@@ -78,6 +78,44 @@ if command -v jq >/dev/null 2>&1; then
     fi
 fi
 
+echo "== fetch-vanilla: bundler jars (every release since 1.18) =="
+# The published server jar is a launcher: the real server, and the worldgen
+# data with it, sits at META-INF/versions/<id>/server-<id>.jar, with its
+# SHA-256 in META-INF/versions.list. A synthetic plain jar happily passed
+# these tests while the real thing failed, so the layout is covered here.
+bundle_src="${work_dir}/bundle-src"
+mkdir -p "${bundle_src}/META-INF/versions/1.21.11"
+inner_jar="${bundle_src}/META-INF/versions/1.21.11/server-1.21.11.jar"
+(cd "${jar_src}" && zip -qr "${inner_jar}" .)
+inner_sha256="$(sha256sum "${inner_jar}" | cut -d' ' -f1)"
+printf '%s\t1.21.11\t1.21.11/server-1.21.11.jar\n' "${inner_sha256}" \
+    > "${bundle_src}/META-INF/versions.list"
+bundler_jar="${work_dir}/bundler.jar"
+(cd "${bundle_src}" && zip -qr "${bundler_jar}" .)
+
+bundler_out="${work_dir}/bundler-out"
+bundler_log="${work_dir}/bundler.log"
+check "extracts worldgen from a bundler jar" \
+    env sh -c "'${fetch}' --jar '${bundler_jar}' --skip-verify --output '${bundler_out}' \
+        > '${bundler_log}' 2>&1"
+check "found the data in the nested server jar" \
+    test -f "${bundler_out}/worldgen/noise_settings/overworld.json"
+check "verified the nested jar's SHA-256" \
+    grep -q "nested server jar verified" "${bundler_log}"
+check "cleaned up the bundle staging directory" test ! -e "${bundler_out}/.bundle"
+
+# Internal consistency is checked even under --skip-verify: that flag waives
+# provenance, not integrity.
+corrupt_src="${work_dir}/corrupt-src"
+cp -r "${bundle_src}" "${corrupt_src}"
+printf '%s\t1.21.11\t1.21.11/server-1.21.11.jar\n' \
+    "0000000000000000000000000000000000000000000000000000000000000000" \
+    > "${corrupt_src}/META-INF/versions.list"
+corrupt_jar="${work_dir}/corrupt.jar"
+(cd "${corrupt_src}" && zip -qr "${corrupt_jar}" .)
+expect_failure "a bundle whose versions.list disagrees with its contents is rejected" \
+    "${fetch}" --jar "${corrupt_jar}" --skip-verify --output "${work_dir}/corrupt-out"
+
 echo "== fetch-vanilla: loud refusals =="
 empty_jar="${work_dir}/empty.jar"
 (cd "${jar_src}/net" && zip -qr "${empty_jar}" .)

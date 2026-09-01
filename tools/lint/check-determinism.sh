@@ -86,21 +86,40 @@ if [[ -d lib ]]; then
     fi
 fi
 
-echo "== 4. no Mojang-derived artefacts in the tree =="
-# SPEC §12: the repo ships scripts, never data.
-artefacts="$(find . \
+echo "== 4. no Mojang-derived artefacts committed =="
+# SPEC §12: the repo ships scripts, never data. Having fixtures on disk is
+# the point of tools/fetch-vanilla, so the violation is an artefact that is
+# *tracked*, or one loose in the source tree — not one sitting in the
+# gitignored fixture directory where the script puts it.
+artefact_names=('*.jar' '*.mca' '*.mcr' '*.nbt')
+artefacts_ok=1
+
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    tracked="$(git ls-files -- "${artefact_names[@]}" 2>/dev/null)"
+    if [[ -n "${tracked}" ]]; then
+        fail "Mojang-derived artefacts are tracked by git (SPEC §12):"
+        printf '%s\n' "${tracked}" >&2
+        artefacts_ok=0
+    fi
+fi
+
+# Loose artefacts outside the sanctioned, gitignored fixture directories.
+loose="$(find . \
     -path ./.git -prune -o \
+    -path ./.fixtures -prune -o \
+    -path ./fixtures -prune -o \
     -path ./build -prune -o \
     -path './cmake-build-*' -prune -o \
     -path '*/_deps' -prune -o \
     -type f \( -name '*.jar' -o -name '*.mca' -o -name '*.mcr' -o -name '*.nbt' \) \
     -print 2>/dev/null)"
-if [[ -n "${artefacts}" ]]; then
-    fail "Mojang-derived artefacts present in the working tree (SPEC §12):"
-    printf '%s\n' "${artefacts}" >&2
-else
-    echo "  ok"
+if [[ -n "${loose}" ]]; then
+    fail "Mojang-derived artefacts outside .fixtures/ (SPEC §12):"
+    printf '%s\n' "${loose}" >&2
+    artefacts_ok=0
 fi
+
+[[ ${artefacts_ok} -eq 1 ]] && echo "  ok"
 
 echo "== 5. determinism flags still applied =="
 det_module="cmake/StratumDeterminism.cmake"

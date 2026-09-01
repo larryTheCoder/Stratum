@@ -10,8 +10,10 @@
 #
 # Trust chain, verified at every hop:
 #   version_manifest_v2.json  -> sha1 of the per-version metadata
-#   <version>.json            -> sha1 of the server jar
-#   server.jar                -> checked before anything is extracted from it
+#   <version>.json            -> sha1 of the published server jar
+#   server.jar                -> checked before it is opened
+#   META-INF/versions.list    -> sha256 of the nested server jar (bundler
+#                                jars, i.e. everything since 1.18)
 set -euo pipefail
 
 # Keep in sync with SPEC §3 and STRATUM_MINECRAFT_VERSION in CMakeLists.txt.
@@ -74,6 +76,16 @@ sha1_of() {
         shasum -a 1 "$1" | cut -d' ' -f1
     else
         die "neither sha1sum nor shasum is available; cannot verify downloads"
+    fi
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        die "neither sha256sum nor shasum is available; cannot verify the bundle"
     fi
 }
 
@@ -176,7 +188,48 @@ if [[ ${skip_verify} -eq 0 ]]; then
     log "jar verified (${jar_sha1_expected})"
 fi
 
-# --- 3. extract the worldgen definitions --------------------------------
+# --- 3. unwrap the bundler ----------------------------------------------
+# Since 1.18 the published server jar is a launcher: the real server sits at
+# META-INF/versions/<id>/server-<id>.jar and META-INF/versions.list records
+# its SHA-256. The worldgen data is in there, not in the outer jar.
+data_jar="${jar_to_read}"
+nested_sha256=""
+versions_list="${output_dir}/versions.list"
+if unzip -p "${jar_to_read}" "META-INF/versions.list" > "${versions_list}" 2>/dev/null \
+        && [[ -s "${versions_list}" ]]; then
+    log "bundler jar detected; unwrapping the nested server jar"
+
+    # Format: <sha256>\t<id>\t<path relative to META-INF/versions/>.
+    # Prefer the entry matching the requested version, else the first.
+    nested_line="$(awk -F'\t' -v want="${version}" \
+        '$2 == want { print; found = 1; exit } END { if (!found) exit 1 }' \
+        "${versions_list}" || head -n 1 "${versions_list}")"
+    nested_sha256="$(cut -f1 <<<"${nested_line}")"
+    nested_path="$(cut -f3 <<<"${nested_line}" | tr -d '\r\n')"
+    [[ -n "${nested_path}" ]] || die "META-INF/versions.list is malformed: '${nested_line}'"
+
+    bundle_dir="${output_dir}/.bundle"
+    rm -rf "${bundle_dir}"
+    mkdir -p "${bundle_dir}"
+    unzip -qo "${jar_to_read}" "META-INF/versions/${nested_path}" -d "${bundle_dir}" \
+        || die "bundler lists META-INF/versions/${nested_path} but the jar does not contain it"
+    data_jar="${bundle_dir}/META-INF/versions/${nested_path}"
+
+    # Checked even under --skip-verify: that flag waives *provenance* (is
+    # this Mojang's jar?), while this is internal consistency (is this jar
+    # intact?). A bundle whose own manifest disagrees with its contents is
+    # corrupt no matter where it came from.
+    actual="$(sha256_of "${data_jar}")"
+    [[ "${actual}" == "${nested_sha256}" ]] \
+        || die "nested server jar SHA-256 mismatch: META-INF/versions.list says
+       ${nested_sha256}
+       but the embedded jar hashes to
+       ${actual}
+       This jar is corrupt or repackaged; refusing to extract from it."
+    log "nested server jar verified (${nested_sha256})"
+fi
+
+# --- 4. extract the worldgen definitions --------------------------------
 log "extracting ${WORLDGEN_PREFIX}/** into ${worldgen_dir}"
 rm -rf "${worldgen_dir}"
 staging_dir="${output_dir}/.extract"
@@ -186,25 +239,28 @@ mkdir -p "${staging_dir}"
 # the tree is extracted intact and then rerooted at worldgen_dir, leaving
 # paths like `noise_settings/overworld.json` — the shape a `minecraft:` id
 # resolves to.
-unzip -qo "${jar_to_read}" "${WORLDGEN_PREFIX}/*" -d "${staging_dir}" \
-    || die "the jar contains no ${WORLDGEN_PREFIX}/ entries; is this a server jar?"
+unzip -qo "${data_jar}" "${WORLDGEN_PREFIX}/*" -d "${staging_dir}" >/dev/null 2>&1 || true
 [[ -d "${staging_dir}/${WORLDGEN_PREFIX}" ]] \
-    || die "the jar contains no ${WORLDGEN_PREFIX}/ entries; is this a server jar?"
+    || die "${data_jar} contains no ${WORLDGEN_PREFIX}/ entries.
+       A modern server jar is a bundler and the data lives in the nested jar
+       under META-INF/versions/; this one has neither. Is it a client jar, or
+       a repackaged build?"
 mkdir -p "$(dirname "${worldgen_dir}")"
 mv "${staging_dir}/${WORLDGEN_PREFIX}" "${worldgen_dir}"
 rm -rf "${staging_dir}"
 
 json_count="$(find "${worldgen_dir}" -name '*.json' -type f | wc -l | tr -d ' ')"
-[[ "${json_count}" -gt 0 ]] || die "extracted no worldgen JSON from ${jar_to_read}"
+[[ "${json_count}" -gt 0 ]] || die "extracted no worldgen JSON from ${data_jar}"
 log "extracted ${json_count} worldgen JSON files"
 
-# --- 4. provenance record ------------------------------------------------
+# --- 5. provenance record ------------------------------------------------
 jq -n \
     --arg version "${version}" \
     --arg pinned "${PINNED_VERSION}" \
     --arg metadata_url "${metadata_url:-}" \
     --arg metadata_sha1 "${metadata_sha1:-}" \
     --arg jar_sha1 "${jar_sha1_expected:-}" \
+    --arg nested_jar_sha256 "${nested_sha256:-}" \
     --arg jar_source "${jar_path:-${jar_url:-}}" \
     --argjson worldgen_files "${json_count}" \
     '{
@@ -213,13 +269,14 @@ jq -n \
         metadata_url: $metadata_url,
         metadata_sha1: $metadata_sha1,
         server_jar_sha1: $jar_sha1,
+        nested_server_jar_sha256: $nested_jar_sha256,
         server_jar_source: $jar_source,
         worldgen_files: $worldgen_files,
         note: "Mojang-derived. Never commit anything in this directory (SPEC 12)."
     }' > "${provenance_file}"
 log "wrote ${provenance_file}"
 
-# --- 5. golden region files ----------------------------------------------
+# --- 6. golden region files ----------------------------------------------
 if [[ ${generate_regions} -eq 1 ]]; then
     if [[ ${accept_eula} -eq 0 ]]; then
         die "--generate-regions runs the vanilla server, which requires accepting
@@ -237,4 +294,5 @@ if [[ ${generate_regions} -eq 1 ]]; then
        Refusing rather than silently producing an empty fixture set."
 fi
 
+rm -rf "${output_dir}/.bundle"
 log "done. Fixtures in ${output_dir} — do not commit them."
