@@ -1,0 +1,156 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "STRATUM_BUILD_CLI": "ON",
+        "STRATUM_BUILD_TESTS": "ON",
+        "STRATUM_BUILD_EXT": "OFF"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "dev (Debug, warnings not fatal)",
+      "description": "Default local development configuration. No generator is pinned, so it works with Make, Ninja or Visual Studio.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "STRATUM_WERROR": "OFF"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "release (RelWithDebInfo)",
+      "description": "Optimised build with debug info. Determinism flags are identical to dev by construction.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STRATUM_WERROR": "OFF"
+      }
+    },
+    {
+      "name": "ci-debug",
+      "inherits": "base",
+      "displayName": "ci-debug (warnings are errors)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "STRATUM_WERROR": "ON"
+      },
+      "description": "CI configuration: warnings are errors. No generator is pinned so each platform uses its native default (Make, Ninja or MSBuild)."
+    },
+    {
+      "name": "ci-release",
+      "inherits": "base",
+      "displayName": "ci-release (warnings are errors)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STRATUM_WERROR": "ON"
+      },
+      "description": "CI configuration: warnings are errors. No generator is pinned so each platform uses its native default (Make, Ninja or MSBuild)."
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ci-debug",
+      "configurePreset": "ci-debug",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "ci-release",
+      "configurePreset": "ci-release",
+      "configuration": "RelWithDebInfo",
+      "jobs": 4
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "configuration": "Debug",
+      "displayName": "unit + lint",
+      "description": "Fast hermetic suites. This is the gate CLAUDE.md requires green before anything is done.",
+      "filter": {
+        "include": {
+          "label": "unit|lint"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "conformance",
+      "configurePreset": "dev",
+      "configuration": "Debug",
+      "displayName": "Tier-A golden diffs vs vanilla",
+      "description": "Requires locally generated fixtures; skips loudly when they are absent.",
+      "filter": {
+        "include": {
+          "label": "conformance"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ci-debug",
+      "configurePreset": "ci-debug",
+      "configuration": "Debug",
+      "filter": {
+        "include": {
+          "label": "unit|lint"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ci-release",
+      "configurePreset": "ci-release",
+      "configuration": "RelWithDebInfo",
+      "filter": {
+        "include": {
+          "label": "unit|lint"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    }
+  ]
+}

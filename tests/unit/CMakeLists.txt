@@ -1,0 +1,37 @@
+add_executable(stratum_unit_tests
+    version_test.cpp
+)
+
+target_link_libraries(stratum_unit_tests PRIVATE
+    stratum::core
+    Catch2::Catch2WithMain
+)
+
+stratum_configure_target(stratum_unit_tests)
+
+catch_discover_tests(stratum_unit_tests
+    TEST_PREFIX "unit."
+    PROPERTIES LABELS "unit"
+)
+
+# --- CLI smoke tests: the dispatcher must be loud, not silently successful ---
+if(TARGET stratum_cli)
+    add_test(NAME unit.cli.version COMMAND stratum_cli --version)
+    set_tests_properties(unit.cli.version PROPERTIES
+        LABELS "unit"
+        PASS_REGULAR_EXPRESSION "schema pin MC 1\\.21\\.11, pack format 94\\.1"
+    )
+
+    add_test(NAME unit.cli.unimplemented_subcommand_is_loud
+        COMMAND stratum_cli render)
+    set_tests_properties(unit.cli.unimplemented_subcommand_is_loud PROPERTIES
+        LABELS "unit"
+        PASS_REGULAR_EXPRESSION "not implemented"
+    )
+
+    add_test(NAME unit.cli.unknown_subcommand_fails COMMAND stratum_cli nonsense)
+    set_tests_properties(unit.cli.unknown_subcommand_fails PROPERTIES
+        LABELS "unit"
+        WILL_FAIL TRUE
+    )
+endif()

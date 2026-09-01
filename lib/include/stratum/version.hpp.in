@@ -1,0 +1,49 @@
+// Stratum — engine, schema-pin and freeze-blob version metadata.
+// Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// Generated from version.hpp.in by CMake — edit the .in file, not the copy
+// in the build tree.
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+
+namespace stratum {
+
+/// Release version of the engine itself (semantic versioning).
+inline constexpr std::string_view kVersion = "@PROJECT_VERSION@";
+inline constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
+
+/// Version of the pipeline execution engine, stamped into every per-world
+/// freeze blob (SPEC 6). Bump this whenever a change can alter generated
+/// output for an already-stored pipeline. A world whose stored blob names a
+/// version this build cannot reproduce is refused loudly — never generated
+/// on a best-effort basis.
+inline constexpr std::uint32_t kPipelineEngineVersion =
+    @STRATUM_PIPELINE_ENGINE_VERSION@U;
+
+/// Pinned Java Edition version whose worldgen schema this engine executes
+/// (SPEC 3). This is a number, not a policy: moving it is versioned
+/// migration work, and we do not chase snapshots.
+inline constexpr std::string_view kMinecraftVersion = "@STRATUM_MINECRAFT_VERSION@";
+
+/// Pinned data pack format under the min_format/max_format scheme.
+inline constexpr int kPackFormatMajor = @STRATUM_PACK_FORMAT_MAJOR@;
+inline constexpr int kPackFormatMinor = @STRATUM_PACK_FORMAT_MINOR@;
+
+/// True when @p major is the pinned pack format major line (94.x), i.e. the
+/// coarse check every pack must pass before its declared min_format /
+/// max_format range is examined in detail at load time.
+[[nodiscard]] constexpr bool isPinnedPackFormatMajor(int major) noexcept {
+    return major == kPackFormatMajor;
+}
+
+/// One-line identification string used by the CLI banner, error messages and
+/// freeze-blob provenance records.
+[[nodiscard]] std::string versionBanner();
+
+}  // namespace stratum

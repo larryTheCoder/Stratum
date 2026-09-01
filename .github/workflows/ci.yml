@@ -1,0 +1,143 @@
+# Stratum CI.
+#
+# SPEC §5.5 makes the build matrix part of the determinism contract: the
+# suites run on x86-64 AND ARM64 across Linux, Windows and macOS, and a
+# cross-architecture divergence is a build failure, never "noise".
+#
+# No generator is pinned; each platform uses its native default (Make on
+# Linux, Make on macOS, MSBuild on Windows), so CI needs no extra toolchain
+# installs to build.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned so formatting is identical on every machine; clang-format output
+  # changes between major versions.
+  CLANG_FORMAT_VERSION: "18.1.8"
+
+jobs:
+  lint:
+    name: lint (format, determinism policy, clang-tidy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned clang-format
+        # pipx, not pip: Ubuntu 24.04's system Python is externally managed.
+        run: pipx install "clang-format==${CLANG_FORMAT_VERSION}"
+
+      - name: clang-format
+        run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          tools/lint/format.sh
+
+      - name: Determinism and provenance policy
+        run: tools/lint/check-determinism.sh
+
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
+
+      - name: Configure for clang-tidy (compile_commands.json)
+        run: cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=OFF
+
+      - name: clang-tidy
+        run: |
+          mapfile -t sources < <(find lib cli -name '*.cpp' -not -path '*/_deps/*')
+          if [ ${#sources[@]} -eq 0 ]; then
+            echo "no first-party sources to analyse"; exit 0
+          fi
+          clang-tidy-18 -p build/tidy --warnings-as-errors='*' "${sources[@]}"
+
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64 (debug)
+            os: ubuntu-24.04
+            preset: ci-debug
+          - name: linux-x86_64 (release)
+            os: ubuntu-24.04
+            preset: ci-release
+          - name: linux-arm64 (debug)
+            os: ubuntu-24.04-arm
+            preset: ci-debug
+          - name: linux-arm64 (release)
+            os: ubuntu-24.04-arm
+            preset: ci-release
+          - name: macos-x86_64 (debug)
+            os: macos-13
+            preset: ci-debug
+          - name: macos-arm64 (debug)
+            os: macos-14
+            preset: ci-debug
+          - name: windows-x86_64 (debug)
+            os: windows-2022
+            preset: ci-debug
+          - name: windows-arm64 (debug)
+            os: windows-11-arm
+            preset: ci-debug
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Unit and lint suites
+        run: ctest --preset ${{ matrix.preset }}
+
+  conformance:
+    name: conformance (${{ matrix.name }})
+    # SPEC §7: Tier-A goldens are generated here, never committed. Until
+    # tools/fetch-vanilla lands in M1 this job runs the harness wiring and
+    # reports the fixture guard as a visible SKIP rather than a silent pass.
+    runs-on: ${{ matrix.os }}
+    needs: build
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset dev
+
+      - name: Build
+        run: cmake --build --preset dev
+
+      # M1: fetch fixtures here with
+      #   tools/fetch-vanilla --version 1.21.11
+      # from an official Mojang jar. Nothing it produces may be committed or
+      # uploaded as a public artifact (SPEC §12).
+
+      - name: Conformance suite
+        run: ctest --preset conformance

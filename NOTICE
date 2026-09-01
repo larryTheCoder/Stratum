@@ -1,0 +1,35 @@
+Stratum — pipeline worldgen engine for PocketMine-MP
+Copyright 2026 Amir Muazzam (larryTheCoder) and the Stratum contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------
+Third-party material
+--------------------------------------------------------------------------
+
+This repository ships no Mojang data and no Mojang source code, in any
+form (SPEC.md section 12). Vanilla worldgen definitions and conformance
+fixtures are obtained by the user, at build/test time, from an official
+jar the user downloads themselves; they are never redistributed here.
+
+"Minecraft" is a trademark of Mojang AB. This project is not affiliated
+with, endorsed by, or associated with Mojang AB or Microsoft.
+
+Code adapted from third-party projects carries per-file attribution
+naming the upstream file and its license. Expected upstreams:
+
+  * cubiomes  — MIT License        — noise/biome math reference
+  * Cuberite  — Apache License 2.0 — pipeline architecture reference
+
+Any such adaptation must be recorded here and in the file header before
+it merges.
