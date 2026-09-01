@@ -47,6 +47,13 @@ jobs:
       - name: Determinism and provenance policy
         run: tools/lint/check-determinism.sh
 
+      - name: Generated test vectors are reproducible
+        # The known-answer vectors must come from a JVM, never from a human
+        # editing the numbers. Re-run the generator and require an exact match.
+        run: |
+          java tools/vectors/JavaMathVectors.java > "${RUNNER_TEMP}/javamath_vectors.inc"
+          diff -u tests/unit/javamath_vectors.inc "${RUNNER_TEMP}/javamath_vectors.inc"
+
       - name: Install clang-tidy
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
 
