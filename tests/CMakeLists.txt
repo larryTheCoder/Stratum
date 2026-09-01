@@ -54,6 +54,14 @@ add_subdirectory(conformance)
 # banned RNGs, banned float flags, raw % / >> on signed values.
 # ---------------------------------------------------------------------------
 if(UNIX)
+    # fetch-vanilla's offline behaviour: extraction, provenance and its
+    # refusals. Hermetic — the network paths belong to the conformance job.
+    add_test(NAME unit.tools.fetch_vanilla
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/fetch_vanilla_offline_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.fetch_vanilla PROPERTIES LABELS "unit")
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."

@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# Stratum — obtain vanilla worldgen data and conformance fixtures.
+# Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#
+# NOTHING THIS SCRIPT PRODUCES MAY BE COMMITTED (SPEC §12). Everything it
+# writes is derived from Mojang data: the repository ships this script, the
+# user supplies the jar. The default output directory is .fixtures/, which
+# .gitignore excludes, and tools/lint/check-determinism.sh fails the build if
+# a jar or region file appears in the tree.
+#
+# Trust chain, verified at every hop:
+#   version_manifest_v2.json  -> sha1 of the per-version metadata
+#   <version>.json            -> sha1 of the server jar
+#   server.jar                -> checked before anything is extracted from it
+set -euo pipefail
+
+# Keep in sync with SPEC §3 and STRATUM_MINECRAFT_VERSION in CMakeLists.txt.
+readonly PINNED_VERSION="1.21.11"
+readonly MANIFEST_URL="https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+readonly WORLDGEN_PREFIX="data/minecraft/worldgen"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+version="${PINNED_VERSION}"
+output_dir=""
+jar_path=""
+dry_run=0
+skip_verify=0
+accept_eula=0
+generate_regions=0
+
+usage() {
+    cat <<'USAGE'
+usage: tools/fetch-vanilla [options]
+
+Downloads (or accepts) an official Minecraft server jar, verifies it, and
+extracts the vanilla worldgen definitions used as conformance input.
+
+options:
+  --version <id>     Minecraft version to fetch (default: the pinned 1.21.11)
+  --output <dir>     where fixtures are written (default: <repo>/.fixtures/<id>)
+  --jar <path>       use a jar you already downloaded instead of fetching one
+  --generate-regions also produce golden region files by running the server
+  --accept-eula      you accept Mojang's EULA; required by --generate-regions
+  --skip-verify      do not check the jar's SHA-1 (for a jar not on the
+                     manifest, e.g. a modified build; unsafe for conformance)
+  --dry-run          print what would happen; performs no network access
+  -h, --help         this message
+
+Nothing written by this script may be committed: it is Mojang-derived data
+(SPEC §12).
+USAGE
+}
+
+log()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+require_tools() {
+    local missing=()
+    for tool in "$@"; do
+        command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        die "missing required tool(s): ${missing[*]}"
+    fi
+}
+
+# macOS ships shasum rather than sha1sum.
+sha1_of() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        sha1sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 1 "$1" | cut -d' ' -f1
+    else
+        die "neither sha1sum nor shasum is available; cannot verify downloads"
+    fi
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --version)          version="${2:?--version needs an argument}"; shift 2 ;;
+        --output)           output_dir="${2:?--output needs an argument}"; shift 2 ;;
+        --jar)              jar_path="${2:?--jar needs an argument}"; shift 2 ;;
+        --generate-regions) generate_regions=1; shift ;;
+        --accept-eula)      accept_eula=1; shift ;;
+        --skip-verify)      skip_verify=1; shift ;;
+        --dry-run)          dry_run=1; shift ;;
+        -h|--help)          usage; exit 0 ;;
+        *)                  usage >&2; die "unknown option: $1" ;;
+    esac
+done
+
+: "${output_dir:="${repo_root}/.fixtures/${version}"}"
+readonly jar_file="${output_dir}/server-${version}.jar"
+readonly worldgen_dir="${output_dir}/worldgen"
+readonly provenance_file="${output_dir}/PROVENANCE.json"
+
+if [[ "${version}" != "${PINNED_VERSION}" ]]; then
+    warn "requested ${version}, but this engine is pinned to ${PINNED_VERSION} (SPEC §3)."
+    warn "Conformance results against another version are not meaningful until the"
+    warn "pin is moved deliberately: schema diff, regenerated goldens, matrix re-check."
+fi
+
+if [[ ${dry_run} -eq 1 ]]; then
+    log "dry run — no network access, nothing written"
+    echo "  version          : ${version}"
+    echo "  manifest         : ${MANIFEST_URL}"
+    echo "  output directory : ${output_dir}"
+    if [[ -n "${jar_path}" ]]; then
+        echo "  jar              : ${jar_path} (supplied by you)"
+    else
+        echo "  jar              : downloaded to ${jar_file}"
+    fi
+    echo "  worldgen JSON    : ${worldgen_dir} (from ${WORLDGEN_PREFIX}/** inside the jar)"
+    echo "  provenance       : ${provenance_file}"
+    echo "  verify SHA-1     : $([[ ${skip_verify} -eq 1 ]] && echo no || echo yes)"
+    echo "  region goldens   : $([[ ${generate_regions} -eq 1 ]] && echo requested || echo no)"
+    exit 0
+fi
+
+require_tools curl jq unzip
+
+mkdir -p "${output_dir}"
+
+# --- 1. resolve the version metadata ------------------------------------
+metadata_file="${output_dir}/${version}.json"
+if [[ -n "${jar_path}" && ${skip_verify} -eq 1 ]]; then
+    log "using ${jar_path} without verification (--skip-verify)"
+    metadata_sha1="(not verified)"
+    jar_sha1_expected="(not verified)"
+    metadata_url="(not fetched)"
+else
+    log "resolving ${version} from the Mojang version manifest"
+    manifest_file="${output_dir}/version_manifest_v2.json"
+    curl -fsSL "${MANIFEST_URL}" -o "${manifest_file}"
+
+    metadata_url="$(jq -r --arg v "${version}" \
+        '.versions[] | select(.id == $v) | .url' "${manifest_file}")"
+    metadata_sha1="$(jq -r --arg v "${version}" \
+        '.versions[] | select(.id == $v) | .sha1' "${manifest_file}")"
+    [[ -n "${metadata_url}" && "${metadata_url}" != "null" ]] \
+        || die "version ${version} is not in the Mojang manifest"
+
+    curl -fsSL "${metadata_url}" -o "${metadata_file}"
+    actual="$(sha1_of "${metadata_file}")"
+    [[ "${actual}" == "${metadata_sha1}" ]] \
+        || die "metadata SHA-1 mismatch for ${version}: expected ${metadata_sha1}, got ${actual}"
+    log "metadata verified (${metadata_sha1})"
+
+    jar_sha1_expected="$(jq -r '.downloads.server.sha1' "${metadata_file}")"
+    jar_url="$(jq -r '.downloads.server.url' "${metadata_file}")"
+    jar_size="$(jq -r '.downloads.server.size' "${metadata_file}")"
+    required_java="$(jq -r '.javaVersion.majorVersion // "unknown"' "${metadata_file}")"
+fi
+
+# --- 2. obtain the server jar -------------------------------------------
+if [[ -n "${jar_path}" ]]; then
+    [[ -f "${jar_path}" ]] || die "no such jar: ${jar_path}"
+    log "using the jar you supplied: ${jar_path}"
+    jar_to_read="${jar_path}"
+else
+    if [[ -f "${jar_file}" ]] && [[ "$(sha1_of "${jar_file}")" == "${jar_sha1_expected}" ]]; then
+        log "server jar already present and verified, skipping download"
+    else
+        log "downloading server jar (${jar_size} bytes) from ${jar_url}"
+        curl -fL --progress-bar "${jar_url}" -o "${jar_file}"
+    fi
+    jar_to_read="${jar_file}"
+fi
+
+if [[ ${skip_verify} -eq 0 ]]; then
+    actual="$(sha1_of "${jar_to_read}")"
+    [[ "${actual}" == "${jar_sha1_expected}" ]] \
+        || die "jar SHA-1 mismatch: expected ${jar_sha1_expected}, got ${actual}"
+    log "jar verified (${jar_sha1_expected})"
+fi
+
+# --- 3. extract the worldgen definitions --------------------------------
+log "extracting ${WORLDGEN_PREFIX}/** into ${worldgen_dir}"
+rm -rf "${worldgen_dir}"
+staging_dir="${output_dir}/.extract"
+rm -rf "${staging_dir}"
+mkdir -p "${staging_dir}"
+# `unzip -j` would flatten the namespaced paths that references depend on, so
+# the tree is extracted intact and then rerooted at worldgen_dir, leaving
+# paths like `noise_settings/overworld.json` — the shape a `minecraft:` id
+# resolves to.
+unzip -qo "${jar_to_read}" "${WORLDGEN_PREFIX}/*" -d "${staging_dir}" \
+    || die "the jar contains no ${WORLDGEN_PREFIX}/ entries; is this a server jar?"
+[[ -d "${staging_dir}/${WORLDGEN_PREFIX}" ]] \
+    || die "the jar contains no ${WORLDGEN_PREFIX}/ entries; is this a server jar?"
+mkdir -p "$(dirname "${worldgen_dir}")"
+mv "${staging_dir}/${WORLDGEN_PREFIX}" "${worldgen_dir}"
+rm -rf "${staging_dir}"
+
+json_count="$(find "${worldgen_dir}" -name '*.json' -type f | wc -l | tr -d ' ')"
+[[ "${json_count}" -gt 0 ]] || die "extracted no worldgen JSON from ${jar_to_read}"
+log "extracted ${json_count} worldgen JSON files"
+
+# --- 4. provenance record ------------------------------------------------
+jq -n \
+    --arg version "${version}" \
+    --arg pinned "${PINNED_VERSION}" \
+    --arg metadata_url "${metadata_url:-}" \
+    --arg metadata_sha1 "${metadata_sha1:-}" \
+    --arg jar_sha1 "${jar_sha1_expected:-}" \
+    --arg jar_source "${jar_path:-${jar_url:-}}" \
+    --argjson worldgen_files "${json_count}" \
+    '{
+        version: $version,
+        pinned_version: $pinned,
+        metadata_url: $metadata_url,
+        metadata_sha1: $metadata_sha1,
+        server_jar_sha1: $jar_sha1,
+        server_jar_source: $jar_source,
+        worldgen_files: $worldgen_files,
+        note: "Mojang-derived. Never commit anything in this directory (SPEC 12)."
+    }' > "${provenance_file}"
+log "wrote ${provenance_file}"
+
+# --- 5. golden region files ----------------------------------------------
+if [[ ${generate_regions} -eq 1 ]]; then
+    if [[ ${accept_eula} -eq 0 ]]; then
+        die "--generate-regions runs the vanilla server, which requires accepting
+       Mojang's EULA (https://aka.ms/MinecraftEULA). Re-run with --accept-eula
+       once you have read and accepted it. This script will not accept it on
+       your behalf."
+    fi
+    if [[ "${required_java:-unknown}" != "unknown" ]]; then
+        log "note: ${version} targets Java ${required_java}"
+    fi
+    die "golden region generation is not implemented yet (Milestone M1, in progress).
+       Planned: for each seed in the fixed set (SPEC §7), write a server.properties
+       with that level-seed, start the server headlessly, force-load the fixture
+       chunk ranges in each dimension, stop cleanly, and collect the region files.
+       Refusing rather than silently producing an empty fixture set."
+fi
+
+log "done. Fixtures in ${output_dir} — do not commit them."

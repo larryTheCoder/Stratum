@@ -28,9 +28,18 @@ Conformance runs separately, because it needs fixtures that are generated
 locally and never committed:
 
 ```bash
-tools/fetch-vanilla --version 1.21.11   # Milestone M1 — not implemented yet
+tools/fetch-vanilla --dry-run           # show the plan without touching the network
+tools/fetch-vanilla                     # fetch + verify + extract worldgen JSON
 ctest --preset conformance              # skips loudly while fixtures are absent
 ```
+
+`fetch-vanilla` resolves the pinned version through Mojang's piston-meta
+manifest and verifies every hop of the chain (manifest → version metadata
+SHA-1 → server jar SHA-1) before extracting anything. Pass `--jar <path>` to
+use a jar you already downloaded. Golden region generation runs the vanilla
+server, which means accepting Mojang's EULA yourself — the script will not
+do that for you, and refuses without `--accept-eula`. It needs `curl`, `jq`
+and `unzip`; its own tests also need `zip`.
 
 | Preset | Purpose |
 |--------|---------|
@@ -98,9 +107,15 @@ seed arithmetic in `uint64_t` with explicit wrapping, Java-semantics
 project's Java LCG and Xoroshiro128++ seeded per `(worldSeed, position,
 salt)`, `-ffp-contract=off` / `/fp:precise`, and never `-ffast-math`.
 
+Transcendentals are a special case: Java uses `StrictMath` (fdlibm), and a
+host libm is within an ulp of it rather than equal to it. Parity-critical
+code therefore calls `stratum::fdlibm::` — never `<cmath>` — for `log` and
+friends. `std::sqrt` is exempt, being IEEE-754 correctly rounded.
+
 CI enforces this on x86-64 **and** ARM64 across Linux, Windows and macOS; a
 cross-architecture divergence is a build failure, not noise.
-`tools/lint/check-determinism.sh` catches the parts a compiler cannot see.
+`tools/lint/check-determinism.sh` catches the parts a compiler cannot see,
+including that vendored licence notices are still intact.
 
 ## Provenance
 
