@@ -2,6 +2,7 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    region_file_test.cpp
     version_test.cpp
 )
 
@@ -12,6 +13,7 @@ target_include_directories(stratum_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(stratum_unit_tests PRIVATE
     stratum::core
     Catch2::Catch2WithMain
+    ZLIB::ZLIB
 )
 
 stratum_configure_target(stratum_unit_tests)

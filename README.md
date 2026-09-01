@@ -48,8 +48,10 @@ and `unzip`; its own tests also need `zip`.
 | `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
-and network access on first configure so Catch2 v3 can be fetched (or install
-Catch2 ≥ 3 yourself and it will be used instead).
+zlib, and network access on first configure so Catch2 v3 can be fetched (or
+install Catch2 ≥ 3 yourself and it will be used instead). zlib is taken from
+the system when present and fetched and built otherwise, so no manual setup
+is needed on platforms that ship without it.
 
 Lint locally the way CI does:
 

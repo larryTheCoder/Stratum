@@ -52,8 +52,14 @@ endif()
 
 include(StratumWarnings)
 include(StratumDeterminism)
+include(StratumZlib)
 
 stratum_assert_no_banned_flags()
+
+# Provisioned here rather than in lib/: an imported target created inside a
+# subdirectory is not visible to sibling directories, and tests/ links zlib
+# too in order to build the region fixtures it reads back.
+stratum_provision_zlib()
 
 # --------------------------------------------------------------------------
 # Layers

@@ -35,6 +35,15 @@ Any such adaptation must be recorded here and in the file header before
 it merges.
 
 --------------------------------------------------------------------------
+zlib (linked dependency)
+--------------------------------------------------------------------------
+
+Region files store chunks deflated, so the engine links zlib
+(https://zlib.net/), by Jean-loup Gailly and Mark Adler, under the zlib
+license. It is used as a dependency, not vendored: a system zlib is
+preferred, and one is fetched and built only when the platform has none.
+
+--------------------------------------------------------------------------
 fdlibm (SunPro)
 --------------------------------------------------------------------------
 

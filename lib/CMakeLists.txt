@@ -13,6 +13,7 @@ configure_file(
 
 add_library(stratum_core STATIC
     src/fdlibm_log.cpp
+    src/region_file.cpp
     src/version.cpp
 )
 add_library(stratum::core ALIAS stratum_core)
@@ -30,9 +31,12 @@ target_sources(stratum_core PUBLIC
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"
 )
+
+target_link_libraries(stratum_core PRIVATE ZLIB::ZLIB)
 
 stratum_configure_target(stratum_core)
 
