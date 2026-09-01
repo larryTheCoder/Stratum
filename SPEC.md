@@ -143,7 +143,9 @@ These are hard requirements; violations are release blockers.
 4. Floating point: `-ffp-contract=off`, never `-ffast-math` /
    `-funsafe-math-optimizations`; MSVC builds use `/fp:precise`. No FMA
    contraction differences between x86-64 and ARM64 may reach observable
-   output.
+   output. Transcendental functions are **not** covered by these flags:
+   vanilla uses `StrictMath` (fdlibm) in places, and a platform libm may
+   differ by an ulp. See the open item in §11.
 5. CI runs the golden suite on x86-64 **and** ARM64, Linux + Windows +
    macOS. Cross-architecture divergence is a build failure.
 6. Engine updates must reproduce stored pipelines byte-identically (§6). Any
@@ -280,7 +282,34 @@ Defaults chosen; flip only with a written note in this section:
 
 Open:
 
-- Nothing currently blocking. (M0 closed both of the original open items.)
+- **StrictMath parity for transcendental functions.** Java's
+  `StrictMath` is fdlibm, and is therefore identical on every JVM;
+  `std::log` is not specified to that precision. Measured on
+  x86-64/glibc against JVM vectors, `java.util.Random.nextGaussian`
+  came back **+1 ulp on 5 of 96 values** — a Tier-A parity failure
+  (§7), not a rounding curiosity. Consequently
+  `stratum::rng::JavaRandom::nextGaussian` is **not implemented**: a
+  caller that needs it fails to compile rather than silently generating
+  wrong terrain.
+
+  Resolving it means deciding how we get an fdlibm-exact `log` (and, as
+  further nodes need them, `exp`, `pow`, `sin`, `cos`, `atan2`):
+
+  1. Vendor an fdlibm-derived implementation. The netlib fdlibm notice is
+     permissive ("Permission to use, copy, modify, and distribute this
+     software is freely granted, provided that this notice is preserved"),
+     which is compatible with Apache-2.0 provided the notice is preserved
+     in `NOTICE` and in a per-file header. **Do not** take it from
+     OpenJDK's `StrictMath`, which is GPL+CE.
+  2. Implement the same published algorithms independently, verified
+     against JVM known-answer vectors.
+  3. Restrict v1 to pipelines that never reach a transcendental, and hard
+     error on the rest per §8.
+
+  Option 1 is the cheapest and is the recommendation; it needs a licence
+  sign-off before any code lands. Until then, any density-function node
+  that would need one of these functions must hard error at load, naming
+  the node (§8).
 
 ---
 

@@ -51,8 +51,16 @@ jobs:
         # The known-answer vectors must come from a JVM, never from a human
         # editing the numbers. Re-run the generator and require an exact match.
         run: |
-          java tools/vectors/JavaMathVectors.java > "${RUNNER_TEMP}/javamath_vectors.inc"
-          diff -u tests/unit/javamath_vectors.inc "${RUNNER_TEMP}/javamath_vectors.inc"
+          for generator in tools/vectors/*.java; do
+            name="$(basename "${generator}" .java)"
+            case "${name}" in
+              JavaMathVectors)   target=tests/unit/javamath_vectors.inc ;;
+              JavaRandomVectors) target=tests/unit/java_random_vectors.inc ;;
+              *) echo "no known target for ${generator}"; exit 1 ;;
+            esac
+            java "${generator}" > "${RUNNER_TEMP}/${name}.inc"
+            diff -u "${target}" "${RUNNER_TEMP}/${name}.inc"
+          done
 
       - name: Install clang-tidy
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18

@@ -1,4 +1,5 @@
 add_executable(stratum_unit_tests
+    java_random_test.cpp
     javamath_test.cpp
     version_test.cpp
 )

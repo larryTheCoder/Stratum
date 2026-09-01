@@ -28,6 +28,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"
 )
 
