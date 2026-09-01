@@ -119,6 +119,28 @@ else
     [[ ${failures} -eq ${det_failures} ]] && echo "  ok"
 fi
 
+echo "== 6. vendored license notices preserved =="
+# Third-party code is vendored on the condition that its notice travels with
+# it (SPEC §2, NOTICE). Losing the notice during a refactor would be a
+# licence violation, so it is a build failure.
+vendored_notice_ok=1
+if [[ -f lib/src/fdlibm_log.cpp ]]; then
+    for required in \
+        'Copyright (C) 1993 by Sun Microsystems' \
+        'is freely granted, provided that this notice' \
+        'netlib.org/fdlibm'; do
+        if ! grep -qF -- "${required}" lib/src/fdlibm_log.cpp; then
+            fail "lib/src/fdlibm_log.cpp no longer carries its upstream notice: '${required}'"
+            vendored_notice_ok=0
+        fi
+    done
+    if ! grep -qF -- 'fdlibm' NOTICE; then
+        fail "NOTICE no longer records the vendored fdlibm code."
+        vendored_notice_ok=0
+    fi
+fi
+[[ ${vendored_notice_ok} -eq 1 ]] && echo "  ok"
+
 if [[ ${failures} -gt 0 ]]; then
     printf '\n%d determinism/policy check(s) failed.\n' "${failures}" >&2
     exit 1

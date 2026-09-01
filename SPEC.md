@@ -280,36 +280,27 @@ Defaults chosen; flip only with a written note in this section:
   third-party attribution, and every adaptation must be recorded there and
   in a per-file header before it merges.
 
+- **StrictMath parity for transcendental functions:** vendor from
+  **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
+  identical on every JVM; a host libm is not. Measured on x86-64/glibc,
+  `std::log` disagrees with `StrictMath.log` on **30 of 1057** known-answer
+  vectors, and that was enough to put `nextGaussian` +1 ulp out on 5 of 96
+  values — a Tier-A parity failure (§7), not a rounding curiosity.
+
+  `lib/src/fdlibm_log.cpp` is adapted from fdlibm's `e_log.c` under the
+  SunPro notice (freely distributable, notice preserved), recorded in
+  `NOTICE` and enforced by `tools/lint/check-determinism.sh`. It was taken
+  from netlib, **not** from OpenJDK's `StrictMath`, which is GPL+CE.
+  `std::sqrt` needs no such treatment: IEEE 754 requires it to be
+  correctly rounded, so it already matches.
+
+  `exp`, `pow`, `sin`, `cos` and `atan2` follow the same route as nodes
+  need them: vendor from netlib, verify against JVM vectors, then use
+  `stratum::fdlibm::` — never `<cmath>` — in parity-critical code.
+
 Open:
 
-- **StrictMath parity for transcendental functions.** Java's
-  `StrictMath` is fdlibm, and is therefore identical on every JVM;
-  `std::log` is not specified to that precision. Measured on
-  x86-64/glibc against JVM vectors, `java.util.Random.nextGaussian`
-  came back **+1 ulp on 5 of 96 values** — a Tier-A parity failure
-  (§7), not a rounding curiosity. Consequently
-  `stratum::rng::JavaRandom::nextGaussian` is **not implemented**: a
-  caller that needs it fails to compile rather than silently generating
-  wrong terrain.
-
-  Resolving it means deciding how we get an fdlibm-exact `log` (and, as
-  further nodes need them, `exp`, `pow`, `sin`, `cos`, `atan2`):
-
-  1. Vendor an fdlibm-derived implementation. The netlib fdlibm notice is
-     permissive ("Permission to use, copy, modify, and distribute this
-     software is freely granted, provided that this notice is preserved"),
-     which is compatible with Apache-2.0 provided the notice is preserved
-     in `NOTICE` and in a per-file header. **Do not** take it from
-     OpenJDK's `StrictMath`, which is GPL+CE.
-  2. Implement the same published algorithms independently, verified
-     against JVM known-answer vectors.
-  3. Restrict v1 to pipelines that never reach a transcendental, and hard
-     error on the rest per §8.
-
-  Option 1 is the cheapest and is the recommendation; it needs a licence
-  sign-off before any code lands. Until then, any density-function node
-  that would need one of these functions must hard error at load, naming
-  the node (§8).
+- Nothing currently blocking.
 
 ---
 

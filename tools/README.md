@@ -8,6 +8,7 @@ Non-C++ helper scripts: fixture fetching, schema sync, CI glue, repo lint.
 | `lint/format.sh` | M0 (present) | `clang-format` check / apply over first-party sources |
 | `vectors/JavaMathVectors.java` | M1 (present) | Emits `tests/unit/javamath_vectors.inc`: known-answer vectors for `stratum::javamath`, observed from a real JVM. CI re-runs it and fails on any diff |
 | `vectors/JavaRandomVectors.java` | M1 (present) | Emits `tests/unit/java_random_vectors.inc`: known-answer vectors for `stratum::rng::JavaRandom` from `java.util.Random`, floats as raw bit patterns |
+| `vectors/StrictMathVectors.java` | M1 (present) | Emits `tests/unit/fdlibm_vectors.inc`: `StrictMath.log` known-answer vectors, the oracle for the vendored fdlibm port |
 | `fetch-vanilla` | M1 | Downloads the official server jar via Mojang's piston-meta manifest, extracts `data/minecraft/worldgen/**`, runs the vanilla data generator, and produces region files for the fixed test seed set by running the server headlessly |
 | `mcdoc-sync` | M2 | Vendors the mcdoc (Spyglass) schema snapshot matching the pinned version, for load-time validation |
 

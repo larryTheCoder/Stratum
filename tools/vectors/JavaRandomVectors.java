@@ -3,8 +3,8 @@
 //
 // Records what java.util.Random actually produces, so our reimplementation
 // is checked against observed behaviour rather than against a reading of the
-// specification. nextGaussian is not covered: it depends on StrictMath.log
-// (fdlibm), which we cannot yet reproduce bit-exactly — see SPEC §11. java.util.Random's algorithm is published in its javadoc
+// specification. Gaussians are covered too: stratum::fdlibm::log
+// reproduces StrictMath.log bit-for-bit (see tools/vectors/StrictMathVectors.java). java.util.Random's algorithm is published in its javadoc
 // (the linear congruential generator, its constants, and the contract of
 // each next* method); this generator uses only the public API.
 //
@@ -66,6 +66,7 @@ public final class JavaRandomVectors {
         emitNextBoolean();
         emitNextFloat();
         emitNextDouble();
+        emitNextGaussian();
         emitInterleaved();
 
         System.out.println("// clang-format on");
@@ -195,6 +196,28 @@ public final class JavaRandomVectors {
         System.out.println();
     }
 
+    private static void emitNextGaussian() {
+        System.out.println("struct GaussianBitsSequence {");
+        System.out.println("    std::int64_t seed;");
+        System.out.println("    std::array<std::uint64_t, " + SEQUENCE_LENGTH + "> bits;");
+        System.out.println("};");
+        System.out.println();
+        System.out.println("constexpr auto kNextGaussianVectors ="
+            + " std::to_array<GaussianBitsSequence>({");
+        for (long seed : SEEDS) {
+            Random random = new Random(seed);
+            StringBuilder line = new StringBuilder("    {" + i64(seed) + ", {{");
+            for (int i = 0; i < SEQUENCE_LENGTH; i++) {
+                long bits = Double.doubleToRawLongBits(random.nextGaussian());
+                line.append(i == 0 ? "" : ", ")
+                    .append(String.format("UINT64_C(0x%016X)", bits));
+            }
+            System.out.println(line + "}}},");
+        }
+        System.out.println("});");
+        System.out.println();
+    }
+
     // Mixed call orders matter: every method consumes a different number of
     // LCG steps, and getting one wrong desynchronises everything downstream
     // without changing any single value in isolation.
@@ -216,9 +239,9 @@ public final class JavaRandomVectors {
             values[4] = Double.doubleToRawLongBits(random.nextDouble());
             values[5] = Float.floatToRawIntBits(random.nextFloat()) & 0xFFFFFFFFL;
             values[6] = random.nextInt(1 << 30);
-            values[7] = random.nextInt();
-            values[8] = random.nextInt(3);
-            values[9] = Float.floatToRawIntBits(random.nextFloat()) & 0xFFFFFFFFL;
+            values[7] = Double.doubleToRawLongBits(random.nextGaussian());
+            values[8] = random.nextInt();
+            values[9] = Double.doubleToRawLongBits(random.nextGaussian());
             values[10] = random.nextLong();
             values[11] = random.nextInt(100);
             StringBuilder line = new StringBuilder("    {" + i64(seed) + ", {{");

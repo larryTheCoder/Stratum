@@ -21,8 +21,10 @@
 #pragma once
 
 #include <stratum/javamath.hpp>
+#include <stratum/math/fdlibm.hpp>
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 
 namespace stratum::rng {
@@ -32,8 +34,7 @@ namespace stratum::rng {
 /// Copying forks the stream, which is what worldgen wants: RNGs are derived
 /// per (seed, position, salt) and never shared between threads.
 ///
-/// Every method is bit-exact against a real JVM. nextGaussian is the one
-/// documented gap — see the note below.
+/// Every method is bit-exact against a real JVM.
 class JavaRandom {
 public:
     /// The LCG constants published in java.util.Random's specification.
@@ -43,10 +44,13 @@ public:
 
     explicit constexpr JavaRandom(std::int64_t seed) noexcept : seed_(scramble(seed)) {}
 
-    /// Reseeds the stream. java.util.Random also discards any
-    /// half-generated Gaussian pair here; that state does not exist yet
-    /// (see the note on Gaussians below) and must be reset when it does.
-    constexpr void setSeed(std::int64_t seed) noexcept { seed_ = scramble(seed); }
+    /// Reseeds the stream and, as java.util.Random specifies, discards any
+    /// half-generated Gaussian pair.
+    constexpr void setSeed(std::int64_t seed) noexcept {
+        seed_ = scramble(seed);
+        nextNextGaussian_ = 0.0;
+        haveNextGaussian_ = false;
+    }
 
     /// The raw generator step: advances the 48-bit state and returns the
     /// top @p bits of it. Callers outside this class rarely want this
@@ -108,19 +112,37 @@ public:
                kDoubleUnit;
     }
 
-    // nextGaussian is deliberately ABSENT, not forgotten.
-    //
-    // java.util.Random's Gaussian uses StrictMath.log, which is fdlibm and
-    // therefore identical on every JVM. glibc's std::log differs from it by
-    // one ulp on some inputs: measured against the JVM vectors, 5 of 96
-    // values came back +1 ulp on x86-64/glibc. That is a Tier-A parity
-    // failure (SPEC §7), so shipping the method would plant a bug that only
-    // shows up as a chunk seam much later.
-    //
-    // Implementing it needs an fdlibm-derived log in this repository, which
-    // is a licensing decision recorded as open in SPEC §11. Until then the
-    // method does not exist, so a caller that needs it fails to compile
-    // rather than silently generating wrong terrain.
+    /// Marsaglia polar method, as java.util.Random specifies, including the
+    /// cached second value of each generated pair.
+    ///
+    /// fdlibm::log, not std::log: Java uses StrictMath here, and a host libm
+    /// is within an ulp of it rather than equal to it — measured, glibc
+    /// disagrees with StrictMath on 30 of the 1057 log vectors. std::sqrt is
+    /// fine, being IEEE-754 correctly rounded and therefore identical to
+    /// StrictMath.sqrt.
+    double nextGaussian() {
+        if (haveNextGaussian_) {
+            haveNextGaussian_ = false;
+            return nextNextGaussian_;
+        }
+
+        double v1 = 0.0;
+        double v2 = 0.0;
+        double s = 0.0;
+        do {
+            v1 = (2.0 * nextDouble()) - 1.0;
+            v2 = (2.0 * nextDouble()) - 1.0;
+            s = (v1 * v1) + (v2 * v2);
+            // s is a sum of squares of finite values, so s >= 0 always and
+            // `s <= 0.0` is exactly Java's `s == 0` without tripping
+            // -Wfloat-equal.
+        } while (s >= 1.0 || s <= 0.0);
+
+        const double multiplier = std::sqrt((-2.0 * fdlibm::log(s)) / s);
+        nextNextGaussian_ = v2 * multiplier;
+        haveNextGaussian_ = true;
+        return v1 * multiplier;
+    }
 
     /// The scrambled 48-bit state. Exposed for seed-derivation code and
     /// tests; it is the whole of this generator's state apart from the
@@ -133,6 +155,8 @@ private:
     }
 
     std::uint64_t seed_;
+    double nextNextGaussian_ = 0.0;
+    bool haveNextGaussian_ = false;
 };
 
 } // namespace stratum::rng

@@ -5,8 +5,8 @@
 // JavaRandomVectors.java). Floating point is compared as raw bits: SPEC §7
 // Tier A is bit-exact, so an "almost equal" double is a failure.
 //
-// nextGaussian is absent from both the generator and these tests: it needs
-// StrictMath.log (fdlibm), and glibc's log differs by an ulp. See SPEC §11.
+// nextGaussian is included: it goes through stratum::fdlibm::log, which is
+// bit-identical to StrictMath.log (see fdlibm_test.cpp).
 
 #include "java_random_vectors.inc" // NOLINT(misc-include-cleaner) — generated
 
@@ -102,6 +102,19 @@ TEST_CASE("nextDouble is bit-exact against the JVM", "[rng][javarandom][vectors]
     }
 }
 
+TEST_CASE("nextGaussian is bit-exact against the JVM", "[rng][javarandom][vectors][fdlibm]") {
+    // If this ever fails while the plain nextDouble suite passes, the cause
+    // is the logarithm, not the generator: check fdlibm_test.cpp first.
+    for (const GaussianBitsSequence& vector : kNextGaussianVectors) {
+        CAPTURE(vector.seed);
+        JavaRandom random(vector.seed);
+        for (std::size_t i = 0; i < vector.bits.size(); ++i) {
+            CAPTURE(i);
+            CHECK(doubleBits(random.nextGaussian()) == vector.bits[i]);
+        }
+    }
+}
+
 TEST_CASE("mixed call orders stay in step with the JVM", "[rng][javarandom][vectors]") {
     // Each method consumes a different number of LCG steps. Getting one
     // wrong desynchronises everything after it while every value in
@@ -117,9 +130,9 @@ TEST_CASE("mixed call orders stay in step with the JVM", "[rng][javarandom][vect
         CHECK(static_cast<std::int64_t>(doubleBits(random.nextDouble())) == vector.values[4]);
         CHECK(static_cast<std::int64_t>(floatBits(random.nextFloat())) == vector.values[5]);
         CHECK(random.nextInt(1 << 30) == vector.values[6]);
-        CHECK(random.nextInt() == vector.values[7]);
-        CHECK(random.nextInt(3) == vector.values[8]);
-        CHECK(static_cast<std::int64_t>(floatBits(random.nextFloat())) == vector.values[9]);
+        CHECK(static_cast<std::int64_t>(doubleBits(random.nextGaussian())) == vector.values[7]);
+        CHECK(random.nextInt() == vector.values[8]);
+        CHECK(static_cast<std::int64_t>(doubleBits(random.nextGaussian())) == vector.values[9]);
         CHECK(random.nextLong() == vector.values[10]);
         CHECK(random.nextInt(100) == vector.values[11]);
     }
@@ -133,14 +146,18 @@ TEST_CASE("seed scrambling matches the specified initial state", "[rng][javarand
     STATIC_REQUIRE(JavaRandom(0).state() <= JavaRandom::kMask);
 }
 
-TEST_CASE("setSeed restarts the stream", "[rng][javarandom]") {
+TEST_CASE("setSeed restarts the stream and drops the cached Gaussian", "[rng][javarandom]") {
     JavaRandom random(12345);
     const std::int32_t first = random.nextInt();
     const std::uint64_t second = doubleBits(random.nextDouble());
+    // Draw one Gaussian, which leaves its pair cached.
+    const std::uint64_t gaussian = doubleBits(random.nextGaussian());
 
     random.setSeed(12345);
     CHECK(random.nextInt() == first);
     CHECK(doubleBits(random.nextDouble()) == second);
+    // If the cached second value survived setSeed, this would return it.
+    CHECK(doubleBits(random.nextGaussian()) == gaussian);
 
     // Reseeding to a different value must actually change the stream.
     random.setSeed(12346);
