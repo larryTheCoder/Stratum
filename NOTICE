@@ -35,6 +35,16 @@ Any such adaptation must be recorded here and in the file header before
 it merges.
 
 --------------------------------------------------------------------------
+xoroshiro128++ (public domain)
+--------------------------------------------------------------------------
+
+lib/include/stratum/rng/xoroshiro128.hpp reimplements the xoroshiro128++
+generator by David Blackman and Sebastiano Vigna, published at
+https://prng.di.unimi.it/xoroshiro128plusplus.c and dedicated to the public
+domain. No attribution is required; it is recorded here because this
+repository records every outside reference it builds on.
+
+--------------------------------------------------------------------------
 zlib (linked dependency)
 --------------------------------------------------------------------------
 

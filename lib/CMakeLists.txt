@@ -45,6 +45,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/region_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/xoroshiro128.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"
 )
 

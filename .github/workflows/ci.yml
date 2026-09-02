@@ -57,9 +57,14 @@ jobs:
               JavaMathVectors)   target=tests/unit/javamath_vectors.inc ;;
               JavaRandomVectors) target=tests/unit/java_random_vectors.inc ;;
               StrictMathVectors) target=tests/unit/fdlibm_vectors.inc ;;
+              XoroshiroVectors)  target=tests/unit/xoroshiro_vectors.inc ;;
               *) echo "no known target for ${generator}"; exit 1 ;;
             esac
-            java "${generator}" > "${RUNNER_TEMP}/${name}.inc"
+            # A generator that needs JDK internals declares the flags itself,
+            # on a `// JAVA_FLAGS:` line, so this loop stays generic.
+            flags="$(sed -n 's|^// JAVA_FLAGS: ||p' "${generator}" | head -1)"
+            # shellcheck disable=SC2086
+            java ${flags} "${generator}" > "${RUNNER_TEMP}/${name}.inc"
             diff -u "${target}" "${RUNNER_TEMP}/${name}.inc"
           done
 

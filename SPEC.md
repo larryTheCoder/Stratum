@@ -323,7 +323,18 @@ Defaults chosen; flip only with a written note in this section:
 
 Open:
 
-- Nothing currently blocking.
+- **Salted and positional RNG derivation has no oracle yet.** §5.3 requires
+  vanilla's seed derivation "including MD5-based position-independent salts
+  from resource-location strings", verified against known-answer vectors.
+  The generator itself and `mixStafford13` are verified against the JDK's
+  own implementations, and the 64→128-bit seed upgrade against an
+  independent implementation of the documented formula. The remaining
+  pieces — `nextInt(bound)`, Gaussians, `fork()`, and positional seeding
+  from MD5 salts — each have more than one plausible spelling and no oracle
+  outside Mojang, so they are deliberately **not implemented**: a caller
+  that needs one fails to compile rather than silently seeding a world
+  wrongly. They land with M3, when generated terrain can be diffed against
+  the goldens and right can be told from plausible.
 
 ---
 
