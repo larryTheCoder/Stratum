@@ -18,9 +18,16 @@ set -euo pipefail
 
 # Keep in sync with SPEC §3 and STRATUM_MINECRAFT_VERSION in CMakeLists.txt.
 readonly PINNED_VERSION="1.21.11"
+readonly PACK_FORMAT_MAJOR=94
+readonly PACK_FORMAT_MINOR=1
 readonly MANIFEST_URL="https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 readonly WORLDGEN_PREFIX="data/minecraft/worldgen"
 readonly STRUCTURE_PREFIX="data/minecraft/structure"
+
+# The fixed seed set (SPEC §7). Deliberately includes 0, the negatives, and
+# the extremes of the 64-bit range, because seed derivation is where sign
+# handling goes wrong.
+readonly DEFAULT_SEEDS="0,1,-1,42,-4172144997902289642,2891948927356891,9223372036854775807,-9223372036854775808"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -32,6 +39,15 @@ skip_verify=0
 accept_eula=0
 generate_regions=0
 with_structures=0
+seeds=""
+dimensions="overworld,nether,end"
+regions="0,0"
+margin=4
+terrain_only=1
+heap="2G"
+generation_timeout=1800
+keep_servers=0
+freeze_ticks=1
 
 usage() {
     cat <<'USAGE'
@@ -48,6 +64,19 @@ options:
                      harness uses as real input for its NBT reader tests
   --generate-regions also produce golden region files by running the server
   --accept-eula      you accept Mojang's EULA; required by --generate-regions
+  --seeds <list>     comma-separated seeds (default: the fixed eight)
+  --dimensions <l>   comma-separated: overworld,nether,end (default: all)
+  --regions <list>   comma-separated region coordinates as X,Z pairs, e.g.
+                     "0,0 -1,-1" (default: 0,0)
+  --margin <n>       chunks generated around each region so its own chunks
+                     reach full status (default: 4)
+  --with-features    keep carvers and features; by default a generated
+                     datapack strips them so the goldens isolate Tier A
+  --heap <size>      server heap, passed to java -Xmx (default: 2G)
+  --keep-servers     keep each server's working directory for inspection
+  --no-freeze-ticks  let the world tick while generating; fluids then flow
+                     between generation and saving, and two runs of the same
+                     seed no longer agree (measured: 197 blocks differed)
   --skip-verify      do not check the jar's SHA-1 (for a jar not on the
                      manifest, e.g. a modified build; unsafe for conformance)
   --dry-run          print what would happen; performs no network access
@@ -99,6 +128,14 @@ while [[ $# -gt 0 ]]; do
         --output)           output_dir="${2:?--output needs an argument}"; shift 2 ;;
         --jar)              jar_path="${2:?--jar needs an argument}"; shift 2 ;;
         --with-structures)  with_structures=1; shift ;;
+        --seeds)            seeds="${2:?--seeds needs an argument}"; shift 2 ;;
+        --dimensions)       dimensions="${2:?--dimensions needs an argument}"; shift 2 ;;
+        --regions)          regions="${2:?--regions needs an argument}"; shift 2 ;;
+        --margin)           margin="${2:?--margin needs an argument}"; shift 2 ;;
+        --with-features)    terrain_only=0; shift ;;
+        --heap)             heap="${2:?--heap needs an argument}"; shift 2 ;;
+        --keep-servers)     keep_servers=1; shift ;;
+        --no-freeze-ticks)  freeze_ticks=0; shift ;;
         --generate-regions) generate_regions=1; shift ;;
         --accept-eula)      accept_eula=1; shift ;;
         --skip-verify)      skip_verify=1; shift ;;
@@ -112,6 +149,7 @@ done
 readonly jar_file="${output_dir}/server-${version}.jar"
 readonly worldgen_dir="${output_dir}/worldgen"
 readonly structure_dir="${output_dir}/structure"
+readonly regions_dir="${output_dir}/regions"
 readonly provenance_file="${output_dir}/PROVENANCE.json"
 
 if [[ "${version}" != "${PINNED_VERSION}" ]]; then
@@ -305,6 +343,307 @@ jq -n \
 log "wrote ${provenance_file}"
 
 # --- 6. golden region files ----------------------------------------------
+
+# Everything below runs the vanilla server headlessly and collects what it
+# wrote. The engine's own output is never involved: these are Mojang's
+# answers, which is the whole point of a conformance golden (SPEC §7).
+
+dimension_directory() {
+    case "$1" in
+        overworld) echo "region" ;;
+        nether)    echo "DIM-1/region" ;;
+        end)       echo "DIM1/region" ;;
+        *)         die "unknown dimension '$1' (expected overworld, nether or end)" ;;
+    esac
+}
+
+dimension_id() {
+    case "$1" in
+        overworld) echo "minecraft:overworld" ;;
+        nether)    echo "minecraft:the_nether" ;;
+        end)       echo "minecraft:the_end" ;;
+        *)         die "unknown dimension '$1'" ;;
+    esac
+}
+
+# A datapack that empties every biome's carvers and features, so the goldens
+# isolate what Tier A actually covers: density functions, noise, terrain
+# shape, aquifers, biome assignment and surface rules. Carvers and features
+# are Tier B (SPEC §7) and would otherwise be noise in every comparison.
+write_terrain_only_datapack() {
+    local world_dir="$1"
+    local pack_dir="${world_dir}/datapacks/stratum-terrain-only"
+    local biome_out="${pack_dir}/data/minecraft/worldgen/biome"
+
+    [[ -d "${worldgen_dir}/biome" ]] \
+        || die "cannot build the terrain-only datapack: ${worldgen_dir}/biome is missing"
+
+    mkdir -p "${biome_out}"
+    cat > "${pack_dir}/pack.mcmeta" <<PACK
+{
+  "pack": {
+    "description": "Stratum conformance: carvers and features removed so goldens isolate Tier A",
+    "min_format": [${PACK_FORMAT_MAJOR}, ${PACK_FORMAT_MINOR}],
+    "max_format": ${PACK_FORMAT_MAJOR}
+  }
+}
+PACK
+
+    local count=0
+    local biome
+    for biome in "${worldgen_dir}"/biome/*.json; do
+        # Keep the same number of decoration steps; vanilla expects them all.
+        jq '.features = [range(.features | length) | []] | .carvers = []' \
+            "${biome}" > "${biome_out}/$(basename "${biome}")"
+        count=$((count + 1))
+    done
+    log "terrain-only datapack: ${count} biome(s) with carvers and features removed"
+}
+
+# /forceload accepts block coordinates and refuses more than 256 chunks at a
+# time, so a region is requested as a grid of 16x16-chunk commands.
+emit_forceload_commands() {
+    local dimension_id="$1"
+    local from_chunk_x="$2"
+    local from_chunk_z="$3"
+    local to_chunk_x="$4"
+    local to_chunk_z="$5"
+
+    local cx cz
+    for (( cz = from_chunk_z; cz <= to_chunk_z; cz += 16 )); do
+        for (( cx = from_chunk_x; cx <= to_chunk_x; cx += 16 )); do
+            local end_x=$(( cx + 15 < to_chunk_x ? cx + 15 : to_chunk_x ))
+            local end_z=$(( cz + 15 < to_chunk_z ? cz + 15 : to_chunk_z ))
+            printf 'execute in %s run forceload add %d %d %d %d\n' \
+                "${dimension_id}" $(( cx * 16 )) $(( cz * 16 )) \
+                $(( end_x * 16 + 15 )) $(( end_z * 16 + 15 ))
+        done
+    done
+}
+
+# A server left running holds its world files open and would collide with the
+# next run. Whatever happens — an error, or the user interrupting — the child
+# is stopped before this script goes away.
+running_server_pid=""
+
+cleanup_server() {
+    if [[ -n "${running_server_pid}" ]] && kill -0 "${running_server_pid}" 2>/dev/null; then
+        printf '\nstopping the server (pid %s)\n' "${running_server_pid}" >&2
+        kill "${running_server_pid}" 2>/dev/null || true
+        local waited=0
+        while kill -0 "${running_server_pid}" 2>/dev/null && (( waited < 20 )); do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        kill -9 "${running_server_pid}" 2>/dev/null || true
+    fi
+    running_server_pid=""
+}
+
+trap cleanup_server EXIT INT TERM
+
+generate_for_seed() {
+    local seed="$1"
+    local server_dir="${output_dir}/servers/seed-${seed}"
+    local world_dir="${server_dir}/world"
+    local log_file="${server_dir}/server.log"
+    local pipe="${server_dir}/console"
+
+    rm -rf "${server_dir}"
+    mkdir -p "${server_dir}" "${world_dir}"
+
+    # The EULA is accepted by the person who passed --accept-eula, and this
+    # file records their decision. The script never writes it otherwise.
+    printf 'eula=true\n' > "${server_dir}/eula.txt"
+
+    # server-port=0 asks for any free port. Nothing ever connects to this
+    # server, and a fixed port would make two generation runs — or a running
+    # game — collide.
+    #
+    # max-tick-time=-1 disables the watchdog. Generating a region across three
+    # dimensions can legitimately hold the main thread for over a minute, and
+    # the watchdog's answer to that is to declare the server crashed and kill
+    # it mid-generation. Observed exactly that: "A single server tick took
+    # 60.00 seconds ... Considering it to be crashed".
+    cat > "${server_dir}/server.properties" <<PROPERTIES
+level-seed=${seed}
+level-name=world
+online-mode=false
+server-port=0
+max-players=1
+spawn-protection=0
+view-distance=10
+simulation-distance=10
+generate-structures=$([[ ${with_structures} -eq 1 ]] && echo true || echo false)
+spawn-monsters=false
+spawn-npcs=false
+spawn-animals=false
+sync-chunk-writes=true
+enable-command-block=false
+max-tick-time=-1
+motd=stratum conformance fixture generation
+PROPERTIES
+
+    if [[ ${terrain_only} -eq 1 ]]; then
+        write_terrain_only_datapack "${world_dir}"
+    fi
+
+    log "seed ${seed}: starting the server"
+    rm -f "${pipe}"
+    mkfifo "${pipe}"
+    ( cd "${server_dir}" && java "-Xmx${heap}" -jar "${jar_to_read_absolute}" --nogui \
+        < "${pipe}" > "${log_file}" 2>&1 ) &
+    local server_pid=$!
+    running_server_pid="${server_pid}"
+    # Holding the write end open keeps the server's stdin from closing.
+    exec 3> "${pipe}"
+
+    local waited=0
+    until grep -q 'Done (' "${log_file}" 2>/dev/null; do
+        sleep 2
+        waited=$((waited + 2))
+        if ! kill -0 "${server_pid}" 2>/dev/null; then
+            exec 3>&-
+            tail -20 "${log_file}" >&2
+            die "seed ${seed}: the server exited during startup (see ${log_file})"
+        fi
+        if [[ ${waited} -gt 300 ]]; then
+            exec 3>&-
+            kill "${server_pid}" 2>/dev/null || true
+            die "seed ${seed}: the server did not finish starting within 300s"
+        fi
+    done
+    log "seed ${seed}: server up after ${waited}s"
+
+    # Worldgen is deterministic; the ticking world on top of it is not.
+    # Fluids keep flowing after a chunk is generated, so how much lava has
+    # spread by the time the region is saved depends on wall-clock timing.
+    # Two runs of this same seed differed in 197 blocks — all flowing lava,
+    # flowing water, and the cobblestone where they met — until the world
+    # was frozen first. Aquifer fill is Tier A (SPEC §7), so those blocks
+    # cannot simply be ignored in the comparison; they have to not happen.
+    if [[ ${freeze_ticks} -eq 1 ]]; then
+        log "seed ${seed}: freezing the world before generating"
+        printf 'tick freeze\n' >&3
+        sleep 2
+        if ! grep -q -i 'frozen' "${log_file}"; then
+            exec 3>&-
+            kill "${server_pid}" 2>/dev/null || true
+            die "seed ${seed}: 'tick freeze' was not acknowledged; this server may not
+       support it. Re-run with --no-freeze-ticks, but note that goldens will
+       then depend on wall-clock timing."
+        fi
+    fi
+
+    local -a expected_files=()
+    local dimension region
+    for dimension in ${dimensions//,/ }; do
+        local dim_id
+        dim_id="$(dimension_id "${dimension}")"
+        for region in ${regions}; do
+            local region_x="${region%%,*}"
+            local region_z="${region##*,}"
+            local from_x=$(( region_x * 32 - margin ))
+            local from_z=$(( region_z * 32 - margin ))
+            local to_x=$(( region_x * 32 + 31 + margin ))
+            local to_z=$(( region_z * 32 + 31 + margin ))
+
+            log "seed ${seed}: forceloading ${dimension} r.${region_x}.${region_z}" \
+                "(chunks ${from_x}..${to_x} x ${from_z}..${to_z}, margin ${margin})"
+            emit_forceload_commands "${dim_id}" "${from_x}" "${from_z}" "${to_x}" "${to_z}" >&3
+
+            expected_files+=("${world_dir}/$(dimension_directory "${dimension}")/r.${region_x}.${region_z}.mca")
+        done
+    done
+
+    # Generation happens over ticks, so the finish line is "every expected
+    # region file exists and has stopped changing", not a log line.
+    log "seed ${seed}: generating (timeout ${generation_timeout}s)"
+    local stable=0
+    local previous_sizes=""
+    waited=0
+    while (( waited < generation_timeout )); do
+        # Writing to the console of a server that has died raises SIGPIPE and
+        # would take this script down with no explanation, so its liveness is
+        # checked first and its own log is surfaced.
+        if ! kill -0 "${server_pid}" 2>/dev/null; then
+            exec 3>&- || true
+            printf 'last 20 lines of %s:\n' "${log_file}" >&2
+            tail -20 "${log_file}" >&2
+            die "seed ${seed}: the server died during generation. Its log is above, and
+       any crash report is under ${server_dir}/crash-reports/."
+        fi
+
+        printf 'save-all flush\n' >&3 || true
+        sleep 10
+        waited=$((waited + 10))
+
+        local all_present=1
+        local sizes=""
+        local file
+        for file in "${expected_files[@]}"; do
+            if [[ -f "${file}" ]]; then
+                sizes+="$(wc -c < "${file}") "
+            else
+                all_present=0
+                sizes+="- "
+            fi
+        done
+
+        if [[ ${all_present} -eq 1 && "${sizes}" == "${previous_sizes}" ]]; then
+            stable=$((stable + 1))
+            if [[ ${stable} -ge 2 ]]; then
+                break
+            fi
+        else
+            stable=0
+        fi
+        previous_sizes="${sizes}"
+    done
+
+    if [[ ${stable} -lt 2 ]]; then
+        printf 'stop\n' >&3 || true
+        exec 3>&-
+        die "seed ${seed}: region files did not settle within ${generation_timeout}s.
+       Raise the timeout, lower --margin, or ask for fewer regions."
+    fi
+    log "seed ${seed}: generation settled after ${waited}s"
+
+    printf 'stop\n' >&3
+    exec 3>&-
+    local stopping=0
+    while kill -0 "${server_pid}" 2>/dev/null; do
+        sleep 2
+        stopping=$((stopping + 2))
+        if [[ ${stopping} -gt 120 ]]; then
+            kill "${server_pid}" 2>/dev/null || true
+            break
+        fi
+    done
+    wait "${server_pid}" 2>/dev/null || true
+    running_server_pid=""
+    rm -f "${pipe}"
+
+    # Collect only the regions asked for; the margin lives in neighbouring
+    # region files and is discarded.
+    for dimension in ${dimensions//,/ }; do
+        for region in ${regions}; do
+            local region_x="${region%%,*}"
+            local region_z="${region##*,}"
+            local source_file="${world_dir}/$(dimension_directory "${dimension}")/r.${region_x}.${region_z}.mca"
+            local target_dir="${regions_dir}/seed-${seed}/${dimension}"
+            [[ -f "${source_file}" ]] || die "seed ${seed}: ${source_file} was never written"
+            mkdir -p "${target_dir}"
+            cp "${source_file}" "${target_dir}/r.${region_x}.${region_z}.mca"
+            log "seed ${seed}: collected ${dimension}/r.${region_x}.${region_z}.mca ($(wc -c < "${source_file}") bytes)"
+        done
+    done
+
+    if [[ ${keep_servers} -eq 0 ]]; then
+        rm -rf "${server_dir}"
+    fi
+}
+
 if [[ ${generate_regions} -eq 1 ]]; then
     if [[ ${accept_eula} -eq 0 ]]; then
         die "--generate-regions runs the vanilla server, which requires accepting
@@ -312,14 +651,36 @@ if [[ ${generate_regions} -eq 1 ]]; then
        once you have read and accepted it. This script will not accept it on
        your behalf."
     fi
+
+    require_tools java
+    [[ -n "${jar_path}" ]] && jar_to_read_absolute="$(cd "$(dirname "${jar_path}")" && pwd)/$(basename "${jar_path}")" \
+        || jar_to_read_absolute="${jar_file}"
+
     if [[ "${required_java:-unknown}" != "unknown" ]]; then
-        log "note: ${version} targets Java ${required_java}"
+        running_java="$(java -version 2>&1 | head -1)"
+        log "server targets Java ${required_java}; using ${running_java}"
     fi
-    die "golden region generation is not implemented yet (Milestone M1, in progress).
-       Planned: for each seed in the fixed set (SPEC §7), write a server.properties
-       with that level-seed, start the server headlessly, force-load the fixture
-       chunk ranges in each dimension, stop cleanly, and collect the region files.
-       Refusing rather than silently producing an empty fixture set."
+
+    # Validated before any server starts: a typo should cost a second, not a
+    # six-second startup followed by a confusing failure mid-run.
+    for dimension in ${dimensions//,/ }; do
+        dimension_id "${dimension}" > /dev/null
+    done
+    for region in ${regions}; do
+        [[ "${region}" =~ ^-?[0-9]+,-?[0-9]+$ ]] \
+            || die "malformed region coordinate '${region}': expected X,Z (for example 0,0 or -1,-1)"
+    done
+    [[ "${margin}" =~ ^[0-9]+$ ]] || die "--margin must be a non-negative whole number"
+
+    [[ -z "${seeds}" ]] && seeds="${DEFAULT_SEEDS}"
+    log "generating goldens for seeds ${seeds}, dimensions ${dimensions}, regions ${regions}"
+
+    for seed in ${seeds//,/ }; do
+        generate_for_seed "${seed}"
+    done
+
+    region_count="$(find "${regions_dir}" -name '*.mca' -type f 2>/dev/null | wc -l | tr -d ' ')"
+    log "collected ${region_count} golden region file(s) into ${regions_dir}"
 fi
 
 rm -rf "${output_dir}/.bundle"

@@ -37,11 +37,25 @@ ctest --preset conformance                # skips loudly while fixtures are abse
 
 `fetch-vanilla` resolves the pinned version through Mojang's piston-meta
 manifest and verifies every hop of the chain (manifest → version metadata
-SHA-1 → server jar SHA-1) before extracting anything. Pass `--jar <path>` to
-use a jar you already downloaded. Golden region generation runs the vanilla
-server, which means accepting Mojang's EULA yourself — the script will not
-do that for you, and refuses without `--accept-eula`. It needs `curl`, `jq`
-and `unzip`; its own tests also need `zip`.
+SHA-1 → published jar SHA-1 → nested server jar SHA-256) before extracting
+anything. Pass `--jar <path>` to use a jar you already downloaded. It needs
+`curl`, `jq`, `unzip` and — for generation — a JRE; its own tests also need
+`zip`.
+
+Golden region files come from running the vanilla server headlessly:
+
+```bash
+tools/fetch-vanilla --generate-regions --accept-eula
+```
+
+That runs the server, so it requires accepting
+[Mojang's EULA](https://aka.ms/MinecraftEULA) yourself — the script refuses
+without `--accept-eula` and will not accept it on your behalf. The defaults
+generate SPEC §7's fixed seed set across all three dimensions; `--seeds`,
+`--dimensions` and `--regions` narrow it. The world is frozen before
+generation and carvers and features are stripped, so the goldens isolate
+Tier A and two runs of the same seed agree exactly — see SPEC §7 for why
+both matter.
 
 | Preset | Purpose |
 |--------|---------|

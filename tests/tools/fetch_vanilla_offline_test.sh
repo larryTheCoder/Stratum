@@ -140,16 +140,39 @@ else
     failures=$((failures + 1))
 fi
 
-# With the EULA accepted it must still refuse loudly rather than quietly
-# producing an empty fixture set.
-regions_status=0
-regions_output="$("${fetch}" --jar "${jar_file}" --skip-verify --output "${work_dir}/regions" \
-    --generate-regions --accept-eula 2>&1)" || regions_status=$?
-if [[ ${regions_status} -ne 0 ]] && grep -q "not implemented" <<<"${regions_output}"; then
-    echo "  ok: --accept-eula still refuses loudly while region goldens are unimplemented"
+# Generation arguments are validated before any server is started, so these
+# stay hermetic: no jar is run and no network is touched.
+bad_dimension_status=0
+bad_dimension_output="$("${fetch}" --jar "${jar_file}" --skip-verify \
+    --output "${work_dir}/bad-dimension" --generate-regions --accept-eula \
+    --dimensions overworld,atlantis 2>&1)" || bad_dimension_status=$?
+if [[ ${bad_dimension_status} -ne 0 ]] && grep -q "atlantis" <<<"${bad_dimension_output}"; then
+    echo "  ok: an unknown dimension is rejected by name"
 else
-    echo "  FAILED: --generate-regions --accept-eula did not refuse loudly" >&2
-    echo "${regions_output}" >&2
+    echo "  FAILED: an unknown dimension was not rejected" >&2
+    echo "${bad_dimension_output}" >&2
+    failures=$((failures + 1))
+fi
+
+bad_region_status=0
+bad_region_output="$("${fetch}" --jar "${jar_file}" --skip-verify \
+    --output "${work_dir}/bad-region" --generate-regions --accept-eula \
+    --dimensions overworld --regions "0,0 nonsense" 2>&1)" || bad_region_status=$?
+if [[ ${bad_region_status} -ne 0 ]] && grep -q "nonsense" <<<"${bad_region_output}"; then
+    echo "  ok: a malformed region coordinate is rejected by name"
+else
+    echo "  FAILED: a malformed region coordinate was not rejected" >&2
+    echo "${bad_region_output}" >&2
+    failures=$((failures + 1))
+fi
+
+# The dry run must describe generation without doing any of it.
+dry_output="$("${fetch}" --dry-run --generate-regions --accept-eula \
+    --output "${work_dir}/dry-generate" 2>&1)"
+if grep -q "requested" <<<"${dry_output}"; then
+    echo "  ok: --dry-run reports that region goldens were requested"
+else
+    echo "  FAILED: --dry-run did not report the requested region goldens" >&2
     failures=$((failures + 1))
 fi
 

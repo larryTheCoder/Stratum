@@ -182,7 +182,30 @@ These are hard requirements; violations are release blockers.
   Mojang's piston-meta version manifest, extracts
   `data/minecraft/worldgen/**`, runs the vanilla data generator where needed
   (multi-noise parameter lists), and generates region files for the fixed
-  test seed set by running the vanilla server headlessly.
+  test seed set by running the vanilla server headlessly. Four properties of
+  that run are load-bearing, each learned by getting it wrong first:
+
+  1. **The world is frozen (`/tick freeze`) before any chunk is generated.**
+     Worldgen is deterministic; the ticking world on top of it is not.
+     Fluids keep flowing after a chunk is generated, so how far lava has
+     spread when the region is saved depends on wall-clock timing. Measured:
+     two runs of the same seed differed in 197 of 100,663,296 blocks — all
+     flowing lava, flowing water, and the cobblestone where they met. Frozen,
+     the same two runs agree exactly. Aquifer fill is Tier A, so those blocks
+     cannot simply be excluded from the comparison; they have to not happen.
+  2. **Carvers and features are stripped** by a generated datapack that
+     empties every biome's `features` and `carvers`. They are Tier B (below),
+     and would otherwise be noise in every Tier-A comparison. Ore *veins*
+     stay, because they come from the noise router and are Tier A.
+  3. **A margin of chunks is generated around each region** (default 4) so
+     that every chunk of the region itself reaches `minecraft:full` status.
+     Chunks at the edge of a generated area are otherwise left partway
+     through the pipeline and are not comparable.
+  4. **Goldens are compared as decoded blocks, never as bytes.** Two runs of
+     the same seed produce region files with different SHA-256 hashes but
+     identical block content: chunk timestamps, `InhabitedTime`, sector
+     ordering and compression all vary. A byte-level harness would report
+     failure on every run.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
   engine output block-for-block in Java block space (before Bedrock
   mapping), reporting first divergence with coordinates and pipeline node
