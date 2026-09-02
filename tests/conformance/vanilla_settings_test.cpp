@@ -15,9 +15,13 @@
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
+#include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
 #include <string>
@@ -163,4 +167,52 @@ TEST_CASE("vanilla's routers resolve into the graph the pack already had",
         CAPTURE(id.toString());
         CHECK(loaded.graph.rootOf(id) == index);
     }
+}
+
+TEST_CASE("vanilla's routers gain the cell-structured entries once there is a lattice",
+          "[conformance][settings][cells]") {
+    const std::filesystem::path tree = findWorldgenTree();
+    if (tree.empty()) {
+        SKIP("no extracted vanilla worldgen under " << STRATUM_FIXTURES_DIR);
+    }
+
+    const Pack pack = Pack::open(tree);
+    const LoadedSettings loaded = stratum::settings::loadAll(pack);
+    const stratum::density::NoiseRegistry noises =
+        stratum::density::NoiseRegistry::create(pack, loaded.graph.referencedNoises(), 42);
+
+    const NoiseSettings& overworld = get(loaded, "minecraft:overworld");
+    const stratum::density::Interpreter withoutCells(loaded.graph, noises);
+    const stratum::density::Interpreter withCells(
+        loaded.graph, noises,
+        stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
+                                       .height = overworld.geometry.cellHeight()});
+
+    // vanilla's noodle caves are wrapped in `interpolated`, and nothing else
+    // about them is out of reach. They are the whole difference the cell
+    // sampler makes to this dimension.
+    const auto noodle =
+        loaded.graph.rootOf(ResourceLocation::parse("minecraft:overworld/caves/noodle"));
+    CHECK_THROWS_AS(withoutCells.requireEvaluable(noodle), stratum::density::EvalError);
+    CHECK_NOTHROW(withCells.requireEvaluable(noodle));
+
+    // The lattice comes from the dimension: 4x8 in the overworld, 8x4 in the
+    // End, and the same function sampled on both is two different functions.
+    CHECK(withCells.cells()->width == 4);
+    CHECK(withCells.cells()->height == 8);
+    const NoiseSettings& end = get(loaded, "minecraft:end");
+    CHECK(end.geometry.cellWidth() == 8);
+    CHECK(end.geometry.cellHeight() == 4);
+
+    // final_density is still out of reach, for reasons that have nothing to
+    // do with cells. Two of them, in fact: the walk meets `blend_density`
+    // first, and `old_blended_noise` sits behind it. Both are held back by
+    // SPEC §11, and terrain needs both — which is worth pinning here,
+    // because "the cell sampler landed" reads like terrain is next and it is
+    // not.
+    CHECK_THROWS_WITH(withCells.requireEvaluable(overworld.router.at(RouterEntry::FinalDensity)),
+                      Catch::Matchers::ContainsSubstring("minecraft:blend_density"));
+    CHECK_THROWS_WITH(withCells.requireEvaluable(loaded.graph.rootOf(
+                          ResourceLocation::parse("minecraft:overworld/base_3d_noise"))),
+                      Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
 }

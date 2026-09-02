@@ -12,7 +12,9 @@
 //
 //   * the cell-structured ones — `interpolated`, `cache_all_in_cell`,
 //     `slide`, `find_top_surface` — whose value is not defined by the point
-//     alone but by the cell it sits in, which is M3's noise chunk;
+//     alone. The first two are defined by the *cell*, so an interpreter
+//     given a CellGeometry evaluates them and one without still refuses
+//     them; the other two need more than a cell and are still refused;
 //   * the ones with neither documentation nor an oracle here —
 //     `old_blended_noise`, `end_islands`, `weird_scaled_sampler`,
 //     `blend_density`. Guessing a formula for these would produce a world
@@ -57,6 +59,20 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// The lattice vanilla samples terrain density on: density is evaluated at
+/// cell corners and interpolated within, which is what `interpolated` means
+/// and why its value is not a function of the point alone (SPEC §4.1).
+///
+/// Both dimensions come from a noise settings entry — `size_horizontal` and
+/// `size_vertical` times four — and are passed in rather than read from one,
+/// so that the density layer does not have to know what a dimension is.
+struct CellGeometry {
+    std::int32_t width = 0;
+    std::int32_t height = 0;
+
+    [[nodiscard]] bool operator==(const CellGeometry& other) const noexcept = default;
+};
+
 /// Where a density function is being evaluated, in block coordinates.
 struct Point {
     std::int32_t x = 0;
@@ -73,6 +89,15 @@ public:
     /// construction rather than on whichever chunk first reached that node.
     Interpreter(const Graph& graph, const NoiseRegistry& noises);
 
+    /// The same, over a cell lattice. `interpolated` and `cache_all_in_cell`
+    /// become evaluable; without one they stay refused, because there is no
+    /// honest value for them.
+    ///
+    /// Throws EvalError for a geometry that is not positive in both
+    /// directions: a zero-width cell would divide by zero on the first
+    /// interpolation, which is a worse way to learn about it.
+    Interpreter(const Graph& graph, const NoiseRegistry& noises, CellGeometry cells);
+
     /// Refuses, by name and with a reason, anything in @p root's subtree
     /// this build cannot evaluate at a point. Callers that intend to sample
     /// a function many times should call this once first: evaluate() raises
@@ -82,10 +107,15 @@ public:
     /// The value of @p root at @p at.
     [[nodiscard]] double evaluate(NodeIndex root, Point at) const;
 
-    /// Why this build cannot evaluate @p type at a point, or nothing if it
-    /// can. Public so that a caller can report the whole set up front rather
-    /// than discovering them one refusal at a time.
-    [[nodiscard]] static std::optional<std::string_view> unevaluableReason(NodeType type) noexcept;
+    /// Why this interpreter cannot evaluate @p type, or nothing if it can.
+    /// Depends on the instance, not only on the type: a cell lattice is what
+    /// makes `interpolated` meaningful. Public so that a caller can report
+    /// the whole set up front rather than discovering them one refusal at a
+    /// time.
+    [[nodiscard]] std::optional<std::string_view> unevaluableReason(NodeType type) const noexcept;
+
+    /// The cell lattice this interpreter samples on, if it has one.
+    [[nodiscard]] const std::optional<CellGeometry>& cells() const noexcept { return cells_; }
 
     /// Whether @p index has the same value everywhere in a column — which is
     /// what makes caching it on (x, z) alone sound. Conservative: a node it
@@ -113,7 +143,16 @@ private:
     void requireEvaluableNode(NodeIndex index, std::vector<char>& seen) const;
     void requireEvaluableSpline(SplineIndex index, std::vector<char>& seen) const;
 
+    /// Trilinear interpolation over the eight corners of @p at's cell.
+    /// Vanilla computes each corner once per cell and reuses it across every
+    /// block in that cell; this recomputes them per point, which is the same
+    /// value at eight times the cost — the density function is a pure
+    /// function of position. The chunk filler is what makes that once-per-cell
+    /// again (SPEC §4.1).
+    [[nodiscard]] double interpolate(NodeIndex argument, Point at) const;
+
     const Graph* graph_;
+    std::optional<CellGeometry> cells_;
     /// The noise each node samples, resolved once, indexed by node. Null for
     /// the nodes that sample none.
     std::vector<const noise::NormalNoise*> noiseOf_;

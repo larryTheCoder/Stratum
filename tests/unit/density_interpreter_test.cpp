@@ -25,6 +25,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -38,6 +39,7 @@ namespace {
 using Catch::Matchers::ContainsSubstring;
 using stratum::data::Pack;
 using stratum::data::ResourceLocation;
+using stratum::density::CellGeometry;
 using stratum::density::EvalError;
 using stratum::density::Graph;
 using stratum::density::Interpreter;
@@ -103,6 +105,12 @@ public:
         : graph_(Graph::resolveAll(pack)),
           noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
           interpreter_(graph_, noises_) {}
+
+    /// Over a cell lattice, which is what gives `interpolated` a meaning.
+    Pipeline(const Pack& pack, std::int64_t seed, CellGeometry cells)
+        : graph_(Graph::resolveAll(pack)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          interpreter_(graph_, noises_, cells) {}
 
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
@@ -351,6 +359,33 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
                       ContainsSubstring("minecraft:interpolated"));
 }
 
+TEST_CASE("the caches that do not relocate return their argument unchanged",
+          "[density][interpreter]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("raw", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("once", R"({"type":"minecraft:cache_once","argument":"raw"})");
+    tree.define("twod", R"({"type":"minecraft:cache_2d","argument":{
+        "type":"minecraft:noise","noise":"test","xz_scale":1.0,"y_scale":0.0}})");
+    tree.define("twod_raw", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":0.0})");
+
+    const Pipeline pipeline(tree.pack(), 17);
+
+    // Obvious enough to have gone untested: both were only ever exercised
+    // through vanilla's data, so a mutation that made them return zero left
+    // the whole unit suite green.
+    for (const Point at : {Point{.x = 0, .y = 0, .z = 0}, Point{.x = 5, .y = -3, .z = 11}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(pipeline.at("once", at)) == bits(pipeline.at("raw", at)));
+        CHECK(bits(pipeline.at("twod", at)) == bits(pipeline.at("twod_raw", at)));
+        // A cache over a function that happened to be zero would pass either
+        // way, so check there is something to pass through.
+        CHECK(bits(pipeline.at("raw", at)) != bits(0.0));
+    }
+}
+
 TEST_CASE("blend_alpha and blend_offset take their no-blending values", "[density][interpreter]") {
     const TempTree tree;
     tree.define("alpha", R"({"type":"minecraft:blend_alpha"})");
@@ -465,4 +500,242 @@ TEST_CASE("a noise is a pure function of the world seed and its own name", "[den
     CHECK(bits(sample(first, 1)) == bits(sample(again, 1)));
     CHECK(bits(sample(first, 0)) != bits(sample(first, 1)));
     CHECK(bits(sample(first, 0)) != bits(sample(other, 0)));
+}
+
+namespace {
+
+/// A pack with a noise to interpolate and a column-varying function to check
+/// the surrounding tree against.
+void defineCellPack(const TempTree& tree) {
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("smooth", R"({"type":"minecraft:interpolated","argument":"field"})");
+    tree.define("flat", R"({"type":"minecraft:interpolated","argument":0.75})");
+    tree.define("gradient", R"({"type":"minecraft:y_clamped_gradient",
+        "from_y":-64,"to_y":320,"from_value":-1.5,"to_value":1.5})");
+    tree.define("smooth_gradient", R"({"type":"minecraft:interpolated","argument":"gradient"})");
+    tree.define("cell_cached", R"({"type":"minecraft:cache_all_in_cell","argument":"field"})");
+}
+
+constexpr CellGeometry kOverworldCells{.width = 4, .height = 8};
+
+} // namespace
+
+TEST_CASE("interpolation returns the corner exactly at a corner", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 55, kOverworldCells);
+
+    // At a lattice point the two ends of every blend are the same value, so
+    // the result must be that value and not merely close to it. This is what
+    // pins the corner positions: a cell aligned to the wrong multiple would
+    // put the "corner" somewhere the argument has a different value.
+    for (const Point corner :
+         {Point{.x = 0, .y = 0, .z = 0}, Point{.x = 8, .y = 16, .z = 12},
+          Point{.x = -4, .y = -8, .z = -16}, Point{.x = -100, .y = 400, .z = 64}}) {
+        // Only the points that are genuinely on the lattice.
+        if (corner.x % 4 != 0 || corner.y % 8 != 0 || corner.z % 4 != 0) {
+            continue;
+        }
+        CAPTURE(corner.x, corner.y, corner.z);
+        CHECK(bits(pipeline.at("smooth", corner)) == bits(pipeline.at("field", corner)));
+    }
+
+    // A constant is its own interpolation everywhere, corner or not.
+    CHECK(bits(pipeline.at("flat", Point{.x = 3, .y = 5, .z = 1})) == bits(0.75));
+}
+
+TEST_CASE("a cell is found with floor division, not truncation", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 55, kOverworldCells);
+
+    // Block -1 belongs to the cell whose lower corner is -4, not to the one
+    // at 0. Truncating division would put it in the cell above with a
+    // *negative* weight — extrapolating below the lattice instead of
+    // interpolating within it — and shift every negative coordinate in the
+    // world by one cell.
+    const auto smooth = [&pipeline](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return pipeline.at("smooth", Point{.x = x, .y = y, .z = z});
+    };
+    const auto field = [&pipeline](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return pipeline.at("field", Point{.x = x, .y = y, .z = z});
+    };
+
+    CHECK(bits(smooth(-4, -8, -4)) == bits(field(-4, -8, -4)));
+
+    // On a lattice line in x and z, block y = -1 must be three quarters of
+    // the way up the cell [-8, 0) — not a quarter of the way *below* the
+    // cell [0, 8), which is where truncation would put it. Checking the
+    // value rather than merely that it differs from the origin's is the
+    // whole difference: both readings differ from the origin.
+    const double lower = field(0, -8, 0);
+    const double upper = field(0, 0, 0);
+    CHECK(bits(smooth(0, -1, 0)) == bits(lower + (0.875 * (upper - lower))));
+
+    const double west = field(-4, 0, 0);
+    const double east = field(0, 0, 0);
+    CHECK(bits(smooth(-1, 0, 0)) == bits(west + (0.75 * (east - west))));
+
+    const double near = field(0, 0, -4);
+    const double far = field(0, 0, 0);
+    CHECK(bits(smooth(0, 0, -1)) == bits(near + (0.75 * (far - near))));
+}
+
+TEST_CASE("blending along one axis is exactly the lerp of that axis's corners",
+          "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 7, kOverworldCells);
+
+    // On a lattice line in x and z, the x and z weights are zero, so the
+    // whole trilinear blend collapses to a single lerp in y — which the test
+    // can compute exactly from the two corner values.
+    const double lower = pipeline.at("field", Point{.x = 0, .y = 0, .z = 0});
+    const double upper = pipeline.at("field", Point{.x = 0, .y = 8, .z = 0});
+    for (const std::int32_t y : {1, 2, 4, 7}) {
+        const double part = static_cast<double>(y) / 8.0;
+        CAPTURE(y);
+        CHECK(bits(pipeline.at("smooth", Point{.x = 0, .y = y, .z = 0})) ==
+              bits(lower + (part * (upper - lower))));
+    }
+}
+
+TEST_CASE("the order the axes are blended in is a decision, not an accident", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 99, kOverworldCells);
+
+    const auto corner = [&pipeline](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
+        return pipeline.at("field", Point{.x = dx * 4, .y = dy * 8, .z = dz * 4});
+    };
+    const double v000 = corner(0, 0, 0);
+    const double v001 = corner(0, 0, 1);
+    const double v010 = corner(0, 1, 0);
+    const double v011 = corner(0, 1, 1);
+    const double v100 = corner(1, 0, 0);
+    const double v101 = corner(1, 0, 1);
+    const double v110 = corner(1, 1, 0);
+    const double v111 = corner(1, 1, 1);
+
+    const auto lerp = [](double part, double from, double to) {
+        return from + (part * (to - from));
+    };
+
+    // Every block of one cell, not one chosen point: two orders agree bitwise
+    // far more often than intuition suggests, and a single sample let a
+    // y-then-z-then-x mutation through unnoticed.
+    std::size_t differingYzx = 0;
+    std::size_t differingZxy = 0;
+    for (std::int32_t x = 0; x < 4; ++x) {
+        for (std::int32_t y = 0; y < 8; ++y) {
+            for (std::int32_t z = 0; z < 4; ++z) {
+                const double tx = static_cast<double>(x) / 4.0;
+                const double ty = static_cast<double>(y) / 8.0;
+                const double tz = static_cast<double>(z) / 4.0;
+
+                const double yThenXThenZ =
+                    lerp(tz, lerp(tx, lerp(ty, v000, v010), lerp(ty, v100, v110)),
+                         lerp(tx, lerp(ty, v001, v011), lerp(ty, v101, v111)));
+                const double yThenZThenX =
+                    lerp(tx, lerp(tz, lerp(ty, v000, v010), lerp(ty, v001, v011)),
+                         lerp(tz, lerp(ty, v100, v110), lerp(ty, v101, v111)));
+                const double zThenXThenY =
+                    lerp(ty, lerp(tx, lerp(tz, v000, v001), lerp(tz, v100, v101)),
+                         lerp(tx, lerp(tz, v010, v011), lerp(tz, v110, v111)));
+
+                CAPTURE(x, y, z);
+                CHECK(bits(pipeline.at("smooth", Point{.x = x, .y = y, .z = z})) ==
+                      bits(yThenXThenZ));
+
+                differingYzx += bits(yThenXThenZ) != bits(yThenZThenX) ? 1U : 0U;
+                differingZxy += bits(yThenXThenZ) != bits(zThenXThenY) ? 1U : 0U;
+            }
+        }
+    }
+
+    // Trilinear interpolation is order-independent in exact arithmetic and is
+    // not in floating point. That is the whole reason the order is written
+    // down rather than left to whoever edits the loop next — and the counts
+    // are checked so that this stays a real distinction rather than becoming
+    // a test of nothing.
+    CHECK(differingYzx > 0U);
+    CHECK(differingZxy > 0U);
+}
+
+TEST_CASE("only the interpolated part of a tree is interpolated", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    tree.define("mixed", R"({"type":"minecraft:add","argument1":"smooth_gradient",
+        "argument2":"gradient"})");
+    const Pipeline pipeline(tree.pack(), 3, kOverworldCells);
+
+    // The second term must be the gradient at the actual y, not at a corner:
+    // vanilla replaces the marker node, not the tree around it. If the whole
+    // tree were interpolated the two terms would agree at every y.
+    const Point at{.x = 0, .y = 5, .z = 0};
+    const double whole = pipeline.at("mixed", at);
+    const double smoothed = pipeline.at("smooth_gradient", at);
+    const double exact = pipeline.at("gradient", at);
+
+    CHECK(bits(whole) == bits(smoothed + exact));
+    // The gradient is linear in y, so interpolating it changes almost
+    // nothing — but "almost" is the point: they are not the same number.
+    CHECK(std::abs(smoothed - exact) < 1e-9);
+}
+
+TEST_CASE("cache_all_in_cell keeps a value per block, so it changes none", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 21, kOverworldCells);
+
+    // Unlike flat_cache it does not relocate the sample: vanilla stores one
+    // value for every block of the cell, not one for the cell.
+    for (const Point at : {Point{.x = 1, .y = 3, .z = 2}, Point{.x = -7, .y = -5, .z = 9}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(pipeline.at("cell_cached", at)) == bits(pipeline.at("field", at)));
+    }
+}
+
+TEST_CASE("the cell lattice is part of the answer", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline overworld(tree.pack(), 42, CellGeometry{.width = 4, .height = 8});
+    const Pipeline end(tree.pack(), 42, CellGeometry{.width = 8, .height = 4});
+
+    // The same function on the same seed at the same point, sampled on two
+    // lattices. A dimension's cell size is not a performance knob.
+    const Point at{.x = 5, .y = 5, .z = 5};
+    CHECK(bits(overworld.at("smooth", at)) != bits(end.at("smooth", at)));
+    CHECK(overworld.interpreter().cells()->width == 4);
+    CHECK(end.interpreter().cells()->height == 4);
+}
+
+TEST_CASE("an unusable cell geometry is refused where it is given", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 0);
+
+    // Better here than as a division by zero on the first interpolation.
+    CHECK_THROWS_WITH(Interpreter(graph, noises, CellGeometry{.width = 0, .height = 8}),
+                      ContainsSubstring("positive"));
+    CHECK_THROWS_WITH(Interpreter(graph, noises, CellGeometry{.width = 4, .height = -8}),
+                      ContainsSubstring("positive"));
+    CHECK_NOTHROW(Interpreter(graph, noises, CellGeometry{.width = 1, .height = 1}));
+}
+
+TEST_CASE("without a lattice the cell types are still refused, and say why", "[density][cells]") {
+    const TempTree tree;
+    defineCellPack(tree);
+    const Pipeline pipeline(tree.pack(), 0);
+
+    // A density function file belongs to no dimension, so on its own it has
+    // no cell size — which is a different thing from the type being
+    // unimplemented, and the message has to say so.
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("smooth")),
+                      ContainsSubstring("cell geometry") && ContainsSubstring("noise settings"));
+    CHECK(pipeline.interpreter().cells() == std::nullopt);
 }

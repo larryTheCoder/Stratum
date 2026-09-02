@@ -301,9 +301,11 @@ Its own component (`lib/mapping/`), its own tests:
 
   Landed: noise settings — geometry, flags, block states and the fifteen-entry
   noise router, whose inline density functions resolve into the *same* graph
-  as the pack's named ones. All seven of vanilla's dimensions load; 88 of
-  their 105 router entries are already evaluable, and the seventeen that are
-  not are exactly the ones waiting on the node types §11 accounts for.
+  as the pack's named ones — and the cell sampler over the lattice they
+  describe, which gives `interpolated` and `cache_all_in_cell` a meaning.
+  All seven of vanilla's dimensions load; 94 of their 105 router entries are
+  evaluable, and the eleven that are not are exactly the ones waiting on the
+  node types §11 accounts for.
 
   The router's field list is generated from mcdoc, and that is not ceremony:
   at 1.21.9 `initial_density_without_jaggedness` became
@@ -440,6 +442,40 @@ Open:
   reading while asserting the difference is still non-zero — if it ever
   reached zero, the handling that makes them agree would be untested.
   Which reading matches Mojang is settled by the M3 goldens.
+
+- **The order the cell sampler blends its axes in is not yet verified (M3).**
+  `interpolated` is trilinear over the eight corners of the cell a point sits
+  in, and this build blends y first, then x, then z. Trilinear interpolation
+  is order-independent in exact arithmetic and is not in floating point, so
+  the order is part of the answer, not a detail of the loop.
+
+  Nothing available here samples vanilla's terrain density — cubiomes models
+  climate and biomes, not this — so the order is the documented reading and
+  stands unverified. The unit suite pins it: it evaluates every block of one
+  cell against an explicitly composed y-then-x-then-z blend, and asserts that
+  two other orders genuinely disagree, so the choice cannot be changed by
+  accident and cannot quietly become a test of nothing. What settles it is
+  the goldens, which need terrain.
+
+  Note the trap this fell into first: a single sampled point let a
+  y-then-z-then-x mutation through, because two orders agree bitwise far more
+  often than intuition suggests.
+
+- **Terrain needs two more decisions, not one (M3).** With the cell sampler
+  in, vanilla's `final_density` is still refused — and the walk meets
+  `blend_density` before it reaches `old_blended_noise`, so *both* have to be
+  settled before a single block can be placed. Neither is a cell problem, and
+  "the cell sampler landed" should not be read as terrain being next.
+
+  On `old_blended_noise` specifically, the claim above that it "has no
+  independent oracle here" is too strong and is corrected: cubiomes'
+  `sampleSurfaceNoise` is the same computation — the 16/16/8 octave stacks,
+  the precision-maintaining coordinate wrap, and the
+  `clampedLerp(0.5 + 0.05*main, min/512, max/512)` blend. What it does not
+  cover is the modern seeding path (it seeds from the Java LCG, as the legacy
+  source does) or `smear_scale_multiplier`, which it has no parameter for. So
+  the formula is checkable and the derivation around it is not, which is a
+  smaller gap than none but not nothing.
 
 - **`cache_2d` over a column-varying function is refused (M2).** Vanilla
   caches it on (x, z) alone, so the whole column would take the value of

@@ -92,12 +92,16 @@ private:
     std::vector<char> computed_;
 };
 
-std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) noexcept {
+std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
     switch (type) {
         case NodeType::Interpolated:
         case NodeType::CacheAllInCell:
+            if (cells_.has_value()) {
+                return std::nullopt;
+            }
             return "its value is defined by the cell it sits in, not by the point alone, so it "
-                   "needs the cell sampler (SPEC §10, M3)";
+                   "needs an interpreter built with a cell geometry — which comes from a noise "
+                   "settings entry (SPEC §4.1)";
         case NodeType::Slide:
             return "it applies the vertical slides from a noise settings entry, which this "
                    "pipeline does not carry yet (SPEC §10, M3)";
@@ -120,6 +124,16 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) no
         default:
             return std::nullopt;
     }
+}
+
+Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises, CellGeometry cells)
+    : Interpreter(graph, noises) {
+    if (cells.width <= 0 || cells.height <= 0) {
+        throw EvalError("a cell geometry of " + std::to_string(cells.width) + "x" +
+                        std::to_string(cells.height) +
+                        " is not usable: both dimensions must be positive");
+    }
+    cells_ = cells;
 }
 
 Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : graph_(&graph) {
@@ -197,6 +211,12 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
             case NodeType::YClampedGradient:
             case NodeType::Shift:
                 invariant = false;
+                break;
+            case NodeType::Interpolated:
+                // Interpolating along y cannot remove a dependence on y, and
+                // interpolating a column-invariant function cannot create
+                // one: the four corner pairs it blends are equal.
+                invariant = cells_.has_value() && argumentsInvariant();
                 break;
             default:
                 // What is left is a pure function of its arguments — or is
@@ -454,10 +474,17 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         }
         case NodeType::Cache2d:
         case NodeType::CacheOnce:
-            // Memoisation that does not move the sample. requireEvaluable
-            // has already refused a cache_2d whose contents would make that
-            // untrue.
+        case NodeType::CacheAllInCell:
+            // Memoisation that does not move the sample. cache_all_in_cell
+            // keeps one value per block of a cell rather than one per cell,
+            // so like the other two it is a cache and not a relocation.
+            // requireEvaluable has already refused a cache_2d whose contents
+            // would make that untrue.
             value = argument(0);
+            break;
+
+        case NodeType::Interpolated:
+            value = interpolate(node.arguments[0], at);
             break;
 
         // --- blending ------------------------------------------------------
@@ -477,6 +504,60 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     }
 
     return scope.store(index, value);
+}
+
+double Interpreter::interpolate(NodeIndex argument, Point at) const {
+    // unevaluableReason refuses `interpolated` without a lattice, so this is
+    // unreachable — but this layer does not get to assume its own caller
+    // checked, and a missing lattice here would otherwise be a crash.
+    if (!cells_.has_value()) {
+        throw EvalError("'minecraft:interpolated' needs a cell geometry and this interpreter "
+                        "has none");
+    }
+    const CellGeometry cells = *cells_;
+
+    // The cell a point is in, found with floorDiv so that a negative
+    // coordinate lands in the cell below it rather than the one above.
+    const std::int32_t x0 = javamath::floorDiv(at.x, cells.width) * cells.width;
+    const std::int32_t y0 = javamath::floorDiv(at.y, cells.height) * cells.height;
+    const std::int32_t z0 = javamath::floorDiv(at.z, cells.width) * cells.width;
+
+    const double tx = static_cast<double>(at.x - x0) / static_cast<double>(cells.width);
+    const double ty = static_cast<double>(at.y - y0) / static_cast<double>(cells.height);
+    const double tz = static_cast<double>(at.z - z0) / static_cast<double>(cells.width);
+
+    const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
+        Scope scope(Point{.x = x0 + (dx * cells.width),
+                          .y = y0 + (dy * cells.height),
+                          .z = z0 + (dz * cells.width)},
+                    graph_->nodeCount());
+        return evaluateNode(scope, argument);
+    };
+
+    // Sequenced through named locals, and blended y first, then x, then z.
+    // Both matter: lerp is not associative across dimensions in floating
+    // point, so a different order is a different world in the last bits.
+    // The order is the documented one and is *not* yet checked against
+    // vanilla — nothing available here samples terrain density — so SPEC §11
+    // carries it as open until the goldens can settle it.
+    const double v000 = corner(0, 0, 0);
+    const double v001 = corner(0, 0, 1);
+    const double v010 = corner(0, 1, 0);
+    const double v011 = corner(0, 1, 1);
+    const double v100 = corner(1, 0, 0);
+    const double v101 = corner(1, 0, 1);
+    const double v110 = corner(1, 1, 0);
+    const double v111 = corner(1, 1, 1);
+
+    const double x0z0 = lerp(ty, v000, v010);
+    const double x1z0 = lerp(ty, v100, v110);
+    const double x0z1 = lerp(ty, v001, v011);
+    const double x1z1 = lerp(ty, v101, v111);
+
+    const double nearZ = lerp(tx, x0z0, x1z0);
+    const double farZ = lerp(tx, x0z1, x1z1);
+
+    return lerp(tz, nearZ, farZ);
 }
 
 float Interpreter::evaluateSpline(Scope& scope, SplineIndex index) const {

@@ -191,11 +191,20 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
     const density::Interpreter interpreter(*graph, noises);
 
     for (const auto& [id, dimension] : loaded->settings) {
+        // Each dimension gets its own interpreter, because the cell lattice
+        // that gives `interpolated` a meaning is a property of the dimension
+        // and not of the function: the same density function is sampled on
+        // 4x8 cells by the overworld and 8x4 by the End.
+        const density::Interpreter sampler(
+            *graph, noises,
+            density::CellGeometry{.width = dimension.geometry.cellWidth(),
+                                  .height = dimension.geometry.cellHeight()});
+
         for (std::size_t i = 0; i < settings::kRouterEntryCount; ++i) {
             const auto entry = static_cast<settings::RouterEntry>(i);
             ++report.routerEntries;
             try {
-                interpreter.requireEvaluable(dimension.router.at(entry));
+                sampler.requireEvaluable(dimension.router.at(entry));
                 ++report.routerEntriesEvaluable;
             } catch (const density::EvalError& error) {
                 add(report, Severity::Warning,

@@ -180,7 +180,9 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // checked here too: seven dimensions, fifteen entries each.
     CHECK(report.noiseSettings == 7U);
     CHECK(report.routerEntries == 105U);
-    CHECK(report.routerEntriesEvaluable == 88U);
+    // 94 with the cell sampler, 88 without it: six of vanilla's router
+    // entries were waiting on `interpolated` alone.
+    CHECK(report.routerEntriesEvaluable == 94U);
 
     // The ten that are left are exactly the ones SPEC §11 accounts for, and
     // no others. A refusal that spread to a function nobody expected would
