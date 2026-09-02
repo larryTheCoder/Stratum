@@ -13,6 +13,7 @@ configure_file(
 
 add_library(stratum_core STATIC
     src/chunk.cpp
+    src/density_graph.cpp
     src/fdlibm_log.cpp
     src/md5.cpp
     src/pack.cpp
@@ -42,6 +43,7 @@ target_sources(stratum_core PUBLIC
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
