@@ -246,6 +246,11 @@ unexecutable registry into a hard failure for callers that need it. Which
 should be the default for a user-supplied datapack is still to be decided;
 loading vanilla's own data cannot be.
 
+`stratum validate --strict` puts the same question to whoever is holding the
+pack, which is a stopgap rather than an answer: the findings are reported
+either way and the flag only decides whether they are fatal. The library
+default stays permissive, and the question stays open.
+
 ---
 
 ## 9. Bedrock mapping layer
@@ -275,8 +280,9 @@ Its own component (`lib/mapping/`), its own tests:
   comparisons on 2D-derivable values.
 
   Landed: the pack loader, the resolved density graph, the mcdoc-derived
-  schema, the noise registry, the interpreter, and heightmap-style rendering
-  of a density function's field through `stratum render --pack`. Vanilla's
+  schema, the noise registry, the interpreter, heightmap-style rendering of
+  a density function's field through `stratum render --pack`, and
+  `stratum validate`. Vanilla's
   overworld climate chain — `shift_x`/`shift_z`, `continents`, `erosion`,
   `ridges`, `ridges_folded` and `offset` — is evaluated from vanilla's own
   JSON and matches cubiomes bit-for-bit across six world seeds.

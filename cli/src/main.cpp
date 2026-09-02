@@ -18,6 +18,7 @@
 #include <stratum/region/region_file.hpp>
 #include <stratum/render/density_render.hpp>
 #include <stratum/render/region_render.hpp>
+#include <stratum/validate/pack_report.hpp>
 #include <stratum/version.hpp>
 
 #include <array>
@@ -83,6 +84,9 @@ void printUsage(std::ostream& out) {
         << "      [--ramp signed|grey]\n"
         << "      Shades one density function across an area. This is not terrain\n"
         << "      height: terrain needs the cell sampler (M3).\n"
+        << "  stratum validate <pack-dir> [--seed N] [--strict]\n"
+        << "      Exits 0 when clean, 1 when there are warnings, 4 on errors.\n"
+        << "      --strict makes warnings fatal too.\n"
         << "\noptions:\n"
         << "  -h, --help       show this message\n"
         << "  -V, --version    print version, engine version and schema pin\n";
@@ -198,26 +202,6 @@ int runDiff(const std::vector<std::string_view>& args) {
     return parseSize(text.substr(0, cross), width) && parseSize(text.substr(cross + 1), height);
 }
 
-/// Both layouts the loader reads, told apart by what is on disk rather than
-/// by a flag the caller has to get right: a data pack has `pack.mcmeta`, an
-/// extracted registry tree has `density_function` at its root — or one level
-/// down, under `worldgen/`, which is the shape tools/fetch-vanilla leaves.
-[[nodiscard]] stratum::data::Pack openPack(const std::filesystem::path& root) {
-    if (std::filesystem::is_regular_file(root / "pack.mcmeta")) {
-        return stratum::data::Pack::openDataPack(root);
-    }
-    if (std::filesystem::is_directory(root / "density_function")) {
-        return stratum::data::Pack::openWorldgenTree(root);
-    }
-    if (std::filesystem::is_directory(root / "worldgen" / "density_function")) {
-        return stratum::data::Pack::openWorldgenTree(root / "worldgen");
-    }
-    throw stratum::data::PackError(
-        "no pack at '" + root.string() +
-        "': expected pack.mcmeta beside data/, or a worldgen tree containing "
-        "density_function/");
-}
-
 struct DensityRenderRequest {
     std::string_view pack;
     std::string_view function;
@@ -226,7 +210,7 @@ struct DensityRenderRequest {
 };
 
 int runDensityRender(const DensityRenderRequest& request, std::string_view output) {
-    const stratum::data::Pack pack = openPack(std::filesystem::path(request.pack));
+    const stratum::data::Pack pack = stratum::data::Pack::open(std::filesystem::path(request.pack));
     const stratum::density::Graph graph = stratum::density::Graph::resolveAll(pack);
 
     const auto id = stratum::data::ResourceLocation::parse(request.function);
@@ -384,6 +368,89 @@ int runRender(const std::vector<std::string_view>& args) {
     return kExitOk;
 }
 
+int runValidate(const std::vector<std::string_view>& args) {
+    std::vector<std::string_view> paths;
+    stratum::validate::ValidateOptions options;
+    bool strict = false;
+
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        const std::string_view argument = args[i];
+        if (argument == "--seed") {
+            if (i + 1 >= args.size() || !parseInt64(args[i + 1], options.seed)) {
+                std::cerr << "stratum validate: --seed must be a 64-bit integer\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--strict") {
+            strict = true;
+        } else if (argument.starts_with("-")) {
+            std::cerr << "stratum validate: unknown option '" << argument << "'\n";
+            return kExitUsage;
+        } else {
+            paths.push_back(argument);
+        }
+    }
+
+    if (paths.size() != 1) {
+        std::cerr << "stratum validate: expects exactly one pack directory\n\n";
+        printUsage(std::cerr);
+        return kExitUsage;
+    }
+
+    const stratum::data::Pack pack = stratum::data::Pack::open(std::filesystem::path(paths[0]));
+    const stratum::validate::Report report = stratum::validate::validatePack(pack, options);
+
+    std::cout << paths[0] << ": "
+              << (pack.layout() == stratum::data::Pack::Layout::DataPack
+                      ? "data pack"
+                      : "extracted worldgen tree")
+              << ", " << pack.size() << " entr" << (pack.size() == 1 ? "y" : "ies") << "\n";
+
+    for (const stratum::validate::RegistryCount& registry : report.registries) {
+        std::cout << "  " << stratum::data::registryDirectory(registry.registry) << "  "
+                  << registry.entries;
+        if (!registry.supported) {
+            std::cout << "  (not executed)";
+        } else if (!registry.interpreted) {
+            std::cout << "  (loaded, not yet interpreted)";
+        }
+        std::cout << '\n';
+    }
+
+    if (report.resolved) {
+        std::cout << "graph: " << report.nodes << " node(s), " << report.splines << " spline(s), "
+                  << report.noisesReferenced << " noise(s) referenced\n"
+                  << "evaluable: " << report.evaluable << " of " << report.densityFunctions
+                  << " density function(s)\n";
+    }
+
+    for (const stratum::validate::Finding& finding : report.findings) {
+        std::cout << stratum::validate::severityName(finding.severity) << ": ";
+        if (!finding.subject.empty()) {
+            std::cout << finding.subject << " — ";
+        }
+        std::cout << finding.message << '\n';
+    }
+
+    const std::size_t errors = report.count(stratum::validate::Severity::Error);
+    const std::size_t warnings = report.count(stratum::validate::Severity::Warning);
+
+    if (errors > 0) {
+        std::cout << errors << " error(s), " << warnings << " warning(s)\n";
+        return kExitFailed;
+    }
+    if (warnings > 0) {
+        // --strict is where SPEC §8's open question is put to the caller
+        // rather than answered: whether an unexecutable registry should be
+        // fatal depends on whose pack it is, and vanilla's own data could
+        // not load if this build decided it.
+        std::cout << warnings << " warning(s)\n";
+        return strict ? kExitFailed : kExitDifferences;
+    }
+    std::cout << "no findings\n";
+    return kExitOk;
+}
+
 int run(const std::vector<std::string_view>& args) {
     if (args.size() < 2U) {
         printUsage(std::cerr);
@@ -405,6 +472,9 @@ int run(const std::vector<std::string_view>& args) {
     }
     if (command == "render") {
         return runRender(args);
+    }
+    if (command == "validate") {
+        return runValidate(args);
     }
 
     for (const Subcommand& cmd : kSubcommands) {

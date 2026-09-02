@@ -131,6 +131,21 @@ void validatePackFormat(const nlohmann::json& mcmeta, const std::filesystem::pat
     }
 }
 
+Pack Pack::open(const std::filesystem::path& root, const PackLoadOptions& options) {
+    if (std::filesystem::is_regular_file(root / "pack.mcmeta")) {
+        return openDataPack(root, options);
+    }
+    if (std::filesystem::is_directory(root / "density_function")) {
+        return openWorldgenTree(root, ResourceLocation::kDefaultNamespace, options);
+    }
+    if (std::filesystem::is_directory(root / "worldgen" / "density_function")) {
+        return openWorldgenTree(root / "worldgen", ResourceLocation::kDefaultNamespace, options);
+    }
+    throw PackError("no pack at '" + root.string() +
+                    "': expected pack.mcmeta beside data/, a worldgen tree containing "
+                    "density_function/, or a directory containing worldgen/density_function/");
+}
+
 Pack Pack::openDataPack(const std::filesystem::path& root, const PackLoadOptions& options) {
     const std::filesystem::path mcmeta = root / "pack.mcmeta";
     if (!std::filesystem::is_regular_file(mcmeta)) {
@@ -144,6 +159,7 @@ Pack Pack::openDataPack(const std::filesystem::path& root, const PackLoadOptions
     }
 
     Pack pack;
+    pack.layout_ = Layout::DataPack;
     std::vector<std::filesystem::path> namespaces;
     for (const auto& entry : std::filesystem::directory_iterator(data)) {
         if (entry.is_directory()) {
@@ -174,6 +190,7 @@ Pack Pack::openWorldgenTree(const std::filesystem::path& root, std::string_view 
     }
 
     Pack pack;
+    pack.layout_ = Layout::WorldgenTree;
     // Rooted inside worldgen/, so the prefix restores what the layout drops.
     pack.scan(root, std::string(namespaceName), options, "worldgen/");
     return pack;

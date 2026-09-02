@@ -101,6 +101,26 @@ This is **not** terrain height: a real heightmap needs the cell sampler and
 block placement that follow it (M3). A function this build cannot evaluate
 is refused by name rather than drawn as a guess.
 
+Check a pack before generating from it:
+
+```bash
+stratum validate <pack-dir> [--seed N] [--strict]   # 0 clean, 1 warnings, 4 errors
+```
+
+It does everything world load does short of sampling a point: opens the
+pack, resolves every reference, builds every noise, and walks each density
+function for node types this build cannot execute. It keeps two kinds of
+"no" apart — a registry v1 does not execute (your pack is fine; this engine
+will not run that part of it) and a function this *build* cannot yet
+evaluate (your pack is fine; the code is not there yet) — and reports the
+registries that load but which nothing interprets yet, so that a clean
+report is not read as more approval than it is.
+
+`--strict` makes warnings fatal. It is where SPEC §8's open question is
+handed to you rather than answered: whether an unexecutable registry should
+stop a load depends on whose pack it is, and vanilla's own data could not
+load if this build decided it.
+
 Lint locally the way CI does:
 
 ```bash

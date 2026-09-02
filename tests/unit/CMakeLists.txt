@@ -15,6 +15,7 @@ add_executable(stratum_unit_tests
     render_test.cpp
     region_diff_test.cpp
     region_file_test.cpp
+    validate_test.cpp
     version_test.cpp
     xoroshiro_test.cpp
 )

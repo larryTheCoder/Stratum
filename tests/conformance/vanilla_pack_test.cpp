@@ -11,14 +11,17 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/validate/pack_report.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -137,4 +140,68 @@ TEST_CASE("the settings the pipeline will need are all present and addressable",
         REQUIRE(function != nullptr);
         CHECK(function->json.at("type") == "minecraft:old_blended_noise");
     }
+}
+
+TEST_CASE("vanilla's own data validates, with an exact account of what is left",
+          "[conformance][validate]") {
+    const std::filesystem::path tree = findWorldgenTree();
+    if (tree.empty()) {
+        SKIP("no extracted vanilla worldgen under "
+             << STRATUM_FIXTURES_DIR
+             << " — Mojang-derived and never committed (SPEC §12). Generate it with: "
+                "tools/fetch-vanilla");
+    }
+
+    const stratum::data::Pack pack = stratum::data::Pack::open(tree);
+    CHECK(pack.layout() == stratum::data::Pack::Layout::WorldgenTree);
+
+    const stratum::validate::Report report = stratum::validate::validatePack(pack);
+
+    // Vanilla's own data must never fail to load. That is the line SPEC §8's
+    // open question turns on: a reading of "hard error" that makes Mojang's
+    // shipped data unloadable is the wrong reading.
+    CHECK(report.count(stratum::validate::Severity::Error) == 0U);
+    CHECK(report.resolved);
+
+    // Numbers, not "some": these move when the data moves or when a
+    // milestone lands, and both are things a person should have to look at
+    // rather than have slide past.
+    CHECK(report.densityFunctions == 35U);
+    CHECK(report.evaluable == 25U);
+    CHECK(report.noisesReferenced == 25U);
+    CHECK(report.nodes == 275U);
+    CHECK(report.splines == 354U);
+
+    // The ten that are left are exactly the ones SPEC §11 accounts for, and
+    // no others. A refusal that spread to a function nobody expected would
+    // otherwise just look like a bigger number.
+    std::vector<std::string> unevaluable;
+    for (const stratum::validate::Finding& finding : report.findings) {
+        if (finding.severity == stratum::validate::Severity::Warning &&
+            finding.subject.starts_with("minecraft:")) {
+            unevaluable.push_back(finding.subject);
+        }
+    }
+    std::ranges::sort(unevaluable);
+    const std::vector<std::string> expected{
+        "minecraft:end/base_3d_noise",
+        "minecraft:end/sloped_cheese",
+        "minecraft:nether/base_3d_noise",
+        "minecraft:overworld/base_3d_noise",
+        "minecraft:overworld/caves/entrances",
+        "minecraft:overworld/caves/noodle",
+        "minecraft:overworld/caves/spaghetti_2d",
+        "minecraft:overworld/sloped_cheese",
+        "minecraft:overworld_amplified/sloped_cheese",
+        "minecraft:overworld_large_biomes/sloped_cheese",
+    };
+    CHECK(unevaluable == expected);
+
+    // Features and their neighbours are reported by registry, never dropped.
+    const auto features =
+        std::ranges::find_if(report.findings, [](const stratum::validate::Finding& finding) {
+            return finding.subject == "worldgen/placed_feature";
+        });
+    REQUIRE(features != report.findings.end());
+    CHECK(features->severity == stratum::validate::Severity::Warning);
 }

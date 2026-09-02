@@ -97,16 +97,20 @@ struct CliResult {
 /// through the real binary without the vanilla fixtures.
 class TempPack {
 public:
-    TempPack() : path_(std::filesystem::temp_directory_path() / "stratum-cli-pack") {
+    explicit TempPack(bool withUnevaluable = true)
+        : path_(std::filesystem::temp_directory_path() /
+                (withUnevaluable ? "stratum-cli-pack" : "stratum-cli-pack-clean")) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_ / "density_function");
         std::filesystem::create_directories(path_ / "noise");
         write("noise", "test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
         write("density_function", "field",
               R"({"type":"minecraft:noise","noise":"test","xz_scale":1.0,"y_scale":0.0})");
-        write("density_function", "blended",
-              R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,"y_scale":1.0,
-                  "xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+        if (withUnevaluable) {
+            write("density_function", "blended",
+                  R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,"y_scale":1.0,
+                      "xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+        }
     }
 
     TempPack(const TempPack&) = delete;
@@ -279,4 +283,63 @@ TEST_CASE("render says which node type it cannot draw", "[cli]") {
     CHECK(result.exitCode == 4);
     CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
     CHECK_FALSE(std::filesystem::exists(image));
+}
+
+TEST_CASE("validate exits 0 on a clean pack and 1 on one with warnings", "[cli]") {
+    const TempPack pack;
+
+    // The pack carries `blended`, whose old_blended_noise this build cannot
+    // evaluate, so it is not clean — exit 1 means "loads, with caveats",
+    // matching diff's use of 1 for "there is something to tell you about".
+    const CliResult warned = runCli("validate \"" + pack.path().string() + "\"");
+    CHECK(warned.exitCode == 1);
+    CHECK_THAT(warned.output, Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
+    CHECK_THAT(warned.output, Catch::Matchers::ContainsSubstring("evaluable: 1 of 2"));
+
+    // --strict is where SPEC §8's open question is handed to the caller
+    // rather than answered: same findings, fatal exit.
+    const CliResult strict = runCli("validate --strict \"" + pack.path().string() + "\"");
+    CHECK(strict.exitCode == 4);
+
+    const TempPack clean(/*withUnevaluable=*/false);
+    const CliResult ok = runCli("validate \"" + clean.path().string() + "\"");
+    CHECK(ok.exitCode == 0);
+    CHECK_THAT(ok.output, Catch::Matchers::ContainsSubstring("no findings"));
+}
+
+TEST_CASE("validate exits 4 on a pack that will not resolve", "[cli]") {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "stratum-cli-broken-pack";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "density_function");
+    {
+        std::ofstream out(root / "density_function" / "a.json");
+        out << R"({"type":"minecraft:abs","argument":"nowhere"})";
+    }
+
+    const CliResult result = runCli("validate \"" + root.string() + "\"");
+    CHECK(result.exitCode == 4);
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:nowhere"));
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST_CASE("validate refuses a directory that is not a pack", "[cli]") {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "stratum-cli-not-a-pack";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    // Exit 4, and the message names every layout it looked for rather than
+    // saying only that this was not one.
+    const CliResult result = runCli("validate \"" + root.string() + "\"");
+    CHECK(result.exitCode == 4);
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("pack.mcmeta"));
+
+    const CliResult tooMany = runCli("validate one two");
+    CHECK(tooMany.exitCode == 2);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
 }

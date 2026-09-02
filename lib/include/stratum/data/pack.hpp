@@ -72,6 +72,24 @@ public:
     [[nodiscard]] static Pack openDataPack(const std::filesystem::path& root,
                                            const PackLoadOptions& options = {});
 
+    /// Opens whichever of the two layouts is actually on disk, told apart
+    /// by what is there rather than by a flag the caller has to get right: a
+    /// data pack has `pack.mcmeta`, an extracted registry tree has
+    /// `density_function` at its root, and the tree tools/fetch-vanilla
+    /// leaves has it one level down under `worldgen/`. Throws PackError
+    /// naming all three when none of them is present, because "not a pack"
+    /// is not an actionable thing to be told.
+    [[nodiscard]] static Pack open(const std::filesystem::path& root,
+                                   const PackLoadOptions& options = {});
+
+    /// Which layout open() found, for a caller that reports it.
+    enum class Layout : std::uint8_t {
+        DataPack,
+        WorldgenTree,
+    };
+
+    [[nodiscard]] Layout layout() const noexcept { return layout_; }
+
     /// Reads an extracted worldgen tree — the shape tools/fetch-vanilla
     /// pulls out of the jar, rooted at `worldgen/` itself so its entries are
     /// `density_function/...` rather than `worldgen/density_function/...`.
@@ -99,6 +117,7 @@ private:
     void scan(const std::filesystem::path& root, const std::string& namespaceName,
               const PackLoadOptions& options, std::string_view directoryPrefix);
 
+    Layout layout_ = Layout::DataPack;
     std::vector<PackEntry> entries_;
     std::vector<RejectedEntry> rejected_;
     std::map<std::pair<Registry, ResourceLocation>, std::size_t> index_;
