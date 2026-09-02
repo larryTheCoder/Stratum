@@ -273,6 +273,14 @@ Its own component (`lib/mapping/`), its own tests:
 - **M2** — 2D pipeline: JSON load/validate/resolve for density functions +
   noise, interpreted evaluation, heightmap-style rendering, first golden
   comparisons on 2D-derivable values.
+
+  Landed: the pack loader, the resolved density graph, the mcdoc-derived
+  schema, the noise registry and the interpreter. Vanilla's overworld
+  climate chain — `shift_x`/`shift_z`, `continents`, `erosion`, `ridges`,
+  `ridges_folded` and `offset` — is evaluated from vanilla's own JSON and
+  matches cubiomes bit-for-bit across six world seeds. Remaining:
+  heightmap-style rendering and the golden comparisons themselves, which
+  need terrain and so wait on M3.
 - **M3** — 3D density: full noise router, cell sampling + trilinear
   interpolation, all cache node types, aquifer fill decision, compiled flat
   execution program, Tier-A goldens passing for terrain shape.
@@ -350,11 +358,72 @@ Open:
   simply `md5("octave_<n>")` taken as two big-endian halves. That is what
   unblocked the noise.
 
+  The **positional random factory** — a world seed forked into a 128-bit
+  base by two draws, then salted per name with that name's MD5 — is verified
+  as of M2 against cubiomes' `setBiomeSeed`, which derives the climate
+  noises identically. Every noise vanilla's overworld uses now matches
+  cubiomes bit-for-bit from a world seed.
+
   Still deliberately **not implemented**, for want of an oracle: Xoroshiro
-  Gaussians, `fork()`, and positional seeding at a block position. A caller
-  that needs one fails to compile rather than silently seeding a world
-  wrongly. They land with M3, when generated terrain can be diffed against
-  the goldens and right can be told from plausible.
+  Gaussians, the general-purpose `fork()` that derives a child generator for
+  a sub-task, and positional seeding at a block position. A caller that
+  needs one fails to compile rather than silently seeding a world wrongly.
+  They land with M3, when generated terrain can be diffed against the
+  goldens and right can be told from plausible.
+
+- **Which density function types the interpreter evaluates (M2).** The
+  resolver builds all 34 types the schema declares; the interpreter refuses
+  eight of them by name, in two groups.
+
+  *Not defined by a point alone* — `interpolated`, `cache_all_in_cell`,
+  `slide`, `find_top_surface`. Their value depends on the cell the point
+  sits in, or on noise settings the pipeline does not yet carry. They arrive
+  with the cell sampler in M3.
+
+  *No documentation and no oracle here* — `old_blended_noise`, `end_islands`,
+  `weird_scaled_sampler`, `blend_density`. minecraft.wiki documents neither
+  `weird_scaled_sampler`'s rarity mapping nor what `blend_density` returns
+  outside blending, and cubiomes models neither terrain density nor the End
+  islands. Implementing them from memory would produce a world that
+  generates and is quietly wrong, which §8 treats as the most severe class
+  of bug, so they are refused until M3's goldens can tell right from
+  plausible.
+
+  Two types *are* implemented on documentation alone, and are flagged here
+  because nothing else stands behind them: `squeeze` and `invert` (the
+  latter documented only through its later rename to `reciprocal`). Vanilla
+  1.21.11 uses neither, so no golden will ever reach them; only the unit
+  vectors do.
+
+  `blend_alpha` and `blend_offset` are implemented as the constants 1.0 and
+  0.0. This engine generates every chunk itself and never blends against
+  terrain another generator wrote, which is the state those values describe
+  — and it is what makes vanilla's `overworld/offset` reduce to its spline.
+
+- **Cubic splines are evaluated in float, not double (M2).** Vanilla's knot
+  locations, derivatives and values are floats, and the coordinate is
+  narrowed to float before use. Widening the arithmetic would change the
+  last bits of every terrain offset in the world.
+
+  This is not a theoretical distinction. cubiomes' `getSpline` routes its
+  two interpolations through a `double` lerp helper shared with the rest of
+  that library, so it rounds to float once at the end where vanilla rounds
+  at every step; the two readings disagree on **30 of 90** sampled
+  coordinates. `tools/vectors/climate_vectors.c` therefore emits both, and
+  the conformance suite holds the interpreter to the float-throughout
+  reading while asserting the difference is still non-zero — if it ever
+  reached zero, the handling that makes them agree would be untested.
+  Which reading matches Mojang is settled by the M3 goldens.
+
+- **`cache_2d` over a column-varying function is refused (M2).** Vanilla
+  caches it on (x, z) alone, so the whole column would take the value of
+  whichever y was asked for first — an order-dependent answer. Everything
+  vanilla wraps in `cache_2d` is column-invariant, which the interpreter
+  checks statically rather than assumes, so treating it as transparent is
+  exact for vanilla's data and a loud error for anything else. `flat_cache`
+  is a different matter and is implemented literally: it relocates the
+  sample to the corner of the 4x4 column at y = 0, which changes the value
+  at every block that is not on a corner.
 
 ---
 

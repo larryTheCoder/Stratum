@@ -127,6 +127,12 @@ identifier and registry, so a caller can report exactly what it will not
 execute. See the open question in SPEC §8 about when their presence should be
 fatal.
 
+This matrix states the v1 contract, not what is finished. The build in
+progress refuses eight density function types it cannot yet evaluate
+correctly — the cell-structured ones, and the ones with neither
+documentation nor an oracle — by name and with a reason, rather than
+approximating them. SPEC §11 lists which, and why each is where it is.
+
 ### Parity tiers
 
 | Tier | Scope | Bar |

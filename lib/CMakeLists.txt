@@ -14,10 +14,12 @@ configure_file(
 add_library(stratum_core STATIC
     src/chunk.cpp
     src/density_graph.cpp
+    src/density_interpreter.cpp
     src/fdlibm_log.cpp
     src/md5.cpp
     src/pack.cpp
     src/nbt_reader.cpp
+    src/noise_registry.cpp
     src/perlin.cpp
     src/registry.cpp
     src/resource_location.cpp
@@ -44,6 +46,8 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/interpreter.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/noise_registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"

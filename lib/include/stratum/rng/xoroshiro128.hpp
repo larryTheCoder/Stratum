@@ -22,10 +22,13 @@
 //     way; only diffing generated terrain against the goldens does, which
 //     needs the density-function pipeline (M3).
 //
-// nextInt(bound) and seedFromHashOf are checked against cubiomes (MIT), the
-// noise and biome reference SPEC §2 names, and the MD5 halves it salts with
-// are checked against md5sum. Still absent for want of an oracle:
-// nextGaussian and fork(). They arrive with M3.
+// nextInt(bound), seedFromHashOf and the positional factory below are
+// checked against cubiomes (MIT), the noise and biome reference SPEC §2
+// names, and the MD5 halves they salt with are checked against md5sum. Still
+// absent for want of an oracle: nextGaussian and the general-purpose fork()
+// that derives a child generator for a sub-task — a different operation from
+// the positional factory, and one nothing here reaches yet. They arrive with
+// M3.
 
 #pragma once
 
@@ -163,5 +166,41 @@ private:
     }
     return seed;
 }
+
+/// Vanilla's positional random factory. A world seed is forked once into a
+/// 128-bit base, and every named object — each noise here, each feature
+/// later — derives its own generator by XORing the MD5 of its identifier
+/// into that base. That is what makes two noises with different names
+/// independent of each other while both stay a pure function of the world
+/// seed, and what makes adding a noise leave the others undisturbed.
+///
+/// Checked against cubiomes (MIT), whose setBiomeSeed derives the climate
+/// noises exactly this way: two draws from the world seed, then the MD5
+/// halves of the noise's identifier XORed into them. cubiomes is an
+/// independent reimplementation, so agreement is strong evidence rather than
+/// proof that Mojang composes it so; the goldens settle that (M3).
+class XoroshiroPositionalFactory {
+public:
+    explicit XoroshiroPositionalFactory(std::int64_t worldSeed) noexcept {
+        Xoroshiro128PlusPlus source{worldSeed};
+        // Sequenced through named locals rather than a braced initialiser:
+        // both draws come from one generator, so which is taken first is
+        // part of the answer, and C++ does not fix that order everywhere.
+        const auto lo = static_cast<std::uint64_t>(source.nextLong());
+        const auto hi = static_cast<std::uint64_t>(source.nextLong());
+        base_ = Seed128{.lo = lo, .hi = hi};
+    }
+
+    /// The generator for one named object.
+    [[nodiscard]] Xoroshiro128PlusPlus fromHashOf(std::string_view name) const noexcept {
+        const Seed128 salt = seedFromHashOf(name);
+        return Xoroshiro128PlusPlus{Seed128{.lo = base_.lo ^ salt.lo, .hi = base_.hi ^ salt.hi}};
+    }
+
+    [[nodiscard]] constexpr Seed128 base() const noexcept { return base_; }
+
+private:
+    Seed128 base_;
+};
 
 } // namespace stratum::rng

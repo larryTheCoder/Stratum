@@ -89,6 +89,11 @@ jobs:
           tools/vectors/generate-noise-vectors.sh "${RUNNER_TEMP}/noise_vectors.inc"
           diff -u tests/unit/noise_vectors.inc "${RUNNER_TEMP}/noise_vectors.inc"
 
+          # The climate vectors come from the same cubiomes commit, one layer
+          # up: the seeding chain and the overworld's 2D density functions.
+          tools/vectors/generate-climate-vectors.sh "${RUNNER_TEMP}/climate_vectors.inc"
+          diff -u tests/conformance/climate_vectors.inc "${RUNNER_TEMP}/climate_vectors.inc"
+
       - name: Generated schema is reproducible
         # The density function schema is derived from mcdoc at a pinned
         # commit (SPEC §11), so a hand-edit to the generated tables — or a
