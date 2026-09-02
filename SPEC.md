@@ -328,10 +328,18 @@ Open:
   from resource-location strings", verified against known-answer vectors.
   The generator itself and `mixStafford13` are verified against the JDK's
   own implementations, and the 64→128-bit seed upgrade against an
-  independent implementation of the documented formula. The remaining
-  pieces — `nextInt(bound)`, Gaussians, `fork()`, and positional seeding
-  from MD5 salts — each have more than one plausible spelling and no oracle
-  outside Mojang, so they are deliberately **not implemented**: a caller
+  independent implementation of the documented formula — and, since the
+  noise work, against cubiomes, whose `xSetSeed` derives the same state
+  constant for constant.
+
+  `nextInt(bound)` and the MD5 salt derivation are verified too: the bounded
+  draw against cubiomes, and the salts against `md5sum`, which turned out to
+  be a genuinely independent oracle for them — vanilla's octave salts are
+  simply `md5("octave_<n>")` taken as two big-endian halves. That is what
+  unblocked the noise.
+
+  Still deliberately **not implemented**, for want of an oracle: Xoroshiro
+  Gaussians, `fork()`, and positional seeding at a block position. A caller
   that needs one fails to compile rather than silently seeding a world
   wrongly. They land with M3, when generated terrain can be diffed against
   the goldens and right can be told from plausible.

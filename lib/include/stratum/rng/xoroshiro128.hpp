@@ -22,17 +22,19 @@
 //     way; only diffing generated terrain against the goldens does, which
 //     needs the density-function pipeline (M3).
 //
-// Deliberately absent until there is an oracle for them: nextInt(bound),
-// nextGaussian, fork(), and positional seeding from MD5 resource-location
-// salts. Each has more than one plausible spelling, and a wrong salt or
-// derivation shifts everything downstream. They arrive with M3, when the
-// conformance harness can tell right from plausible.
+// nextInt(bound) and seedFromHashOf are checked against cubiomes (MIT), the
+// noise and biome reference SPEC §2 names, and the MD5 halves it salts with
+// are checked against md5sum. Still absent for want of an oracle:
+// nextGaussian and fork(). They arrive with M3.
 
 #pragma once
+
+#include <stratum/hash/md5.hpp>
 
 #include <bit>
 #include <cassert>
 #include <cstdint>
+#include <string_view>
 
 namespace stratum::rng {
 
@@ -102,6 +104,29 @@ public:
 
     constexpr std::int32_t nextInt() noexcept { return next(32); }
 
+    /// Uniform in [0, bound), by Lemire's multiply-and-shift with rejection:
+    /// the low 32 bits of a draw are multiplied by the bound and the high
+    /// half taken, retrying only for the values that would bias the result.
+    /// Precondition: bound > 0.
+    ///
+    /// Note this is a different method from the Java LCG's bounded draw, and
+    /// consumes a different number of draws. The two are not interchangeable.
+    constexpr std::int32_t nextInt(std::int32_t bound) noexcept {
+        assert(bound > 0);
+        const auto limit = static_cast<std::uint32_t>(bound);
+
+        auto scaled = lowHalf() * static_cast<std::uint64_t>(limit);
+        if (static_cast<std::uint32_t>(scaled) < limit) {
+            // (2^32 - bound) mod bound: the count of low products that would
+            // over-represent the first few values.
+            const std::uint32_t threshold = (~limit + 1U) % limit;
+            while (static_cast<std::uint32_t>(scaled) < threshold) {
+                scaled = lowHalf() * static_cast<std::uint64_t>(limit);
+            }
+        }
+        return static_cast<std::int32_t>(scaled >> 32U);
+    }
+
     constexpr bool nextBoolean() noexcept { return nextInt() < 0; }
 
     constexpr double nextDouble() noexcept {
@@ -117,8 +142,26 @@ public:
     [[nodiscard]] constexpr Seed128 state() const noexcept { return Seed128{lo_, hi_}; }
 
 private:
+    /// The low 32 bits of the next draw, which is what the bounded draw uses.
+    constexpr std::uint64_t lowHalf() noexcept {
+        return static_cast<std::uint64_t>(nextLong()) & UINT64_C(0xFFFFFFFF);
+    }
+
     std::uint64_t lo_;
     std::uint64_t hi_;
 };
+
+/// The 128-bit salt vanilla derives from a name: the MD5 of the name, taken
+/// as two big-endian halves. `lo` is the first eight bytes of the digest and
+/// `hi` the last, matching how the halves are XORed into generator state.
+[[nodiscard]] inline Seed128 seedFromHashOf(std::string_view name) noexcept {
+    const hash::Md5Digest digest = hash::md5(name);
+    Seed128 seed;
+    for (std::size_t i = 0; i < 8; ++i) {
+        seed.lo = (seed.lo << 8U) | digest[i];
+        seed.hi = (seed.hi << 8U) | digest[i + 8U];
+    }
+    return seed;
+}
 
 } // namespace stratum::rng

@@ -4,7 +4,9 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    md5_test.cpp
     nbt_test.cpp
+    noise_test.cpp
     png_test.cpp
     render_test.cpp
     region_diff_test.cpp

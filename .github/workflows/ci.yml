@@ -68,6 +68,14 @@ jobs:
             diff -u "${target}" "${RUNNER_TEMP}/${name}.inc"
           done
 
+          # The MD5 vectors come from md5sum, and the noise vectors from
+          # cubiomes at a pinned commit; both are reproduced the same way.
+          tools/vectors/generate-md5-vectors.sh "${RUNNER_TEMP}/md5_vectors.inc"
+          diff -u tests/unit/md5_vectors.inc "${RUNNER_TEMP}/md5_vectors.inc"
+
+          tools/vectors/generate-noise-vectors.sh "${RUNNER_TEMP}/noise_vectors.inc"
+          diff -u tests/unit/noise_vectors.inc "${RUNNER_TEMP}/noise_vectors.inc"
+
       - name: Install clang-tidy
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
 

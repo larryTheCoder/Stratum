@@ -14,7 +14,9 @@ configure_file(
 add_library(stratum_core STATIC
     src/chunk.cpp
     src/fdlibm_log.cpp
+    src/md5.cpp
     src/nbt_reader.cpp
+    src/perlin.cpp
     src/png.cpp
     src/nbt_tag.cpp
     src/region_diff.cpp
@@ -37,10 +39,12 @@ target_sources(stratum_core PUBLIC
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/hash/md5.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/image/png.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/reader.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/tag.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/noise/perlin.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/diff.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/region_render.hpp"
