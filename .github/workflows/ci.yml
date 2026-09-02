@@ -93,6 +93,14 @@ jobs:
           - name: linux-x86_64 (release)
             os: ubuntu-24.04
             preset: ci-release
+          - name: linux-x86_64 (clang, debug)
+            os: ubuntu-24.04
+            preset: ci-debug
+            # GCC and Clang disagree about when a std::variant instantiates
+            # its alternatives' special members, among other things. Without
+            # a Linux Clang leg that class of bug only surfaces on macOS.
+            cc: clang
+            cxx: clang++
           - name: linux-arm64 (debug)
             os: ubuntu-24.04-arm
             preset: ci-debug
@@ -115,6 +123,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
         run: cmake --preset ${{ matrix.preset }}
 
       - name: Build

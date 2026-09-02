@@ -2,6 +2,7 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    nbt_test.cpp
     region_file_test.cpp
     version_test.cpp
 )

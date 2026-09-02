@@ -9,7 +9,7 @@ Non-C++ helper scripts: fixture fetching, schema sync, CI glue, repo lint.
 | `vectors/JavaMathVectors.java` | M1 (present) | Emits `tests/unit/javamath_vectors.inc`: known-answer vectors for `stratum::javamath`, observed from a real JVM. CI re-runs it and fails on any diff |
 | `vectors/JavaRandomVectors.java` | M1 (present) | Emits `tests/unit/java_random_vectors.inc`: known-answer vectors for `stratum::rng::JavaRandom` from `java.util.Random`, floats as raw bit patterns |
 | `vectors/StrictMathVectors.java` | M1 (present) | Emits `tests/unit/fdlibm_vectors.inc`: `StrictMath.log` known-answer vectors, the oracle for the vendored fdlibm port |
-| `fetch-vanilla` | M1 (partial) | Resolves and verifies the pinned version through Mojang's piston-meta manifest (manifest → metadata SHA-1 → jar SHA-1), downloads or accepts a server jar, and extracts `data/minecraft/worldgen/**`. Golden region generation by running the server headlessly is still to come, and refuses loudly meanwhile |
+| `fetch-vanilla` | M1 (partial) | Resolves and verifies the pinned version through Mojang's piston-meta manifest (manifest → metadata SHA-1 → jar SHA-1), downloads or accepts a server jar, and extracts `data/minecraft/worldgen/**`. `--with-structures` also extracts the 1202 vanilla structure `.nbt` files, which the NBT reader's conformance suite parses as real input. Golden region generation by running the server headlessly is still to come, and refuses loudly meanwhile |
 | `mcdoc-sync` | M2 | Vendors the mcdoc (Spyglass) schema snapshot matching the pinned version, for load-time validation |
 
 ## Provenance

@@ -20,6 +20,7 @@ set -euo pipefail
 readonly PINNED_VERSION="1.21.11"
 readonly MANIFEST_URL="https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 readonly WORLDGEN_PREFIX="data/minecraft/worldgen"
+readonly STRUCTURE_PREFIX="data/minecraft/structure"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -30,6 +31,7 @@ dry_run=0
 skip_verify=0
 accept_eula=0
 generate_regions=0
+with_structures=0
 
 usage() {
     cat <<'USAGE'
@@ -42,6 +44,8 @@ options:
   --version <id>     Minecraft version to fetch (default: the pinned 1.21.11)
   --output <dir>     where fixtures are written (default: <repo>/.fixtures/<id>)
   --jar <path>       use a jar you already downloaded instead of fetching one
+  --with-structures  also extract the vanilla structure NBT files, which the
+                     harness uses as real input for its NBT reader tests
   --generate-regions also produce golden region files by running the server
   --accept-eula      you accept Mojang's EULA; required by --generate-regions
   --skip-verify      do not check the jar's SHA-1 (for a jar not on the
@@ -94,6 +98,7 @@ while [[ $# -gt 0 ]]; do
         --version)          version="${2:?--version needs an argument}"; shift 2 ;;
         --output)           output_dir="${2:?--output needs an argument}"; shift 2 ;;
         --jar)              jar_path="${2:?--jar needs an argument}"; shift 2 ;;
+        --with-structures)  with_structures=1; shift ;;
         --generate-regions) generate_regions=1; shift ;;
         --accept-eula)      accept_eula=1; shift ;;
         --skip-verify)      skip_verify=1; shift ;;
@@ -106,6 +111,7 @@ done
 : "${output_dir:="${repo_root}/.fixtures/${version}"}"
 readonly jar_file="${output_dir}/server-${version}.jar"
 readonly worldgen_dir="${output_dir}/worldgen"
+readonly structure_dir="${output_dir}/structure"
 readonly provenance_file="${output_dir}/PROVENANCE.json"
 
 if [[ "${version}" != "${PINNED_VERSION}" ]]; then
@@ -127,6 +133,7 @@ if [[ ${dry_run} -eq 1 ]]; then
     echo "  worldgen JSON    : ${worldgen_dir} (from ${WORLDGEN_PREFIX}/** inside the jar)"
     echo "  provenance       : ${provenance_file}"
     echo "  verify SHA-1     : $([[ ${skip_verify} -eq 1 ]] && echo no || echo yes)"
+    echo "  structures       : $([[ ${with_structures} -eq 1 ]] && echo "${structure_dir}" || echo no)"
     echo "  region goldens   : $([[ ${generate_regions} -eq 1 ]] && echo requested || echo no)"
     exit 0
 fi
@@ -253,6 +260,25 @@ json_count="$(find "${worldgen_dir}" -name '*.json' -type f | wc -l | tr -d ' ')
 [[ "${json_count}" -gt 0 ]] || die "extracted no worldgen JSON from ${data_jar}"
 log "extracted ${json_count} worldgen JSON files"
 
+# Structure NBT is not worldgen input; it is the only real, vanilla-written
+# NBT available without running a server, so the NBT reader's conformance
+# test parses it. Same rule as everything else here: never committed.
+structure_count=0
+if [[ ${with_structures} -eq 1 ]]; then
+    log "extracting ${STRUCTURE_PREFIX}/** into ${structure_dir}"
+    rm -rf "${structure_dir}"
+    structure_staging="${output_dir}/.extract-structure"
+    rm -rf "${structure_staging}"
+    mkdir -p "${structure_staging}"
+    unzip -qo "${data_jar}" "${STRUCTURE_PREFIX}/*" -d "${structure_staging}" >/dev/null 2>&1 || true
+    [[ -d "${structure_staging}/${STRUCTURE_PREFIX}" ]] \
+        || die "${data_jar} contains no ${STRUCTURE_PREFIX}/ entries"
+    mv "${structure_staging}/${STRUCTURE_PREFIX}" "${structure_dir}"
+    rm -rf "${structure_staging}"
+    structure_count="$(find "${structure_dir}" -name '*.nbt' -type f | wc -l | tr -d ' ')"
+    log "extracted ${structure_count} structure NBT files"
+fi
+
 # --- 5. provenance record ------------------------------------------------
 jq -n \
     --arg version "${version}" \
@@ -263,6 +289,7 @@ jq -n \
     --arg nested_jar_sha256 "${nested_sha256:-}" \
     --arg jar_source "${jar_path:-${jar_url:-}}" \
     --argjson worldgen_files "${json_count}" \
+    --argjson structure_files "${structure_count:-0}" \
     '{
         version: $version,
         pinned_version: $pinned,
@@ -272,6 +299,7 @@ jq -n \
         nested_server_jar_sha256: $nested_jar_sha256,
         server_jar_source: $jar_source,
         worldgen_files: $worldgen_files,
+        structure_files: $structure_files,
         note: "Mojang-derived. Never commit anything in this directory (SPEC 12)."
     }' > "${provenance_file}"
 log "wrote ${provenance_file}"

@@ -28,9 +28,9 @@ Conformance runs separately, because it needs fixtures that are generated
 locally and never committed:
 
 ```bash
-tools/fetch-vanilla --dry-run           # show the plan without touching the network
-tools/fetch-vanilla                     # fetch + verify + extract worldgen JSON
-ctest --preset conformance              # skips loudly while fixtures are absent
+tools/fetch-vanilla --dry-run             # show the plan without touching the network
+tools/fetch-vanilla --with-structures     # fetch + verify + extract vanilla data
+ctest --preset conformance                # skips loudly while fixtures are absent
 ```
 
 `fetch-vanilla` resolves the pinned version through Mojang's piston-meta

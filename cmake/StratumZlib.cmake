@@ -8,6 +8,9 @@
 
 option(STRATUM_FETCH_ZLIB "Fetch and build zlib when the system has none" ON)
 set(STRATUM_ZLIB_TAG "v1.3.1" CACHE STRING "Pinned zlib release tag")
+set(STRATUM_ZLIB_SHA256
+    "17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c"
+    CACHE STRING "SHA-256 of the pinned zlib release archive")
 
 function(stratum_provision_zlib)
     if(TARGET ZLIB::ZLIB)
@@ -31,10 +34,12 @@ function(stratum_provision_zlib)
     message(STATUS "zlib: not found on the system, fetching ${STRATUM_ZLIB_TAG}")
     include(FetchContent)
     set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    # Verified archive rather than a clone: see the note on Catch2 in
+    # tests/CMakeLists.txt.
     FetchContent_Declare(zlib
-        GIT_REPOSITORY https://github.com/madler/zlib.git
-        GIT_TAG ${STRATUM_ZLIB_TAG}
-        GIT_SHALLOW TRUE
+        URL "https://github.com/madler/zlib/archive/refs/tags/${STRATUM_ZLIB_TAG}.tar.gz"
+        URL_HASH SHA256=${STRATUM_ZLIB_SHA256}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(zlib)
 

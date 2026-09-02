@@ -20,3 +20,25 @@ set_tests_properties(conformance.fixtures_present PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
 )
+
+# --- The NBT reader against real, vanilla-written files ---------------------
+add_executable(stratum_conformance_tests
+    nbt_structures_test.cpp
+)
+
+target_link_libraries(stratum_conformance_tests PRIVATE
+    stratum::core
+    Catch2::Catch2WithMain
+    ZLIB::ZLIB
+)
+
+target_compile_definitions(stratum_conformance_tests PRIVATE
+    "STRATUM_FIXTURES_DIR=\"${STRATUM_FIXTURES_DIR}\""
+)
+
+stratum_configure_target(stratum_conformance_tests)
+
+catch_discover_tests(stratum_conformance_tests
+    TEST_PREFIX "conformance."
+    PROPERTIES LABELS "conformance"
+)

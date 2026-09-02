@@ -13,6 +13,8 @@ configure_file(
 
 add_library(stratum_core STATIC
     src/fdlibm_log.cpp
+    src/nbt_reader.cpp
+    src/nbt_tag.cpp
     src/region_file.cpp
     src/version.cpp
 )
@@ -31,6 +33,8 @@ target_sources(stratum_core PUBLIC
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/reader.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/tag.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"

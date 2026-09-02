@@ -9,6 +9,9 @@ option(STRATUM_FETCH_CATCH2
     "Fetch Catch2 v3 with FetchContent when it is not installed" ON)
 
 set(STRATUM_CATCH2_TAG "v3.16.0" CACHE STRING "Pinned Catch2 release tag")
+set(STRATUM_CATCH2_SHA256
+    "0957cae5821b17ce07f0833aaa52b5137643a8382203221f363a8303c109af34"
+    CACHE STRING "SHA-256 of the pinned Catch2 release archive")
 
 find_package(Catch2 3 QUIET)
 
@@ -21,10 +24,16 @@ if(NOT Catch2_FOUND)
     endif()
 
     include(FetchContent)
+    # A release archive rather than a git clone: a cloned dependency keeps a
+    # git update step that can re-run during the build and leave the source
+    # tree momentarily incomplete, which showed up here as builds failing on
+    # a Catch2 source file that plainly existed. An archive is extracted once
+    # and stamped, and its hash is verified — which suits a project whose
+    # whole point is reproducibility.
     FetchContent_Declare(Catch2
-        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG ${STRATUM_CATCH2_TAG}
-        GIT_SHALLOW TRUE
+        URL "https://github.com/catchorg/Catch2/archive/refs/tags/${STRATUM_CATCH2_TAG}.tar.gz"
+        URL_HASH SHA256=${STRATUM_CATCH2_SHA256}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(Catch2)
     list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
