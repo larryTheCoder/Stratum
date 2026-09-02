@@ -3,6 +3,7 @@ add_executable(stratum_unit_tests
     cli_test.cpp
     density_graph_test.cpp
     density_interpreter_test.cpp
+    density_render_test.cpp
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp

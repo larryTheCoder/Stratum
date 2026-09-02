@@ -8,15 +8,22 @@
 // doing nothing is the failure mode this project treats as most severe
 // (SPEC §8).
 
+#include <stratum/data/pack.hpp>
+#include <stratum/data/resource_location.hpp>
+#include <stratum/density/graph.hpp>
+#include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/image/png.hpp>
 #include <stratum/region/diff.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/render/density_render.hpp>
 #include <stratum/render/region_render.hpp>
 #include <stratum/version.hpp>
 
 #include <array>
 #include <charconv>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -45,7 +52,9 @@ constexpr auto kSubcommands = std::to_array<Subcommand>({
     {.name = "diff",
      .milestone = "M1",
      .summary = "compare two region files block-for-block in Java block space"},
-    {.name = "render", .milestone = "M1", .summary = "render a region file to a PNG"},
+    {.name = "render",
+     .milestone = "M1",
+     .summary = "draw a region file, or a density function's field, to a PNG"},
     {.name = "validate",
      .milestone = "M2",
      .summary = "load and schema-check a pack without generating"},
@@ -69,6 +78,11 @@ void printUsage(std::ostream& out) {
         << "  stratum diff <left.mca> <right.mca> [--max <n>]\n"
         << "      Exits 0 when identical, 1 when they differ.\n"
         << "  stratum render <region.mca> --out <file.png> [--mode heightmap|biome|blocks]\n"
+        << "  stratum render --pack <dir> --function <id> --out <file.png>\n"
+        << "      [--seed N] [--origin X,Z] [--y N] [--step N] [--size WxH]\n"
+        << "      [--ramp signed|grey]\n"
+        << "      Shades one density function across an area. This is not terrain\n"
+        << "      height: terrain needs the cell sampler (M3).\n"
         << "\noptions:\n"
         << "  -h, --help       show this message\n"
         << "  -V, --version    print version, engine version and schema pin\n";
@@ -147,22 +161,175 @@ int runDiff(const std::vector<std::string_view>& args) {
     return kExitDifferences;
 }
 
+[[nodiscard]] bool parseInt32(std::string_view text, std::int32_t& value) {
+    const char* first = text.data();
+    const char* last = text.data() + text.size();
+    const auto result = std::from_chars(first, last, value);
+    return result.ec == std::errc{} && result.ptr == last;
+}
+
+[[nodiscard]] bool parseInt64(std::string_view text, std::int64_t& value) {
+    const char* first = text.data();
+    const char* last = text.data() + text.size();
+    const auto result = std::from_chars(first, last, value);
+    return result.ec == std::errc{} && result.ptr == last;
+}
+
+/// "X,Z" — a pair, because two separate options for one coordinate is two
+/// chances to give only half of it.
+[[nodiscard]] bool parseOrigin(std::string_view text, std::int32_t& x, std::int32_t& z) {
+    const std::size_t comma = text.find(',');
+    if (comma == std::string_view::npos) {
+        return false;
+    }
+    return parseInt32(text.substr(0, comma), x) && parseInt32(text.substr(comma + 1), z);
+}
+
+/// "WxH", or "N" for a square.
+[[nodiscard]] bool parseDimensions(std::string_view text, std::size_t& width, std::size_t& height) {
+    const std::size_t cross = text.find('x');
+    if (cross == std::string_view::npos) {
+        if (!parseSize(text, width)) {
+            return false;
+        }
+        height = width;
+        return true;
+    }
+    return parseSize(text.substr(0, cross), width) && parseSize(text.substr(cross + 1), height);
+}
+
+/// Both layouts the loader reads, told apart by what is on disk rather than
+/// by a flag the caller has to get right: a data pack has `pack.mcmeta`, an
+/// extracted registry tree has `density_function` at its root — or one level
+/// down, under `worldgen/`, which is the shape tools/fetch-vanilla leaves.
+[[nodiscard]] stratum::data::Pack openPack(const std::filesystem::path& root) {
+    if (std::filesystem::is_regular_file(root / "pack.mcmeta")) {
+        return stratum::data::Pack::openDataPack(root);
+    }
+    if (std::filesystem::is_directory(root / "density_function")) {
+        return stratum::data::Pack::openWorldgenTree(root);
+    }
+    if (std::filesystem::is_directory(root / "worldgen" / "density_function")) {
+        return stratum::data::Pack::openWorldgenTree(root / "worldgen");
+    }
+    throw stratum::data::PackError(
+        "no pack at '" + root.string() +
+        "': expected pack.mcmeta beside data/, or a worldgen tree containing "
+        "density_function/");
+}
+
+struct DensityRenderRequest {
+    std::string_view pack;
+    std::string_view function;
+    std::int64_t seed = 0;
+    stratum::render::DensityRenderOptions options;
+};
+
+int runDensityRender(const DensityRenderRequest& request, std::string_view output) {
+    const stratum::data::Pack pack = openPack(std::filesystem::path(request.pack));
+    const stratum::density::Graph graph = stratum::density::Graph::resolveAll(pack);
+
+    const auto id = stratum::data::ResourceLocation::parse(request.function);
+    if (!graph.contains(id)) {
+        std::cerr << "stratum render: the pack defines no density function '" << id.toString()
+                  << "'\n";
+        return kExitUsage;
+    }
+
+    const stratum::density::NoiseRegistry noises =
+        stratum::density::NoiseRegistry::create(pack, graph.referencedNoises(), request.seed);
+    const stratum::density::Interpreter interpreter(graph, noises);
+
+    const stratum::render::DensityField field =
+        stratum::render::renderDensity(interpreter, graph.rootOf(id), request.options);
+    stratum::image::writePng(std::filesystem::path(output), field.image);
+
+    std::cout << "wrote " << output << " (" << field.image.width() << "x" << field.image.height()
+              << ", " << id.toString() << ", seed " << request.seed << ", step "
+              << request.options.step << ", " << stratum::render::rampName(request.options.ramp)
+              << ")\n"
+              << "values ranged " << field.minimum << " to " << field.maximum << " over "
+              << field.samples << " sample(s)\n";
+    if (field.nonFinite > 0) {
+        // Said out loud: those pixels are drawn in a colour of their own, and
+        // a reader who did not know that would read them as data.
+        std::cout << field.nonFinite << " sample(s) were not finite and are drawn in magenta\n";
+    }
+    return kExitOk;
+}
+
 int runRender(const std::vector<std::string_view>& args) {
     std::vector<std::string_view> paths;
     std::string_view output;
     stratum::render::Mode mode = stratum::render::Mode::Heightmap;
+    DensityRenderRequest density;
+
+    // One option needs a value and got none: said the same way every time,
+    // naming the option rather than the position.
+    const auto needsValue = [](std::string_view option) {
+        std::cerr << "stratum render: " << option << " needs a value\n";
+        return kExitUsage;
+    };
 
     for (std::size_t i = 2; i < args.size(); ++i) {
         const std::string_view argument = args[i];
         if (argument == "--out") {
             if (i + 1 >= args.size()) {
-                std::cerr << "stratum render: --out needs a path\n";
-                return kExitUsage;
+                return needsValue(argument);
             }
             output = args[++i];
         } else if (argument == "--mode") {
             if (i + 1 >= args.size() || !stratum::render::parseMode(args[i + 1], mode)) {
                 std::cerr << "stratum render: --mode must be heightmap, biome or blocks\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--pack") {
+            if (i + 1 >= args.size()) {
+                return needsValue(argument);
+            }
+            density.pack = args[++i];
+        } else if (argument == "--function") {
+            if (i + 1 >= args.size()) {
+                return needsValue(argument);
+            }
+            density.function = args[++i];
+        } else if (argument == "--seed") {
+            if (i + 1 >= args.size() || !parseInt64(args[i + 1], density.seed)) {
+                std::cerr << "stratum render: --seed must be a 64-bit integer\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--origin") {
+            if (i + 1 >= args.size() ||
+                !parseOrigin(args[i + 1], density.options.originX, density.options.originZ)) {
+                std::cerr << "stratum render: --origin must be X,Z\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--y") {
+            if (i + 1 >= args.size() || !parseInt32(args[i + 1], density.options.y)) {
+                std::cerr << "stratum render: --y must be an integer\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--step") {
+            if (i + 1 >= args.size() || !parseInt32(args[i + 1], density.options.step)) {
+                std::cerr << "stratum render: --step must be an integer\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--size") {
+            if (i + 1 >= args.size() ||
+                !parseDimensions(args[i + 1], density.options.width, density.options.height)) {
+                std::cerr << "stratum render: --size must be WxH, or N for a square\n";
+                return kExitUsage;
+            }
+            ++i;
+        } else if (argument == "--ramp") {
+            if (i + 1 >= args.size() ||
+                !stratum::render::parseRamp(args[i + 1], density.options.ramp)) {
+                std::cerr << "stratum render: --ramp must be signed or grey\n";
                 return kExitUsage;
             }
             ++i;
@@ -174,8 +341,35 @@ int runRender(const std::vector<std::string_view>& args) {
         }
     }
 
-    if (paths.size() != 1 || output.empty()) {
-        std::cerr << "stratum render: expects one region file and --out <file.png>\n\n";
+    if (output.empty()) {
+        std::cerr << "stratum render: --out <file.png> is required\n\n";
+        printUsage(std::cerr);
+        return kExitUsage;
+    }
+
+    // Two forms share the subcommand, so refuse a mixture rather than
+    // quietly honouring one half of what was asked for.
+    if (!density.pack.empty()) {
+        if (!paths.empty()) {
+            std::cerr << "stratum render: --pack renders a density function, so it takes no "
+                         "region file (got '"
+                      << paths.front() << "')\n";
+            return kExitUsage;
+        }
+        if (density.function.empty()) {
+            std::cerr << "stratum render: --pack needs --function <id> to say what to render\n";
+            return kExitUsage;
+        }
+        return runDensityRender(density, output);
+    }
+
+    if (!density.function.empty()) {
+        std::cerr << "stratum render: --function needs --pack <dir> to look the function up in\n";
+        return kExitUsage;
+    }
+
+    if (paths.size() != 1) {
+        std::cerr << "stratum render: expects one region file, or --pack with --function\n\n";
         printUsage(std::cerr);
         return kExitUsage;
     }

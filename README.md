@@ -82,6 +82,25 @@ Anything it cannot compare — a chunk present on one side, one that fails to
 decode, one whose stored coordinates disagree — is reported as a finding
 rather than skipped. Slice rendering is still to come.
 
+Look at a density function before there is any terrain to look at:
+
+```bash
+stratum render --pack <dir> --function minecraft:overworld/continents \
+    --seed 42 --out continents.png \
+    [--origin X,Z] [--y N] [--step N] [--size WxH] [--ramp signed|grey]
+```
+
+`<dir>` is either a data pack (`pack.mcmeta` beside `data/`) or an extracted
+worldgen tree, told apart by what is on disk. The default ramp draws values
+below zero blue and above zero orange, which is the distinction most of
+vanilla's 2D functions are shaped around — continentalness below zero is
+ocean. The value range is printed alongside, because a shade cannot be read
+back into a number.
+
+This is **not** terrain height: a real heightmap needs the cell sampler and
+block placement that follow it (M3). A function this build cannot evaluate
+is refused by name rather than drawn as a guess.
+
 Lint locally the way CI does:
 
 ```bash

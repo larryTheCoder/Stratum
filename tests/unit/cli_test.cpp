@@ -93,6 +93,41 @@ struct CliResult {
     return path;
 }
 
+/// A minimal worldgen tree on disk, so the density render path can be driven
+/// through the real binary without the vanilla fixtures.
+class TempPack {
+public:
+    TempPack() : path_(std::filesystem::temp_directory_path() / "stratum-cli-pack") {
+        std::filesystem::remove_all(path_);
+        std::filesystem::create_directories(path_ / "density_function");
+        std::filesystem::create_directories(path_ / "noise");
+        write("noise", "test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+        write("density_function", "field",
+              R"({"type":"minecraft:noise","noise":"test","xz_scale":1.0,"y_scale":0.0})");
+        write("density_function", "blended",
+              R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,"y_scale":1.0,
+                  "xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    }
+
+    TempPack(const TempPack&) = delete;
+    TempPack& operator=(const TempPack&) = delete;
+
+    ~TempPack() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+
+private:
+    void write(const char* registry, const char* name, const char* json) const {
+        std::ofstream out(path_ / registry / (std::string(name) + ".json"));
+        out << json;
+    }
+
+    std::filesystem::path path_;
+};
+
 } // namespace
 
 TEST_CASE("diff exits 0 and says so when regions are identical", "[cli]") {
@@ -179,4 +214,69 @@ TEST_CASE("the CLI fails loudly rather than half-succeeding", "[cli]") {
         CHECK(result.exitCode == 3);
         CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("not implemented"));
     }
+}
+
+TEST_CASE("render --pack writes a PNG of a density function", "[cli]") {
+    const TempPack pack;
+    const std::filesystem::path image =
+        std::filesystem::temp_directory_path() / "stratum-cli-density.png";
+    std::filesystem::remove(image);
+
+    const CliResult result = runCli("render --pack \"" + pack.path().string() +
+                                    "\" --function field --seed 7 --size 16x8 --step 4 --out \"" +
+                                    image.string() + "\"");
+
+    CHECK(result.exitCode == 0);
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("16x8"));
+    // The range is printed because a picture cannot be read back into
+    // numbers, and a field that came out constant should be obvious from the
+    // console rather than only from squinting at the image.
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("values ranged"));
+    CHECK(std::filesystem::exists(image));
+    CHECK(std::filesystem::file_size(image) > 0U);
+
+    std::filesystem::remove(image);
+}
+
+TEST_CASE("render refuses half-given density options", "[cli]") {
+    const TempPack pack;
+    const std::filesystem::path image =
+        std::filesystem::temp_directory_path() / "stratum-cli-unused.png";
+
+    // --pack without --function: there is no default function, and picking
+    // one would be a guess about what was wanted.
+    const CliResult noFunction =
+        runCli("render --pack \"" + pack.path().string() + "\" --out \"" + image.string() + "\"");
+    CHECK(noFunction.exitCode == 2);
+    CHECK_THAT(noFunction.output, Catch::Matchers::ContainsSubstring("--function"));
+
+    // --function without --pack: nothing to look the name up in.
+    const CliResult noPack = runCli("render --function field --out \"" + image.string() + "\"");
+    CHECK(noPack.exitCode == 2);
+    CHECK_THAT(noPack.output, Catch::Matchers::ContainsSubstring("--pack"));
+
+    // A name the pack does not define is a usage error naming the name, not
+    // an empty image.
+    const CliResult unknown = runCli("render --pack \"" + pack.path().string() +
+                                     "\" --function nope --out \"" + image.string() + "\"");
+    CHECK(unknown.exitCode == 2);
+    CHECK_THAT(unknown.output, Catch::Matchers::ContainsSubstring("minecraft:nope"));
+
+    CHECK_FALSE(std::filesystem::exists(image));
+}
+
+TEST_CASE("render says which node type it cannot draw", "[cli]") {
+    const TempPack pack;
+    const std::filesystem::path image =
+        std::filesystem::temp_directory_path() / "stratum-cli-refused.png";
+    std::filesystem::remove(image);
+
+    const CliResult result = runCli("render --pack \"" + pack.path().string() +
+                                    "\" --function blended --out \"" + image.string() + "\"");
+
+    // Exit 4 is "the command failed", distinct from exit 2's "you asked for
+    // something malformed" — the request was well formed and cannot be met.
+    CHECK(result.exitCode == 4);
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
+    CHECK_FALSE(std::filesystem::exists(image));
 }

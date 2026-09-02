@@ -15,6 +15,7 @@ add_library(stratum_core STATIC
     src/chunk.cpp
     src/density_graph.cpp
     src/density_interpreter.cpp
+    src/density_render.cpp
     src/fdlibm_log.cpp
     src/md5.cpp
     src/pack.cpp
@@ -59,6 +60,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/noise/perlin.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/diff.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/density_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/region_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/xoroshiro128.hpp"

@@ -275,12 +275,20 @@ Its own component (`lib/mapping/`), its own tests:
   comparisons on 2D-derivable values.
 
   Landed: the pack loader, the resolved density graph, the mcdoc-derived
-  schema, the noise registry and the interpreter. Vanilla's overworld
-  climate chain — `shift_x`/`shift_z`, `continents`, `erosion`, `ridges`,
-  `ridges_folded` and `offset` — is evaluated from vanilla's own JSON and
-  matches cubiomes bit-for-bit across six world seeds. Remaining:
-  heightmap-style rendering and the golden comparisons themselves, which
-  need terrain and so wait on M3.
+  schema, the noise registry, the interpreter, and heightmap-style rendering
+  of a density function's field through `stratum render --pack`. Vanilla's
+  overworld climate chain — `shift_x`/`shift_z`, `continents`, `erosion`,
+  `ridges`, `ridges_folded` and `offset` — is evaluated from vanilla's own
+  JSON and matches cubiomes bit-for-bit across six world seeds.
+
+  Remaining: the golden comparisons themselves. "2D-derivable values" turned
+  out to be a smaller set than the milestone assumed — a chunk's stored
+  `Heightmaps` are a product of terrain, not of the 2D chain, so there is
+  nothing in a golden region a 2D pipeline alone can be diffed against. They
+  move to M3, where generated terrain makes them meaningful. The cubiomes
+  comparison is what stands in their place until then, and it is a weaker
+  claim: an independent reimplementation agreeing with us, rather than
+  Mojang's own output.
 - **M3** — 3D density: full noise router, cell sampling + trilinear
   interpolation, all cache node types, aquifer fill decision, compiled flat
   execution program, Tier-A goldens passing for terrain shape.
