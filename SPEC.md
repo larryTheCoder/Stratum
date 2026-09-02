@@ -497,6 +497,36 @@ Open:
   up as Java does), and the vectors deliberately stay inside the band where
   the two agree. Where the wrap actually bites, nothing checks it.
 
+- **`legacy_random_source` is honoured by refusing, not by guessing (M3).**
+  A noise settings entry picks one generator for all of a dimension's
+  noises. Four of vanilla's seven — Nether, End, caves, floating islands —
+  pick the Java LCG; the overworld and its two variants pick Xoroshiro.
+
+  This mattered more than it looked. `minecraft:temperature` is referenced
+  by the overworld's router *and* by the Nether's, so one pack needs the same
+  noise seeded two different ways, and the registry was built once per pack
+  and always with Xoroshiro. Three dimensions were right and four were
+  silently wrong — invisible only because nothing generates terrain yet, and
+  baked into the shape of the API rather than a slip in one function.
+
+  Registries are now per dimension, and `RandomSource` is a required
+  argument with no default, because a default is how this happened.
+  `RandomSource::Legacy` throws: how a noise's *name* becomes an LCG seed is
+  not settled here. cubiomes seeds named noises only through Xoroshiro; it
+  models the LCG for the blended noise alone, which is a different
+  construction with no name hashing. So the four legacy dimensions cannot be
+  built, and `stratum validate` reports each one as a warning and leaves its
+  router **unchecked** — deliberately not counted as fifteen failures, since
+  "we did not look" and "we looked and it does not work" are different
+  claims. That is why the headline count reads 39 of 45 across 3 of 7
+  dimensions rather than 94 of 105: fewer entries, and all of them ones we
+  can actually speak to.
+
+  One assumption, stated because it has not been verified: that the flag
+  selects the generator for *all* of a dimension's noises rather than some
+  subset. That matches a single RandomState being constructed once, but
+  nothing here checks it, and if it is wrong this refusal is too broad.
+
 - **The three blending types take their no-blending values (M2, extended M3).**
   This engine generates every chunk itself and never blends against terrain
   another generator wrote. `blend_alpha` is 1.0, `blend_offset` is 0.0, and

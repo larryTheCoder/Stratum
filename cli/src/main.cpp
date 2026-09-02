@@ -220,8 +220,11 @@ int runDensityRender(const DensityRenderRequest& request, std::string_view outpu
         return kExitUsage;
     }
 
-    const stratum::density::NoiseRegistry noises =
-        stratum::density::NoiseRegistry::create(pack, graph.referencedNoises(), request.seed);
+    const stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
+        pack, graph.referencedNoises(), request.seed,
+        // No dimension here, so no `legacy_random_source` to honour:
+        // `render --pack` draws one function's field, not a world.
+        stratum::density::RandomSource::Xoroshiro);
     const stratum::density::Interpreter interpreter(graph, noises);
 
     const stratum::render::DensityField field =
@@ -425,7 +428,8 @@ int runValidate(const std::vector<std::string_view>& args) {
         if (report.noiseSettings > 0) {
             std::cout << ", " << report.routerEntriesEvaluable << " of " << report.routerEntries
                       << " router entr" << (report.routerEntries == 1 ? "y" : "ies") << " across "
-                      << report.noiseSettings << " dimension(s)";
+                      << report.dimensionsChecked << " of " << report.noiseSettings
+                      << " dimension(s)";
         }
         std::cout << '\n';
     }

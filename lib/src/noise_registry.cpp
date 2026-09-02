@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace stratum::density {
@@ -85,11 +86,33 @@ NoiseParameters NoiseParameters::fromJson(const nlohmann::json& json,
     return parsed;
 }
 
+std::string_view randomSourceName(RandomSource source) noexcept {
+    switch (source) {
+        case RandomSource::Xoroshiro:
+            return "xoroshiro";
+        case RandomSource::Legacy:
+            return "legacy";
+    }
+    return "unknown";
+}
+
 NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
                                     std::span<const data::ResourceLocation> wanted,
-                                    std::int64_t worldSeed) {
+                                    std::int64_t worldSeed, RandomSource source) {
+    if (source == RandomSource::Legacy) {
+        // Refused rather than approximated. The modern derivation is not a
+        // near-enough stand-in: it would seed every noise differently and
+        // produce a Nether that generates and is not vanilla's, with nothing
+        // to indicate it (SPEC §8, §11).
+        throw NoiseError(
+            "this dimension declares legacy_random_source, and how a noise's name becomes a "
+            "seed under the Java LCG is not settled here — so its noises cannot be built. This "
+            "build will not substitute the modern derivation (SPEC §11)");
+    }
+
     NoiseRegistry registry;
     registry.worldSeed_ = worldSeed;
+    registry.source_ = source;
 
     // Forked once, then salted per name. Building it outside the loop is not
     // an optimisation: the base is defined by two draws from the world seed

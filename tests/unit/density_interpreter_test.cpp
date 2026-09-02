@@ -103,13 +103,15 @@ class Pipeline {
 public:
     Pipeline(const Pack& pack, std::int64_t seed = 0)
         : graph_(Graph::resolveAll(pack)),
-          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed,
+                                        stratum::density::RandomSource::Xoroshiro)),
           interpreter_(graph_, noises_) {}
 
     /// Over a cell lattice, which is what gives `interpolated` a meaning.
     Pipeline(const Pack& pack, std::int64_t seed, CellGeometry cells)
         : graph_(Graph::resolveAll(pack)),
-          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed,
+                                        stratum::density::RandomSource::Xoroshiro)),
           interpreter_(graph_, noises_, cells) {}
 
     Pipeline(const Pipeline&) = delete;
@@ -455,7 +457,8 @@ TEST_CASE("a noise a density function names but the pack lacks is refused",
     const Graph graph = Graph::resolveAll(tree.pack());
     // Refused where the noise is built, naming it, rather than on whichever
     // chunk first reached that node.
-    CHECK_THROWS_WITH(NoiseRegistry::create(tree.pack(), graph.referencedNoises(), 0),
+    CHECK_THROWS_WITH(NoiseRegistry::create(tree.pack(), graph.referencedNoises(), 0,
+                                            stratum::density::RandomSource::Xoroshiro),
                       ContainsSubstring("minecraft:missing"));
 }
 
@@ -495,9 +498,12 @@ TEST_CASE("a noise is a pure function of the world seed and its own name", "[den
     const std::vector<ResourceLocation> wanted{ResourceLocation::parse("alpha"),
                                                ResourceLocation::parse("beta")};
 
-    const NoiseRegistry first = NoiseRegistry::create(pack, wanted, 99);
-    const NoiseRegistry again = NoiseRegistry::create(pack, wanted, 99);
-    const NoiseRegistry other = NoiseRegistry::create(pack, wanted, 100);
+    const NoiseRegistry first =
+        NoiseRegistry::create(pack, wanted, 99, stratum::density::RandomSource::Xoroshiro);
+    const NoiseRegistry again =
+        NoiseRegistry::create(pack, wanted, 99, stratum::density::RandomSource::Xoroshiro);
+    const NoiseRegistry other =
+        NoiseRegistry::create(pack, wanted, 100, stratum::density::RandomSource::Xoroshiro);
 
     const auto sample = [&wanted](const NoiseRegistry& registry, std::size_t which) {
         return registry.get(wanted[which]).sample(1.5, -2.25, 3.75);
@@ -724,7 +730,8 @@ TEST_CASE("an unusable cell geometry is refused where it is given", "[density][c
     defineCellPack(tree);
     const Pack pack = tree.pack();
     const Graph graph = Graph::resolveAll(pack);
-    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 0);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 0,
+                                                       stratum::density::RandomSource::Xoroshiro);
 
     // Better here than as a division by zero on the first interpolation.
     CHECK_THROWS_WITH(Interpreter(graph, noises, CellGeometry{.width = 0, .height = 8}),
@@ -745,4 +752,31 @@ TEST_CASE("without a lattice the cell types are still refused, and say why", "[d
     CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("smooth")),
                       ContainsSubstring("cell geometry") && ContainsSubstring("noise settings"));
     CHECK(pipeline.interpreter().cells() == std::nullopt);
+}
+
+TEST_CASE("a legacy random source is refused rather than approximated", "[density][noise]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":0.0})");
+
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const auto wanted = graph.referencedNoises();
+
+    // The modern derivation is not a near-enough stand-in for the legacy
+    // one: it would seed every noise differently and produce a Nether that
+    // generates and is not vanilla's, with nothing to say so.
+    CHECK_THROWS_WITH(
+        NoiseRegistry::create(pack, wanted, 0, stratum::density::RandomSource::Legacy),
+        ContainsSubstring("legacy_random_source") && ContainsSubstring("will not substitute"));
+
+    const NoiseRegistry modern =
+        NoiseRegistry::create(pack, wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    CHECK(modern.source() == stratum::density::RandomSource::Xoroshiro);
+    CHECK(modern.size() == 1U);
+
+    CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Xoroshiro) ==
+          "xoroshiro");
+    CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
 }

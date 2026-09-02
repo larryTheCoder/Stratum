@@ -177,12 +177,26 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     CHECK(report.splines == 354U);
 
     // The routers are resolved into the same graph, so the settings are
-    // checked here too: seven dimensions, fifteen entries each.
+    // checked here too — but only the dimensions whose noises this build can
+    // actually seed. Four of vanilla's seven declare `legacy_random_source`,
+    // and their entries are left unchecked rather than counted as failures:
+    // "we did not look" is not "we looked and it does not work".
     CHECK(report.noiseSettings == 7U);
-    CHECK(report.routerEntries == 105U);
-    // 94 with the cell sampler, 88 without it: six of vanilla's router
-    // entries were waiting on `interpolated` alone.
-    CHECK(report.routerEntriesEvaluable == 94U);
+    CHECK(report.dimensionsChecked == 3U);
+    CHECK(report.routerEntries == 45U);
+    CHECK(report.routerEntriesEvaluable == 39U);
+
+    // The six are preliminary_surface_level and final_density in each of the
+    // three, waiting on find_top_surface and old_blended_noise respectively.
+    std::vector<std::string> unseeded;
+    for (const stratum::validate::Finding& finding : report.findings) {
+        if (finding.message.find("legacy_random_source") != std::string::npos) {
+            unseeded.push_back(finding.subject);
+        }
+    }
+    std::ranges::sort(unseeded);
+    CHECK(unseeded == std::vector<std::string>{"minecraft:caves", "minecraft:end",
+                                               "minecraft:floating_islands", "minecraft:nether"});
 
     // The ten that are left are exactly the ones SPEC §11 accounts for, and
     // no others. A refusal that spread to a function nobody expected would
@@ -191,9 +205,12 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // counted above rather than listed here.
     std::vector<std::string> unevaluable;
     for (const stratum::validate::Finding& finding : report.findings) {
+        // Selected on the message, not the subject: a legacy dimension's
+        // warning is also about a "minecraft:" subject with no space in it,
+        // and it says something entirely different.
         if (finding.severity == stratum::validate::Severity::Warning &&
-            finding.subject.starts_with("minecraft:") &&
-            finding.subject.find(' ') == std::string::npos) {
+            finding.subject.find(' ') == std::string::npos &&
+            finding.message.find("cannot be evaluated by this build") != std::string::npos) {
             unevaluable.push_back(finding.subject);
         }
     }

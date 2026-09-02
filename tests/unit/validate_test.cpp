@@ -102,7 +102,8 @@ void defineWorkingPack(const TempTree& tree) {
 }
 
 /// A valid settings file whose `final_density` points at @p finalDensity.
-void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity) {
+void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity,
+                    bool legacyRandomSource = false) {
     nlohmann::json router = nlohmann::json::object();
     for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
         router[std::string(stratum::settings::routerEntryName(
@@ -117,7 +118,7 @@ void defineSettings(const TempTree& tree, std::string_view name, std::string_vie
         {"disable_mob_generation", false},
         {"aquifers_enabled", true},
         {"ore_veins_enabled", true},
-        {"legacy_random_source", false},
+        {"legacy_random_source", legacyRandomSource},
         {"noise", {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}}},
         {"noise_router", router},
         {"spawn_target", nlohmann::json::array()},
@@ -398,4 +399,32 @@ TEST_CASE("a router entry this build cannot evaluate is named with its dimension
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Warning);
     CHECK_THAT(finding->message, ContainsSubstring("minecraft:old_blended_noise"));
+}
+
+TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecked", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    defineSettings(tree, "overworld", "field", /*legacyRandomSource=*/false);
+    defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true);
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    // Not an error: the pack is fine, this build cannot seed that dimension.
+    CHECK(report.count(Severity::Error) == 0U);
+    CHECK(report.noiseSettings == 2U);
+
+    // Left out of the counts entirely rather than counted as failures.
+    // Reporting fifteen unevaluable entries would say we looked and they did
+    // not work, and we did not look.
+    CHECK(report.dimensionsChecked == 1U);
+    CHECK(report.routerEntries == stratum::settings::kRouterEntryCount);
+    CHECK(report.routerEntriesEvaluable == stratum::settings::kRouterEntryCount);
+
+    const Finding* finding = findingAbout(report, "minecraft:nether");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Warning);
+    CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
+
+    // And nothing was said about the dimension that is fine.
+    CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
 }

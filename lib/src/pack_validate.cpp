@@ -186,19 +186,42 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         return report;
     }
 
-    const density::NoiseRegistry noises =
-        density::NoiseRegistry::create(pack, referenced, options.seed);
+    // Xoroshiro for the pack-level pass, deliberately: a density function
+    // file belongs to no dimension, so it has no random source of its own,
+    // and what is being asked here is which node *types* can be evaluated —
+    // a structural question that does not depend on how a noise was seeded.
+    // The per-dimension passes below are the ones that care.
+    const density::NoiseRegistry noises = density::NoiseRegistry::create(
+        pack, referenced, options.seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interpreter(*graph, noises);
 
     for (const auto& [id, dimension] : loaded->settings) {
-        // Each dimension gets its own interpreter, because the cell lattice
-        // that gives `interpolated` a meaning is a property of the dimension
-        // and not of the function: the same density function is sampled on
-        // 4x8 cells by the overworld and 8x4 by the End.
+        // Each dimension gets its own noises and its own interpreter. Both
+        // are properties of the dimension rather than of the function: the
+        // same density function is sampled on 4x8 cells by the overworld and
+        // 8x4 by the End, and the same `minecraft:temperature` is seeded by
+        // Xoroshiro in the overworld and by the Java LCG in the Nether.
+        const auto source = dimension.legacyRandomSource ? density::RandomSource::Legacy
+                                                         : density::RandomSource::Xoroshiro;
+        std::optional<density::NoiseRegistry> dimensionNoises;
+        try {
+            dimensionNoises.emplace(
+                density::NoiseRegistry::create(pack, referenced, options.seed, source));
+        } catch (const density::NoiseError& error) {
+            // A warning, not an error: the pack is not wrong, this build
+            // cannot seed that dimension. Its router entries are left
+            // *unchecked* rather than counted as failures — "we did not
+            // look" and "we looked and it does not work" are different
+            // things and the counts should not conflate them.
+            add(report, Severity::Warning, id.toString(), error.what());
+            continue;
+        }
+
         const density::Interpreter sampler(
-            *graph, noises,
+            *graph, *dimensionNoises,
             density::CellGeometry{.width = dimension.geometry.cellWidth(),
                                   .height = dimension.geometry.cellHeight()});
+        ++report.dimensionsChecked;
 
         for (std::size_t i = 0; i < settings::kRouterEntryCount; ++i) {
             const auto entry = static_cast<settings::RouterEntry>(i);

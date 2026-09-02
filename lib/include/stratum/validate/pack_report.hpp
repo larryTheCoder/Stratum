@@ -82,10 +82,15 @@ struct Report {
     std::size_t nodes = 0;
     std::size_t splines = 0;
     std::size_t noiseSettings = 0;
-    /// Router entries across every noise settings entry, and how many of
-    /// them this build could evaluate. Counted rather than only listed:
-    /// seven dimensions times fifteen entries is a lot of warnings, and
-    /// "94 of 105" is the number someone actually wants.
+    /// Of those, the ones whose noises this build can actually seed. A
+    /// dimension declaring `legacy_random_source` is not one, and its router
+    /// is left unchecked rather than reported as broken.
+    std::size_t dimensionsChecked = 0;
+    /// Router entries across the *checked* dimensions, and how many of them
+    /// this build could evaluate. Counted rather than only listed: fifteen
+    /// entries a dimension is a lot of warnings, and "33 of 45" is the
+    /// number someone actually wants — with the dimensions that were never
+    /// looked at kept out of it rather than folded in as failures.
     std::size_t routerEntries = 0;
     std::size_t routerEntriesEvaluable = 0;
 

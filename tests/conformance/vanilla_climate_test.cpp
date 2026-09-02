@@ -84,7 +84,8 @@ public:
 
     Overworld(const Pack& pack, std::int64_t seed)
         : graph_(Graph::resolveAll(pack)),
-          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed,
+                                        stratum::density::RandomSource::Xoroshiro)),
           interpreter_(graph_, noises_) {}
 
     [[nodiscard]] double at(std::string_view function, Point point) const {
@@ -127,11 +128,13 @@ TEST_CASE("the noises a world seed derives match cubiomes", "[conformance][densi
         wanted.push_back(ResourceLocation::parse(std::string(vector.noise)));
     }
 
-    NoiseRegistry registry = NoiseRegistry::create(pack, wanted, currentSeed);
+    NoiseRegistry registry =
+        NoiseRegistry::create(pack, wanted, currentSeed, stratum::density::RandomSource::Xoroshiro);
     for (const auto& vector : kClimateNoiseVectors) {
         if (vector.seed != currentSeed) {
             currentSeed = vector.seed;
-            registry = NoiseRegistry::create(pack, wanted, currentSeed);
+            registry = NoiseRegistry::create(pack, wanted, currentSeed,
+                                             stratum::density::RandomSource::Xoroshiro);
         }
 
         const auto id = ResourceLocation::parse(std::string(vector.noise));

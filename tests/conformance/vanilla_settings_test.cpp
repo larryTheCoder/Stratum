@@ -178,8 +178,8 @@ TEST_CASE("vanilla's routers gain the cell-structured entries once there is a la
 
     const Pack pack = Pack::open(tree);
     const LoadedSettings loaded = stratum::settings::loadAll(pack);
-    const stratum::density::NoiseRegistry noises =
-        stratum::density::NoiseRegistry::create(pack, loaded.graph.referencedNoises(), 42);
+    const stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), 42, stratum::density::RandomSource::Xoroshiro);
 
     const NoiseSettings& overworld = get(loaded, "minecraft:overworld");
     const stratum::density::Interpreter withoutCells(loaded.graph, noises);

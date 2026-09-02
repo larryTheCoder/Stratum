@@ -60,7 +60,8 @@ class Overworld {
 public:
     Overworld(const Pack& pack, std::int64_t seed)
         : graph_(Graph::resolveAll(pack)),
-          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed,
+                                        stratum::density::RandomSource::Xoroshiro)),
           interpreter_(graph_, noises_) {}
 
     Overworld(const Overworld&) = delete;

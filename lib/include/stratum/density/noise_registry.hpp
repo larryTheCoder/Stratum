@@ -29,6 +29,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace stratum::density {
@@ -40,6 +41,29 @@ class NoiseError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
+
+/// Which generator seeds a dimension's noises. A noise settings entry
+/// chooses one for all of them at once, through `legacy_random_source`, so
+/// the same `minecraft:temperature` is a different noise in the overworld
+/// than it is in the Nether — and a registry can only hold one of the two.
+///
+/// Named rather than a bool, and required rather than defaulted, because a
+/// default is exactly how this went wrong: the registry used to be built
+/// per pack and always with Xoroshiro, which was right for three of
+/// vanilla's seven dimensions and silently wrong for the other four.
+enum class RandomSource : std::uint8_t {
+    /// Xoroshiro128++ through the positional factory, salted with the MD5 of
+    /// each noise's identifier. What a dimension declaring
+    /// `legacy_random_source: false` uses, which is the overworld and its
+    /// two variants.
+    Xoroshiro,
+    /// The Java LCG. What the Nether, the End, caves and floating islands
+    /// use — and what this build cannot yet derive, because nothing
+    /// available says how a name becomes an LCG seed here (SPEC §11).
+    Legacy,
+};
+
+[[nodiscard]] std::string_view randomSourceName(RandomSource source) noexcept;
 
 /// A `worldgen/noise` entry, as declared.
 struct NoiseParameters {
@@ -62,9 +86,14 @@ public:
     /// not define is an error here rather than on the chunk that first
     /// reached it — which is the whole reason Graph::referencedNoises()
     /// exists.
+    ///
+    /// @p source has no default on purpose. Throws NoiseError for
+    /// RandomSource::Legacy: this build cannot derive it, and it will not
+    /// quietly substitute the modern derivation, which would produce four of
+    /// vanilla's seven dimensions in a world that generates and is wrong.
     [[nodiscard]] static NoiseRegistry create(const data::Pack& pack,
                                               std::span<const data::ResourceLocation> wanted,
-                                              std::int64_t worldSeed);
+                                              std::int64_t worldSeed, RandomSource source);
 
     [[nodiscard]] const noise::NormalNoise* find(const data::ResourceLocation& id) const noexcept;
 
@@ -75,9 +104,12 @@ public:
 
     [[nodiscard]] std::int64_t worldSeed() const noexcept { return worldSeed_; }
 
+    [[nodiscard]] RandomSource source() const noexcept { return source_; }
+
 private:
     std::map<data::ResourceLocation, noise::NormalNoise> noises_;
     std::int64_t worldSeed_ = 0;
+    RandomSource source_ = RandomSource::Xoroshiro;
 };
 
 } // namespace stratum::density

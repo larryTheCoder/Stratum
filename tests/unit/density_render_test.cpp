@@ -96,7 +96,8 @@ class Pipeline {
 public:
     Pipeline(const Pack& pack, std::int64_t seed)
         : graph_(Graph::resolveAll(pack)),
-          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed)),
+          noises_(NoiseRegistry::create(pack, graph_.referencedNoises(), seed,
+                                        stratum::density::RandomSource::Xoroshiro)),
           interpreter_(graph_, noises_) {}
 
     Pipeline(const Pipeline&) = delete;
