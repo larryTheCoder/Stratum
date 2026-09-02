@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Stratum — derive the density-function schema from mcdoc.
+
+SPEC section 11: schema validation is derived from mcdoc definitions matching
+the pinned version, not hand-written. This fetches SpyglassMC/vanilla-mcdoc
+(MIT) at a pinned commit, reads the density-function schema, filters it to
+the pinned Minecraft version, and writes the generated C++ tables.
+
+vanilla-mcdoc is fetched, never vendored: the repository ships this tool and
+the generated tables, not somebody else's source tree.
+
+Usage:
+    tools/mcdoc-sync                 # fetch the pinned commit and regenerate
+    tools/mcdoc-sync --mcdoc <path>  # use a checkout you already have
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent / "mcdoc"))
+
+import mcdoc  # noqa: E402
+from emit import emit_node_types, emit_schema  # noqa: E402
+from schema import SchemaBuilder  # noqa: E402
+
+# Pinned deliberately: a different commit could change the generated tables,
+# and the tables are what the loader validates against.
+MCDOC_REPOSITORY = "https://github.com/SpyglassMC/vanilla-mcdoc.git"
+MCDOC_COMMIT = "c373ab678a7bf70f26c06fec3e7b470886dfb2f7"
+
+# Keep in sync with SPEC section 3 and STRATUM_MINECRAFT_VERSION.
+MINECRAFT_VERSION = "1.21.11"
+
+COMMAND = "tools/mcdoc-sync"
+
+
+def fetch(destination: pathlib.Path) -> pathlib.Path:
+    print(f"==> fetching vanilla-mcdoc at {MCDOC_COMMIT}", file=sys.stderr)
+    checkout = destination / "vanilla-mcdoc"
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", MCDOC_REPOSITORY],
+                   check=True)
+    subprocess.run(["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", "origin",
+                    MCDOC_COMMIT], check=True)
+    subprocess.run(["git", "-C", str(checkout), "checkout", "-q", "FETCH_HEAD"], check=True)
+
+    actual = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    if actual != MCDOC_COMMIT:
+        raise SystemExit(f"error: expected vanilla-mcdoc {MCDOC_COMMIT} but got {actual}")
+    return checkout
+
+
+def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
+    source = checkout / "java/data/worldgen/density_function.mcdoc"
+    if not source.is_file():
+        raise SystemExit(f"error: {source} is missing; has the schema moved?")
+
+    document = mcdoc.parse(source.read_text(encoding="utf-8"), str(source))
+    types = SchemaBuilder(document, MINECRAFT_VERSION).build("density_function")
+    print(f"==> {len(types)} density function types at {MINECRAFT_VERSION}", file=sys.stderr)
+
+    node_types = repository_root / "lib/include/stratum/density/node_types.inc"
+    schema_table = repository_root / "lib/src/density_schema.inc"
+    node_types.write_text(emit_node_types(types, COMMAND), encoding="utf-8")
+    schema_table.write_text(
+        emit_schema(types, COMMAND, MINECRAFT_VERSION, MCDOC_COMMIT), encoding="utf-8")
+    print(f"==> wrote {node_types.relative_to(repository_root)}", file=sys.stderr)
+    print(f"==> wrote {schema_table.relative_to(repository_root)}", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mcdoc", type=pathlib.Path,
+                        help="an existing vanilla-mcdoc checkout to read instead of fetching")
+    arguments = parser.parse_args()
+
+    repository_root = pathlib.Path(__file__).resolve().parent.parent
+
+    if arguments.mcdoc is not None:
+        generate(arguments.mcdoc, repository_root)
+        return
+
+    with tempfile.TemporaryDirectory() as directory:
+        generate(fetch(pathlib.Path(directory)), repository_root)
+
+
+if __name__ == "__main__":
+    main()

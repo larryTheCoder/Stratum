@@ -13,7 +13,7 @@ Non-C++ helper scripts: fixture fetching, schema sync, CI glue, repo lint.
 | `vectors/generate-md5-vectors.sh` | M1 (present) | Emits `tests/unit/md5_vectors.inc` from `md5sum`, covering RFC 1321's suite, the padding boundaries, and the `octave_*` salts vanilla seeds noise with |
 | `vectors/generate-noise-vectors.sh` + `noise_vectors.c` | M1 (present) | Emits `tests/unit/noise_vectors.inc` from cubiomes (MIT) at a pinned commit — fetched, never vendored. Covers the bounded draw, Perlin init and sampling, simplex, octave and normal noise |
 | `fetch-vanilla` | M1 (present) | Resolves and verifies the pinned version through Mojang's piston-meta manifest (manifest → metadata SHA-1 → published jar SHA-1 → nested jar SHA-256), downloads or accepts a server jar, and extracts `data/minecraft/worldgen/**`. `--with-structures` also extracts the 1202 vanilla structure `.nbt` files. `--generate-regions --accept-eula` runs the vanilla server headlessly to produce golden region files for the fixed seed set — frozen, with carvers and features stripped, and with a margin so every chunk reaches full status (SPEC §7) |
-| `mcdoc-sync` | M2 | Vendors the mcdoc (Spyglass) schema snapshot matching the pinned version, for load-time validation |
+| `mcdoc-sync` | M2 (present) | Fetches SpyglassMC/vanilla-mcdoc (MIT) at a pinned commit, reads the density-function schema, filters it to the pinned Minecraft version, and generates the C++ tables the loader validates against. Fetched, never vendored. The reader is strict: an mcdoc construct it cannot map raises rather than being skipped, because a silently incomplete table would reject datapacks vanilla accepts |
 
 ## Provenance
 

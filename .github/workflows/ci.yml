@@ -89,6 +89,16 @@ jobs:
           tools/vectors/generate-noise-vectors.sh "${RUNNER_TEMP}/noise_vectors.inc"
           diff -u tests/unit/noise_vectors.inc "${RUNNER_TEMP}/noise_vectors.inc"
 
+      - name: Generated schema is reproducible
+        # The density function schema is derived from mcdoc at a pinned
+        # commit (SPEC §11), so a hand-edit to the generated tables — or a
+        # reader that silently stopped understanding a construct — shows up
+        # here rather than as a datapack the engine wrongly rejects.
+        run: |
+          tools/mcdoc-sync
+          git diff --exit-code -- lib/src/density_schema.inc \
+              lib/include/stratum/density/node_types.inc
+
       - name: Install clang-tidy
         # Pinned: clang-tidy's check set changes between releases, so an
         # unpinned linter is a gate that moves on its own. Reproduce locally

@@ -247,6 +247,45 @@ TEST_CASE("a spline that could not be interpolated is refused", "[density][graph
     }
 }
 
+TEST_CASE("types the schema allows but vanilla never uses still resolve",
+          "[density][graph][schema]") {
+    // The reason the schema is derived from mcdoc rather than from vanilla's
+    // own files: a datapack may use any type the version defines, and eight
+    // of them appear nowhere in vanilla's data. Before mcdoc-sync these were
+    // rejected as unknown.
+    for (const std::string_view type :
+         {"minecraft:square", "minecraft:squeeze", "minecraft:blend_density", "minecraft:invert",
+          "minecraft:slide", "minecraft:cache_all_in_cell"}) {
+        CAPTURE(type);
+        const TempTree tree;
+        tree.define("a", R"({"type":")" + std::string(type) + R"(","argument":1})");
+        CHECK_NOTHROW(tree.resolve());
+    }
+
+    // shift takes a noise, like its shift_a and shift_b siblings.
+    const TempTree shift;
+    shift.define("a", R"({"type":"minecraft:shift","argument":"minecraft:offset"})");
+    const Graph graph = shift.resolve();
+    CHECK(graph.node(graph.rootOf(ResourceLocation::parse("a"))).noise.has_value());
+}
+
+TEST_CASE("the schema's per-version restrictions are enforced", "[density][graph][schema]") {
+    // At this version clamp's input must be given inline; only the schema
+    // records that, and vanilla's own two clamps both obey it.
+    const TempTree tree;
+    tree.define("target", "1.0");
+    tree.define("a", R"({"type":"minecraft:clamp","input":"target","min":0,"max":1})");
+    REQUIRE_THROWS_WITH(tree.resolve(),
+                        Catch::Matchers::ContainsSubstring("does not accept an identifier"));
+
+    // Given inline, the same node is fine.
+    const TempTree inlined;
+    inlined.define("a",
+                   R"({"type":"minecraft:clamp","input":{"type":"minecraft:constant",
+                       "argument":1},"min":0,"max":1})");
+    CHECK_NOTHROW(inlined.resolve());
+}
+
 TEST_CASE("every node type has a name that round-trips", "[density][graph]") {
     for (const std::string_view name :
          {"minecraft:add", "minecraft:shifted_noise", "minecraft:old_blended_noise",

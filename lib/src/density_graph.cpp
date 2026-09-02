@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,96 +26,17 @@ namespace {
 struct TypeInfo {
     NodeType type;
     std::string_view name;
-    std::vector<Field> fields;
+    std::span<const SchemaField> fields;
 };
 
-/// The node set, and each type's fields in declaration order. Derived from
-/// vanilla's own density functions: every entry here is exercised by data in
-/// the pinned version, and nothing is listed that was not observed.
-[[nodiscard]] const std::vector<TypeInfo>& typeTable() {
-    static const std::vector<TypeInfo> kTable = {
-        {NodeType::Constant, "minecraft:constant", {{"argument", FieldKind::Number}}},
-        {NodeType::Add,
-         "minecraft:add",
-         {{"argument1", FieldKind::Function}, {"argument2", FieldKind::Function}}},
-        {NodeType::Mul,
-         "minecraft:mul",
-         {{"argument1", FieldKind::Function}, {"argument2", FieldKind::Function}}},
-        {NodeType::Min,
-         "minecraft:min",
-         {{"argument1", FieldKind::Function}, {"argument2", FieldKind::Function}}},
-        {NodeType::Max,
-         "minecraft:max",
-         {{"argument1", FieldKind::Function}, {"argument2", FieldKind::Function}}},
-        {NodeType::Abs, "minecraft:abs", {{"argument", FieldKind::Function}}},
-        {NodeType::Cube, "minecraft:cube", {{"argument", FieldKind::Function}}},
-        {NodeType::HalfNegative, "minecraft:half_negative", {{"argument", FieldKind::Function}}},
-        {NodeType::QuarterNegative,
-         "minecraft:quarter_negative",
-         {{"argument", FieldKind::Function}}},
-        {NodeType::Clamp,
-         "minecraft:clamp",
-         {{"input", FieldKind::Function}, {"min", FieldKind::Number}, {"max", FieldKind::Number}}},
-        {NodeType::RangeChoice,
-         "minecraft:range_choice",
-         {{"input", FieldKind::Function},
-          {"min_inclusive", FieldKind::Number},
-          {"max_exclusive", FieldKind::Number},
-          {"when_in_range", FieldKind::Function},
-          {"when_out_of_range", FieldKind::Function}}},
-        {NodeType::Noise,
-         "minecraft:noise",
-         {{"noise", FieldKind::NoiseRef},
-          {"xz_scale", FieldKind::Number},
-          {"y_scale", FieldKind::Number}}},
-        {NodeType::ShiftedNoise,
-         "minecraft:shifted_noise",
-         {{"noise", FieldKind::NoiseRef},
-          {"shift_x", FieldKind::Function},
-          {"shift_y", FieldKind::Function},
-          {"shift_z", FieldKind::Function},
-          {"xz_scale", FieldKind::Number},
-          {"y_scale", FieldKind::Number}}},
-        // shift_a and shift_b take a noise, not a nested function — the one
-        // place where `argument` does not mean what it does elsewhere.
-        {NodeType::ShiftA, "minecraft:shift_a", {{"argument", FieldKind::NoiseRef}}},
-        {NodeType::ShiftB, "minecraft:shift_b", {{"argument", FieldKind::NoiseRef}}},
-        {NodeType::BlendAlpha, "minecraft:blend_alpha", {}},
-        {NodeType::BlendOffset, "minecraft:blend_offset", {}},
-        {NodeType::OldBlendedNoise,
-         "minecraft:old_blended_noise",
-         {{"xz_scale", FieldKind::Number},
-          {"y_scale", FieldKind::Number},
-          {"xz_factor", FieldKind::Number},
-          {"y_factor", FieldKind::Number},
-          {"smear_scale_multiplier", FieldKind::Number}}},
-        {NodeType::FlatCache, "minecraft:flat_cache", {{"argument", FieldKind::Function}}},
-        {NodeType::Cache2d, "minecraft:cache_2d", {{"argument", FieldKind::Function}}},
-        {NodeType::CacheOnce, "minecraft:cache_once", {{"argument", FieldKind::Function}}},
-        {NodeType::Interpolated, "minecraft:interpolated", {{"argument", FieldKind::Function}}},
-        {NodeType::Spline, "minecraft:spline", {{"spline", FieldKind::Spline}}},
-        {NodeType::YClampedGradient,
-         "minecraft:y_clamped_gradient",
-         {{"from_y", FieldKind::Number},
-          {"to_y", FieldKind::Number},
-          {"from_value", FieldKind::Number},
-          {"to_value", FieldKind::Number}}},
-        {NodeType::WeirdScaledSampler,
-         "minecraft:weird_scaled_sampler",
-         {{"input", FieldKind::Function},
-          {"noise", FieldKind::NoiseRef},
-          {"rarity_value_mapper", FieldKind::Selector}}},
-        {NodeType::EndIslands, "minecraft:end_islands", {}},
-    };
-    return kTable;
-}
+// The schema itself, generated from mcdoc for the pinned version by
+// tools/mcdoc-sync. Hand-editing it would defeat the point: the schema is
+// authoritative about which types exist and what fields they take.
+#include "density_schema.inc"
 
 [[nodiscard]] const TypeInfo& infoOf(NodeType type) {
-    return typeTable()[static_cast<std::size_t>(type)];
+    return kTypeTable[static_cast<std::size_t>(type)];
 }
-
-/// rarity_value_mapper's permitted values, as vanilla's data uses them.
-constexpr std::array<std::string_view, 2> kRarityValueMappers = {"type_1", "type_2"};
 
 } // namespace
 
@@ -123,7 +45,7 @@ std::string_view nodeTypeName(NodeType type) noexcept {
 }
 
 std::optional<NodeType> nodeTypeFromName(std::string_view name) noexcept {
-    for (const TypeInfo& info : typeTable()) {
+    for (const TypeInfo& info : kTypeTable) {
         if (info.name == name) {
             return info.type;
         }
@@ -131,7 +53,7 @@ std::optional<NodeType> nodeTypeFromName(std::string_view name) noexcept {
     return std::nullopt;
 }
 
-std::vector<Field> fieldsOf(NodeType type) {
+std::span<const SchemaField> fieldsOf(NodeType type) noexcept {
     return infoOf(type).fields;
 }
 
@@ -231,14 +153,27 @@ private:
 
         Node node;
         node.type = *type;
-        for (const Field& field : infoOf(*type).fields) {
+        for (const SchemaField& field : infoOf(*type).fields) {
             if (!object.contains(field.name)) {
+                // The schema marks some fields optional, with a documented
+                // default; the rest are required.
+                if (field.optional) {
+                    continue;
+                }
                 fail("'" + typeName + "' is missing its \"" + std::string(field.name) + "\"");
             }
             const nlohmann::json& fieldValue = object.at(field.name);
 
             switch (field.kind) {
                 case FieldKind::Function:
+                    // Some fields take a nested function but not a reference
+                    // to one — clamp's input, at this version. Only the
+                    // schema records that distinction.
+                    if (fieldValue.is_string() && !field.allowsReference) {
+                        fail("'" + typeName + "' does not accept an identifier for \"" +
+                             std::string(field.name) +
+                             "\" at this version; it must be given inline");
+                    }
                     node.arguments.push_back(resolveValue(graph, fieldValue));
                     break;
                 case FieldKind::Number:
@@ -261,8 +196,8 @@ private:
                              "\" to be a string");
                     }
                     node.selector = fieldValue.get<std::string>();
-                    if (std::ranges::find(kRarityValueMappers, node.selector) ==
-                        kRarityValueMappers.end()) {
+                    if (std::ranges::find(field.selectorValues, node.selector) ==
+                        field.selectorValues.end()) {
                         fail("'" + typeName + "' has an unknown " + std::string(field.name) + " '" +
                              node.selector + "'");
                     }

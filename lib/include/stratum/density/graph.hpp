@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -36,33 +37,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// The density function types the pinned version defines. Generated from
+/// mcdoc — see tools/mcdoc-sync — so the set follows the schema rather than
+/// whatever vanilla's own data happens to use, which is eight types fewer.
 enum class NodeType : std::uint8_t {
-    Constant,
-    Add,
-    Mul,
-    Min,
-    Max,
-    Abs,
-    Cube,
-    HalfNegative,
-    QuarterNegative,
-    Clamp,
-    RangeChoice,
-    Noise,
-    ShiftedNoise,
-    ShiftA,
-    ShiftB,
-    BlendAlpha,
-    BlendOffset,
-    OldBlendedNoise,
-    FlatCache,
-    Cache2d,
-    CacheOnce,
-    Interpolated,
-    Spline,
-    YClampedGradient,
-    WeirdScaledSampler,
-    EndIslands,
+#include <stratum/density/node_types.inc>
 };
 
 /// "minecraft:shifted_noise".
@@ -108,13 +87,22 @@ enum class FieldKind : std::uint8_t {
     Spline,   ///< a spline definition
 };
 
-struct Field {
+/// One field of a node type, as the schema declares it.
+struct SchemaField {
     std::string_view name;
-    FieldKind kind;
+    FieldKind kind = FieldKind::Number;
+    /// Absent fields are permitted, with a documented default.
+    bool optional = false;
+    /// Whether a nested function may be given as an identifier. `clamp`'s
+    /// input may not be, at this version — a distinction only the schema
+    /// records.
+    bool allowsReference = false;
+    /// The permitted strings, for a Selector.
+    std::span<const std::string_view> selectorValues;
 };
 
-/// The fields a node type takes, in the order vanilla declares them.
-[[nodiscard]] std::vector<Field> fieldsOf(NodeType type);
+/// The fields a node type takes, in the order the schema declares them.
+[[nodiscard]] std::span<const SchemaField> fieldsOf(NodeType type) noexcept;
 
 class Graph {
 public:

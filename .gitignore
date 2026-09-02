@@ -30,6 +30,9 @@ _deps/
 *.pdb
 *.exe
 
+__pycache__/
+*.pyc
+
 # --- Tooling / editors ---
 .cache/
 .idea/
