@@ -28,6 +28,7 @@ add_executable(stratum_conformance_tests
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
     vanilla_pack_test.cpp
+    vanilla_settings_test.cpp
     vanilla_render_test.cpp
 )
 

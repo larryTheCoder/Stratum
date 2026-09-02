@@ -298,6 +298,18 @@ Its own component (`lib/mapping/`), its own tests:
 - **M3** — 3D density: full noise router, cell sampling + trilinear
   interpolation, all cache node types, aquifer fill decision, compiled flat
   execution program, Tier-A goldens passing for terrain shape.
+
+  Landed: noise settings — geometry, flags, block states and the fifteen-entry
+  noise router, whose inline density functions resolve into the *same* graph
+  as the pack's named ones. All seven of vanilla's dimensions load; 88 of
+  their 105 router entries are already evaluable, and the seventeen that are
+  not are exactly the ones waiting on the node types §11 accounts for.
+
+  The router's field list is generated from mcdoc, and that is not ceremony:
+  at 1.21.9 `initial_density_without_jaggedness` became
+  `preliminary_surface_level`. A hand-written list would have carried the
+  older name and refused every vanilla noise settings file, for a reason the
+  error would not have made obvious.
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
 - **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2

@@ -421,7 +421,13 @@ int runValidate(const std::vector<std::string_view>& args) {
         std::cout << "graph: " << report.nodes << " node(s), " << report.splines << " spline(s), "
                   << report.noisesReferenced << " noise(s) referenced\n"
                   << "evaluable: " << report.evaluable << " of " << report.densityFunctions
-                  << " density function(s)\n";
+                  << " density function(s)";
+        if (report.noiseSettings > 0) {
+            std::cout << ", " << report.routerEntriesEvaluable << " of " << report.routerEntries
+                      << " router entr" << (report.routerEntries == 1 ? "y" : "ies") << " across "
+                      << report.noiseSettings << " dimension(s)";
+        }
+        std::cout << '\n';
     }
 
     for (const stratum::validate::Finding& finding : report.findings) {

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -112,6 +113,9 @@ private:
     }
 
     /// A density function is a number, an identifier, or an inline object.
+    /// Public because the builder resolves the density functions written
+    /// inline in a noise settings router through it.
+public:
     NodeIndex resolveValue(Graph& graph, const nlohmann::json& value) {
         if (value.is_number()) {
             // The documented shorthand: a bare number is a constant.
@@ -132,6 +136,7 @@ private:
         return resolveObject(graph, value);
     }
 
+private:
     NodeIndex resolveObject(Graph& graph, const nlohmann::json& object) {
         if (!object.contains("type")) {
             fail(R"(an inline density function has no "type")");
@@ -282,11 +287,36 @@ private:
     std::vector<data::ResourceLocation> stack_;
 };
 
+/// The builder's innards, kept out of the header so that Resolver stays a
+/// detail of this file.
+class Graph::Builder::State {
+public:
+    explicit State(const data::Pack& pack) : resolver_(pack) {}
+
+    Resolver resolver_;
+    Graph graph_;
+};
+
+Graph::Builder::Builder(const data::Pack& pack) : state_(std::make_unique<State>(pack)) {}
+
+Graph::Builder::~Builder() = default;
+
+void Graph::Builder::addNamed() {
+    state_->resolver_.resolveEverything(state_->graph_);
+}
+
+NodeIndex Graph::Builder::add(const nlohmann::json& value) {
+    return state_->resolver_.resolveValue(state_->graph_, value);
+}
+
+Graph Graph::Builder::release() {
+    return std::move(state_->graph_);
+}
+
 Graph Graph::resolveAll(const data::Pack& pack) {
-    Graph graph;
-    Resolver resolver(pack);
-    resolver.resolveEverything(graph);
-    return graph;
+    Builder builder(pack);
+    builder.addNamed();
+    return builder.release();
 }
 
 const Node& Graph::node(NodeIndex index) const {

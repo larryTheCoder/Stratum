@@ -16,7 +16,10 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/settings/noise_settings.hpp>
 #include <stratum/validate/pack_report.hpp>
+
+#include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -98,6 +101,31 @@ void defineWorkingPack(const TempTree& tree) {
         "xz_scale":1.0,"y_scale":0.0})");
 }
 
+/// A valid settings file whose `final_density` points at @p finalDensity.
+void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity) {
+    nlohmann::json router = nlohmann::json::object();
+    for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
+        router[std::string(stratum::settings::routerEntryName(
+            static_cast<stratum::settings::RouterEntry>(i)))] = 0.0;
+    }
+    router["final_density"] = std::string(finalDensity);
+
+    const nlohmann::json json{
+        {"default_block", {{"Name", "minecraft:stone"}}},
+        {"default_fluid", {{"Name", "minecraft:water"}}},
+        {"sea_level", 63},
+        {"disable_mob_generation", false},
+        {"aquifers_enabled", true},
+        {"ore_veins_enabled", true},
+        {"legacy_random_source", false},
+        {"noise", {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}}},
+        {"noise_router", router},
+        {"spawn_target", nlohmann::json::array()},
+        {"surface_rule", {{"type", "minecraft:bandlands"}}},
+    };
+    tree.defineIn("noise_settings", name, json.dump());
+}
+
 [[nodiscard]] const Finding* findingAbout(const Report& report, std::string_view subject) {
     const auto found = std::ranges::find_if(
         report.findings, [subject](const Finding& finding) { return finding.subject == subject; });
@@ -173,14 +201,14 @@ TEST_CASE("a function this build cannot evaluate is named with its reason", "[va
 TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.defineIn("noise_settings", "overworld", "{}");
+    tree.defineIn("biome", "plains", "{}");
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
-    // This is the honest half of a clean report. Noise settings load and
-    // nothing reads them, so a pack whose settings are nonsense passes today
-    // — and silence about that would read as approval.
-    const Finding* finding = findingAbout(report, "worldgen/noise_settings");
+    // This is the honest half of a clean report. Biomes load and nothing
+    // reads them, so a pack whose biomes are nonsense passes today — and
+    // silence about that would read as approval.
+    const Finding* finding = findingAbout(report, "worldgen/biome");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Note);
     CHECK_THAT(finding->message, ContainsSubstring("not"));
@@ -188,13 +216,13 @@ TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate
     // A note is not a problem: the pack is still clean.
     CHECK(report.clean());
 
-    const auto settings =
+    const auto biomes =
         std::ranges::find_if(report.registries, [](const stratum::validate::RegistryCount& count) {
-            return count.registry == Registry::NoiseSettings;
+            return count.registry == Registry::Biome;
         });
-    REQUIRE(settings != report.registries.end());
-    CHECK(settings->supported);
-    CHECK_FALSE(settings->interpreted);
+    REQUIRE(biomes != report.registries.end());
+    CHECK(biomes->supported);
+    CHECK_FALSE(biomes->interpreted);
 }
 
 TEST_CASE("a graph that will not resolve is an error, and says it stopped early", "[validate]") {
@@ -252,7 +280,7 @@ TEST_CASE("every missing noise is reported, not just the first", "[validate]") {
 TEST_CASE("findings come worst first", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.defineIn("noise_settings", "overworld", "{}");
+    tree.defineIn("biome", "plains", "{}");
     tree.defineIn("placed_feature", "a", "{}");
     tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
         "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
@@ -333,4 +361,41 @@ TEST_CASE("Pack::open finds either layout, and names all three when it finds non
 
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
+}
+
+TEST_CASE("noise settings that will not load are an error", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    tree.defineIn("noise_settings", "overworld", "{}");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    // Settings are interpreted as of M3's first slice, so an empty one is no
+    // longer a file nobody looks at — it is a dimension that cannot be built.
+    CHECK_FALSE(report.clean());
+    REQUIRE(report.count(Severity::Error) == 1U);
+    CHECK_THAT(report.findings.front().message,
+               ContainsSubstring("minecraft:overworld") && ContainsSubstring("default_block"));
+}
+
+TEST_CASE("a router entry this build cannot evaluate is named with its dimension", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
+        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    defineSettings(tree, "overworld", "blended");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    CHECK(report.count(Severity::Error) == 0U);
+    CHECK(report.routerEntries == stratum::settings::kRouterEntryCount);
+    // Fourteen of fifteen: only the entry that was pointed at the
+    // unevaluable function fails, and the report says which dimension it
+    // belongs to — a pack with seven of them needs that.
+    CHECK(report.routerEntriesEvaluable == stratum::settings::kRouterEntryCount - 1U);
+
+    const Finding* finding = findingAbout(report, "minecraft:overworld final_density");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Warning);
+    CHECK_THAT(finding->message, ContainsSubstring("minecraft:old_blended_noise"));
 }

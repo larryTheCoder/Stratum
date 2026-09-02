@@ -7,6 +7,7 @@
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/settings/noise_settings.hpp>
 #include <stratum/validate/pack_report.hpp>
 
 #include <algorithm>
@@ -26,7 +27,8 @@ namespace {
 /// while this one shrinks every milestone, and conflating them would let a
 /// clean report quietly overclaim.
 [[nodiscard]] bool isInterpretedYet(data::Registry registry) noexcept {
-    return registry == data::Registry::DensityFunction || registry == data::Registry::Noise;
+    return registry == data::Registry::DensityFunction || registry == data::Registry::Noise ||
+           registry == data::Registry::NoiseSettings;
 }
 
 void add(Report& report, Severity severity, std::string subject, std::string message) {
@@ -138,9 +140,13 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
     reportRegistries(pack, report);
     report.densityFunctions = pack.entriesOf(data::Registry::DensityFunction).size();
 
-    std::optional<density::Graph> graph;
+    // The settings' routers carry density functions written inline, so they
+    // are resolved into the same graph as the pack's named ones — which
+    // means a broken router is found here rather than left for whatever
+    // first asks a dimension to generate.
+    std::optional<settings::LoadedSettings> loaded;
     try {
-        graph = density::Graph::resolveAll(pack);
+        loaded = settings::loadAll(pack);
     } catch (const density::ResolveError& error) {
         // Resolution is all-or-nothing — one cycle stops the whole graph —
         // so this is the first problem, not necessarily the only one. Said
@@ -150,11 +156,27 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
             std::string(error.what()) +
                 " (resolution stops at the first problem; there may be more behind it)");
         return report;
+    } catch (const settings::SettingsError& error) {
+        add(report, Severity::Error, {},
+            std::string(error.what()) +
+                " (loading stops at the first problem; there may be more behind it)");
+        return report;
     }
 
+    const density::Graph* graph = &loaded->graph;
     report.resolved = true;
     report.nodes = graph->nodeCount();
     report.splines = graph->splineCount();
+    report.noiseSettings = loaded->settings.size();
+
+    if (!loaded->settings.empty()) {
+        // Read and kept, never interpreted. Saying so is the difference
+        // between a clean report and a clean report that means something.
+        add(report, Severity::Note,
+            std::string(data::registryDirectory(data::Registry::NoiseSettings)),
+            "surface rules and spawn targets inside these entries are kept verbatim and are "
+            "not interpreted by this build (SPEC §10, M4)");
+    }
 
     const std::vector<data::ResourceLocation> referenced = graph->referencedNoises();
     report.noisesReferenced = referenced.size();
@@ -167,6 +189,21 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
     const density::NoiseRegistry noises =
         density::NoiseRegistry::create(pack, referenced, options.seed);
     const density::Interpreter interpreter(*graph, noises);
+
+    for (const auto& [id, dimension] : loaded->settings) {
+        for (std::size_t i = 0; i < settings::kRouterEntryCount; ++i) {
+            const auto entry = static_cast<settings::RouterEntry>(i);
+            ++report.routerEntries;
+            try {
+                interpreter.requireEvaluable(dimension.router.at(entry));
+                ++report.routerEntriesEvaluable;
+            } catch (const density::EvalError& error) {
+                add(report, Severity::Warning,
+                    id.toString() + " " + std::string(settings::routerEntryName(entry)),
+                    error.what());
+            }
+        }
+    }
 
     for (const auto& [id, root] : graph->roots()) {
         try {

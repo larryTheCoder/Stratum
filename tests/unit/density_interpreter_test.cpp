@@ -291,6 +291,24 @@ TEST_CASE("cache_2d over a column-varying function is refused", "[density][inter
     CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("good")));
 }
 
+TEST_CASE("a cache over something unevaluable blames the right thing", "[density][interpreter]") {
+    const TempTree tree;
+    // Exactly the shape of vanilla's end/erosion. end_islands is as
+    // column-invariant as a function gets, but this build cannot evaluate it,
+    // and column invariance is deliberately conservative about anything it
+    // cannot evaluate — so checking the cache before its contents produced a
+    // true refusal with a false reason stapled to it.
+    tree.define("islands", R"({"type":"minecraft:cache_2d",
+        "argument":{"type":"minecraft:end_islands"}})");
+
+    const Pipeline pipeline(tree.pack());
+
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("islands")),
+                      ContainsSubstring("minecraft:end_islands"));
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("islands")),
+                      !ContainsSubstring("varies with y"));
+}
+
 TEST_CASE("the node types this build cannot evaluate are refused by name",
           "[density][interpreter]") {
     const TempTree tree;

@@ -55,6 +55,18 @@ class Field:
 
 
 @dataclass
+class MapEntry:
+    """`[KeyType]: ValueType` — a struct keyed by an arbitrary string rather
+    than by a fixed set of field names. Recorded rather than skipped: a
+    schema reader that quietly dropped one would describe a struct with no
+    fields, which is a shape the engine would then accept anything for."""
+
+    key_type_text: str
+    value_type_text: str
+    gate: "Gate"
+
+
+@dataclass
 class Spread:
     """`...OtherStruct` or `...struct { ... }` inside a struct body."""
 
@@ -66,7 +78,7 @@ class Spread:
 @dataclass
 class Struct:
     name: Optional[str]
-    members: list["Field | Spread"] = field(default_factory=list)
+    members: list["Field | Spread | MapEntry"] = field(default_factory=list)
 
 
 @dataclass
@@ -95,6 +107,8 @@ class _Reader:
     """A character cursor with just enough lookahead for this subset."""
 
     def __init__(self, text: str, source: str) -> None:
+        # Structs declared inside another struct's body, by `...struct Name {}`.
+        self.declared_structs: dict[str, "Struct"] = {}
         self.text = text
         self.source = source
         self.position = 0
@@ -203,9 +217,9 @@ def _read_attributes(reader: _Reader) -> Gate:
         reader.position = match.end()
 
 
-def _read_struct_body(reader: _Reader) -> list["Field | Spread"]:
+def _read_struct_body(reader: _Reader) -> list["Field | Spread | MapEntry"]:
     """Reads `{ ... }`, returning its members in declaration order."""
-    members: list[Field | Spread] = []
+    members: list[Field | Spread | MapEntry] = []
     reader.expect("{")
     while True:
         reader.skip_trivia()
@@ -225,9 +239,28 @@ def _read_struct_body(reader: _Reader) -> list["Field | Spread"]:
             reader.skip_trivia()
             if reader.peek("struct"):
                 reader.expect("struct")
-                members.append(Spread(target=None, inline_fields=_read_struct_body(reader), gate=gate))
+                reader.skip_trivia()
+                # `...struct Name { ... }` both declares a struct and spreads
+                # it. The name is not decoration: NoiseGeneratorFlags is
+                # written this way, and a reader that took the braces and
+                # dropped the name would still be right here — but would be
+                # silently wrong the first time something referred to it.
+                declared = ""
+                if not reader.peek("{"):
+                    declared = reader.identifier()
+                    reader.skip_trivia()
+                fields = _read_struct_body(reader)
+                if declared:
+                    reader.declared_structs[declared] = Struct(name=declared, members=fields)
+                members.append(Spread(target=None, inline_fields=fields, gate=gate))
             else:
                 members.append(Spread(target=reader.identifier(), gate=gate))
+        elif reader.peek("["):
+            key_type = reader.balanced("[", "]")
+            reader.skip_trivia()
+            reader.expect(":")
+            members.append(MapEntry(key_type_text=key_type.strip(),
+                                    value_type_text=_read_type(reader), gate=gate))
         else:
             name = reader.identifier()
             optional = reader.take("?")
@@ -341,5 +374,13 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
             continue
 
         raise reader.fail(f"unsupported construct: {reader.rest_of_line()[:60]!r}")
+
+    # Structs declared inside another struct's body — `...struct Name {}` —
+    # are as real as any other, and folding them in makes a later reference
+    # to one resolvable rather than a mysterious unknown type.
+    for declared_name, declared in reader.declared_structs.items():
+        if declared_name in document.structs:
+            raise McdocError(f"{source}: struct {declared_name!r} is declared twice")
+        document.structs[declared_name] = declared
 
     return document

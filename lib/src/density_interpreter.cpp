@@ -241,6 +241,20 @@ void Interpreter::requireEvaluableNode(NodeIndex index, std::vector<char>& seen)
                         "' cannot be evaluated by this build: " + std::string(*reason));
     }
 
+    // The subtree first, so that a refusal names the real cause. Column
+    // invariance is deliberately conservative about a node it cannot
+    // evaluate, and checking the cache before the contents made vanilla's
+    // own `end/erosion` — a cache_2d over end_islands, which is as
+    // column-invariant as a function gets — report that its argument varied
+    // with y. That is a true refusal with a false reason attached, which is
+    // worse than no reason at all.
+    for (const NodeIndex argument : node.arguments) {
+        requireEvaluableNode(argument, seen);
+    }
+    if (node.spline.has_value()) {
+        requireEvaluableSpline(*node.spline, seen);
+    }
+
     // cache_2d keys on (x, z) and never re-reads its argument as y changes.
     // Vanilla only ever wraps something column-invariant in it, so treating
     // it as transparent is exact — for vanilla. A pack that wrapped a
@@ -252,13 +266,6 @@ void Interpreter::requireEvaluableNode(NodeIndex index, std::vector<char>& seen)
             "'minecraft:cache_2d' wraps a function whose value varies with y. Vanilla caches it "
             "on (x, z) alone, so the whole column would take the value of whichever y was asked "
             "for first; this build refuses rather than pick one silently");
-    }
-
-    for (const NodeIndex argument : node.arguments) {
-        requireEvaluableNode(argument, seen);
-    }
-    if (node.spline.has_value()) {
-        requireEvaluableSpline(*node.spline, seen);
     }
 }
 

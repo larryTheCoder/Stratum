@@ -168,17 +168,30 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // rather than have slide past.
     CHECK(report.densityFunctions == 35U);
     CHECK(report.evaluable == 25U);
-    CHECK(report.noisesReferenced == 25U);
-    CHECK(report.nodes == 275U);
+    // The routers reach fourteen noises no named density function does —
+    // the aquifer and ore-vein ones — so this is larger than the 25 the
+    // density functions alone reference.
+    CHECK(report.noisesReferenced == 39U);
+    // 275 named nodes plus what the seven routers add inline.
+    CHECK(report.nodes == 730U);
     CHECK(report.splines == 354U);
+
+    // The routers are resolved into the same graph, so the settings are
+    // checked here too: seven dimensions, fifteen entries each.
+    CHECK(report.noiseSettings == 7U);
+    CHECK(report.routerEntries == 105U);
+    CHECK(report.routerEntriesEvaluable == 88U);
 
     // The ten that are left are exactly the ones SPEC §11 accounts for, and
     // no others. A refusal that spread to a function nobody expected would
-    // otherwise just look like a bigger number.
+    // otherwise just look like a bigger number. Router entries carry a space
+    // in their subject — "minecraft:overworld final_density" — and are
+    // counted above rather than listed here.
     std::vector<std::string> unevaluable;
     for (const stratum::validate::Finding& finding : report.findings) {
         if (finding.severity == stratum::validate::Severity::Warning &&
-            finding.subject.starts_with("minecraft:")) {
+            finding.subject.starts_with("minecraft:") &&
+            finding.subject.find(' ') == std::string::npos) {
             unevaluable.push_back(finding.subject);
         }
     }

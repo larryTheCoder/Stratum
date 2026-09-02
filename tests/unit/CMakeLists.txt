@@ -9,6 +9,7 @@ add_executable(stratum_unit_tests
     javamath_test.cpp
     md5_test.cpp
     nbt_test.cpp
+    noise_settings_test.cpp
     noise_test.cpp
     pack_test.cpp
     png_test.cpp

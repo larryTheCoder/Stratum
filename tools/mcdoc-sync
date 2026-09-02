@@ -25,7 +25,9 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).parent / "mcdoc"))
 
 import mcdoc  # noqa: E402
-from emit import emit_node_types, emit_schema  # noqa: E402
+from emit import (emit_node_types, emit_router_entries, emit_schema,  # noqa: E402
+                  emit_settings_schema)
+from settings import SettingsSchemaBuilder  # noqa: E402
 from schema import SchemaBuilder  # noqa: E402
 
 # Pinned deliberately: a different commit could change the generated tables,
@@ -72,6 +74,30 @@ def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
         emit_schema(types, COMMAND, MINECRAFT_VERSION, MCDOC_COMMIT), encoding="utf-8")
     print(f"==> wrote {node_types.relative_to(repository_root)}", file=sys.stderr)
     print(f"==> wrote {schema_table.relative_to(repository_root)}", file=sys.stderr)
+
+    settings_source = checkout / "java/data/worldgen/noise_settings.mcdoc"
+    if not settings_source.is_file():
+        raise SystemExit(f"error: {settings_source} is missing; has the schema moved?")
+
+    settings_document = mcdoc.parse(settings_source.read_text(encoding="utf-8"),
+                                    str(settings_source))
+    builder = SettingsSchemaBuilder(settings_document, MINECRAFT_VERSION)
+    settings_fields = builder.build_struct("NoiseGeneratorSettings")
+    geometry_fields = builder.build_struct("NoiseSettings")
+    router_fields = builder.build_struct("NoiseRouter")
+    print(f"==> {len(settings_fields)} noise settings fields, {len(router_fields)} router "
+          f"entries at {MINECRAFT_VERSION}", file=sys.stderr)
+
+    router_entries = repository_root / "lib/include/stratum/settings/router_entries.inc"
+    settings_table = repository_root / "lib/src/settings_schema.inc"
+    router_entries.parent.mkdir(parents=True, exist_ok=True)
+    router_entries.write_text(emit_router_entries(router_fields, COMMAND), encoding="utf-8")
+    settings_table.write_text(
+        emit_settings_schema(settings_fields, geometry_fields, router_fields, COMMAND,
+                             MINECRAFT_VERSION, MCDOC_COMMIT),
+        encoding="utf-8")
+    print(f"==> wrote {router_entries.relative_to(repository_root)}", file=sys.stderr)
+    print(f"==> wrote {settings_table.relative_to(repository_root)}", file=sys.stderr)
 
 
 def main() -> None:

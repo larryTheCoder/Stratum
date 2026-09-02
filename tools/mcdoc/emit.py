@@ -89,3 +89,68 @@ def emit_schema(types: list[ResolvedType], command: str, version: str, commit: s
     lines.append("")
     lines.append("// clang-format on")
     return "\n".join(lines) + "\n"
+
+
+_SETTINGS_KIND_TO_CPP = {
+    "BlockState": "SettingsKind::BlockState",
+    "Boolean": "SettingsKind::Boolean",
+    "Int": "SettingsKind::Int",
+    "Geometry": "SettingsKind::Geometry",
+    "Router": "SettingsKind::Router",
+    "MaterialRule": "SettingsKind::MaterialRule",
+    "SpawnTarget": "SettingsKind::SpawnTarget",
+}
+
+
+def emit_router_entries(router: list, command: str) -> str:
+    """The router's entries as enumerators, in the schema's own order.
+
+    Generated rather than written out because the names move: at 1.21.9
+    `initial_density_without_jaggedness` became `preliminary_surface_level`.
+    An enumerator makes that a compile error at every use site rather than a
+    lookup that quietly finds nothing.
+    """
+    lines = [_header(command), ""]
+    for field in router:
+        lines.append(f"{_enumerator(field.name)},  // {field.name}")
+    return "\n".join(lines) + "\n"
+
+
+def emit_settings_schema(settings: list, geometry: list, router: list, command: str,
+                         version: str, commit: str) -> str:
+    lines = [
+        _header(command),
+        "",
+        f"// Minecraft version: {version}",
+        f"// vanilla-mcdoc commit: {commit}",
+        "",
+        "// clang-format off",
+        "",
+    ]
+
+    lines.append(f"constexpr std::array<SettingsField, {len(settings)}> kSettingsFields = {{{{")
+    for field in settings:
+        kind = _SETTINGS_KIND_TO_CPP[field.kind]
+        lines.append(
+            f'    {{.name = "{field.name}", .kind = {kind}, '
+            f".optional = {'true' if field.optional else 'false'}}},")
+    lines.append("}};")
+    lines.append("")
+
+    lines.append(f"constexpr std::array<GeometryField, {len(geometry)}> kGeometryFields = {{{{")
+    for field in geometry:
+        if field.minimum is None or field.maximum is None:
+            raise SystemExit(f"error: {field.name} has no range; the loader needs one")
+        lines.append(
+            f'    {{.name = "{field.name}", .minimum = {field.minimum}, '
+            f".maximum = {field.maximum}}},")
+    lines.append("}};")
+    lines.append("")
+
+    lines.append(f"constexpr std::array<std::string_view, {len(router)}> kRouterFields = {{{{")
+    for field in router:
+        lines.append(f'    "{field.name}",')
+    lines.append("}};")
+    lines.append("")
+    lines.append("// clang-format on")
+    return "\n".join(lines) + "\n"

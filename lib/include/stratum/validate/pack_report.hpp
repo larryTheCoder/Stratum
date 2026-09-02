@@ -20,11 +20,12 @@
 //
 // Neither is silently swallowed, and neither is reported as the other.
 //
-// WHAT A CLEAN REPORT DOES NOT MEAN. Six of the eight registries v1 executes
-// are loaded and addressable but not yet interpreted — noise settings, biomes,
-// dimensions and the rest are parsed as JSON and nothing more. A pack whose
-// surface rules are nonsense will validate clean today. The report says so
-// itself rather than leaving the silence to be read as approval.
+// WHAT A CLEAN REPORT DOES NOT MEAN. Five of the eight registries v1 executes
+// are loaded and addressable but not yet interpreted — biomes, dimensions and
+// the rest are parsed as JSON and nothing more — and the surface rules inside
+// a noise settings entry are read but not understood. A pack whose surface
+// rules are nonsense will validate clean today. The report says so itself
+// rather than leaving the silence to be read as approval.
 
 #pragma once
 
@@ -80,6 +81,13 @@ struct Report {
     std::size_t noisesReferenced = 0;
     std::size_t nodes = 0;
     std::size_t splines = 0;
+    std::size_t noiseSettings = 0;
+    /// Router entries across every noise settings entry, and how many of
+    /// them this build could evaluate. Counted rather than only listed:
+    /// seven dimensions times fifteen entries is a lot of warnings, and
+    /// "94 of 105" is the number someone actually wants.
+    std::size_t routerEntries = 0;
+    std::size_t routerEntriesEvaluable = 0;
 
     /// False when the pack could not be resolved at all, in which case the
     /// counts above are whatever had been established when it stopped.

@@ -21,6 +21,7 @@ add_library(stratum_core STATIC
     src/pack.cpp
     src/pack_validate.cpp
     src/nbt_reader.cpp
+    src/noise_settings.cpp
     src/noise_registry.cpp
     src/perlin.cpp
     src/registry.cpp
@@ -65,6 +66,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/region_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/xoroshiro128.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/settings/noise_settings.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/validate/pack_report.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"
 )

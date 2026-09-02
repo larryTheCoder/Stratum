@@ -102,7 +102,9 @@ jobs:
         run: |
           tools/mcdoc-sync
           git diff --exit-code -- lib/src/density_schema.inc \
-              lib/include/stratum/density/node_types.inc
+              lib/include/stratum/density/node_types.inc \
+              lib/src/settings_schema.inc \
+              lib/include/stratum/settings/router_entries.inc
 
       - name: Install clang-tidy
         # Pinned: clang-tidy's check set changes between releases, so an

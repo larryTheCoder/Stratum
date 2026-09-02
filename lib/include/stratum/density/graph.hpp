@@ -18,8 +18,11 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -110,6 +113,37 @@ public:
     /// dangling reference anywhere is found at load rather than on the first
     /// chunk that happens to reach it.
     [[nodiscard]] static Graph resolveAll(const data::Pack& pack);
+
+    /// Builds one graph from more than the pack's own `density_function`
+    /// entries. A noise settings router carries fifteen density functions
+    /// written inline, and they have to land in the *same* graph as the
+    /// named ones: they share subtrees with them — every router in vanilla
+    /// refers to `overworld/continents` — and a second graph would resolve
+    /// those a second time, sample the same noise twice, and give one
+    /// pipeline two node numbering schemes.
+    class Builder {
+    public:
+        explicit Builder(const data::Pack& pack);
+        Builder(const Builder&) = delete;
+        Builder& operator=(const Builder&) = delete;
+        Builder(Builder&&) = delete;
+        Builder& operator=(Builder&&) = delete;
+        ~Builder();
+
+        /// Resolves every density function the pack names, as roots.
+        void addNamed();
+
+        /// Resolves one function given inline, by reference, or as a bare
+        /// number. The node is reachable from whatever the caller does with
+        /// the index; it is not made a root.
+        [[nodiscard]] NodeIndex add(const nlohmann::json& value);
+
+        [[nodiscard]] Graph release();
+
+    private:
+        class State;
+        std::unique_ptr<State> state_;
+    };
 
     [[nodiscard]] const Node& node(NodeIndex index) const;
     [[nodiscard]] const SplineDefinition& spline(SplineIndex index) const;
