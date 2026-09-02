@@ -7,6 +7,8 @@
 // and a lenient parser would let the conformance harness report parity it
 // never established (SPEC §8).
 
+#include "support/nbt_writer.hpp"
+
 #include <stratum/nbt/reader.hpp>
 #include <stratum/nbt/tag.hpp>
 
@@ -29,52 +31,7 @@ using stratum::nbt::ParseError;
 using stratum::nbt::Tag;
 using stratum::nbt::TagType;
 using stratum::nbt::TypeError;
-
-/// Builds NBT byte streams, big-endian, exactly as the format specifies.
-class NbtWriter {
-public:
-    NbtWriter& u8(std::uint8_t value) {
-        bytes_.push_back(static_cast<std::byte>(value));
-        return *this;
-    }
-
-    NbtWriter& type(TagType value) { return u8(static_cast<std::uint8_t>(value)); }
-
-    NbtWriter& u16(std::uint16_t value) {
-        return u8(static_cast<std::uint8_t>(value >> 8U)).u8(static_cast<std::uint8_t>(value));
-    }
-
-    NbtWriter& u32(std::uint32_t value) {
-        return u8(static_cast<std::uint8_t>(value >> 24U))
-            .u8(static_cast<std::uint8_t>(value >> 16U))
-            .u8(static_cast<std::uint8_t>(value >> 8U))
-            .u8(static_cast<std::uint8_t>(value));
-    }
-
-    NbtWriter& u64(std::uint64_t value) {
-        return u32(static_cast<std::uint32_t>(value >> 32U)).u32(static_cast<std::uint32_t>(value));
-    }
-
-    NbtWriter& str(std::string_view value) {
-        u16(static_cast<std::uint16_t>(value.size()));
-        for (const char character : value) {
-            u8(static_cast<std::uint8_t>(character));
-        }
-        return *this;
-    }
-
-    /// A named tag header: type byte followed by the name.
-    NbtWriter& named(TagType value, std::string_view name) { return type(value).str(name); }
-
-    NbtWriter& end() { return type(TagType::End); }
-
-    [[nodiscard]] std::span<const std::byte> span() const noexcept { return bytes_; }
-
-    [[nodiscard]] const std::vector<std::byte>& bytes() const noexcept { return bytes_; }
-
-private:
-    std::vector<std::byte> bytes_;
-};
+using stratum::test::NbtWriter;
 
 /// The canonical example document from the format's documentation.
 [[nodiscard]] NbtWriter helloWorld() {

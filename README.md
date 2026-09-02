@@ -9,9 +9,11 @@ Snowcapped, Spyglass) work as content for a Bedrock server.
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
-- **Status:** Milestone **M0** — scaffolding. The engine does not generate
-  anything yet; every CLI subcommand fails loudly with the milestone that
-  owns it.
+- **Status:** Milestone **M1** — core primitives and the conformance
+  harness. The engine does not generate terrain yet, but it can already read
+  what vanilla produced: `stratum diff` compares two region files
+  block-for-block and `stratum render` draws one. Subcommands that are not
+  implemented fail loudly with the milestone that owns them.
 
 `SPEC.md` is the single source of truth for scope and architecture;
 `CLAUDE.md` defines how changes are made. Read both before contributing.
@@ -52,6 +54,19 @@ zlib, and network access on first configure so Catch2 v3 can be fetched (or
 install Catch2 ≥ 3 yourself and it will be used instead). zlib is taken from
 the system when present and fetched and built otherwise, so no manual setup
 is needed on platforms that ship without it.
+
+Read what vanilla produced:
+
+```bash
+stratum diff <left.mca> <right.mca> [--max <n>]   # 0 identical, 1 differing
+stratum render <region.mca> --out map.png --mode heightmap|biome|blocks
+```
+
+`diff` compares block-for-block in Java block space, before any Bedrock
+mapping (SPEC §7), and reports the first differences with their coordinates.
+Anything it cannot compare — a chunk present on one side, one that fails to
+decode, one whose stored coordinates disagree — is reported as a finding
+rather than skipped. Slice rendering is still to come.
 
 Lint locally the way CI does:
 
