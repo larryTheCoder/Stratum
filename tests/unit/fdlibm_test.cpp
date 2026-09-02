@@ -30,9 +30,24 @@ namespace {
 } // namespace
 
 TEST_CASE("fdlibm::log is bit-identical to StrictMath.log", "[fdlibm][vectors]") {
+    constexpr std::uint64_t kCanonicalNaN = UINT64_C(0x7FF8000000000000);
+
     for (const LogVector& vector : kLogVectors) {
         CAPTURE(vector.inputBits);
-        CHECK(bits(stratum::fdlibm::log(fromBits(vector.inputBits))) == vector.resultBits);
+        const double actual = stratum::fdlibm::log(fromBits(vector.inputBits));
+
+        if (vector.resultBits == kCanonicalNaN) {
+            // NaN is compared as NaN, not as bits. IEEE 754 leaves the sign
+            // of the NaN produced by 0.0/0.0 unspecified and the hardware
+            // disagrees: x86-64 gives 0xFFF8..., AArch64 gives 0x7FF8....
+            // An arm64 runner caught this suite demanding the x86 spelling.
+            // Java erases the distinction in Double.doubleToLongBits, and
+            // nothing observable can depend on it, since a NaN reaching
+            // terrain is already a bug. Every non-NaN result stays exact.
+            CHECK(std::isnan(actual));
+        } else {
+            CHECK(bits(actual) == vector.resultBits);
+        }
     }
 }
 

@@ -35,6 +35,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pin the JDK
+        # The vector generators use the JDK as an oracle, so which JDK is a
+        # reproducibility input: the Xoroshiro implementation has moved
+        # package between releases, and the derived nextInt/nextDouble draws
+        # come from RandomGenerator's default methods. The runner's default
+        # Java had no jdk.internal.random at all, which is how this surfaced.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
       - name: Install pinned clang-format
         # pipx, not pip: Ubuntu 24.04's system Python is externally managed.
         run: pipx install "clang-format==${CLANG_FORMAT_VERSION}"

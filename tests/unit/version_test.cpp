@@ -7,7 +7,11 @@
 
 #include <string>
 
-TEST_CASE("schema pin matches SPEC §3", "[version][pin]") {
+// Test names stay ASCII: ctest passes the name to the test binary as a
+// command-line filter, and a non-ASCII character is mangled by the Windows
+// console codepage, so the filter matches nothing and the test "fails" by
+// never running. Section references live in comments instead.
+TEST_CASE("schema pin matches the SPEC section 3 pin", "[version][pin]") {
     // The pin is a deliberate, versioned decision (SPEC §3): moving it means
     // schema diff review, regenerated conformance goldens and a capability
     // matrix re-check. This test exists so it cannot drift by accident.

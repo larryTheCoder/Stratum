@@ -1,7 +1,7 @@
 // Stratum — known-answer vectors for stratum::rng::Xoroshiro128PlusPlus.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// JAVA_FLAGS: --add-exports java.base/jdk.internal.random=ALL-UNNAMED --add-exports java.base/jdk.internal.util.random=ALL-UNNAMED
+// JAVA_FLAGS: --add-exports java.base/jdk.internal.random=ALL-UNNAMED --add-exports java.base/jdk.internal.util.random=ALL-UNNAMED --add-exports jdk.random/jdk.random=ALL-UNNAMED
 //
 // Two independent oracles, both shipped with the JDK:
 //
@@ -22,8 +22,9 @@
 //          --add-exports java.base/jdk.internal.util.random=ALL-UNNAMED \
 //          tools/vectors/XoroshiroVectors.java > tests/unit/xoroshiro_vectors.inc
 
+import java.lang.reflect.Constructor;
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
-import jdk.internal.random.Xoroshiro128PlusPlus;
 import jdk.internal.util.random.RandomSupport;
 
 public final class XoroshiroVectors {
@@ -54,6 +55,41 @@ public final class XoroshiroVectors {
     // ratios — and Stafford's variant 13 mix.
     private static final long SILVER_RATIO_64 = 0x6A09E667F3BCC909L;
     private static final long GOLDEN_RATIO_64 = 0x9E3779B97F4A7C15L;
+
+    /// The JDK's Xoroshiro128PlusPlus has moved package between releases, so
+    /// it is looked up by name rather than imported: an import that resolves
+    /// on the machine that wrote the vectors and not on the one checking them
+    /// turns a reproducibility check into a build error, which is exactly
+    /// what happened on CI.
+    private static final String[] CANDIDATE_CLASSES = {
+        "jdk.internal.random.Xoroshiro128PlusPlus",
+        "jdk.random.Xoroshiro128PlusPlus",
+    };
+
+    private static final Constructor<?> XOROSHIRO = findXoroshiro();
+
+    private static Constructor<?> findXoroshiro() {
+        for (String name : CANDIDATE_CLASSES) {
+            try {
+                return Class.forName(name).getConstructor(long.class, long.class);
+            } catch (ReflectiveOperationException ignored) {
+                // Try the next spelling.
+            }
+        }
+        throw new IllegalStateException(
+            "no Xoroshiro128PlusPlus with a (long, long) constructor on this JDK ("
+            + System.getProperty("java.version") + "); tried "
+            + Arrays.toString(CANDIDATE_CLASSES)
+            + ". The exact-state constructor is what makes this an oracle at all.");
+    }
+
+    private static RandomGenerator newGenerator(long x0, long x1) {
+        try {
+            return (RandomGenerator) XOROSHIRO.newInstance(x0, x1);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("cannot construct the JDK generator", error);
+        }
+    }
 
     private static String i64(long v) {
         return v == Long.MIN_VALUE ? "(-9223372036854775807LL - 1)" : v + "LL";
@@ -95,7 +131,7 @@ public final class XoroshiroVectors {
         System.out.println();
         System.out.println("constexpr auto kNextLongVectors = std::to_array<XoroshiroSequence>({");
         for (long[] state : STATES) {
-            RandomGenerator generator = new Xoroshiro128PlusPlus(state[0], state[1]);
+            RandomGenerator generator = newGenerator(state[0], state[1]);
             StringBuilder line = new StringBuilder("    {" + u64(state[0]) + ", " + u64(state[1]) + ", {{");
             for (int i = 0; i < SEQUENCE_LENGTH; i++) {
                 line.append(i == 0 ? "" : ", ").append(i64(generator.nextLong()));
@@ -162,20 +198,20 @@ public final class XoroshiroVectors {
         for (long[] state : STATES) {
             StringBuilder line = new StringBuilder("    {" + u64(state[0]) + ", " + u64(state[1]) + ", {{");
 
-            RandomGenerator ints = new Xoroshiro128PlusPlus(state[0], state[1]);
+            RandomGenerator ints = newGenerator(state[0], state[1]);
             for (int i = 0; i < 4; i++) {
                 line.append(i == 0 ? "" : ", ").append(ints.nextInt());
             }
             line.append("}}, {{");
 
-            RandomGenerator doubles = new Xoroshiro128PlusPlus(state[0], state[1]);
+            RandomGenerator doubles = newGenerator(state[0], state[1]);
             for (int i = 0; i < 4; i++) {
                 line.append(i == 0 ? "" : ", ")
                     .append(u64(Double.doubleToRawLongBits(doubles.nextDouble())));
             }
             line.append("}}, {{");
 
-            RandomGenerator floats = new Xoroshiro128PlusPlus(state[0], state[1]);
+            RandomGenerator floats = newGenerator(state[0], state[1]);
             for (int i = 0; i < 4; i++) {
                 line.append(i == 0 ? "" : ", ")
                     .append(String.format("UINT32_C(0x%08X)",
@@ -183,7 +219,7 @@ public final class XoroshiroVectors {
             }
             line.append("}}, {{");
 
-            RandomGenerator booleans = new Xoroshiro128PlusPlus(state[0], state[1]);
+            RandomGenerator booleans = newGenerator(state[0], state[1]);
             for (int i = 0; i < 8; i++) {
                 line.append(i == 0 ? "" : ", ").append(booleans.nextBoolean());
             }

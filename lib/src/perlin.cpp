@@ -250,8 +250,15 @@ double OctaveNoise::sample(double x, double y, double z) const noexcept {
 
 NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOctave,
                                 std::span<const double> amplitudes) {
-    NormalNoise noise{OctaveNoise::create(random, firstOctave, amplitudes),
-                      OctaveNoise::create(random, firstOctave, amplitudes), 1.0};
+    // Sequenced through named locals, not passed as two constructor
+    // arguments: both calls draw from the same generator, so which one runs
+    // first is part of the result. C++ leaves the evaluation order of
+    // constructor arguments unspecified, and MSVC evaluates them right to
+    // left — which silently swapped the two stacks and produced a different
+    // world on Windows while every other platform agreed.
+    OctaveNoise firstStack = OctaveNoise::create(random, firstOctave, amplitudes);
+    OctaveNoise secondStack = OctaveNoise::create(random, firstOctave, amplitudes);
+    NormalNoise noise{std::move(firstStack), std::move(secondStack), 1.0};
 
     // Leading and trailing zero amplitudes do not count toward the scaling:
     // they are padding that positions the rest, not octaves in their own

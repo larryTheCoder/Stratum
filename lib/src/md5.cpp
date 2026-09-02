@@ -8,7 +8,6 @@
 #include <stratum/hash/md5.hpp>
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -45,6 +44,14 @@ constexpr std::array<unsigned, 64> kShifts = {
     14, 20, 5,  9,  14, 20, 5,  9,  14, 20, 4,  11, 16, 23, 4,  11, 16, 23, 4,  11, 16, 23,
     4,  11, 16, 23, 6,  10, 15, 21, 6,  10, 15, 21, 6,  10, 15, 21, 6,  10, 15, 21,
 };
+
+/// libstdc++ and libc++ disagree about whether std::rotl's shift parameter is
+/// int or unsigned, so a runtime shift trips -Wsign-conversion on one of
+/// them. The rotation is spelled out instead. The mask keeps a shift of 0
+/// well defined, though RFC 1321 never uses one.
+[[nodiscard]] constexpr std::uint32_t rotateLeft(std::uint32_t value, unsigned shift) noexcept {
+    return (value << shift) | (value >> ((32U - shift) & 31U));
+}
 
 [[nodiscard]] std::uint32_t readLittleEndian32(const std::uint8_t* data) noexcept {
     return static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8U) |
@@ -92,7 +99,7 @@ void processBlock(State& state, const std::uint8_t* block) noexcept {
         a = d;
         d = c;
         c = b;
-        b += std::rotl(rotated, static_cast<int>(kShifts[i]));
+        b += rotateLeft(rotated, kShifts[i]);
     }
 
     state.a += a;

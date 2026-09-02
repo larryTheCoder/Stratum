@@ -89,6 +89,20 @@ public final class StrictMathVectors {
         return inputs;
     }
 
+    /// Every NaN is emitted as the canonical quiet NaN.
+    ///
+    /// IEEE 754 does not specify the sign of the NaN that 0.0/0.0 produces,
+    /// and the hardware disagrees: x86-64 yields 0xFFF8000000000000 while
+    /// AArch64 yields 0x7FF8000000000000. Recording whichever one the
+    /// generating machine happened to produce would bake an architecture
+    /// into the vectors — and did, until an arm64 CI runner caught it. Java
+    /// itself collapses the distinction in Double.doubleToLongBits, and no
+    /// worldgen value can depend on it, because a NaN reaching terrain is
+    /// already a bug.
+    private static long resultBits(double value) {
+        return Double.isNaN(value) ? 0x7FF8000000000000L : Double.doubleToRawLongBits(value);
+    }
+
     public static void main(String[] args) {
         System.out.println("// GENERATED FILE — DO NOT EDIT BY HAND.");
         System.out.println("//");
@@ -113,8 +127,7 @@ public final class StrictMathVectors {
         System.out.println("constexpr auto kLogVectors = std::to_array<LogVector>({");
         for (double input : logInputs()) {
             System.out.printf("    {UINT64_C(0x%016X), UINT64_C(0x%016X)},%n",
-                Double.doubleToRawLongBits(input),
-                Double.doubleToRawLongBits(StrictMath.log(input)));
+                Double.doubleToRawLongBits(input), resultBits(StrictMath.log(input)));
         }
         System.out.println("});");
         System.out.println();

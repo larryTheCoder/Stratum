@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
@@ -35,15 +34,35 @@ struct CliResult {
 [[nodiscard]] CliResult runCli(const std::string& arguments) {
     const std::filesystem::path outputPath =
         std::filesystem::temp_directory_path() / "stratum-cli-test-output.txt";
-    const std::string command = std::string("\"") + STRATUM_CLI_PATH + "\" " + arguments + " > \"" +
-                                outputPath.string() + "\" 2>&1";
+    std::string command = std::string("\"") + STRATUM_CLI_PATH + "\" " + arguments + " > \"" +
+                          outputPath.string() + "\" 2>&1";
+
+#ifdef _WIN32
+    // std::system runs `cmd /c <command>`, and cmd strips the outer quotes
+    // when a command line both begins with a quote and contains more of
+    // them, so the executable is never found. Wrapping the whole thing in
+    // one more pair is the documented way round that.
+    command = "\"" + command + "\"";
+#endif
 
     const int status = std::system(command.c_str());
 
-    std::ifstream stream(outputPath);
-    const std::string output{std::istreambuf_iterator<char>(stream),
-                             std::istreambuf_iterator<char>()};
-    stream.close();
+    std::string output;
+    {
+        // Scoped so the handle is closed before the file is removed: Windows
+        // refuses to delete a file that is still open. Read by size rather
+        // than through istreambuf_iterator, which GCC 13's optimiser cannot
+        // prove non-null through and reports as a potential null dereference
+        // inside <streambuf>.
+        std::ifstream stream(outputPath, std::ios::binary);
+        if (stream) {
+            stream.seekg(0, std::ios::end);
+            output.resize(static_cast<std::size_t>(stream.tellg()));
+            stream.seekg(0, std::ios::beg);
+            stream.read(output.data(), static_cast<std::streamsize>(output.size()));
+            output.resize(static_cast<std::size_t>(stream.gcount()));
+        }
+    }
     std::filesystem::remove(outputPath);
 
 #ifdef _WIN32

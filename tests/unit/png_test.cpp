@@ -18,7 +18,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
@@ -180,10 +179,20 @@ TEST_CASE("a written file matches what the encoder produced", "[png]") {
         std::filesystem::temp_directory_path() / "stratum-test-image.png";
     stratum::image::writePng(path, image);
 
-    std::ifstream stream(path, std::ios::binary);
-    REQUIRE(stream);
-    const std::vector<char> written{std::istreambuf_iterator<char>(stream),
-                                    std::istreambuf_iterator<char>()};
+    std::vector<char> written;
+    {
+        // Scoped so the handle is closed before the file is removed: Windows
+        // refuses to delete a file that is still open, where POSIX allows it.
+        // Read with an explicit size rather than istreambuf_iterator, which
+        // GCC's optimiser cannot prove non-null through and reports as a
+        // potential null dereference in <streambuf>.
+        std::ifstream stream(path, std::ios::binary);
+        REQUIRE(stream);
+        stream.seekg(0, std::ios::end);
+        written.resize(static_cast<std::size_t>(stream.tellg()));
+        stream.seekg(0, std::ios::beg);
+        REQUIRE(stream.read(written.data(), static_cast<std::streamsize>(written.size())));
+    }
     std::filesystem::remove(path);
 
     const std::vector<std::byte> expected = encodePng(image);
