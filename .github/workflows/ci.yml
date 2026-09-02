@@ -27,6 +27,8 @@ env:
   # Pinned so formatting is identical on every machine; clang-format output
   # changes between major versions.
   CLANG_FORMAT_VERSION: "18.1.8"
+  # Keep in sync with SPEC §3 and STRATUM_MINECRAFT_VERSION.
+  MINECRAFT_VERSION: "1.21.11"
 
 jobs:
   lint:
@@ -192,10 +194,46 @@ jobs:
       - name: Build
         run: cmake --build --preset dev
 
-      # M1: fetch fixtures here with
-      #   tools/fetch-vanilla --version 1.21.11
-      # from an official Mojang jar. Nothing it produces may be committed or
-      # uploaded as a public artifact (SPEC §12).
+      # The jar is content-addressed and its SHA-1 is verified on every run,
+      # so caching it is safe and saves pulling 56 MB from Mojang each time.
+      # fetch-vanilla re-verifies a cached jar and only re-downloads if the
+      # hash does not match.
+      - name: Cache the vanilla server jar
+        uses: actions/cache@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/server-${{ env.MINECRAFT_VERSION }}.jar
+          key: vanilla-server-jar-${{ env.MINECRAFT_VERSION }}
+
+      - name: Fetch vanilla worldgen data
+        # Extraction only — no EULA is involved, because the server is never
+        # run. Golden region generation does run it, needs --accept-eula, and
+        # deliberately stays off CI; the suites that need regions skip and
+        # say so. Nothing fetched here is committed or uploaded (SPEC §12).
+        run: tools/fetch-vanilla --with-structures
+
+      - name: Check the fixtures really arrived
+        # Without this, a fetch that produced nothing would leave every
+        # data-driven suite skipping and the job still green — which is the
+        # failure mode this whole job exists to avoid.
+        run: |
+          worldgen=".fixtures/${MINECRAFT_VERSION}/worldgen"
+          structures=".fixtures/${MINECRAFT_VERSION}/structure"
+          json_count="$(find "${worldgen}" -name '*.json' | wc -l)"
+          nbt_count="$(find "${structures}" -name '*.nbt' | wc -l)"
+          echo "worldgen JSON: ${json_count}, structure NBT: ${nbt_count}"
+          test -d "${worldgen}/density_function"
+          test -d "${worldgen}/noise_settings"
+          [ "${json_count}" -gt 900 ]
+          [ "${nbt_count}" -gt 1000 ]
 
       - name: Conformance suite
         run: ctest --preset conformance
+
+      - name: Report what could not be checked
+        # Region goldens need the server run, so those suites skip here. Said
+        # out loud rather than left to be inferred from a green tick.
+        if: always()
+        run: |
+          echo "Region-golden suites skip here: generating them runs the vanilla"
+          echo "server, which requires accepting Mojang's EULA. Run them locally:"
+          echo "  tools/fetch-vanilla --generate-regions --accept-eula"
