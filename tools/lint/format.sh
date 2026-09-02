@@ -13,7 +13,12 @@ if ! command -v "${CLANG_FORMAT}" >/dev/null 2>&1; then
     exit 2
 fi
 
-mapfile -t files < <(find lib cli ext tests \
+# A read loop rather than mapfile: macOS still ships bash 3.2, where
+# mapfile does not exist.
+files=()
+while IFS= read -r file; do
+    files+=("${file}")
+done < <(find lib cli ext tests \
     \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.inl' \) \
     -not -path '*/_deps/*' 2>/dev/null | sort)
 

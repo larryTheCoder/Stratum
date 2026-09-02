@@ -14,6 +14,20 @@ fetch="${repo_root}/tools/fetch-vanilla"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
+# macOS has shasum, not sha256sum — the same split tools/fetch-vanilla
+# handles. A test that assumes coreutils fails on a platform the code
+# supports, which is what happened on the macos-arm64 runner.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        echo "neither sha256sum nor shasum is available" >&2
+        exit 1
+    fi
+}
+
 failures=0
 check() {
     local what="$1"
@@ -87,7 +101,7 @@ bundle_src="${work_dir}/bundle-src"
 mkdir -p "${bundle_src}/META-INF/versions/1.21.11"
 inner_jar="${bundle_src}/META-INF/versions/1.21.11/server-1.21.11.jar"
 (cd "${jar_src}" && zip -qr "${inner_jar}" .)
-inner_sha256="$(sha256sum "${inner_jar}" | cut -d' ' -f1)"
+inner_sha256="$(sha256_of "${inner_jar}")"
 printf '%s\t1.21.11\t1.21.11/server-1.21.11.jar\n' "${inner_sha256}" \
     > "${bundle_src}/META-INF/versions.list"
 bundler_jar="${work_dir}/bundler.jar"
