@@ -45,7 +45,9 @@ struct CliResult {
     command = "\"" + command + "\"";
 #endif
 
-    const int status = std::system(command.c_str());
+    // Not const: Apple's WIFEXITED and WEXITSTATUS expand to *(int *)&(x),
+    // which drops the qualifier off a const int and trips -Wcast-qual.
+    int status = std::system(command.c_str());
 
     std::string output;
     {

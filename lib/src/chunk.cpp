@@ -8,6 +8,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,7 +30,7 @@ namespace {
             state.properties.emplace_back(property.name, property.value.asString());
         }
         // Sorted so that equality is about meaning, not serialisation order.
-        std::sort(state.properties.begin(), state.properties.end());
+        std::ranges::sort(state.properties);
     }
     return state;
 }
@@ -158,6 +159,9 @@ Chunk Chunk::decode(const nbt::Tag& root) {
 
     for (const nbt::Tag& entry : sections->asList().elements) {
         Section section;
+        // Y is genuinely signed — sections run from -4 upward since 1.18 —
+        // so the sign extension is the point, not a mistake.
+        // NOLINTNEXTLINE(bugprone-signed-char-misuse)
         section.y = entry.at("Y").asByte();
         const std::string what =
             describe(chunk.x_, chunk.z_) + " section " + std::to_string(section.y);
@@ -186,8 +190,8 @@ Chunk Chunk::decode(const nbt::Tag& root) {
         chunk.sections_.push_back(std::move(section));
     }
 
-    std::sort(chunk.sections_.begin(), chunk.sections_.end(),
-              [](const Section& lhs, const Section& rhs) { return lhs.y < rhs.y; });
+    std::ranges::sort(chunk.sections_,
+                      [](const Section& lhs, const Section& rhs) { return lhs.y < rhs.y; });
     return chunk;
 }
 
@@ -205,8 +209,8 @@ const BlockState* Chunk::blockAt(int localX, int y, int localZ) const {
     const int sectionY = javamath::floorDiv(y, kSectionSize);
     const int localY = javamath::floorMod(y, kSectionSize);
 
-    const auto found = std::find_if(sections_.begin(), sections_.end(),
-                                    [sectionY](const Section& s) { return s.y == sectionY; });
+    const auto found =
+        std::ranges::find_if(sections_, [sectionY](const Section& s) { return s.y == sectionY; });
     if (found == sections_.end()) {
         return nullptr;
     }
@@ -214,12 +218,12 @@ const BlockState* Chunk::blockAt(int localX, int y, int localZ) const {
 }
 
 std::optional<int> Chunk::highestNonAir(int localX, int localZ) const {
-    for (auto section = sections_.rbegin(); section != sections_.rend(); ++section) {
+    for (const Section& section : std::views::reverse(sections_)) {
         for (int localY = kSectionSize - 1; localY >= 0; --localY) {
-            const BlockState& state = section->blockAt(localX, localY, localZ);
+            const BlockState& state = section.blockAt(localX, localY, localZ);
             if (state.name != "minecraft:air" && state.name != "minecraft:cave_air" &&
                 state.name != "minecraft:void_air") {
-                return (section->y * kSectionSize) + localY;
+                return (section.y * kSectionSize) + localY;
             }
         }
     }

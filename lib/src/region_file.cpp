@@ -75,7 +75,7 @@ namespace {
 
     std::vector<std::byte> output;
     // Chunk NBT inflates to a few hundred KiB; start there and grow.
-    std::array<std::byte, 64U * 1024U> buffer{};
+    std::array<std::byte, std::size_t{64} * 1024> buffer{};
 
     int status = Z_OK;
     do {
@@ -129,11 +129,11 @@ RegionFile RegionFile::open(const std::filesystem::path& path) {
         throw FormatError("short read on region file: " + path.string());
     }
 
-    return RegionFile(std::move(bytes), path.filename().string());
+    return {std::move(bytes), path.filename().string()};
 }
 
 RegionFile RegionFile::fromBytes(std::vector<std::byte> bytes, std::string name) {
-    return RegionFile(std::move(bytes), std::move(name));
+    return {std::move(bytes), std::move(name)};
 }
 
 std::size_t RegionFile::indexFor(std::int32_t chunkX, std::int32_t chunkZ) noexcept {
@@ -161,7 +161,7 @@ void RegionFile::validateHeader() const {
     for (std::size_t index = 0; index < static_cast<std::size_t>(kChunksPerRegion); ++index) {
         const std::byte* entry = bytes_.data() + (index * 4U);
         const std::uint32_t offset = readBigEndian24(entry);
-        const std::uint8_t count = static_cast<std::uint8_t>(entry[3]);
+        const auto count = static_cast<std::uint8_t>(entry[3]);
 
         if (offset == 0U && count == 0U) {
             continue; // absent, which is the common case
@@ -190,7 +190,8 @@ ChunkLocation RegionFile::location(std::int32_t chunkX, std::int32_t chunkZ) con
         return {};
     }
     const std::byte* entry = bytes_.data() + (indexFor(chunkX, chunkZ) * 4U);
-    return ChunkLocation{readBigEndian24(entry), static_cast<std::uint8_t>(entry[3])};
+    return ChunkLocation{.sectorOffset = readBigEndian24(entry),
+                         .sectorCount = static_cast<std::uint8_t>(entry[3])};
 }
 
 bool RegionFile::hasChunk(std::int32_t chunkX, std::int32_t chunkZ) const {
@@ -245,7 +246,7 @@ std::vector<std::byte> RegionFile::readChunk(std::int32_t chunkX, std::int32_t c
                           std::to_string(span - 4U));
     }
 
-    const std::uint8_t rawScheme = static_cast<std::uint8_t>(bytes_[start + 4U]);
+    const auto rawScheme = static_cast<std::uint8_t>(bytes_[start + 4U]);
 
     // The high bit means the payload lives beside the region in an .mcc file
     // because it did not fit in 255 sectors.
@@ -264,7 +265,7 @@ std::vector<std::byte> RegionFile::readChunk(std::int32_t chunkX, std::int32_t c
         case Compression::Gzip:
             return inflatePayload(payload, payloadSize, 15 + 16, what);
         case Compression::None:
-            return std::vector<std::byte>(payload, payload + payloadSize);
+            return {payload, payload + payloadSize};
         case Compression::Lz4:
         case Compression::Custom:
         default:

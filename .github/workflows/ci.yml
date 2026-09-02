@@ -88,6 +88,10 @@ jobs:
           diff -u tests/unit/noise_vectors.inc "${RUNNER_TEMP}/noise_vectors.inc"
 
       - name: Install clang-tidy
+        # Pinned: clang-tidy's check set changes between releases, so an
+        # unpinned linter is a gate that moves on its own. Reproduce locally
+        # with the same major, e.g. `apt-get download clang-tidy-18` and
+        # `dpkg -x` if you would rather not install it system-wide.
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
 
       - name: Configure for clang-tidy (compile_commands.json)
@@ -132,7 +136,10 @@ jobs:
             os: ubuntu-24.04-arm
             preset: ci-release
           - name: macos-x86_64 (debug)
-            os: macos-13
+            # macos-13 is retired: the job is never assigned a runner, sits
+            # queued and is eventually cancelled, which looks like a hang
+            # rather than a missing runner.
+            os: macos-15-intel
             preset: ci-debug
           - name: macos-arm64 (debug)
             os: macos-14

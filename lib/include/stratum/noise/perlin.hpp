@@ -60,8 +60,12 @@ public:
     }
 
 private:
-    [[nodiscard]] std::uint8_t at(std::size_t index) const noexcept {
-        return permutation_[index & 0xFFU];
+    /// Wraps into the 256-entry table. The index is signed because the
+    /// lattice coordinates are: a negative one wraps exactly as the
+    /// reference's `0xff & i` does, and masking before widening keeps that
+    /// explicit rather than routing it through a huge size_t.
+    [[nodiscard]] std::uint8_t at(std::int32_t index) const noexcept {
+        return permutation_[static_cast<std::size_t>(index & 0xFF)];
     }
 
     double originX_ = 0.0;

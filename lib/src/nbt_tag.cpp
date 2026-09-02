@@ -4,6 +4,7 @@
 #include <stratum/nbt/tag.hpp>
 
 #include <algorithm>
+#include <ranges>
 #include <string>
 #include <string_view>
 
@@ -149,8 +150,8 @@ const Tag::LongArray& Tag::asLongArray() const {
 
 const Tag* Tag::find(std::string_view name) const {
     const Compound& entries = asCompound();
-    const auto found = std::find_if(entries.begin(), entries.end(),
-                                    [name](const NamedTag& entry) { return entry.name == name; });
+    const auto found =
+        std::ranges::find_if(entries, [name](const NamedTag& entry) { return entry.name == name; });
     return found == entries.end() ? nullptr : &found->value;
 }
 

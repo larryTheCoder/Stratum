@@ -15,11 +15,12 @@
 #include <stratum/image/png.hpp>
 #include <stratum/region/region_file.hpp>
 
+#include <cstdint>
 #include <string_view>
 
 namespace stratum::render {
 
-enum class Mode {
+enum class Mode : std::uint8_t {
     /// Surface height, dark to light across the region's own range.
     Heightmap,
     /// The surface biome, one colour per biome id.

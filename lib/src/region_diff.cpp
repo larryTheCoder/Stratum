@@ -29,9 +29,9 @@ struct LoadedChunk {
     try {
         const std::vector<std::byte> payload = region.readChunk(chunkX, chunkZ);
         const nbt::Document document = nbt::read(payload);
-        return LoadedChunk{chunk::Chunk::decode(document.root), {}};
+        return LoadedChunk{.chunk = chunk::Chunk::decode(document.root), .error = {}};
     } catch (const std::exception& error) {
-        return LoadedChunk{chunk::Chunk{}, error.what()};
+        return LoadedChunk{.chunk = chunk::Chunk{}, .error = error.what()};
     }
 }
 
@@ -68,8 +68,11 @@ DiffReport diff(const RegionFile& left, const RegionFile& right, const DiffOptio
                 continue;
             }
             if (inLeft != inRight) {
-                report.chunkFindings.push_back(ChunkFinding{
-                    localX, localZ, inLeft ? ChunkIssue::OnlyInLeft : ChunkIssue::OnlyInRight, {}});
+                report.chunkFindings.push_back(
+                    ChunkFinding{.chunkX = localX,
+                                 .chunkZ = localZ,
+                                 .issue = inLeft ? ChunkIssue::OnlyInLeft : ChunkIssue::OnlyInRight,
+                                 .detail = {}});
                 continue;
             }
 
@@ -78,20 +81,25 @@ DiffReport diff(const RegionFile& left, const RegionFile& right, const DiffOptio
             if (!leftChunk.ok() || !rightChunk.ok()) {
                 // Reported, never skipped: an unreadable chunk is a finding,
                 // not an absence of evidence.
-                report.chunkFindings.push_back(ChunkFinding{
-                    localX, localZ, ChunkIssue::Undecodable,
-                    !leftChunk.ok() ? "left: " + leftChunk.error : "right: " + rightChunk.error});
+                report.chunkFindings.push_back(
+                    ChunkFinding{.chunkX = localX,
+                                 .chunkZ = localZ,
+                                 .issue = ChunkIssue::Undecodable,
+                                 .detail = !leftChunk.ok() ? "left: " + leftChunk.error
+                                                           : "right: " + rightChunk.error});
                 continue;
             }
 
             if (leftChunk.chunk.x() != rightChunk.chunk.x() ||
                 leftChunk.chunk.z() != rightChunk.chunk.z()) {
                 report.chunkFindings.push_back(ChunkFinding{
-                    leftChunk.chunk.x(), leftChunk.chunk.z(), ChunkIssue::CoordinateMismatch,
-                    "left says (" + std::to_string(leftChunk.chunk.x()) + ", " +
-                        std::to_string(leftChunk.chunk.z()) + "), right says (" +
-                        std::to_string(rightChunk.chunk.x()) + ", " +
-                        std::to_string(rightChunk.chunk.z()) + ")"});
+                    .chunkX = leftChunk.chunk.x(),
+                    .chunkZ = leftChunk.chunk.z(),
+                    .issue = ChunkIssue::CoordinateMismatch,
+                    .detail = "left says (" + std::to_string(leftChunk.chunk.x()) + ", " +
+                              std::to_string(leftChunk.chunk.z()) + "), right says (" +
+                              std::to_string(rightChunk.chunk.x()) + ", " +
+                              std::to_string(rightChunk.chunk.z()) + ")"});
                 continue;
             }
 
@@ -125,9 +133,11 @@ DiffReport diff(const RegionFile& left, const RegionFile& right, const DiffOptio
                         ++report.blockDifferenceCount;
                         if (report.blockDifferences.size() < options.maxBlockDifferences) {
                             report.blockDifferences.push_back(BlockDifference{
-                                baseX + blockX, y, baseZ + blockZ,
-                                describeBlock(leftChunk.chunk, blockX, y, blockZ),
-                                describeBlock(rightChunk.chunk, blockX, y, blockZ)});
+                                .x = baseX + blockX,
+                                .y = y,
+                                .z = baseZ + blockZ,
+                                .left = describeBlock(leftChunk.chunk, blockX, y, blockZ),
+                                .right = describeBlock(rightChunk.chunk, blockX, y, blockZ)});
                         }
                     }
                 }

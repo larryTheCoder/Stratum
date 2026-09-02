@@ -22,7 +22,7 @@
 namespace stratum::region {
 
 /// Why two chunks could not be compared block-for-block.
-enum class ChunkIssue {
+enum class ChunkIssue : std::uint8_t {
     OnlyInLeft,
     OnlyInRight,
     Undecodable,

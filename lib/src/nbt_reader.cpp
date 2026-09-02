@@ -218,7 +218,7 @@ private:
                 }
             }
             Tag value = readPayload(type, depth + 1);
-            entries.push_back(NamedTag{std::move(name), std::move(value)});
+            entries.push_back(NamedTag{.name = std::move(name), .value = std::move(value)});
         }
     }
 

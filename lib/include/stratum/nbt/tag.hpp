@@ -75,7 +75,9 @@ public:
     using Compound = std::vector<NamedTag>;
 
     // Declared here, defined below: see the note above the definitions.
-    Tag() noexcept;
+    // The default constructor is an exception: it touches only the variant's
+    // first alternative (monostate), so it needs nothing complete.
+    Tag() noexcept = default;
     explicit Tag(std::int8_t value) noexcept;
     explicit Tag(std::int16_t value) noexcept;
     explicit Tag(std::int32_t value) noexcept;
@@ -137,8 +139,6 @@ struct NamedTag {
 // Defining them in-class instantiates the variant too early: GCC tolerates
 // it, Clang rejects it outright. Deferring the definitions until NamedTag is
 // complete is correct for both.
-
-inline Tag::Tag() noexcept = default;
 
 inline Tag::Tag(std::int8_t value) noexcept : value_(value) {}
 

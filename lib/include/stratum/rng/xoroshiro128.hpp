@@ -68,7 +68,7 @@ inline constexpr std::uint64_t kGoldenRatio64 = UINT64_C(0x9E3779B97F4A7C15);
     const std::uint64_t lo = static_cast<std::uint64_t>(seed) ^ kSilverRatio64;
     // Wrapping addition, as Java's is.
     const std::uint64_t hi = lo + kGoldenRatio64;
-    return Seed128{mixStafford13(lo), mixStafford13(hi)};
+    return Seed128{.lo = mixStafford13(lo), .hi = mixStafford13(hi)};
 }
 
 class Xoroshiro128PlusPlus {
@@ -139,7 +139,7 @@ public:
         return static_cast<float>(static_cast<std::uint64_t>(nextLong()) >> 40U) * kFloatUnit;
     }
 
-    [[nodiscard]] constexpr Seed128 state() const noexcept { return Seed128{lo_, hi_}; }
+    [[nodiscard]] constexpr Seed128 state() const noexcept { return Seed128{.lo = lo_, .hi = hi_}; }
 
 private:
     /// The low 32 bits of the next draw, which is what the bounded draw uses.

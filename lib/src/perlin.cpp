@@ -123,9 +123,9 @@ double PerlinNoise::sample(double x, double y, double z, double yScale,
     const double cellY = std::floor(shiftedY);
     const double cellZ = std::floor(shiftedZ);
 
-    double localX = shiftedX - cellX;
+    const double localX = shiftedX - cellX;
     double localY = shiftedY - cellY;
-    double localZ = shiftedZ - cellZ;
+    const double localZ = shiftedZ - cellZ;
 
     const auto latticeX = static_cast<std::uint8_t>(static_cast<std::int32_t>(cellX));
     const auto latticeY = static_cast<std::uint8_t>(static_cast<std::int32_t>(cellY));
@@ -143,21 +143,21 @@ double PerlinNoise::sample(double x, double y, double z, double yScale,
     }
 
     const auto cornerA = static_cast<std::uint8_t>(at(latticeX) + latticeY);
-    const auto cornerB = static_cast<std::uint8_t>(at(latticeX + 1U) + latticeY);
+    const auto cornerB = static_cast<std::uint8_t>(at(latticeX + 1) + latticeY);
 
     const auto cornerAA = static_cast<std::uint8_t>(at(cornerA) + latticeZ);
     const auto cornerBA = static_cast<std::uint8_t>(at(cornerB) + latticeZ);
-    const auto cornerAB = static_cast<std::uint8_t>(at(cornerA + 1U) + latticeZ);
-    const auto cornerBB = static_cast<std::uint8_t>(at(cornerB + 1U) + latticeZ);
+    const auto cornerAB = static_cast<std::uint8_t>(at(cornerA + 1) + latticeZ);
+    const auto cornerBB = static_cast<std::uint8_t>(at(cornerB + 1) + latticeZ);
 
     const double x0y0z0 = gradientDot(at(cornerAA), localX, localY, localZ);
     const double x1y0z0 = gradientDot(at(cornerBA), localX - 1.0, localY, localZ);
     const double x0y1z0 = gradientDot(at(cornerAB), localX, localY - 1.0, localZ);
     const double x1y1z0 = gradientDot(at(cornerBB), localX - 1.0, localY - 1.0, localZ);
-    const double x0y0z1 = gradientDot(at(cornerAA + 1U), localX, localY, localZ - 1.0);
-    const double x1y0z1 = gradientDot(at(cornerBA + 1U), localX - 1.0, localY, localZ - 1.0);
-    const double x0y1z1 = gradientDot(at(cornerAB + 1U), localX, localY - 1.0, localZ - 1.0);
-    const double x1y1z1 = gradientDot(at(cornerBB + 1U), localX - 1.0, localY - 1.0, localZ - 1.0);
+    const double x0y0z1 = gradientDot(at(cornerAA + 1), localX, localY, localZ - 1.0);
+    const double x1y0z1 = gradientDot(at(cornerBA + 1), localX - 1.0, localY, localZ - 1.0);
+    const double x0y1z1 = gradientDot(at(cornerAB + 1), localX, localY - 1.0, localZ - 1.0);
+    const double x1y1z1 = gradientDot(at(cornerBB + 1), localX - 1.0, localY - 1.0, localZ - 1.0);
 
     const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
     const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
@@ -188,13 +188,13 @@ double PerlinNoise::sampleSimplex2D(double x, double y) const noexcept {
     const double x2 = (x0 - 1.0) + (2.0 * kUnskew);
     const double y2 = (y0 - 1.0) + (2.0 * kUnskew);
 
-    const std::uint8_t rowA = at(static_cast<std::size_t>(cellY));
-    const std::uint8_t rowB = at(static_cast<std::size_t>(cellY + stepY));
-    const std::uint8_t rowC = at(static_cast<std::size_t>(cellY + 1));
+    const std::uint8_t rowA = at(cellY);
+    const std::uint8_t rowB = at(cellY + stepY);
+    const std::uint8_t rowC = at(cellY + 1);
 
-    const std::uint8_t gradientA = at(static_cast<std::size_t>(rowA + cellX));
-    const std::uint8_t gradientB = at(static_cast<std::size_t>(rowB + cellX + stepX));
-    const std::uint8_t gradientC = at(static_cast<std::size_t>(rowC + cellX + 1));
+    const std::uint8_t gradientA = at(rowA + cellX);
+    const std::uint8_t gradientB = at(rowB + cellX + stepX);
+    const std::uint8_t gradientC = at(rowC + cellX + 1);
 
     double total = 0.0;
     total += simplexCorner(static_cast<std::uint8_t>(gradientA % 12U), x0, y0, 0.0, 0.5);
@@ -225,10 +225,11 @@ OctaveNoise OctaveNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
             const std::string name = "octave_" + std::to_string(firstOctave + static_cast<int>(i));
             const rng::Seed128 salt = rng::seedFromHashOf(name);
             rng::Xoroshiro128PlusPlus octaveRandom{
-                rng::Seed128{baseLo ^ salt.lo, baseHi ^ salt.hi}};
+                rng::Seed128{.lo = baseLo ^ salt.lo, .hi = baseHi ^ salt.hi}};
 
-            octaveNoise.octaves_.push_back(Octave{PerlinNoise::fromRandom(octaveRandom),
-                                                  amplitudes[i] * persistence, frequency});
+            octaveNoise.octaves_.push_back(Octave{.noise = PerlinNoise::fromRandom(octaveRandom),
+                                                  .amplitude = amplitudes[i] * persistence,
+                                                  .frequency = frequency});
         }
         // Advanced even for a skipped octave: a zero amplitude means "this
         // frequency contributes nothing", not "this frequency is not there".

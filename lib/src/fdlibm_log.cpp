@@ -71,7 +71,7 @@ constexpr double kLg7 = 1.479819860511658591e-01;     // 3FC2F112 DF3E5244
 /// ones. Used to normalise x into [1, 2) without touching its mantissa.
 [[nodiscard]] double withHighWord(double value, std::int32_t word) noexcept {
     const std::uint64_t low = std::bit_cast<std::uint64_t>(value) & 0xFFFFFFFFU;
-    const std::uint64_t high = static_cast<std::uint64_t>(static_cast<std::uint32_t>(word));
+    const auto high = static_cast<std::uint64_t>(static_cast<std::uint32_t>(word));
     return std::bit_cast<double>((high << 32U) | low);
 }
 
@@ -97,6 +97,10 @@ double log(double x) noexcept {
             return -kTwo54 / zero; // log(+-0) = -inf
         }
         if (hx < 0) {
+            // (x - x), not 0.0: upstream writes it this way so a NaN input
+            // propagates its own payload instead of being replaced. The two
+            // sides being identical is the point.
+            // NOLINTNEXTLINE(misc-redundant-expression)
             return (x - x) / zero; // log(-#) = NaN
         }
         k -= 54;

@@ -3,6 +3,16 @@
 # Determinism (SPEC section 5 / CLAUDE.md) is the reason several of these
 # are enabled and NOT negotiable away in a NOLINT: signed overflow, narrowing
 # casts and non-derived RNG are correctness bugs here, not style nits.
+#
+# modernize-use-std-numbers is off because it cannot tell a constant that
+# approximates a mathematical value from one that is deliberately a part of
+# it. It asks for std::numbers::ln2 in place of fdlibm's ln2_hi, noting that
+# they "differ by 1.91e-10" — which is the whole point: ln2 is split into a
+# high and a low part there, and taking that advice would break the
+# algorithm the vectors exist to protect.
+#
+# portability-avoid-pragma-once is off because #pragma once is a deliberate
+# project-wide choice.
 # Structural checks that clang-tidy cannot express (banned RNG types, banned
 # float flags) are enforced by tools/lint/check-determinism.sh in CI.
 Checks: >
@@ -23,7 +33,9 @@ Checks: >
   -readability-identifier-length,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,
-  -misc-include-cleaner
+  -misc-include-cleaner,
+  -modernize-use-std-numbers,
+  -portability-avoid-pragma-once
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*/(lib|cli|ext)/.*\.(hpp|h)$'
@@ -64,6 +76,24 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.ClassConstantPrefix
     value: k
+  # The k prefix marks a compile-time constant. An ordinary local that
+  # happens to be const is still just a variable, and demanding kResult for
+  # `const auto result` would make const-by-default unusable.
+  # Enumerators are not the constants the k prefix is for.
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.LocalConstantCase
+    value: camelBack
+  - key: readability-identifier-naming.LocalConstantPointerCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.ConstantMemberSuffix
+    value: '_'
   - key: readability-identifier-naming.MacroDefinitionCase
     value: UPPER_CASE
   - key: readability-implicit-bool-conversion.AllowPointerConditions

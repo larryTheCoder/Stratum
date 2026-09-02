@@ -29,8 +29,8 @@ public:
 };
 
 inline constexpr int kSectionSize = 16;
-inline constexpr std::size_t kBlocksPerSection = 16 * 16 * 16;
-inline constexpr std::size_t kBiomesPerSection = 4 * 4 * 4;
+inline constexpr std::size_t kBlocksPerSection = std::size_t{16} * 16 * 16;
+inline constexpr std::size_t kBiomesPerSection = std::size_t{4} * 4 * 4;
 
 /// A block state: its identifier plus its properties, kept as written.
 /// Properties are sorted by key so that two states compare equal when they

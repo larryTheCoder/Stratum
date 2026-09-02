@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace stratum::image {
@@ -29,13 +30,13 @@ void appendBigEndian32(std::vector<std::uint8_t>& out, std::uint32_t value) {
 }
 
 /// Every PNG chunk is length, type, payload, CRC-32 of type+payload.
-void appendChunk(std::vector<std::uint8_t>& out, const char (&type)[5],
+void appendChunk(std::vector<std::uint8_t>& out, std::string_view type,
                  const std::vector<std::uint8_t>& payload) {
     appendBigEndian32(out, static_cast<std::uint32_t>(payload.size()));
 
     const std::size_t crcStart = out.size();
-    for (std::size_t i = 0; i < 4; ++i) {
-        out.push_back(static_cast<std::uint8_t>(type[i]));
+    for (const char character : type) {
+        out.push_back(static_cast<std::uint8_t>(character));
     }
     out.insert(out.end(), payload.begin(), payload.end());
 
