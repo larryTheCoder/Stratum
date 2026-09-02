@@ -15,8 +15,11 @@ add_library(stratum_core STATIC
     src/chunk.cpp
     src/fdlibm_log.cpp
     src/md5.cpp
+    src/pack.cpp
     src/nbt_reader.cpp
     src/perlin.cpp
+    src/registry.cpp
+    src/resource_location.cpp
     src/png.cpp
     src/nbt_tag.cpp
     src/region_diff.cpp
@@ -38,6 +41,9 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/hash/md5.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/image/png.hpp"
@@ -53,7 +59,10 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_BINARY_DIR}/generated/stratum/version.hpp"
 )
 
-target_link_libraries(stratum_core PRIVATE ZLIB::ZLIB)
+target_link_libraries(stratum_core
+    PUBLIC nlohmann_json::nlohmann_json
+    PRIVATE ZLIB::ZLIB
+)
 
 stratum_configure_target(stratum_core)
 

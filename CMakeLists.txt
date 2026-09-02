@@ -52,6 +52,7 @@ endif()
 
 include(StratumWarnings)
 include(StratumDeterminism)
+include(StratumJson)
 include(StratumZlib)
 
 stratum_assert_no_banned_flags()
@@ -60,6 +61,7 @@ stratum_assert_no_banned_flags()
 # subdirectory is not visible to sibling directories, and tests/ links zlib
 # too in order to build the region fixtures it reads back.
 stratum_provision_zlib()
+stratum_provision_json()
 
 # --------------------------------------------------------------------------
 # Layers

@@ -7,6 +7,7 @@ add_executable(stratum_unit_tests
     md5_test.cpp
     nbt_test.cpp
     noise_test.cpp
+    pack_test.cpp
     png_test.cpp
     render_test.cpp
     region_diff_test.cpp

@@ -113,13 +113,19 @@ that was rejected**.
 | `worldgen/noise` | Supported | |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
 | Multi-noise biome source | Supported | |
-| `dimension`, `world_preset` | Partial | Only what is needed to select noise settings |
+| `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
+| `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |
 | Tags and namespaced references | Supported | Within the registries above |
 | `configured_feature`, `placed_feature` | **Rejected** | v2 (SPEC §10, M6) |
 | `configured_carver` | **Rejected** | v2 |
 | `structure`, `structure_set` | **Rejected** | v2 |
 | `template_pool`, `processor_list` | **Rejected** | v2 |
 | `flat_level_generator_preset` | **Rejected** | Not planned for v1 |
+
+Rejected entries are never silently dropped: the loader records each one by
+identifier and registry, so a caller can report exactly what it will not
+execute. See the open question in SPEC §8 about when their presence should be
+fatal.
 
 ### Parity tiers
 

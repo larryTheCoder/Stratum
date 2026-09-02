@@ -25,6 +25,7 @@ set_tests_properties(conformance.fixtures_present PROPERTIES
 add_executable(stratum_conformance_tests
     golden_regions_test.cpp
     nbt_structures_test.cpp
+    vanilla_pack_test.cpp
 )
 
 target_link_libraries(stratum_conformance_tests PRIVATE

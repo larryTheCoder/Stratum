@@ -234,6 +234,18 @@ Unsupported in v1 (hard error at load, listed by name in the error):
 The matrix is published in the README and is part of the public contract.
 A pack that half-loads silently is a bug of the highest severity class.
 
+**Open question, raised by the loader (M2).** "Hard error at load" has two
+readings, and the difference matters: taken literally it makes vanilla's own
+data unloadable, since 1.21.11 ships 258 `placed_feature` and 224
+`configured_feature` entries that v1 never executes — and the Tier-A goldens
+are deliberately generated with features stripped because they are out of
+scope. The loader therefore *classifies and reports* rather than baking in a
+reading: every file is either loaded or recorded by name, nothing is dropped,
+and `PackLoadOptions::rejectUnsupported` turns the presence of an
+unexecutable registry into a hard failure for callers that need it. Which
+should be the default for a user-supplied datapack is still to be decided;
+loading vanilla's own data cannot be.
+
 ---
 
 ## 9. Bedrock mapping layer
