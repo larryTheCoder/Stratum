@@ -88,7 +88,14 @@ PerlinNoise::PerlinNoise(double originX, double originY, double originZ,
                          std::array<std::uint8_t, 256> permutation) noexcept
     : originX_(originX), originY_(originY), originZ_(originZ), permutation_(permutation) {}
 
-PerlinNoise PerlinNoise::fromRandom(rng::Xoroshiro128PlusPlus& random) {
+namespace {
+
+/// The construction both generators share: three origin draws, then a
+/// Fisher-Yates shuffle over the shrinking tail. Templated on the generator
+/// rather than duplicated, because the whole point is that the *order* is
+/// the same and only the source of the numbers differs.
+template<typename Random>
+[[nodiscard]] PerlinNoise perlinFrom(Random& random) {
     // Order matters: three origin draws, then the shuffle. Reordering them
     // silently changes every octave seeded from this generator.
     const double originX = random.nextDouble() * 256.0;
@@ -99,7 +106,6 @@ PerlinNoise PerlinNoise::fromRandom(rng::Xoroshiro128PlusPlus& random) {
     for (std::size_t i = 0; i < permutation.size(); ++i) {
         permutation[i] = static_cast<std::uint8_t>(i);
     }
-    // A Fisher-Yates shuffle that draws from the shrinking tail.
     for (std::size_t i = 0; i < permutation.size(); ++i) {
         const auto swap =
             static_cast<std::size_t>(random.nextInt(static_cast<std::int32_t>(256U - i))) + i;
@@ -107,6 +113,16 @@ PerlinNoise PerlinNoise::fromRandom(rng::Xoroshiro128PlusPlus& random) {
     }
 
     return PerlinNoise{originX, originY, originZ, permutation};
+}
+
+} // namespace
+
+PerlinNoise PerlinNoise::fromRandom(rng::JavaRandom& random) {
+    return perlinFrom(random);
+}
+
+PerlinNoise PerlinNoise::fromRandom(rng::Xoroshiro128PlusPlus& random) {
+    return perlinFrom(random);
 }
 
 double PerlinNoise::sample(double x, double y, double z) const noexcept {

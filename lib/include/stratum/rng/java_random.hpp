@@ -60,7 +60,7 @@ public:
     constexpr std::int32_t next(int bits) noexcept {
         assert(bits >= 1 && bits <= 32);
         seed_ = ((seed_ * kMultiplier) + kAddend) & kMask;
-        const unsigned drop = static_cast<unsigned>(48 - bits);
+        const auto drop = static_cast<unsigned>(48 - bits);
         return static_cast<std::int32_t>(static_cast<std::uint32_t>(seed_ >> drop));
     }
 

@@ -94,6 +94,10 @@ jobs:
           tools/vectors/generate-climate-vectors.sh "${RUNNER_TEMP}/climate_vectors.inc"
           diff -u tests/conformance/climate_vectors.inc "${RUNNER_TEMP}/climate_vectors.inc"
 
+          # And the legacy blended noise, from the same commit.
+          tools/vectors/generate-blended-vectors.sh "${RUNNER_TEMP}/blended_vectors.inc"
+          diff -u tests/unit/blended_vectors.inc "${RUNNER_TEMP}/blended_vectors.inc"
+
       - name: Generated schema is reproducible
         # The density function schema is derived from mcdoc at a pinned
         # commit (SPEC §11), so a hand-edit to the generated tables — or a

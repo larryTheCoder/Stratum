@@ -109,18 +109,23 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
             return "it scans a column against a cell height, which needs the cell sampler "
                    "(SPEC §10, M3)";
         case NodeType::OldBlendedNoise:
-            return "the legacy blended noise has no independent oracle here, so implementing it "
-                   "would be a guess that generates a plausible wrong world (SPEC §11)";
+            // The noise itself is implemented and checked against cubiomes
+            // (stratum::noise::BlendedNoise). What is missing is smaller and
+            // more specific than it used to be, and still parity-fatal:
+            // where `smear_scale_multiplier` enters the formula, and how a
+            // dimension that does not declare `legacy_random_source` seeds
+            // the three octave stacks. Neither is documented and neither is
+            // covered by any oracle here (SPEC §11).
+            return "the blended noise is implemented, but where smear_scale_multiplier enters "
+                   "it and how a modern dimension seeds it are both unsettled, and each one "
+                   "changes every block (SPEC §11)";
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";
         case NodeType::WeirdScaledSampler:
             return "its rarity mapping is neither documented nor covered by any oracle "
                    "available here; it arrives with the cave functions (SPEC §10, M3)";
-        case NodeType::BlendDensity:
-            return "this engine never blends against pre-existing chunks, and what this type "
-                   "returns outside blending is not documented — unlike blend_alpha and "
-                   "blend_offset, whose no-blending values are";
+
         default:
             return std::nullopt;
     }
@@ -472,6 +477,14 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             }
             break;
         }
+        case NodeType::BlendDensity:
+            // The third member of the same interface as blend_alpha and
+            // blend_offset, and this engine generates every chunk itself. If
+            // 1.0 and 0.0 are what "not blending" means for those two — and
+            // vanilla's own overworld/offset is a lerp that reduces to its
+            // own value at alpha 1, which is hard to read any other way —
+            // then not blending has to leave a density alone. Documented
+            // nowhere, so SPEC §11 carries it until the goldens can say.
         case NodeType::Cache2d:
         case NodeType::CacheOnce:
         case NodeType::CacheAllInCell:

@@ -12,6 +12,7 @@ configure_file(
 )
 
 add_library(stratum_core STATIC
+    src/blended.cpp
     src/chunk.cpp
     src/density_graph.cpp
     src/density_interpreter.cpp
@@ -59,6 +60,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/reader.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/nbt/tag.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/noise/blended.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/noise/perlin.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/diff.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/region/region_file.hpp"

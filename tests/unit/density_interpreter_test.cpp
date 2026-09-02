@@ -328,7 +328,6 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     tree.define("islands", R"({"type":"minecraft:end_islands"})");
     tree.define("weird", R"({"type":"minecraft:weird_scaled_sampler",
         "rarity_value_mapper":"type_1","noise":"test","input":1.0})");
-    tree.define("blend_density", R"({"type":"minecraft:blend_density","argument":1.0})");
     // Buried two levels down, to make sure the walk descends rather than
     // only inspecting the root.
     tree.define("nested", R"({"type":"minecraft:add","argument1":1.0,
@@ -350,7 +349,6 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     CHECK_THAT(refusal("blended"), ContainsSubstring("minecraft:old_blended_noise"));
     CHECK_THAT(refusal("islands"), ContainsSubstring("minecraft:end_islands"));
     CHECK_THAT(refusal("weird"), ContainsSubstring("minecraft:weird_scaled_sampler"));
-    CHECK_THAT(refusal("blend_density"), ContainsSubstring("minecraft:blend_density"));
 
     // Reached through the walk, not through evaluation: requireEvaluable is
     // what a caller runs at load, and it has to find this before any chunk
@@ -386,18 +384,27 @@ TEST_CASE("the caches that do not relocate return their argument unchanged",
     }
 }
 
-TEST_CASE("blend_alpha and blend_offset take their no-blending values", "[density][interpreter]") {
+TEST_CASE("the three blending types take their no-blending values", "[density][interpreter]") {
     const TempTree tree;
     tree.define("alpha", R"({"type":"minecraft:blend_alpha"})");
     tree.define("offset", R"({"type":"minecraft:blend_offset"})");
+    tree.define("density", R"({"type":"minecraft:blend_density","argument":-2.5})");
+    tree.define("nested", R"({"type":"minecraft:blend_density","argument":{
+        "type":"minecraft:y_clamped_gradient",
+        "from_y":0,"to_y":100,"from_value":0.0,"to_value":100.0}})");
 
     const Pipeline pipeline(tree.pack());
 
     // This engine generates every chunk itself and never blends against
-    // terrain another generator wrote, so these are constants — which is
-    // what makes vanilla's overworld/offset reduce to its spline.
+    // terrain another generator wrote. For the first two that means 1.0 and
+    // 0.0, which is what makes vanilla's overworld/offset reduce to its
+    // spline; for the third it means leaving the density alone, which is the
+    // same statement about the same interface. None of the three is
+    // documented anywhere — SPEC §11 carries all three.
     CHECK(bits(pipeline.at("alpha")) == bits(1.0));
     CHECK(bits(pipeline.at("offset")) == bits(0.0));
+    CHECK(bits(pipeline.at("density")) == bits(-2.5));
+    CHECK(bits(pipeline.at("nested", Point{.x = 0, .y = 37, .z = 0})) == bits(37.0));
 }
 
 TEST_CASE("splines pass through their knots and extrapolate off the ends",

@@ -204,14 +204,15 @@ TEST_CASE("vanilla's routers gain the cell-structured entries once there is a la
     CHECK(end.geometry.cellWidth() == 8);
     CHECK(end.geometry.cellHeight() == 4);
 
-    // final_density is still out of reach, for reasons that have nothing to
-    // do with cells. Two of them, in fact: the walk meets `blend_density`
-    // first, and `old_blended_noise` sits behind it. Both are held back by
-    // SPEC §11, and terrain needs both — which is worth pinning here,
-    // because "the cell sampler landed" reads like terrain is next and it is
-    // not.
+    // final_density is still out of reach, for a reason that has nothing to
+    // do with cells: `old_blended_noise`. The noise itself is implemented and
+    // checked against cubiomes; what is unsettled is where
+    // smear_scale_multiplier enters it and how a modern dimension seeds it
+    // (SPEC §11). `blend_density`, which used to be the first refusal met on
+    // this path, is transparent now — so this is the single remaining thing
+    // between the pipeline and a block of terrain.
     CHECK_THROWS_WITH(withCells.requireEvaluable(overworld.router.at(RouterEntry::FinalDensity)),
-                      Catch::Matchers::ContainsSubstring("minecraft:blend_density"));
+                      Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
     CHECK_THROWS_WITH(withCells.requireEvaluable(loaded.graph.rootOf(
                           ResourceLocation::parse("minecraft:overworld/base_3d_noise"))),
                       Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));

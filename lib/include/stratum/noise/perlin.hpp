@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <array>
@@ -34,6 +35,12 @@ public:
     /// generator exactly as vanilla does: three doubles, then 256 bounded
     /// draws.
     [[nodiscard]] static PerlinNoise fromRandom(rng::Xoroshiro128PlusPlus& random);
+
+    /// The same construction from a Java LCG, which is what a dimension
+    /// declaring `legacy_random_source` uses. The draw sequence is identical;
+    /// only the generator differs, and the two produce entirely different
+    /// permutations from the same seed.
+    [[nodiscard]] static PerlinNoise fromRandom(rng::JavaRandom& random);
 
     PerlinNoise(double originX, double originY, double originZ,
                 std::array<std::uint8_t, 256> permutation) noexcept;

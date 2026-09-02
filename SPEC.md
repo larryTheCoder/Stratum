@@ -468,14 +468,47 @@ Open:
   "the cell sampler landed" should not be read as terrain being next.
 
   On `old_blended_noise` specifically, the claim above that it "has no
-  independent oracle here" is too strong and is corrected: cubiomes'
-  `sampleSurfaceNoise` is the same computation — the 16/16/8 octave stacks,
-  the precision-maintaining coordinate wrap, and the
-  `clampedLerp(0.5 + 0.05*main, min/512, max/512)` blend. What it does not
-  cover is the modern seeding path (it seeds from the Java LCG, as the legacy
-  source does) or `smear_scale_multiplier`, which it has no parameter for. So
-  the formula is checkable and the derivation around it is not, which is a
-  smaller gap than none but not nothing.
+  independent oracle here" was too strong. The noise is now **implemented and
+  checked** against cubiomes' `sampleSurfaceNoise`: the 16/16/8 octave
+  stacks, the per-octave scaling, the `clampedLerp(0.5 + 0.05*blend,
+  min/512, max/512)` blend, and the legacy seeding — three stacks drawn in
+  order from one Java LCG. See `lib/src/blended.cpp` and NOTICE.
+
+  Two things that oracle cannot reach, and each one changes every block:
+
+  * **Where `smear_scale_multiplier` enters.** cubiomes models the pre-1.18
+    noise, which had no such parameter, so agreement pins only the
+    multiplier-of-one case. Vanilla's data uses 8.0 in the overworld and
+    Nether and 4.0 in the End. This build multiplies the per-octave y slab
+    width by it, which is a guess. Measured, not assumed: the multiplier is
+    inert at exactly y = 0 and changes the value at every other height, so a
+    wrong placement is not confined to some corner of the world.
+  * **How a dimension that does not declare `legacy_random_source` seeds the
+    three stacks.** Nothing here answers this, and the overworld is such a
+    dimension.
+
+  So `old_blended_noise` stays refused, with a refusal that now names those
+  two rather than the whole function. It is the single remaining thing
+  between the pipeline and a block of overworld terrain.
+
+  A third, smaller gap worth writing down: cubiomes' `maintainPrecision` is
+  a no-op — the real line is commented out in its header as "useless in
+  practice". This build implements the wrap (fold into ±2^25, rounding half
+  up as Java does), and the vectors deliberately stay inside the band where
+  the two agree. Where the wrap actually bites, nothing checks it.
+
+- **The three blending types take their no-blending values (M2, extended M3).**
+  This engine generates every chunk itself and never blends against terrain
+  another generator wrote. `blend_alpha` is 1.0, `blend_offset` is 0.0, and
+  `blend_density` returns its argument unchanged.
+
+  None of the three is documented — minecraft.wiki records that they exist
+  and says "[more information needed]" — so all three rest on one structural
+  reading: they are the same interface, and vanilla's own
+  `overworld/offset` is a lerp of the shape `blended*(1-alpha) + own*alpha`,
+  which at alpha 1 takes the function's own value and is hard to read any
+  other way. Leaving a density alone is that same statement. The goldens
+  settle it; until then it is a reading, not a fact.
 
 - **`cache_2d` over a column-varying function is refused (M2).** Vanilla
   caches it on (x, z) alone, so the whole column would take the value of
