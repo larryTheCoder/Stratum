@@ -790,14 +790,16 @@ TEST_CASE("a legacy random source is refused rather than approximated", "[densit
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
 }
 
-TEST_CASE("a noise written inline loads, and is refused rather than seeded from a guess",
+TEST_CASE("a noise written inline loads, and is refused because vanilla refuses it too",
           "[density][interpreter][noise]") {
     // Two separate questions, and the answers differ. Is the input legal?
     // Yes — mcdoc declares a `noise` field as an identifier OR a noise, so
-    // the graph resolves it and the pack is not wrong. Can this build sample
-    // it? No: a noise is seeded from the MD5 of its identifier and this one
-    // has none, and substituting a derivation would give a world that
-    // generates and is silently not the one the pack asks for (SPEC §11).
+    // the graph resolves it and the pack parses. Can it be sampled? No, and
+    // not because this build is behind: a noise is seeded from the MD5 of
+    // its identifier, this one has none, and the vanilla server does not
+    // work around that either — it refuses to build a world whose router
+    // reaches such a node, which is measured in
+    // tests/conformance/vanilla_inline_noise_test.cpp (SPEC §11).
     const TempTree tree;
     tree.defineNoise("named", R"({"firstOctave":-4,"amplitudes":[1.0]})");
     tree.define("by_name", R"({"type":"minecraft:shift_a","argument":"named"})");
@@ -815,12 +817,22 @@ TEST_CASE("a noise written inline loads, and is refused rather than seeded from 
     // the temporaries it is made of and reading it is undefined.
     CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("inlined")),
                       ContainsSubstring("minecraft:shift_a") && ContainsSubstring("inline") &&
-                          ContainsSubstring("SPEC §11"));
+                          ContainsSubstring("vanilla server") && ContainsSubstring("SPEC §11"));
     // And on the sample too, not only on the up-front check: a caller that
     // skipped requireEvaluable must not get a number here.
     CHECK_THROWS_WITH(pipeline.at("inlined"), ContainsSubstring("minecraft:shift_a") &&
                                                   ContainsSubstring("inline") &&
                                                   ContainsSubstring("SPEC §11"));
+
+    // UnbuildableError, not a plain EvalError, from both entry points. The
+    // type is the machine-readable half of the sentence above — it is what
+    // lets `stratum validate` report a pack that works nowhere as an error
+    // and a node this build has not got to yet as a warning — so a caller
+    // that stopped distinguishing them would be a regression the message
+    // text could not catch.
+    CHECK_THROWS_AS(pipeline.interpreter().requireEvaluable(pipeline.root("inlined")),
+                    stratum::density::UnbuildableError);
+    CHECK_THROWS_AS(pipeline.at("inlined"), stratum::density::UnbuildableError);
 
     // Conservative about the column, because it will not evaluate the node
     // at all — a caller asking "may I cache this on (x, z)?" gets no.

@@ -7,18 +7,24 @@
 // open, resolve every reference, build every noise from a seed, and walk
 // each density function for node types this build cannot execute.
 //
-// TWO KINDS OF NO. SPEC §8 makes the capability matrix a public contract,
-// and this report keeps its two halves apart, because they mean different
-// things to whoever is holding the pack:
+// THREE KINDS OF NO. SPEC §8 makes the capability matrix a public contract,
+// and this report keeps its parts apart, because they mean different things
+// to whoever is holding the pack:
 //
 //   * a registry v1 does not execute — `placed_feature` and its neighbours.
 //     The pack is fine; this engine is not going to run that part of it, by
 //     design, and vanilla's own data is full of them.
 //   * a density function this *build* cannot yet evaluate. The pack is fine
 //     and the engine intends to run it, but the code is not there yet
-//     (SPEC §10, M3).
+//     (SPEC §10, M3). A warning.
+//   * a dimension vanilla itself will not build a world from — today, one
+//     whose noise router reaches a `noise` field carrying its parameters
+//     inline. Nothing is missing here; the pack does not work anywhere, and
+//     the vanilla server was asked (SPEC §11). An error.
 //
-// Neither is silently swallowed, and neither is reported as the other.
+// None is silently swallowed, and none is reported as another. The third was
+// a warning until it was measured, which is the difference between "we have
+// not implemented that" and "that does not work".
 //
 // WHAT A CLEAN REPORT DOES NOT MEAN. Five of the eight registries v1 executes
 // are loaded and addressable but not yet interpreted — biomes, dimensions and
@@ -45,7 +51,9 @@ enum class Severity : std::uint8_t {
     Note,
     /// The pack loads, but some of it will not be executed here.
     Warning,
-    /// The pack cannot be loaded or resolved at all.
+    /// The pack cannot be loaded or resolved at all — or holds something
+    /// the vanilla server refuses to build a world from, which is a broken
+    /// pack rather than an incomplete engine (SPEC §11).
     Error,
 };
 

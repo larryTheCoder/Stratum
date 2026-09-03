@@ -208,9 +208,9 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         };
 
         // A noise written inline is refused rather than evaluated (see
-        // refuseIfUnevaluable), and what this build will not evaluate it
-        // cannot show to hold one value down a column either. Conservative,
-        // as everything here is.
+        // refuseIfUnevaluable), and what will not be evaluated cannot be
+        // shown to hold one value down a column either. Conservative, as
+        // everything here is.
         if (node.inlineNoise.has_value()) {
             columnInvariant_[i] = 0;
             continue;
@@ -331,18 +331,21 @@ void Interpreter::refuseIfUnevaluable(const Node& node) const {
                         "' cannot be evaluated by this build: " + std::string(*reason));
     }
     if (node.inlineNoise.has_value()) {
-        // The input is legal and was loaded; what is missing is a seed. A
-        // noise is seeded from the MD5 of its identifier and one written
-        // inline has no identifier, so there is nothing to build it from
-        // here that is not a guess — and a guessed seed would produce a
-        // world that generates and is silently not the one the pack asks
-        // for (SPEC §8, §11).
-        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
-                        "' carries its noise parameters inline rather than naming a "
-                        "worldgen/noise entry. That is legal and this build loads it, but a "
-                        "noise is seeded from the MD5 of its identifier and this one has none; "
-                        "how vanilla seeds it is not settled here, so it will not be sampled "
-                        "from a guess (SPEC §11)");
+        // Not an admission that this build is behind: vanilla does not build
+        // it either. The server takes such a pack, loads the JSON without a
+        // word, and then dies constructing the dimension's random state with
+        // NoSuchElementException from Optional.orElseThrow, because the seed
+        // it needs is the MD5 of the noise's identifier and this noise has
+        // none. Measured over every field that takes the union, over two
+        // different sets of parameters, and over a router entry the dimension
+        // never samples: tools/analysis/inline-noise-probe.sh (SPEC §11).
+        throw UnbuildableError(
+            "'" + std::string(nodeTypeName(node.type)) +
+            "' carries its noise parameters inline rather than naming a worldgen/noise "
+            "entry. mcdoc allows that and this build loads it, but a noise is seeded from "
+            "the MD5 of its identifier and this one has none — and the vanilla server does "
+            "not work around that either: it refuses to build a world whose noise router "
+            "reaches such a node. Name the parameters as a worldgen/noise entry (SPEC §11)");
     }
 }
 

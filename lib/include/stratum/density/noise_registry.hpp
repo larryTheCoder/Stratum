@@ -8,10 +8,12 @@
 // first place in the pipeline where the seed appears.
 //
 // The other spelling — parameters written inline in the density function —
-// is legal and is kept by the graph, but is NOT built here. It has no
-// identifier, and an identifier is exactly what the seeding chain below
-// consumes; see stratum::density::Interpreter, which refuses such a node by
-// name rather than seeding it from a guess (SPEC §11).
+// is legal and is kept by the graph, but is NOT built here, and nothing is
+// missing. It has no identifier, and an identifier is exactly what the
+// seeding chain below consumes; the vanilla server has the same problem and
+// resolves it by refusing to build the world at all, which
+// tools/analysis/inline-noise-probe.sh measured. See
+// stratum::density::Interpreter, which refuses such a node by name (SPEC §11).
 //
 // The seeding chain is the part worth being careful about (CLAUDE.md: "one
 // wrong salt/seed derivation shifts everything downstream"):

@@ -229,6 +229,15 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
             try {
                 sampler.requireEvaluable(dimension.router.at(entry));
                 ++report.routerEntriesEvaluable;
+            } catch (const density::UnbuildableError& error) {
+                // An error, not a warning, and the difference was measured
+                // rather than assumed: the vanilla server refuses to build a
+                // world whose router reaches this, so the pack is broken
+                // wherever it is taken. Caught before EvalError because it
+                // derives from it.
+                add(report, Severity::Error,
+                    id.toString() + " " + std::string(settings::routerEntryName(entry)),
+                    error.what());
             } catch (const density::EvalError& error) {
                 add(report, Severity::Warning,
                     id.toString() + " " + std::string(settings::routerEntryName(entry)),
@@ -242,8 +251,14 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
             interpreter.requireEvaluable(root);
             ++report.evaluable;
         } catch (const density::EvalError& error) {
-            // A warning rather than an error: the pack is not wrong, this
-            // build is incomplete, and those two want telling apart.
+            // A warning rather than an error even for an UnbuildableError,
+            // which the router loop above reports as one. The difference is
+            // reach: a `worldgen/density_function` file that no dimension's
+            // router names is never visited, and a vanilla server carrying
+            // one starts and generates perfectly well — measured, alongside
+            // the refusals (tools/analysis/inline-noise-probe.sh). It
+            // becomes an error at the dimension that reaches it, which is
+            // exactly where vanilla raises it.
             add(report, Severity::Warning, id.toString(), error.what());
         }
     }

@@ -21,12 +21,14 @@
 //     that generates and is silently wrong, which is the failure mode this
 //     project treats as most severe.
 //
-// A node whose `noise` field carried its parameters inline is refused for
-// the same reason, and it is worth being precise about which reason. The
-// input is legal — mcdoc declares the field as an identifier OR a noise —
-// and the graph resolves it. What is missing is the seed: a noise is seeded
-// from the MD5 of its identifier, and one written inline has none, so there
-// is nothing here to build it from that is not a guess (SPEC §11).
+// A node whose `noise` field carried its parameters inline is refused too,
+// but for a different reason, and the difference is the whole point of
+// UnbuildableError below. The input is legal — mcdoc declares the field as an
+// identifier OR a noise — and the graph resolves it. It is *vanilla* that
+// cannot build it: the server loads such a pack without complaint and then
+// dies constructing the dimension's random state, because a noise is seeded
+// from the MD5 of its identifier and one written inline has none. Measured,
+// not reasoned: tools/analysis/inline-noise-probe.sh, SPEC §11.
 //
 // Everything else is evaluated. The 2D chain vanilla's overworld actually
 // uses — shift_a/shift_b, flat_cache, cache_2d, shifted_noise, noise, spline
@@ -81,9 +83,28 @@ namespace stratum::density {
 
 /// Raised when a graph cannot be evaluated: a node type this build does not
 /// implement, a missing noise, a cache whose contents break its contract.
+///
+/// Its meaning is "this build cannot do that *yet*" — the pack is fine and
+/// the engine intends to run it (SPEC §10). For input no build ever will,
+/// see UnbuildableError below.
 class EvalError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+};
+
+/// Raised for input that is legal to write, legal to load, and that vanilla
+/// itself will not build a world from — so refusing it is parity rather than
+/// an admission (SPEC §8, §11).
+///
+/// Today that is exactly one thing: a `noise` field carrying its parameters
+/// inline. It derives from EvalError because every caller that wants "can
+/// this be sampled?" wants one answer to that question; what the separate
+/// type buys is that `stratum validate` can tell a broken pack from an
+/// incomplete engine, and report the first as an error rather than a note
+/// about this build.
+class UnbuildableError : public EvalError {
+public:
+    using EvalError::EvalError;
 };
 
 /// The lattice vanilla samples terrain density on: density is evaluated at

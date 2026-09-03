@@ -397,34 +397,73 @@ TEST_CASE("a router entry this build cannot evaluate is named with its dimension
     CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
 }
 
-TEST_CASE("a noise written inline is a warning, not a rejected pack", "[validate]") {
-    // The two halves of the distinction this report is built around, in one
-    // pack. The input is legal — a `noise` field is an identifier OR a noise
-    // — so the pack is not broken and must not be reported as such; and this
-    // build cannot seed a noise that has no identifier, so the function is
-    // not evaluable and must not be counted as if it were.
-    const TempTree tree;
-    defineWorkingPack(tree);
-    tree.define("inlined", R"({"type":"minecraft:shift_a",
-        "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
+TEST_CASE("an inline noise is a warning where it sits and an error where a dimension reaches it",
+          "[validate]") {
+    // The report's three kinds of no, in two packs. The input is legal — a
+    // `noise` field is an identifier OR a noise — and it *loads*, so a
+    // density function file carrying one is not a broken pack. What breaks
+    // is a dimension whose router reaches it: the vanilla server refuses to
+    // build such a world at all, which was measured rather than assumed
+    // (tools/analysis/inline-noise-probe.sh, SPEC §11), so nothing is going
+    // to generate from it anywhere and calling that a warning would be
+    // telling the holder of the pack that the problem is at this end.
 
-    const Report report = stratum::validate::validatePack(tree.pack());
+    SECTION("a density function file that no router names") {
+        const TempTree tree;
+        defineWorkingPack(tree);
+        tree.define("inlined", R"({"type":"minecraft:shift_a",
+            "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
 
-    CHECK(report.resolved);
-    CHECK(report.count(Severity::Error) == 0U);
-    CHECK(report.densityFunctions == 2U);
-    // Only `field` of the two, and the inline noise asks nothing of the
-    // registry — it names nothing to look up.
-    CHECK(report.evaluable == 1U);
-    CHECK(report.noisesReferenced == 1U);
+        const Report report = stratum::validate::validatePack(tree.pack());
 
-    const Finding* finding = findingAbout(report, "minecraft:inlined");
-    REQUIRE(finding != nullptr);
-    CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("inline") && ContainsSubstring("SPEC §11"));
+        CHECK(report.resolved);
+        // Not an error: a vanilla server carrying exactly this file starts
+        // and generates, because nothing ever visits it.
+        CHECK(report.count(Severity::Error) == 0U);
+        CHECK(report.densityFunctions == 2U);
+        // Only `field` of the two, and the inline noise asks nothing of the
+        // registry — it names nothing to look up.
+        CHECK(report.evaluable == 1U);
+        CHECK(report.noisesReferenced == 1U);
 
-    // And nothing was said about the function that is fine.
-    CHECK(findingAbout(report, "minecraft:field") == nullptr);
+        const Finding* finding = findingAbout(report, "minecraft:inlined");
+        REQUIRE(finding != nullptr);
+        CHECK(finding->severity == Severity::Warning);
+        CHECK_THAT(finding->message, ContainsSubstring("inline") && ContainsSubstring("SPEC §11"));
+
+        // And nothing was said about the function that is fine.
+        CHECK(findingAbout(report, "minecraft:field") == nullptr);
+    }
+
+    SECTION("a router entry that reaches one") {
+        const TempTree tree;
+        defineWorkingPack(tree);
+        tree.define("inlined", R"({"type":"minecraft:shift_a",
+            "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
+        defineSettings(tree, "overworld", "inlined");
+
+        const Report report = stratum::validate::validatePack(tree.pack());
+
+        CHECK(report.resolved);
+        // One error, for the router entry — and the file it points at is
+        // still only a warning, which is the whole distinction: the same
+        // node, reported differently according to whether anything reaches
+        // it, exactly as the server treats it.
+        REQUIRE(report.count(Severity::Error) == 1U);
+        CHECK(report.routerEntries == stratum::settings::kRouterEntryCount);
+        CHECK(report.routerEntriesEvaluable == stratum::settings::kRouterEntryCount - 1U);
+
+        const Finding* entry = findingAbout(report, "minecraft:overworld final_density");
+        REQUIRE(entry != nullptr);
+        CHECK(entry->severity == Severity::Error);
+        CHECK_THAT(entry->message, ContainsSubstring("inline") &&
+                                       ContainsSubstring("vanilla server") &&
+                                       ContainsSubstring("SPEC §11"));
+
+        const Finding* file = findingAbout(report, "minecraft:inlined");
+        REQUIRE(file != nullptr);
+        CHECK(file->severity == Severity::Warning);
+    }
 }
 
 TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecked", "[validate]") {
