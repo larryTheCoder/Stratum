@@ -622,6 +622,47 @@ Open:
   filler already placed. A column without them is bare stone where grass and
   dirt belong — visibly incomplete rather than wrong.
 
+  **Surface rules: `vertical_gradient`, half settled (M4).** Two of the
+  overworld's three top-level surface rules are vertical gradients — bedrock
+  at the world floor and deepslate — and between them they account for 4368
+  of the 4496 blocks the filler currently gets wrong. They are also the only
+  undocumented rule types the aquifer-free probe world can exercise, because
+  the other four sit under a `biome` condition and that world has one biome.
+
+  **The probability is settled.** Counting vanilla's own blocks by height:
+
+  | deepslate, y | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+  |---|---|---|---|---|---|---|---|
+  | measured | 0.868 | 0.750 | 0.620 | 0.498 | 0.372 | 0.252 | 0.125 |
+  | (8 - y) / 8 | 0.875 | 0.750 | 0.625 | 0.500 | 0.375 | 0.250 | 0.125 |
+
+  and bedrock, over a different band with different anchors, matches
+  `(-59 - y) / 5` just as closely. So the probability at height y is
+  `(false_at_and_above - y) / (false_at_and_above - true_at_and_below)`,
+  clamped, on two independent gradients.
+
+  **The draw is per block, not per column.** A single draw per column would
+  make every column deepslate up to a height and stone above it; 47.8% of
+  columns are, where 100% would be.
+
+  **What the random source is remains open, and the shape of the answer is
+  now constrained.** The outcome correlates between vertically adjacent
+  blocks by +0.089 over what independent draws with the same marginals would
+  give — and by +0.003 horizontally, +0.001 in z, and +0.008 two blocks
+  apart in y. That is a fingerprint: correlation only between y and y+1, in
+  one axis, gone by y+2.
+
+  A well-mixed hash of (x, y, z) cannot produce it, which is why eight
+  candidate derivations — Xoroshiro and the Java LCG, three position mixes,
+  seeded from the world seed, from the MD5 of `random_name`, and from both —
+  all scored at the marginal, 62%, against 96535 labelled positions. They are
+  recorded here so the next attempt starts past them rather than at them.
+
+  The instrument for settling it exists: a datapack can give a dimension a
+  surface rule that is one `vertical_gradient` with a chosen `random_name`
+  and band over flat terrain, which isolates the draw from every other rule.
+  That is the next measurement, not another guess.
+
   **The aquifer fill decision: what it is, and what it will cost (M3).**
   Scoped, not started. Three things are now known about it.
 
