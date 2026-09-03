@@ -39,6 +39,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -54,6 +56,11 @@ struct Comparison {
     std::size_t exact = 0;
     std::size_t withinOne = 0;
     long long worst = 0;
+    /// The smallest distance from zero of either density that decides a
+    /// column's height. This is what makes the counts above safe to pin: a
+    /// column only changes answer on a last-bit difference if it sits within
+    /// a few ULP of a tie, and none of them do.
+    double margin = 1.0e30;
 };
 
 [[nodiscard]] std::filesystem::path fixtures() {
@@ -109,6 +116,15 @@ struct Comparison {
                             break;
                         }
                     }
+                    // The two values the answer turns on: the surface block
+                    // must be positive and the block above it must not be.
+                    const double below =
+                        interpreter.evaluate(root, density::Point{.x = x, .y = ours, .z = z});
+                    const double above =
+                        interpreter.evaluate(root, density::Point{.x = x, .y = ours + 1, .z = z});
+                    result.margin =
+                        std::min(result.margin, std::min(std::abs(below), std::abs(above)));
+
                     ++result.columns;
                     const long long diff = ours - *stored;
                     if (diff == 0) {
@@ -137,6 +153,12 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
     SECTION("seed 42") {
         const Comparison result = compare(42);
         REQUIRE(result.columns == 256U);
+        // Pinning exact counts is only sound if no column is near a tie.
+        // Measured, the closest is 4.9e-06 from zero — nine orders of
+        // magnitude above double rounding — so an x86-64/ARM64 contraction
+        // difference cannot move these numbers. If that ever stops being
+        // true, this fails instead of the counts going quietly flaky.
+        CHECK(result.margin > 1.0e-9);
         // Two columns out, both by exactly one block.
         CHECK(result.exact == 254U);
         CHECK(result.withinOne == 256U);
@@ -150,6 +172,7 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         }
         const Comparison result = compare(-1);
         REQUIRE(result.columns == 256U);
+        CHECK(result.margin > 1.0e-9);
         // Worse, and worse in kind: 28 blocks is not a boundary being resolved
         // differently, it is a column whose terrain this build gets wrong.
         // This is the number to watch when the residual is chased.
