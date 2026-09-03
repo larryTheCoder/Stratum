@@ -547,6 +547,46 @@ Open:
   arithmetic. `tools/analysis/aquifer-free-probe.sh` produces the reference,
   and `golden_terrain_no_aquifer_test.cpp` pins the comparison against it.
 
+  **The aquifer fill decision: what it is, and what it will cost (M3).**
+  Scoped, not started. Three things are now known about it.
+
+  *It is undocumented.* minecraft.wiki describes what the four router entries
+  influence but gives no algorithm: no cell grid, no fluid-level formula, no
+  barrier rule. The single numeric constant documented anywhere permitted is
+  the lava threshold, 0.3. So this is a derivation like `old_blended_noise`
+  was, not an implementation — and a larger one, because the unknowns are
+  structural (a cell lattice, randomised centres, a nearest-cells search)
+  rather than a formula with a few constants.
+
+  *Its effect is measured.* Generating seed -1 twice from vanilla's own
+  settings, once with `aquifers_enabled` and once without, 70426 of 6291456
+  blocks differ — 1.12%. By transition:
+
+  | from the pure density field | to vanilla | share |
+  |---|---|---|
+  | water | **air** | 81.3% |
+  | water | deepslate / stone / gravel (**barriers**) | 14.8% |
+  | water | **lava** | 3.2% |
+
+  So the aquifer's main job is *draining*: without it every underground void
+  below sea level fills with `default_fluid`, which is wrong for playability
+  and not only for parity. The barriers that broke the terrain comparison are
+  a sixth of its work, not the bulk of it.
+
+  *It is observable, with a catch.* Every block of a generated chunk is a
+  labelled sample, and the inputs can be controlled through a datapack, so
+  the geometry is reachable by measurement. The catch, found immediately: the
+  top of a column's water body is `min(aquifer fluid level, cavity ceiling)`,
+  not the fluid level, so naive run-length estimates of the cell spacing are
+  contaminated by terrain shape — a bimodal histogram of runs, one mode from
+  cell boundaries and one from cave roofs. Any estimator has to take the
+  level from where a cavity is known to reach above it.
+
+  deepslate implements aquifers and reproduced vanilla's OCEAN_FLOOR on 6143
+  of 6144 golden columns, so it is available as the fast black-box oracle
+  here, with the server as the authority — the same arrangement that settled
+  the blended noise.
+
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the
   density in dispute of order 1e-3 — real, not a tie resolved differently,
