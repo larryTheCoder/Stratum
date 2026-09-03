@@ -167,12 +167,70 @@ execute. See the open question in SPEC §8 about when their presence should be
 fatal.
 
 This matrix states the v1 contract, not what is finished. The build in
-progress refuses eight density function types it cannot yet evaluate
-correctly — the cell-structured ones, and the ones with neither
-documentation nor an oracle — by name and with a reason, rather than
-approximating them. It refuses a noise written inline for a narrower reason:
-a noise is seeded from the MD5 of its identifier, and one written in place
-has none. SPEC §11 lists which, and why each is where it is.
+progress refuses three density function types outright, and two more only
+when it has no cell lattice to evaluate them over — by name and with a
+reason, rather than approximating them. It refuses a noise written inline
+for a narrower reason: a noise is seeded from the MD5 of its identifier, and
+one written in place has none. SPEC §11 lists why each is where it is.
+
+### Density function types
+
+All 34 types vanilla defines at 1.21.11. The last column is the one that
+matters for a parity project: what a type has actually been *checked*
+against, rather than whether it has code.
+
+`golden terrain` means the type is reached by the overworld's `final_density`
+and is therefore exercised by the end-to-end comparison against the
+heightmaps vanilla itself recorded (`golden_terrain_test`). That comparison
+is close but not yet exact, so it is coverage rather than a clean bill of
+health — it would catch a type being badly wrong, not subtly.
+
+| Node type | Status | Vanilla uses | Checked against |
+|---|---|---|---|
+| `abs` | Supported | 12 | golden terrain, cubiomes |
+| `add` | Supported | 123 | golden terrain, cubiomes |
+| `blend_alpha` | Supported — constant `1.0` | 12 | golden terrain; the no-blending value (SPEC §11) |
+| `blend_density` | Supported — passthrough | 7 | golden terrain; the no-blending reading (SPEC §11) |
+| `blend_offset` | Supported — constant `0.0` | 3 | golden terrain; the no-blending value (SPEC §11) |
+| `cache_2d` | Supported | 24 | golden terrain, cubiomes |
+| `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors only — unused at 1.21.11 |
+| `cache_once` | Supported | 12 | golden terrain |
+| `clamp` | Supported | 14 | golden terrain, cubiomes |
+| `constant` | Supported | — | golden terrain; written as a bare number, so pervasive |
+| `cube` | Supported | 2 | golden terrain, cubiomes |
+| `end_islands` | **Not implemented** | 2 | — the End's terrain (SPEC §10, M3) |
+| `find_top_surface` | **Not implemented** | 3 | — blocks `preliminary_surface_level` in three settings |
+| `flat_cache` | Supported | 16 | golden terrain, cubiomes |
+| `half_negative` | Supported | 3 | golden terrain |
+| `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings) |
+| `invert` | Supported | 3 | **nothing** — its only uses sit behind `find_top_surface` |
+| `max` | Supported | 9 | golden terrain, cubiomes |
+| `min` | Supported | 13 | golden terrain, cubiomes |
+| `mul` | Supported | 88 | golden terrain, cubiomes |
+| `noise` | Supported | 49 | golden terrain, cubiomes |
+| `old_blended_noise` | Supported | 3 | the vanilla server, via datapack probe: 16384/16384 columns |
+| `quarter_negative` | Supported | 6 | golden terrain |
+| `range_choice` | Supported | 20 | golden terrain |
+| `shift` | Supported | 0 | unit vectors only — unused at 1.21.11 |
+| `shift_a` | Supported | 1 | golden terrain, cubiomes |
+| `shift_b` | Supported | 1 | golden terrain, cubiomes |
+| `shifted_noise` | Supported | 17 | golden terrain, cubiomes |
+| `slide` | **Not implemented** | 0 | — unused at 1.21.11, so no parity cost yet |
+| `spline` | Supported | 9 | golden terrain, cubiomes |
+| `square` | Supported | 3 | golden terrain, cubiomes |
+| `squeeze` | Supported | 7 | golden terrain — sits in `final_density` directly |
+| `weird_scaled_sampler` | Supported | 3 | the vanilla server, via datapack probe: both rarity ladders |
+| `y_clamped_gradient` | Supported | 29 | golden terrain, cubiomes |
+
+Two of these deserve reading twice. **`invert`** is the only type vanilla
+uses that nothing checks: all three of its uses are inside
+`preliminary_surface_level`, which `find_top_surface` refuses, so no golden
+reaches it and it rests on documentation alone. **`squeeze`** rests on
+documentation too, but it sits directly in the overworld's `final_density`,
+so the terrain comparison does reach it.
+
+`slide`, `shift` and `cache_all_in_cell` are unused at 1.21.11. That is not
+a promise about other versions — it is why they cost nothing today.
 
 ### Parity tiers
 

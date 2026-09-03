@@ -536,11 +536,23 @@ Open:
   of bug, so they are refused until M3's goldens can tell right from
   plausible.
 
-  Two types *are* implemented on documentation alone, and are flagged here
-  because nothing else stands behind them: `squeeze` and `invert` (the
-  latter documented only through its later rename to `reciprocal`). Vanilla
-  1.21.11 uses neither, so no golden will ever reach them; only the unit
-  vectors do.
+  Two types *are* implemented on documentation alone: `squeeze` and `invert`
+  (the latter documented only through its later rename to `reciprocal`).
+
+  This entry used to say vanilla 1.21.11 uses neither, so no golden would
+  ever reach them. **That was wrong, and wrong in both directions.**
+  `squeeze` is used seven times and sits *directly* in the overworld's
+  `final_density/argument1`, so the end-to-end terrain comparison reaches it
+  — it has golden coverage, and had it while this said otherwise. `invert`
+  is used three times, but every use is inside `preliminary_surface_level`,
+  which `find_top_surface` refuses, so nothing reaches it after all. The
+  conclusion happened to hold for `invert` and the reason given was still
+  false.
+
+  So `invert` is the one type vanilla uses that nothing checks. It is the
+  place to look first if `preliminary_surface_level` comes out wrong once
+  `find_top_surface` lands, because it will be the only thing on that path
+  that has never been compared to anything.
 
   `blend_alpha` and `blend_offset` are implemented as the constants 1.0 and
   0.0. This engine generates every chunk itself and never blends against

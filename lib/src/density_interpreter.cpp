@@ -493,9 +493,14 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
         }
         case NodeType::Invert:
-            // Documented only through its later rename to `reciprocal`, and
-            // used by nothing vanilla ships, so no golden reaches it. See
-            // SPEC §11.
+            // Documented only through its later rename to `reciprocal`.
+            //
+            // Vanilla DOES use this — three times — and this comment used to
+            // say otherwise. All three uses are inside
+            // `preliminary_surface_level`, which find_top_surface refuses, so
+            // no golden reaches it; that is a fact about what this build
+            // cannot evaluate yet, not about what vanilla ships. It makes
+            // this the only type vanilla uses that nothing checks (SPEC §11).
             value = 1.0 / argument(0);
             break;
         case NodeType::Clamp:
