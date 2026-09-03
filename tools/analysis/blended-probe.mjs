@@ -24,15 +24,22 @@ const settings = NoiseGeneratorSettings.create({
     legacyRandomSource: false,
 });
 
+// For `columns` the second argument is a smear_scale_multiplier rather than a
+// named config: that mode exists to sweep it, including values no dimension
+// uses. 0 is legal and is what "no smearing" looks like.
 const [, , mode, config = 'overworld', seed = '0'] = process.argv;
-if (!CONFIGS[config]) {
-    console.error(`unknown config '${config}'; try ${Object.keys(CONFIGS).join(', ')}`);
+const parameters = mode === 'columns'
+    ? { xz_scale: 0.25, y_scale: 0.125, xz_factor: 80.0, y_factor: 160.0,
+        smear_scale_multiplier: Number(config) }
+    : CONFIGS[config];
+if (!parameters || (mode === 'columns' && !Number.isFinite(Number(config)))) {
+    console.error(`bad second argument '${config}'`);
     process.exit(2);
 }
 const state = new RandomState(settings, BigInt(seed));
 const visitor = state.createVisitor(settings.noise, settings.legacyRandomSource);
 const fn = visitor.apply(DensityFunction.fromJson({
-    type: 'minecraft:old_blended_noise', ...CONFIGS[config],
+    type: 'minecraft:old_blended_noise', ...parameters,
 }));
 
 // `lines` is sampled at y = 0 on purpose. That is the one height where this
@@ -40,7 +47,14 @@ const fn = visitor.apply(DensityFunction.fromJson({
 // measures normalisation alone and is not contaminated by the smear question.
 // The 32 lines are 977 apart, which is past the field's correlation length,
 // so their spectra can be averaged as independent estimates.
-if (mode === 'lines') {
+// 64 columns of 512 blocks in y. The smear is a y-structure parameter, so
+// what it does shows up along y and is invisible in a horizontal slice.
+if (mode === 'columns') {
+    for (let c = 0; c < 64; ++c) {
+        const x = (c % 8) * 71, z = ((c / 8) | 0) * 89;
+        for (let y = -256; y < 256; ++y) { console.log(fn.compute({ x, y, z })); }
+    }
+} else if (mode === 'lines') {
     for (let k = 0; k < 32; ++k) {
         const z = k * 977;
         for (let x = 0; x < 4096; ++x) { console.log(fn.compute({ x, y: 0, z })); }
@@ -54,6 +68,6 @@ if (mode === 'lines') {
         }
     }
 } else {
-    console.error("mode must be 'lines' or 'planes'");
+    console.error("mode must be 'lines', 'planes' or 'columns'");
     process.exit(2);
 }

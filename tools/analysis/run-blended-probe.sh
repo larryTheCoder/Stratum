@@ -57,7 +57,22 @@ python3 tools/analysis/blended-compare.py spectra \
 echo; echo "=== scale: what is the normalisation? ==="
 python3 tools/analysis/blended-compare.py scale "${ours[@]}" -- "${theirs[@]}"
 
-echo; echo "=== height: where does smear_scale_multiplier go wrong? ==="
+echo; echo "=== height: how the spread varies with y ==="
 (cd "${work}" && node probe.mjs planes overworld 0) > "${work}/tp.txt"
 "${work}/ours" planes overworld 0 > "${work}/op.txt"
 python3 tools/analysis/blended-compare.py planes "${work}/op.txt" -- "${work}/tp.txt"
+
+# The multiplier is a free parameter in the oracle, so it can simply be swept.
+# Multiplier 0 is the no-smearing control; 1 and 16 bracket the range over
+# which vanilla's response is flat, which is itself the strongest constraint
+# on where the multiplier can possibly enter.
+echo; echo "=== smear: what does smear_scale_multiplier actually do? ==="
+smear_ours=() smear_theirs=()
+for ((seed = 0; seed < ${smear_seeds:-8}; ++seed)); do
+    for m in 0 1 16; do
+        (cd "${work}" && node probe.mjs columns "${m}" "${seed}") > "${work}/ts${seed}_${m}.txt"
+        "${work}/ours" columns "${m}" "${seed}" > "${work}/os${seed}_${m}.txt"
+        smear_theirs+=("${work}/ts${seed}_${m}.txt"); smear_ours+=("${work}/os${seed}_${m}.txt")
+    done
+done
+python3 tools/analysis/blended-compare.py smear "${smear_ours[@]}" -- "${smear_theirs[@]}"

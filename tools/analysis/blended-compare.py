@@ -83,6 +83,49 @@ def compare_scale(ours, theirs):
               f"skew {((x - x.mean()) ** 3).mean() / x.var() ** 1.5:+.5f}")
 
 
+def _corr_length(a):
+    """Lag in blocks at which the autocorrelation along y first falls below a
+    half. The smear is a y-structure parameter, so this is the statistic it
+    moves; a horizontal slice cannot see it at all."""
+    a = a - a.mean(axis=1, keepdims=True)
+    n = a.shape[1]
+    denominator = (a * a).mean()
+    for lag in range(1, n // 2):
+        if (a[:, :n - lag] * a[:, lag:]).mean() / denominator < 0.5:
+            return lag
+    return n // 2
+
+
+def compare_smear(ours, theirs):
+    """Files come in triples per seed: multiplier 0, 1 and 16, in that order.
+
+    Three statistics, all dimensionless, so none of them needs the seeding:
+    the correlation length along y, how much the smear raises the spread over
+    having none at all, and how much the field moves between a multiplier of 1
+    and of 16. The last is the sharpest — vanilla's field is almost unmoved,
+    at r = 0.989, and a candidate that scales amplitude with the multiplier
+    fails it by a mile.
+    """
+    def summarise(paths):
+        lengths, boosts, sensitivity = [], [], []
+        for i in range(0, len(paths), 3):
+            off, one, sixteen = (np.loadtxt(p).reshape(64, 512) for p in paths[i:i + 3])
+            lengths.append(_corr_length(one))
+            boosts.append(one.std() / off.std())
+            sensitivity.append(float(np.corrcoef(one.ravel(), sixteen.ravel())[0, 1]))
+        return lengths, boosts, sensitivity
+
+    labels = ("corr-length in y (m=1)", "sd boost over m=0", "r(m=1, m=16)")
+    a, b = summarise(theirs), summarise(ours)
+    print(f"{'':<26} {'deepslate':>20} {'ours':>20}   agreement")
+    for label, x, y in zip(labels, a, b):
+        mx, my = np.mean(x), np.mean(y)
+        ex = np.std(x, ddof=1) / np.sqrt(len(x)) if len(x) > 1 else float("nan")
+        ey = np.std(y, ddof=1) / np.sqrt(len(y)) if len(y) > 1 else float("nan")
+        sigma = abs(mx - my) / np.hypot(ex, ey) if ex == ex and ey == ey else float("nan")
+        print(f"{label:<26} {mx:12.4f} +/- {ex:5.4f} {my:12.4f} +/- {ey:5.4f}   {sigma:5.2f} sigma")
+
+
 def compare_planes(ours, theirs):
     def by_height(path):
         raw = np.loadtxt(path)
@@ -95,8 +138,8 @@ def compare_planes(ours, theirs):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4 or "--" not in sys.argv:
-        sys.exit("usage: blended-compare.py {spectra|scale|planes} ours... -- theirs...")
+        sys.exit("usage: blended-compare.py {spectra|scale|planes|smear} ours... -- theirs...")
     split = sys.argv.index("--")
     mode, ours, theirs = sys.argv[1], sys.argv[2:split], sys.argv[split + 1:]
-    {"spectra": compare_spectra, "scale": compare_scale, "planes": compare_planes}[mode](
-        ours, theirs)
+    {"spectra": compare_spectra, "scale": compare_scale, "planes": compare_planes,
+     "smear": compare_smear}[mode](ours, theirs)

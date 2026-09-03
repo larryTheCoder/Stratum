@@ -583,6 +583,62 @@ Open:
     survives at a multiplier of 1 (a factor of 1.9 at y = -32), so this
     build's "no smearing" is not vanilla's either.
 
+  **Sweeping the multiplier (M3).** It is a free parameter in the oracle, so
+  it can simply be swept, and the response is the strongest constraint
+  available on where it can possibly enter. Vanilla's, over 0 to 256:
+
+  | multiplier | 0 | 0.25 | 1 | 4 | 16 | 64 | 256 |
+  |---|---|---|---|---|---|---|---|
+  | correlation length along y | 51 | 33 | 33 | 33 | 33 | 38 | 44 |
+  | spread | 0.151 | 0.209 | 0.209 | 0.208 | 0.204 | 0.192 | 0.176 |
+
+  Three things follow. Smearing is **on** in vanilla — turning it off, at a
+  multiplier of 0, changes the field a great deal (r = 0.62 against a
+  multiplier of 1) and lengthens the correlation along y from 33 blocks to
+  51. Its effect **saturates**: from 0.25 to 16, a factor of sixty-four,
+  nothing moves. And it only weakens again past 64, drifting back toward the
+  unsmeared field. That is the signature of a quantisation whose step is
+  below one for nearly every octave until the multiplier grows large enough
+  to lift the early octaves out of it.
+
+  **What the sweep found, and what it did not.** This build passes the
+  Perlin sampler a y cap of `y * step`, and that is the fault. The sampler
+  computes `min(cap, localY)` and then folds; below y = 0 the cap is large
+  and negative, so `floor(cap / step)` displaces `localY` by a multiple of
+  the step proportional to both y *and* the multiplier. Hence the two
+  symptoms: amplitude scaling linearly with the multiplier, and the blow-up
+  at negative y.
+
+  Passing no cap at all — fold `localY`, never clamp it — with the step left
+  exactly as it is now, agrees with vanilla on three statistics of four,
+  over eight seeds:
+
+  | | vanilla | fold, never cap | |
+  |---|---|---|---|
+  | correlation length, multiplier 1 | 38.00 +/- 1.58 | 39.62 +/- 1.52 | 0.7 sigma |
+  | correlation length, multiplier 16 | 38.12 +/- 1.65 | 39.50 +/- 1.52 | 0.6 sigma |
+  | r(multiplier 1, multiplier 16) | 0.9892 +/- 0.0006 | 0.9904 +/- 0.0005 | 1.5 sigma |
+  | spread raised over no smearing | 1.5688 +/- 0.0435 | 1.8424 +/- 0.0506 | **4.1 sigma** |
+
+  The third row is the one that carries weight: it is a dimensionless
+  measure of how much the field moves across a factor of sixteen in the
+  multiplier, and the current build fails it by 16 sigma where this passes
+  at 1.5. The step needs no change — scaling it up or down breaks that row
+  immediately, which is what pins it.
+
+  The fourth row does not agree. The smear is still about a sixth too
+  energetic, and that is a real disagreement rather than noise, so **this is
+  not adopted**. It is recorded because it is a large narrowing: the cap is
+  established as wrong, the step as right, and what remains is one
+  17% discrepancy in a single statistic rather than an unknown reading.
+
+  **It is not a fix to `legacy()` either, and that is a result in itself.**
+  Changing the cap would break the cubiomes vectors, 150 of whose 270 rows
+  sit below y = 0. Those vectors pin the *pre-1.18* function, which had no
+  multiplier at all. So the two constructions genuinely differ here, and the
+  modern one needs its own path rather than a parameter on this one. That is
+  now measured rather than assumed.
+
   **A methodological correction worth keeping.** The first estimate of the
   normalisation was 130.86 +/- 0.21, reported as 13 sigma from 128 — and the
   error bar was wrong by an order of magnitude. It came from 1/sqrt(2n) on
