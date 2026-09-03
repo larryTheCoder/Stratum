@@ -881,41 +881,41 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
 
 TEST_CASE("type_1's rarity ladder", "[density][interpreter][rarity]") {
     // Below the first threshold, then one bucket at a time.
-    CHECK(rarityValueMapper("type_1", -100.0) == 0.75);
-    CHECK(rarityValueMapper("type_1", -0.5000001) == 0.75);
+    CHECK(bits(rarityValueMapper("type_1", -100.0)) == bits(0.75));
+    CHECK(bits(rarityValueMapper("type_1", -0.5000001)) == bits(0.75));
     // A value exactly on a threshold takes the rarity ABOVE it: the comparison
     // is a strict `<`. Probed at 1e-7 either side of every boundary.
-    CHECK(rarityValueMapper("type_1", -0.5) == 1.0);
-    CHECK(rarityValueMapper("type_1", -0.0000001) == 1.0);
-    CHECK(rarityValueMapper("type_1", 0.0) == 1.5);
-    CHECK(rarityValueMapper("type_1", 0.4999999) == 1.5);
-    CHECK(rarityValueMapper("type_1", 0.5) == 2.0);
-    CHECK(rarityValueMapper("type_1", 100.0) == 2.0);
+    CHECK(bits(rarityValueMapper("type_1", -0.5)) == bits(1.0));
+    CHECK(bits(rarityValueMapper("type_1", -0.0000001)) == bits(1.0));
+    CHECK(bits(rarityValueMapper("type_1", 0.0)) == bits(1.5));
+    CHECK(bits(rarityValueMapper("type_1", 0.4999999)) == bits(1.5));
+    CHECK(bits(rarityValueMapper("type_1", 0.5)) == bits(2.0));
+    CHECK(bits(rarityValueMapper("type_1", 100.0)) == bits(2.0));
 }
 
 TEST_CASE("type_2's rarity ladder", "[density][interpreter][rarity]") {
-    CHECK(rarityValueMapper("type_2", -100.0) == 0.5);
-    CHECK(rarityValueMapper("type_2", -0.7500001) == 0.5);
-    CHECK(rarityValueMapper("type_2", -0.75) == 0.75);
-    CHECK(rarityValueMapper("type_2", -0.5000001) == 0.75);
-    CHECK(rarityValueMapper("type_2", -0.5) == 1.0);
-    CHECK(rarityValueMapper("type_2", 0.4999999) == 1.0);
-    CHECK(rarityValueMapper("type_2", 0.5) == 2.0);
-    CHECK(rarityValueMapper("type_2", 0.7499999) == 2.0);
-    CHECK(rarityValueMapper("type_2", 0.75) == 3.0);
-    CHECK(rarityValueMapper("type_2", 100.0) == 3.0);
+    CHECK(bits(rarityValueMapper("type_2", -100.0)) == bits(0.5));
+    CHECK(bits(rarityValueMapper("type_2", -0.7500001)) == bits(0.5));
+    CHECK(bits(rarityValueMapper("type_2", -0.75)) == bits(0.75));
+    CHECK(bits(rarityValueMapper("type_2", -0.5000001)) == bits(0.75));
+    CHECK(bits(rarityValueMapper("type_2", -0.5)) == bits(1.0));
+    CHECK(bits(rarityValueMapper("type_2", 0.4999999)) == bits(1.0));
+    CHECK(bits(rarityValueMapper("type_2", 0.5)) == bits(2.0));
+    CHECK(bits(rarityValueMapper("type_2", 0.7499999)) == bits(2.0));
+    CHECK(bits(rarityValueMapper("type_2", 0.75)) == bits(3.0));
+    CHECK(bits(rarityValueMapper("type_2", 100.0)) == bits(3.0));
 }
 
 TEST_CASE("the two ladders are not each other", "[density][interpreter][rarity]") {
     // The one assertion that a swapped pair of names would fail. type_2 reaches
     // 0.5 and 3.0, which type_1 never does; type_1 reaches 1.5, which type_2
     // never does. Nothing else in this file would notice the swap.
-    CHECK(rarityValueMapper("type_2", -1.0) == 0.5);
-    CHECK(rarityValueMapper("type_1", -1.0) == 0.75);
-    CHECK(rarityValueMapper("type_1", 0.25) == 1.5);
-    CHECK(rarityValueMapper("type_2", 0.25) == 1.0);
-    CHECK(rarityValueMapper("type_2", 1.0) == 3.0);
-    CHECK(rarityValueMapper("type_1", 1.0) == 2.0);
+    CHECK(bits(rarityValueMapper("type_2", -1.0)) == bits(0.5));
+    CHECK(bits(rarityValueMapper("type_1", -1.0)) == bits(0.75));
+    CHECK(bits(rarityValueMapper("type_1", 0.25)) == bits(1.5));
+    CHECK(bits(rarityValueMapper("type_2", 0.25)) == bits(1.0));
+    CHECK(bits(rarityValueMapper("type_2", 1.0)) == bits(3.0));
+    CHECK(bits(rarityValueMapper("type_1", 1.0)) == bits(2.0));
 }
 
 TEST_CASE("an unknown rarity mapper is refused by name", "[density][interpreter][rarity]") {

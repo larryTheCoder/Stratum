@@ -7,6 +7,10 @@
 # pushing. Format is wired in (lint.format) because it costs a quarter of a
 # second; this does not.
 #
+# The pre-push routine is this and tools/lint/warnings.sh: clang-tidy here,
+# and the project warning set as errors there. `ctest --preset dev` covers
+# formatting and the tests but neither of those.
+#
 # The version matters. clang-tidy 18, 19 and 21 each report a different set of
 # findings on this tree, so "clean locally" means nothing unless the major
 # matches what CI pins. Without root, get the pinned one with:

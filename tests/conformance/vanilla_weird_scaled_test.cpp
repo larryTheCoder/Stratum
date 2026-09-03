@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -80,7 +81,10 @@ TEST_CASE("the rarity ladders the server itself uses are the ones this build use
     const double quantum = 2.0 / height / scale;
 
     std::size_t probes = 0;
-    std::size_t thresholdsCovered = 0;
+    // A set rather than a counter, so this asserts which thresholds are
+    // covered rather than how many entries mention one. Ordered insertion
+    // only, no float equality.
+    std::set<double> thresholds;
     for (const auto& entry : spec) {
         const std::string name = entry.at("name").get<std::string>();
         if (!entry.contains("mapper")) {
@@ -93,8 +97,8 @@ TEST_CASE("the rarity ladders the server itself uses are the ones this build use
         const std::string mapper = entry.at("mapper").get<std::string>();
         const double input = entry.at("input").get<double>();
         const double rarity = stratum::density::rarityValueMapper(mapper, input);
-        if (entry.contains("delta") && entry.at("delta").get<double>() == 0.0) {
-            ++thresholdsCovered;
+        if (entry.contains("threshold")) {
+            thresholds.insert(entry.at("threshold").get<double>());
         }
 
         const auto file = stratum::region::RegionFile::open(mca);
@@ -160,8 +164,9 @@ TEST_CASE("the rarity ladders the server itself uses are the ones this build use
 
     // The whole spec, not whichever entries happened to be readable.
     CHECK(probes == 35U);
-    // Seven thresholds — three for type_1, four for type_2 — each probed at
-    // the value itself. If a future spec stopped covering one, the ladder
-    // would be asserted with a hole in it.
-    CHECK(thresholdsCovered == 7U);
+    // Seven thresholds in all — three for type_1, four for type_2 — but the
+    // two ladders share -0.5 and 0.5, so five distinct values. Asserted as
+    // the set rather than a count, so a future spec that stopped covering one
+    // fails here instead of asserting the ladder with a hole in it.
+    CHECK(thresholds == std::set<double>{-0.75, -0.5, 0.0, 0.5, 0.75});
 }
