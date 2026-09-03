@@ -145,6 +145,9 @@ public:
         std::unique_ptr<State> state_;
     };
 
+    /// Rebuilds a graph from parts resolved once already — see below.
+    class Assembler;
+
     [[nodiscard]] const Node& node(NodeIndex index) const;
     [[nodiscard]] const SplineDefinition& spline(SplineIndex index) const;
 
@@ -171,6 +174,25 @@ private:
     std::vector<Node> nodes_;
     std::vector<SplineDefinition> splines_;
     std::map<data::ResourceLocation, NodeIndex> roots_;
+};
+
+/// Rebuilds a graph from parts that were resolved once already, which is what
+/// reading a frozen pipeline needs (SPEC §6). It validates rather than
+/// trusts: a stored index that points nowhere is a corrupt blob, and a graph
+/// assembled from one would generate a world quietly unlike the one that was
+/// frozen.
+class Graph::Assembler {
+public:
+    /// Nodes must arrive in the order they were resolved in, because every
+    /// argument index has to name a node already added — the same property
+    /// that makes the graph acyclic.
+    NodeIndex addNode(Node node);
+    SplineIndex addSpline(SplineDefinition spline);
+    void addRoot(const data::ResourceLocation& id, NodeIndex root);
+    [[nodiscard]] Graph release();
+
+private:
+    Graph graph_;
 };
 
 } // namespace stratum::density

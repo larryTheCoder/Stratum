@@ -39,10 +39,19 @@ struct TypeInfo {
     return kTypeTable[static_cast<std::size_t>(type)];
 }
 
+/// Whether @p type names a row of the table at all. A NodeType that came out
+/// of a file rather than out of the resolver can be any byte, and indexing
+/// the table with one of those aborts in a checked build — which is how this
+/// was found: the freeze reader's own validation was the thing that crashed
+/// on the input it was validating.
+[[nodiscard]] bool isKnownType(NodeType type) noexcept {
+    return static_cast<std::size_t>(type) < kTypeTable.size();
+}
+
 } // namespace
 
 std::string_view nodeTypeName(NodeType type) noexcept {
-    return infoOf(type).name;
+    return isKnownType(type) ? infoOf(type).name : "unknown";
 }
 
 std::optional<NodeType> nodeTypeFromName(std::string_view name) noexcept {
@@ -55,7 +64,7 @@ std::optional<NodeType> nodeTypeFromName(std::string_view name) noexcept {
 }
 
 std::span<const SchemaField> fieldsOf(NodeType type) noexcept {
-    return infoOf(type).fields;
+    return isKnownType(type) ? infoOf(type).fields : std::span<const SchemaField>{};
 }
 
 /// Walks the JSON and builds the graph, memoising by identifier so a
@@ -311,6 +320,64 @@ NodeIndex Graph::Builder::add(const nlohmann::json& value) {
 
 Graph Graph::Builder::release() {
     return std::move(state_->graph_);
+}
+
+NodeIndex Graph::Assembler::addNode(Node node) {
+    const auto next = static_cast<NodeIndex>(graph_.nodes_.size());
+    for (const NodeIndex argument : node.arguments) {
+        if (argument >= next) {
+            throw ResolveError("a frozen node's argument names node " + std::to_string(argument) +
+                               ", which is not before it");
+        }
+    }
+    graph_.nodes_.push_back(std::move(node));
+    return next;
+}
+
+SplineIndex Graph::Assembler::addSpline(SplineDefinition spline) {
+    const auto next = static_cast<SplineIndex>(graph_.splines_.size());
+    for (const SplinePoint& point : spline.points) {
+        if (point.value.has_value() == point.nested.has_value()) {
+            throw ResolveError("a frozen spline point is either both a value and a nested "
+                               "spline or neither");
+        }
+        if (point.nested.has_value() && *point.nested >= next) {
+            throw ResolveError("a frozen spline nests spline " + std::to_string(*point.nested) +
+                               ", which is not before it");
+        }
+    }
+    graph_.splines_.push_back(std::move(spline));
+    return next;
+}
+
+void Graph::Assembler::addRoot(const data::ResourceLocation& id, NodeIndex root) {
+    if (root >= graph_.nodes_.size()) {
+        throw ResolveError("frozen root '" + id.toString() + "' names node " +
+                           std::to_string(root) + ", which does not exist");
+    }
+    graph_.roots_.emplace(id, root);
+}
+
+Graph Graph::Assembler::release() {
+    // Nodes name splines and splines name nodes, so neither table can be
+    // finished before the other. The references that cross between them are
+    // therefore checked here, once both are whole, rather than as each entry
+    // arrives.
+    for (std::size_t i = 0; i < graph_.nodes_.size(); ++i) {
+        const std::optional<SplineIndex>& spline = graph_.nodes_[i].spline;
+        if (spline.has_value() && *spline >= graph_.splines_.size()) {
+            throw ResolveError("frozen node " + std::to_string(i) + " names spline " +
+                               std::to_string(*spline) + ", which does not exist");
+        }
+    }
+    for (std::size_t i = 0; i < graph_.splines_.size(); ++i) {
+        if (graph_.splines_[i].coordinate >= graph_.nodes_.size()) {
+            throw ResolveError("frozen spline " + std::to_string(i) + " has coordinate " +
+                               std::to_string(graph_.splines_[i].coordinate) +
+                               ", which is not a node");
+        }
+    }
+    return std::move(graph_);
 }
 
 Graph Graph::resolveAll(const data::Pack& pack) {

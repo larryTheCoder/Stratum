@@ -25,6 +25,7 @@ add_library(stratum_core STATIC
     src/noise_settings.cpp
     src/noise_registry.cpp
     src/perlin.cpp
+    src/pipeline_freeze.cpp
     src/registry.cpp
     src/resource_location.cpp
     src/png.cpp
@@ -55,6 +56,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/freeze/pipeline.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/hash/md5.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/image/png.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
