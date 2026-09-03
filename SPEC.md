@@ -579,9 +579,30 @@ Open:
   It is evidence, not proof, and the function is still not reproduced. 0.809
   is not 1.0, and the gap is somewhere in the sampling formula: sweeping five
   smear placements, twenty-four frequency and amplitude schedules, and three
-  normalisation divisors moved it not at all. Whatever is left is structural
-  and is not among the things guessed at so far. `old_blended_noise` stays
+  normalisation divisors moved it not at all. `old_blended_noise` stays
   refused.
+
+  **What the isolation experiment ruled out.** `xz_factor` and `y_factor`
+  only reach the *main* stack's sampling coordinates, so a point whose output
+  does not move when they change is one where the blend is not deciding
+  anything and the value is a single stack's sum. 190 of 4000 probed points
+  behave that way. That turns the amplitude schedule from something to guess
+  into a linear system: sixteen unknown weights, one equation per point.
+
+  It does not fit. With the seeding above and sixteen *free* amplitudes, the
+  best R² is 0.38, against 0.16 for the same fit with a nonsense salt — which
+  is about what sixteen free parameters over 190 points will reach by
+  overfitting alone. A correct frequency schedule with free weights should
+  have fitted almost exactly.
+
+  So the discrepancy is **not in the amplitude schedule**: the fit was handed
+  every weight it could have wanted and still could not reach the answer.
+  What is left is the coordinates or the per-octave structure. Two caveats on
+  the strength of that: the selected points may be invariant because the two
+  limit stacks nearly coincide there rather than because the blend clamps,
+  which would make them an unrepresentative subset; and the right salt
+  scoring 0.38 against a control's 0.16 is consistent with the seeding
+  finding without adding much to it.
 
   The golden round trip is no longer the fastest way to test a candidate,
   though. `tools/vectors/generate-deepslate-vectors.sh` records deepslate's
