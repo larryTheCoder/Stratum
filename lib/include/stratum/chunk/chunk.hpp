@@ -16,6 +16,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace stratum::chunk {
@@ -58,6 +60,28 @@ struct Section {
     [[nodiscard]] const BlockState& blockAt(int x, int y, int z) const;
 };
 
+/// The heightmaps vanilla stores beside a chunk's blocks. Each is 256
+/// entries — one per column, in ZX order — packed nine bits at a time.
+///
+/// They matter beyond bookkeeping: they are the only thing in a golden
+/// region that states a *surface height* directly, which makes them the
+/// oracle a generated terrain column can be compared against without first
+/// getting aquifers, surface rules and block mapping right (SPEC §7).
+enum class Heightmap : std::uint8_t {
+    /// Highest block that is not air.
+    WorldSurface,
+    /// Highest block that is neither air nor fluid — the terrain surface
+    /// under an ocean, which is the one a density function speaks to.
+    OceanFloor,
+    /// Highest block that blocks motion, fluids included.
+    MotionBlocking,
+    /// The same, ignoring leaves.
+    MotionBlockingNoLeaves,
+};
+
+/// "OCEAN_FLOOR" — the name vanilla stores it under.
+[[nodiscard]] std::string_view heightmapName(Heightmap kind) noexcept;
+
 class Chunk {
 public:
     /// Decodes one chunk from the root tag of its NBT.
@@ -85,12 +109,33 @@ public:
     /// nullopt for an entirely empty column.
     [[nodiscard]] std::optional<int> highestNonAir(int localX, int localZ) const;
 
+    /// The stored heightmap of this kind, as world y per column in ZX order,
+    /// or nothing when the chunk does not carry it. A column with no
+    /// qualifying block at all is nullopt within the array.
+    ///
+    /// Vanilla stores `y + 1 - minY` rather than y, so that zero can mean
+    /// "nothing here" — measured, not assumed: across all 16384 columns of
+    /// one golden region the stored WORLD_SURFACE value was exactly 65 more
+    /// than this decoder's own highestNonAir, and 65 is `1 - minY` for a
+    /// world whose yPos is -4. The Nether and the End, whose yPos is 0,
+    /// offset by 1.
+    [[nodiscard]] std::optional<std::vector<std::optional<int>>> heightmap(Heightmap kind) const;
+
+    /// The lowest section index the chunk declares, from `yPos`. This is
+    /// what the heightmaps are measured from, so it is kept rather than
+    /// inferred from the sections present — a padding section would move an
+    /// inferred one and shift every height by sixteen.
+    [[nodiscard]] std::int32_t lowestSection() const noexcept { return lowestSection_; }
+
 private:
     std::int32_t x_ = 0;
     std::int32_t z_ = 0;
     std::int32_t dataVersion_ = 0;
+    std::int32_t lowestSection_ = 0;
     std::string status_;
     std::vector<Section> sections_;
+    /// Kept as stored, decoded on demand: most callers want none of them.
+    std::vector<std::pair<Heightmap, std::vector<std::int64_t>>> heightmaps_;
 };
 
 /// Unpacks vanilla's packed index array. Entries are @p bitsPerEntry wide

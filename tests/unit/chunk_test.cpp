@@ -236,3 +236,51 @@ TEST_CASE("chunks that cannot be decoded are refused, not guessed at", "[chunk][
                             Catch::Matchers::ContainsSubstring("no data array"));
     }
 }
+
+TEST_CASE("stored heightmaps are measured from yPos, not from the sections present",
+          "[chunk][heightmap]") {
+    // The discriminating case, which vanilla's own regions cannot provide:
+    // a chunk whose lowest *present* section is not its yPos. Real chunks
+    // write every section, so a decoder that inferred the origin from the
+    // sections agrees with one that reads yPos on every golden region there
+    // is — and would be wrong the moment it met a chunk like this one.
+    std::vector<std::uint16_t> stored(256, 0);
+    stored[0] = 65;                // y + 1 - minY, with minY = -64: y = 0.
+    stored[1] = 1;                 // the lowest block there is: y = -64.
+    stored[2] = 0;                 // nothing in this column at all.
+    stored[(3U * 16U) + 5U] = 130; // y = 65, at column x=5, z=3.
+
+    const stratum::test::NbtWriter writer = stratum::test::buildChunkNbt(
+        0, 0, {stratum::test::uniformSection(0, "minecraft:stone")}, 4440,
+        /*yPos=*/-4, {{"WORLD_SURFACE", stored}});
+
+    const stratum::chunk::Chunk chunk =
+        stratum::chunk::Chunk::decode(stratum::nbt::read(writer.bytes()).root);
+
+    REQUIRE(chunk.lowestSection() == -4);
+    const auto heights = chunk.heightmap(stratum::chunk::Heightmap::WorldSurface);
+    REQUIRE(heights.has_value());
+    REQUIRE(heights->size() == 256U);
+
+    CHECK((*heights)[0] == 0);
+    CHECK((*heights)[1] == -64);
+    CHECK_FALSE((*heights)[2].has_value());
+    // ZX order: column (x=5, z=3) is index 3*16 + 5, not 5*16 + 3.
+    CHECK((*heights)[(3U * 16U) + 5U] == 65);
+    CHECK_FALSE((*heights)[(5U * 16U) + 3U].has_value());
+
+    // A map the chunk does not carry is absent, not empty.
+    CHECK_FALSE(chunk.heightmap(stratum::chunk::Heightmap::OceanFloor).has_value());
+}
+
+TEST_CASE("a chunk with no heightmaps says so", "[chunk][heightmap]") {
+    const stratum::test::NbtWriter writer =
+        stratum::test::buildChunkNbt(0, 0, {stratum::test::uniformSection(0, "minecraft:stone")});
+    const stratum::chunk::Chunk chunk =
+        stratum::chunk::Chunk::decode(stratum::nbt::read(writer.bytes()).root);
+
+    CHECK_FALSE(chunk.heightmap(stratum::chunk::Heightmap::WorldSurface).has_value());
+    // yPos is optional in the format, and its absence must not be read as a
+    // silent zero somewhere that matters.
+    CHECK(chunk.lowestSection() == 0);
+}

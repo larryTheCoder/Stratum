@@ -151,6 +151,22 @@ Chunk Chunk::decode(const nbt::Tag& root) {
     if (const nbt::Tag* status = root.find("Status"); status != nullptr) {
         chunk.status_ = status->asString();
     }
+    if (const nbt::Tag* yPos = root.find("yPos"); yPos != nullptr) {
+        chunk.lowestSection_ = yPos->asInt();
+    }
+
+    // Kept packed. Decoding all four for every chunk a diff walks would be
+    // work almost nobody asked for.
+    if (const nbt::Tag* heightmaps = root.find("Heightmaps"); heightmaps != nullptr) {
+        for (const Heightmap kind :
+             {Heightmap::WorldSurface, Heightmap::OceanFloor, Heightmap::MotionBlocking,
+              Heightmap::MotionBlockingNoLeaves}) {
+            const nbt::Tag* stored = heightmaps->find(std::string(heightmapName(kind)));
+            if (stored != nullptr) {
+                chunk.heightmaps_.emplace_back(kind, stored->asLongArray());
+            }
+        }
+    }
 
     const nbt::Tag* sections = root.find("sections");
     if (sections == nullptr) {
@@ -228,6 +244,49 @@ std::optional<int> Chunk::highestNonAir(int localX, int localZ) const {
         }
     }
     return std::nullopt;
+}
+
+std::string_view heightmapName(Heightmap kind) noexcept {
+    switch (kind) {
+        case Heightmap::WorldSurface:
+            return "WORLD_SURFACE";
+        case Heightmap::OceanFloor:
+            return "OCEAN_FLOOR";
+        case Heightmap::MotionBlocking:
+            return "MOTION_BLOCKING";
+        case Heightmap::MotionBlockingNoLeaves:
+            return "MOTION_BLOCKING_NO_LEAVES";
+    }
+    return "UNKNOWN";
+}
+
+std::optional<std::vector<std::optional<int>>> Chunk::heightmap(Heightmap kind) const {
+    const auto found = std::ranges::find_if(
+        heightmaps_, [kind](const auto& entry) { return entry.first == kind; });
+    if (found == heightmaps_.end()) {
+        return std::nullopt;
+    }
+
+    // Nine bits holds 0..511, which covers every world height the schema
+    // allows plus the "nothing here" zero. The width is a property of the
+    // format rather than of the data, so it is not derived from a palette
+    // the way a section's is.
+    constexpr int kBitsPerHeight = 9;
+    constexpr std::size_t kColumns = 256;
+    const std::vector<std::uint16_t> raw = unpackIndices(found->second, kBitsPerHeight, kColumns);
+
+    // Stored as `y + 1 - minY`, so that zero is "no qualifying block". See
+    // the note on Chunk::heightmap: this offset is measured against the
+    // blocks themselves, not assumed.
+    const int origin = (lowestSection_ * kSectionSize) - 1;
+
+    std::vector<std::optional<int>> heights;
+    heights.reserve(kColumns);
+    for (const std::uint16_t value : raw) {
+        heights.push_back(value == 0 ? std::optional<int>{}
+                                     : std::optional<int>{static_cast<int>(value) + origin});
+    }
+    return heights;
 }
 
 } // namespace stratum::chunk

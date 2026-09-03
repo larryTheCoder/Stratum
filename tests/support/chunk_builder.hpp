@@ -12,6 +12,7 @@
 #include <stratum/chunk/chunk.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,16 +46,46 @@ struct SectionSpec {
     std::vector<std::uint16_t> biomes;
 };
 
+/// One stored heightmap: 256 columns in ZX order, as vanilla writes them —
+/// `y + 1 - minY`, so that zero means the column holds nothing.
+struct HeightmapSpec {
+    std::string name;
+    std::vector<std::uint16_t> stored;
+};
+
 /// Writes chunk NBT of the shape Chunk::decode expects.
+///
+/// @p yPos is written whenever it is given. It is deliberately separate from
+/// the sections: vanilla's lowest section and its yPos agree, but the
+/// heightmap origin is defined by yPos alone, and a test that could not tell
+/// them apart could not tell a decoder that used the wrong one.
 [[nodiscard]] inline NbtWriter buildChunkNbt(std::int32_t chunkX, std::int32_t chunkZ,
                                              const std::vector<SectionSpec>& sections,
-                                             std::int32_t dataVersion = 4440) {
+                                             std::int32_t dataVersion = 4440,
+                                             std::optional<std::int32_t> yPos = std::nullopt,
+                                             const std::vector<HeightmapSpec>& heightmaps = {}) {
     NbtWriter writer;
     writer.named(nbt::TagType::Compound, "");
     writer.named(nbt::TagType::Int, "DataVersion").u32(static_cast<std::uint32_t>(dataVersion));
     writer.named(nbt::TagType::Int, "xPos").u32(static_cast<std::uint32_t>(chunkX));
     writer.named(nbt::TagType::Int, "zPos").u32(static_cast<std::uint32_t>(chunkZ));
+    if (yPos.has_value()) {
+        writer.named(nbt::TagType::Int, "yPos").u32(static_cast<std::uint32_t>(*yPos));
+    }
     writer.named(nbt::TagType::String, "Status").str("minecraft:full");
+
+    if (!heightmaps.empty()) {
+        writer.named(nbt::TagType::Compound, "Heightmaps");
+        for (const HeightmapSpec& map : heightmaps) {
+            const std::vector<std::uint64_t> packed = packIndices(map.stored, 9);
+            writer.named(nbt::TagType::LongArray, map.name)
+                .u32(static_cast<std::uint32_t>(packed.size()));
+            for (const std::uint64_t word : packed) {
+                writer.u64(word);
+            }
+        }
+        writer.end(); // Heightmaps
+    }
     writer.named(nbt::TagType::List, "sections")
         .type(nbt::TagType::Compound)
         .u32(static_cast<std::uint32_t>(sections.size()));
