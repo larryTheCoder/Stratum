@@ -780,3 +780,82 @@ TEST_CASE("a legacy random source is refused rather than approximated", "[densit
           "xoroshiro");
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
 }
+
+TEST_CASE("a candidate reading can be put in front of the pipeline, and only that way",
+          "[density][interpreter][unsettled]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":0.25,
+        "y_scale":0.125,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("weird", R"({"type":"minecraft:weird_scaled_sampler",
+        "rarity_value_mapper":"type_1","noise":"test","input":0.5})");
+
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 0,
+                                                       stratum::density::RandomSource::Xoroshiro);
+
+    const auto blendedRoot = graph.rootOf(ResourceLocation::parse("minecraft:blended"));
+    const auto weirdRoot = graph.rootOf(ResourceLocation::parse("minecraft:weird"));
+
+    SECTION("without a candidate both stay refused") {
+        const Interpreter plain(graph, noises);
+        CHECK_THROWS_WITH(plain.requireEvaluable(blendedRoot), ContainsSubstring("normalisation"));
+        CHECK_THROWS_WITH(plain.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
+    }
+
+    SECTION("a candidate is handed the node's own parameters and position") {
+        Interpreter running(graph, noises);
+        stratum::density::UnsettledSubstitutions subs;
+        stratum::noise::BlendedNoise::Parameters seen;
+        Point seenAt{};
+        subs.blendedNoise = [&](const stratum::noise::BlendedNoise::Parameters& parameters,
+                                Point at) {
+            seen = parameters;
+            seenAt = at;
+            return 7.5;
+        };
+        running.substitute(std::move(subs));
+
+        CHECK_NOTHROW(running.requireEvaluable(blendedRoot));
+        const Point at{.x = 3, .y = -17, .z = 91};
+        CHECK(bits(running.evaluate(blendedRoot, at)) == bits(7.5));
+
+        // All five, in the order the schema declares them — a candidate that
+        // received them shuffled would be testing the wrong function.
+        CHECK(bits(seen.xzScale) == bits(0.25));
+        CHECK(bits(seen.yScale) == bits(0.125));
+        CHECK(bits(seen.xzFactor) == bits(80.0));
+        CHECK(bits(seen.yFactor) == bits(160.0));
+        CHECK(bits(seen.smearScaleMultiplier) == bits(8.0));
+        CHECK(seenAt == at);
+
+        // Substituting one says nothing about the other.
+        CHECK_THROWS_WITH(running.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
+    }
+
+    SECTION("the weird_scaled_sampler constant is a constant, input and all") {
+        Interpreter running(graph, noises);
+        stratum::density::UnsettledSubstitutions subs;
+        subs.weirdScaledSampler = 1.0e6;
+        running.substitute(std::move(subs));
+
+        CHECK_NOTHROW(running.requireEvaluable(weirdRoot));
+        // It ignores the noise and the input entirely: this is an isolation
+        // device for an experiment, not a reading of the type.
+        CHECK(bits(running.evaluate(weirdRoot, Point{.x = 0, .y = 0, .z = 0})) == bits(1.0e6));
+        CHECK(bits(running.evaluate(weirdRoot, Point{.x = 900, .y = -60, .z = -12})) ==
+              bits(1.0e6));
+
+        CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
+                          ContainsSubstring("normalisation"));
+    }
+
+    SECTION("an empty set of substitutions is the same as none") {
+        Interpreter running(graph, noises);
+        running.substitute(stratum::density::UnsettledSubstitutions{});
+        CHECK(stratum::density::UnsettledSubstitutions{}.empty());
+        CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
+                          ContainsSubstring("normalisation"));
+    }
+}

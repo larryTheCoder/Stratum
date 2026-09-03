@@ -109,20 +109,28 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
             return "it scans a column against a cell height, which needs the cell sampler "
                    "(SPEC §10, M3)";
         case NodeType::OldBlendedNoise:
-            // The noise itself is implemented and checked against cubiomes
-            // (stratum::noise::BlendedNoise). What is missing is smaller and
-            // more specific than it used to be, and still parity-fatal:
-            // where `smear_scale_multiplier` enters the formula, and how a
-            // dimension that does not declare `legacy_random_source` seeds
-            // the three octave stacks. Neither is documented and neither is
-            // covered by any oracle here (SPEC §11).
-            return "the blended noise is implemented, but where smear_scale_multiplier enters "
-                   "it and how a modern dimension seeds it are both unsettled, and each one "
-                   "changes every block (SPEC §11)";
+            if (substitutions_.blendedNoise != nullptr) {
+                return std::nullopt;
+            }
+            // stratum::noise::BlendedNoise matches cubiomes bit-exactly and
+            // that is not enough: cubiomes' sampleSurfaceNoise returns ±128
+            // by construction, and this function has to land in a density
+            // space of order one. Three things are unsettled — the
+            // normalisation, where smear_scale_multiplier enters, and how a
+            // modern dimension seeds the octaves — and each changes every
+            // block. UnsettledSubstitutions is how an experiment tries a
+            // candidate without any of them reaching an ordinary world
+            // (SPEC §11).
+            return "the blended noise is written but not settled: its normalisation, where "
+                   "smear_scale_multiplier enters it, and how a modern dimension seeds it are "
+                   "all open, and each one changes every block (SPEC §11)";
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";
         case NodeType::WeirdScaledSampler:
+            if (substitutions_.weirdScaledSampler.has_value()) {
+                return std::nullopt;
+            }
             return "its rarity mapping is neither documented nor covered by any oracle "
                    "available here; it arrives with the cave functions (SPEC §10, M3)";
 
@@ -232,6 +240,10 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         }
         columnInvariant_[i] = invariant ? 1 : 0;
     }
+}
+
+void Interpreter::substitute(UnsettledSubstitutions substitutions) {
+    substitutions_ = std::move(substitutions);
 }
 
 bool Interpreter::isColumnInvariant(NodeIndex index) const {
@@ -453,6 +465,31 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
 
         // --- splines -------------------------------------------------------
+        case NodeType::OldBlendedNoise: {
+            // Only reachable with a candidate in place; unevaluableReason
+            // refuses it otherwise, and that refusal is what keeps an
+            // unverified reading out of an ordinary world.
+            const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
+                                                             .yScale = node.parameters[1],
+                                                             .xzFactor = node.parameters[2],
+                                                             .yFactor = node.parameters[3],
+                                                             .smearScaleMultiplier =
+                                                                 node.parameters[4]};
+            value = substitutions_.blendedNoise(parameters, at);
+            break;
+        }
+        case NodeType::WeirdScaledSampler:
+            // The substituted constant ignores the noise and the input
+            // entirely. It is an isolation device, not a reading.
+            // unevaluableReason refuses this type without one, so the check
+            // is unreachable — and this layer does not get to assume its own
+            // caller checked.
+            if (!substitutions_.weirdScaledSampler.has_value()) {
+                throw EvalError("'minecraft:weird_scaled_sampler' has no substituted value");
+            }
+            value = *substitutions_.weirdScaledSampler;
+            break;
+
         case NodeType::Spline: {
             // The resolver never builds one without a spline, but this layer
             // does not get to assume its input came from that resolver.

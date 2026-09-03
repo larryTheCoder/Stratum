@@ -42,9 +42,11 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -82,12 +84,46 @@ struct Point {
     [[nodiscard]] bool operator==(const Point& other) const noexcept = default;
 };
 
+/// Values for the node types SPEC §11 leaves unsettled, supplied by an
+/// experiment that is trying to settle them.
+///
+/// Absent by default, and that default is the point: without it those types
+/// stay refused, so no ordinary caller can generate a world from a reading
+/// nothing has verified. An experiment comparing generated terrain against
+/// the goldens is the one thing that *can* settle them, and it needs a way
+/// to put a candidate in front of the pipeline.
+struct UnsettledSubstitutions {
+    /// What `old_blended_noise` samples. The candidate under test — see
+    /// stratum::noise::BlendedNoise for the two questions it answers.
+    std::function<double(const noise::BlendedNoise::Parameters&, Point)> blendedNoise;
+
+    /// What `weird_scaled_sampler` returns, ignoring its noise and input.
+    ///
+    /// The only use for this is isolation. Vanilla's caves reach terrain
+    /// through nested `min`s, so a large positive constant here loses every
+    /// one of those and leaves the terrain shape alone — without pretending
+    /// to know the rarity mapping, which stays unsettled. An experiment that
+    /// uses it must check its own premise: caves only ever remove material,
+    /// so a prediction made this way has to come out at or above vanilla's
+    /// surface in every column, and any column below it means the isolation
+    /// is wrong rather than the candidate.
+    std::optional<double> weirdScaledSampler;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return blendedNoise == nullptr && !weirdScaledSampler.has_value();
+    }
+};
+
 class Interpreter {
 public:
     /// Binds a graph to the noises it names. Throws EvalError if any `noise`
     /// field has nothing behind it, so that a missing noise is found once at
     /// construction rather than on whichever chunk first reached that node.
     Interpreter(const Graph& graph, const NoiseRegistry& noises);
+
+    /// Puts candidate readings of the unsettled types in front of the
+    /// pipeline. For experiments only; see UnsettledSubstitutions.
+    void substitute(UnsettledSubstitutions substitutions);
 
     /// The same, over a cell lattice. `interpolated` and `cache_all_in_cell`
     /// become evaluable; without one they stay refused, because there is no
@@ -161,6 +197,7 @@ private:
     /// has to mean const (SPEC §4.1).
     std::vector<char> columnInvariant_;
     std::vector<char> splineColumnInvariant_;
+    UnsettledSubstitutions substitutions_;
 };
 
 } // namespace stratum::density

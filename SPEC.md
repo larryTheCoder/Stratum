@@ -474,7 +474,34 @@ Open:
   min/512, max/512)` blend, and the legacy seeding — three stacks drawn in
   order from one Java LCG. See `lib/src/blended.cpp` and NOTICE.
 
-  Two things that oracle cannot reach, and each one changes every block:
+  **Correction, from trying to use it (M3).** "Implemented and checked" was
+  too generous, and the commit that introduced it says so too. Matching
+  cubiomes bit-exactly does not make this function usable, because cubiomes'
+  `sampleSurfaceNoise` is not the same quantity:
+
+  * It is handed *cell* coordinates — its caller in generator.c passes a `py`
+    running 0..32 — where `old_blended_noise` is evaluated at block
+    coordinates. That part reconciles: `xz_scale: 0.25` and
+    `y_scale: 0.125` are exactly the block-to-cell conversion.
+  * Its output is ±128 by construction: sixteen octaves whose amplitudes
+    *double* to 32768, then divided by 512. The legacy generator worked in
+    that density space. Modern `old_blended_noise` feeds
+    `sloped_cheese = 4 * quarter_negative(...) + base_3d_noise`, whose other
+    term is order one. Measured with the overworld's own parameters, this
+    implementation returns −300.35 to +578.79 where it needs order one.
+
+  So there is a **third** unknown — how the modern function is normalised —
+  and it is the largest of the three: a wrong smear shifts values, a wrong
+  normalisation makes the function unusable. It was found by running the
+  experiment below, not by reading, which is the argument for running
+  experiments early.
+
+  The three things that oracle cannot reach, each of which changes every
+  block:
+
+  * **How the modern function is normalised.** See above. Nothing available
+    here says.
+
 
   * **Where `smear_scale_multiplier` enters.** cubiomes models the pre-1.18
     noise, which had no such parameter, so agreement pins only the
@@ -487,9 +514,39 @@ Open:
     three stacks.** Nothing here answers this, and the overworld is such a
     dimension.
 
-  So `old_blended_noise` stays refused, with a refusal that now names those
-  two rather than the whole function. It is the single remaining thing
-  between the pipeline and a block of overworld terrain.
+  So `old_blended_noise` stays refused, with a refusal that names those three
+  rather than the whole function.
+
+  It is also **not** the single remaining thing between the pipeline and a
+  block of overworld terrain, which is another thing the experiment
+  corrected: vanilla's caves reach terrain through `min`s nested sixteen
+  levels inside `final_density`, so `weird_scaled_sampler` is on that path
+  too.
+
+- **How the unsettled types get settled, and how they do not leak (M3).**
+  `density::UnsettledSubstitutions` lets a caller put a candidate reading of
+  `old_blended_noise`, or a constant for `weird_scaled_sampler`, in front of
+  the pipeline. It is absent by default and that default is the whole
+  point: without it those types stay refused, so no ordinary caller can
+  generate a world from a reading nothing has verified.
+
+  It exists because the only thing that can settle them is a comparison
+  against the goldens, and that comparison needs a way to run a candidate.
+  The experiment shape, established by measurement:
+
+  * Evaluate the whole `final_density` with `weird_scaled_sampler` forced to
+    a large positive, which loses every carving `min` and isolates terrain
+    without claiming to know the rarity mapping.
+  * Scan each column for the highest y where it is positive, and compare
+    against vanilla's own `OCEAN_FLOOR` heightmap.
+  * Check the premise as well as the answer: caves only remove material, so
+    a prediction made this way must come out at or above vanilla's surface
+    in every column. Columns below it mean the isolation is wrong, not the
+    candidate.
+
+  It discriminates: with the blended noise forced to zero, 1.6% of columns
+  match exactly. A candidate that is right should be near the other end of
+  that scale, and nothing yet is.
 
   A third, smaller gap worth writing down: cubiomes' `maintainPrecision` is
   a no-op — the real line is commented out in its header as "useless in
