@@ -24,6 +24,7 @@ set_tests_properties(conformance.fixtures_present PROPERTIES
 # --- The NBT reader against real, vanilla-written files ---------------------
 add_executable(stratum_conformance_tests
     golden_heightmaps_test.cpp
+    golden_fill_test.cpp
     golden_terrain_test.cpp
     golden_terrain_no_aquifer_test.cpp
     golden_regions_test.cpp

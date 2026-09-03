@@ -17,6 +17,7 @@ add_library(stratum_core STATIC
     src/chunk.cpp
     src/density_graph.cpp
     src/density_interpreter.cpp
+    src/terrain_filler.cpp
     src/density_render.cpp
     src/fdlibm_log.cpp
     src/md5.cpp

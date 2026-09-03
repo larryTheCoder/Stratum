@@ -54,6 +54,7 @@
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -186,8 +187,62 @@ public:
     /// the same errors, but on the sample rather than at load.
     void requireEvaluable(NodeIndex root) const;
 
+    /// Per-task scratch for filling a chunk, holding the cell corner values
+    /// `interpolated` nodes need.
+    ///
+    /// WHY THIS EXISTS. `interpolated` is defined over a cell: its value at a
+    /// point is a blend of its argument at the eight corners of the cell the
+    /// point sits in. Evaluating it at a point therefore costs eight
+    /// evaluations of the argument, and a filler asking for every block in a
+    /// 4x8x4 cell pays that 128 times over for eight values that never
+    /// change. Vanilla computes them once per cell; so does this, when the
+    /// caller supplies somewhere to keep them.
+    ///
+    /// It is the CALLER's, not the interpreter's, because a compiled pipeline
+    /// is immutable and shared between threads (SPEC §4.1 and §5) — a cache
+    /// hanging off the interpreter would be shared mutable state in the hot
+    /// path. One of these per generating task, never two tasks to one.
+    ///
+    /// Using one is not supposed to change any value it returns. That is
+    /// asserted rather than assumed: see the unit tests, which compare cached
+    /// and uncached evaluation bit-for-bit over a whole cell.
+    class CornerCache {
+    public:
+        explicit CornerCache(std::size_t nodeCount) : entries_(nodeCount) {}
+
+        /// Forgets everything. Cheap, and only needed if the same cache is
+        /// reused for a different world or pipeline.
+        void reset() noexcept {
+            for (Entry& entry : entries_) {
+                entry.filled = false;
+            }
+        }
+
+    private:
+        friend class Interpreter;
+
+        struct Entry {
+            /// The cell these corners belong to, by its lower corner.
+            std::int32_t x = 0;
+            std::int32_t y = 0;
+            std::int32_t z = 0;
+            bool filled = false;
+            std::array<double, 8> corners{};
+        };
+
+        std::vector<Entry> entries_;
+    };
+
     /// The value of @p root at @p at.
     [[nodiscard]] double evaluate(NodeIndex root, Point at) const;
+
+    /// The same, reusing @p cache for the cell corners `interpolated` needs.
+    /// Bit-for-bit identical to the two-argument form; only faster, and only
+    /// when consecutive calls stay inside a cell.
+    [[nodiscard]] double evaluate(NodeIndex root, Point at, CornerCache& cache) const;
+
+    /// How many entries a CornerCache for this interpreter needs.
+    [[nodiscard]] std::size_t cacheSize() const noexcept;
 
     /// Why this interpreter cannot evaluate @p type, or nothing if it can.
     /// Depends on the instance, not only on the type: a cell lattice is what
@@ -242,7 +297,7 @@ private:
     /// value at eight times the cost — the density function is a pure
     /// function of position. The chunk filler is what makes that once-per-cell
     /// again (SPEC §4.1).
-    [[nodiscard]] double interpolate(NodeIndex argument, Point at) const;
+    [[nodiscard]] double interpolate(NodeIndex argument, const Scope& scope) const;
 
     const Graph* graph_;
     std::optional<CellGeometry> cells_;

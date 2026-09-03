@@ -8,6 +8,7 @@
 #include <stratum/noise/perlin.hpp>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -70,7 +71,14 @@ class Interpreter::Scope {
 public:
     Scope(Point at, std::size_t nodeCount) : at_(at), values_(nodeCount), computed_(nodeCount, 0) {}
 
+    Scope(Point at, std::size_t nodeCount, CornerCache* cache)
+        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache) {}
+
     [[nodiscard]] Point at() const noexcept { return at_; }
+
+    /// Where `interpolated` keeps its cell corners, or null when the caller
+    /// supplied nowhere and every point pays for its own eight.
+    [[nodiscard]] CornerCache* cache() const noexcept { return cache_; }
 
     [[nodiscard]] bool has(NodeIndex index) const noexcept {
         return computed_[static_cast<std::size_t>(index)] != 0;
@@ -90,6 +98,7 @@ private:
     Point at_;
     std::vector<double> values_;
     std::vector<char> computed_;
+    CornerCache* cache_ = nullptr;
 };
 
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
@@ -409,6 +418,15 @@ void Interpreter::requireEvaluableSpline(SplineIndex index, std::vector<char>& s
     }
 }
 
+std::size_t Interpreter::cacheSize() const noexcept {
+    return graph_->nodeCount();
+}
+
+double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache) const {
+    Scope scope(at, graph_->nodeCount(), &cache);
+    return evaluateNode(scope, root);
+}
+
 double Interpreter::evaluate(NodeIndex root, Point at) const {
     if (root >= graph_->nodeCount()) {
         throw EvalError("node index " + std::to_string(root) + " is out of range");
@@ -688,7 +706,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
 
         case NodeType::Interpolated:
-            value = interpolate(node.arguments[0], at);
+            value = interpolate(node.arguments[0], scope);
             break;
 
         // --- blending ------------------------------------------------------
@@ -710,7 +728,8 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     return scope.store(index, value);
 }
 
-double Interpreter::interpolate(NodeIndex argument, Point at) const {
+double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
+    const Point at = scope.at();
     // unevaluableReason refuses `interpolated` without a lattice, so this is
     // unreachable — but this layer does not get to assume its own caller
     // checked, and a missing lattice here would otherwise be a crash.
@@ -731,12 +750,38 @@ double Interpreter::interpolate(NodeIndex argument, Point at) const {
     const double tz = static_cast<double>(at.z - z0) / static_cast<double>(cells.width);
 
     const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
-        Scope scope(Point{.x = x0 + (dx * cells.width),
+        // The corner's own scope carries the same cache: a nested
+        // `interpolated` caches its own cell under its own node index, and
+        // the cell check below keeps the two from being confused.
+        Scope inner(Point{.x = x0 + (dx * cells.width),
                           .y = y0 + (dy * cells.height),
                           .z = z0 + (dz * cells.width)},
-                    graph_->nodeCount());
-        return evaluateNode(scope, argument);
+                    graph_->nodeCount(), scope.cache());
+        return evaluateNode(inner, argument);
     };
+
+    // With a cache, the eight corners are computed once for the cell and
+    // reused; without one, every point computes its own. The two paths
+    // must produce identical values, and the arithmetic below is shared
+    // between them precisely so that they cannot drift apart.
+    std::array<double, 8> own{};
+    const std::array<double, 8>* corners = &own;
+    CornerCache* cache = scope.cache();
+    if (cache != nullptr) {
+        CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
+        if (!entry.filled || entry.x != x0 || entry.y != y0 || entry.z != z0) {
+            entry.x = x0;
+            entry.y = y0;
+            entry.z = z0;
+            entry.filled = true;
+            entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
+                             corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
+        }
+        corners = &entry.corners;
+    } else {
+        own = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
+               corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
+    }
 
     // Sequenced through named locals, and blended y first, then x, then z.
     // Both matter: lerp is not associative across dimensions in floating
@@ -744,14 +789,14 @@ double Interpreter::interpolate(NodeIndex argument, Point at) const {
     // The order is the documented one and is *not* yet checked against
     // vanilla — nothing available here samples terrain density — so SPEC §11
     // carries it as open until the goldens can settle it.
-    const double v000 = corner(0, 0, 0);
-    const double v001 = corner(0, 0, 1);
-    const double v010 = corner(0, 1, 0);
-    const double v011 = corner(0, 1, 1);
-    const double v100 = corner(1, 0, 0);
-    const double v101 = corner(1, 0, 1);
-    const double v110 = corner(1, 1, 0);
-    const double v111 = corner(1, 1, 1);
+    const double v000 = (*corners)[0];
+    const double v001 = (*corners)[1];
+    const double v010 = (*corners)[2];
+    const double v011 = (*corners)[3];
+    const double v100 = (*corners)[4];
+    const double v101 = (*corners)[5];
+    const double v110 = (*corners)[6];
+    const double v111 = (*corners)[7];
 
     const double x0z0 = lerp(ty, v000, v010);
     const double x1z0 = lerp(ty, v100, v110);

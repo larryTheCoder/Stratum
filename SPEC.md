@@ -581,6 +581,47 @@ Open:
   With this, **all 45 of vanilla's 45 noise router entries evaluate**, across
   every dimension this build can seed.
 
+  **The chunk filler (M3).** The first code in this project that produces a
+  block rather than a number. For every position: `default_block` where
+  `final_density` is positive, `default_fluid` below `sea_level` where it is
+  not, air above that.
+
+  Two things were learned by building it, both from comparing against blocks
+  the server actually wrote:
+
+  * **`sea_level` is EXCLUSIVE.** With vanilla's 63 the water stops at 62 and
+    63 is the first air. An inclusive comparison put one extra water block on
+    top of every column in the world — 256 a chunk, and the only category
+    disagreement in four chunks. Nothing short of a golden comparison would
+    have caught a mistake that uniform.
+  * **`interpolated` is where the time goes.** It is defined over a cell, so
+    evaluating it at a point costs eight evaluations of its argument, and a
+    filler asking for every block of a 4x8x4 cell paid that 128 times for
+    eight values that never change. Computing them once per cell is
+    **86.8 times faster** — 39.7 seconds a chunk down to 0.46 — and bit-for-bit
+    identical, which is asserted over 17000 points rather than assumed. The
+    cache belongs to the calling task, not to the interpreter, because a
+    compiled pipeline is immutable and shared between threads (§4.1).
+
+  Against the aquifer-free reference, over four chunks and 393216 blocks:
+  **every block is in the right category** — solid, fluid or air — and 82.013%
+  are the exact right block. All of the remaining 17.987% is surface rules
+  this build does not run: deepslate and bedrock, which are vertical gradients
+  reaching the whole column rather than a skin at the top, and gravel, dirt
+  and grass at the surface.
+
+  **What it refuses.** A dimension with `aquifers_enabled` or
+  `ore_veins_enabled` is refused by name at compile, not filled approximately.
+  Vanilla's overworld sets both, so this filler cannot generate it today —
+  which is the honest position: with aquifers the block is not a function of
+  the density, and filling as though it were floods every cave in the world.
+  §8 puts a world that generates and is quietly wrong in the most severe class
+  there is, and this is exactly that case.
+
+  Surface rules are NOT refused, because they only ever replace blocks the
+  filler already placed. A column without them is bare stone where grass and
+  dirt belong — visibly incomplete rather than wrong.
+
   **The aquifer fill decision: what it is, and what it will cost (M3).**
   Scoped, not started. Three things are now known about it.
 
