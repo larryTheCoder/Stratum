@@ -28,11 +28,11 @@ const settings = NoiseGeneratorSettings.create({
 // named config: that mode exists to sweep it, including values no dimension
 // uses. 0 is legal and is what "no smearing" looks like.
 const [, , mode, config = 'overworld', seed = '0'] = process.argv;
-const parameters = mode === 'columns'
+const parameters = (mode === 'columns' || mode === 'fine')
     ? { xz_scale: 0.25, y_scale: 0.125, xz_factor: 80.0, y_factor: 160.0,
         smear_scale_multiplier: Number(config) }
     : CONFIGS[config];
-if (!parameters || (mode === 'columns' && !Number.isFinite(Number(config)))) {
+if (!parameters || ((mode === 'columns' || mode === 'fine') && !Number.isFinite(Number(config)))) {
     console.error(`bad second argument '${config}'`);
     process.exit(2);
 }
@@ -49,7 +49,18 @@ const fn = visitor.apply(DensityFunction.fromJson({
 // so their spectra can be averaged as independent estimates.
 // 64 columns of 512 blocks in y. The smear is a y-structure parameter, so
 // what it does shows up along y and is invisible in a horizontal slice.
-if (mode === 'columns') {
+// A quantisation keyed to the block coordinate shows up as a discontinuity
+// at integer y and nowhere else, so this samples *between* the integers:
+// 1/64 of a block apart, along one column. Vanilla's field jumps by twenty to
+// sixty times its median step at every integer when the smear is on, and not
+// at all when the multiplier is 0. That is the sharpest test found so far,
+// and it separates candidates that the summary statistics rank as good.
+if (mode === 'fine') {
+    for (let i = 0; i <= 512; ++i) {
+        const y = i / 64;
+        console.log(`${y} ${fn.compute({ x: 11, y, z: 23 })}`);
+    }
+} else if (mode === 'columns') {
     for (let c = 0; c < 64; ++c) {
         const x = (c % 8) * 71, z = ((c / 8) | 0) * 89;
         for (let y = -256; y < 256; ++y) { console.log(fn.compute({ x, y, z })); }
@@ -68,6 +79,6 @@ if (mode === 'columns') {
         }
     }
 } else {
-    console.error("mode must be 'lines', 'planes' or 'columns'");
+    console.error("mode must be 'lines', 'planes', 'columns' or 'fine'");
     process.exit(2);
 }

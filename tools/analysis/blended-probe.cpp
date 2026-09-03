@@ -24,7 +24,9 @@ int main(int argc, char** argv) {
         .smearScaleMultiplier = config == "smear1" ? 1.0 : 8.0,
     };
     // `columns` takes a multiplier rather than a named config, to sweep it.
-    if (mode == "columns") { parameters.smearScaleMultiplier = std::atof(config.c_str()); }
+    if (mode == "columns" || mode == "fine") {
+        parameters.smearScaleMultiplier = std::atof(config.c_str());
+    }
 
     // The seeding a modern dimension uses is the open question this cannot
     // answer, so it uses the legacy one. Every statistic the comparison
@@ -32,7 +34,13 @@ int main(int argc, char** argv) {
     rng::JavaRandom random(seed);
     const auto noise = noise::BlendedNoise::legacy(random, parameters);
 
-    if (mode == "columns") {
+    if (mode == "fine") {
+        // Sub-block steps along one column: see the .mjs beside this.
+        for (int i = 0; i <= 512; ++i) {
+            const double y = i / 64.0;
+            std::printf("%.17g %.17g\n", y, noise.sample(11, y, 23));
+        }
+    } else if (mode == "columns") {
         for (int c = 0; c < 64; ++c) {
             const double x = (c % 8) * 71, z = (c / 8) * 89;
             for (int y = -256; y < 256; ++y) { std::printf("%.17g\n", noise.sample(x, y, z)); }
@@ -49,7 +57,7 @@ int main(int argc, char** argv) {
             }
         }
     } else {
-        std::fprintf(stderr, "mode must be 'lines', 'planes' or 'columns'\n");
+        std::fprintf(stderr, "mode must be 'lines', 'planes', 'columns' or 'fine'\n");
         return 2;
     }
     return 0;

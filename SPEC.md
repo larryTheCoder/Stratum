@@ -601,43 +601,65 @@ Open:
   below one for nearly every octave until the multiplier grows large enough
   to lift the early octaves out of it.
 
-  **What the sweep found, and what it did not.** This build passes the
-  Perlin sampler a y cap of `y * step`, and that is the fault. The sampler
-  computes `min(cap, localY)` and then folds; below y = 0 the cap is large
-  and negative, so `floor(cap / step)` displaces `localY` by a multiple of
-  the step proportional to both y *and* the multiplier. Hence the two
-  symptoms: amplitude scaling linearly with the multiplier, and the blow-up
-  at negative y.
+  **What the sweep found, and the correction that followed.** This build
+  passes the Perlin sampler a y cap of `y * step`. The sampler computes
+  `min(cap, localY)` and then folds; below y = 0 the cap is large and
+  negative, so `floor(cap / step)` displaces `localY` by a multiple of the
+  step proportional to both y *and* the multiplier. That produces the two
+  symptoms measured above: amplitude scaling linearly with the multiplier,
+  and the blow-up at negative y.
 
-  Passing no cap at all — fold `localY`, never clamp it — with the step left
-  exactly as it is now, agrees with vanilla on three statistics of four,
-  over eight seeds:
+  Passing no cap at all — fold `localY`, never clamp it — agreed with vanilla
+  on three summary statistics of four, and was recorded here as "the cap is
+  established wrong, the step right". **That was wrong, and the way it was
+  wrong is the lesson.** Summary statistics rank candidates; they do not
+  reject them. Sampling *between* the integers does.
 
-  | | vanilla | fold, never cap | |
-  |---|---|---|---|
-  | correlation length, multiplier 1 | 38.00 +/- 1.58 | 39.62 +/- 1.52 | 0.7 sigma |
-  | correlation length, multiplier 16 | 38.12 +/- 1.65 | 39.50 +/- 1.52 | 0.6 sigma |
-  | r(multiplier 1, multiplier 16) | 0.9892 +/- 0.0006 | 0.9904 +/- 0.0005 | 1.5 sigma |
-  | spread raised over no smearing | 1.5688 +/- 0.0435 | 1.8424 +/- 0.0506 | **4.1 sigma** |
+  **The fingerprint.** Vanilla's field is smooth in y at a sixty-fourth of a
+  block, except at integer y, where it jumps by twenty to sixty times its
+  median step — and those jumps vanish entirely at a multiplier of 0. So the
+  smear is a quantisation keyed to the **block** coordinate, not to the
+  per-octave scaled one. Measured at multiplier 1, as multiples of the
+  median step at y = 1..8:
 
-  The third row is the one that carries weight: it is a dimensionless
-  measure of how much the field moves across a factor of sixteen in the
-  multiplier, and the current build fails it by 16 sigma where this passes
-  at 1.5. The step needs no change — scaling it up or down breaks that row
-  immediately, which is what pins it.
+  | | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+  |---|---|---|---|---|---|---|---|---|
+  | vanilla | 59 | 21 | 3 | 20 | 19 | 38 | 46 | 50 |
+  | vanilla, multiplier 0 | 2 | 1 | 2 | 1 | 1 | 1 | 0 | 0 |
+  | this build's cap | 39 | 37 | 1 | 33 | 45 | 1 | 56 | 62 |
+  | fold, never cap | 1 | 1 | 1 | 0 | 1 | 0 | 1 | 1 |
 
-  The fourth row does not agree. The smear is still about a sixth too
-  energetic, and that is a real disagreement rather than noise, so **this is
-  not adopted**. It is recorded because it is a large narrowing: the cap is
-  established as wrong, the step as right, and what remains is one
-  17% discrepancy in a single statistic rather than an unknown reading.
+  This build's cap reproduces the effect almost exactly; the candidate that
+  scored well on the summary statistics has none of it. So the cap's *form*
+  is right and only the way the multiplier enters it is wrong. The candidate
+  is withdrawn.
 
-  **It is not a fix to `legacy()` either, and that is a result in itself.**
-  Changing the cap would break the cubiomes vectors, 150 of whose 270 rows
-  sit below y = 0. Those vectors pin the *pre-1.18* function, which had no
-  multiplier at all. So the two constructions genuinely differ here, and the
-  modern one needs its own path rather than a parameter on this one. That is
-  now measured rather than assumed.
+  **What is settled, and what is not.** Two structural questions are closed.
+  The fade is taken from the *unfolded* y — folding first fails the spread by
+  13 sigma and the multiplier-sensitivity by 11. And all three octave stacks
+  are smeared: smearing only the limits misses the multiplier-sensitivity by
+  17 sigma, only the blend misses the spread by 12.
+
+  What is not settled is a construction with **both** properties. Vanilla has
+  a correlation length along y of 38 blocks *and* the integer jumps. Every
+  capped candidate tried has the jumps and a correlation length of 2; every
+  uncapped one has the correlation length and no jumps. Scaling the step
+  between the two does not interpolate between them: at K = 1 the jumps match
+  and the correlation is 2, and by K = 1/4 the correlation is 29 but the
+  multiplier-sensitivity has collapsed from 0.989 to 0.476. Flooring the cap
+  at zero, which stops the negative-y displacement, keeps the jumps and still
+  misses the spread by 7 sigma.
+
+  So the displacement must be a *small perturbation* on a field that is
+  otherwise smooth in y, where in this build it dominates. That is a much
+  narrower question than the one this section started with, and the
+  fingerprint is the test that any answer has to pass. Nothing is adopted.
+
+  **None of this is a fix to `legacy()`.** Changing the cap breaks the
+  cubiomes vectors, 150 of whose 270 rows sit below y = 0, and those pin the
+  *pre-1.18* function, which had no multiplier at all. The two constructions
+  genuinely differ here and the modern one needs its own path — measured now,
+  not assumed.
 
   **A methodological correction worth keeping.** The first estimate of the
   normalisation was 130.86 +/- 0.21, reported as 13 sigma from 128 — and the

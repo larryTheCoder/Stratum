@@ -76,3 +76,15 @@ for ((seed = 0; seed < ${smear_seeds:-8}; ++seed)); do
     done
 done
 python3 tools/analysis/blended-compare.py smear "${smear_ours[@]}" -- "${smear_theirs[@]}"
+
+# The summary statistics above rank candidates; this one rejects them. Both
+# multipliers are shown because 0 is the control: the jumps must be absent
+# there and present at 1, or whatever produced them is not the smear.
+echo; echo "=== fingerprint: discontinuities at integer y ==="
+for m in 0 1; do
+    (cd "${work}" && node probe.mjs fine "${m}" 0) > "${work}/fine_t_m${m}.txt"
+    "${work}/ours" fine "${m}" 0 > "${work}/fine_o_m${m}.txt"
+done
+python3 tools/analysis/blended-compare.py fingerprint \
+    "${work}/fine_o_m0.txt" "${work}/fine_o_m1.txt" -- \
+    "${work}/fine_t_m0.txt" "${work}/fine_t_m1.txt"

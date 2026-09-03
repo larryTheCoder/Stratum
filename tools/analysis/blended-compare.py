@@ -24,7 +24,9 @@ Three cautions, each learned by getting it wrong first:
     fields are not related by any affine map, and no single constant will
     reconcile them.
 """
+import os
 import sys
+
 import numpy as np
 
 
@@ -126,6 +128,29 @@ def compare_smear(ours, theirs):
         print(f"{label:<26} {mx:12.4f} +/- {ex:5.4f} {my:12.4f} +/- {ey:5.4f}   {sigma:5.2f} sigma")
 
 
+def compare_fingerprint(ours, theirs):
+    """Jump sizes at integer y, as multiples of the median sub-block step.
+
+    A quantisation keyed to the block coordinate is discontinuous at integer y
+    and smooth between, which no summary statistic can see. Vanilla's field
+    jumps by twenty to sixty times its median step at every integer with the
+    smear on, and not at all with the multiplier at 0. Candidates that match
+    the spread and the correlation length can still fail this outright, which
+    is exactly what happened to the first one that looked good.
+    """
+    def profile(path):
+        raw = np.loadtxt(path)
+        y, value = raw[:, 0], raw[:, 1]
+        step = np.abs(np.diff(value))
+        median = np.median(step)
+        return [step[np.argmin(np.abs(y[1:] - k))] / median for k in range(1, 9)]
+
+    for label, paths in (("deepslate", theirs), ("ours", ours)):
+        for path in paths:
+            print(f"{label:>10} {os.path.basename(path):<28} "
+                  f"{' '.join(f'{j:5.0f}' for j in profile(path))}")
+
+
 def compare_planes(ours, theirs):
     def by_height(path):
         raw = np.loadtxt(path)
@@ -138,8 +163,8 @@ def compare_planes(ours, theirs):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4 or "--" not in sys.argv:
-        sys.exit("usage: blended-compare.py {spectra|scale|planes|smear} ours... -- theirs...")
+        sys.exit("usage: blended-compare.py {spectra|scale|planes|smear|fingerprint} ours... -- theirs...")
     split = sys.argv.index("--")
     mode, ours, theirs = sys.argv[1], sys.argv[2:split], sys.argv[split + 1:]
     {"spectra": compare_spectra, "scale": compare_scale, "planes": compare_planes,
-     "smear": compare_smear}[mode](ours, theirs)
+     "smear": compare_smear, "fingerprint": compare_fingerprint}[mode](ours, theirs)
