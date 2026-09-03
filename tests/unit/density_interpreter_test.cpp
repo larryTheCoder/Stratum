@@ -348,7 +348,11 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     CHECK_THAT(refusal("interpolated"),
                ContainsSubstring("minecraft:interpolated") && ContainsSubstring("cell"));
     CHECK_THAT(refusal("cell"), ContainsSubstring("minecraft:cache_all_in_cell"));
-    CHECK_THAT(refusal("blended"), ContainsSubstring("minecraft:old_blended_noise"));
+    // Not old_blended_noise any more: it is settled and evaluates. Kept in
+    // the tree above so that the walk still has to pass over it, and asserted
+    // here so that a regression which re-refuses it is a failure rather than
+    // a quiet loss of terrain.
+    CHECK_THAT(refusal("blended"), ContainsSubstring("no refusal"));
     CHECK_THAT(refusal("islands"), ContainsSubstring("minecraft:end_islands"));
     CHECK_THAT(refusal("weird"), ContainsSubstring("minecraft:weird_scaled_sampler"));
 
@@ -800,8 +804,7 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
 
     SECTION("without a candidate both stay refused") {
         const Interpreter plain(graph, noises);
-        CHECK_THROWS_WITH(plain.requireEvaluable(blendedRoot),
-                          ContainsSubstring("seeds its three"));
+        CHECK_NOTHROW(plain.requireEvaluable(blendedRoot));
         CHECK_THROWS_WITH(plain.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
     }
 
@@ -848,15 +851,13 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
         CHECK(bits(running.evaluate(weirdRoot, Point{.x = 900, .y = -60, .z = -12})) ==
               bits(1.0e6));
 
-        CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
-                          ContainsSubstring("seeds its three"));
+        CHECK_NOTHROW(running.requireEvaluable(blendedRoot));
     }
 
     SECTION("an empty set of substitutions is the same as none") {
         Interpreter running(graph, noises);
         running.substitute(stratum::density::UnsettledSubstitutions{});
         CHECK(stratum::density::UnsettledSubstitutions{}.empty());
-        CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
-                          ContainsSubstring("seeds its three"));
+        CHECK_NOTHROW(running.requireEvaluable(blendedRoot));
     }
 }

@@ -679,12 +679,39 @@ Open:
   the new one. High enough up the two agree again at any multiplier, once the
   cap exceeds the local offset under either reading and both saturate.
 
-  **What is left is the seeding, and only the seeding.** How a dimension that
-  does not declare `legacy_random_source` seeds its three octave stacks is
-  unknown, and the overworld is such a dimension. So `old_blended_noise` stays
-  refused, and `withMeasuredSmear()` is deliberately not the modern function:
-  it is the modern *smear* on the legacy seeding, so that the settled part is
-  code with tests rather than a paragraph here.
+  **The seeding, and the whole node (M3).** One generator, taken from the
+  world seed's positional factory under the name `minecraft:terrain`, with the
+  three stacks drawn from it in order: sixteen minimum, sixteen maximum, eight
+  blend. Every part of that is load-bearing — a different salt, the blend
+  stack first, or the world seed put straight into Xoroshiro all miss by order
+  one rather than narrowly, and `terrain` without the namespace misses too,
+  because the name is MD5'd into the seed.
+
+  It was found by search rather than by probing vanilla again, and the reason
+  that worked *now* and not before is worth recording: a seeding hypothesis
+  can only be tested against exact values if everything else about the
+  function is already right. With the normalisation and the smear settled, a
+  correct seeding had to reproduce deepslate's 240 values outright, and one
+  did. With either still open, no hypothesis could have matched and the search
+  would have found nothing — which is what an earlier attempt, scoring
+  candidates by correlation, actually found.
+
+  **Together: 240 of 240 to within a part in a billion, 230 of them
+  bit-for-bit.** The ten that are not differ by at most 6.3e-14 and sit at the
+  largest coordinates in the set, five of them at (1000, -60, -1000). That is
+  accumulated rounding across sixteen octaves whose amplitudes reach 32768,
+  not a difference of construction — and which side's last bits are right is
+  not something deepslate can settle, because it is an emulator and the golden
+  regions are the authority (§7).
+
+  **What it unblocked.** `old_blended_noise` is no longer refused, and with it
+  vanilla's evaluable named density functions go from 25 of 35 to **31**,
+  including `overworld/base_3d_noise` and `overworld/sloped_cheese` — the
+  terrain shape function itself. `final_density` still refuses, but one step
+  further down: vanilla's caves reach terrain through `min`s nested deep
+  inside it, so `weird_scaled_sampler` is now the first thing met on that
+  path. Four named functions remain unevaluable, all of them cave or End
+  functions.
 
   **A methodological correction worth keeping.** The first estimate of the
   normalisation was 130.86 +/- 0.21, reported as 13 sigma from 128 — and the

@@ -109,22 +109,11 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
             return "it scans a column against a cell height, which needs the cell sampler "
                    "(SPEC §10, M3)";
         case NodeType::OldBlendedNoise:
-            if (substitutions_.blendedNoise != nullptr) {
-                return std::nullopt;
-            }
-            // stratum::noise::BlendedNoise matches cubiomes bit-exactly and
-            // that is not enough: cubiomes' sampleSurfaceNoise returns ±128
-            // by construction, and this function has to land in a density
-            // space of order one. Three things are unsettled — the
-            // normalisation, where smear_scale_multiplier enters, and how a
-            // modern dimension seeds the octaves — and each changes every
-            // block. UnsettledSubstitutions is how an experiment tries a
-            // candidate without any of them reaching an ordinary world
-            // (SPEC §11).
-            return "the blended noise is written but not settled: how a dimension that does "
-                   "not declare legacy_random_source seeds its three octave stacks is unknown, "
-                   "and the overworld is such a dimension. Its normalisation and its smear are "
-                   "settled; the seeding alone changes every block (SPEC §11)";
+            // Settled (SPEC §11). Its normalisation, its smear and its
+            // seeding were each established against vanilla's own values
+            // separately, and together they reproduce all 240 of them to
+            // within a part in a billion.
+            return std::nullopt;
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";
@@ -163,6 +152,26 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
                             node.noise->toString() + "', which was not built for this world seed");
         }
         noiseOf_[i] = noise;
+    }
+
+    // The blended noises, built once. Forty Perlin permutations each, from the
+    // world seed and this node's own parameters — both fixed by the time a
+    // pipeline is compiled, so building them per sample would be forty
+    // thousand draws per block for no change in the answer.
+    blendedOf_.assign(graph.nodeCount(), std::nullopt);
+    for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
+        const Node& node = graph.node(static_cast<NodeIndex>(i));
+        if (node.type != NodeType::OldBlendedNoise) {
+            continue;
+        }
+        blendedOf_[i] = noise::BlendedNoise::modern(noises.worldSeed(),
+                                                    noise::BlendedNoise::Parameters{
+                                                        .xzScale = node.parameters[0],
+                                                        .yScale = node.parameters[1],
+                                                        .xzFactor = node.parameters[2],
+                                                        .yFactor = node.parameters[3],
+                                                        .smearScaleMultiplier = node.parameters[4],
+                                                    });
     }
 
     // Column invariance, in one forward pass. Node indices are assigned as
@@ -260,6 +269,15 @@ const noise::NormalNoise& Interpreter::noiseFor(NodeIndex index) const {
         throw EvalError("node " + std::to_string(index) + " samples a noise it does not name");
     }
     return *noise;
+}
+
+const noise::BlendedNoise& Interpreter::blendedFor(NodeIndex index) const {
+    const std::optional<noise::BlendedNoise>& blended = blendedOf_[static_cast<std::size_t>(index)];
+    if (!blended.has_value()) {
+        throw EvalError("node " + std::to_string(index) +
+                        " is an old_blended_noise with no noise built for it");
+    }
+    return *blended;
 }
 
 void Interpreter::requireEvaluable(NodeIndex root) const {
@@ -470,13 +488,20 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             // Only reachable with a candidate in place; unevaluableReason
             // refuses it otherwise, and that refusal is what keeps an
             // unverified reading out of an ordinary world.
-            const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
-                                                             .yScale = node.parameters[1],
-                                                             .xzFactor = node.parameters[2],
-                                                             .yFactor = node.parameters[3],
-                                                             .smearScaleMultiplier =
-                                                                 node.parameters[4]};
-            value = substitutions_.blendedNoise(parameters, at);
+            // Built at construction; see blendedOf_. A substitution still
+            // wins if one is in place, so an experiment can put a candidate
+            // in front of the settled reading.
+            if (substitutions_.blendedNoise != nullptr) {
+                const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
+                                                                 .yScale = node.parameters[1],
+                                                                 .xzFactor = node.parameters[2],
+                                                                 .yFactor = node.parameters[3],
+                                                                 .smearScaleMultiplier =
+                                                                     node.parameters[4]};
+                value = substitutions_.blendedNoise(parameters, at);
+            } else {
+                value = blendedFor(index).sample(at.x, at.y, at.z);
+            }
             break;
         }
         case NodeType::WeirdScaledSampler:

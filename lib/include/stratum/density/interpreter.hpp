@@ -176,6 +176,11 @@ private:
 
     [[nodiscard]] const noise::NormalNoise& noiseFor(NodeIndex index) const;
 
+    /// The blended noise built for @p index. Throws rather than returning a
+    /// wrong value if none was built, which can only happen if the graph
+    /// changed under the interpreter.
+    [[nodiscard]] const noise::BlendedNoise& blendedFor(NodeIndex index) const;
+
     void requireEvaluableNode(NodeIndex index, std::vector<char>& seen) const;
     void requireEvaluableSpline(SplineIndex index, std::vector<char>& seen) const;
 
@@ -192,6 +197,12 @@ private:
     /// The noise each node samples, resolved once, indexed by node. Null for
     /// the nodes that sample none.
     std::vector<const noise::NormalNoise*> noiseOf_;
+    /// The blended noise each `old_blended_noise` node needs, built once at
+    /// construction, indexed by node. Building one draws forty Perlin
+    /// permutations, which is not something to do per sample; and the noise is
+    /// a function of the world seed and the node's own five parameters, both
+    /// fixed once the pipeline is compiled.
+    std::vector<std::optional<noise::BlendedNoise>> blendedOf_;
     /// Column invariance per node, computed once at construction rather than
     /// memoised on demand: an interpreter is shared across threads and const
     /// has to mean const (SPEC §4.1).

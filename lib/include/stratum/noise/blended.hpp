@@ -72,15 +72,20 @@ public:
         double smearScaleMultiplier = 1.0;
     };
 
-    /// Which reading of the smear to use. The two differ, and SPEC §11
-    /// records how that was established rather than assumed.
-    enum class Smear : std::uint8_t {
+    /// Which reading of the function to use. The pre-1.18 one and vanilla
+    /// 1.21.11's differ in two places — the normalisation and the smear —
+    /// and SPEC §11 records how each was established rather than assumed.
+    enum class Reading : std::uint8_t {
         /// The pre-1.18 function, which cubiomes models and the vectors pin
-        /// bit-for-bit. It had no multiplier at all, so what this build does
+        /// bit-for-bit. Its octave stack is divided by 512, leaving a value
+        /// of order a hundred — the density space the old generator worked
+        /// in. It had no smear multiplier at all, so what this build does
         /// with one is an extrapolation and is measurably not vanilla's.
         PreModern,
-        /// Vanilla 1.21.11's, measured. Two differences from PreModern, both
-        /// in the cap handed to the Perlin sampler:
+        /// Vanilla 1.21.11's, measured. It divides the octave stack by
+        /// 65536 = 2^16 — the sum of the sixteen doubling amplitudes, so the
+        /// value lands in the order-one space `sloped_cheese` needs — and it
+        /// differs in the cap handed to the Perlin sampler, twice:
         ///
         ///   * The cap grows with y using the slab width taken *before* the
         ///     multiplier is applied. The slab still widens with the
@@ -92,9 +97,9 @@ public:
         ///     value its rising curve above zero reaches around y = 240 —
         ///     the signature of saturation, not of a mirrored cap.
         ///
-        /// At a multiplier of one the two are bit-identical for y >= 0 and
-        /// differ only below it.
-        Measured,
+        /// At a multiplier of one, and once the divisors are taken out, the
+        /// two are bit-identical for y >= 0 and differ only below it.
+        Modern,
     };
 
     /// The octave counts are fixed by the algorithm, not configurable.
@@ -107,19 +112,27 @@ public:
     /// them changes all three.
     [[nodiscard]] static BlendedNoise legacy(rng::JavaRandom& random, Parameters parameters);
 
-    /// The same stacks and the same seeding as legacy(), read with vanilla's
-    /// smear instead of the pre-1.18 one.
+    /// Vanilla 1.21.11's, for a dimension that does not declare
+    /// `legacy_random_source` — which the overworld, the Nether and the End
+    /// all are.
     ///
-    /// This is NOT the modern function: how a dimension that does not declare
-    /// `legacy_random_source` seeds the three stacks is still unknown, and
-    /// the overworld is such a dimension (SPEC §11). It is the modern
-    /// *smear*, seeded the only way this build can seed anything, so that the
-    /// part that is settled is written down and tested rather than carried in
-    /// a document. `old_blended_noise` stays refused until the seeding lands.
-    [[nodiscard]] static BlendedNoise withMeasuredSmear(rng::JavaRandom& random,
+    /// The seeding: one generator, taken from the world seed's positional
+    /// factory under the name `minecraft:terrain`, and the three stacks drawn
+    /// from it in order — sixteen minimum, sixteen maximum, eight blend. Every
+    /// part of that is load-bearing and every part was checked against
+    /// deepslate's exact values: a different salt, a different order, or the
+    /// world seed used directly all miss by order one rather than narrowly
+    /// (SPEC §11).
+    [[nodiscard]] static BlendedNoise modern(std::int64_t worldSeed, Parameters parameters);
+
+    /// The modern *reading* on the legacy *seeding*. Not something a world
+    /// uses: it exists so the tests can hold the seeding constant while
+    /// comparing the two readings, which is the only way that comparison
+    /// means anything.
+    [[nodiscard]] static BlendedNoise withModernReading(rng::JavaRandom& random,
                                                         Parameters parameters);
 
-    [[nodiscard]] Smear smear() const noexcept { return smear_; }
+    [[nodiscard]] Reading reading() const noexcept { return reading_; }
 
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
@@ -129,13 +142,13 @@ private:
     BlendedNoise() = default;
 
     [[nodiscard]] static BlendedNoise build(rng::JavaRandom& random, Parameters parameters,
-                                            Smear smear);
+                                            Reading reading);
 
     std::vector<PerlinNoise> minimum_;
     std::vector<PerlinNoise> maximum_;
     std::vector<PerlinNoise> blend_;
     Parameters parameters_;
-    Smear smear_ = Smear::PreModern;
+    Reading reading_ = Reading::PreModern;
 };
 
 } // namespace stratum::noise

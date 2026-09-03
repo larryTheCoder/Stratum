@@ -74,19 +74,19 @@ TEST_CASE("old_blended_noise lands in a density space of order one", "[noise][bl
     CHECK(largest > 0.1);
 }
 
-TEST_CASE("the legacy construction is not what a modern dimension uses",
-          "[noise][blended][oracle]") {
-    // stratum::noise::BlendedNoise matches cubiomes bit-exactly, and this is
-    // the demonstration that bit-exactness against cubiomes was never the
-    // question: cubiomes answers about the pre-1.18 noise, seeded from a Java
-    // LCG and living in a ±128 density space.
+TEST_CASE("the modern construction reproduces vanilla's own values", "[noise][blended][oracle]") {
+    // This case used to assert that nothing matched, with a note saying it
+    // should become the real comparison once the node was solved. It has.
     //
-    // Twenty-four candidate derivations of the modern seeding — sequential
-    // and per-stack draws, six salt strings, amplitudes doubling and halving
-    // — produced no constant ratio against these vectors either. The search
-    // space is larger than guessing covers, which is why the node stays
-    // refused (SPEC §11).
-    std::size_t matches = 0;
+    // Seeding: one generator from the world seed's positional factory under
+    // the name `minecraft:terrain`, then sixteen minimum, sixteen maximum and
+    // eight blend octaves drawn from it in order. Reading: the octave stack
+    // over 65536, and the smear cap built from the pre-multiplier slab and
+    // not binding below y = 0. Every one of those was established separately
+    // (SPEC §11); this is all of them at once against numbers neither of them
+    // was fitted to.
+    std::size_t exact = 0;
+    double worst = 0.0;
     for (const auto& vector : kDeepslateBlendedVectors) {
         const BlendedNoise::Parameters parameters{.xzScale = fromBits(vector.xzScale),
                                                   .yScale = fromBits(vector.yScale),
@@ -94,15 +94,37 @@ TEST_CASE("the legacy construction is not what a modern dimension uses",
                                                   .yFactor = fromBits(vector.yFactor),
                                                   .smearScaleMultiplier =
                                                       fromBits(vector.smearScaleMultiplier)};
-        JavaRandom random(vector.seed);
-        const BlendedNoise legacy = BlendedNoise::legacy(random, parameters);
-        if (std::bit_cast<std::uint64_t>(legacy.sample(vector.x, vector.y, vector.z)) ==
-            vector.value) {
-            ++matches;
+        const BlendedNoise modern = BlendedNoise::modern(vector.seed, parameters);
+        const double got = modern.sample(vector.x, vector.y, vector.z);
+        if (std::bit_cast<std::uint64_t>(got) == vector.value) {
+            ++exact;
         }
+        worst = std::max(worst, std::abs(got - fromBits(vector.value)));
     }
 
-    // When this stops being zero, old_blended_noise has been solved and this
-    // case should become the real comparison.
-    CHECK(matches == 0U);
+    // The claim. Every one of the 240, to within a part in a billion.
+    CHECK(worst < 1.0e-9);
+
+    // And 230 of them bit-for-bit. The ten that are not differ by at most
+    // 6.3e-14 and sit at the largest coordinates in the set — five of them at
+    // (1000, -60, -1000) — which is accumulated rounding across sixteen
+    // octaves whose amplitudes reach 32768, not a difference of construction.
+    // Whether the last bits are ours or deepslate's is not something deepslate
+    // can settle: it is an emulator, and the golden regions are the authority
+    // (SPEC §7). Pinned as a number so that a platform disagreeing here has to
+    // be looked at rather than absorbed.
+    CHECK(exact == 230U);
+
+    // The salt is load-bearing, not decoration: it is MD5'd into the seed, so
+    // a near-miss name gives an unrelated world rather than a nearby one.
+    // Without this, "the seeding is right" would rest on one positive result.
+    const BlendedNoise::Parameters overworld{.xzScale = 0.25,
+                                             .yScale = 0.125,
+                                             .xzFactor = 80.0,
+                                             .yFactor = 160.0,
+                                             .smearScaleMultiplier = 8.0};
+    const BlendedNoise right = BlendedNoise::modern(0, overworld);
+    JavaRandom legacySeeded(0);
+    const BlendedNoise wrong = BlendedNoise::withModernReading(legacySeeded, overworld);
+    CHECK(std::abs(right.sample(17, 33, -49) - wrong.sample(17, 33, -49)) > 1.0e-3);
 }

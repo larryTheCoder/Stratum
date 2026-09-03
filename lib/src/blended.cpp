@@ -8,6 +8,7 @@
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -53,9 +54,9 @@ namespace {
 /// the same width before the multiplier. Which of the two the cap uses, and
 /// what happens below y = 0, is the whole difference between the two
 /// readings — see BlendedNoise::Smear.
-[[nodiscard]] double smearCap(BlendedNoise::Smear smear, double y, double slab,
+[[nodiscard]] double smearCap(BlendedNoise::Reading reading, double y, double slab,
                               double bareSlab) noexcept {
-    if (smear == BlendedNoise::Smear::PreModern) {
+    if (reading == BlendedNoise::Reading::PreModern) {
         return y * slab;
     }
     if (y < 0.0) {
@@ -71,17 +72,42 @@ namespace {
 } // namespace
 
 BlendedNoise BlendedNoise::legacy(rng::JavaRandom& random, Parameters parameters) {
-    return build(random, parameters, Smear::PreModern);
+    return build(random, parameters, Reading::PreModern);
 }
 
-BlendedNoise BlendedNoise::withMeasuredSmear(rng::JavaRandom& random, Parameters parameters) {
-    return build(random, parameters, Smear::Measured);
+BlendedNoise BlendedNoise::withModernReading(rng::JavaRandom& random, Parameters parameters) {
+    return build(random, parameters, Reading::Modern);
 }
 
-BlendedNoise BlendedNoise::build(rng::JavaRandom& random, Parameters parameters, Smear smear) {
+BlendedNoise BlendedNoise::modern(std::int64_t worldSeed, Parameters parameters) {
+    // One generator for all three stacks, named. The name is not decoration:
+    // it is MD5-salted into the seed, so `terrain` or `old_blended_noise`
+    // give an unrelated world rather than a nearby one.
+    rng::Xoroshiro128PlusPlus random =
+        rng::XoroshiroPositionalFactory(worldSeed).fromHashOf("minecraft:terrain");
+
     BlendedNoise noise;
     noise.parameters_ = parameters;
-    noise.smear_ = smear;
+    noise.reading_ = Reading::Modern;
+    noise.minimum_.reserve(kLimitOctaves);
+    for (std::size_t i = 0; i < kLimitOctaves; ++i) {
+        noise.minimum_.push_back(PerlinNoise::fromRandom(random));
+    }
+    noise.maximum_.reserve(kLimitOctaves);
+    for (std::size_t i = 0; i < kLimitOctaves; ++i) {
+        noise.maximum_.push_back(PerlinNoise::fromRandom(random));
+    }
+    noise.blend_.reserve(kBlendOctaves);
+    for (std::size_t i = 0; i < kBlendOctaves; ++i) {
+        noise.blend_.push_back(PerlinNoise::fromRandom(random));
+    }
+    return noise;
+}
+
+BlendedNoise BlendedNoise::build(rng::JavaRandom& random, Parameters parameters, Reading reading) {
+    BlendedNoise noise;
+    noise.parameters_ = parameters;
+    noise.reading_ = reading;
 
     // Drawn in this order from one generator: the two limits, then the
     // blend. Sequenced through separate loops rather than interleaved,
@@ -127,7 +153,7 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
         // of the local offset folds. Which is which is Smear's business.
         const double limitBare = yScale * persistence;
         const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
-        const double limitCap = smearCap(smear_, y, limitSmear, limitBare);
+        const double limitCap = smearCap(reading_, y, limitSmear, limitBare);
 
         minimum += minimum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
         maximum += maximum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
@@ -138,7 +164,7 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
             const double blendZ = maintainPrecision(z * xzStep * persistence);
             const double blendBare = yStep * persistence;
             const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
-            const double blendCap = smearCap(smear_, y, blendSmear, blendBare);
+            const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
             blend += blend_[i].sample(blendX, blendY, blendZ, blendSmear, blendCap) * contribution;
         }
 
@@ -146,7 +172,12 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
         contribution *= 2.0;
     }
 
-    return clampedLerp(0.5 + (0.05 * blend), minimum / 512.0, maximum / 512.0);
+    // 512 leaves the pre-1.18 density space, of order a hundred; 65536 is
+    // the sum of the sixteen doubling amplitudes and lands in the order-one
+    // space `sloped_cheese` adds its other term in. The two differ by exactly
+    // 128, which is how the modern one was measured (SPEC §11).
+    const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
+    return clampedLerp(0.5 + (0.05 * blend), minimum / divisor, maximum / divisor);
 }
 
 } // namespace stratum::noise

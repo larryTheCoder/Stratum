@@ -188,7 +188,7 @@ namespace {
 
 [[nodiscard]] BlendedNoise built(bool measured, double smearScaleMultiplier) {
     JavaRandom random(0);
-    return measured ? BlendedNoise::withMeasuredSmear(random, overworldShape(smearScaleMultiplier))
+    return measured ? BlendedNoise::withModernReading(random, overworldShape(smearScaleMultiplier))
                     : BlendedNoise::legacy(random, overworldShape(smearScaleMultiplier));
 }
 
@@ -199,12 +199,16 @@ TEST_CASE("at a multiplier of one the two readings agree above y = 0", "[noise][
     // below zero. At a multiplier of one the first difference vanishes, so
     // the whole of y >= 0 must come out bit-for-bit identical — which is what
     // keeps the cubiomes vectors, all 270 of them, meaningful for both.
+    // Taking the divisors out is a division by exactly 128, which is exact in
+    // binary, so this pins the normalisation ratio at the same time: if the
+    // modern divisor were not exactly 128 times the old one, no height would
+    // agree here at all.
     const BlendedNoise pre = built(false, 1.0);
-    const BlendedNoise measured = built(true, 1.0);
+    const BlendedNoise modern = built(true, 1.0);
     for (const int y : {0, 1, 2, 7, 64, 255, 319}) {
         for (const int x : {0, 13, -71}) {
             CAPTURE(x, y);
-            CHECK(bits(pre.sample(x, y, 29)) == bits(measured.sample(x, y, 29)));
+            CHECK(bits(pre.sample(x, y, 29) / 128.0) == bits(modern.sample(x, y, 29)));
         }
     }
 }
@@ -215,10 +219,10 @@ TEST_CASE("below y = 0 the measured cap stops binding", "[noise][blended][smear]
     // at full effect because nothing caps it. So the two readings must differ
     // here, at a multiplier of one, where above zero they cannot.
     const BlendedNoise pre = built(false, 1.0);
-    const BlendedNoise measured = built(true, 1.0);
+    const BlendedNoise modern = built(true, 1.0);
     std::size_t differing = 0;
     for (const int y : {-1, -8, -32, -63, -64}) {
-        if (bits(pre.sample(11, y, 23)) != bits(measured.sample(11, y, 23))) {
+        if (bits(pre.sample(11, y, 23) / 128.0) != bits(modern.sample(11, y, 23))) {
             ++differing;
         }
     }
@@ -239,14 +243,14 @@ TEST_CASE("the measured cap leaves the multiplier out of itself", "[noise][blend
     // slab and the whole distinction would be gone — which no statistic in
     // tools/analysis would notice quickly, and this notices at once.
     const BlendedNoise preEight = built(false, 8.0);
-    const BlendedNoise measuredEight = built(true, 8.0);
+    const BlendedNoise modernEight = built(true, 8.0);
     // Not the top of the world: high enough up, the cap exceeds the local
     // offset under either reading, both saturate, and they agree again. That
     // is a real property and not a gap in the test — y = 255 and y = 319 come
     // out identical at a multiplier of eight.
     std::size_t parted = 0;
     for (const int y : {1, 7, 96, 128}) {
-        if (bits(preEight.sample(11, y, 23)) != bits(measuredEight.sample(11, y, 23))) {
+        if (bits(preEight.sample(11, y, 23) / 128.0) != bits(modernEight.sample(11, y, 23))) {
             ++parted;
         }
     }

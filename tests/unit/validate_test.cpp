@@ -182,8 +182,7 @@ TEST_CASE("a registry this engine does not execute is a warning, not an error", 
 TEST_CASE("a function this build cannot evaluate is named with its reason", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
-        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("blended", R"({"type":"minecraft:end_islands"})");
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
@@ -196,7 +195,7 @@ TEST_CASE("a function this build cannot evaluate is named with its reason", "[va
     const Finding* finding = findingAbout(report, "minecraft:blended");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("minecraft:old_blended_noise"));
+    CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
 }
 
 TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate]") {
@@ -283,8 +282,7 @@ TEST_CASE("findings come worst first", "[validate]") {
     defineWorkingPack(tree);
     tree.defineIn("biome", "plains", "{}");
     tree.defineIn("placed_feature", "a", "{}");
-    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
-        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("blended", R"({"type":"minecraft:end_islands"})");
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
@@ -302,8 +300,7 @@ TEST_CASE("validation is deterministic", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
     tree.defineIn("placed_feature", "a", "{}");
-    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
-        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("blended", R"({"type":"minecraft:end_islands"})");
 
     const Pack pack = tree.pack();
     const Report first = stratum::validate::validatePack(pack);
@@ -382,8 +379,7 @@ TEST_CASE("noise settings that will not load are an error", "[validate]") {
 TEST_CASE("a router entry this build cannot evaluate is named with its dimension", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
-        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("blended", R"({"type":"minecraft:end_islands"})");
     defineSettings(tree, "overworld", "blended");
 
     const Report report = stratum::validate::validatePack(tree.pack());
@@ -398,7 +394,7 @@ TEST_CASE("a router entry this build cannot evaluate is named with its dimension
     const Finding* finding = findingAbout(report, "minecraft:overworld final_density");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("minecraft:old_blended_noise"));
+    CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
 }
 
 TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecked", "[validate]") {

@@ -338,8 +338,9 @@ TEST_CASE("options that cannot be honoured are refused, not clamped", "[render][
 
 TEST_CASE("a function this build cannot evaluate is refused before sampling", "[render][density]") {
     const TempTree tree;
-    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
-        "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    // end_islands, because it is still refused. This was old_blended_noise
+    // until that was settled and started rendering terrain instead.
+    tree.define("blended", R"({"type":"minecraft:end_islands"})");
     const Pipeline pipeline(tree.pack(), 0);
 
     DensityRenderOptions options;
@@ -350,7 +351,7 @@ TEST_CASE("a function this build cannot evaluate is refused before sampling", "[
     // sample, so a caller hears it immediately instead of after a pause that
     // looks like work.
     CHECK_THROWS_WITH(pipeline.render("blended", options),
-                      ContainsSubstring("minecraft:old_blended_noise"));
+                      ContainsSubstring("minecraft:end_islands"));
 }
 
 TEST_CASE("ramp names round-trip", "[render][density]") {

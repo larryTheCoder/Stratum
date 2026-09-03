@@ -204,16 +204,18 @@ TEST_CASE("vanilla's routers gain the cell-structured entries once there is a la
     CHECK(end.geometry.cellWidth() == 8);
     CHECK(end.geometry.cellHeight() == 4);
 
-    // final_density is still out of reach, for a reason that has nothing to
-    // do with cells: `old_blended_noise`. The noise itself is implemented and
-    // checked against cubiomes; what is unsettled is where
-    // smear_scale_multiplier enters it and how a modern dimension seeds it
-    // (SPEC §11). `blend_density`, which used to be the first refusal met on
-    // this path, is transparent now — so this is the single remaining thing
+    // base_3d_noise evaluates: old_blended_noise is settled (SPEC §11), and
+    // it is the node this whole path used to stop at.
+    CHECK_NOTHROW(withCells.requireEvaluable(
+        loaded.graph.rootOf(ResourceLocation::parse("minecraft:overworld/base_3d_noise"))));
+    CHECK_NOTHROW(withCells.requireEvaluable(
+        loaded.graph.rootOf(ResourceLocation::parse("minecraft:overworld/sloped_cheese"))));
+
+    // final_density is still out of reach, one step further down than before:
+    // vanilla's caves reach terrain through `min`s nested deep inside it, so
+    // `weird_scaled_sampler` is now the first refusal met on this path. That
+    // it moved is the point — the blended noise is no longer what stands
     // between the pipeline and a block of terrain.
     CHECK_THROWS_WITH(withCells.requireEvaluable(overworld.router.at(RouterEntry::FinalDensity)),
-                      Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
-    CHECK_THROWS_WITH(withCells.requireEvaluable(loaded.graph.rootOf(
-                          ResourceLocation::parse("minecraft:overworld/base_3d_noise"))),
-                      Catch::Matchers::ContainsSubstring("minecraft:old_blended_noise"));
+                      Catch::Matchers::ContainsSubstring("minecraft:weird_scaled_sampler"));
 }
