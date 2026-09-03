@@ -446,8 +446,76 @@ Open:
   sits in, or on noise settings the pipeline does not yet carry. They arrive
   with the cell sampler in M3.
 
-  *No documentation and no oracle here* — `old_blended_noise`, `end_islands`,
-  `weird_scaled_sampler`, `blend_density`. minecraft.wiki documents neither
+- **`weird_scaled_sampler` is settled, and the wiki could not have settled it
+  (M3).** Vanilla's own removal changelog for 26.2 gives the formula outright:
+
+      abs(rarity * noise(x/rarity, y/rarity, z/rarity))
+
+  The coordinates are divided by the rarity, the sampled value is multiplied
+  by it, and the modulus is what makes this a cave function — the tunnels are
+  where the result is near zero, which is *both* sides of the noise's own zero
+  crossing rather than one. That the output is non-negative is what the probe
+  noticed first, before any formula was consulted: a field running +0.007 to
+  +1.317 where the same noise sampled plainly ran -1.02 to +0.84.
+
+  The rarity ladders, both measured off the vanilla server:
+
+  | `type_1` | | `type_2` | |
+  |---|---|---|---|
+  | input < -0.5 | 0.75 | input < -0.75 | 0.5 |
+  | input < 0.0 | 1.0 | input < -0.5 | 0.75 |
+  | input < 0.5 | 1.5 | input < 0.5 | 1.0 |
+  | otherwise | 2.0 | input < 0.75 | 2.0 |
+  | | | otherwise | 3.0 |
+
+  Compared with a strict `<`, so a value sitting exactly on a threshold takes
+  the rarity above it. Every threshold was probed at the value itself and at
+  plus and minus 1e-7, which is what pins that rather than assuming it.
+
+  **The names could not be taken from documentation.** minecraft.wiki carries
+  both ladders, and its two pages assign them to `type_1` and `type_2` in
+  *opposite* order — the Density function page one way, the 26.2 changelog the
+  other. A build that trusted the wiki had an even chance of generating every
+  cave in the world from the wrong ladder, and nothing in the wiki resolves
+  it. The server does, and the assignment above is the server's. The unit
+  tests assert the one thing a swap would break — that `type_2` reaches 0.5
+  and 3.0 where `type_1` never does, and `type_1` reaches 1.5 where `type_2`
+  never does — because nothing else in the file would notice.
+
+  **How it was measured.** `tools/analysis/density-probe.sh` generalises the
+  datapack probe: a spec file lists functions to test, each becomes its own
+  *dimension* in one world, and one server start therefore measures a whole
+  sweep instead of one point. 51 dimensions mapped the ladders coarsely; 35
+  more pinned the thresholds. The fit is seeded from the field's spread —
+  `sd(r * |noise(p/r)|) = r * sd(|noise|)`, so the spread gives the rarity
+  outright — because a blind search cannot find it: at x = 127 a step of
+  0.001 in the rarity moves the sampled point by 0.13 in noise space, which
+  decorrelates a noise whose features are 8 wide.
+
+- **The terrain chain runs end to end, and is close but not right (M3).** With
+  the blended noise and this settled, the overworld's `final_density`
+  evaluates for the first time. Against vanilla's own recorded OCEAN_FLOOR
+  heightmaps, over 4096 columns a seed:
+
+  | seed | exact | within one block | worst |
+  |---|---|---|---|
+  | 42 | 99.561% | 100% | 1 block |
+  | 0 | 99.902% | 99.951% | 2 blocks |
+  | -1 | 96.167% | 97.949% | **50 blocks** |
+
+  The residual is real, not rounding: at a disagreeing column the density at
+  the block in dispute is of order 1e-4 to 1e-2, not 1e-15, so it is not a
+  tie resolved differently. Seed -1's 50-block outliers are not a boundary
+  being rounded either — they are columns whose terrain this build gets wrong.
+  Something in the chain is still off, and finding it is the next question.
+  `tests/conformance/golden_terrain_test.cpp` pins a cheap sample of this so
+  the number has to move deliberately; it samples every eighth column across
+  8x8 chunks rather than filling one chunk, because a single chunk of seed 42
+  comes out 256 of 256 and would have hidden the residual entirely.
+
+  *No documentation and no oracle here* — `end_islands` and, as it was,
+  `old_blended_noise`, `weird_scaled_sampler` and `blend_density`; the last
+  three are settled above, leaving `end_islands` and `find_top_surface`. minecraft.wiki documents neither
   `weird_scaled_sampler`'s rarity mapping nor what `blend_density` returns
   outside blending, and cubiomes models neither terrain density nor the End
   islands. Implementing them from memory would produce a world that

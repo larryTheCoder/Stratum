@@ -108,22 +108,16 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
         case NodeType::FindTopSurface:
             return "it scans a column against a cell height, which needs the cell sampler "
                    "(SPEC §10, M3)";
-        case NodeType::OldBlendedNoise:
-            // Settled (SPEC §11). Its normalisation, its smear and its
-            // seeding were each established against vanilla's own values
-            // separately, and together they reproduce all 240 of them to
-            // within a part in a billion.
-            return std::nullopt;
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";
-        case NodeType::WeirdScaledSampler:
-            if (substitutions_.weirdScaledSampler.has_value()) {
-                return std::nullopt;
-            }
-            return "its rarity mapping is neither documented nor covered by any oracle "
-                   "available here; it arrives with the cave functions (SPEC §10, M3)";
 
+        // `old_blended_noise` and `weird_scaled_sampler` were refused here
+        // until M3 settled them (SPEC §11) — the first against vanilla's own
+        // values to within a part in a billion, the second from vanilla's
+        // changelog plus both rarity ladders measured off the server. They
+        // reach the default deliberately, and had cases of their own until
+        // clang-tidy pointed out that saying so twice is saying it once.
         default:
             return std::nullopt;
     }
@@ -278,6 +272,43 @@ const noise::BlendedNoise& Interpreter::blendedFor(NodeIndex index) const {
                         " is an old_blended_noise with no noise built for it");
     }
     return *blended;
+}
+
+double rarityValueMapper(std::string_view mapper, double input) {
+    // Written as ladders rather than as arithmetic because that is what they
+    // are: five and four steps with no pattern between them, and any formula
+    // that appeared to fit would be a coincidence over this many points.
+    if (mapper == "type_1") {
+        if (input < -0.5) {
+            return 0.75;
+        }
+        if (input < 0.0) {
+            return 1.0;
+        }
+        if (input < 0.5) {
+            return 1.5;
+        }
+        return 2.0;
+    }
+    if (mapper == "type_2") {
+        if (input < -0.75) {
+            return 0.5;
+        }
+        if (input < -0.5) {
+            return 0.75;
+        }
+        if (input < 0.5) {
+            return 1.0;
+        }
+        if (input < 0.75) {
+            return 2.0;
+        }
+        return 3.0;
+    }
+    throw EvalError("'minecraft:weird_scaled_sampler' has rarity_value_mapper '" +
+                    std::string(mapper) +
+                    "', which this build does not know; the two vanilla defines are 'type_1' "
+                    "and 'type_2'");
 }
 
 void Interpreter::requireEvaluable(NodeIndex root) const {
@@ -504,18 +535,24 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             }
             break;
         }
-        case NodeType::WeirdScaledSampler:
-            // The substituted constant ignores the noise and the input
-            // entirely. It is an isolation device, not a reading.
-            // unevaluableReason refuses this type without one, so the check
-            // is unreachable — and this layer does not get to assume its own
-            // caller checked.
-            if (!substitutions_.weirdScaledSampler.has_value()) {
-                throw EvalError("'minecraft:weird_scaled_sampler' has no substituted value");
+        case NodeType::WeirdScaledSampler: {
+            // abs(rarity * noise(x/rarity, y/rarity, z/rarity)). The rarity
+            // scales the sampled position AND the value, and the absolute
+            // value is what makes this a cave function: the tunnels are where
+            // the result is near zero, which is both sides of the noise's
+            // own zero crossing rather than one.
+            //
+            // A substituted constant still wins, as an isolation device.
+            if (substitutions_.weirdScaledSampler.has_value()) {
+                value = *substitutions_.weirdScaledSampler;
+                break;
             }
-            value = *substitutions_.weirdScaledSampler;
+            const double rarity =
+                rarityValueMapper(node.selector, evaluateNode(scope, node.arguments[0]));
+            value = std::abs(rarity *
+                             noiseFor(index).sample(at.x / rarity, at.y / rarity, at.z / rarity));
             break;
-
+        }
         case NodeType::Spline: {
             // The resolver never builds one without a spline, but this layer
             // does not get to assume its input came from that resolver.

@@ -54,6 +54,24 @@
 
 namespace stratum::density {
 
+/// The rarity `weird_scaled_sampler` gives an input, for one of the two
+/// mappers vanilla defines.
+///
+/// A ladder of thresholds, compared with a strict `<`, so a value sitting
+/// exactly on a threshold takes the rarity ABOVE it. That is measured, not
+/// assumed: every threshold was probed at the value itself and at plus and
+/// minus 1e-7 either side, and the step falls exactly on it (SPEC §11).
+///
+/// Which ladder belongs to which name is the part worth being careful about.
+/// minecraft.wiki documents both ladders but its two pages assign them to
+/// `type_1` and `type_2` in OPPOSITE order, so the names could not be taken
+/// from documentation at all. The assignment here is the one the vanilla
+/// server itself produces.
+///
+/// Throws EvalError for a mapper this build does not know, rather than
+/// picking one — a silently wrong rarity would reshape every cave.
+[[nodiscard]] double rarityValueMapper(std::string_view mapper, double input);
+
 /// Raised when a graph cannot be evaluated: a node type this build does not
 /// implement, a missing noise, a cache whose contents break its contract.
 class EvalError : public std::runtime_error {

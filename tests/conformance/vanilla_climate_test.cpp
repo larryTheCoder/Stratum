@@ -265,14 +265,16 @@ TEST_CASE("the interpreter's account of vanilla's graph is honest",
           "overworld/factor", "overworld/jaggedness",
           // Terrain shape, since old_blended_noise was settled: base_3d_noise
           // is that node, and sloped_cheese is the function built on it.
-          "overworld/base_3d_noise", "overworld/sloped_cheese"}) {
+          "overworld/base_3d_noise", "overworld/sloped_cheese",
+          // The cave functions, since weird_scaled_sampler was settled.
+          "overworld/caves/entrances", "overworld/caves/spaghetti_2d"}) {
         CAPTURE(path);
         CHECK_NOTHROW(interpreter.requireEvaluable(root(path)));
     }
 
     // What is left waits on weird_scaled_sampler and end_islands, not on
     // anything about the blended noise.
-    for (const std::string_view path : {"end/sloped_cheese", "overworld/caves/entrances"}) {
+    for (const std::string_view path : {"end/sloped_cheese", "overworld/caves/noodle"}) {
         CAPTURE(path);
         CHECK_THROWS_AS(interpreter.requireEvaluable(root(path)), stratum::density::EvalError);
     }

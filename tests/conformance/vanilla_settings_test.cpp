@@ -211,11 +211,10 @@ TEST_CASE("vanilla's routers gain the cell-structured entries once there is a la
     CHECK_NOTHROW(withCells.requireEvaluable(
         loaded.graph.rootOf(ResourceLocation::parse("minecraft:overworld/sloped_cheese"))));
 
-    // final_density is still out of reach, one step further down than before:
-    // vanilla's caves reach terrain through `min`s nested deep inside it, so
-    // `weird_scaled_sampler` is now the first refusal met on this path. That
-    // it moved is the point — the blended noise is no longer what stands
-    // between the pipeline and a block of terrain.
-    CHECK_THROWS_WITH(withCells.requireEvaluable(overworld.router.at(RouterEntry::FinalDensity)),
-                      Catch::Matchers::ContainsSubstring("minecraft:weird_scaled_sampler"));
+    // And final_density itself. Nothing on the overworld's terrain path is
+    // refused any more: the blended noise settled the base, weird_scaled_
+    // sampler settled the caves that reach it through `min`s nested deep
+    // inside, and there is no third thing. This is the assertion that says
+    // the pipeline can produce a block of terrain.
+    CHECK_NOTHROW(withCells.requireEvaluable(overworld.router.at(RouterEntry::FinalDensity)));
 }

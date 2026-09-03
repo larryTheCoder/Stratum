@@ -20,6 +20,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -47,6 +48,7 @@ using stratum::density::NoiseError;
 using stratum::density::NoiseParameters;
 using stratum::density::NoiseRegistry;
 using stratum::density::Point;
+using stratum::density::rarityValueMapper;
 
 [[nodiscard]] std::uint64_t bits(double value) noexcept {
     return std::bit_cast<std::uint64_t>(value);
@@ -354,7 +356,10 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     // a quiet loss of terrain.
     CHECK_THAT(refusal("blended"), ContainsSubstring("no refusal"));
     CHECK_THAT(refusal("islands"), ContainsSubstring("minecraft:end_islands"));
-    CHECK_THAT(refusal("weird"), ContainsSubstring("minecraft:weird_scaled_sampler"));
+    // Not weird_scaled_sampler any more either: its formula and both rarity
+    // ladders are settled, so it evaluates. Left in the tree so the walk
+    // still passes over it.
+    CHECK_THAT(refusal("weird"), ContainsSubstring("no refusal"));
 
     // Reached through the walk, not through evaluation: requireEvaluable is
     // what a caller runs at load, and it has to find this before any chunk
@@ -805,7 +810,7 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
     SECTION("without a candidate both stay refused") {
         const Interpreter plain(graph, noises);
         CHECK_NOTHROW(plain.requireEvaluable(blendedRoot));
-        CHECK_THROWS_WITH(plain.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
+        CHECK_NOTHROW(plain.requireEvaluable(weirdRoot));
     }
 
     SECTION("a candidate is handed the node's own parameters and position") {
@@ -835,7 +840,7 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
         CHECK(seenAt == at);
 
         // Substituting one says nothing about the other.
-        CHECK_THROWS_WITH(running.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
+        CHECK_NOTHROW(running.requireEvaluable(weirdRoot));
     }
 
     SECTION("the weird_scaled_sampler constant is a constant, input and all") {
@@ -859,5 +864,113 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
         running.substitute(stratum::density::UnsettledSubstitutions{});
         CHECK(stratum::density::UnsettledSubstitutions{}.empty());
         CHECK_NOTHROW(running.requireEvaluable(blendedRoot));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// weird_scaled_sampler's rarity ladders (SPEC §11). Measured off the vanilla
+// server, one dimension per input value, and the thresholds pinned by probing
+// each one at the value itself and at plus and minus 1e-7.
+//
+// These are known-answer vectors, not a restatement of the implementation: the
+// numbers came from the measurement, and the reason they are worth asserting
+// at every step is that minecraft.wiki gives both ladders but its two pages
+// assign them to type_1 and type_2 in OPPOSITE order. Getting the names the
+// wrong way round would still produce caves — the wrong ones, everywhere.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("type_1's rarity ladder", "[density][interpreter][rarity]") {
+    // Below the first threshold, then one bucket at a time.
+    CHECK(rarityValueMapper("type_1", -100.0) == 0.75);
+    CHECK(rarityValueMapper("type_1", -0.5000001) == 0.75);
+    // A value exactly on a threshold takes the rarity ABOVE it: the comparison
+    // is a strict `<`. Probed at 1e-7 either side of every boundary.
+    CHECK(rarityValueMapper("type_1", -0.5) == 1.0);
+    CHECK(rarityValueMapper("type_1", -0.0000001) == 1.0);
+    CHECK(rarityValueMapper("type_1", 0.0) == 1.5);
+    CHECK(rarityValueMapper("type_1", 0.4999999) == 1.5);
+    CHECK(rarityValueMapper("type_1", 0.5) == 2.0);
+    CHECK(rarityValueMapper("type_1", 100.0) == 2.0);
+}
+
+TEST_CASE("type_2's rarity ladder", "[density][interpreter][rarity]") {
+    CHECK(rarityValueMapper("type_2", -100.0) == 0.5);
+    CHECK(rarityValueMapper("type_2", -0.7500001) == 0.5);
+    CHECK(rarityValueMapper("type_2", -0.75) == 0.75);
+    CHECK(rarityValueMapper("type_2", -0.5000001) == 0.75);
+    CHECK(rarityValueMapper("type_2", -0.5) == 1.0);
+    CHECK(rarityValueMapper("type_2", 0.4999999) == 1.0);
+    CHECK(rarityValueMapper("type_2", 0.5) == 2.0);
+    CHECK(rarityValueMapper("type_2", 0.7499999) == 2.0);
+    CHECK(rarityValueMapper("type_2", 0.75) == 3.0);
+    CHECK(rarityValueMapper("type_2", 100.0) == 3.0);
+}
+
+TEST_CASE("the two ladders are not each other", "[density][interpreter][rarity]") {
+    // The one assertion that a swapped pair of names would fail. type_2 reaches
+    // 0.5 and 3.0, which type_1 never does; type_1 reaches 1.5, which type_2
+    // never does. Nothing else in this file would notice the swap.
+    CHECK(rarityValueMapper("type_2", -1.0) == 0.5);
+    CHECK(rarityValueMapper("type_1", -1.0) == 0.75);
+    CHECK(rarityValueMapper("type_1", 0.25) == 1.5);
+    CHECK(rarityValueMapper("type_2", 0.25) == 1.0);
+    CHECK(rarityValueMapper("type_2", 1.0) == 3.0);
+    CHECK(rarityValueMapper("type_1", 1.0) == 2.0);
+}
+
+TEST_CASE("an unknown rarity mapper is refused by name", "[density][interpreter][rarity]") {
+    // The graph validates the selector against the schema, so this is
+    // unreachable through a pack. It is asserted because a default here would
+    // reshape every cave in the world and nothing would say so.
+    CHECK_THROWS_WITH(rarityValueMapper("type_3", 0.0),
+                      ContainsSubstring("type_3") && ContainsSubstring("type_1"));
+}
+
+TEST_CASE("weird_scaled_sampler scales the position and the value, and takes the modulus",
+          "[density][interpreter][rarity]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+
+    // type_2 maps an input below -0.75 to a rarity of 0.5, so the node must
+    // equal abs(0.5 * noise(x/0.5, y/0.5, z/0.5)).
+    //
+    // A rarity of one half is chosen so the claim can be asserted BIT-EXACTLY:
+    // dividing by 0.5 is multiplying by 2, both exact in binary, so the
+    // equivalent can be written as a density function the pack itself carries —
+    // `minecraft:noise` with xz_scale and y_scale of 2. At a rarity of 1.5 the
+    // same equivalence holds only to rounding, because x/1.5 and x*(1/1.5) are
+    // not the same double.
+    tree.define("weird_half", R"({"type":"minecraft:weird_scaled_sampler",
+        "rarity_value_mapper":"type_2","noise":"test","input":-1.0})");
+    tree.define("formula_half", R"({"type":"minecraft:abs","argument":{
+        "type":"minecraft:mul","argument1":0.5,"argument2":{
+            "type":"minecraft:noise","noise":"test","xz_scale":2.0,"y_scale":2.0}}})");
+
+    // And a rarity of 1.5, checked to rounding rather than to the bit.
+    tree.define("weird_onehalf", R"({"type":"minecraft:weird_scaled_sampler",
+        "rarity_value_mapper":"type_1","noise":"test","input":0.0})");
+    tree.define("formula_onehalf", R"({"type":"minecraft:abs","argument":{
+        "type":"minecraft:mul","argument1":1.5,"argument2":{
+            "type":"minecraft:noise","noise":"test",
+            "xz_scale":0.6666666666666666,"y_scale":0.6666666666666666}}})");
+
+    const Pipeline pipeline(tree.pack(), 0);
+
+    for (const Point at :
+         {Point{.x = 0, .y = 0, .z = 0}, Point{.x = 17, .y = 33, .z = -49},
+          Point{.x = -7, .y = -64, .z = 5}, Point{.x = 300, .y = 200, .z = -300}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(pipeline.at("weird_half", at)) == bits(pipeline.at("formula_half", at)));
+        CHECK(pipeline.at("weird_onehalf", at) ==
+              Catch::Approx(pipeline.at("formula_onehalf", at)).epsilon(1e-12));
+    }
+
+    // Never negative, which is what makes it a cave function: the tunnels are
+    // where it is near zero, and that is both sides of the noise's own zero
+    // crossing rather than one.
+    for (int x = 0; x < 24; ++x) {
+        CAPTURE(x);
+        CHECK(pipeline.at("weird_half", Point{.x = x, .y = 40, .z = x * 3}) >= 0.0);
+        CHECK(pipeline.at("weird_onehalf", Point{.x = x, .y = 40, .z = x * 3}) >= 0.0);
     }
 }

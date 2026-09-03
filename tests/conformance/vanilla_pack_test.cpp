@@ -167,7 +167,7 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // milestone lands, and both are things a person should have to look at
     // rather than have slide past.
     CHECK(report.densityFunctions == 35U);
-    CHECK(report.evaluable == 31U);
+    CHECK(report.evaluable == 33U);
     // The routers reach fourteen noises no named density function does —
     // the aquifer and ore-vein ones — so this is larger than the 25 the
     // density functions alone reference.
@@ -184,7 +184,7 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     CHECK(report.noiseSettings == 7U);
     CHECK(report.dimensionsChecked == 3U);
     CHECK(report.routerEntries == 45U);
-    CHECK(report.routerEntriesEvaluable == 39U);
+    CHECK(report.routerEntriesEvaluable == 42U);
 
     // The six are preliminary_surface_level and final_density in each of the
     // three, waiting on find_top_surface and old_blended_noise respectively.
@@ -223,9 +223,7 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     std::ranges::sort(unevaluable);
     const std::vector<std::string> expected{
         "minecraft:end/sloped_cheese",
-        "minecraft:overworld/caves/entrances",
         "minecraft:overworld/caves/noodle",
-        "minecraft:overworld/caves/spaghetti_2d",
     };
     CHECK(unevaluable == expected);
 
