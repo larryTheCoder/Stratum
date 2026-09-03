@@ -27,6 +27,7 @@ add_executable(stratum_conformance_tests
     golden_regions_test.cpp
     nbt_structures_test.cpp
     vanilla_biomes_test.cpp
+    vanilla_blended_probe_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
     vanilla_freeze_test.cpp

@@ -704,6 +704,42 @@ Open:
   not something deepslate can settle, because it is an emulator and the golden
   regions are the authority (§7).
 
+  **Confirmed against the server, not the emulator.** deepslate settled the
+  seeding, and deepslate is an emulator; §7 makes the golden regions the
+  authority. `tools/analysis/blended-datapack-probe.sh` closes that gap
+  without asking the server for a number it has no way to report. A datapack
+  gives a dimension the entire `final_density`
+
+      K * flat_cache(old_blended_noise) + y_clamped_gradient(+1 .. -1)
+
+  and nothing else that can place a block. `flat_cache` pins the noise to
+  y = 0 for the whole column, so the only thing varying with height is the
+  gradient, the surface sits exactly where `K*N + g(y) = 0`, and inverting g
+  turns every column's terrain height into a reading of `N(x, 0, z)` written
+  by Mojang's own binary.
+
+  Over a full region at seed 42: **all 16384 cell corners agree to within half
+  a block**, which is the floor of what the measurement can resolve — the
+  surface is a block, and its centre is the best estimate of where the density
+  crossed zero. Correlation 0.99997595, means +0.054288 against +0.054286,
+  spreads 0.143683 against 0.143685.
+
+  Two things had to be right for that number, and both were wrong first:
+
+  * **Only the cell corners can be read.** `final_density` is evaluated on the
+    cell lattice and interpolated across it, and `flat_cache` pins its
+    argument to the 4x4 column corner as well. Comparing every column against
+    the noise at that column compares two different quantities, and cost 0.04
+    of correlation until it was restricted.
+  * **The biome must have no carvers and no features.** `minecraft:plains`
+    carves caves through the terrain and puts lakes and springs on top of it;
+    the probe's outlier columns turned out to be topped with *water*. The pack
+    now defines its own biome with both lists empty, which is what
+    `tools/fetch-vanilla` does to the goldens for the same reason.
+
+  The fixture is Mojang-derived and never committed (§12). The conformance
+  case skips without it, and a wrong salt or a reordered draw fails it.
+
   **What it unblocked.** `old_blended_noise` is no longer refused, and with it
   vanilla's evaluable named density functions go from 25 of 35 to **31**,
   including `overworld/base_3d_noise` and `overworld/sloped_cheese` — the
