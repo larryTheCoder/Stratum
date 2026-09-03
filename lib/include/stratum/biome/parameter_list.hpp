@@ -25,6 +25,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -114,8 +115,10 @@ struct QuantizedSample {
 /// so the list builds them once at load rather than seven thousand times per
 /// lookup.
 struct QuantizedPoint {
-    std::int64_t min[6]{};
-    std::int64_t max[6]{};
+    /// Indexed rather than named, in the order ParameterPoint declares:
+    /// temperature, humidity, continentalness, erosion, depth, weirdness.
+    std::array<std::int64_t, 6> min{};
+    std::array<std::int64_t, 6> max{};
     std::int64_t offset = 0;
 
     [[nodiscard]] static QuantizedPoint of(const ParameterPoint& point) noexcept;

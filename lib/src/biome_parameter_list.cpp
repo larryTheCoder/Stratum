@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -59,8 +60,8 @@ QuantizedSample QuantizedSample::of(const ClimateSample& sample) noexcept {
 }
 
 QuantizedPoint QuantizedPoint::of(const ParameterPoint& point) noexcept {
-    const Parameter axes[6] = {point.temperature, point.humidity, point.continentalness,
-                               point.erosion,     point.depth,    point.weirdness};
+    const std::array<Parameter, 6> axes{point.temperature, point.humidity, point.continentalness,
+                                        point.erosion,     point.depth,    point.weirdness};
     QuantizedPoint quantized;
     for (std::size_t axis = 0; axis < 6; ++axis) {
         quantized.min[axis] = quantizeCoord(axes[axis].min);
@@ -71,15 +72,19 @@ QuantizedPoint QuantizedPoint::of(const ParameterPoint& point) noexcept {
 }
 
 std::int64_t QuantizedPoint::fitness(const QuantizedSample& sample) const noexcept {
-    const std::int64_t values[6] = {sample.temperature, sample.humidity, sample.continentalness,
-                                    sample.erosion,     sample.depth,    sample.weirdness};
+    const std::array<std::int64_t, 6> values{sample.temperature,     sample.humidity,
+                                             sample.continentalness, sample.erosion,
+                                             sample.depth,           sample.weirdness};
     std::int64_t total = offset * offset;
     for (std::size_t axis = 0; axis < 6; ++axis) {
         // How far the sample lies outside the range — zero when inside.
         const std::int64_t value = values[axis];
-        const std::int64_t distance = value < min[axis]   ? min[axis] - value
-                                      : value > max[axis] ? value - max[axis]
-                                                          : 0;
+        std::int64_t distance = 0;
+        if (value < min[axis]) {
+            distance = min[axis] - value;
+        } else if (value > max[axis]) {
+            distance = value - max[axis];
+        }
         total += distance * distance;
     }
     return total;
