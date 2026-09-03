@@ -32,6 +32,13 @@ constexpr std::array<std::byte, 8> kMagic = {std::byte{'S'}, std::byte{'T'}, std
                                              std::byte{'T'}, std::byte{'M'}, std::byte{'P'},
                                              std::byte{'I'}, std::byte{'P'}};
 
+/// Which spelling a node's `noise` field used. Written as a tag so that the
+/// two the schema allows — an identifier, or the parameters inline — are
+/// told apart on the way back in.
+constexpr std::uint8_t kNoiseAbsent = 0;
+constexpr std::uint8_t kNoiseNamed = 1;
+constexpr std::uint8_t kNoiseInline = 2;
+
 /// A blob with more than this in any one collection is not a pipeline, it is
 /// a corrupt length being believed. Bounds are checked before allocation so
 /// that a wrong number cannot ask for a terabyte.
@@ -180,6 +187,33 @@ void writeNoises(Writer& out,
     }
 }
 
+/// A node's `noise` field: a tag saying which of the schema's two spellings
+/// it used, then that spelling. A tag rather than a present/absent flag
+/// because losing the distinction would turn an inline noise into a node
+/// that samples nothing.
+///
+/// Its own function rather than three branches inside writeGraph's loop, and
+/// that is not only tidiness: clang-tidy's optional-access analysis gives up
+/// on a body this size, and once it does it reports the *spline* field's
+/// perfectly good guard as unchecked.
+void writeNodeNoise(Writer& out, const density::Node& node) {
+    if (node.noise.has_value()) {
+        out.u8(kNoiseNamed);
+        out.id(*node.noise);
+        return;
+    }
+    if (!node.inlineNoise.has_value()) {
+        out.u8(kNoiseAbsent);
+        return;
+    }
+    out.u8(kNoiseInline);
+    out.i32(node.inlineNoise->firstOctave);
+    out.u32(static_cast<std::uint32_t>(node.inlineNoise->amplitudes.size()));
+    for (const double amplitude : node.inlineNoise->amplitudes) {
+        out.f64(amplitude);
+    }
+}
+
 void writeGraph(Writer& out, const density::Graph& graph) {
     out.u32(static_cast<std::uint32_t>(graph.nodeCount()));
     for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
@@ -193,10 +227,7 @@ void writeGraph(Writer& out, const density::Graph& graph) {
         for (const double parameter : node.parameters) {
             out.f64(parameter);
         }
-        out.u8(node.noise.has_value() ? 1U : 0U);
-        if (node.noise.has_value()) {
-            out.id(*node.noise);
-        }
+        writeNodeNoise(out, node);
         out.u8(node.spline.has_value() ? 1U : 0U);
         if (node.spline.has_value()) {
             out.u32(*node.spline);
@@ -313,8 +344,26 @@ void writeSettings(Writer& out,
         for (std::uint32_t k = 0; k < parameters; ++k) {
             node.parameters.push_back(in.f64());
         }
-        if (in.u8() != 0U) {
-            node.noise = in.id();
+        switch (const std::uint8_t noiseTag = in.u8(); noiseTag) {
+            case kNoiseAbsent:
+                break;
+            case kNoiseNamed:
+                node.noise = in.id();
+                break;
+            case kNoiseInline: {
+                density::NoiseParameters inlineNoise;
+                inlineNoise.firstOctave = in.i32();
+                const std::uint32_t amplitudes = in.count("an inline noise's amplitudes");
+                inlineNoise.amplitudes.reserve(amplitudes);
+                for (std::uint32_t k = 0; k < amplitudes; ++k) {
+                    inlineNoise.amplitudes.push_back(in.f64());
+                }
+                node.inlineNoise = std::move(inlineNoise);
+                break;
+            }
+            default:
+                in.fail("node " + std::to_string(i) + " tags its noise field " +
+                        std::to_string(noiseTag) + ", which is not one of the two spellings");
         }
         if (in.u8() != 0U) {
             node.spline = in.u32();

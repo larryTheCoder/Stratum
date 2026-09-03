@@ -17,6 +17,7 @@
 
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/density/noise_parameters.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -76,7 +77,17 @@ struct Node {
     NodeType type = NodeType::Constant;
     std::vector<NodeIndex> arguments;
     std::vector<double> parameters;
+    /// The `worldgen/noise` entry this node's noise field names.
     std::optional<data::ResourceLocation> noise;
+    /// The parameters its noise field carried inline instead. A node with a
+    /// noise field has exactly one of these two set; every other node has
+    /// neither.
+    ///
+    /// Both spellings are legal — mcdoc declares the field as
+    /// `#[id="worldgen/noise"] string | NoiseParameters` — so both are
+    /// resolved. What differs is downstream: a named noise can be seeded,
+    /// and an inline one cannot yet be (see Interpreter).
+    std::optional<NoiseParameters> inlineNoise;
     std::optional<SplineIndex> spline;
     std::string selector;
 };
@@ -85,7 +96,7 @@ struct Node {
 enum class FieldKind : std::uint8_t {
     Function, ///< a nested density function: number, reference or inline
     Number,   ///< a plain number
-    NoiseRef, ///< an identifier naming a worldgen/noise entry
+    Noise,    ///< a worldgen/noise entry: an identifier, or its parameters inline
     Selector, ///< a fixed string, such as rarity_value_mapper
     Spline,   ///< a spline definition
 };
@@ -96,9 +107,10 @@ struct SchemaField {
     FieldKind kind = FieldKind::Number;
     /// Absent fields are permitted, with a documented default.
     bool optional = false;
-    /// Whether a nested function may be given as an identifier. `clamp`'s
-    /// input may not be, at this version — a distinction only the schema
-    /// records.
+    /// Whether the value may be given as an identifier rather than written
+    /// out. `clamp`'s input may not be, at this version — a distinction only
+    /// the schema records. Every `noise` field may, and may equally be
+    /// written inline, which is what makes that kind a union.
     bool allowsReference = false;
     /// The permitted strings, for a Selector.
     std::span<const std::string_view> selectorValues;
@@ -165,7 +177,8 @@ public:
     [[nodiscard]] std::size_t splineCount() const noexcept { return splines_.size(); }
 
     /// Every noise identifier the graph references, so a caller can check
-    /// they all exist before generation begins.
+    /// they all exist before generation begins. Noises written inline name
+    /// nothing and so appear in no list; they travel on the node itself.
     [[nodiscard]] std::vector<data::ResourceLocation> referencedNoises() const;
 
 private:

@@ -24,6 +24,7 @@ add_library(stratum_core STATIC
     src/pack_validate.cpp
     src/nbt_reader.cpp
     src/noise_settings.cpp
+    src/noise_parameters.cpp
     src/noise_registry.cpp
     src/perlin.cpp
     src/pipeline_freeze.cpp
@@ -54,6 +55,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/interpreter.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/noise_parameters.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/noise_registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"

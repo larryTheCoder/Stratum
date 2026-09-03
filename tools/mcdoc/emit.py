@@ -7,10 +7,21 @@ from schema import ResolvedType
 _KIND_TO_CPP = {
     "Function": "FieldKind::Function",
     "Number": "FieldKind::Number",
-    "NoiseRef": "FieldKind::NoiseRef",
+    "Noise": "FieldKind::Noise",
     "Selector": "FieldKind::Selector",
     "Spline": "FieldKind::Spline",
 }
+
+
+def _doc_comments(docs, indent: str) -> list[str]:
+    """mcdoc's `///` lines, as C++ comments.
+
+    Carried into the generated file rather than dropped because they are
+    where mcdoc puts semantics a type expression cannot hold -- a default
+    value, or the formula behind an enum value -- and a reader of the
+    generated table has nowhere else to find them.
+    """
+    return [f"{indent}// {line}" if line else f"{indent}//" for line in docs]
 
 
 def _enumerator(key: str) -> str:
@@ -58,6 +69,9 @@ def emit_schema(types: list[ResolvedType], command: str, version: str, commit: s
         enumerator = _enumerator(resolved.key)
         for schema_field in resolved.fields:
             if schema_field.selector_values:
+                for value, doc in zip(schema_field.selector_values, schema_field.selector_docs):
+                    if doc:
+                        lines.extend(_doc_comments([f'"{value}": {doc}'], ""))
                 values = ", ".join(f'"{value}"' for value in schema_field.selector_values)
                 lines.append(
                     "constexpr std::array<std::string_view, %d> kSelector%s%s = {%s};"
@@ -70,6 +84,7 @@ def emit_schema(types: list[ResolvedType], command: str, version: str, commit: s
         for schema_field in resolved.fields:
             selector = ("kSelector%s%s" % (enumerator, _enumerator(schema_field.name))
                         if schema_field.selector_values else "{}")
+            lines.extend(_doc_comments(schema_field.docs, "    "))
             lines.append(
                 '    {.name = "%s", .kind = %s, .optional = %s, .allowsReference = %s, '
                 ".selectorValues = %s},"

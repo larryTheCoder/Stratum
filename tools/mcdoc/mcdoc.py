@@ -9,6 +9,12 @@ raises, rather than being skipped. A reader that quietly ignored a dispatch
 it could not parse would emit a table missing a node type, and the engine
 would then reject a datapack that vanilla accepts -- the silent-partial
 failure SPEC section 8 calls the most severe class of bug.
+
+Doc comments are read rather than discarded. mcdoc uses `///` to document
+semantics a type expression cannot carry -- density_function.mcdoc writes the
+per-value formulas of DistanceMetric that way -- so a reader that skipped
+them would make those unreachable from the generated tables. Plain `//`
+comments are addressed to whoever is editing the schema and are skipped.
 """
 
 from __future__ import annotations
@@ -52,6 +58,8 @@ class Field:
     type_text: str
     optional: bool = False
     gate: Gate = field(default_factory=Gate)
+    # The `///` lines written above this field, one per line, in order.
+    docs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -90,9 +98,29 @@ class Dispatch:
 
 
 @dataclass
+class EnumValue:
+    """One `Name = "value"` of a string enum.
+
+    Its docs and its gate are kept because both change what the enum means:
+    density_function.mcdoc documents DistanceMetric's four metrics only in
+    `///` lines, and a value can be added or removed by version.
+    """
+
+    name: str
+    value: str
+    docs: list[str] = field(default_factory=list)
+    gate: Gate = field(default_factory=Gate)
+
+
+@dataclass
 class Enum:
     name: str
-    values: list[str]
+    # In declaration order, including values that belong to other versions.
+    # A caller must filter by each member's gate -- see
+    # SchemaBuilder._map_type. There is deliberately no accessor that hands
+    # out the literals unfiltered: offering one is how a value from a version
+    # this build does not target got into a selector table.
+    members: list[EnumValue]
 
 
 @dataclass
@@ -112,6 +140,10 @@ class _Reader:
         self.text = text
         self.source = source
         self.position = 0
+        # `///` lines seen since the last take_docs(). Trivia is skipped from
+        # several places, so the docs are accumulated here and claimed by
+        # whichever member reader runs next.
+        self.pending_docs: list[str] = []
 
     def fail(self, what: str) -> "McdocError":
         line = self.text.count("\n", 0, self.position) + 1
@@ -122,11 +154,20 @@ class _Reader:
             character = self.text[self.position]
             if character.isspace():
                 self.position += 1
+            elif self.text.startswith("///", self.position):
+                self.position += 3
+                self.pending_docs.append(self.rest_of_line().strip())
             elif self.text.startswith("//", self.position):
                 end = self.text.find("\n", self.position)
                 self.position = len(self.text) if end < 0 else end
             else:
                 return
+
+    def take_docs(self) -> list[str]:
+        """The doc comments seen since the last call, and forgets them."""
+        docs = self.pending_docs
+        self.pending_docs = []
+        return docs
 
     def at_end(self) -> bool:
         self.skip_trivia()
@@ -153,6 +194,17 @@ class _Reader:
             raise self.fail("expected an identifier")
         self.position = match.end()
         return match.group(0)
+
+    def string_literal(self) -> str:
+        self.skip_trivia()
+        if not self.text.startswith('"', self.position):
+            raise self.fail("expected a string literal")
+        end = self.text.find('"', self.position + 1)
+        if end < 0:
+            raise self.fail("unterminated string literal")
+        value = self.text[self.position + 1 : end]
+        self.position = end + 1
+        return value
 
     def rest_of_line(self) -> str:
         end = self.text.find("\n", self.position)
@@ -223,17 +275,16 @@ def _read_struct_body(reader: _Reader) -> list["Field | Spread | MapEntry"]:
     reader.expect("{")
     while True:
         reader.skip_trivia()
-        while reader.peek("///"):
-            reader.rest_of_line()
-            reader.skip_trivia()
         if reader.take("}"):
+            # Docs written against nothing -- above the closing brace --
+            # belong to no member and must not drift onto the next one.
+            reader.take_docs()
             return members
 
         gate = _read_attributes(reader)
-        reader.skip_trivia()
-        while reader.peek("///"):
-            reader.rest_of_line()
-            reader.skip_trivia()
+        # After the attributes, so that a field documented above its
+        # `#[since=...]` and one documented below it read the same.
+        docs = reader.take_docs()
 
         if reader.take("..."):
             reader.skip_trivia()
@@ -265,8 +316,33 @@ def _read_struct_body(reader: _Reader) -> list["Field | Spread | MapEntry"]:
             name = reader.identifier()
             optional = reader.take("?")
             reader.expect(":")
-            members.append(Field(name=name, type_text=_read_type(reader), optional=optional, gate=gate))
+            members.append(Field(name=name, type_text=_read_type(reader), optional=optional,
+                                 gate=gate, docs=docs))
 
+        reader.take(",")
+
+
+def _read_enum_body(reader: _Reader) -> list[EnumValue]:
+    """Reads `{ Name = "value", ... }`, keeping each value's docs and gate.
+
+    Read member by member rather than by a regex over the body text, which
+    is what this used to be: a regex finds the string literals and nothing
+    else, so the `///` formulas density_function.mcdoc attaches to
+    DistanceMetric's values had nowhere to go.
+    """
+    members: list[EnumValue] = []
+    reader.expect("{")
+    while True:
+        reader.skip_trivia()
+        if reader.take("}"):
+            reader.take_docs()
+            return members
+
+        gate = _read_attributes(reader)
+        docs = reader.take_docs()
+        name = reader.identifier()
+        reader.expect("=")
+        members.append(EnumValue(name=name, value=reader.string_literal(), docs=docs, gate=gate))
         reader.take(",")
 
 
@@ -310,14 +386,11 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
     reader = _Reader(text, source)
 
     while not reader.at_end():
-        while reader.peek("///"):
-            reader.rest_of_line()
-            reader.skip_trivia()
-        if reader.at_end():
-            break
-
         gate = _read_attributes(reader)
         reader.skip_trivia()
+        # Docs on a top-level construct are read so they cannot drift onto
+        # the next one; nothing in the generated tables carries them yet.
+        reader.take_docs()
 
         if reader.peek("use "):
             reader.rest_of_line()
@@ -359,11 +432,10 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
             if kind != "string":
                 raise reader.fail(f"only string enums are supported, not {kind!r}")
             name = reader.identifier()
-            body = reader.balanced("{", "}")
-            values = re.findall(r'=\s*"([^"]*)"', body)
-            if not values:
+            members = _read_enum_body(reader)
+            if not members:
                 raise reader.fail(f"enum {name} has no values")
-            document.enums[name] = Enum(name=name, values=values)
+            document.enums[name] = Enum(name=name, members=members)
             continue
 
         if reader.take("type"):

@@ -397,6 +397,36 @@ TEST_CASE("a router entry this build cannot evaluate is named with its dimension
     CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
 }
 
+TEST_CASE("a noise written inline is a warning, not a rejected pack", "[validate]") {
+    // The two halves of the distinction this report is built around, in one
+    // pack. The input is legal — a `noise` field is an identifier OR a noise
+    // — so the pack is not broken and must not be reported as such; and this
+    // build cannot seed a noise that has no identifier, so the function is
+    // not evaluable and must not be counted as if it were.
+    const TempTree tree;
+    defineWorkingPack(tree);
+    tree.define("inlined", R"({"type":"minecraft:shift_a",
+        "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    CHECK(report.resolved);
+    CHECK(report.count(Severity::Error) == 0U);
+    CHECK(report.densityFunctions == 2U);
+    // Only `field` of the two, and the inline noise asks nothing of the
+    // registry — it names nothing to look up.
+    CHECK(report.evaluable == 1U);
+    CHECK(report.noisesReferenced == 1U);
+
+    const Finding* finding = findingAbout(report, "minecraft:inlined");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Warning);
+    CHECK_THAT(finding->message, ContainsSubstring("inline") && ContainsSubstring("SPEC §11"));
+
+    // And nothing was said about the function that is fine.
+    CHECK(findingAbout(report, "minecraft:field") == nullptr);
+}
+
 TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecked", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);

@@ -28,6 +28,11 @@ class ResolvedField:
     optional: bool
     allows_reference: bool = False
     selector_values: tuple[str, ...] = ()
+    # One entry per selector value, in the same order: the `///` lines mcdoc
+    # documents that value with, joined, or "" for a value with none.
+    selector_docs: tuple[str, ...] = ()
+    # The `///` lines written above the field itself.
+    docs: tuple[str, ...] = ()
 
 
 @dataclass
@@ -133,23 +138,44 @@ class SchemaBuilder:
         name = text.split("@")[0].strip()
 
         # The names the engine knows are matched before generic alias
-        # expansion: NoiseParametersRef, for instance, expands to a struct
-        # defined in another file, and following it would be both pointless
-        # and unresolvable.
+        # expansion, for the types whose *contents* this table does not
+        # describe -- a nested density function, a spline, a noise.
+        #
+        # NoiseParametersRef is deliberately NOT among them. It is an alias
+        # for `#[id="worldgen/noise"] string | NoiseParameters`, and matching
+        # it by name here recorded only the identifier half: a datapack that
+        # writes its noise parameters inline is legal to vanilla, and the
+        # generated table said it was not. The alias is expanded like any
+        # other and the union below is what records both spellings.
         if name == "DensityFunctionRef":
             return ResolvedField("", "Function", False, allows_reference=True)
         if name == "DensityFunction":
             # Inline only: at this version `clamp` may not take a reference.
             return ResolvedField("", "Function", False, allows_reference=False)
-        if name == "NoiseParametersRef":
-            return ResolvedField("", "NoiseRef", False)
+        if name == "NoiseParameters":
+            # The inline half of NoiseParametersRef. Its own fields are
+            # declared in another schema file and are not flattened into this
+            # table: they are the same shape as a `worldgen/noise` entry,
+            # which the engine already parses in one place. What this table
+            # has to record is *that* the inline form is legal here -- see
+            # the union above, which sets allows_reference for the id half.
+            return ResolvedField("", "Noise", False)
         if name == "CubicSpline":
             return ResolvedField("", "Spline", False)
         if name in ("float", "double", "int", "long", "byte", "short"):
             return ResolvedField("", "Number", False)
         if name in self.document.enums:
-            return ResolvedField("", "Selector", False,
-                                 selector_values=tuple(self.document.enums[name].values))
+            # Filtered by gate: a value added or removed by version is not
+            # one this version accepts, and a selector table that listed it
+            # anyway would accept a string vanilla refuses.
+            live_values = [member for member in self.document.enums[name].members
+                           if member.gate.applies_to(self.version)]
+            if not live_values:
+                raise McdocError(f"{where}: enum {name!r} has no values at this version")
+            return ResolvedField(
+                "", "Selector", False,
+                selector_values=tuple(member.value for member in live_values),
+                selector_docs=tuple(" ".join(member.docs) for member in live_values))
         if name in self.document.aliases:
             return self._map_type(self.document.aliases[name], where)
         raise McdocError(f"{where}: no mapping for type {name!r}")
@@ -178,6 +204,7 @@ class SchemaBuilder:
             mapped = self._map_type(member.type_text, f"{where}.{member.name}")
             mapped.name = member.name
             mapped.optional = member.optional
+            mapped.docs = tuple(member.docs)
             fields.append(mapped)
         return fields
 

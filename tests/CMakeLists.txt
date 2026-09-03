@@ -71,6 +71,17 @@ if(UNIX)
     )
     set_tests_properties(unit.tools.fetch_vanilla PROPERTIES LABELS "unit")
 
+    # The schema generator's own behaviour. CI checks that the generated
+    # tables are *reproducible*, which catches a hand-edit but not a
+    # generator that has quietly narrowed the schema — regenerating from the
+    # same wrong reader diffs clean. This is the other half.
+    add_test(NAME unit.tools.mcdoc_generator
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcdoc_generator_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.mcdoc_generator PROPERTIES
+        LABELS "unit" SKIP_RETURN_CODE 77)
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."

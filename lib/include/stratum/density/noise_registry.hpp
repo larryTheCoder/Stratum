@@ -1,10 +1,17 @@
 // Stratum — the noises a density function graph names.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// A `noise` field in a density function is an identifier, not a value: it
-// names a `worldgen/noise` entry that carries a first octave and a list of
-// amplitudes. Turning those into a sampleable NormalNoise needs the world
-// seed, so this is the first place in the pipeline where the seed appears.
+// A `noise` field in a density function usually names a `worldgen/noise`
+// entry rather than carrying one: an entry has a first octave and a list of
+// amplitudes, and this is where the ones a graph names are built. Turning
+// them into sampleable NormalNoises needs the world seed, so this is the
+// first place in the pipeline where the seed appears.
+//
+// The other spelling — parameters written inline in the density function —
+// is legal and is kept by the graph, but is NOT built here. It has no
+// identifier, and an identifier is exactly what the seeding chain below
+// consumes; see stratum::density::Interpreter, which refuses such a node by
+// name rather than seeding it from a guess (SPEC §11).
 //
 // The seeding chain is the part worth being careful about (CLAUDE.md: "one
 // wrong salt/seed derivation shifts everything downstream"):
@@ -20,27 +27,16 @@
 
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/density/noise_parameters.hpp>
 #include <stratum/noise/perlin.hpp>
 
-#include <nlohmann/json.hpp>
-
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <span>
-#include <stdexcept>
-#include <string>
 #include <string_view>
-#include <vector>
 
 namespace stratum::density {
-
-/// Raised when a `worldgen/noise` entry is missing or malformed. Never
-/// silently substituted: a noise that quietly defaulted would produce a
-/// world that generates but is not the one asked for (SPEC §8).
-class NoiseError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
 
 /// Which generator seeds a dimension's noises. A noise settings entry
 /// chooses one for all of them at once, through `legacy_random_source`, so
@@ -64,19 +60,6 @@ enum class RandomSource : std::uint8_t {
 };
 
 [[nodiscard]] std::string_view randomSourceName(RandomSource source) noexcept;
-
-/// A `worldgen/noise` entry, as declared.
-struct NoiseParameters {
-    /// Vanilla's `firstOctave`, the exponent of the lowest frequency.
-    int firstOctave = 0;
-    /// One amplitude per octave. Zeroes are meaningful: they position the
-    /// octaves that follow without contributing themselves.
-    std::vector<double> amplitudes;
-
-    /// Parses one entry. @p id names the entry in any error raised.
-    [[nodiscard]] static NoiseParameters fromJson(const nlohmann::json& json,
-                                                  const data::ResourceLocation& id);
-};
 
 /// The NormalNoise instances a graph's `noise` fields name, built once for a
 /// world seed and immutable afterwards (SPEC §4.1).

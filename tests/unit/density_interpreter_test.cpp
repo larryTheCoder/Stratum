@@ -790,6 +790,45 @@ TEST_CASE("a legacy random source is refused rather than approximated", "[densit
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
 }
 
+TEST_CASE("a noise written inline loads, and is refused rather than seeded from a guess",
+          "[density][interpreter][noise]") {
+    // Two separate questions, and the answers differ. Is the input legal?
+    // Yes — mcdoc declares a `noise` field as an identifier OR a noise, so
+    // the graph resolves it and the pack is not wrong. Can this build sample
+    // it? No: a noise is seeded from the MD5 of its identifier and this one
+    // has none, and substituting a derivation would give a world that
+    // generates and is silently not the one the pack asks for (SPEC §11).
+    const TempTree tree;
+    tree.defineNoise("named", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("by_name", R"({"type":"minecraft:shift_a","argument":"named"})");
+    tree.define("inlined", R"({"type":"minecraft:shift_a",
+        "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
+
+    const Pipeline pipeline(tree.pack());
+
+    // The named one is unaffected: the two spellings share a node type, and
+    // widening the field must not cost the spelling that already worked.
+    CHECK_NOTHROW(pipeline.interpreter().requireEvaluable(pipeline.root("by_name")));
+
+    // Written out twice rather than held in a variable: a Catch2 matcher
+    // expression keeps references to its operands, so a named one outlives
+    // the temporaries it is made of and reading it is undefined.
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("inlined")),
+                      ContainsSubstring("minecraft:shift_a") && ContainsSubstring("inline") &&
+                          ContainsSubstring("SPEC §11"));
+    // And on the sample too, not only on the up-front check: a caller that
+    // skipped requireEvaluable must not get a number here.
+    CHECK_THROWS_WITH(pipeline.at("inlined"), ContainsSubstring("minecraft:shift_a") &&
+                                                  ContainsSubstring("inline") &&
+                                                  ContainsSubstring("SPEC §11"));
+
+    // Conservative about the column, because it will not evaluate the node
+    // at all — a caller asking "may I cache this on (x, z)?" gets no.
+    CHECK_FALSE(pipeline.interpreter().isColumnInvariant(pipeline.root("inlined")));
+    // Whereas shift_a with a named noise samples with y pinned, so it is.
+    CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("by_name")));
+}
+
 TEST_CASE("a candidate reading can be put in front of the pipeline, and only that way",
           "[density][interpreter][unsettled]") {
     const TempTree tree;

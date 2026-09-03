@@ -93,6 +93,11 @@ TEST_CASE("vanilla's whole pipeline freezes and thaws unchanged", "[conformance]
         CHECK(a.type == b.type);
         CHECK(a.arguments == b.arguments);
         CHECK(a.noise == b.noise);
+        // Always empty on vanilla's own data — nothing it ships inlines a
+        // noise — and checked anyway: the field has to be *compared*, or a
+        // freeze that dropped it would round-trip vanilla's pack clean and
+        // lose a third-party pack's noise in silence.
+        CHECK(a.inlineNoise == b.inlineNoise);
         CHECK(a.spline == b.spline);
         CHECK(a.selector == b.selector);
         REQUIRE(a.parameters.size() == b.parameters.size());

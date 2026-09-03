@@ -21,6 +21,13 @@
 //     that generates and is silently wrong, which is the failure mode this
 //     project treats as most severe.
 //
+// A node whose `noise` field carried its parameters inline is refused for
+// the same reason, and it is worth being precise about which reason. The
+// input is legal — mcdoc declares the field as an identifier OR a noise —
+// and the graph resolves it. What is missing is the seed: a noise is seeded
+// from the MD5 of its identifier, and one written inline has none, so there
+// is nothing here to build it from that is not a guess (SPEC §11).
+//
 // Everything else is evaluated. The 2D chain vanilla's overworld actually
 // uses — shift_a/shift_b, flat_cache, cache_2d, shifted_noise, noise, spline
 // and the arithmetic around them — is checked bit-exactly against cubiomes
@@ -198,6 +205,12 @@ private:
     /// wrong value if none was built, which can only happen if the graph
     /// changed under the interpreter.
     [[nodiscard]] const noise::BlendedNoise& blendedFor(NodeIndex index) const;
+
+    /// Refuses @p node, by name and with a reason, if this interpreter
+    /// cannot evaluate it — because of its type, or because of what its
+    /// noise field carried. Both requireEvaluable() and evaluate() go
+    /// through it, so a refusal reads the same whichever asked.
+    void refuseIfUnevaluable(const Node& node) const;
 
     void requireEvaluableNode(NodeIndex index, std::vector<char>& seen) const;
     void requireEvaluableSpline(SplineIndex index, std::vector<char>& seen) const;

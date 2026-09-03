@@ -149,7 +149,7 @@ that was rejected**.
 | Registry / feature | v1 | Notes |
 |---|---|---|
 | `worldgen/density_function` | Supported | Including all cache node types |
-| `worldgen/noise` | Supported | |
+| `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
 | Multi-noise biome source | Supported | |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
@@ -170,7 +170,9 @@ This matrix states the v1 contract, not what is finished. The build in
 progress refuses eight density function types it cannot yet evaluate
 correctly — the cell-structured ones, and the ones with neither
 documentation nor an oracle — by name and with a reason, rather than
-approximating them. SPEC §11 lists which, and why each is where it is.
+approximating them. It refuses a noise written inline for a narrower reason:
+a noise is seeded from the MD5 of its identifier, and one written in place
+has none. SPEC §11 lists which, and why each is where it is.
 
 ### Parity tiers
 

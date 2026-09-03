@@ -81,7 +81,14 @@ struct Provenance {
 /// The format this build writes. Distinct from the *engine* version: the
 /// container can change shape without the generated world changing, and a
 /// world does not need regenerating because a field moved.
-inline constexpr std::uint32_t kBlobFormat = 1;
+///
+/// 2 since a node's noise field became a union: it is written as a tag byte
+/// naming which of the two spellings was used, where format 1 wrote a
+/// present/absent flag. The two are byte-compatible for a blob with no
+/// inline noise in it, which is exactly why the number has to change — a
+/// format-1 reader would take the new tag for the old flag and read the
+/// parameters as an identifier.
+inline constexpr std::uint32_t kBlobFormat = 2;
 
 /// Serialises @p pipeline. Deterministic: the same pipeline gives the same
 /// bytes, here and on any other platform.

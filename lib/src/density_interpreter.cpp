@@ -138,6 +138,11 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
     for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
         const Node& node = graph.node(static_cast<NodeIndex>(i));
         if (!node.noise.has_value()) {
+            // Either the node samples no noise, or it carries one inline.
+            // The second is left unbound rather than refused here: a graph
+            // is loaded once and sampled for one dimension at a time, and a
+            // node nothing reaches should not stop the rest of it being
+            // evaluated. refuseIfUnevaluable() is where it is refused.
             continue;
         }
         const noise::NormalNoise* noise = noises.find(*node.noise);
@@ -201,6 +206,15 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
                 return columnInvariant_[static_cast<std::size_t>(argument)] != 0;
             });
         };
+
+        // A noise written inline is refused rather than evaluated (see
+        // refuseIfUnevaluable), and what this build will not evaluate it
+        // cannot show to hold one value down a column either. Conservative,
+        // as everything here is.
+        if (node.inlineNoise.has_value()) {
+            columnInvariant_[i] = 0;
+            continue;
+        }
 
         bool invariant = false;
         switch (node.type) {
@@ -311,6 +325,27 @@ double rarityValueMapper(std::string_view mapper, double input) {
                     "and 'type_2'");
 }
 
+void Interpreter::refuseIfUnevaluable(const Node& node) const {
+    if (const std::optional<std::string_view> reason = unevaluableReason(node.type)) {
+        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
+                        "' cannot be evaluated by this build: " + std::string(*reason));
+    }
+    if (node.inlineNoise.has_value()) {
+        // The input is legal and was loaded; what is missing is a seed. A
+        // noise is seeded from the MD5 of its identifier and one written
+        // inline has no identifier, so there is nothing to build it from
+        // here that is not a guess — and a guessed seed would produce a
+        // world that generates and is silently not the one the pack asks
+        // for (SPEC §8, §11).
+        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
+                        "' carries its noise parameters inline rather than naming a "
+                        "worldgen/noise entry. That is legal and this build loads it, but a "
+                        "noise is seeded from the MD5 of its identifier and this one has none; "
+                        "how vanilla seeds it is not settled here, so it will not be sampled "
+                        "from a guess (SPEC §11)");
+    }
+}
+
 void Interpreter::requireEvaluable(NodeIndex root) const {
     std::vector<char> seen(graph_->nodeCount() + graph_->splineCount(), 0);
     requireEvaluableNode(root, seen);
@@ -323,10 +358,7 @@ void Interpreter::requireEvaluableNode(NodeIndex index, std::vector<char>& seen)
     seen[static_cast<std::size_t>(index)] = 1;
 
     const Node& node = graph_->node(index);
-    if (const std::optional<std::string_view> reason = unevaluableReason(node.type)) {
-        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
-                        "' cannot be evaluated by this build: " + std::string(*reason));
-    }
+    refuseIfUnevaluable(node);
 
     // The subtree first, so that a refusal names the real cause. Column
     // invariance is deliberately conservative about a node it cannot
@@ -386,10 +418,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     }
 
     const Node& node = graph_->node(index);
-    if (const std::optional<std::string_view> reason = unevaluableReason(node.type)) {
-        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
-                        "' cannot be evaluated by this build: " + std::string(*reason));
-    }
+    refuseIfUnevaluable(node);
 
     const Point at = scope.at();
     const auto x = static_cast<double>(at.x);

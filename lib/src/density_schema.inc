@@ -73,7 +73,7 @@ constexpr std::array<SchemaField, 2> kFieldsMul = {{
     {.name = "argument2", .kind = FieldKind::Function, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 3> kFieldsNoise = {{
-    {.name = "noise", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "noise", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
     {.name = "xz_scale", .kind = FieldKind::Number, .optional = false, .allowsReference = false, .selectorValues = {}},
     {.name = "y_scale", .kind = FieldKind::Number, .optional = false, .allowsReference = false, .selectorValues = {}},
 }};
@@ -95,16 +95,16 @@ constexpr std::array<SchemaField, 5> kFieldsRangeChoice = {{
     {.name = "when_out_of_range", .kind = FieldKind::Function, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 1> kFieldsShift = {{
-    {.name = "argument", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "argument", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 1> kFieldsShiftA = {{
-    {.name = "argument", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "argument", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 1> kFieldsShiftB = {{
-    {.name = "argument", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "argument", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 6> kFieldsShiftedNoise = {{
-    {.name = "noise", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "noise", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
     {.name = "xz_scale", .kind = FieldKind::Number, .optional = false, .allowsReference = false, .selectorValues = {}},
     {.name = "y_scale", .kind = FieldKind::Number, .optional = false, .allowsReference = false, .selectorValues = {}},
     {.name = "shift_x", .kind = FieldKind::Function, .optional = false, .allowsReference = true, .selectorValues = {}},
@@ -126,7 +126,7 @@ constexpr std::array<SchemaField, 1> kFieldsSqueeze = {{
 constexpr std::array<std::string_view, 2> kSelectorWeirdScaledSamplerRarityValueMapper = {"type_1", "type_2"};
 constexpr std::array<SchemaField, 3> kFieldsWeirdScaledSampler = {{
     {.name = "rarity_value_mapper", .kind = FieldKind::Selector, .optional = false, .allowsReference = false, .selectorValues = kSelectorWeirdScaledSamplerRarityValueMapper},
-    {.name = "noise", .kind = FieldKind::NoiseRef, .optional = false, .allowsReference = false, .selectorValues = {}},
+    {.name = "noise", .kind = FieldKind::Noise, .optional = false, .allowsReference = true, .selectorValues = {}},
     {.name = "input", .kind = FieldKind::Function, .optional = false, .allowsReference = true, .selectorValues = {}},
 }};
 constexpr std::array<SchemaField, 4> kFieldsYClampedGradient = {{

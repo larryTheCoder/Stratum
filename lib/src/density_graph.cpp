@@ -5,6 +5,7 @@
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
+#include <stratum/density/noise_parameters.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -132,6 +133,7 @@ public:
                                        .arguments = {},
                                        .parameters = {value.get<double>()},
                                        .noise = std::nullopt,
+                                       .inlineNoise = std::nullopt,
                                        .spline = std::nullopt,
                                        .selector = {}});
         }
@@ -197,12 +199,42 @@ private:
                     }
                     node.parameters.push_back(fieldValue.get<double>());
                     break;
-                case FieldKind::NoiseRef:
-                    if (!fieldValue.is_string()) {
+                case FieldKind::Noise:
+                    // A union in the schema, so a union here: the field
+                    // either names a `worldgen/noise` entry or carries that
+                    // entry's parameters inline. Both are legal to vanilla,
+                    // and the generated table used to record only the first
+                    // — which made a datapack that inlines its noise
+                    // parameters something this engine refused for no
+                    // reason (SPEC §8, §11).
+                    if (fieldValue.is_string()) {
+                        // No noise field at the pinned version forbids the
+                        // identifier, so this refusal cannot fire today. It
+                        // is here because the table decides and not this
+                        // code: a bare `NoiseParameters` field is a shape
+                        // the generator emits, and it means inline only.
+                        if (!field.allowsReference) {
+                            fail("'" + typeName + "' does not accept an identifier for \"" +
+                                 std::string(field.name) +
+                                 "\" at this version; it must be given inline");
+                        }
+                        node.noise = parseId(fieldValue.get<std::string>());
+                    } else if (fieldValue.is_object()) {
+                        try {
+                            node.inlineNoise = NoiseParameters::fromInline(
+                                fieldValue, "the noise written inline in '" + typeName + "' as \"" +
+                                                std::string(field.name) + "\"");
+                        } catch (const NoiseError& error) {
+                            // Rethrown as a ResolveError so that the message
+                            // carries the chain of identifiers that reached
+                            // this node, which is the whole point of fail().
+                            fail(error.what());
+                        }
+                    } else {
                         fail("'" + typeName + "' expects \"" + std::string(field.name) +
-                             "\" to name a noise, not " + std::string(fieldValue.type_name()));
+                             "\" to name a noise or to be one, not " +
+                             std::string(fieldValue.type_name()));
                     }
-                    node.noise = parseId(fieldValue.get<std::string>());
                     break;
                 case FieldKind::Selector: {
                     if (!fieldValue.is_string()) {

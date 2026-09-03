@@ -201,6 +201,84 @@ TEST_CASE("shift_a takes a noise, not a nested function", "[density][graph]") {
     CHECK(graph.referencedNoises().size() == 1U);
 }
 
+TEST_CASE("a noise field takes either an identifier or the parameters inline",
+          "[density][graph][noise]") {
+    // mcdoc declares every `noise` field as
+    // `#[id="worldgen/noise"] string | NoiseParameters`, so both spellings
+    // are legal input. The generated schema used to record only the first,
+    // because the alias was matched by name before the union was expanded —
+    // which made a datapack that inlines its noise parameters something this
+    // engine refused for no reason at all. Both are checked here, and on two
+    // node types, because that narrowing affected every field of this kind
+    // rather than one.
+    SECTION("an identifier") {
+        const TempTree tree;
+        tree.define("a", R"({"type":"minecraft:shift_a","argument":"minecraft:offset"})");
+
+        const Graph graph = tree.resolve();
+        const auto& node = graph.node(graph.rootOf(ResourceLocation::parse("a")));
+        REQUIRE(node.noise.has_value());
+        CHECK(node.noise->toString() == "minecraft:offset");
+        CHECK_FALSE(node.inlineNoise.has_value());
+        CHECK(graph.referencedNoises().size() == 1U);
+    }
+
+    SECTION("the parameters inline") {
+        const TempTree tree;
+        tree.define("a", R"({"type":"minecraft:shift_a",
+                             "argument":{"firstOctave":-3,"amplitudes":[1.0,0.0,2.5]}})");
+
+        const Graph graph = tree.resolve();
+        const auto& node = graph.node(graph.rootOf(ResourceLocation::parse("a")));
+        CHECK(node.type == NodeType::ShiftA);
+        CHECK(node.arguments.empty());
+        CHECK_FALSE(node.noise.has_value());
+        REQUIRE(node.inlineNoise.has_value());
+        CHECK(node.inlineNoise->firstOctave == -3);
+        REQUIRE(node.inlineNoise->amplitudes.size() == 3U);
+        CHECK(bits(node.inlineNoise->amplitudes[0]) == bits(1.0));
+        // A zero amplitude is not padding: it positions the octaves after it
+        // without contributing itself, so it has to survive the trip.
+        CHECK(bits(node.inlineNoise->amplitudes[1]) == bits(0.0));
+        CHECK(bits(node.inlineNoise->amplitudes[2]) == bits(2.5));
+
+        // It names nothing, so it asks nothing of the noise registry.
+        CHECK(graph.referencedNoises().empty());
+    }
+
+    SECTION("inline on minecraft:noise, whose field is spelled differently") {
+        const TempTree tree;
+        tree.define("a", R"({"type":"minecraft:noise","xz_scale":1.0,"y_scale":2.0,
+                             "noise":{"firstOctave":-7,"amplitudes":[1.0]}})");
+
+        const Graph graph = tree.resolve();
+        const auto& node = graph.node(graph.rootOf(ResourceLocation::parse("a")));
+        CHECK(node.type == NodeType::Noise);
+        REQUIRE(node.inlineNoise.has_value());
+        CHECK(node.inlineNoise->firstOctave == -7);
+        // The two numbers still land in `parameters`, in schema order.
+        REQUIRE(node.parameters.size() == 2U);
+        CHECK(bits(node.parameters[0]) == bits(1.0));
+        CHECK(bits(node.parameters[1]) == bits(2.0));
+    }
+
+    SECTION("an inline noise that is malformed is refused, and says where it was") {
+        const TempTree tree;
+        tree.define("a", R"({"type":"minecraft:shift_b","argument":{"firstOctave":-3}})");
+        REQUIRE_THROWS_WITH(tree.resolve(),
+                            Catch::Matchers::ContainsSubstring("amplitudes") &&
+                                Catch::Matchers::ContainsSubstring("minecraft:shift_b") &&
+                                Catch::Matchers::ContainsSubstring("argument"));
+    }
+
+    SECTION("a noise field that is neither is refused as neither") {
+        const TempTree tree;
+        tree.define("a", R"({"type":"minecraft:shift","argument":7})");
+        REQUIRE_THROWS_WITH(tree.resolve(),
+                            Catch::Matchers::ContainsSubstring("name a noise or to be one"));
+    }
+}
+
 TEST_CASE("splines resolve, nest, and carry their coordinate", "[density][graph][spline]") {
     const TempTree tree;
     tree.define("coord", "0.5");

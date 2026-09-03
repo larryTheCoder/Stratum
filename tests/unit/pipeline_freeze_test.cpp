@@ -79,12 +79,20 @@ private:
 };
 
 /// A pipeline with one of everything the format has to carry: a spline, a
-/// noise reference, a selector, a nested spline point, and settings with
-/// both a block state that has properties and one that does not.
+/// noise reference, a noise written inline, a selector, a nested spline
+/// point, and settings with both a block state that has properties and one
+/// that does not.
 [[nodiscard]] Pipeline buildPipeline(const TempTree& tree) {
     tree.write("noise", "test", R"({"firstOctave":-4,"amplitudes":[1.0,0.0,2.5]})");
     tree.write("density_function", "field",
                R"({"type":"minecraft:noise","noise":"test","xz_scale":0.25,"y_scale":0.125})");
+    // The other spelling of a noise field. It belongs in the fixture rather
+    // than in a test of its own: a blob that lost it would come back as a
+    // node that samples nothing, and every round-trip check here should be
+    // looking for that.
+    tree.write("density_function", "inlined",
+               R"({"type":"minecraft:shift_b",
+                   "argument":{"firstOctave":-6,"amplitudes":[0.5,0.0,1.5]}})");
     tree.write("density_function", "curved", R"({"type":"minecraft:spline","spline":{
         "coordinate":"field",
         "points":[{"location":-1.0,"value":0.5,"derivative":0.25},
@@ -143,6 +151,7 @@ void expectSame(const Pipeline& before, const Pipeline& after) {
             CHECK(bits(a.parameters[k]) == bits(b.parameters[k]));
         }
         CHECK(a.noise == b.noise);
+        CHECK(a.inlineNoise == b.inlineNoise);
         CHECK(a.spline == b.spline);
         CHECK(a.selector == b.selector);
     }
@@ -307,6 +316,28 @@ void reseal(std::vector<std::byte>& blob) {
     }
 }
 
+/// How many single-byte corruptions of the payload are refused with a
+/// message mentioning @p what. A scan rather than a computed offset: to aim
+/// at one field the test would have to know the payload's byte layout, and
+/// that layout is the thing under test.
+[[nodiscard]] std::size_t refusalsMentioning(const std::vector<std::byte>& good,
+                                             std::size_t payload, std::string_view what) {
+    std::size_t caught = 0;
+    for (std::size_t at = payload; at < good.size(); ++at) {
+        std::vector<std::byte> blob = good;
+        blob[at] = std::byte{200};
+        reseal(blob);
+        try {
+            static_cast<void>(stratum::freeze::read(blob));
+        } catch (const FreezeError& error) {
+            if (std::string(error.what()).find(what) != std::string::npos) {
+                ++caught;
+            }
+        }
+    }
+    return caught;
+}
+
 TEST_CASE("the checks behind the hash catch what the hash would have caught", "[freeze]") {
     const TempTree tree;
     const std::vector<std::byte> good = stratum::freeze::write(buildPipeline(tree));
@@ -324,25 +355,17 @@ TEST_CASE("the checks behind the hash catch what the hash would have caught", "[
     }
 
     SECTION("a node type this build does not know") {
-        // Find the node table by walking: it follows the noise table, whose
-        // shape the test knows because it built the pipeline. Simpler to
-        // scan for the first byte whose corruption trips the type check.
-        std::size_t caught = 0;
-        for (std::size_t at = payload; at < good.size(); ++at) {
-            std::vector<std::byte> blob = good;
-            blob[at] = std::byte{200};
-            reseal(blob);
-            try {
-                static_cast<void>(stratum::freeze::read(blob));
-            } catch (const FreezeError& error) {
-                if (std::string(error.what()).find("does not know") != std::string::npos) {
-                    ++caught;
-                }
-            }
-        }
         // A reader that cast the stored byte straight to NodeType would
         // accept every one of these and build a graph out of nonsense.
-        CHECK(caught > 0U);
+        CHECK(refusalsMentioning(good, payload, "does not know") > 0U);
+    }
+
+    SECTION("a noise field tagged as neither spelling") {
+        // The field is a union, so the tag has three legal values and 253
+        // illegal ones. A reader that treated anything non-zero as "an
+        // identifier follows" would read an inline noise's first octave as
+        // the length of a string.
+        CHECK(refusalsMentioning(good, payload, "not one of the two spellings") > 0U);
     }
 
     SECTION("a payload longer than its own contents") {
