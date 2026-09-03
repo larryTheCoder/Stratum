@@ -800,7 +800,8 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
 
     SECTION("without a candidate both stay refused") {
         const Interpreter plain(graph, noises);
-        CHECK_THROWS_WITH(plain.requireEvaluable(blendedRoot), ContainsSubstring("normalisation"));
+        CHECK_THROWS_WITH(plain.requireEvaluable(blendedRoot),
+                          ContainsSubstring("smear_scale_multiplier"));
         CHECK_THROWS_WITH(plain.requireEvaluable(weirdRoot), ContainsSubstring("rarity mapping"));
     }
 
@@ -848,7 +849,7 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
               bits(1.0e6));
 
         CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
-                          ContainsSubstring("normalisation"));
+                          ContainsSubstring("smear_scale_multiplier"));
     }
 
     SECTION("an empty set of substitutions is the same as none") {
@@ -856,6 +857,6 @@ TEST_CASE("a candidate reading can be put in front of the pipeline, and only tha
         running.substitute(stratum::density::UnsettledSubstitutions{});
         CHECK(stratum::density::UnsettledSubstitutions{}.empty());
         CHECK_THROWS_WITH(running.requireEvaluable(blendedRoot),
-                          ContainsSubstring("normalisation"));
+                          ContainsSubstring("smear_scale_multiplier"));
     }
 }

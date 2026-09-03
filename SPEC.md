@@ -552,8 +552,53 @@ Open:
     three stacks.** Nothing here answers this, and the overworld is such a
     dimension.
 
-  So `old_blended_noise` stays refused, with a refusal that names those three
-  rather than the whole function.
+  **What measuring the field settled (M3).** Two of the three are now
+  answered, by statistics rather than by a candidate. The seeding is unknown,
+  so the two fields cannot be compared point by point — they are different
+  realisations. But a field's *spectrum*, its *distribution shape* and its
+  *spread* do not depend on the seed, and those pin everything except the
+  seeding. Reproduce with `tools/analysis/run-blended-probe.sh`.
+
+  * **The octave schedule is right.** Power in every dyadic wavelength band
+    from 2 to 8192 blocks agrees with deepslate's, and — the part that makes
+    it a result rather than an impression — every difference is smaller than
+    the spread of each spectrum across seeds. An earlier read of the same
+    data found a "systematic tilt" at 256–512 blocks; with the seed-to-seed
+    control it is 1.3x the noise. This also retires the amplitude-schedule
+    question for good.
+  * **The normalisation is a further division by 128**, making the divisor
+    512 x 128 = 65536 = 2^16 — which is exactly the sum of the sixteen
+    doubling amplitudes, so it is the constant that takes the stack to +/-1
+    rather than a fitted number. Measured at y = 0, the one height where this
+    build's smear provably does nothing, so it is normalisation alone:
+    sd ratio **128.17 +/- 1.11** over 41 seeds and 5.4M samples a side
+    (0.16 sigma from 128), quantile-implied scale 127.7, kurtosis agreeing to
+    0.5% (2.773 against 2.786) and skew zero on both.
+  * **`smear_scale_multiplier` is in the wrong place, and that is new.**
+    Vanilla's field barely notices it: deepslate's spread at y = -64 moves
+    1%, from 0.3112 at a multiplier of 1 to 0.3082 at 8. This build's moves
+    **6.6x**, from 31.5 to 206.8, because it scales the per-octave y slab
+    width. Whatever the multiplier does in vanilla is close to
+    variance-preserving, which the current reading is not. The discrepancy
+    survives at a multiplier of 1 (a factor of 1.9 at y = -32), so this
+    build's "no smearing" is not vanilla's either.
+
+  **A methodological correction worth keeping.** The first estimate of the
+  normalisation was 130.86 +/- 0.21, reported as 13 sigma from 128 — and the
+  error bar was wrong by an order of magnitude. It came from 1/sqrt(2n) on
+  1.4M points, which assumes independence; a noise field is spatially
+  correlated, so the effective count is the number of independent patches,
+  and the true seed-to-seed spread is ~6%. Forty-one seeds give
+  128.17 +/- 1.11 and the disagreement evaporates. The comparison script
+  refuses to be used this way twice: it computes its error bar across seeds,
+  and its header says so.
+
+  So `old_blended_noise` stays refused. The refusal now names one open
+  question rather than three: how a dimension that does not declare
+  `legacy_random_source` seeds the three stacks. The normalisation is
+  settled, and the smear is not settled but is at least *localised* — it is
+  known to be wrong and known by how much, which the next experiment can aim
+  at.
 
   It is also **not** the single remaining thing between the pipeline and a
   block of overworld terrain, which is another thing the experiment
