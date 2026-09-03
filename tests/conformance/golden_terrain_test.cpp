@@ -8,22 +8,42 @@
 // that is to vanilla, and the answer is CLOSE BUT NOT RIGHT.
 //
 // A chunk's stored OCEAN_FLOOR heightmap is the highest block that is neither
-// air nor fluid, which is where `final_density` last crossed zero — the same
-// quantity deepslate was validated against (SPEC §7). So walking a column from
-// the top and taking the highest y with a positive density must reproduce it.
+// air nor fluid. That is NOT the same as where `final_density` last crossed
+// zero, and the difference is the whole story of this test.
 //
-// It does not, quite. The numbers below are pinned rather than thresholded
-// because they are a statement about where this build stands, and they must
-// move deliberately:
+// **What the residual turned out to be.** Vanilla's overworld runs aquifers,
+// and an aquifer places a stone BARRIER between two bodies of water at
+// different levels — solid blocks that no density function produced. Where
+// that happens, OCEAN_FLOOR reports the barrier, high above the terrain, and
+// a comparison against `final_density` reads it as the terrain being wrong.
+//
+// It was measured, not argued. Regenerating seed -1 from vanilla's own
+// overworld settings with `aquifers_enabled: false` and nothing else changed
+// (tools/analysis/aquifer-free-probe.sh) moves the same 4096 columns from
+//
+//   96.167% exact, 97.949% within one block, worst 50 blocks
+//
+// to
+//
+//   98.267% exact, 100.000% within one block, worst 1 block
+//
+// The worst column, (104, 112), is the mechanism in miniature: gravel over
+// stone at y = 27-28 floating in water with aquifers on, water all the way
+// down with them off, and OCEAN_FLOOR moving 28 -> 9 — where this build's
+// density does turn positive.
+//
+// So the numbers below measure the AQUIFER FILL DECISION this build does not
+// implement (SPEC §7 Tier A), not an error in the density chain. They are
+// still pinned, because they are the size of that gap and it should move
+// deliberately:
 //
 //   seed 42: 254 of 256 columns exact, all within one block
 //   seed -1: 249 of 256 exact, 252 within one block, worst 28 blocks
 //
-// The residual is REAL, not rounding. At a disagreeing column the density at
-// the block in dispute is of order 1e-4 to 1e-2, not 1e-15, so it is not a
-// tie being broken differently — something in the chain is slightly wrong, and
-// on seed -1 badly wrong on a few columns. SPEC §11 records it as the open
-// question it is. Nothing here should be read as "terrain works".
+// golden_terrain_no_aquifer_test.cpp is the one that measures the density
+// chain itself. What it finds there is real but small: 1.7% of columns off by
+// exactly one block, the density within about 1e-3 of vanilla's at the block
+// in dispute. Neither test should be read as "terrain works".
 //
 // Sampling: every eighth column over 8x8 chunks, so 256 columns spread across
 // 128x128 blocks rather than packed into one chunk. That matters — a single
@@ -159,7 +179,8 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         // difference cannot move these numbers. If that ever stops being
         // true, this fails instead of the counts going quietly flaky.
         CHECK(result.margin > 1.0e-9);
-        // Two columns out, both by exactly one block.
+        // Two columns out, both by exactly one block — the aquifer gap is small
+        // on this seed.
         CHECK(result.exact == 254U);
         CHECK(result.withinOne == 256U);
         CHECK(result.worst == 1);
@@ -173,9 +194,9 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         const Comparison result = compare(-1);
         REQUIRE(result.columns == 256U);
         CHECK(result.margin > 1.0e-9);
-        // Worse, and worse in kind: 28 blocks is not a boundary being resolved
-        // differently, it is a column whose terrain this build gets wrong.
-        // This is the number to watch when the residual is chased.
+        // Worse, and worse in kind — this seed has aquifer barriers: 28 blocks is not a boundary
+        // being resolved differently, it is a column whose terrain this build gets wrong. This is
+        // the number to watch when the residual is chased.
         CHECK(result.exact == 249U);
         CHECK(result.withinOne == 252U);
         CHECK(result.worst == 28);

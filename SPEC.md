@@ -505,7 +505,7 @@ Open:
   0.001 in the rarity moves the sampled point by 0.13 in noise space, which
   decorrelates a noise whose features are 8 wide.
 
-- **The terrain chain runs end to end, and is close but not right (M3).** With
+- **The terrain chain runs end to end (M3).** With
   the blended noise and this settled, the overworld's `final_density`
   evaluates for the first time. Against vanilla's own recorded OCEAN_FLOOR
   heightmaps, over 4096 columns a seed:
@@ -516,14 +516,53 @@ Open:
   | 0 | 99.902% | 99.951% | 2 blocks |
   | -1 | 96.167% | 97.949% | **50 blocks** |
 
-  The residual is real, not rounding: at a disagreeing column the density at
-  the block in dispute is of order 1e-4 to 1e-2, not 1e-15, so it is not a
-  tie resolved differently. Seed -1's 50-block outliers are not a boundary
-  being rounded either — they are columns whose terrain this build gets wrong.
-  Something in the chain is still off, and finding it is the next question.
-  `tests/conformance/golden_terrain_test.cpp` pins a cheap sample of this so
-  the number has to move deliberately; it samples every eighth column across
-  8x8 chunks rather than filling one chunk, because a single chunk of seed 42
+  **What that residual turned out to be, and it was not the density (M3).**
+  The table above is dominated by a step this build does not implement rather
+  than by an error in the chain. Vanilla's overworld runs aquifers, and an
+  aquifer places a stone BARRIER between two bodies of water at different
+  levels — solid blocks no density function produced. OCEAN_FLOOR is the
+  highest block that is neither air nor fluid, so it reports the barrier, and
+  a comparison against `final_density` reads that as terrain being wrong.
+
+  Measured, not argued. Regenerating seed -1 from vanilla's own overworld
+  settings with one field changed — `aquifers_enabled: false`, everything
+  else byte for byte — moves the same 4096 columns:
+
+  | seed -1, 4096 columns | with aquifers | without |
+  |---|---|---|
+  | exact | 96.167% | **98.267%** |
+  | within one block | 97.949% | **100.000%** |
+  | worst | **50 blocks** | **1 block** |
+
+  The worst column, (104, 112), is the mechanism in miniature: gravel over
+  stone at y = 27-28 floating in water with aquifers on, water all the way
+  down with them off, and OCEAN_FLOOR moving 28 to 9 — which is where this
+  build's density does turn positive. Two branches were eliminated on the
+  way: `noodle` is +64 in every disagreeing column and never the minimum, and
+  `squeeze` cannot be responsible because near the zero crossing its input is
+  small enough that the cubic term is worth about 1e-11.
+
+  So the aquifer fill decision, which §7 already places in Tier A, is what
+  stands between this and faithful terrain — not something unfound in the
+  arithmetic. `tools/analysis/aquifer-free-probe.sh` produces the reference,
+  and `golden_terrain_no_aquifer_test.cpp` pins the comparison against it.
+
+  **What is genuinely left is small.** With aquifers out of the way, 1.7% of
+  columns are still off, every one of them by exactly one block, with the
+  density in dispute of order 1e-3 — real, not a tie resolved differently,
+  but two orders of magnitude below what the aquifer gap contributed. It does
+  not correlate strongly with the cell lattice: by cell y-offset the
+  disagreement rate runs 5.4% at offset 0 down to 0.3% at offset 2, and
+  columns on a cell corner in both x and z do only slightly better than
+  columns on neither (1.37% against 1.95%). An interpolation error would
+  vanish at the corners, and this does not. Block heights cannot resolve it
+  further — they saturate at half a block — so the next instrument is the
+  datapack probe run against a y-independent slice of the chain, where an
+  amplified window can read a difference of 1e-4 directly.
+
+  `tests/conformance/golden_terrain_test.cpp` pins a cheap sample so the
+  number has to move deliberately; it samples every eighth column across 8x8
+  chunks rather than filling one chunk, because a single chunk of seed 42
   comes out 256 of 256 and would have hidden the residual entirely.
 
   *No documentation and no oracle here* — `end_islands` and, as it was,
