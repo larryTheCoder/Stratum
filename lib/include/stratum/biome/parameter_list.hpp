@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -39,23 +40,26 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// The search does not run in the reals. Every climate value and every
+/// bound is first mapped to a fixed-point integer — ten thousand steps per
+/// unit, truncated through `float` — and the distances are integer
+/// distances. This is not an optimisation, it is part of the answer: two
+/// entries whose real-valued fitnesses differ in the ninth decimal place are
+/// *exactly equal* here, and which of them wins is then decided by the
+/// tie-break rather than by that difference. SPEC §11 records the
+/// measurement that established it.
+///
+/// The cast through `float` before the multiply is deliberate and is the
+/// reason this is not simply `llround(value * 10000)`.
+[[nodiscard]] constexpr std::int64_t quantizeCoord(double value) noexcept {
+    return static_cast<std::int64_t>(static_cast<float>(value) * 10000.0F);
+}
+
 /// One axis of one entry. Vanilla writes either a `[min, max]` pair or a
 /// single number, which is a range of zero width rather than a special case.
 struct Parameter {
     double min = 0.0;
     double max = 0.0;
-
-    /// How far @p value lies outside this range — zero when it is inside.
-    /// This is the per-axis term of the distance the search minimises.
-    [[nodiscard]] double distanceTo(double value) const noexcept {
-        if (value < min) {
-            return min - value;
-        }
-        if (value > max) {
-            return value - max;
-        }
-        return 0.0;
-    }
 
     [[nodiscard]] bool operator==(const Parameter& other) const = default;
 };
@@ -84,13 +88,48 @@ struct ParameterPoint {
     Parameter weirdness;
     double offset = 0.0;
 
-    /// Vanilla's fitness: the squared distance on each axis, summed, plus
-    /// the offset squared. Squared throughout — no square root is taken,
-    /// because only the ordering matters and taking one would add rounding
-    /// to seven thousand comparisons per lookup.
-    [[nodiscard]] double fitness(const ClimateSample& sample) const noexcept;
+    /// Vanilla's fitness for @p sample. Convenience over QuantizedPoint —
+    /// correct, but it quantises this entry on every call, so the search
+    /// itself uses the precomputed form instead.
+    [[nodiscard]] std::int64_t fitness(const ClimateSample& sample) const noexcept;
 
     [[nodiscard]] bool operator==(const ParameterPoint& other) const = default;
+};
+
+/// A climate sample in the space the comparison actually happens in.
+struct QuantizedSample {
+    std::int64_t temperature = 0;
+    std::int64_t humidity = 0;
+    std::int64_t continentalness = 0;
+    std::int64_t erosion = 0;
+    std::int64_t depth = 0;
+    std::int64_t weirdness = 0;
+
+    [[nodiscard]] static QuantizedSample of(const ClimateSample& sample) noexcept;
+
+    [[nodiscard]] bool operator==(const QuantizedSample& other) const = default;
+};
+
+/// A table row in that same space. Building one costs fourteen conversions,
+/// so the list builds them once at load rather than seven thousand times per
+/// lookup.
+struct QuantizedPoint {
+    std::int64_t min[6]{};
+    std::int64_t max[6]{};
+    std::int64_t offset = 0;
+
+    [[nodiscard]] static QuantizedPoint of(const ParameterPoint& point) noexcept;
+
+    /// The squared distance on each axis, summed, plus the offset squared.
+    /// Squared throughout: only the ordering matters, and a square root
+    /// would put rounding back into a comparison that has been made exact.
+    ///
+    /// The widest legal input is a bound of ±2 against a sample of ∓2, so
+    /// each term is at most 40000² and the sum of seven at most 1.12e10 —
+    /// comfortably inside int64, and no term can overflow.
+    [[nodiscard]] std::int64_t fitness(const QuantizedSample& sample) const noexcept;
+
+    [[nodiscard]] bool operator==(const QuantizedPoint& other) const = default;
 };
 
 struct Entry {
@@ -110,9 +149,18 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
 
-    /// The biome whose entry fits @p sample best. Ties go to the earlier
-    /// entry, which is what makes the answer a function of the table's order
-    /// as well as its contents — so the order is preserved as read.
+    /// The biome whose entry fits @p sample best.
+    ///
+    /// Ties go to the **later** entry. Ties are common rather than exotic —
+    /// the comparison is over quantised integers, so entries that differ
+    /// only in the ninth decimal place land on the same value — which makes
+    /// this rule load-bearing rather than a detail. Vanilla does not scan a
+    /// list at all; it searches a tree built from one, and which leaf a tie
+    /// resolves to is a property of that tree's shape. "Later row wins"
+    /// reproduces every tie observed across 98304 cells and four seeds, but
+    /// it is a measured match and not a derivation of the tree — SPEC §11
+    /// records that distinction, and a counterexample would be a finding
+    /// about the tree rather than a bug in the arithmetic.
     ///
     /// Throws ParameterError on an empty list rather than inventing a biome:
     /// there is no sensible default, and a world full of one wrong biome is
@@ -121,6 +169,9 @@ public:
 
 private:
     std::vector<Entry> entries_;
+    /// entries_[i] in the space the search runs in. Kept parallel rather
+    /// than inside Entry so that Entry stays the table as it was written.
+    std::vector<QuantizedPoint> quantized_;
 };
 
 } // namespace stratum::biome

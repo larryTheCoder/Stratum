@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,20 +47,46 @@ constexpr std::size_t kMaxEntries = 1'000'000;
 
 } // namespace
 
-double ParameterPoint::fitness(const ClimateSample& sample) const noexcept {
-    // Sequenced through named locals rather than summed inline: this runs
-    // seven thousand times per lookup and the order the terms are added in
-    // is part of the answer when two entries are close.
-    const double dTemperature = temperature.distanceTo(sample.temperature);
-    const double dHumidity = humidity.distanceTo(sample.humidity);
-    const double dContinentalness = continentalness.distanceTo(sample.continentalness);
-    const double dErosion = erosion.distanceTo(sample.erosion);
-    const double dDepth = depth.distanceTo(sample.depth);
-    const double dWeirdness = weirdness.distanceTo(sample.weirdness);
+QuantizedSample QuantizedSample::of(const ClimateSample& sample) noexcept {
+    return QuantizedSample{
+        .temperature = quantizeCoord(sample.temperature),
+        .humidity = quantizeCoord(sample.humidity),
+        .continentalness = quantizeCoord(sample.continentalness),
+        .erosion = quantizeCoord(sample.erosion),
+        .depth = quantizeCoord(sample.depth),
+        .weirdness = quantizeCoord(sample.weirdness),
+    };
+}
 
-    return (dTemperature * dTemperature) + (dHumidity * dHumidity) +
-           (dContinentalness * dContinentalness) + (dErosion * dErosion) + (dDepth * dDepth) +
-           (dWeirdness * dWeirdness) + (offset * offset);
+QuantizedPoint QuantizedPoint::of(const ParameterPoint& point) noexcept {
+    const Parameter axes[6] = {point.temperature, point.humidity, point.continentalness,
+                               point.erosion,     point.depth,    point.weirdness};
+    QuantizedPoint quantized;
+    for (std::size_t axis = 0; axis < 6; ++axis) {
+        quantized.min[axis] = quantizeCoord(axes[axis].min);
+        quantized.max[axis] = quantizeCoord(axes[axis].max);
+    }
+    quantized.offset = quantizeCoord(point.offset);
+    return quantized;
+}
+
+std::int64_t QuantizedPoint::fitness(const QuantizedSample& sample) const noexcept {
+    const std::int64_t values[6] = {sample.temperature, sample.humidity, sample.continentalness,
+                                    sample.erosion,     sample.depth,    sample.weirdness};
+    std::int64_t total = offset * offset;
+    for (std::size_t axis = 0; axis < 6; ++axis) {
+        // How far the sample lies outside the range — zero when inside.
+        const std::int64_t value = values[axis];
+        const std::int64_t distance = value < min[axis]  ? min[axis] - value
+                                      : value > max[axis] ? value - max[axis]
+                                                          : 0;
+        total += distance * distance;
+    }
+    return total;
+}
+
+std::int64_t ParameterPoint::fitness(const ClimateSample& sample) const noexcept {
+    return QuantizedPoint::of(*this).fitness(QuantizedSample::of(sample));
 }
 
 ParameterList ParameterList::fromJson(const nlohmann::json& json,
@@ -77,6 +104,7 @@ ParameterList ParameterList::fromJson(const nlohmann::json& json,
 
     ParameterList list;
     list.entries_.reserve(biomes.size());
+    list.quantized_.reserve(biomes.size());
     for (std::size_t row = 0; row < biomes.size(); ++row) {
         const nlohmann::json& entry = biomes[row];
         if (!entry.is_object() || !entry.contains("biome") || !entry.contains("parameters")) {
@@ -121,6 +149,7 @@ ParameterList ParameterList::fromJson(const nlohmann::json& json,
         }
         read.parameters.offset = offset.get<double>();
 
+        list.quantized_.push_back(QuantizedPoint::of(read.parameters));
         list.entries_.push_back(std::move(read));
     }
     return list;
@@ -132,13 +161,15 @@ const data::ResourceLocation& ParameterList::find(const ClimateSample& sample) c
                              "biome to choose; refusing rather than inventing one");
     }
 
+    const QuantizedSample quantized = QuantizedSample::of(sample);
     std::size_t best = 0;
-    double bestFitness = entries_[0].parameters.fitness(sample);
-    for (std::size_t i = 1; i < entries_.size(); ++i) {
-        const double fitness = entries_[i].parameters.fitness(sample);
-        // Strictly less: a tie keeps the earlier entry, so the answer depends
-        // on the table's order and the order is preserved as read.
-        if (fitness < bestFitness) {
+    std::int64_t bestFitness = quantized_[0].fitness(quantized);
+    for (std::size_t i = 1; i < quantized_.size(); ++i) {
+        const std::int64_t fitness = quantized_[i].fitness(quantized);
+        // Less *or equal*: a tie takes the later entry. See the header — this
+        // is measured against vanilla, not derived, and it decides a lot of
+        // cells because quantising makes near-misses into exact ties.
+        if (fitness <= bestFitness) {
             bestFitness = fitness;
             best = i;
         }

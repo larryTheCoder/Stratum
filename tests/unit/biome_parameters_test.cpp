@@ -26,6 +26,10 @@ using stratum::biome::ClimateSample;
 using stratum::biome::Parameter;
 using stratum::biome::ParameterError;
 using stratum::biome::ParameterList;
+using stratum::biome::ParameterPoint;
+using stratum::biome::quantizeCoord;
+using stratum::biome::QuantizedPoint;
+using stratum::biome::QuantizedSample;
 using stratum::data::ResourceLocation;
 
 [[nodiscard]] std::uint64_t bits(double value) noexcept {
@@ -66,31 +70,84 @@ TEST_CASE("a range is read from either spelling", "[biome][parameters]") {
     CHECK(list.entries()[0].biome == ResourceLocation::parse("minecraft:plains"));
 }
 
-TEST_CASE("distance is zero inside a range and the gap outside", "[biome][parameters]") {
-    const Parameter parameter{.min = -0.5, .max = 0.5};
-    CHECK(bits(parameter.distanceTo(0.0)) == bits(0.0));
-    CHECK(bits(parameter.distanceTo(-0.5)) == bits(0.0));
-    CHECK(bits(parameter.distanceTo(0.5)) == bits(0.0));
-    CHECK(bits(parameter.distanceTo(1.5)) == bits(1.0));
-    CHECK(bits(parameter.distanceTo(-1.5)) == bits(1.0));
+TEST_CASE("coordinates quantise through float and truncate", "[biome][parameters]") {
+    CHECK(quantizeCoord(0.0) == 0);
+    CHECK(quantizeCoord(1.0) == 10000);
+    CHECK(quantizeCoord(-1.0) == -10000);
+    // Truncation towards zero, not rounding: the two sides are not
+    // symmetric about a half step, and rounding would move boundaries.
+    CHECK(quantizeCoord(0.00019) == 1);
+    CHECK(quantizeCoord(-0.00019) == -1);
+    // The cast through float is load-bearing, and these are the witnesses:
+    // narrowing first lands on a different side of the integer boundary
+    // than multiplying in double does. Either spelling is "reasonable"; only
+    // one of them agrees with vanilla, and getting it wrong moves a biome
+    // boundary by a ten-thousandth on every axis.
+    CHECK(quantizeCoord(-0.819) == -8190);
+    CHECK(static_cast<std::int64_t>(-0.819 * 10000.0) == -8189);
+    CHECK(quantizeCoord(-0.8188) == -8187);
+    CHECK(static_cast<std::int64_t>(-0.8188 * 10000.0) == -8188);
 }
 
-TEST_CASE("the search takes the nearest entry, and the earlier one on a tie",
+TEST_CASE("distance is zero inside a range and the gap outside", "[biome][parameters]") {
+    const Parameter whole{.min = -1.0, .max = 1.0};
+    const QuantizedPoint point = QuantizedPoint::of(ParameterPoint{
+        .temperature = Parameter{.min = -0.5, .max = 0.5},
+        .humidity = whole,
+        .continentalness = whole,
+        .erosion = whole,
+        .depth = whole,
+        .weirdness = whole,
+        .offset = 0.0,
+    });
+    const auto at = [&](double temperature) {
+        return point.fitness(QuantizedSample::of(ClimateSample{.temperature = temperature}));
+    };
+    CHECK(at(0.0) == 0);
+    CHECK(at(-0.5) == 0);
+    CHECK(at(0.5) == 0);
+    // Outside, the term is the squared gap in quantised units.
+    CHECK(at(1.5) == 10000LL * 10000LL);
+    CHECK(at(-1.5) == 10000LL * 10000LL);
+}
+
+TEST_CASE("near-misses in the reals are exact ties once quantised", "[biome][parameters]") {
+    // This is the whole reason the search is not done in doubles. These two
+    // entries are 1e-9 apart on temperature, which in double arithmetic
+    // orders them strictly; quantised, they are the same number, and the
+    // tie-break decides instead.
+    const ParameterList list =
+        parse(nlohmann::json{{"biomes",
+                              {entry("minecraft:first", 0.5, 0.0),
+                               entry("minecraft:second", 0.5 + 1e-9, 0.0)}}});
+    const ClimateSample sample{.temperature = 0.0};
+    CHECK(list.entries()[0].parameters.fitness(sample) ==
+          list.entries()[1].parameters.fitness(sample));
+    CHECK(list.find(sample) == ResourceLocation::parse("minecraft:second"));
+}
+
+TEST_CASE("the search takes the nearest entry, and the later one on a tie",
           "[biome][parameters]") {
-    const ParameterList list = parse(
+    const ParameterList nearest = parse(nlohmann::json{
+        {"biomes", {entry("minecraft:cold", -1.0, 0.0), entry("minecraft:warm", 1.0, 0.0)}}});
+    CHECK(nearest.find(ClimateSample{.temperature = -0.9}) ==
+          ResourceLocation::parse("minecraft:cold"));
+    CHECK(nearest.find(ClimateSample{.temperature = 0.9}) ==
+          ResourceLocation::parse("minecraft:warm"));
+
+    // Two entries fit identically. The *later* wins, which makes the answer
+    // a function of the table's order as well as its contents — so the order
+    // has to survive reading. Measured against vanilla; see the header.
+    const ParameterList tied = parse(
         nlohmann::json{{"biomes",
                         {entry("minecraft:cold", -1.0, 0.0), entry("minecraft:warm", 1.0, 0.0),
                          entry("minecraft:also_warm", 1.0, 0.0)}}});
-
-    CHECK(list.find(ClimateSample{.temperature = -0.9}) ==
+    CHECK(tied.find(ClimateSample{.temperature = 1.0}) ==
+          ResourceLocation::parse("minecraft:also_warm"));
+    // ...and it is genuinely the later of the tied pair, not just the last
+    // row of the table: `cold` is not tied and does not win.
+    CHECK(tied.find(ClimateSample{.temperature = -1.0}) ==
           ResourceLocation::parse("minecraft:cold"));
-    CHECK(list.find(ClimateSample{.temperature = 0.9}) ==
-          ResourceLocation::parse("minecraft:warm"));
-    // Two entries fit identically. The earlier wins, which makes the answer
-    // a function of the table's order as well as its contents — so the order
-    // has to survive reading.
-    CHECK(list.find(ClimateSample{.temperature = 1.0}) ==
-          ResourceLocation::parse("minecraft:warm"));
 }
 
 TEST_CASE("the offset is a penalty on every distance", "[biome][parameters]") {

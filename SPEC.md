@@ -694,17 +694,46 @@ Open:
   With that, **the biome source is the first thing in this project checked
   against vanilla's own output rather than against another reimplementation
   of it.** The golden regions store a biome per 4x4x4 cell; the climate chain
-  and the table between them choose one; the two are compared directly. Three
-  of the four seeds checked match on every one of 24576 cells.
+  and the table between them choose one; the two are compared directly. All
+  four seeds checked match on every one of 24576 cells — 98304 in all.
 
-  The fourth does not, and the shape of the failure is the useful part: seed
-  42 misses 76 of 24576, and 75 of those are one contiguous stretch of
-  `dark_forest` this build calls `beach`. A systematic edge, not scattered
-  noise — which points at a climate value being slightly out near one
-  boundary rather than at the search or the table being wrong, since a wrong
-  fitness function would not be right 99.7% of the time. Unsettled, pinned by
-  number in the conformance suite so that any change to it has to be looked
-  at.
+- **The biome search runs on quantised integers, and ties go to the later
+  row (M4).** This is settled now, but it was found the hard way and the way
+  it was found is the point.
+
+  The first implementation compared fitnesses as doubles and took the earlier
+  entry on a tie. It got 98228 of 98304 cells. The residual was not scattered:
+  75 of the 76 misses were a **single column**, `(x=36, z=12)` of seed 42,
+  wrong at every height from -64 to 316 — one (x,z) where something that does
+  not vary with y flips the answer. That shape ruled out the climate chain
+  before anything was measured, and measuring confirmed it: deepslate agrees
+  with this build's six climate values at that column to every digit printed.
+  The climate was right and the *search* was wrong.
+
+  At that column `beach` scores 0.000537869 and `dark_forest` 0.000537878 —
+  apart by 9e-9, which is not a difference so much as an artefact of summing
+  six squares in floating point. Vanilla does not have the artefact because
+  vanilla does not compare in the reals: every coordinate is first mapped to a
+  fixed-point integer, ten thousand steps per unit, truncated through
+  `float` (cubiomes carries the same `int64` climate coordinates, which is the
+  independent corroboration). Quantised, the two entries are not 9e-9 apart —
+  they are **exactly equal, both 53824**. The near-miss was never a near-miss.
+
+  Which leaves the tie, and the tie is the part that is measured rather than
+  derived. `beach` is row 3609 and `dark_forest` is row 3611, so "earlier
+  wins" still answers `beach`; vanilla answers `dark_forest`. Vanilla does not
+  scan the list at all — it searches a tree built from it, and which leaf a
+  tie resolves to is a property of that tree's shape, which is not documented
+  and is not derivable from the dumped table. **Later row wins** reproduces
+  every tie observed across 98304 cells and four seeds, and it is adopted on
+  that evidence, flagged here as an empirical match rather than a derivation.
+
+  Neither change is sufficient alone, which is what makes this more than
+  fitting seed 42: seed -4172144997902289642 is exact under the old
+  double-precision search, and quantising *without* the tie-break breaks one
+  of its cells. Only both together leave all four seeds whole. A future
+  counterexample would be a finding about the shape of vanilla's tree, not a
+  bug in the arithmetic.
 
 - **The three blending types take their no-blending values (M2, extended M3).**
   This engine generates every chunk itself and never blends against terrain

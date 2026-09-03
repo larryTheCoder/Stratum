@@ -173,22 +173,17 @@ TEST_CASE("the biome source reproduces the biomes vanilla recorded", "[conforman
     const Pack pack = Pack::open(tree);
     const Comparison result = compare(pack, table, 42, region, 4);
 
-    // Numbers rather than a threshold. 24500 of 24576 is where this build
-    // stands, and any change to the climate chain, the table or the search
-    // moves it — which is a thing somebody should have to look at rather
-    // than a bar that silently keeps being cleared.
+    // Every cell, not a threshold. This seed used to sit at 24500: the
+    // residual was seventy-five cells in a single column where `beach` and
+    // `dark_forest` are 9e-9 apart in double arithmetic and *exactly equal*
+    // once quantised. Quantising plus taking the later of a tied pair closes
+    // it. Pinned at the whole so that any regression is visible as one.
     CHECK(result.cells == 24576U);
-    CHECK(result.exact == 24500U);
-
-    // The residual is not scattered: it is one boundary, seventy-five cells
-    // of dark_forest that this build calls beach. A systematic edge, not
-    // noise — see SPEC §11.
-    CHECK(result.misses.size() <= 3U);
-    CHECK(result.misses.contains("minecraft:dark_forest -> minecraft:beach"));
-    CHECK(result.misses.at("minecraft:dark_forest -> minecraft:beach") == 75U);
+    CHECK(result.exact == 24576U);
+    CHECK(result.misses.empty());
 }
 
-TEST_CASE("three other seeds have no residual at all", "[conformance][biome]") {
+TEST_CASE("three other seeds are exact too", "[conformance][biome]") {
     const std::filesystem::path tree = findWorldgenTree();
     const std::filesystem::path parameters = findParameterList();
     if (tree.empty() || parameters.empty()) {
@@ -202,8 +197,11 @@ TEST_CASE("three other seeds have no residual at all", "[conformance][biome]") {
         nlohmann::json::parse(contents.str()), ResourceLocation::parse("minecraft:overworld"));
     const Pack pack = Pack::open(tree);
 
-    // That seed 42 has a residual and these do not is the strongest thing
-    // said here: whatever is wrong is rare and local, not a wrong formula.
+    // Three more seeds, 73728 further cells. Seed -4172144997902289642 is
+    // the load-bearing one: it is exact under the old double-precision
+    // search *and* under the new one, but quantising without the tie-break
+    // breaks it. That it takes both changes together to keep all four seeds
+    // whole is why the tie-break is not just seed 42 being fitted.
     for (const std::int64_t seed :
          {std::int64_t{0}, std::int64_t{-1}, std::int64_t{-4172144997902289642}}) {
         const std::filesystem::path region = fixtures() / "1.21.11" / "regions" /
