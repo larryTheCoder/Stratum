@@ -77,7 +77,7 @@ std::int64_t QuantizedPoint::fitness(const QuantizedSample& sample) const noexce
     for (std::size_t axis = 0; axis < 6; ++axis) {
         // How far the sample lies outside the range — zero when inside.
         const std::int64_t value = values[axis];
-        const std::int64_t distance = value < min[axis]  ? min[axis] - value
+        const std::int64_t distance = value < min[axis]   ? min[axis] - value
                                       : value > max[axis] ? value - max[axis]
                                                           : 0;
         total += distance * distance;

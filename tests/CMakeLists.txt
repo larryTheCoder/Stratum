@@ -76,4 +76,14 @@ if(UNIX)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
     )
     set_tests_properties(lint.determinism PROPERTIES LABELS "lint")
+
+    # clang-format, run by the same script CI runs. Without this, `ctest
+    # --preset dev` passes on code CI will reject on formatting alone — which
+    # is how main has gone red twice while the dev preset was green. Skipped,
+    # visibly, when no clang-format is installed; never silently passed.
+    add_test(NAME lint.format
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/format.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(lint.format PROPERTIES LABELS "lint" SKIP_RETURN_CODE 77)
 endif()

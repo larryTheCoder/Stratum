@@ -116,18 +116,16 @@ TEST_CASE("near-misses in the reals are exact ties once quantised", "[biome][par
     // entries are 1e-9 apart on temperature, which in double arithmetic
     // orders them strictly; quantised, they are the same number, and the
     // tie-break decides instead.
-    const ParameterList list =
-        parse(nlohmann::json{{"biomes",
-                              {entry("minecraft:first", 0.5, 0.0),
-                               entry("minecraft:second", 0.5 + 1e-9, 0.0)}}});
+    const ParameterList list = parse(nlohmann::json{
+        {"biomes",
+         {entry("minecraft:first", 0.5, 0.0), entry("minecraft:second", 0.5 + 1e-9, 0.0)}}});
     const ClimateSample sample{.temperature = 0.0};
     CHECK(list.entries()[0].parameters.fitness(sample) ==
           list.entries()[1].parameters.fitness(sample));
     CHECK(list.find(sample) == ResourceLocation::parse("minecraft:second"));
 }
 
-TEST_CASE("the search takes the nearest entry, and the later one on a tie",
-          "[biome][parameters]") {
+TEST_CASE("the search takes the nearest entry, and the later one on a tie", "[biome][parameters]") {
     const ParameterList nearest = parse(nlohmann::json{
         {"biomes", {entry("minecraft:cold", -1.0, 0.0), entry("minecraft:warm", 1.0, 0.0)}}});
     CHECK(nearest.find(ClimateSample{.temperature = -0.9}) ==
