@@ -16,6 +16,14 @@ you work in every session.
   (Spyglass) schema definitions, cubiomes (MIT), Cuberite (Apache-2.0),
   and the observed input/output of the vanilla server via the conformance
   harness.
+- **deepslate (MIT, Misode) is a black-box oracle only.** Run it, record what
+  it outputs, generate vectors from that — exactly as `tools/fetch-vanilla`
+  treats the Minecraft server. Its source is NEVER read and nothing is ever
+  derived from it. Only its published API surface (the `.d.ts` declarations,
+  which carry signatures and no algorithm) may be consulted, and only to know
+  what to call. It is a faithful emulator rather than an independent
+  reimplementation, so reading it would be too close to the decompiled
+  sources this rule exists to keep out; observing its behaviour is not.
 - NEVER commit: vanilla worldgen JSON, extracted jar contents, generated
   region files, golden fixtures, or any file produced by
   `tools/fetch-vanilla`. These are derived from Mojang data and are

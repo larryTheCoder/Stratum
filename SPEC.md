@@ -57,6 +57,15 @@ Study for design, never transcribe code without license check:
 - **Terra / OpenTerrainGenerator** — config schema design ideas only.
 - **Misode's generators, Snowcapped, Spyglass** — external authoring tools we
   must remain compatible with.
+- **deepslate** (MIT, TypeScript) — the library behind Misode's generators,
+  used as a **black-box oracle only**, never read. See the provenance rule in
+  `CLAUDE.md`. It earns that place by measurement: running its own
+  `final_density` down a column and comparing the highest positive y against
+  the `OCEAN_FLOOR` heightmap vanilla itself wrote into the golden regions
+  gives **6143 of 6144 columns exact**, across the overworld, the Nether and
+  the End and four seeds. It reproduces vanilla's terrain, which is a
+  stronger claim than this project can make about any of its other oracles —
+  and one made against the goldens, which are the authority (§7).
 
 ---
 
@@ -547,6 +556,17 @@ Open:
   It discriminates: with the blended noise forced to zero, 1.6% of columns
   match exactly. A candidate that is right should be near the other end of
   that scale, and nothing yet is.
+
+  The golden round trip is no longer the fastest way to test a candidate,
+  though. `tools/vectors/generate-deepslate-vectors.sh` records deepslate's
+  own `old_blended_noise` at 240 points across five seeds and four parameter
+  shapes, which answers in microseconds and bit-exactly. What it does not do
+  is supply the algorithm: twenty-four candidate derivations of the modern
+  seeding — sequential and per-stack draws, six salt strings, amplitudes
+  doubling and halving — produce no constant ratio against those vectors, so
+  the space is larger than guessing covers. The function stays refused; what
+  changed is that any future attempt is now checkable in one step instead of
+  none.
 
   A third, smaller gap worth writing down: cubiomes' `maintainPrecision` is
   a no-op — the real line is commented out in its header as "useless in

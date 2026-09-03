@@ -98,6 +98,10 @@ jobs:
           tools/vectors/generate-blended-vectors.sh "${RUNNER_TEMP}/blended_vectors.inc"
           diff -u tests/unit/blended_vectors.inc "${RUNNER_TEMP}/blended_vectors.inc"
 
+          # And the deepslate oracle, run as a black box at a pinned version.
+          tools/vectors/generate-deepslate-vectors.sh "${RUNNER_TEMP}/deepslate_vectors.inc"
+          diff -u tests/unit/deepslate_vectors.inc "${RUNNER_TEMP}/deepslate_vectors.inc"
+
       - name: Generated schema is reproducible
         # The density function schema is derived from mcdoc at a pinned
         # commit (SPEC §11), so a hand-edit to the generated tables — or a

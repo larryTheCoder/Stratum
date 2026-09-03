@@ -2,6 +2,7 @@ add_executable(stratum_unit_tests
     blended_test.cpp
     chunk_test.cpp
     cli_test.cpp
+    deepslate_oracle_test.cpp
     density_graph_test.cpp
     density_interpreter_test.cpp
     density_render_test.cpp
