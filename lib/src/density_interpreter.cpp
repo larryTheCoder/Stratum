@@ -106,8 +106,10 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
             return "it applies the vertical slides from a noise settings entry, which this "
                    "pipeline does not carry yet (SPEC §10, M3)";
         case NodeType::FindTopSurface:
-            return "it scans a column against a cell height, which needs the cell sampler "
-                   "(SPEC §10, M3)";
+            // Settled (SPEC §11). It needs no cell lattice — the old refusal
+            // said it did, and that was wrong; it scans its own column on a
+            // lattice of its own `cell_height`.
+            return std::nullopt;
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";
@@ -569,6 +571,58 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
                 value = substitutions_.blendedNoise(parameters, at);
             } else {
                 value = blendedFor(index).sample(at.x, at.y, at.z);
+            }
+            break;
+        }
+        case NodeType::FindTopSurface: {
+            // "Scans through a column of an input density and returns the
+            // topmost y-level that is above 0. If no such position exists
+            // within the bounds, the lower_bound is returned" — minecraft.wiki.
+            // Everything the wiki leaves open was measured off the server
+            // (SPEC §11):
+            //
+            //   * the scan is on a lattice of ABSOLUTE multiples of
+            //     cell_height, anchored to neither bound. Probed with an
+            //     upper_bound of 317 and a lower_bound of -60, both off the
+            //     lattice, and the answers stayed multiples of eight.
+            //   * upper_bound is inclusive when it lands on the lattice, and
+            //     is FLOORED onto it when it does not: 319.9 scans from 312,
+            //     320.0 scans from 320.
+            //   * the test is a strict `> 0`: a density of exactly zero at a
+            //     lattice point is not a surface.
+            const double upperBound = evaluateNode(scope, node.arguments[1]);
+            const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
+            const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
+            if (cellHeight <= 0) {
+                throw EvalError("'minecraft:find_top_surface' has cell_height " +
+                                std::to_string(cellHeight) +
+                                ", which would never finish scanning; it must be positive");
+            }
+
+            // floorDiv, not truncating division: a negative upper_bound has to
+            // land on the lattice point BELOW it, and C++ division rounds the
+            // other way.
+            const auto top = static_cast<std::int32_t>(std::floor(upperBound));
+            const std::int32_t start = javamath::floorDiv(top, cellHeight) * cellHeight;
+
+            // A bound on the work, so a pathological upper_bound is an error
+            // rather than a hang. Vanilla's own use runs 48 steps.
+            constexpr std::int64_t kMaxSteps = 1 << 20;
+            const std::int64_t steps = (static_cast<std::int64_t>(start) - lowerBound) / cellHeight;
+            if (steps > kMaxSteps) {
+                throw EvalError("'minecraft:find_top_surface' would scan " + std::to_string(steps) +
+                                " steps from " + std::to_string(start) + " down to " +
+                                std::to_string(lowerBound) +
+                                "; that is not a column, it is a hang");
+            }
+
+            value = lowerBound;
+            for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
+                Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount());
+                if (evaluateNode(column, node.arguments[0]) > 0.0) {
+                    value = scanY;
+                    break;
+                }
             }
             break;
         }

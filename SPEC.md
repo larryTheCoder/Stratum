@@ -547,6 +547,40 @@ Open:
   arithmetic. `tools/analysis/aquifer-free-probe.sh` produces the reference,
   and `golden_terrain_no_aquifer_test.cpp` pins the comparison against it.
 
+  **`find_top_surface` is settled (M3).** minecraft.wiki gives the semantics —
+  "scans through a column of an input density and returns the topmost y-level
+  that is above 0. If no such position exists within the bounds, the
+  lower_bound is returned" — and leaves four things open. All four were
+  measured off the server with a density whose zero crossing is placed by
+  hand, so each answer is analytic rather than inferred:
+
+  * **The scan lattice is absolute multiples of `cell_height`**, anchored to
+    neither bound. Probed with an `upper_bound` of 317 and a `lower_bound` of
+    -60, both off a lattice of eight, and vanilla still answered in multiples
+    of eight. A loop written straight from the wiki would anchor to one bound
+    or the other and be wrong by up to seven blocks.
+  * **`upper_bound` is floored onto that lattice, and is inclusive when it
+    lands on it.** 319.9 scans from 312; 320.0 scans from 320. It floors
+    rather than rounds, which matters because vanilla's own `upper_bound` is
+    a `clamp` and fractional in general.
+  * **The test is a strict `> 0`.** A density of exactly zero at a lattice
+    point is not a surface.
+  * **Nothing found returns `lower_bound` itself**, as the wiki says.
+
+  Checked end to end: vanilla's own `preliminary_surface_level`, read back
+  through the datapack probe, agrees with this build on **1024 of 1024
+  columns**, every one inside the probe's own resolution.
+
+  That comparison also closes something else. `invert` was the only density
+  function type vanilla uses that nothing here had ever compared against
+  anything — all three of its uses sit inside `preliminary_surface_level`,
+  which was refused for want of `find_top_surface`. It is now reached and
+  checked. The old refusal's stated reason was wrong too: it said the node
+  "needs the cell sampler", and it needs no lattice at all.
+
+  With this, **all 45 of vanilla's 45 noise router entries evaluate**, across
+  every dimension this build can seed.
+
   **The aquifer fill decision: what it is, and what it will cost (M3).**
   Scoped, not started. Three things are now known about it.
 

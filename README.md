@@ -167,7 +167,7 @@ execute. See the open question in SPEC §8 about when their presence should be
 fatal.
 
 This matrix states the v1 contract, not what is finished. The build in
-progress refuses three density function types outright, and two more only
+progress refuses two density function types outright, and two more only
 when it has no cell lattice to evaluate them over — by name and with a
 reason, rather than approximating them. It refuses a noise written inline
 for a narrower reason: a noise is seeded from the MD5 of its identifier, and
@@ -199,11 +199,11 @@ health — it would catch a type being badly wrong, not subtly.
 | `constant` | Supported | — | golden terrain; written as a bare number, so pervasive |
 | `cube` | Supported | 2 | golden terrain, cubiomes |
 | `end_islands` | **Not implemented** | 2 | — the End's terrain (SPEC §10, M3) |
-| `find_top_surface` | **Not implemented** | 3 | — blocks `preliminary_surface_level` in three settings |
+| `find_top_surface` | Supported | 3 | the vanilla server, via datapack probe: 1024/1024 columns |
 | `flat_cache` | Supported | 16 | golden terrain, cubiomes |
 | `half_negative` | Supported | 3 | golden terrain |
 | `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings) |
-| `invert` | Supported | 3 | **nothing** — its only uses sit behind `find_top_surface` |
+| `invert` | Supported | 3 | golden `preliminary_surface_level`, since `find_top_surface` landed |
 | `max` | Supported | 9 | golden terrain, cubiomes |
 | `min` | Supported | 13 | golden terrain, cubiomes |
 | `mul` | Supported | 88 | golden terrain, cubiomes |
@@ -222,12 +222,12 @@ health — it would catch a type being badly wrong, not subtly.
 | `weird_scaled_sampler` | Supported | 3 | the vanilla server, via datapack probe: both rarity ladders |
 | `y_clamped_gradient` | Supported | 29 | golden terrain, cubiomes |
 
-Two of these deserve reading twice. **`invert`** is the only type vanilla
-uses that nothing checks: all three of its uses are inside
-`preliminary_surface_level`, which `find_top_surface` refuses, so no golden
-reaches it and it rests on documentation alone. **`squeeze`** rests on
-documentation too, but it sits directly in the overworld's `final_density`,
-so the terrain comparison does reach it.
+`squeeze` and `invert` are the two types implemented from documentation
+alone, and both are now reached by a comparison against vanilla: `squeeze`
+sits directly in the overworld's `final_density`, and `invert` became
+checkable when `find_top_surface` landed and made `preliminary_surface_level`
+evaluable. Until then `invert` was the only type vanilla uses that nothing
+here had ever compared against anything.
 
 `slide`, `shift` and `cache_all_in_cell` are unused at 1.21.11. That is not
 a promise about other versions — it is why they cost nothing today.

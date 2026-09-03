@@ -1025,3 +1025,106 @@ TEST_CASE("weird_scaled_sampler scales the position and the value, and takes the
         CHECK(pipeline.at("weird_onehalf", Point{.x = x, .y = 40, .z = x * 3}) >= 0.0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// find_top_surface (SPEC §11). minecraft.wiki gives the semantics — "scans
+// through a column of an input density and returns the topmost y-level that
+// is above 0. If no such position exists within the bounds, the lower_bound
+// is returned" — and leaves four things open. All four were measured off the
+// vanilla server with a density whose zero crossing is placed by hand, so the
+// answer is analytic and the staircase is read straight off.
+//
+// The density below is +1 under `t` and -1 above it, so "topmost lattice point
+// above zero" is the largest lattice point strictly below t.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::string crossingAt(int t) {
+    return R"({"type":"minecraft:y_clamped_gradient","from_y":)" + std::to_string(t - 1) +
+           R"(,"to_y":)" + std::to_string(t + 1) + R"(,"from_value":1.0,"to_value":-1.0})";
+}
+
+[[nodiscard]] std::string findTopSurface(const std::string& density, const std::string& upper,
+                                         int lower, int cell) {
+    return R"({"type":"minecraft:find_top_surface","density":)" + density + R"(,"upper_bound":)" +
+           upper + R"(,"lower_bound":)" + std::to_string(lower) + R"(,"cell_height":)" +
+           std::to_string(cell) + "}";
+}
+
+} // namespace
+
+TEST_CASE("find_top_surface scans a lattice of absolute multiples of cell_height",
+          "[density][interpreter][surface]") {
+    const TempTree tree;
+    tree.define("c8_104", findTopSurface(crossingAt(104), "320.0", -64, 8));
+    tree.define("c8_105", findTopSurface(crossingAt(105), "320.0", -64, 8));
+    tree.define("c8_112", findTopSurface(crossingAt(112), "320.0", -64, 8));
+    tree.define("c8_113", findTopSurface(crossingAt(113), "320.0", -64, 8));
+    tree.define("c4_110", findTopSurface(crossingAt(110), "320.0", -64, 4));
+    const Pipeline pipeline(tree.pack(), 0);
+
+    // At exactly t the density is zero, and zero is not "above 0" — the test
+    // is a strict `>`. So a crossing at 104 gives 96, not 104.
+    CHECK(bits(pipeline.at("c8_104")) == bits(96.0));
+    CHECK(bits(pipeline.at("c8_105")) == bits(104.0));
+    CHECK(bits(pipeline.at("c8_112")) == bits(104.0));
+    CHECK(bits(pipeline.at("c8_113")) == bits(112.0));
+    // A different cell_height moves the lattice with it.
+    CHECK(bits(pipeline.at("c4_110")) == bits(108.0));
+}
+
+TEST_CASE("find_top_surface's lattice follows neither bound", "[density][interpreter][surface]") {
+    // The measurement that pins this: an upper_bound of 317 and a lower_bound
+    // of -60 are both off a lattice of eight, and vanilla still answers in
+    // multiples of eight. Anchoring the scan to either bound — the obvious
+    // reading, and the one a loop written from the wiki would produce — gives
+    // answers congruent to 5 and to 4 instead.
+    const TempTree tree;
+    tree.define("upper317", findTopSurface(crossingAt(114), "317.0", -64, 8));
+    tree.define("lower60", findTopSurface(crossingAt(114), "320.0", -60, 8));
+    const Pipeline pipeline(tree.pack(), 0);
+    CHECK(bits(pipeline.at("upper317")) == bits(112.0));
+    CHECK(bits(pipeline.at("lower60")) == bits(112.0));
+}
+
+TEST_CASE("find_top_surface floors upper_bound onto the lattice, inclusively",
+          "[density][interpreter][surface]") {
+    // A density positive everywhere in range, so the answer is entirely about
+    // where the scan starts. Vanilla's own upper_bound is a `clamp` and so is
+    // fractional in general, which is why this is worth pinning: 319.9 starts
+    // at 312 and 320.0 starts at 320, so it floors rather than rounds.
+    const TempTree tree;
+    const std::string always = crossingAt(400);
+    tree.define("u319", findTopSurface(always, "319.0", -64, 8));
+    tree.define("u319_9", findTopSurface(always, "319.9", -64, 8));
+    tree.define("u320", findTopSurface(always, "320.0", -64, 8));
+    tree.define("u320_5", findTopSurface(always, "320.5", -64, 8));
+    const Pipeline pipeline(tree.pack(), 0);
+    CHECK(bits(pipeline.at("u319")) == bits(312.0));
+    CHECK(bits(pipeline.at("u319_9")) == bits(312.0));
+    CHECK(bits(pipeline.at("u320")) == bits(320.0));
+    CHECK(bits(pipeline.at("u320_5")) == bits(320.0));
+}
+
+TEST_CASE("find_top_surface returns lower_bound when there is no surface",
+          "[density][interpreter][surface]") {
+    const TempTree tree;
+    // Crossing far below the range, so nothing scanned is above zero.
+    tree.define("none64", findTopSurface(crossingAt(-200), "320.0", -64, 8));
+    tree.define("none60", findTopSurface(crossingAt(-200), "320.0", -60, 8));
+    const Pipeline pipeline(tree.pack(), 0);
+    CHECK(bits(pipeline.at("none64")) == bits(-64.0));
+    CHECK(bits(pipeline.at("none60")) == bits(-60.0));
+}
+
+TEST_CASE("find_top_surface refuses a cell_height that would never finish",
+          "[density][interpreter][surface]") {
+    // Not reachable through vanilla's data, but a datapack can write it, and
+    // the alternative to an error here is a hang with no explanation.
+    const TempTree tree;
+    tree.define("zero", findTopSurface(crossingAt(100), "320.0", -64, 0));
+    const Pipeline pipeline(tree.pack(), 0);
+    CHECK_THROWS_WITH(pipeline.at("zero"),
+                      ContainsSubstring("cell_height") && ContainsSubstring("never finish"));
+}

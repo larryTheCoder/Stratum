@@ -184,7 +184,7 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     CHECK(report.noiseSettings == 7U);
     CHECK(report.dimensionsChecked == 3U);
     CHECK(report.routerEntries == 45U);
-    CHECK(report.routerEntriesEvaluable == 42U);
+    CHECK(report.routerEntriesEvaluable == 45U);
 
     // The six are preliminary_surface_level and final_density in each of the
     // three, waiting on find_top_surface and old_blended_noise respectively.
