@@ -121,9 +121,10 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
             // block. UnsettledSubstitutions is how an experiment tries a
             // candidate without any of them reaching an ordinary world
             // (SPEC §11).
-            return "the blended noise is written but not settled: where "
-                   "smear_scale_multiplier enters it is measurably wrong, and how a modern "
-                   "dimension seeds it is unknown; either one changes every block (SPEC §11)";
+            return "the blended noise is written but not settled: how a dimension that does "
+                   "not declare legacy_random_source seeds its three octave stacks is unknown, "
+                   "and the overworld is such a dimension. Its normalisation and its smear are "
+                   "settled; the seeding alone changes every block (SPEC §11)";
         case NodeType::EndIslands:
             return "the End island field is not implemented yet; it arrives with the End's "
                    "terrain (SPEC §10, M3)";

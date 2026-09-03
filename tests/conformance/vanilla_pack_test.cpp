@@ -190,7 +190,13 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // three, waiting on find_top_surface and old_blended_noise respectively.
     std::vector<std::string> unseeded;
     for (const stratum::validate::Finding& finding : report.findings) {
-        if (finding.message.find("legacy_random_source") != std::string::npos) {
+        // Match the phrase the *dimension* refusal opens with, not the bare
+        // registry name: old_blended_noise's refusal names
+        // `legacy_random_source` too, now that the seeding is the only thing
+        // left unsettled about it, and a looser test silently counted every
+        // final_density here as an unseedable dimension.
+        if (finding.message.find("this dimension declares legacy_random_source") !=
+            std::string::npos) {
             unseeded.push_back(finding.subject);
         }
     }

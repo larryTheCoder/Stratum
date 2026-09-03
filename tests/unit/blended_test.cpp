@@ -166,3 +166,98 @@ TEST_CASE("the three stacks are drawn from one generator, in order", "[noise][bl
     // And the noise is not accidentally flat.
     CHECK(bits(noise.sample(1, 2, 3)) != bits(noise.sample(4, 5, 6)));
 }
+
+// ---------------------------------------------------------------------------
+// The measured smear (SPEC §11). These pin what the sweep against vanilla
+// established, as exact relationships rather than as statistics: the
+// statistics live in tools/analysis and take minutes, but every one of them
+// rests on the three claims below, and those are checkable in microseconds.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] BlendedNoise::Parameters overworldShape(double smearScaleMultiplier) {
+    return BlendedNoise::Parameters{
+        .xzScale = 0.25,
+        .yScale = 0.125,
+        .xzFactor = 80.0,
+        .yFactor = 160.0,
+        .smearScaleMultiplier = smearScaleMultiplier,
+    };
+}
+
+[[nodiscard]] BlendedNoise built(bool measured, double smearScaleMultiplier) {
+    JavaRandom random(0);
+    return measured ? BlendedNoise::withMeasuredSmear(random, overworldShape(smearScaleMultiplier))
+                    : BlendedNoise::legacy(random, overworldShape(smearScaleMultiplier));
+}
+
+} // namespace
+
+TEST_CASE("at a multiplier of one the two readings agree above y = 0", "[noise][blended][smear]") {
+    // The cap differs only in the slab it is built from and in what happens
+    // below zero. At a multiplier of one the first difference vanishes, so
+    // the whole of y >= 0 must come out bit-for-bit identical — which is what
+    // keeps the cubiomes vectors, all 270 of them, meaningful for both.
+    const BlendedNoise pre = built(false, 1.0);
+    const BlendedNoise measured = built(true, 1.0);
+    for (const int y : {0, 1, 2, 7, 64, 255, 319}) {
+        for (const int x : {0, 13, -71}) {
+            CAPTURE(x, y);
+            CHECK(bits(pre.sample(x, y, 29)) == bits(measured.sample(x, y, 29)));
+        }
+    }
+}
+
+TEST_CASE("below y = 0 the measured cap stops binding", "[noise][blended][smear]") {
+    // Vanilla's spread below zero is flat in y, at the value its rising curve
+    // above zero only reaches near y = 240. That is saturation: the fold runs
+    // at full effect because nothing caps it. So the two readings must differ
+    // here, at a multiplier of one, where above zero they cannot.
+    const BlendedNoise pre = built(false, 1.0);
+    const BlendedNoise measured = built(true, 1.0);
+    std::size_t differing = 0;
+    for (const int y : {-1, -8, -32, -63, -64}) {
+        if (bits(pre.sample(11, y, 23)) != bits(measured.sample(11, y, 23))) {
+            ++differing;
+        }
+    }
+    CHECK(differing == 5U);
+}
+
+TEST_CASE("the measured cap leaves the multiplier out of itself", "[noise][blended][smear]") {
+    // The slab widens with the multiplier and the cap does not, so above y = 0
+    // a multiplier of eight still differs from one — the fold is let in at a
+    // different rate. Under PreModern both move together, which is exactly the
+    // extrapolation that made the field scale with the multiplier.
+    CHECK(bits(built(true, 1.0).sample(11, 96, 23)) != bits(built(true, 8.0).sample(11, 96, 23)));
+
+    // The sharp one. PreModern's cap is built from the slab *with* the
+    // multiplier and Measured's from the slab without it, so at any
+    // multiplier but one they must part company above y = 0 too. If they
+    // still agreed there, the cap would be taking the multiplier-bearing
+    // slab and the whole distinction would be gone — which no statistic in
+    // tools/analysis would notice quickly, and this notices at once.
+    const BlendedNoise preEight = built(false, 8.0);
+    const BlendedNoise measuredEight = built(true, 8.0);
+    // Not the top of the world: high enough up, the cap exceeds the local
+    // offset under either reading, both saturate, and they agree again. That
+    // is a real property and not a gap in the test — y = 255 and y = 319 come
+    // out identical at a multiplier of eight.
+    std::size_t parted = 0;
+    for (const int y : {1, 7, 96, 128}) {
+        if (bits(preEight.sample(11, y, 23)) != bits(measuredEight.sample(11, y, 23))) {
+            ++parted;
+        }
+    }
+    CHECK(parted == 4U);
+
+    // And at y = 0 the cap is zero under either reading, so nothing folds and
+    // the multiplier cannot matter. Measured, not assumed: it is why the
+    // normalisation could be pinned at y = 0 without the smear confusing it.
+    for (const double multiplier : {1.0, 4.0, 8.0, 16.0}) {
+        CAPTURE(multiplier);
+        CHECK(bits(built(true, multiplier).sample(11, 0, 23)) ==
+              bits(built(true, 1.0).sample(11, 0, 23)));
+    }
+}

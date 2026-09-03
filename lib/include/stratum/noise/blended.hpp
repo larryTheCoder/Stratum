@@ -44,6 +44,7 @@
 #include <stratum/rng/java_random.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace stratum::noise {
@@ -66,9 +67,34 @@ public:
         double yFactor = 160.0;
         /// How far the y coordinate is smeared onto a slab per octave.
         /// Vanilla's data uses 8.0 in the overworld and Nether and 4.0 in
-        /// the End; a value of one is the pre-1.18 behaviour cubiomes
-        /// models, and the only one checked here.
+        /// the End. See Smear for what it actually does, which is not what
+        /// the pre-1.18 function did with the same field.
         double smearScaleMultiplier = 1.0;
+    };
+
+    /// Which reading of the smear to use. The two differ, and SPEC §11
+    /// records how that was established rather than assumed.
+    enum class Smear : std::uint8_t {
+        /// The pre-1.18 function, which cubiomes models and the vectors pin
+        /// bit-for-bit. It had no multiplier at all, so what this build does
+        /// with one is an extrapolation and is measurably not vanilla's.
+        PreModern,
+        /// Vanilla 1.21.11's, measured. Two differences from PreModern, both
+        /// in the cap handed to the Perlin sampler:
+        ///
+        ///   * The cap grows with y using the slab width taken *before* the
+        ///     multiplier is applied. The slab still widens with the
+        ///     multiplier; the cap does not. That is what keeps the field
+        ///     almost unmoved across a factor of sixteen in the multiplier,
+        ///     which vanilla's is and PreModern's is not.
+        ///   * Below y = 0 the cap does not bind at all, so the fold runs at
+        ///     full effect. Vanilla's spread below zero is flat in y at the
+        ///     value its rising curve above zero reaches around y = 240 —
+        ///     the signature of saturation, not of a mirrored cap.
+        ///
+        /// At a multiplier of one the two are bit-identical for y >= 0 and
+        /// differ only below it.
+        Measured,
     };
 
     /// The octave counts are fixed by the algorithm, not configurable.
@@ -81,6 +107,20 @@ public:
     /// them changes all three.
     [[nodiscard]] static BlendedNoise legacy(rng::JavaRandom& random, Parameters parameters);
 
+    /// The same stacks and the same seeding as legacy(), read with vanilla's
+    /// smear instead of the pre-1.18 one.
+    ///
+    /// This is NOT the modern function: how a dimension that does not declare
+    /// `legacy_random_source` seeds the three stacks is still unknown, and
+    /// the overworld is such a dimension (SPEC §11). It is the modern
+    /// *smear*, seeded the only way this build can seed anything, so that the
+    /// part that is settled is written down and tested rather than carried in
+    /// a document. `old_blended_noise` stays refused until the seeding lands.
+    [[nodiscard]] static BlendedNoise withMeasuredSmear(rng::JavaRandom& random,
+                                                        Parameters parameters);
+
+    [[nodiscard]] Smear smear() const noexcept { return smear_; }
+
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
     [[nodiscard]] const Parameters& parameters() const noexcept { return parameters_; }
@@ -88,10 +128,14 @@ public:
 private:
     BlendedNoise() = default;
 
+    [[nodiscard]] static BlendedNoise build(rng::JavaRandom& random, Parameters parameters,
+                                            Smear smear);
+
     std::vector<PerlinNoise> minimum_;
     std::vector<PerlinNoise> maximum_;
     std::vector<PerlinNoise> blend_;
     Parameters parameters_;
+    Smear smear_ = Smear::PreModern;
 };
 
 } // namespace stratum::noise

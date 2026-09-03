@@ -634,32 +634,57 @@ Open:
   is right and only the way the multiplier enters it is wrong. The candidate
   is withdrawn.
 
-  **What is settled, and what is not.** Two structural questions are closed.
-  The fade is taken from the *unfolded* y — folding first fails the spread by
-  13 sigma and the multiplier-sensitivity by 11. And all three octave stacks
-  are smeared: smearing only the limits misses the multiplier-sensitivity by
-  17 sigma, only the blend misses the spread by 12.
+  **What is settled.** Four structural questions closed, each by a
+  measurement that would have shown the opposite had it been the other way.
+  The fade is taken from the *unfolded* y — folding first misses the spread
+  by 13 sigma and the multiplier-sensitivity by 11. All three octave stacks
+  are smeared — limits only misses the sensitivity by 17 sigma, blend only
+  misses the spread by 12. And the cap, which is the whole of the rest:
 
-  What is not settled is a construction with **both** properties. Vanilla has
-  a correlation length along y of 38 blocks *and* the integer jumps. Every
-  capped candidate tried has the jumps and a correlation length of 2; every
-  uncapped one has the correlation length and no jumps. Scaling the step
-  between the two does not interpolate between them: at K = 1 the jumps match
-  and the correlation is 2, and by K = 1/4 the correlation is 29 but the
-  multiplier-sensitivity has collapsed from 0.989 to 0.476. Flooring the cap
-  at zero, which stops the negative-y displacement, keeps the jumps and still
-  misses the spread by 7 sigma.
+  * **It is built from the slab width taken before the multiplier.** The slab
+    widens with the multiplier; the cap does not. That is what leaves the
+    field almost unmoved across a factor of sixteen in the multiplier, which
+    vanilla's is.
+  * **Below y = 0 it does not bind at all**, so the fold runs at full effect.
+    This was the last piece and the y-profile is what gave it away: vanilla's
+    smear boost below zero is *flat* at 1.67, not varying with y at all,
+    while above zero it climbs steadily — 1.01 at y in [0,32) to 1.67 at
+    [224,256). Flat at the value the rising curve only reaches near y = 240
+    is saturation, not a mirrored cap, and mirroring the cap (which was tried)
+    leaves the negative side at 1.07 and misses the spread by 4.5 sigma.
 
-  So the displacement must be a *small perturbation* on a field that is
-  otherwise smooth in y, where in this build it dominates. That is a much
-  narrower question than the one this section started with, and the
-  fingerprint is the test that any answer has to pass. Nothing is adopted.
+  Against vanilla over sixteen seeds, on the dimension's own y range:
 
-  **None of this is a fix to `legacy()`.** Changing the cap breaks the
-  cubiomes vectors, 150 of whose 270 rows sit below y = 0, and those pin the
-  *pre-1.18* function, which had no multiplier at all. The two constructions
-  genuinely differ here and the modern one needs its own path — measured now,
-  not assumed.
+  | | vanilla | measured reading | |
+  |---|---|---|---|
+  | correlation length along y | 27.00 +/- 0.86 | 28.50 +/- 0.65 | 1.4 sigma |
+  | spread raised over no smearing | 1.4333 +/- 0.027 | 1.4384 +/- 0.018 | 0.2 sigma |
+  | r(multiplier 1, multiplier 16) | 0.9875 +/- 0.001 | 0.9881 +/- 0.000 | 0.8 sigma |
+  | integer-y jumps | present | present | — |
+
+  and it tracks the whole multiplier response, including its non-monotonic
+  tail: correlation length 43/29/29/28/28/31/39 at multipliers
+  0/0.25/1/4/16/64/256 against vanilla's 40/27/27/27/28/31/38.
+
+  **A range check that mattered.** The first version of this comparison
+  sampled y from -256, and the dimension is y in [-64, 320). Everything below
+  -64 is outside the world and vanilla never evaluates there; including it
+  made the fit look worse and pointed at the wrong things. The probes now
+  restrict to the real range.
+
+  **`legacy()` keeps the old reading, and the two are related exactly.** At a
+  multiplier of one they are bit-identical for y >= 0 and differ only below
+  it, which is why the cubiomes vectors — 150 of whose 270 rows sit below
+  y = 0 — still pin the pre-1.18 function unchanged. `withMeasuredSmear()` is
+  the new one. High enough up the two agree again at any multiplier, once the
+  cap exceeds the local offset under either reading and both saturate.
+
+  **What is left is the seeding, and only the seeding.** How a dimension that
+  does not declare `legacy_random_source` seeds its three octave stacks is
+  unknown, and the overworld is such a dimension. So `old_blended_noise` stays
+  refused, and `withMeasuredSmear()` is deliberately not the modern function:
+  it is the modern *smear* on the legacy seeding, so that the settled part is
+  code with tests rather than a paragraph here.
 
   **A methodological correction worth keeping.** The first estimate of the
   normalisation was 130.86 +/- 0.21, reported as 13 sigma from 128 — and the
