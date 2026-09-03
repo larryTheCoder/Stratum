@@ -78,6 +78,19 @@ cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<'META'
 META
 
 # No carvers, no features. Without this the probe reads the wrong thing.
+# A spec may ship extra biomes beside it, as <spec>.biomes.json. `temperature`
+# is a condition ON the biome, so probing it means varying one.
+biomes_file="${spec%.json}.biomes.json"
+if [[ -f "${biomes_file}" ]]; then
+    log "writing extra biomes from ${biomes_file}"
+    env BIOMES="${biomes_file}" PACK="${pack}" python3 -c '
+import json, os, pathlib
+pack = pathlib.Path(os.environ["PACK"])
+for name, body in json.load(open(os.environ["BIOMES"])).items():
+    (pack / "worldgen" / "biome" / (name + ".json")).write_text(json.dumps(body))
+'
+fi
+
 cat > "${pack}/worldgen/biome/probe.json" <<'BIOME'
 {
   "temperature": 0.8, "downfall": 0.4, "has_precipitation": false,
@@ -108,12 +121,36 @@ for entry in spec:
     if name in names:
         raise SystemExit(f'duplicate probe name: {name}')
     names.add(name)
+    # Two shapes. A DENSITY probe wraps the function under test in
+    # `K * flat_cache(f) + gradient` so its value shows up as a terrain
+    # height. A SURFACE RULE probe does not: it takes `raw_final_density`
+    # verbatim — usually a constant, so the column is solid throughout —
+    # and a `surface_rule` of its own, and the answer is read from the
+    # block identities rather than from a height. Same machinery,
+    # different readout.
+    if 'raw_final_density' in entry:
+        final_density = entry['raw_final_density']
+    else:
+        final_density = {
+            'type': 'minecraft:add',
+            'argument1': {'type': 'minecraft:mul', 'argument1': k,
+                          'argument2': {'type': 'minecraft:flat_cache',
+                                        'argument': entry['function']}},
+            'argument2': {'type': 'minecraft:y_clamped_gradient',
+                          'from_y': min_y, 'to_y': min_y + height,
+                          'from_value': 1.0, 'to_value': -1.0},
+        }
+    surface_rule = entry.get('surface_rule',
+                             {'type': 'minecraft:block',
+                              'result_state': {'Name': 'minecraft:stone'}})
+    biome = entry.get('biome', 'stratum:probe')
+
     (pack / 'dimension' / f'{name}.json').write_text(json.dumps({
         'type': 'minecraft:overworld',
         'generator': {
             'type': 'minecraft:noise',
             'settings': f'stratum:{name}',
-            'biome_source': {'type': 'minecraft:fixed', 'biome': 'stratum:probe'},
+            'biome_source': {'type': 'minecraft:fixed', 'biome': biome},
         },
     }))
     (pack / 'worldgen' / 'noise_settings' / f'{name}.json').write_text(json.dumps({
@@ -127,22 +164,13 @@ for entry in spec:
         'noise': {'min_y': min_y, 'height': height,
                   'size_horizontal': 1, 'size_vertical': 1},
         'spawn_target': [],
-        'surface_rule': {'type': 'minecraft:block',
-                         'result_state': {'Name': 'minecraft:stone'}},
+        'surface_rule': surface_rule,
         'noise_router': {
             'barrier': 0, 'fluid_level_floodedness': 0, 'fluid_level_spread': 0,
             'lava': 0, 'temperature': 0, 'vegetation': 0, 'continents': 0,
             'erosion': 0, 'depth': 0, 'ridges': 0, 'preliminary_surface_level': 0,
             'vein_toggle': 0, 'vein_ridged': 0, 'vein_gap': 0,
-            'final_density': {
-                'type': 'minecraft:add',
-                'argument1': {'type': 'minecraft:mul', 'argument1': k,
-                              'argument2': {'type': 'minecraft:flat_cache',
-                                            'argument': entry['function']}},
-                'argument2': {'type': 'minecraft:y_clamped_gradient',
-                              'from_y': min_y, 'to_y': min_y + height,
-                              'from_value': 1.0, 'to_value': -1.0},
-            },
+            'final_density': final_density,
         },
     }))
 print(len(spec))

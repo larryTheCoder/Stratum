@@ -658,10 +658,64 @@ Open:
   all scored at the marginal, 62%, against 96535 labelled positions. They are
   recorded here so the next attempt starts past them rather than at them.
 
-  The instrument for settling it exists: a datapack can give a dimension a
-  surface rule that is one `vertical_gradient` with a chosen `random_name`
-  and band over flat terrain, which isolates the draw from every other rule.
-  That is the next measurement, not another guess.
+  **Isolated, the draw gives up three more of its properties (M4).**
+  `tools/analysis/density-probe.sh` now carries a `surface_rule` and a
+  `raw_final_density` per dimension, so a probe can be one construct alone
+  over solid ground with a marker block for its output — no caves, no
+  aquifers, no competing rules, and the answer read straight from block
+  identities rather than from a terrain height.
+
+  * **The formula holds away from vanilla's own data.** A band of 0..4 gives
+    0.755, 0.503, 0.248 against `(4 - y)/4`; a band of 0..8 reproduces the
+    golden numbers.
+  * **The draw depends only on `random_name` and the position.** Three bands
+    sharing one name were checked for nesting — a smaller threshold
+    succeeding must imply a larger one does, if and only if the band enters
+    nowhere but the threshold. 100% nested, **zero violations**.
+  * **The draw is uniform.** Choosing bands so that `p(y=1) = k/32` for
+    k = 1..31 brackets the value at every position to a thirty-second; over
+    16384 positions the histogram is flat and nothing is non-monotone.
+
+  That last one is an instrument, not just a result: a candidate derivation
+  can now be scored against *bracketed values* rather than against a coin
+  flip, where a wrong answer lands in the right bucket 3.1% of the time
+  instead of 62%. **Nineteen candidates have been refuted** — eight against
+  binary outcomes and eleven at the sharper discrimination, spanning both
+  RNGs, four position mixes and four seedings. All landed at chance. They are
+  written down so the next attempt starts past them.
+
+  The vertical-only correlation survives isolation, which settles that it was
+  the random source and not the world: +0.067 for `minecraft:deepslate` and
+  +0.097 for another name, against +0.003 and below horizontally. That it
+  varies with the NAME by nineteen standard errors says it is a property of
+  particular seeds rather than of the construction — which is what a
+  weakly-mixed position seed looks like, and why a well-mixed hash keeps
+  failing.
+
+- **The other four undocumented surface constructs, measured (M4).** In
+  vanilla's data these all sit under a `biome` condition, so no probe of
+  vanilla's own overworld can reach them. Written directly into a probe's own
+  rule tree they are reachable, and four of the five gave something up.
+
+  * **`temperature` is a threshold at 0.30, strict.** Sweeping a fixed
+    biome's temperature: true at -0.5, 0.0, 0.14 through 0.29 inclusive, and
+    false from 0.30 up. One position of 98304 at exactly 0.30 came out true,
+    which is evidence of a position-dependent adjustment near the top of the
+    world; separating "0.30 flat" from "a lower threshold plus an adjustment"
+    needs a sweep of terrain HEIGHT, not of temperature, and has not been
+    done.
+  * **`bandlands` paints terracotta banding**, and the band table is readable
+    straight off: plain terracotta, orange, red, white and light grey, in
+    that order of frequency, over a fixed column.
+  * **`steep` fires on 16.9% of columns** of a gently varying terrain — a
+    workable signal, but deriving the predicate needs neighbouring columns'
+    heights, which the filler's per-column API cannot currently reach.
+  * **`hole` fires on 0.04%**, six columns in sixteen thousand. Too rare on
+    ordinary terrain to derive from; it needs terrain built so that the
+    surface depth is zero over a known area.
+  * **`above_preliminary_surface` was true everywhere** on the probe's
+    terrain and so said nothing. It needs terrain where the preliminary
+    surface and the real one differ, which the probe did not arrange.
 
   **The aquifer fill decision: what it is, and what it will cost (M3).**
   Scoped, not started. Three things are now known about it.
