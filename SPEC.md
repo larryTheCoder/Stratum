@@ -557,6 +557,32 @@ Open:
   match exactly. A candidate that is right should be near the other end of
   that scale, and nothing yet is.
 
+  **What a time-boxed search established (M3).** Using the deepslate vectors
+  as the oracle and Pearson correlation as the filter — chosen because a
+  correct *seeding* should track the answer even while the normalisation and
+  smear are still wrong, since those change scale and detail rather than
+  shape — three parts of the derivation now have real evidence behind them:
+
+  * the salt is **`"minecraft:terrain"`**, through the positional factory:
+    `XoroshiroPositionalFactory(worldSeed).fromHashOf("minecraft:terrain")`;
+  * the octaves are drawn **sequentially from that one generator**, not
+    per-octave salted the way NormalNoise's are;
+  * in the order **min (16), max (16), main (8)**.
+
+  Each is held up by its own control rather than by looking plausible.
+  `"minecraft:terrain"` correlates at **0.809**; two nonsense salts give
+  0.115 and −0.059. Reversing the octave order with the correct salt
+  collapses it to −0.108, which is the useful one: if the permutations were
+  wrong, their order could not matter that much. All five other draw orders
+  fall to 0.29 or below.
+
+  It is evidence, not proof, and the function is still not reproduced. 0.809
+  is not 1.0, and the gap is somewhere in the sampling formula: sweeping five
+  smear placements, twenty-four frequency and amplitude schedules, and three
+  normalisation divisors moved it not at all. Whatever is left is structural
+  and is not among the things guessed at so far. `old_blended_noise` stays
+  refused.
+
   The golden round trip is no longer the fastest way to test a candidate,
   though. `tools/vectors/generate-deepslate-vectors.sh` records deepslate's
   own `old_blended_noise` at 240 points across five seeds and four parameter

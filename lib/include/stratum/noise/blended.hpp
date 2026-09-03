@@ -26,7 +26,14 @@
 //     commented out as "useless in practice", so the two agree only while
 //     no coordinate reaches the wrap.
 //   * How a dimension that does *not* declare `legacy_random_source` seeds
-//     these octaves is unknown here, and nothing in this file answers it.
+//     these octaves is now *partly* known, and nothing in this file
+//     implements it. A search against the deepslate vectors puts the
+//     derivation at
+//     `XoroshiroPositionalFactory(seed).fromHashOf("minecraft:terrain")`,
+//     drawn sequentially in the order min, max, main — each part supported
+//     by its own control (SPEC §11). What is still missing is whatever makes
+//     the sampling formula agree: that search plateaus at a correlation of
+//     0.809, and nothing swept so far moves it.
 //
 // Which is why `old_blended_noise` remains refused by the interpreter. This
 // is the verified half of it, not the whole (SPEC §11).
