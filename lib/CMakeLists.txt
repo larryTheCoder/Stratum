@@ -12,6 +12,7 @@ configure_file(
 )
 
 add_library(stratum_core STATIC
+    src/biome_parameter_list.cpp
     src/blended.cpp
     src/chunk.cpp
     src/density_graph.cpp
@@ -48,6 +49,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
     FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/biome/parameter_list.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"

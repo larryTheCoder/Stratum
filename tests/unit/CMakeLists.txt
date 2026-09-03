@@ -1,4 +1,5 @@
 add_executable(stratum_unit_tests
+    biome_parameters_test.cpp
     blended_test.cpp
     chunk_test.cpp
     cli_test.cpp

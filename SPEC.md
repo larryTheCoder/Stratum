@@ -680,6 +680,32 @@ Open:
   subset. That matches a single RandomState being constructed once, but
   nothing here checks it, and if it is wrong this refusal is too broad.
 
+- **The biome parameter table is not data, and vanilla will dump it (M4).**
+  At 1.21.11 the pack ships
+  `worldgen/multi_noise_biome_source_parameter_list/overworld.json` as
+  nothing but `{"preset": "minecraft:overworld"}`; the table is compiled into
+  the jar. That looked like a blocker and is not: the server's own data
+  generator writes it out on request, and CLAUDE.md permits the observed
+  output of the vanilla server where it forbids its code.
+  `tools/fetch-vanilla` now asks for it — 7593 rows over 54 biomes for the
+  overworld, five for the Nether — and keeps it under `.fixtures/`, never
+  committed (§12).
+
+  With that, **the biome source is the first thing in this project checked
+  against vanilla's own output rather than against another reimplementation
+  of it.** The golden regions store a biome per 4x4x4 cell; the climate chain
+  and the table between them choose one; the two are compared directly. Three
+  of the four seeds checked match on every one of 24576 cells.
+
+  The fourth does not, and the shape of the failure is the useful part: seed
+  42 misses 76 of 24576, and 75 of those are one contiguous stretch of
+  `dark_forest` this build calls `beach`. A systematic edge, not scattered
+  noise — which points at a climate value being slightly out near one
+  boundary rather than at the search or the table being wrong, since a wrong
+  fitness function would not be right 99.7% of the time. Unsettled, pinned by
+  number in the conformance suite so that any change to it has to be looked
+  at.
+
 - **The three blending types take their no-blending values (M2, extended M3).**
   This engine generates every chunk itself and never blends against terrain
   another generator wrote. `blend_alpha` is 1.0, `blend_offset` is 0.0, and

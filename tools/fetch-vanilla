@@ -149,6 +149,7 @@ done
 readonly jar_file="${output_dir}/server-${version}.jar"
 readonly worldgen_dir="${output_dir}/worldgen"
 readonly structure_dir="${output_dir}/structure"
+readonly biome_parameters_dir="${output_dir}/biome_parameters"
 readonly regions_dir="${output_dir}/regions"
 readonly provenance_file="${output_dir}/PROVENANCE.json"
 
@@ -169,6 +170,8 @@ if [[ ${dry_run} -eq 1 ]]; then
         echo "  jar              : downloaded to ${jar_file}"
     fi
     echo "  worldgen JSON    : ${worldgen_dir} (from ${WORLDGEN_PREFIX}/** inside the jar)"
+    echo "  biome parameters : ${biome_parameters_dir} (dumped by the server's own data
+                       generator; the jar ships only a preset name)"
     echo "  provenance       : ${provenance_file}"
     echo "  verify SHA-1     : $([[ ${skip_verify} -eq 1 ]] && echo no || echo yes)"
     echo "  structures       : $([[ ${with_structures} -eq 1 ]] && echo "${structure_dir}" || echo no)"
@@ -317,6 +320,36 @@ if [[ ${with_structures} -eq 1 ]]; then
     log "extracted ${structure_count} structure NBT files"
 fi
 
+# The biome parameter table is not in the jar as data: at 1.21.11
+# worldgen/multi_noise_biome_source_parameter_list/overworld.json is only
+# {"preset": "minecraft:overworld"}, and the table itself is compiled in.
+# The server will however dump it, and its own output is a permitted source
+# where its code is not (CLAUDE.md). This is the only way to get the numbers
+# M4's biome source needs without reading Mojang's code for them.
+biome_parameter_count=0
+log "asking the server to dump its biome parameters"
+reports_staging="${output_dir}/.extract-reports"
+rm -rf "${reports_staging}"
+mkdir -p "${reports_staging}"
+if (cd "${reports_staging}" && java \
+        -DbundlerMainClass=net.minecraft.data.Main \
+        -jar "${jar_file}" --reports >/dev/null 2>&1); then
+    dumped="${reports_staging}/generated/reports/biome_parameters"
+    if [[ -d "${dumped}" ]]; then
+        rm -rf "${biome_parameters_dir}"
+        mkdir -p "$(dirname "${biome_parameters_dir}")"
+        mv "${dumped}" "${biome_parameters_dir}"
+        biome_parameter_count="$(find "${biome_parameters_dir}" -name '*.json' -type f \
+            | wc -l | tr -d ' ')"
+        log "dumped ${biome_parameter_count} biome parameter list(s)"
+    else
+        log "warning: the server produced no biome_parameters; M4's biome source will skip"
+    fi
+else
+    log "warning: could not run the data generator; M4's biome source will skip"
+fi
+rm -rf "${reports_staging}"
+
 # --- 5. provenance record ------------------------------------------------
 jq -n \
     --arg version "${version}" \
@@ -328,6 +361,7 @@ jq -n \
     --arg jar_source "${jar_path:-${jar_url:-}}" \
     --argjson worldgen_files "${json_count}" \
     --argjson structure_files "${structure_count:-0}" \
+    --argjson biome_parameter_files "${biome_parameter_count:-0}" \
     '{
         version: $version,
         pinned_version: $pinned,
@@ -338,6 +372,7 @@ jq -n \
         server_jar_source: $jar_source,
         worldgen_files: $worldgen_files,
         structure_files: $structure_files,
+        biome_parameter_files: $biome_parameter_files,
         note: "Mojang-derived. Never commit anything in this directory (SPEC 12)."
     }' > "${provenance_file}"
 log "wrote ${provenance_file}"
