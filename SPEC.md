@@ -990,18 +990,47 @@ Open:
   function of the four noises — which is the jittered-centre randomness the
   horizontal geometry already implied, showing up in a second place.
 
-  **Horizontally the spacing is bounded, not pinned (M3).** Three independent
-  estimates agree and none is decisive: two-point disagreement plateaus by a
-  separation of twelve to sixteen columns; segmenting the level field where
-  the spread noise runs gives regions averaging 134 columns, about 11.6
-  across; and the non-flooded blobs at floodedness 1.0 average 189 columns,
-  about 13.8 across. All three are consistent with a sixteen-wide grid and
-  none excludes twelve. The obstacle is structural rather than statistical: in
-  every configuration found so far either almost every cell is flooded to the
-  sea, or the non-flooded ones all share ONE level, so adjacent cells merge
-  and a count of regions undercounts cells. What is needed is a configuration
-  where neighbouring cells reliably take DIFFERENT levels; until then the
-  horizontal number stays a bound.
+  **The horizontal pitch is sixteen (M3).** Bounding it was easy and pinning
+  it was not, for a structural reason: every configuration tried at first
+  either flooded almost every cell to the sea, or gave the non-flooded ones a
+  single shared level, so neighbouring cells merged and counting regions
+  undercounted cells. Three things together fixed that.
+
+  * `preliminary_surface_level`, which the probe had been holding at zero all
+    along, turns out to be an input to the flooding decision — at 320 the
+    aquifer produces no fluid at all, and raising it to 64 stops the sea
+    flooding everything, taking 83% of columns off the sea plateau.
+  * `fluid_level_floodedness` at 0.5 keeps cells in the spread branch rather
+    than the deep one that parks them all at -54.
+  * The spread wrapped in `flat_cache`, so it is one value per column and
+    cells stacked in y cannot disagree — without this the level field
+    fragments into thousands of tendrils, because a per-column scan finds
+    whichever body is deepest.
+
+  Then the test that settled the vertical lattice works sideways. Level
+  changes by position within a candidate pitch, over 16384 columns:
+
+  | pitch | 8 | 12 | **16** | 20 | 24 |
+  |---|---|---|---|---|---|
+  | spread of the step rate | 0.058 | 0.039 | **0.327** | 0.099 | 0.188 |
+
+  Sixteen wins by a factor of three over anything else, and the two that beat
+  the rest are its own aliases — pitch 8 is the pattern folded in half and
+  pitch 24 is it beaten against a period of 48. The profile within the pitch
+  runs from 0.075 at offset 4 to 0.402 at offset 13: smooth rather than
+  spiked, which is the smearing that jittered centres produce.
+
+  It survives every control. Repeating with the spread noise at `xz_scale` 4,
+  8 and 16 gives pitch-16 spreads of 0.187, 0.327 and 0.398 with the SAME
+  phase, so the sixteen belongs to the aquifer and not to the input; and x and
+  z separately agree, peaking at offset 12 and 13 against a trough at 4 to 6.
+  The peak is not at offset 0, so it is not an artefact of the 16-wide chunk
+  either.
+
+  **So the aquifer cell is 16 x 12 x 16**, with the vertical grid line at
+  `y = 8 (mod 12)` and the horizontal boundaries concentrating around
+  `x = 12 (mod 16)`, centres near `x = 5`. Every number there is measured
+  against the server rather than assumed from the shape the wiki describes.
 
   *One contamination to know about.* Where the probe's water meets its lava
   the server's fluid physics makes obsidian and cobblestone — 2821 blocks,
