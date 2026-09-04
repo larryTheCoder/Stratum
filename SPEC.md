@@ -684,6 +684,24 @@ Open:
   RNGs, four position mixes and four seedings. All landed at chance. They are
   written down so the next attempt starts past them.
 
+  **What the vertical correlation looks like, in the values themselves.** The
+  bands used for bracketing put a threshold at every height, not only at
+  y = 1 — band k has `p(y) = (1 + k - y)/32` — so the same run brackets the
+  draw at two adjacent heights for the same position, and the two can be
+  crossed. Over 14944 positions the shift between them is a symmetric peak on
+  zero:
+
+  | shift in 32nds | -3 | -2 | -1 | 0 | +1 | +2 | +3 |
+  |---|---|---|---|---|---|---|---|
+  | share | 3.9% | 5.1% | 6.5% | **8.1%** | 6.6% | 5.0% | 3.6% |
+
+  against 3.1% everywhere if the two were independent. So the draw at y+1 is
+  *near* the draw at y far more often than chance and yet frequently
+  unrelated — not a shared draw, not a fixed offset, and not independence.
+  Whatever seeds the two positions is close for adjacent heights and the
+  values it produces are correlated rather than equal, which is a strong
+  constraint on the derivation and the reason a well-mixed hash cannot be it.
+
   The vertical-only correlation survives isolation, which settles that it was
   the random source and not the world: +0.067 for `minecraft:deepslate` and
   +0.097 for another name, against +0.003 and below horizontally. That it
