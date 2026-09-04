@@ -30,6 +30,7 @@ add_executable(stratum_conformance_tests
     golden_regions_test.cpp
     nbt_structures_test.cpp
     vanilla_aquifer_jitter_test.cpp
+    vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_blended_probe_test.cpp
     vanilla_climate_test.cpp

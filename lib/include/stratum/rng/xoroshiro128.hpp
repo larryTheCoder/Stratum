@@ -203,4 +203,44 @@ private:
     Seed128 base_;
 };
 
+/// Vanilla's position-to-seed mix, shared by everything that wants a value per
+/// block rather than per world.
+///
+/// Recovered by scoring candidates against server output, twice over and
+/// independently: it is what places the aquifer's cell centres and what drives
+/// surface rules' `vertical_gradient`. Shifting by 15 or 17 instead of 16, or
+/// using a logical shift, collapses either match rate to chance.
+///
+/// Every step wraps, and the x term is multiplied as a 32-bit value before
+/// being sign-extended. Spelled in unsigned arithmetic because C++ signed
+/// overflow is undefined where Java's simply wraps.
+[[nodiscard]] std::int64_t positionSeed(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
+
+/// A named object's per-position generator.
+///
+/// The derivation is two forks around one salt: fork the world seed, XOR in
+/// the MD5 of the name, then fork AGAIN. That second fork is the part that
+/// nineteen earlier attempts at `vertical_gradient` missed — with a single
+/// fork the same code scores 34% where the correct one scores 100%.
+class PositionalSource {
+public:
+    explicit constexpr PositionalSource(Seed128 base) noexcept : base_(base) {}
+
+    /// The generator for one block position. Cheap: one mix and one seeding.
+    [[nodiscard]] Xoroshiro128PlusPlus at(std::int32_t x, std::int32_t y,
+                                          std::int32_t z) const noexcept {
+        const auto mixed = static_cast<std::uint64_t>(positionSeed(x, y, z));
+        return Xoroshiro128PlusPlus{Seed128{.lo = base_.lo ^ mixed, .hi = base_.hi}};
+    }
+
+    [[nodiscard]] constexpr Seed128 base() const noexcept { return base_; }
+
+private:
+    Seed128 base_;
+};
+
+/// The whole derivation for a named object, from a world seed.
+[[nodiscard]] PositionalSource positionalSourceFor(std::int64_t worldSeed,
+                                                   std::string_view name) noexcept;
+
 } // namespace stratum::rng

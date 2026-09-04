@@ -183,15 +183,9 @@ private:
     rng::Seed128 base_;
 };
 
-/// The position-to-seed mix the aquifer uses, which several other parts of
-/// vanilla share. Recovered here by scoring candidates against observed cell
-/// draws — shifting by 15 or 17 rather than 16, or using a logical shift,
-/// each collapses the match rate to the null band.
-///
-/// Every step wraps: the x term is multiplied as a 32-bit value and then
-/// sign-extended, and the rest is 64-bit. Spelled in unsigned arithmetic
-/// because C++ signed overflow is undefined where Java's simply wraps.
-[[nodiscard]] std::int64_t positionSeed(std::int32_t cx, std::int32_t cy, std::int32_t cz) noexcept;
+/// The mix and the two-fork derivation live in `stratum::rng`: surface rules'
+/// `vertical_gradient` turned out to use exactly the same primitive, so it is
+/// not the aquifer's to own.
 
 /// The pitch of the lattice the BASE fluid level sits on, which is not the
 /// cell pitch and has no relation to it.

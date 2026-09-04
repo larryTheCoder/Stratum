@@ -25,6 +25,7 @@
 #pragma once
 
 #include <stratum/data/resource_location.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
 #include <nlohmann/json.hpp>
@@ -58,6 +59,29 @@ struct VerticalAnchor {
 
     [[nodiscard]] bool operator==(const VerticalAnchor& other) const = default;
 };
+
+/// Whether a `vertical_gradient` fires at one block.
+///
+/// The rule is a coin weighted by height: certain at and below one anchor,
+/// impossible at and above another, and linear between them, drawn once per
+/// block. The probability was measured early and was never the hard part —
+///
+///     p(y) = (falseAtAndAbove - y) / (falseAtAndAbove - trueAtAndBelow)
+///
+/// — the random source was, and it took nineteen refuted derivations before
+/// the aquifer's own draw showed what shape to look for. It is
+/// `rng::positionalSourceFor(seed, randomName).at(x, y, z)`, one `nextFloat`,
+/// fired when the draw is BELOW p. Checked against the server on 27 million
+/// blocks: 786432 on one band, 21626880 across a 55-band bracket sweep where
+/// every band has to follow from the same single draw, and 4718592 more over
+/// two world seeds and three names including one outside the `minecraft`
+/// namespace. Exact on every one.
+///
+/// @p source must be the one built for the rule's `random_name`.
+[[nodiscard]] bool verticalGradientFires(const rng::PositionalSource& source, std::int32_t x,
+                                         std::int32_t y, std::int32_t z,
+                                         std::int32_t trueAtAndBelow,
+                                         std::int32_t falseAtAndAbove) noexcept;
 
 /// The four things a rule can be.
 enum class RuleType : std::uint8_t {

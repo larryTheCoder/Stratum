@@ -124,10 +124,14 @@ TEST_CASE("what cannot be run is named, and what can be is not", "[surface]") {
     CHECK(refused.unrunnable()[0] == "minecraft:steep");
 
     // And the reason says what is missing, not merely that something is.
-    const auto reason = RuleGraph::unrunnableReason(ConditionType::VerticalGradient);
+    const auto reason = RuleGraph::unrunnableReason(ConditionType::Steep);
     REQUIRE(reason.has_value());
     CHECK_THAT(std::string(*reason),
-               ContainsSubstring("probability is settled") && ContainsSubstring("random source"));
+               ContainsSubstring("neighbouring columns") && ContainsSubstring("SPEC"));
+
+    // vertical_gradient is no longer among them: its random source was
+    // recovered and checked against the server on 27 million blocks.
+    CHECK_FALSE(RuleGraph::unrunnableReason(ConditionType::VerticalGradient).has_value());
 }
 
 TEST_CASE("a malformed surface rule is refused by name", "[surface]") {
@@ -160,4 +164,54 @@ TEST_CASE("a malformed surface rule is refused by name", "[surface]") {
                                              {"then_run", block("minecraft:stone")}}),
                       ContainsSubstring("sideways") && ContainsSubstring("above_bottom"));
     CHECK_THROWS_AS(resolve(nlohmann::json{{"type", "minecraft:block"}}), RuleError);
+}
+
+TEST_CASE("a vertical gradient is certain below, impossible above, and drawn between",
+          "[surface]") {
+    const auto source = stratum::rng::positionalSourceFor(42, "minecraft:deepslate");
+    const auto fires = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return stratum::surface::verticalGradientFires(source, x, y, z, -100, 124);
+    };
+
+    // The ends need no draw at all.
+    CHECK(fires(0, -100, 0));
+    CHECK(fires(0, -400, 0));
+    CHECK_FALSE(fires(0, 124, 0));
+    CHECK_FALSE(fires(0, 400, 0));
+
+    // Between them the rate has to track the probability. At y = 12 that is
+    // (124 - 12) / 224 = 0.5 exactly, so a large sample should sit near half.
+    int fired = 0;
+    int total = 0;
+    for (std::int32_t x = 0; x < 64; ++x)
+        for (std::int32_t z = 0; z < 64; ++z) {
+            ++total;
+            fired += static_cast<int>(fires(x, 12, z));
+        }
+    const double rate = static_cast<double>(fired) / static_cast<double>(total);
+    CHECK(rate > 0.46);
+    CHECK(rate < 0.54);
+
+    // The name is a salt, so an unrelated one gives an unrelated field.
+    const auto other = stratum::rng::positionalSourceFor(42, "stratum:some_other_name");
+    int differing = 0;
+    for (std::int32_t x = 0; x < 64; ++x)
+        for (std::int32_t z = 0; z < 64; ++z)
+            differing += static_cast<int>(stratum::surface::verticalGradientFires(
+                                              other, x, 12, z, -100, 124) != fires(x, 12, z));
+    CHECK(differing > total / 4);
+
+    // But NOT every pair of names is unrelated, and this is measured rather
+    // than assumed: over one probe world the server's own deepslate and
+    // bedrock_floor fields differ on 24.6% of blocks where two independent
+    // fields differ on 50.7%. Whatever brings those two salts close together,
+    // this build inherits it — both are reproduced exactly — so a test that
+    // demanded independence between them would be asserting a falsehood.
+    const auto bedrock = stratum::rng::positionalSourceFor(42, "minecraft:bedrock_floor");
+    int alsoDiffering = 0;
+    for (std::int32_t x = 0; x < 64; ++x)
+        for (std::int32_t z = 0; z < 64; ++z)
+            alsoDiffering += static_cast<int>(stratum::surface::verticalGradientFires(
+                                                  bedrock, x, 12, z, -100, 124) != fires(x, 12, z));
+    CHECK(alsoDiffering < differing);
 }

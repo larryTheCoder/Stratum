@@ -29,6 +29,7 @@ add_library(stratum_core STATIC
     src/noise_settings.cpp
     src/noise_parameters.cpp
     src/noise_registry.cpp
+    src/positional_random.cpp
     src/perlin.cpp
     src/pipeline_freeze.cpp
     src/registry.cpp

@@ -183,14 +183,13 @@ block-exact.
 
 **Surface rules — loaded, not run, and this is the largest gap.** The graph
 resolves completely — 287 rules over 141 conditions for the overworld alone —
-but 8 of the 11 condition types are refused by name, so a generated column is
+but 7 of the 11 condition types are refused by name, so a generated column is
 bare stone where grass, dirt, gravel, deepslate and bedrock belong. That is a
 visibly incomplete world rather than a quietly wrong one, which is the
 trade-off SPEC §8 endorses. The blockers are not equal:
 
 | Blocker | Why it is stuck |
 |---|---|
-| `vertical_gradient` | The probability is settled; the random source is not. Nineteen candidate derivations refuted. This one is genuinely open research, and it owns deepslate and bedrock — 4368 of the 4496 blocks the filler currently gets wrong. |
 | `stone_depth`, `water`, `y_above` | All three need a surface-depth computation that no part of this build has yet. Buildable work, not a derivation problem. |
 | `steep` | Needs neighbouring columns, which the filler's per-column shape cannot reach. |
 | `hole`, `bandlands` | Undocumented and rare; measured but not settled. |
@@ -202,9 +201,11 @@ of M5 that is in place.
 
 So: shape is finished, materials are perhaps a third finished, and
 integration is ahead of us. A world that could be walked around needs surface
-depth and the aquifer's barrier threshold; a bit-exact world additionally
-needs `vertical_gradient`'s random source, which has resisted nineteen
-candidate derivations and is now the project's one genuinely open problem.
+depth and the aquifer's barrier threshold. `vertical_gradient`'s random
+source — nineteen refuted derivations, and the project's longest-standing
+open problem — is now settled: it turned out to be the same primitive the
+aquifer's cell centres use, and it is checked against the server on 27
+million blocks.
 
 ## Capability matrix (v1)
 

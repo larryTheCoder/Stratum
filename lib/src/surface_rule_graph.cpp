@@ -158,16 +158,25 @@ std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType type) noexc
     return std::nullopt;
 }
 
+bool verticalGradientFires(const rng::PositionalSource& source, const std::int32_t x,
+                           const std::int32_t y, const std::int32_t z,
+                           const std::int32_t trueAtAndBelow,
+                           const std::int32_t falseAtAndAbove) noexcept {
+    if (y <= trueAtAndBelow) {
+        return true;
+    }
+    if (y >= falseAtAndAbove) {
+        return false;
+    }
+    const double span = static_cast<double>(falseAtAndAbove) - static_cast<double>(trueAtAndBelow);
+    const double probability =
+        (static_cast<double>(falseAtAndAbove) - static_cast<double>(y)) / span;
+    rng::Xoroshiro128PlusPlus draw = source.at(x, y, z);
+    return static_cast<double>(draw.nextFloat()) < probability;
+}
+
 std::optional<std::string_view> RuleGraph::unrunnableReason(ConditionType type) noexcept {
     switch (type) {
-        case ConditionType::VerticalGradient:
-            // The probability IS settled — measured on two gradients with
-            // different bands. What is not is the random source, and half a
-            // rule is not a rule.
-            return "its probability is settled, (false_at_and_above - y) / (false_at_and_above - "
-                   "true_at_and_below), but the random source that compares against it is not: "
-                   "nineteen candidate derivations have been refuted against measured values "
-                   "(SPEC §11)";
         case ConditionType::Hole:
             return "it fires on 0.04% of ordinary terrain, too rarely to have been derived, and "
                    "nothing documents whether its test is on a surface depth of exactly zero or "

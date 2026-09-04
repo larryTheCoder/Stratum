@@ -622,182 +622,51 @@ Open:
   filler already placed. A column without them is bare stone where grass and
   dirt belong — visibly incomplete rather than wrong.
 
-  **Surface rules: `vertical_gradient`, half settled (M4).** Two of the
-  overworld's three top-level surface rules are vertical gradients — bedrock
-  at the world floor and deepslate — and between them they account for 4368
-  of the 4496 blocks the filler currently gets wrong. They are also the only
-  undocumented rule types the aquifer-free probe world can exercise, because
-  the other four sit under a `biome` condition and that world has one biome.
+  **Surface rules: `vertical_gradient`, SETTLED (M4).** Two of the overworld's
+  three top-level surface rules are vertical gradients — bedrock at the world
+  floor and deepslate — and between them they accounted for 4368 of the 4496
+  blocks the filler got wrong.
 
-  **The probability is settled.** Counting vanilla's own blocks by height:
+  The probability was measured early and was never the hard part:
 
-  | deepslate, y | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
-  |---|---|---|---|---|---|---|---|
-  | measured | 0.868 | 0.750 | 0.620 | 0.498 | 0.372 | 0.252 | 0.125 |
-  | (8 - y) / 8 | 0.875 | 0.750 | 0.625 | 0.500 | 0.375 | 0.250 | 0.125 |
+  ```
+  p(y) = (false_at_and_above - y) / (false_at_and_above - true_at_and_below)
+  ```
 
-  and bedrock, over a different band with different anchors, matches
-  `(-59 - y) / 5` just as closely. So the probability at height y is
-  `(false_at_and_above - y) / (false_at_and_above - true_at_and_below)`,
-  clamped, on two independent gradients.
+  clamped, drawn once per block. The random source took nineteen refuted
+  derivations, several sessions of characterisation, and in the end came from
+  somewhere else entirely: **the aquifer's cell-centre jitter, recovered first,
+  showed what shape to look for.** It is the same primitive —
 
-  **The draw is per block, not per column.** A single draw per column would
-  make every column deepslate up to a height and stone above it; 47.8% of
-  columns are, where 100% would be.
+  ```
+  source = rng::positionalSourceFor(worldSeed, random_name)   // fork, salt, fork AGAIN
+  fires  = source.at(x, y, z).nextFloat() < p(y)
+  ```
 
-  **What the random source is remains open, and the shape of the answer is
-  now constrained.** The outcome correlates between vertically adjacent
-  blocks by +0.089 over what independent draws with the same marginals would
-  give — and by +0.003 horizontally, +0.001 in z, and +0.008 two blocks
-  apart in y. That is a fingerprint: correlation only between y and y+1, in
-  one axis, gone by y+2.
+  — and the second fork is precisely what the nineteen were missing. With a
+  single fork the identical code scores 34% where the correct one scores 100%.
 
-  A well-mixed hash of (x, y, z) cannot produce it, which is why eight
-  candidate derivations — Xoroshiro and the Java LCG, three position mixes,
-  seeded from the world seed, from the MD5 of `random_name`, and from both —
-  all scored at the marginal, 62%, against 96535 labelled positions. They are
-  recorded here so the next attempt starts past them rather than at them.
+  *Checked on 27 million blocks.* One band at seed 42: 786432 of 786432. The
+  55-band bracket sweep, where every band shares one draw per position and
+  differs only in its threshold, so all 55 must follow from a single value:
+  21626880 of 21626880, worst band also exact. Two further world seeds against
+  three names, one of them outside the `minecraft` namespace: 4718592 more,
+  every combination exact. `vanilla_vertical_gradient_test.cpp` pins the first
+  two.
 
-  **Isolated, the draw gives up three more of its properties (M4).**
-  `tools/analysis/density-probe.sh` now carries a `surface_rule`, a
-  `raw_final_density` and the two cell sizes per dimension, so a probe can
-  vary the lattice under a fixed rule, and can be one construct alone
-  over solid ground with a marker block for its output — no caves, no
-  aquifers, no competing rules, and the answer read straight from block
-  identities rather than from a terrain height.
+  *One thing measured along the way that contradicts an obvious assumption.*
+  Not every pair of names gives independent fields. Over one probe world the
+  server's own `minecraft:deepslate` and `minecraft:bedrock_floor` differ on
+  24.6% of blocks, where two unrelated names differ on 50.7%. Both are
+  reproduced exactly here, so whatever brings those two salts close together
+  is inherited rather than approximated — and a test asserting independence
+  between them would be asserting a falsehood. `surface_rule_test.cpp` says so
+  in place, since it is the kind of thing a later reader would otherwise
+  "fix".
 
-  * **The formula holds away from vanilla's own data.** A band of 0..4 gives
-    0.755, 0.503, 0.248 against `(4 - y)/4`; a band of 0..8 reproduces the
-    golden numbers.
-  * **The draw depends only on `random_name` and the position.** Three bands
-    sharing one name were checked for nesting — a smaller threshold
-    succeeding must imply a larger one does, if and only if the band enters
-    nowhere but the threshold. 100% nested, **zero violations**.
-  * **The draw is uniform.** Choosing bands so that `p(y=1) = k/32` for
-    k = 1..31 brackets the value at every position to a thirty-second; over
-    16384 positions the histogram is flat and nothing is non-monotone.
-
-  That last one is an instrument, not just a result: a candidate derivation
-  can now be scored against *bracketed values* rather than against a coin
-  flip, where a wrong answer lands in the right bucket 3.1% of the time
-  instead of 62%. **Nineteen candidates have been refuted** — eight against
-  binary outcomes and eleven at the sharper discrimination, spanning both
-  RNGs, four position mixes and four seedings. All landed at chance. They are
-  written down so the next attempt starts past them.
-
-  **The draw is not an independent per-position value at all (M4).** With the
-  bracketing instrument the correlation can be measured as a correlation
-  rather than as an agreement rate, and it has a shape:
-
-  | vertical lag | 1 | 2 | 3 | 4 |
-  |---|---|---|---|---|
-  | rho | **+0.273** | +0.133 | +0.055 | -0.003 |
-
-  against +0.010 and +0.018 one and two blocks sideways. So the value behaves
-  like a field with a vertical correlation length of about three blocks and no
-  horizontal correlation whatever — which is not what a WELL-MIXED hash of
-  (x, y, z) produces, and is why nineteen of them scored at chance. The
-  measurement below sharpens both halves of this: the horizontal figures are
-  an artefact, and the vertical one is a bit effect rather than a distance.
-
-  **It is not a cell, and it is not a distance — it is the bits of y (M4).**
-  Splitting the lag-1 pairs by whether they share a vertical cell gave +0.314
-  within a cell against +0.104 across a boundary, which looked like the
-  answer. It was confounded: over a y range of six, "across a boundary" is one
-  particular pair of heights. Two experiments took the confound out, and
-  between them they refute the cell reading and replace it.
-
-  *Widening the sweep.* Fifty-five bands, band k with
-  `true_at_and_below: k - 31` and `false_at_and_above: k + 1`, put a full
-  thirty-second ladder at every height from 0 to 23 — six whole cells instead
-  of one boundary. The split survives (+0.182 within, +0.043 across at lag 1),
-  but the lag profile that comes with it does not decay: it combs, near zero
-  at lag 4 and lag 8 and positive at 5, 6 and 7.
-
-  *Varying the cell.* The same rule over the same solid ground at
-  `size_vertical` 1, 2 and 4 — cells of 4, 8 and 16 blocks — is **block for
-  block identical**, 0 of 786432. So the draw never consults the density
-  lattice at all, and a four-block cell cannot be what the split was seeing.
-  What the split was actually seeing is a fixed phase in the absolute height:
-  lag-1 pairs at `y ≡ 0` and `y ≡ 2 (mod 4)` couple at +0.153, at `y ≡ 1` at
-  +0.105, and at `y ≡ 3` at +0.035, repeating exactly at mod 8.
-
-  Neither separation nor phase explains that alone, so the two were crossed —
-  separation down, the absolute height's residue mod 4 across, over 786432
-  labelled blocks:
-
-  | lag | y=0 | y=1 | y=2 | y=3 | mean |
-  |---|---|---|---|---|---|
-  | 1 | +0.1530 | +0.1048 | +0.1531 | +0.0350 | +0.1115 |
-  | 2 | +0.0796 | +0.0832 | +0.0275 | +0.0284 | +0.0547 |
-  | 3 | +0.1046 | +0.0135 | +0.0333 | +0.0171 | +0.0421 |
-  | **4** | **+0.0019** | **+0.0019** | **+0.0020** | **+0.0017** | **+0.0019** |
-  | 5 | +0.0162 | +0.0350 | +0.0156 | -0.0011 | +0.0164 |
-  | 6 | +0.0269 | +0.0269 | -0.0008 | -0.0017 | +0.0128 |
-  | 7 | +0.0349 | +0.0035 | -0.0023 | +0.0019 | +0.0095 |
-  | **8** | **+0.0021** | **+0.0004** | **+0.0039** | **+0.0064** | **+0.0032** |
-
-  Lags 4 and 8 are flat at every phase; every other lag has structure. **Two
-  blocks whose heights agree mod 4 are independent, and no others are.** The
-  bracketing instrument says the same thing without ever estimating a
-  threshold — its lag-4 correlation is -0.003 against +0.273 at lag 1 — so
-  this is a property of the draw and not of the baseline.
-
-  The horizontal axes stay flat under the same treatment, to within 0.003 at
-  every separation and phase. This corrects the earlier figures: the +0.010
-  and +0.018 quoted sideways were an artefact of estimating the baseline
-  across heights of differing probability.
-
-  Read down the table rather than across and the structure names itself. The
-  six pairs that sit inside one group of four absolute heights — (0,1), (0,2),
-  (0,3), (1,2), (1,3), (2,3) — carry +0.153, +0.080, +0.105, +0.105, +0.083
-  and +0.153. Every pair that crosses a group boundary carries +0.035 or less.
-  So the draw is grouped into FOUR-BLOCK RUNS OF ABSOLUTE HEIGHT, which is
-  what the first experiment saw; what it got wrong was calling that group the
-  density cell, and the second experiment is what rules the density cell out.
-
-  **What this changes is the search.** The grouping is four blocks whatever
-  the cell height is, so something other than the noise lattice fixes it. That
-  does not put the target outside the class of position functions — a value
-  sliced out of one word per (x, z, floor(y/4)) would look exactly like this,
-  independent across groups and correlated within one — but it does say a
-  twentieth flat position mix is the wrong next move, because every one of the
-  nineteen was a function of y that treats all heights alike. The table itself
-  is the acceptance test, and a far sharper one than a hit rate: a candidate
-  must put zeroes on the lag-4 and lag-8 rows and reproduce the phase
-  structure on the rest.
-
-  One thing this cannot yet say is where the group boundary sits. Both probes
-  run with `min_y: -64`, and 64 is a multiple of four, so "aligned to absolute
-  y" and "aligned to the bottom of the world" predict the same table. Vanilla
-  requires `min_y` to be a multiple of sixteen, so no setting of it separates
-  them; whatever tries next has to distinguish them some other way.
-
-  **What the vertical correlation looks like, in the values themselves.** The
-  bands used for bracketing put a threshold at every height, not only at
-  y = 1 — band k has `p(y) = (1 + k - y)/32` — so the same run brackets the
-  draw at two adjacent heights for the same position, and the two can be
-  crossed. Over 14944 positions the shift between them is a symmetric peak on
-  zero:
-
-  | shift in 32nds | -3 | -2 | -1 | 0 | +1 | +2 | +3 |
-  |---|---|---|---|---|---|---|---|
-  | share | 3.9% | 5.1% | 6.5% | **8.1%** | 6.6% | 5.0% | 3.6% |
-
-  against 3.1% everywhere if the two were independent. So the draw at y+1 is
-  *near* the draw at y far more often than chance and yet frequently
-  unrelated — not a shared draw, not a fixed offset, and not independence.
-  Whatever seeds the two positions is close for adjacent heights and the
-  values it produces are correlated rather than equal, which is a strong
-  constraint on the derivation and the reason a well-mixed hash cannot be it.
-
-  The vertical-only correlation survives isolation, which settles that it was
-  the random source and not the world: +0.067 for `minecraft:deepslate` and
-  +0.097 for another name, against +0.003 and below horizontally. That it
-  varies with the NAME by nineteen standard errors says it is a property of
-  particular seeds rather than of the construction — which is what a
-  weakly-mixed position seed looks like, and why a well-mixed hash keeps
-  failing.
+  With this the condition is no longer refused: `RuleGraph::unrunnableReason`
+  returns nothing for `vertical_gradient`, and the earlier record of what was
+  known and not known about it is superseded by the derivation above.
 
 - **Surface rules load whole, and refuse by name (M4).**
   `stratum::surface::RuleGraph` resolves the tree for every one of vanilla's
