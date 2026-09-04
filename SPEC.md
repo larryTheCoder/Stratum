@@ -722,30 +722,56 @@ Open:
   lag-1 pairs at `y ≡ 0` and `y ≡ 2 (mod 4)` couple at +0.153, at `y ≡ 1` at
   +0.105, and at `y ≡ 3` at +0.035, repeating exactly at mod 8.
 
-  That is not a distance law, so it was regrouped by the highest bit position
-  at which the two coordinates differ, along each axis:
+  Neither separation nor phase explains that alone, so the two were crossed —
+  separation down, the absolute height's residue mod 4 across, over 786432
+  labelled blocks:
 
-  | highest differing bit | 0 | 1 | 2 | 3 | 4 | 5 |
-  |---|---|---|---|---|---|---|
-  | along y | **+0.1545** | +0.0944 | +0.0307 | +0.0092 | +0.0045 | +0.0014 |
-  | along x | +0.0003 | +0.0007 | +0.0008 | +0.0000 | +0.0002 | +0.0002 |
-  | along z | -0.0027 | -0.0008 | +0.0008 | -0.0005 | -0.0004 | -0.0001 |
+  | lag | y=0 | y=1 | y=2 | y=3 | mean |
+  |---|---|---|---|---|---|
+  | 1 | +0.1530 | +0.1048 | +0.1531 | +0.0350 | +0.1115 |
+  | 2 | +0.0796 | +0.0832 | +0.0275 | +0.0284 | +0.0547 |
+  | 3 | +0.1046 | +0.0135 | +0.0333 | +0.0171 | +0.0421 |
+  | **4** | **+0.0019** | **+0.0019** | **+0.0020** | **+0.0017** | **+0.0019** |
+  | 5 | +0.0162 | +0.0350 | +0.0156 | -0.0011 | +0.0164 |
+  | 6 | +0.0269 | +0.0269 | -0.0008 | -0.0017 | +0.0128 |
+  | 7 | +0.0349 | +0.0035 | -0.0023 | +0.0019 | +0.0095 |
+  | **8** | **+0.0021** | **+0.0004** | **+0.0039** | **+0.0064** | **+0.0032** |
 
-  A monotone ladder in y and a flat line in both horizontal axes, over 786432
-  labelled blocks. This also corrects the horizontal figures quoted above:
-  +0.010 and +0.018 sideways were an artefact of estimating the baseline
-  across heights of differing probability; against a per-height independence
-  baseline, x and z are decorrelated to within 0.003 at every scale.
+  Lags 4 and 8 are flat at every phase; every other lag has structure. **Two
+  blocks whose heights agree mod 4 are independent, and no others are.** The
+  bracketing instrument says the same thing without ever estimating a
+  threshold — its lag-4 correlation is -0.003 against +0.273 at lag 1 — so
+  this is a property of the draw and not of the baseline.
 
-  **What this changes is the search.** The target is a hash after all — the
-  nineteen refuted candidates were right in kind — but one whose avalanche in
-  y is incomplete, so that flipping a low bit of y perturbs the result instead
-  of replacing it, while flipping any bit of x or z replaces it. That is what
-  a positional seed built as a linear combination looks like when y enters
-  with a small multiplier or none while x and z are multiplied by large
-  constants. The ladder is also an acceptance test far sharper than a hit
-  rate: a candidate must reproduce these six numbers and the two flat rows,
-  and any well-mixed function of position fails on the first column.
+  The horizontal axes stay flat under the same treatment, to within 0.003 at
+  every separation and phase. This corrects the earlier figures: the +0.010
+  and +0.018 quoted sideways were an artefact of estimating the baseline
+  across heights of differing probability.
+
+  Read down the table rather than across and the structure names itself. The
+  six pairs that sit inside one group of four absolute heights — (0,1), (0,2),
+  (0,3), (1,2), (1,3), (2,3) — carry +0.153, +0.080, +0.105, +0.105, +0.083
+  and +0.153. Every pair that crosses a group boundary carries +0.035 or less.
+  So the draw is grouped into FOUR-BLOCK RUNS OF ABSOLUTE HEIGHT, which is
+  what the first experiment saw; what it got wrong was calling that group the
+  density cell, and the second experiment is what rules the density cell out.
+
+  **What this changes is the search.** The grouping is four blocks whatever
+  the cell height is, so something other than the noise lattice fixes it. That
+  does not put the target outside the class of position functions — a value
+  sliced out of one word per (x, z, floor(y/4)) would look exactly like this,
+  independent across groups and correlated within one — but it does say a
+  twentieth flat position mix is the wrong next move, because every one of the
+  nineteen was a function of y that treats all heights alike. The table itself
+  is the acceptance test, and a far sharper one than a hit rate: a candidate
+  must put zeroes on the lag-4 and lag-8 rows and reproduce the phase
+  structure on the rest.
+
+  One thing this cannot yet say is where the group boundary sits. Both probes
+  run with `min_y: -64`, and 64 is a multiple of four, so "aligned to absolute
+  y" and "aligned to the bottom of the world" predict the same table. Vanilla
+  requires `min_y` to be a multiple of sixteen, so no setting of it separates
+  them; whatever tries next has to distinguish them some other way.
 
   **What the vertical correlation looks like, in the values themselves.** The
   bands used for bracketing put a threshold at every height, not only at
