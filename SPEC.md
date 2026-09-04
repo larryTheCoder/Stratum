@@ -1314,55 +1314,56 @@ Open:
   separated by exactly that thickness and agreed to within 0.09 blocks once it
   was accounted for.
 
-  **The jitter draw: the law is settled, the derivation is not (M3).** A second
-  round put ten more agents on it — a per-cell ground truth first, then five
-  search families in parallel, then adversarial verification of the negative.
-  The verification overturned the ground truth's own headline, which is the
-  result that matters.
+  **The jitter draw, recovered (M3).** Three rounds and about 1.9e9 refuted
+  candidates in, the derivation fell out once two things changed: a ground
+  truth refit under the integer constraint, and scoring by EXACT MATCH of a
+  cell's draw rather than by correlation against a noisy table.
 
-  *It is an integer draw on nine values, not a continuous uniform.* The
-  sharpest channel needs no model at all: for vertically adjacent cell pairs
-  the DIFFERENCE of horizontal jitters is an integer. Period-1 Rayleigh over
-  1032 pairs gives R = 0.290 (jx) and 0.310 (jz) against a chance level of
-  0.028 — p = 2e-38 and 1e-43 — while the control that matters, the same
-  difference between SAME-LAYER horizontal neighbours, gives R = 0.019 at
-  p = 0.56. An estimator artefact would show in both channels; this shows in
-  one. The barrier thickness agrees independently: the slab width t satisfies
-  `dy = K/t` for one global K near 23.6, dy is integral in each of the four
-  seeds separately, and 0 of 400 lattice-destroying null resamples reach the
-  observed statistic.
+  ```
+  base  = fork(fork(worldSeed) ^ md5("minecraft:aquifer"))      // two forks, one salt
+  mix   = { l = (int)(cx * 3129871) ^ (cz * 116129781L) ^ cy;
+            l = l * l * 42317861L + l * 11L;  l >> 16 }         // arithmetic shift
+  g     = Xoroshiro128PlusPlus(base.lo ^ mix, base.hi)
+  jx    = g.nextInt(10);  jy = g.nextInt(9);  jz = g.nextInt(10)
+  centre = (16cx + jx, 12cy + jy, 16cz + jz)
+  ```
 
-  Nine rather than ten then follows from the model-free threshold readout,
-  `P(jy >= 8) = 0.1289 +- 0.0148` over 512 cells: ten values predict 0.200 and
-  are 4.8 sigma out, nine predict 0.111 and sit 1.2 sigma away. Discreteness is
-  also what closes the width dispute — a continuous law could escape the same
-  bound through a free half-block offset, and an integer one cannot, because
-  the indicator `n + phi >= 8` reduces to `n >= 8` for any phi.
+  **The bounds are not equal, which corrects the previous entry.** Ten
+  horizontally and nine vertically — the round before this one concluded "nine
+  values, the same absolute width on every axis", and the horizontal half of
+  that was wrong. At block level width 10 gives 78.4% of barrier slabs exactly
+  against 40.5% for width 9, and in the phi-free tilt channel width 9 produces
+  the textbook symmetric plus-or-minus-one shoulders of a wrong bound.
 
-  What is NOT pinned is the draw's offset — the values are `phi ... phi+8` for
-  a constant degenerate with the estimator's own calibration — and the RNG
-  behind them.
+  *Checked independently before landing.* Reimplemented here from the written
+  derivation alone and scored on an observable with no fitted quantity in it: a
+  cell at layer -4 takes the -20 level rather than the lava floor exactly when
+  its vertical draw reaches 8. Over four world seeds that is **256 of 256
+  cells**, 34 predicted positive and the same 34 observed. The one subtlety is
+  worth recording, because it cost 9 cells at the first attempt: a 16x16
+  footprint is the WRONG way to decide which cell owns a column, since
+  horizontal jitter moves a cell's territory by up to nine blocks. Assigning
+  each column to its nearest predicted centre takes the score from 96.5% to
+  exact, and is not circular — the assignment uses the horizontal draws while
+  the readout tests the vertical one. `vanilla_aquifer_jitter_test.cpp` pins it.
 
-  *The derivation was not found, and the negative is trustworthy.* Roughly
-  1.9e9 candidates across five families were scored and refuted: positional
-  Xoroshiro from every plausible aquifer salt, the legacy `java.util.Random`
-  path, a 24-constant grid of positional seed mixes against 25 salts and 32
-  state assemblies, and their draw-slot and axis permutations. The screen has
-  demonstrated power rather than assumed it: the dataset's two independent
-  estimates of the same quantity correlate at 0.959, so a correct derivation
-  would score there, and the best candidate anywhere reached 0.19. An
-  independent fit-free re-scoring — which fluid level each cell took, no plane
-  fit and no recovered value — puts every named candidate at or below the
-  measured chance baseline of 68.5% against 98.7-99.7% for the truth.
+  *Why it is not a fluke of a large search.* Every ablation collapses to a 3-5%
+  null band at block level, with no table in the loop: a different salt,
+  dropping either fork, swapping the MD5 halves, adding a third fork, shifting
+  by 15 or 17 instead of 16, or a logical shift instead of an arithmetic one.
+  The five other assignments of draw slots to axes score 3.9-15.3% against
+  78.9%. Fed another world's seed the same model gives 10.8%. And it holds on
+  fixtures the search never saw, including one with lava live and one at
+  psl 120.
 
-  Four things the list does NOT cover, recorded so the next attempt starts
-  past them rather than at them: three successive `nextInt(9)` draws, where
-  rejection sampling shifts the later slots and a fixed-slot correlation screen
-  cannot see it; integer horizontal jitters, never tested as such; the
-  exact-match score, which only becomes available now that the draw is known to
-  be 9-valued and is far sharper than a correlation; and a ground truth refit
-  under the integer constraint with the offset free, which should collapse the
-  present 0.6-block per-cell error and make every later search cheaper.
+  *What the remaining 22% is.* Not the centres. Split by how far the third
+  nearest source sits beyond the second, exactness runs 0.53 where three
+  sources compete and 0.97 where only two do — so the two-source barrier rule
+  is 97% block-exact, which bounds the per-cell jitter error at about 1.5%.
+  The shortfall is the barrier THRESHOLD, whose optimum moves between probes
+  (23 on most, 22 on two, 12 on one) while the Voronoi boundaries stay inside
+  the observed slab 99.3% of the time. That threshold is the last unrecovered
+  number in the aquifer.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the

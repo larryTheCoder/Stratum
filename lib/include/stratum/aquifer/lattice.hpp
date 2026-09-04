@@ -34,6 +34,8 @@
 //     moves 27% of columns with all four router inputs held constant.
 #pragma once
 
+#include <stratum/rng/xoroshiro128.hpp>
+
 #include <cstdint>
 
 namespace stratum::aquifer {
@@ -74,33 +76,6 @@ inline constexpr std::int32_t kLavaLevel = -54;
 /// than 1e-4 can exist.
 inline constexpr double kFloodedLocalThreshold = 0.4;
 inline constexpr double kFloodedSeaThreshold = 0.8;
-
-/// The centre jitter is an INTEGER draw on nine values — `nextInt(9)` or any
-/// equivalent — the same absolute width on all three axes, drawn once per 3D
-/// cell. It is NOT a continuous uniform, which is what the first measurement
-/// of it concluded.
-///
-/// Discreteness is settled on a channel that needs no model: for vertically
-/// adjacent cell pairs the DIFFERENCE of horizontal jitters is an integer.
-/// Period-1 Rayleigh over 1032 pairs gives R = 0.290 (jx) and 0.310 (jz)
-/// against a chance level of 0.028 — p = 2e-38 and 1e-43 — while the control
-/// that matters, the same difference between same-layer horizontal
-/// neighbours, gives R = 0.019 at p = 0.56. An estimator artefact would show
-/// in both. The barrier-thickness channel agrees independently: the slab
-/// width t satisfies dy = K/t for a single global K near 23.6, and dy is
-/// integral in every seed separately.
-///
-/// Nine rather than ten follows from a model-free readout: a threshold cell
-/// takes the upper level exactly when its jitter clears 8, and P = 0.1289
-/// +- 0.0148 over 512 such cells. Ten values predict 0.200 (4.8 sigma out);
-/// nine predict 0.111 (1.2 sigma). Twelve and sixteen are excluded by orders
-/// of magnitude.
-///
-/// The draw's OFFSET is not pinned — the values are `phi, phi+1, ... phi+8`
-/// for some constant phi degenerate with the estimator's own calibration —
-/// and neither is the RNG that produces them. Roughly 1.9e9 candidate
-/// derivations across five families have been refuted (SPEC §11).
-inline constexpr std::int32_t kJitterValues = 9;
 
 /// The fluid level a cell takes for a given `fluid_level_spread`, relative to
 /// whatever base the cell is measured from.
@@ -154,6 +129,69 @@ struct CellIndex {
 /// Every axis floors toward negative infinity: below y = 0, and west or north
 /// of the origin, a truncating division would fold two cells into one.
 [[nodiscard]] CellIndex cellOf(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
+
+/// The centre jitter, drawn once per 3D cell. It is an INTEGER draw, and the
+/// bound differs by axis: ten values horizontally and nine vertically.
+///
+/// Recovered by search against the server, not from any source: a candidate
+/// either reproduces a cell's draw or it does not, and this one does. On the
+/// model-free readout — a cell at layer -4 takes the -20 fluid level rather
+/// than the lava floor exactly when its centre clears y = -40, which for a
+/// nine-valued draw means jy == 8 — it predicts **256 of 256 cells across four
+/// world seeds**, with 34 predicted positive and the same 34 observed. Block
+/// level, with no fitted table anywhere in the loop, it reproduces 78.4% of
+/// the probe's barrier slabs exactly and places 99.3% of Voronoi boundaries
+/// inside the observed slab; the shortfall is the barrier threshold, which is
+/// still unrecovered, not the centres. Every ablation collapses to a 3-5% null
+/// band: a different salt, dropping either fork, swapping the MD5 halves,
+/// adding a third fork, or shifting by 15 or 17 instead of 16.
+inline constexpr std::int32_t kJitterBoundX = 10;
+inline constexpr std::int32_t kJitterBoundY = 9;
+inline constexpr std::int32_t kJitterBoundZ = 10;
+
+/// A cell's centre offset from the low corner of its cell.
+struct Jitter {
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::int32_t z = 0;
+
+    [[nodiscard]] constexpr bool operator==(const Jitter&) const noexcept = default;
+};
+
+/// The per-world source of cell centres. Immutable once built, and cheap to
+/// query: the world seed is folded down to a 128-bit base once, and each cell
+/// then costs one position mix and three draws.
+class CentreSource {
+public:
+    /// Forks the world seed, salts it with the MD5 of `minecraft:aquifer`, and
+    /// forks again — the same two-step derivation the noise registry uses,
+    /// which is why `XoroshiroPositionalFactory` does the first half here.
+    explicit CentreSource(std::int64_t worldSeed) noexcept;
+
+    /// The three draws for one cell, in the order x, y, z from one generator.
+    /// The order is not free: the other five assignments of draw slots to axes
+    /// score 3.9-15.3% against this one's 78.9% at block level.
+    [[nodiscard]] Jitter jitterOf(std::int32_t cx, std::int32_t cy, std::int32_t cz) const noexcept;
+
+    /// The centre in absolute block coordinates.
+    [[nodiscard]] CellIndex centreOf(std::int32_t cx, std::int32_t cy,
+                                     std::int32_t cz) const noexcept;
+
+    [[nodiscard]] constexpr rng::Seed128 base() const noexcept { return base_; }
+
+private:
+    rng::Seed128 base_;
+};
+
+/// The position-to-seed mix the aquifer uses, which several other parts of
+/// vanilla share. Recovered here by scoring candidates against observed cell
+/// draws — shifting by 15 or 17 rather than 16, or using a logical shift,
+/// each collapses the match rate to the null band.
+///
+/// Every step wraps: the x term is multiplied as a 32-bit value and then
+/// sign-extended, and the rest is 64-bit. Spelled in unsigned arithmetic
+/// because C++ signed overflow is undefined where Java's simply wraps.
+[[nodiscard]] std::int64_t positionSeed(std::int32_t cx, std::int32_t cy, std::int32_t cz) noexcept;
 
 /// The pitch of the lattice the BASE fluid level sits on, which is not the
 /// cell pitch and has no relation to it.

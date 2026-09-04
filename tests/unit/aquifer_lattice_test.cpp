@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <bit>
 #include <cstdint>
 
@@ -143,17 +144,74 @@ TEST_CASE("the measured aquifer constants are recorded as measured", "[aquifer]"
     CHECK(stratum::aquifer::baseLevel(-64, 96) < stratum::aquifer::kLavaLevel + 12);
 }
 
-TEST_CASE("the centre jitter is a nine-valued integer draw", "[aquifer]") {
-    // Nine, not ten: a threshold cell takes the upper level exactly when its
-    // jitter clears 8, measured at 0.1289 +- 0.0148 over 512 cells. Ten values
-    // would put that at 0.200, which is 4.8 sigma away; nine put it at 0.111.
-    CHECK(stratum::aquifer::kJitterValues == 9);
+TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
+    using stratum::aquifer::CentreSource;
+    using stratum::aquifer::Jitter;
 
-    // The jitter has to fit inside the cell it belongs to on every axis, which
-    // it does with room to spare on the horizontal ones and only just on the
-    // vertical one — the constraint that makes a single absolute width, rather
-    // than a per-axis fraction of the pitch, the only consistent reading.
-    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchY);
-    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchX);
-    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchZ);
+    // Known answers from the derivation recovered against the server. They are
+    // self-consistent by construction; what ties them to vanilla is the
+    // conformance case, which scores this same code on the server's own blocks.
+    const CentreSource s42{42};
+    CHECK(s42.jitterOf(0, 0, 0) == Jitter{7, 7, 9});
+    CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 4, 6});
+    CHECK(s42.jitterOf(3, -4, 5) == Jitter{6, 7, 8});
+    CHECK(s42.jitterOf(-1, 1, -1) == Jitter{0, 6, 4});
+    CHECK(s42.jitterOf(7, 7, 7) == Jitter{2, 1, 8});
+
+    const CentreSource s7{7};
+    CHECK(s7.jitterOf(0, 0, 0) == Jitter{9, 6, 8});
+    CHECK(s7.jitterOf(3, -4, 5) == Jitter{0, 6, 2});
+
+    // A negative seed, since the position mix sign-extends and shifts
+    // arithmetically, and every step of it wraps.
+    const CentreSource sneg{-1};
+    CHECK(sneg.jitterOf(0, 0, 0) == Jitter{2, 7, 4});
+    CHECK(sneg.jitterOf(7, 7, 7) == Jitter{8, 8, 5});
+}
+
+TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
+    // Ten horizontally, nine vertically — not one width on every axis, which is
+    // what the measurement first suggested. Over 32000 cells every value inside
+    // each bound appears and nothing outside it does.
+    const stratum::aquifer::CentreSource source{42};
+    std::array<int, 16> seenX{};
+    std::array<int, 16> seenY{};
+    std::array<int, 16> seenZ{};
+    for (std::int32_t cx = -20; cx < 20; ++cx)
+        for (std::int32_t cy = -6; cy < 14; ++cy)
+            for (std::int32_t cz = -20; cz < 20; ++cz) {
+                const auto jitter = source.jitterOf(cx, cy, cz);
+                REQUIRE(jitter.x >= 0);
+                REQUIRE(jitter.y >= 0);
+                REQUIRE(jitter.z >= 0);
+                REQUIRE(jitter.x < stratum::aquifer::kJitterBoundX);
+                REQUIRE(jitter.y < stratum::aquifer::kJitterBoundY);
+                REQUIRE(jitter.z < stratum::aquifer::kJitterBoundZ);
+                ++seenX.at(static_cast<std::size_t>(jitter.x));
+                ++seenY.at(static_cast<std::size_t>(jitter.y));
+                ++seenZ.at(static_cast<std::size_t>(jitter.z));
+            }
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundX); ++v)
+        CHECK(seenX.at(v) > 0);
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundY); ++v)
+        CHECK(seenY.at(v) > 0);
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundZ); ++v)
+        CHECK(seenZ.at(v) > 0);
+    CHECK(seenY.at(9) == 0); // nine values vertically, so 9 never appears
+    CHECK(seenX.at(10) == 0);
+    CHECK(seenZ.at(10) == 0);
+}
+
+TEST_CASE("the centre is the cell corner plus its jitter", "[aquifer]") {
+    const stratum::aquifer::CentreSource source{42};
+    const auto jitter = source.jitterOf(3, -4, 5);
+    const auto centre = source.centreOf(3, -4, 5);
+    CHECK(centre.x == (3 * stratum::aquifer::kCellPitchX) + jitter.x);
+    CHECK(centre.y == (-4 * stratum::aquifer::kCellPitchY) + jitter.y);
+    CHECK(centre.z == (5 * stratum::aquifer::kCellPitchZ) + jitter.z);
+
+    // Every centre lies inside its own cell, which is what makes the grid a
+    // partition rather than an overlapping mess.
+    CHECK(stratum::aquifer::cellOf(centre.x, centre.y, centre.z) ==
+          stratum::aquifer::CellIndex{3, -4, 5});
 }

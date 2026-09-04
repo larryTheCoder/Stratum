@@ -172,13 +172,14 @@ toward the later entry.
 the filler refuses that dimension by name rather than flooding every cave
 below sea level. The geometry is now measured against the server: cells of
 16 x 12 x 16 anchored on multiples of their pitch, centres jittered per 3D
-cell as a nine-valued integer draw, the fluid level
+cell — recovered, and pinned by a conformance case that predicts 256 of 256
+threshold cells across four seeds — the fluid level
 `base + 3 * floorDiv(floor(spread * 10), 3)` over a base lattice of pitch 40,
 floodedness gating at exactly 0.4 and 0.8, and barriers written at every cell
-interface whose two sides place different blocks. What is missing is the RNG
-that produces the jitter draw; without it the base rule reproduces 96.1% of
-blocks rather than all of them. Roughly 1.9e9 candidate derivations have been
-refuted, so this one is open research rather than unfinished coding.
+interface whose two sides place different blocks. The last unrecovered number
+is the barrier THRESHOLD, whose optimum moves between probes; the centres
+themselves are settled, and where only two sources compete the rule is 97%
+block-exact.
 
 **Surface rules — loaded, not run, and this is the largest gap.** The graph
 resolves completely — 287 rules over 141 conditions for the overworld alone —
@@ -201,10 +202,9 @@ of M5 that is in place.
 
 So: shape is finished, materials are perhaps a third finished, and
 integration is ahead of us. A world that could be walked around needs surface
-depth and the aquifer jitter draw; a bit-exact world additionally needs
-`vertical_gradient`'s random source. Both of those are RNG derivations that
-have resisted large searches — nineteen candidates and 1.9e9 respectively —
-so they are the project's two genuinely open problems.
+depth and the aquifer's barrier threshold; a bit-exact world additionally
+needs `vertical_gradient`'s random source, which has resisted nineteen
+candidate derivations and is now the project's one genuinely open problem.
 
 ## Capability matrix (v1)
 
