@@ -9,11 +9,12 @@ Snowcapped, Spyglass) work as content for a Bedrock server.
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
-- **Status:** Milestone **M1** — core primitives and the conformance
-  harness. The engine does not generate terrain yet, but it can already read
-  what vanilla produced: `stratum diff` compares two region files
-  block-for-block and `stratum render` draws one. Subcommands that are not
-  implemented fail loudly with the milestone that owns them.
+- **Status:** Milestone **M3** closing, **M4** under way. Terrain SHAPE
+  generates and is checked against the vanilla server; terrain MATERIALS are
+  partly done and contain the project's one genuinely stuck problem. See
+  [What generates today](#what-generates-today) for the honest breakdown.
+  Subcommands that are not implemented fail loudly with the milestone that
+  owns them.
 
 `SPEC.md` is the single source of truth for scope and architecture;
 `CLAUDE.md` defines how changes are made. Read both before contributing.
@@ -97,9 +98,12 @@ vanilla's 2D functions are shaped around — continentalness below zero is
 ocean. The value range is printed alongside, because a shade cannot be read
 back into a number.
 
-This is **not** terrain height: a real heightmap needs the cell sampler and
-block placement that follow it (M3). A function this build cannot evaluate
-is refused by name rather than drawn as a guess.
+This is **not** terrain height — it is one function's field. The cell sampler
+and block placement that turn it into terrain now exist in `lib/`, but the
+`generate` subcommand that would drive them from the command line does not,
+so terrain is reachable from the library and the conformance tests rather
+than from the shell. A function this build cannot evaluate is refused by name
+rather than drawn as a guess.
 
 Check a pack before generating from it:
 
@@ -121,11 +125,16 @@ handed to you rather than answered: whether an unexecutable registry should
 stop a load depends on whose pack it is, and vanilla's own data could not
 load if this build decided it.
 
-Lint locally the way CI does:
+Lint locally the way CI does. `ctest --preset dev` covers the first two; the
+other two exist because CI builds configurations this machine does not, and
+each of them has caught a break that every other check passed:
 
 ```bash
 tools/lint/check-determinism.sh   # also runs as the ctest `lint.determinism` case
 tools/lint/format.sh --fix        # clang-format 18.1.8, pinned
+tools/lint/warnings.sh            # the project warning set as errors, which only CI sets
+tools/lint/tidy.sh                # clang-tidy 18
+tools/lint/optimised.sh           # the unit suite built optimised, where UB stops being forgiven
 ```
 
 ## Repository layout
@@ -138,6 +147,60 @@ ext/       zend binding for PocketMine-MP (M5; marshaling only)
 tools/     lint, fixture fetching, schema sync, CI glue
 tests/     Catch2 v3 unit suites; conformance driven via `cli diff` + CTest
 ```
+
+## What generates today
+
+This section is the honest counterpart to the capability matrix below: the
+matrix states the v1 contract, this states how much of it is finished. Every
+number here is against output from the vanilla 1.21.11 server, not against a
+reimplementation.
+
+**Terrain shape — done, and checked.** The density pipeline evaluates all 34
+node types, the full noise router (all 45 of the overworld's entries), cell
+sampling with trilinear interpolation and every cache node type. The chunk
+filler turns that field into blocks: over four chunks and 393216 blocks of an
+aquifer-free world, **every block is in the right category** — solid, fluid or
+air — and 82.0% are the exact right block. All of the missing 18% is surface
+rules, below.
+
+**Biomes — done, and exact.** The multi-noise biome source matches vanilla on
+every one of 98304 sampled cells across four seeds. Getting there needed two
+things together: climate values quantised to fixed point, and ties broken
+toward the later entry.
+
+**Aquifers — derived, not yet wired.** Vanilla's overworld enables them, so
+the filler refuses that dimension by name rather than flooding every cave
+below sea level. The geometry is now measured against the server: cells of
+16 x 12 x 16 anchored on multiples of their pitch, centres jittered per 3D
+cell, the fluid level `base + 3 * floorDiv(floor(spread * 10), 3)` over a base
+lattice of pitch 40, floodedness gating at exactly 0.4 and 0.8, and barriers
+written at every cell interface whose two sides place different blocks. What
+is missing is the RNG that draws the centre jitter; without it the base rule
+reproduces 96.1% of blocks rather than all of them.
+
+**Surface rules — loaded, not run, and this is the largest gap.** The graph
+resolves completely — 287 rules over 141 conditions for the overworld alone —
+but 8 of the 11 condition types are refused by name, so a generated column is
+bare stone where grass, dirt, gravel, deepslate and bedrock belong. That is a
+visibly incomplete world rather than a quietly wrong one, which is the
+trade-off SPEC §8 endorses. The blockers are not equal:
+
+| Blocker | Why it is stuck |
+|---|---|
+| `vertical_gradient` | The probability is settled; the random source is not. Nineteen candidate derivations refuted. This one is genuinely open research, and it owns deepslate and bedrock — 4368 of the 4496 blocks the filler currently gets wrong. |
+| `stone_depth`, `water`, `y_above` | All three need a surface-depth computation that no part of this build has yet. Buildable work, not a derivation problem. |
+| `steep` | Needs neighbouring columns, which the filler's per-column shape cannot reach. |
+| `hole`, `bandlands` | Undocumented and rare; measured but not settled. |
+
+**PocketMine integration — not started.** `ext/` is an empty directory with a
+README by design (M5), and the Java-to-Bedrock mapping layer that belongs at
+`lib/mapping/` does not exist yet. Pipeline freeze storage is the only piece
+of M5 that is in place.
+
+So: shape is finished, materials are perhaps a third finished, and
+integration is ahead of us. A world that could be walked around needs surface
+depth and the aquifer jitter draw; a bit-exact world additionally needs
+`vertical_gradient`'s random source, which has resisted nineteen attempts.
 
 ## Capability matrix (v1)
 
@@ -166,10 +229,12 @@ identifier and registry, so a caller can report exactly what it will not
 execute. See the open question in SPEC §8 about when their presence should be
 fatal.
 
-This matrix states the v1 contract, not what is finished. The build in
-progress refuses two density function types outright, and two more only
-when it has no cell lattice to evaluate them over — by name and with a
-reason, rather than approximating them. It refuses a noise written inline
+This matrix states the v1 contract, not what is finished — see
+[What generates today](#what-generates-today) for that. The build in progress
+refuses two density function types outright, `end_islands` and `slide`, and
+two more only when it is asked to evaluate them without a cell lattice, which
+noise settings now supply — by name and with a reason, rather than
+approximating them. It refuses a noise written inline
 for a narrower reason: a noise is seeded from the MD5 of its identifier, and
 one written in place has none. SPEC §11 lists why each is where it is.
 
