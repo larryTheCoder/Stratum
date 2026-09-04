@@ -1,0 +1,355 @@
+// Stratum — a dimension's surface rules, resolved.
+// Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+
+#include <stratum/surface/rule_graph.hpp>
+
+#include <algorithm>
+#include <array>
+#include <string>
+#include <string_view>
+#include <utility>
+
+namespace stratum::surface {
+
+namespace {
+
+constexpr std::array<std::string_view, 4> kRuleNames = {"minecraft:sequence", "minecraft:condition",
+                                                        "minecraft:block", "minecraft:bandlands"};
+
+constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
+                                                              "minecraft:noise_threshold",
+                                                              "minecraft:not",
+                                                              "minecraft:stone_depth",
+                                                              "minecraft:vertical_gradient",
+                                                              "minecraft:water",
+                                                              "minecraft:y_above",
+                                                              "minecraft:above_preliminary_surface",
+                                                              "minecraft:hole",
+                                                              "minecraft:steep",
+                                                              "minecraft:temperature"};
+
+[[noreturn]] void fail(const data::ResourceLocation& id, const std::string& what) {
+    throw RuleError("surface rule of '" + id.toString() + "': " + what);
+}
+
+[[nodiscard]] const nlohmann::json& require(const nlohmann::json& object, const char* field,
+                                            const data::ResourceLocation& id,
+                                            std::string_view typeName) {
+    if (!object.contains(field)) {
+        fail(id, "'" + std::string(typeName) + "' has no \"" + field + "\"");
+    }
+    return object.at(field);
+}
+
+/// The same shape settings::loadAll reads for `default_block`: a "Name" and
+/// an optional "Properties" of strings. Written again here rather than shared
+/// because the settings loader's version reports errors against a settings
+/// FIELD, and this one has to report against a rule.
+[[nodiscard]] settings::BlockState readBlockState(const nlohmann::json& json,
+                                                  const data::ResourceLocation& id,
+                                                  std::string_view typeName) {
+    if (!json.is_object() || !json.contains("Name")) {
+        fail(id, "'" + std::string(typeName) +
+                     "' needs \"result_state\" to be an object with a "
+                     "\"Name\"");
+    }
+    const nlohmann::json& name = json.at("Name");
+    if (!name.is_string()) {
+        fail(id, "'" + std::string(typeName) + "' needs \"Name\" to be an identifier");
+    }
+    settings::BlockState state;
+    state.name = data::ResourceLocation::parse(name.get<std::string>());
+    if (json.contains("Properties")) {
+        const nlohmann::json& properties = json.at("Properties");
+        if (!properties.is_object()) {
+            fail(id, "'" + std::string(typeName) + "' needs \"Properties\" to be an object");
+        }
+        for (const auto& [key, value] : properties.items()) {
+            if (!value.is_string()) {
+                fail(id, "'" + std::string(typeName) + "' needs the property \"" + key +
+                             "\" to be a string, as vanilla writes them");
+            }
+            state.properties.emplace(key, value.get<std::string>());
+        }
+    }
+    return state;
+}
+
+[[nodiscard]] VerticalAnchor readAnchor(const nlohmann::json& json,
+                                        const data::ResourceLocation& id, const char* where) {
+    if (!json.is_object() || json.size() != 1) {
+        fail(id,
+             std::string(where) +
+                 " must be an object naming exactly one of absolute, above_bottom or below_top");
+    }
+    const auto& [key, value] = *json.items().begin();
+    if (!value.is_number_integer()) {
+        fail(id, std::string(where) + "'s " + key + " must be a whole number of blocks");
+    }
+    VerticalAnchor anchor;
+    anchor.value = value.get<std::int32_t>();
+    if (key == "absolute") {
+        anchor.kind = VerticalAnchor::Kind::Absolute;
+    } else if (key == "above_bottom") {
+        anchor.kind = VerticalAnchor::Kind::AboveBottom;
+    } else if (key == "below_top") {
+        anchor.kind = VerticalAnchor::Kind::BelowTop;
+    } else {
+        fail(id, std::string(where) + " names '" + key +
+                     "', which is not a vertical anchor; the three are absolute, above_bottom "
+                     "and below_top");
+    }
+    return anchor;
+}
+
+} // namespace
+
+std::int32_t VerticalAnchor::resolve(const settings::NoiseGeometry& geometry) const noexcept {
+    switch (kind) {
+        case Kind::AboveBottom:
+            return geometry.minY + value;
+        case Kind::BelowTop:
+            // The top block is minY + height - 1, so "below_top: 0" is it.
+            return (geometry.minY + geometry.height - 1) - value;
+        case Kind::Absolute:
+        default:
+            return value;
+    }
+}
+
+std::string_view ruleTypeName(RuleType type) noexcept {
+    return kRuleNames[static_cast<std::size_t>(type)];
+}
+
+std::string_view conditionTypeName(ConditionType type) noexcept {
+    return kConditionNames[static_cast<std::size_t>(type)];
+}
+
+std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType type) noexcept {
+    if (type == RuleType::Bandlands) {
+        return "it paints the mesa banding, and while a probe shows which terracotta it places "
+               "(SPEC §11) the order the bands run in is not settled and nothing documents it";
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string_view> RuleGraph::unrunnableReason(ConditionType type) noexcept {
+    switch (type) {
+        case ConditionType::VerticalGradient:
+            // The probability IS settled — measured on two gradients with
+            // different bands. What is not is the random source, and half a
+            // rule is not a rule.
+            return "its probability is settled, (false_at_and_above - y) / (false_at_and_above - "
+                   "true_at_and_below), but the random source that compares against it is not: "
+                   "nineteen candidate derivations have been refuted against measured values "
+                   "(SPEC §11)";
+        case ConditionType::Hole:
+            return "it fires on 0.04% of ordinary terrain, too rarely to have been derived, and "
+                   "nothing documents whether its test is on a surface depth of exactly zero or "
+                   "at most zero (SPEC §11)";
+        case ConditionType::Steep:
+            return "its predicate needs the heights of neighbouring columns, which no permitted "
+                   "source states and which the filler's per-column shape cannot reach "
+                   "(SPEC §11)";
+        case ConditionType::StoneDepth:
+            return "the direction and strictness of its comparison are not documented, and a "
+                   "wrong choice moves every surface layer by a block (SPEC §11)";
+        case ConditionType::Water:
+        case ConditionType::YAbove:
+            return "it needs the surface depth, which no part of this build computes yet";
+        case ConditionType::Biome:
+        case ConditionType::Temperature:
+            return "it reads the biome at the position, which the filler does not carry";
+        case ConditionType::NoiseThreshold:
+            return "the y its noise is sampled at, and whether its thresholds are inclusive, are "
+                   "both undocumented (SPEC §11)";
+        case ConditionType::AbovePreliminarySurface:
+        case ConditionType::Not:
+        default:
+            return std::nullopt;
+    }
+}
+
+const Rule& RuleGraph::rule(RuleIndex index) const {
+    if (index >= rules_.size()) {
+        throw RuleError("rule " + std::to_string(index) + " is outside this graph");
+    }
+    return rules_[index];
+}
+
+const Condition& RuleGraph::condition(ConditionIndex index) const {
+    if (index >= conditions_.size()) {
+        throw RuleError("condition " + std::to_string(index) + " is outside this graph");
+    }
+    return conditions_[index];
+}
+
+std::vector<data::ResourceLocation> RuleGraph::referencedNoises() const {
+    std::vector<data::ResourceLocation> named;
+    for (const Condition& entry : conditions_) {
+        if (entry.noise.has_value()) {
+            named.push_back(*entry.noise);
+        }
+    }
+    std::ranges::sort(named);
+    named.erase(std::ranges::unique(named).begin(), named.end());
+    return named;
+}
+
+std::vector<std::string> RuleGraph::unrunnable() const {
+    std::vector<std::string> names;
+    for (const Rule& entry : rules_) {
+        if (unrunnableReason(entry.type).has_value()) {
+            names.emplace_back(ruleTypeName(entry.type));
+        }
+    }
+    for (const Condition& entry : conditions_) {
+        if (unrunnableReason(entry.type).has_value()) {
+            names.emplace_back(conditionTypeName(entry.type));
+        }
+    }
+    std::ranges::sort(names);
+    names.erase(std::ranges::unique(names).begin(), names.end());
+    return names;
+}
+
+namespace {
+
+/// Resolution is two mutually recursive walks over the JSON, appending as it
+/// goes. A surface rule is a tree — vanilla shares nothing between branches —
+/// so there is no deduplication here and no need for one.
+struct Resolver {
+    const data::ResourceLocation& id;
+    std::vector<Rule>& rules;
+    std::vector<Condition>& conditions;
+
+    [[nodiscard]] RuleIndex readRule(const nlohmann::json& json);
+    [[nodiscard]] ConditionIndex readCondition(const nlohmann::json& json);
+};
+
+RuleIndex Resolver::readRule(const nlohmann::json& json) {
+    if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
+        fail(id, "a rule must be an object with a string \"type\"");
+    }
+    const auto name = json.at("type").get<std::string>();
+    const auto* const found = std::ranges::find(kRuleNames, name);
+    if (found == kRuleNames.end()) {
+        fail(id, "'" + name +
+                     "' is not a surface rule this build knows; the four are sequence, condition, "
+                     "block and bandlands");
+    }
+
+    Rule entry;
+    entry.type = static_cast<RuleType>(found - kRuleNames.begin());
+    switch (entry.type) {
+        case RuleType::Sequence: {
+            const nlohmann::json& list = require(json, "sequence", id, name);
+            if (!list.is_array()) {
+                fail(id, "'" + name + "' needs \"sequence\" to be an array");
+            }
+            for (const nlohmann::json& child : list) {
+                entry.sequence.push_back(readRule(child));
+            }
+            break;
+        }
+        case RuleType::Condition:
+            entry.condition = readCondition(require(json, "if_true", id, name));
+            entry.thenRun = readRule(require(json, "then_run", id, name));
+            break;
+        case RuleType::Block:
+            entry.block = readBlockState(require(json, "result_state", id, name), id, name);
+            break;
+        case RuleType::Bandlands:
+            break;
+    }
+    rules.push_back(std::move(entry));
+    return static_cast<RuleIndex>(rules.size() - 1);
+}
+
+ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
+    if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
+        fail(id, "a condition must be an object with a string \"type\"");
+    }
+    const auto name = json.at("type").get<std::string>();
+    const auto* const found = std::ranges::find(kConditionNames, name);
+    if (found == kConditionNames.end()) {
+        fail(id, "'" + name + "' is not a surface rule condition this build knows");
+    }
+
+    Condition entry;
+    entry.type = static_cast<ConditionType>(found - kConditionNames.begin());
+    switch (entry.type) {
+        case ConditionType::Biome: {
+            const nlohmann::json& list = require(json, "biome_is", id, name);
+            if (!list.is_array() || list.empty()) {
+                fail(id, "'" + name + "' needs \"biome_is\" to be a non-empty array");
+            }
+            for (const nlohmann::json& biome : list) {
+                if (!biome.is_string()) {
+                    fail(id, "'" + name + "' needs every \"biome_is\" entry to be an identifier");
+                }
+                entry.biomes.push_back(data::ResourceLocation::parse(biome.get<std::string>()));
+            }
+            break;
+        }
+        case ConditionType::NoiseThreshold:
+            entry.noise =
+                data::ResourceLocation::parse(require(json, "noise", id, name).get<std::string>());
+            entry.minThreshold = require(json, "min_threshold", id, name).get<double>();
+            entry.maxThreshold = require(json, "max_threshold", id, name).get<double>();
+            break;
+        case ConditionType::Not:
+            entry.invert = readCondition(require(json, "invert", id, name));
+            break;
+        case ConditionType::StoneDepth:
+            entry.offset = require(json, "offset", id, name).get<std::int32_t>();
+            entry.addSurfaceDepth = require(json, "add_surface_depth", id, name).get<bool>();
+            entry.secondaryDepthRange =
+                require(json, "secondary_depth_range", id, name).get<std::int32_t>();
+            entry.surfaceType = require(json, "surface_type", id, name).get<std::string>();
+            if (entry.surfaceType != "floor" && entry.surfaceType != "ceiling") {
+                fail(id, "'" + name + "' has surface_type '" + entry.surfaceType +
+                             "'; the two are floor and ceiling");
+            }
+            break;
+        case ConditionType::VerticalGradient:
+            entry.randomName = require(json, "random_name", id, name).get<std::string>();
+            entry.trueAtAndBelow =
+                readAnchor(require(json, "true_at_and_below", id, name), id, "true_at_and_below");
+            entry.falseAtAndAbove =
+                readAnchor(require(json, "false_at_and_above", id, name), id, "false_at_and_above");
+            break;
+        case ConditionType::Water:
+            entry.offset = require(json, "offset", id, name).get<std::int32_t>();
+            entry.surfaceDepthMultiplier =
+                require(json, "surface_depth_multiplier", id, name).get<std::int32_t>();
+            entry.addStoneDepth = require(json, "add_stone_depth", id, name).get<bool>();
+            break;
+        case ConditionType::YAbove:
+            entry.anchor = readAnchor(require(json, "anchor", id, name), id, "anchor");
+            entry.surfaceDepthMultiplier =
+                require(json, "surface_depth_multiplier", id, name).get<std::int32_t>();
+            entry.addStoneDepth = require(json, "add_stone_depth", id, name).get<bool>();
+            break;
+        case ConditionType::AbovePreliminarySurface:
+        case ConditionType::Hole:
+        case ConditionType::Steep:
+        case ConditionType::Temperature:
+            // No fields. All four are absent from mcdoc entirely, which is
+            // why the schema here is written out (see the header).
+            break;
+    }
+    conditions.push_back(std::move(entry));
+    return static_cast<ConditionIndex>(conditions.size() - 1);
+}
+
+} // namespace
+
+RuleGraph RuleGraph::resolve(const nlohmann::json& json, const data::ResourceLocation& id) {
+    RuleGraph graph;
+    Resolver resolver{.id = id, .rules = graph.rules_, .conditions = graph.conditions_};
+    graph.root_ = resolver.readRule(json);
+    return graph;
+}
+
+} // namespace stratum::surface

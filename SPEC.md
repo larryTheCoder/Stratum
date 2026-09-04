@@ -710,6 +710,35 @@ Open:
   weakly-mixed position seed looks like, and why a well-mixed hash keeps
   failing.
 
+- **Surface rules load whole, and refuse by name (M4).**
+  `stratum::surface::RuleGraph` resolves the tree for every one of vanilla's
+  seven dimensions: the overworld's is 287 rules over 141 conditions naming 7
+  noises, an order of magnitude larger than anything else here. All fifteen
+  types are read; anything the schema does not define is an error naming the
+  type, never a skip.
+
+  Resolving is separated from RUNNING on purpose. The structure of every type
+  is documented and can be loaded today; the semantics of ten of them are not
+  settled, and §8 would rather refuse a rule by name than approximate it. So
+  the graph reports what it cannot execute and why — and the reasons are the
+  measurements above rather than "unimplemented": `vertical_gradient` says its
+  probability is settled and its random source is not, `hole` says it fires on
+  0.04% of terrain and its comparison is undocumented, `steep` says its
+  predicate needs neighbouring columns the filler cannot reach.
+
+  Five constructs are already runnable — the three structural rules, `not`,
+  and `above_preliminary_surface`, the last only because `find_top_surface`
+  landed. That makes `minecraft:end`, whose whole surface rule is one `block`,
+  the one dimension this build could decorate the moment there is an executor.
+
+  The schema is written out rather than generated, and that is a debt (§11).
+  Five of the fifteen are absent from mcdoc entirely, so they would be
+  hand-written whatever happens — the precedent is `tools/mcdoc/schema.py`,
+  which already hand-writes `blend_alpha` and `end_islands`. The other ten
+  could be generated and are not: the generator cannot parse either
+  surface-rule mcdoc file, and the types they refer to live in a third file it
+  cannot parse either.
+
 - **The other four undocumented surface constructs, measured (M4).** In
   vanilla's data these all sit under a `biome` condition, so no probe of
   vanilla's own overworld can reach them. Written directly into a probe's own

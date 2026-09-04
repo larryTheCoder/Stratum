@@ -38,6 +38,7 @@ add_executable(stratum_conformance_tests
     vanilla_pack_test.cpp
     vanilla_settings_test.cpp
     vanilla_surface_level_test.cpp
+    vanilla_surface_rules_test.cpp
     vanilla_weird_scaled_test.cpp
     vanilla_render_test.cpp
 )
