@@ -1115,6 +1115,48 @@ Open:
   across 16382 bodies, agreeing exactly with the global lava level measured
   from the block census.
 
+  **The base is a lattice of its own, and nothing random is in it (M3).**
+  Pinning `fluid_level_spread` to the constant zero makes the offset exactly
+  zero, so the level read out of a chunk IS the base. Done per cell, each cell
+  layer then reports exactly ONE level, unanimous across some 16400 bodies —
+  which retires the per-cell random term the ladders seemed to need.
+
+  That apparent randomness has an exact explanation. The bases are 40 apart
+  and 40 is not divisible by 3, so consecutive bases cycle through all three
+  residues mod 3:
+
+  | base | -54 | -20 | 20 | 60 | 100 | 140 |
+  |---|---|---|---|---|---|---|
+  | mod 3 | 0 | 1 | 2 | 0 | 1 | 2 |
+
+  The ladders measured in cells -2, 1 and 4 had residues 1, 2 and 0, and the
+  bases in those cells are -20, 20 and 60 — residues 1, 2 and 0. The spread
+  never changes a residue, because its offset is always a multiple of three.
+  So the earlier reading, that a further per-cell term sat inside the base, was
+  wrong: the residues differ because the BASES differ, on a lattice.
+
+  *What the lattice is.* Sweeping the preliminary surface and reading per cell:
+
+  | psl | 56 | 80 | 96 | 128 | 160 |
+  |---|---|---|---|---|---|
+  | top slab | 56 | 80 | 96 | 128 | 160 |
+  | beneath it | -54, -20, 20 | -54, -20, 20, 60 | -54, -20, 20, 60 | -54, -20, 20, 60, 100 | -54, -20, 20, 60, 100, 140 |
+
+  **The topmost fluid level is `preliminary_surface_level` exactly**, on all
+  five values, and beneath it sits a fixed ladder of period **40** anchored at
+  `y = 20 (mod 40)` which psl does not move at all. The lava floor's -54 sits
+  outside that progression, as its own thing.
+
+  *What the lattice is not.* It does not follow the sea: at `sea_level` 32 and
+  96 the ladder is identical. Raising the sea ABOVE part of it does not shift
+  it either — at `sea_level` 128 the 60 and 96 slabs stop reporting tops
+  because they are swallowed into one sea body, which is a merge rather than a
+  move. And floodedness 1.0 collapses everything to the sea alone.
+
+  This is also the last correction the old readout forced: what looked like the
+  base saturating in the preliminary surface was the deepest-body scan sitting
+  on the fixed ladder while the psl-tracking slab moved above it, unseen.
+
   **The grid origin, from centres instead of boundaries (M3).** Boundaries
   could not settle the anchor because a boundary's position is the grid origin
   convolved with the centre jitter. A RUN's midpoint estimates the centre
