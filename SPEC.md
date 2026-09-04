@@ -659,8 +659,9 @@ Open:
   recorded here so the next attempt starts past them rather than at them.
 
   **Isolated, the draw gives up three more of its properties (M4).**
-  `tools/analysis/density-probe.sh` now carries a `surface_rule` and a
-  `raw_final_density` per dimension, so a probe can be one construct alone
+  `tools/analysis/density-probe.sh` now carries a `surface_rule`, a
+  `raw_final_density` and the two cell sizes per dimension, so a probe can
+  vary the lattice under a fixed rule, and can be one construct alone
   over solid ground with a marker block for its output — no caves, no
   aquifers, no competing rules, and the answer read straight from block
   identities rather than from a terrain height.
@@ -694,27 +695,57 @@ Open:
 
   against +0.010 and +0.018 one and two blocks sideways. So the value behaves
   like a field with a vertical correlation length of about three blocks and no
-  horizontal correlation whatever — which is not what ANY hash of (x, y, z)
-  produces, and is why nineteen of them scored at chance.
+  horizontal correlation whatever — which is not what a WELL-MIXED hash of
+  (x, y, z) produces, and is why nineteen of them scored at chance. The
+  measurement below sharpens both halves of this: the horizontal figures are
+  an artefact, and the vertical one is a bit effect rather than a distance.
 
-  Splitting the lag-1 pairs by whether they share a vertical cell — the probe
-  dimension has `size_vertical: 1`, so four blocks — gives +0.314 within a
-  cell against +0.104 across a boundary. Suggestive, and not conclusive: over
-  a y range of six, "across a boundary" is one particular pair of heights, so
-  cell membership and height are confounded. Widening it needs bands chosen
-  for higher y, which the current spec does not carry.
+  **It is not a cell, and it is not a distance — it is the bits of y (M4).**
+  Splitting the lag-1 pairs by whether they share a vertical cell gave +0.314
+  within a cell against +0.104 across a boundary, which looked like the
+  answer. It was confounded: over a y range of six, "across a boundary" is one
+  particular pair of heights. Two experiments took the confound out, and
+  between them they refute the cell reading and replace it.
 
-  **The world seed does matter.** Re-running the bracket sweep at seed 7 and
-  again at 42 and comparing the same positions: 4.04% of them land in the same
-  thirty-second, against 3.1% by chance. Mostly decorrelated, so the seed is
-  in the derivation — with a small excess that one more seed would say was
-  real or not.
+  *Widening the sweep.* Fifty-five bands, band k with
+  `true_at_and_below: k - 31` and `false_at_and_above: k + 1`, put a full
+  thirty-second ladder at every height from 0 to 23 — six whole cells instead
+  of one boundary. The split survives (+0.182 within, +0.043 across at lag 1),
+  but the lag profile that comes with it does not decay: it combs, near zero
+  at lag 4 and lag 8 and positive at 5, 6 and 7.
 
-  What this changes is the search. The target is not a well-mixed function of
-  position; it is something with vertical structure over about three blocks.
-  A per-column generator whose draws are consumed walking down, or a value
-  cached across part of a cell, would both look like this, and neither is a
-  hash.
+  *Varying the cell.* The same rule over the same solid ground at
+  `size_vertical` 1, 2 and 4 — cells of 4, 8 and 16 blocks — is **block for
+  block identical**, 0 of 786432. So the draw never consults the density
+  lattice at all, and a four-block cell cannot be what the split was seeing.
+  What the split was actually seeing is a fixed phase in the absolute height:
+  lag-1 pairs at `y ≡ 0` and `y ≡ 2 (mod 4)` couple at +0.153, at `y ≡ 1` at
+  +0.105, and at `y ≡ 3` at +0.035, repeating exactly at mod 8.
+
+  That is not a distance law, so it was regrouped by the highest bit position
+  at which the two coordinates differ, along each axis:
+
+  | highest differing bit | 0 | 1 | 2 | 3 | 4 | 5 |
+  |---|---|---|---|---|---|---|
+  | along y | **+0.1545** | +0.0944 | +0.0307 | +0.0092 | +0.0045 | +0.0014 |
+  | along x | +0.0003 | +0.0007 | +0.0008 | +0.0000 | +0.0002 | +0.0002 |
+  | along z | -0.0027 | -0.0008 | +0.0008 | -0.0005 | -0.0004 | -0.0001 |
+
+  A monotone ladder in y and a flat line in both horizontal axes, over 786432
+  labelled blocks. This also corrects the horizontal figures quoted above:
+  +0.010 and +0.018 sideways were an artefact of estimating the baseline
+  across heights of differing probability; against a per-height independence
+  baseline, x and z are decorrelated to within 0.003 at every scale.
+
+  **What this changes is the search.** The target is a hash after all — the
+  nineteen refuted candidates were right in kind — but one whose avalanche in
+  y is incomplete, so that flipping a low bit of y perturbs the result instead
+  of replacing it, while flipping any bit of x or z replaces it. That is what
+  a positional seed built as a linear combination looks like when y enters
+  with a small multiplier or none while x and z are multiplied by large
+  constants. The ladder is also an acceptance test far sharper than a hit
+  rate: a candidate must reproduce these six numbers and the two flat rows,
+  and any well-mixed function of position fails on the first column.
 
   **What the vertical correlation looks like, in the values themselves.** The
   bands used for bracketing put a threshold at every height, not only at

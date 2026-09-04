@@ -144,6 +144,10 @@ for entry in spec:
                              {'type': 'minecraft:block',
                               'result_state': {'Name': 'minecraft:stone'}})
     biome = entry.get('biome', 'stratum:probe')
+    # The cell shape is per-entry too: a probe that wants to know whether an
+    # effect follows the cell lattice has to be able to move the lattice.
+    size_vertical = entry.get('size_vertical', 1)
+    size_horizontal = entry.get('size_horizontal', 1)
 
     (pack / 'dimension' / f'{name}.json').write_text(json.dumps({
         'type': 'minecraft:overworld',
@@ -162,7 +166,8 @@ for entry in spec:
         'default_block': {'Name': 'minecraft:stone'},
         'default_fluid': {'Name': 'minecraft:air'},
         'noise': {'min_y': min_y, 'height': height,
-                  'size_horizontal': 1, 'size_vertical': 1},
+                  'size_horizontal': size_horizontal,
+                  'size_vertical': size_vertical},
         'spawn_target': [],
         'surface_rule': surface_rule,
         'noise_router': {
