@@ -1,0 +1,76 @@
+// Stratum — the aquifer's cell lattice and fluid level.
+// Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// The vectors below are not invented: each is a level the vanilla server put
+// in a chunk when the probe held `fluid_level_spread` at that constant, read
+// off the water-to-air boundary in a world with no terrain in it. The base of
+// -20 is the offset that configuration produced.
+#include <stratum/aquifer/lattice.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <cstdint>
+
+using stratum::aquifer::fluidLevel;
+using stratum::aquifer::spreadOffset;
+
+namespace {
+constexpr std::int32_t kMeasuredBase = -20;
+}
+
+TEST_CASE("the fluid level follows the spread the server was given", "[aquifer]") {
+    // The coarse sweep: nine values a quarter apart. Steps of three, with the
+    // doubled step between 0.00 and 0.25 that says this is a floor.
+    CHECK(fluidLevel(kMeasuredBase, -1.00) == -32);
+    CHECK(fluidLevel(kMeasuredBase, -0.75) == -29);
+    CHECK(fluidLevel(kMeasuredBase, -0.50) == -26);
+    CHECK(fluidLevel(kMeasuredBase, -0.25) == -23);
+    CHECK(fluidLevel(kMeasuredBase, 0.00) == -20);
+    CHECK(fluidLevel(kMeasuredBase, 0.25) == -20);
+    CHECK(fluidLevel(kMeasuredBase, 0.50) == -17);
+    CHECK(fluidLevel(kMeasuredBase, 0.75) == -14);
+    CHECK(fluidLevel(kMeasuredBase, 1.00) == -11);
+}
+
+TEST_CASE("the spread's transitions sit where the server put them", "[aquifer]") {
+    // These ten separate `3 * floorDiv(floor(s * 10), 3)` from
+    // `3 * floor(s * 3.5)`, which fits the sweep above just as well and is
+    // wrong on five of these. Each pair brackets a transition.
+    CHECK(fluidLevel(kMeasuredBase, 0.29) == -20);
+    CHECK(fluidLevel(kMeasuredBase, 0.31) == -17);
+    CHECK(fluidLevel(kMeasuredBase, 0.58) == -17);
+    CHECK(fluidLevel(kMeasuredBase, 0.62) == -14);
+    CHECK(fluidLevel(kMeasuredBase, 0.85) == -14);
+    CHECK(fluidLevel(kMeasuredBase, 0.88) == -14);
+    CHECK(fluidLevel(kMeasuredBase, -0.29) == -23);
+    CHECK(fluidLevel(kMeasuredBase, -0.31) == -26);
+    CHECK(fluidLevel(kMeasuredBase, -0.58) == -26);
+    CHECK(fluidLevel(kMeasuredBase, -0.62) == -29);
+}
+
+TEST_CASE("the grouping rounds toward negative infinity, not toward zero", "[aquifer]") {
+    // The whole point of the floorDiv. A `/ 3` truncating toward zero agrees
+    // on every non-negative value here and is one step high on every negative
+    // one, which is why these are spelled out separately.
+    CHECK(spreadOffset(0.0) == 0);
+    CHECK(spreadOffset(0.29) == 0);
+    CHECK(spreadOffset(0.31) == 3);
+    CHECK(spreadOffset(1.0) == 9);
+
+    CHECK(spreadOffset(-0.05) == -3); // floor(-0.5) = -1, floorDiv(-1, 3) = -1
+    CHECK(spreadOffset(-0.1) == -3);  // floor(-1.0) = -1
+    CHECK(spreadOffset(-0.29) == -3); // floor(-2.9) = -3, floorDiv(-3, 3) = -1
+    CHECK(spreadOffset(-0.31) == -6); // floor(-3.1) = -4, floorDiv(-4, 3) = -2
+    CHECK(spreadOffset(-1.0) == -12); // floor(-10) = -10, floorDiv(-10, 3) = -4
+
+    // truncation would give -0 and -3 for these two rather than -3 and -6
+    CHECK(spreadOffset(-0.05) != 0);
+    CHECK(spreadOffset(-0.31) != -3);
+}
+
+TEST_CASE("the measured cell pitch is recorded as measured", "[aquifer]") {
+    CHECK(stratum::aquifer::kCellPitchX == 16);
+    CHECK(stratum::aquifer::kCellPitchY == 12);
+    CHECK(stratum::aquifer::kCellPitchZ == 16);
+    CHECK(stratum::aquifer::kVerticalLatticeIsAbsolute);
+}

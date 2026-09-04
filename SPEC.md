@@ -1038,6 +1038,24 @@ Open:
   geometry, not small enough to ignore when this becomes a bit-exact
   comparison.
 
+  **What has landed in code, and what has not (M3).**
+  `stratum::aquifer` carries the two things the probe actually settled: the
+  measured cell pitch as named constants, and
+  `fluidLevel(base, spread) = base + 3 * floorDiv(floor(spread * 10), 3)`,
+  with the ten discriminating values as known-answer vectors and the
+  negative-operand cases spelled out separately, because a `/ 3` truncating
+  toward zero agrees on every non-negative spread and is one step high on
+  every negative one.
+
+  There is deliberately no `cellOf`. What the probe observes is a cell
+  BOUNDARY, and a boundary's position is the grid origin convolved with
+  however far the cell's centre is jittered inside it; the pitch survives that
+  convolution and the origin does not. Shipping a `cellOf` would be picking an
+  origin, and a wrong origin shifts every cell in the world — §8 would rather
+  have the gap. The filler therefore still refuses `aquifers_enabled` by name,
+  and will until the origin, the base, the floodedness gate, the barrier rule
+  and the per-cell randomness are all measured.
+
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the
   density in dispute of order 1e-3 — real, not a tie resolved differently,
