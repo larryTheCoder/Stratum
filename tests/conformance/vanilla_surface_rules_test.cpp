@@ -89,20 +89,22 @@ TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
     const auto id = stratum::data::ResourceLocation::parse("minecraft:overworld");
     const auto graph = stratum::surface::RuleGraph::resolve(loaded.settings.at(id).surfaceRule, id);
 
-    // Ten of the fifteen types the overworld uses cannot be run yet, and the
+    // Nine of the fifteen types the overworld uses cannot be run yet, and the
     // list is asserted whole rather than counted: when one of them is settled
     // it leaves this list, and that should be a visible, deliberate edit.
+    //
+    // `minecraft:vertical_gradient` is the first to leave. Its random source
+    // was recovered and checked against the server on 27 million blocks
+    // (SPEC §11), which is what took this list from ten to nine.
     const std::vector<std::string> expected{
-        "minecraft:bandlands",   "minecraft:biome",
-        "minecraft:hole",        "minecraft:noise_threshold",
-        "minecraft:steep",       "minecraft:stone_depth",
-        "minecraft:temperature", "minecraft:vertical_gradient",
-        "minecraft:water",       "minecraft:y_above",
+        "minecraft:bandlands",       "minecraft:biome", "minecraft:hole",
+        "minecraft:noise_threshold", "minecraft:steep", "minecraft:stone_depth",
+        "minecraft:temperature",     "minecraft:water", "minecraft:y_above",
     };
     CHECK(graph.unrunnable() == expected);
 
-    // The five that are not in that list are the ones that need nothing this
-    // build lacks: the three structural rules, plus `not` and
-    // `above_preliminary_surface`.
-    CHECK(graph.unrunnable().size() == 10U);
+    // The six that are not in that list are the ones that need nothing this
+    // build lacks: the three structural rules, plus `not`,
+    // `above_preliminary_surface` and now `vertical_gradient`.
+    CHECK(graph.unrunnable().size() == 9U);
 }
