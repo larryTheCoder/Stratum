@@ -1038,6 +1038,40 @@ Open:
   geometry, not small enough to ignore when this becomes a bit-exact
   comparison.
 
+  **The grid origin, from centres instead of boundaries (M3).** Boundaries
+  could not settle the anchor because a boundary's position is the grid origin
+  convolved with the centre jitter. A RUN's midpoint estimates the centre
+  instead: for centres `c_k = 16k + j_k`, a run is bounded by the midpoints to
+  each neighbour, so its own midpoint is `16k + (j_-1 + 2 j_0 + j_1) / 4` —
+  an unbiased estimate of the mean jitter, and a smoothed one, which is why
+  the histogram is a bell rather than a box.
+
+  | centre phase mod 16 | seed 42 | seeds 7 + 12345 | pooled |
+  |---|---|---|---|
+  | along x | 4.05 | 4.64 | **4.44** |
+  | along z | 4.24 | 4.78 | **4.60** |
+
+  Concentration is 0.61 to 0.64, where zero would be uniform. That alone
+  excludes a centre jittered uniformly across its whole cell: that would put
+  the mean at 7.5 and the concentration at zero. Re-running with the spread
+  noise at `xz_scale` 4, 8 and 16 gives x phases of 4.06, 3.35 and 4.05 and z
+  phases of 5.00, 4.67 and 4.24, so the figure belongs to the aquifer rather
+  than to the probe's input, exactly as the pitch did.
+
+  So **the cell centre sits at `16k + j` with `E[j]` about 4.4 — the lower
+  half of its own cell — which places the grid on multiples of sixteen**, and
+  the boundary measurement agrees: a centre at 4.4 puts the far boundary at
+  12.4, and the observed boundary peak is 12 to 13.
+
+  Vertically the same reasoning runs one step in reverse. Cell edges were
+  measured at `y = 8 (mod 12)`; an edge lies half a pitch from a centre, so the
+  centre is at `12k + 2` and the cell is `[12k, 12k + 12)`. That is inference
+  from a measurement rather than a direct measurement, and it is flagged as
+  such in the header — the horizontal axes are what confirm the model it uses.
+
+  What is still open is the jitter's DISTRIBUTION and the random source behind
+  it. Only its mean is measured, so `cellOf` is the grid, not the centre.
+
   **What has landed in code, and what has not (M3).**
   `stratum::aquifer` carries the two things the probe actually settled: the
   measured cell pitch as named constants, and
@@ -1047,14 +1081,12 @@ Open:
   toward zero agrees on every non-negative spread and is one step high on
   every negative one.
 
-  There is deliberately no `cellOf`. What the probe observes is a cell
-  BOUNDARY, and a boundary's position is the grid origin convolved with
-  however far the cell's centre is jittered inside it; the pitch survives that
-  convolution and the origin does not. Shipping a `cellOf` would be picking an
-  origin, and a wrong origin shifts every cell in the world — §8 would rather
-  have the gap. The filler therefore still refuses `aquifers_enabled` by name,
-  and will until the origin, the base, the floodedness gate, the barrier rule
-  and the per-cell randomness are all measured.
+  `cellOf` now goes with them, since the origin is measured: it floors on
+  every axis, and its tests pin the cases a truncating division gets wrong —
+  below y = 0, and west or north of the origin, where truncation folds two
+  cells into one and shifts every cell after them. The filler still refuses
+  `aquifers_enabled` by name, and will until the base, the floodedness gate,
+  the barrier rule and the per-cell randomness are measured too.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the

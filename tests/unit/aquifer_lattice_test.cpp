@@ -74,3 +74,22 @@ TEST_CASE("the measured cell pitch is recorded as measured", "[aquifer]") {
     CHECK(stratum::aquifer::kCellPitchZ == 16);
     CHECK(stratum::aquifer::kVerticalLatticeIsAbsolute);
 }
+
+TEST_CASE("the lattice divides toward negative infinity on every axis", "[aquifer]") {
+    using stratum::aquifer::CellIndex;
+    using stratum::aquifer::cellOf;
+
+    CHECK(cellOf(0, 0, 0) == CellIndex{0, 0, 0});
+    CHECK(cellOf(15, 11, 15) == CellIndex{0, 0, 0});
+    CHECK(cellOf(16, 12, 16) == CellIndex{1, 1, 1});
+
+    // The cases a truncating division gets wrong: it would fold -1 and 0 into
+    // one cell and shift every cell west, north and below the origin.
+    CHECK(cellOf(-1, -1, -1) == CellIndex{-1, -1, -1});
+    CHECK(cellOf(-16, -12, -16) == CellIndex{-1, -1, -1});
+    CHECK(cellOf(-17, -13, -17) == CellIndex{-2, -2, -2});
+
+    // The world floor of vanilla's overworld, which is not a multiple of 12.
+    CHECK(cellOf(0, -64, 0).y == -6);
+    CHECK(cellOf(0, -60, 0).y == -5);
+}

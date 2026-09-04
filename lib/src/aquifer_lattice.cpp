@@ -19,4 +19,10 @@ std::int32_t fluidLevel(const std::int32_t base, const double spread) noexcept {
     return base + spreadOffset(spread);
 }
 
+CellIndex cellOf(const std::int32_t x, const std::int32_t y, const std::int32_t z) noexcept {
+    return CellIndex{.x = javamath::floorDiv(x, kCellPitchX),
+                     .y = javamath::floorDiv(y, kCellPitchY),
+                     .z = javamath::floorDiv(z, kCellPitchZ)};
+}
+
 } // namespace stratum::aquifer

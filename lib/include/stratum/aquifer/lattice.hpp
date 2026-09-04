@@ -18,14 +18,16 @@
 //   * The FLUID LEVEL as a function of the spread, below. Ten values chosen
 //     to separate two candidate forms refuted one of them on five of the ten.
 //
+//   * Where the grid is ANCHORED. A boundary's position is the grid origin
+//     convolved with the centre jitter, so boundaries could not separate the
+//     two; a RUN's midpoint estimates the centre instead. Those midpoints put
+//     the centre at `16k + j` with `E[j]` about 4.4 — in the LOWER HALF of its
+//     own cell — which places the grid itself on multiples of sixteen.
+//
 // WHAT IS NOT SETTLED, and is deliberately absent rather than guessed:
 //
-//   * Where the grid is ANCHORED. What the probe sees is a cell boundary, and
-//     a boundary's position is the grid origin convolved with however far the
-//     cell's centre is jittered inside it. The pitch survives that convolution
-//     and the origin does not, so there is no `cellOf` here yet: shipping one
-//     would be picking an origin, and a wrong origin shifts every cell in the
-//     world. SPEC §8 would rather have the gap than the guess.
+//   * The jitter's distribution and the random source behind it. Only its
+//     mean is measured, and `cellOf` below is the grid, not the centre.
 //   * What sets the `base` the level is measured from. It tracks
 //     `preliminary_surface_level` and does so non-linearly.
 //   * The floodedness gate, the barrier rule, and the per-cell randomness that
@@ -74,5 +76,28 @@ inline constexpr bool kVerticalLatticeIsAbsolute = true;
 /// known. Spelled separately so that the part which IS derived can be tested
 /// on its own while the base is still open.
 [[nodiscard]] std::int32_t fluidLevel(std::int32_t base, double spread) noexcept;
+
+/// Which lattice cell a block belongs to.
+struct CellIndex {
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::int32_t z = 0;
+
+    [[nodiscard]] constexpr bool operator==(const CellIndex&) const noexcept = default;
+};
+
+/// The grid, anchored on multiples of the pitch in all three axes.
+///
+/// Horizontally that anchor is measured: run midpoints put the cell centre at
+/// `16k + 4.4`, inside the lower half of the cell `[16k, 16k + 16)`, and the
+/// figure holds across three world seeds and three spread frequencies.
+/// Vertically it is one step of inference from a measurement — observed cell
+/// edges sit at `y = 8 (mod 12)`, and an edge lies half a pitch from a centre,
+/// so the centre is at `12k + 2` and the cell is `[12k, 12k + 12)`. The same
+/// reasoning is what the horizontal numbers confirm directly.
+///
+/// Every axis floors toward negative infinity: below y = 0, and west or north
+/// of the origin, a truncating division would fold two cells into one.
+[[nodiscard]] CellIndex cellOf(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
 
 } // namespace stratum::aquifer
