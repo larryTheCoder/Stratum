@@ -100,4 +100,31 @@ struct CellIndex {
 /// of the origin, a truncating division would fold two cells into one.
 [[nodiscard]] CellIndex cellOf(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
 
+/// The pitch of the lattice the BASE fluid level sits on, which is not the
+/// cell pitch and has no relation to it.
+inline constexpr std::int32_t kBasePitch = 40;
+inline constexpr std::int32_t kBasePhase = 20;
+
+/// The base a cell's fluid level is measured from, before the spread moves it.
+///
+/// Measured by pinning the spread to zero — which makes the offset exactly
+/// zero, so the level read out of a chunk IS the base — and reading every cell
+/// rather than one number per world. The levels then land on a lattice of
+/// pitch 40 anchored at `y = 20 (mod 40)`: -20, 20, 60, 100, 140. The
+/// preliminary surface caps it, and does so exactly: across psl 56, 80, 96,
+/// 128 and 160 the topmost level was 56, 80, 96, 128 and 160.
+///
+/// The lattice is the aquifer's own. It does not move with `sea_level` (32 and
+/// 96 give an identical ladder), and raising the sea through it merges bodies
+/// rather than shifting them.
+///
+/// APPROXIMATE IN ONE RESPECT, deliberately. A cell takes the lattice point
+/// nearest its own CENTRE, and centres are jittered, so the transition between
+/// two lattice points is smeared rather than sharp. Taking @p y as the centre
+/// predicts 96.1% of blocks over 6.1 million, and every disagreement is within
+/// about ten blocks of a lattice boundary — 78% wrong at y = -40, 0, 40 and 80
+/// and under 2% by ten blocks away. Closing that needs the vertical jitter,
+/// which is not measured yet.
+[[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
+
 } // namespace stratum::aquifer

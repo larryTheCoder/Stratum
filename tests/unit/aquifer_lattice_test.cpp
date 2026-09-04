@@ -93,3 +93,29 @@ TEST_CASE("the lattice divides toward negative infinity on every axis", "[aquife
     CHECK(cellOf(0, -64, 0).y == -6);
     CHECK(cellOf(0, -60, 0).y == -5);
 }
+
+TEST_CASE("the base sits on its own lattice, capped by the surface", "[aquifer]") {
+    using stratum::aquifer::baseLevel;
+
+    // The ladder read out of a spread-pinned world at psl 96: -20, 20, 60, 96.
+    CHECK(baseLevel(-30, 96) == -20);
+    CHECK(baseLevel(12, 96) == 20);
+    CHECK(baseLevel(39, 96) == 20);
+    CHECK(baseLevel(40, 96) == 60);
+    CHECK(baseLevel(59, 96) == 60);
+
+    // The cap is exact: the topmost level equalled psl on every value tried.
+    CHECK(baseLevel(84, 56) == 56);
+    CHECK(baseLevel(84, 96) == 96);
+    CHECK(baseLevel(84, 160) == 100);
+    CHECK(baseLevel(140, 160) == 140);
+    CHECK(baseLevel(160, 160) == 160);
+
+    // Below zero the lattice keeps its pitch only because the division floors.
+    // Truncation would put y = -40 and y = -1 in one band and shift the ladder.
+    CHECK(baseLevel(-40, 96) == -20);
+    CHECK(baseLevel(-41, 96) == -60);
+    // -1 is 19 from -20 and 21 from 20, so it takes the lower point.
+    CHECK(baseLevel(-1, 96) == -20);
+    CHECK(baseLevel(-64, 96) == -60);
+}

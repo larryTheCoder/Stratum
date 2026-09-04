@@ -1157,6 +1157,36 @@ Open:
   base saturating in the preliminary surface was the deepest-body scan sitting
   on the fixed ladder while the psl-tracking slab moved above it, unseen.
 
+  **The base rule, and what the residual is (M3).** Classifying every cell as
+  wet, dry or split — rather than scanning for body tops, which a fully
+  submerged cell does not have — shows bodies running twenty blocks wet then
+  twenty dry, and the switch inside cell 3 happening at y = 40, which is not a
+  cell boundary. So the base is a function of HEIGHT on the 40-lattice rather
+  than of the cell index:
+
+  ```
+  base(y) = min(40 * floorDiv(y, 40) + 20, preliminary_surface_level)
+  ```
+
+  Predicting every block of a spread-pinned world from it — fluid iff
+  `y < base(y)` — gives 96.1% over 6.1 million blocks, and the shape of the
+  4% is the interesting part. The error is zero away from the lattice and
+  concentrated entirely around it: 78% wrong at y = -40, 0, 40 and 80, falling
+  to under 2% by ten blocks either side. A sharp step predicted where the
+  server has a SMEARED one.
+
+  That smear is the vertical centre jitter. A cell takes the lattice point
+  nearest its own centre, and centres are jittered, so the transition between
+  two lattice points is spread over roughly the cell height rather than being a
+  clean cut. It is the same jitter the horizontal centre measurement found,
+  showing up on the axis that measurement could not reach — so the residual
+  here and the open jitter question are one thing, not two.
+
+  `stratum::aquifer::baseLevel` carries the rule with that approximation stated
+  in its own comment, and its tests pin the ladder measured at psl 96 together
+  with the sub-zero cases where a truncating division would fold two bands into
+  one.
+
   **The grid origin, from centres instead of boundaries (M3).** Boundaries
   could not settle the anchor because a boundary's position is the grid origin
   convolved with the centre jitter. A RUN's midpoint estimates the centre

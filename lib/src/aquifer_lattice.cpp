@@ -3,6 +3,7 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/javamath.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace stratum::aquifer {
@@ -23,6 +24,11 @@ CellIndex cellOf(const std::int32_t x, const std::int32_t y, const std::int32_t 
     return CellIndex{.x = javamath::floorDiv(x, kCellPitchX),
                      .y = javamath::floorDiv(y, kCellPitchY),
                      .z = javamath::floorDiv(z, kCellPitchZ)};
+}
+
+std::int32_t baseLevel(const std::int32_t y, const std::int32_t preliminarySurface) noexcept {
+    const std::int32_t onLattice = (kBasePitch * javamath::floorDiv(y, kBasePitch)) + kBasePhase;
+    return std::min(onLattice, preliminarySurface);
 }
 
 } // namespace stratum::aquifer
