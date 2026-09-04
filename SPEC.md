@@ -1038,6 +1038,41 @@ Open:
   geometry, not small enough to ignore when this becomes a bit-exact
   comparison.
 
+  **What the base is NOT, and why the obvious readout was wrong (M3).**
+  Sweeping `preliminary_surface_level` with the spread pinned at zero should
+  read the base straight off, and it does not behave like a formula.
+
+  *It does not follow the sea.* At psl 0 the whole non-sea structure is
+  byte-identical at `sea_level` 32, 63 and 96; at psl 96 it is identical again
+  at 32, 96 and 128. Five sea levels, two regimes, no movement. Whatever the
+  base is measured from, it is not the sea.
+
+  *The surface is a gate, not a slope.* Between psl 52 and psl 60 the world
+  flips: at and below 52 the sea plateau covers 95-99% of columns, and at and
+  above 60 every column reads 19. Then psl 56, 64, 72, 80, 88, 96, 112, 128
+  and 160 give IDENTICAL output. A quantity that stops responding over a
+  three-fold change in its input is not a term in a sum.
+
+  *And floodedness is non-monotone in the same place.* Holding psl at 96:
+  floodedness 0 and 0.25 produce no fluid at all, 0.5 and 0.75 produce the
+  uniform 19, and 1.0 produces the sea plateau with 27% of columns at -54. So
+  the gate is joint in the two inputs and cannot be read one axis at a time.
+
+  *The readout itself was the mistake.* A cross-section of the psl-96 world
+  shows water from y = 19 down to about y = -3 and air below it, with barriers
+  along the lower edge — the fluid body has a BOTTOM. If every cell shared the
+  level 19, every cell below 19 would be full; the air says the cells beneath
+  hold a much lower level. So "the level" is per CELL and varies with the
+  cell's own height, and a per-world histogram reads whichever body happens to
+  be topmost. That is why the low-psl sweep looked non-monotone: at 1-3%
+  coverage the modal value jumps between populations rather than tracking one.
+
+  What this changes is the instrument, not the target. The base needs a
+  per-cell readout — every fluid body in a column, tagged with the cell it sits
+  in — where every measurement so far has taken one number per world. Building
+  that is the next step, and until it exists no formula for the base should be
+  written down.
+
   **The grid origin, from centres instead of boundaries (M3).** Boundaries
   could not settle the anchor because a boundary's position is the grid origin
   convolved with the centre jitter. A RUN's midpoint estimates the centre
