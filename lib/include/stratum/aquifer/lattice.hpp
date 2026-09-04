@@ -48,10 +48,32 @@ inline constexpr std::int32_t kCellPitchZ = 16;
 
 /// The vertical lattice is anchored in ABSOLUTE space: the identical probe at
 /// `min_y` -64, -80 and -48 gives the same `y mod 12` histogram, shape
-/// included, while `(y - min_y) mod 12` moves with the floor. So a dimension's
-/// world floor does not shift the aquifer, which is the one anchoring question
-/// that has been answered.
+/// included, while `(y - min_y) mod 12` moves with the floor.
+///
+/// The first version of that experiment was worthless and said so anyway. The
+/// probe wrote `minecraft:overworld` as the dimension TYPE, and the type — not
+/// the noise settings — fixes a world's height, so all three arms generated at
+/// min_y -64 and two of them were the same world twice. The harness now ships
+/// a dimension type of its own whenever the floor moves, and the re-run is a
+/// real test: the worlds differ (lava reaches y = -78 at min_y -80 and stops
+/// at -64 otherwise) while the aquifer geometry above the floor does not move.
 inline constexpr bool kVerticalLatticeIsAbsolute = true;
+
+/// The lava aquifer's level, and it is absolute too. At `min_y` -80 the lava
+/// still tops out at y = -55 rather than at -71, which is what a floor-relative
+/// level would give; at `min_y` -48 there is no lava at all, the world floor
+/// being above it.
+inline constexpr std::int32_t kLavaLevel = -54;
+
+/// `fluid_level_floodedness` gates which level a cell takes, against two
+/// constants that are exact to a ten-thousandth: at psl 96 a floodedness of
+/// 0.4000 yields only the lava floor and 0.4001 yields the full ladder, while
+/// 0.8000 is block-identical to 0.4001 and 0.8001 is the sea everywhere.
+/// Both comparisons are strict, and the gate is DETERMINISTIC — every cell in
+/// a world flips across that ten-thousandth, so no per-cell threshold wider
+/// than 1e-4 can exist.
+inline constexpr double kFloodedLocalThreshold = 0.4;
+inline constexpr double kFloodedSeaThreshold = 0.8;
 
 /// The fluid level a cell takes for a given `fluid_level_spread`, relative to
 /// whatever base the cell is measured from.
@@ -91,10 +113,16 @@ struct CellIndex {
 /// Horizontally that anchor is measured: run midpoints put the cell centre at
 /// `16k + 4.4`, inside the lower half of the cell `[16k, 16k + 16)`, and the
 /// figure holds across three world seeds and three spread frequencies.
-/// Vertically it is one step of inference from a measurement — observed cell
-/// edges sit at `y = 8 (mod 12)`, and an edge lies half a pitch from a centre,
-/// so the centre is at `12k + 2` and the cell is `[12k, 12k + 12)`. The same
-/// reasoning is what the horizontal numbers confirm directly.
+/// Vertically the same holds, though the first reading of it was wrong. The
+/// figure of `y = 8 (mod 12)` came from the highest AIR block, and an aquifer
+/// rests on a stone floor about 2.4 blocks thick, so that estimator sits
+/// several blocks below the interface it was taken for. The two clean
+/// estimators — the floor's own bottom and the fluid's bottom — bracket the
+/// interface at 9.68 and 11.61 (mod 12) over 262119 interfaces on four seeds,
+/// which puts the vertical centre near `12k + 4.6` rather than `12k + 2`.
+/// That is the same offset the horizontal axes give, so one jitter law covers
+/// all three; the cell is `[12k, 12k + 12)` either way, which is why `cellOf`
+/// is unaffected.
 ///
 /// Every axis floors toward negative infinity: below y = 0, and west or north
 /// of the origin, a truncating division would fold two cells into one.
@@ -123,8 +151,12 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// two lattice points is smeared rather than sharp. Taking @p y as the centre
 /// predicts 96.1% of blocks over 6.1 million, and every disagreement is within
 /// about ten blocks of a lattice boundary — 78% wrong at y = -40, 0, 40 and 80
-/// and under 2% by ten blocks away. Closing that needs the vertical jitter,
-/// which is not measured yet.
+/// and under 2% by ten blocks away.
+///
+/// That residual is now ACCOUNTED FOR rather than merely bounded: it is the
+/// vertical centre jitter, uniform on about `[0, 9.2)`, plus the aquifer's own
+/// 2.4-block stone floor. Spending it needs the centre, which needs the jitter
+/// draw, which is the one part of the geometry still unmeasured.
 [[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
 
 } // namespace stratum::aquifer

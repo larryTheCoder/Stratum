@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <bit>
 #include <cstdint>
 
 using stratum::aquifer::fluidLevel;
@@ -118,4 +119,26 @@ TEST_CASE("the base sits on its own lattice, capped by the surface", "[aquifer]"
     // -1 is 19 from -20 and 21 from 20, so it takes the lower point.
     CHECK(baseLevel(-1, 96) == -20);
     CHECK(baseLevel(-64, 96) == -60);
+}
+
+TEST_CASE("the measured aquifer constants are recorded as measured", "[aquifer]") {
+    // Bracketed to a ten-thousandth against the server: at psl 96, floodedness
+    // 0.4000 gives the lava floor alone and 0.4001 the whole ladder; 0.8000 is
+    // block-identical to 0.4001 and 0.8001 is sea everywhere.
+    // Spelled through the bit pattern: the project set builds with
+    // -Werror=float-equal, and these are exact constants rather than results
+    // of arithmetic, so bit equality is the assertion actually wanted.
+    CHECK(std::bit_cast<std::uint64_t>(stratum::aquifer::kFloodedLocalThreshold) ==
+          std::bit_cast<std::uint64_t>(0.4));
+    CHECK(std::bit_cast<std::uint64_t>(stratum::aquifer::kFloodedSeaThreshold) ==
+          std::bit_cast<std::uint64_t>(0.8));
+
+    // Absolute, not measured from the world floor: at min_y -80 the lava still
+    // tops out at -55 rather than the -71 a floor-relative level would give.
+    CHECK(stratum::aquifer::kLavaLevel == -54);
+    CHECK(stratum::aquifer::kVerticalLatticeIsAbsolute);
+
+    // The base lattice is clamped below by the lava level wherever it would
+    // otherwise fall through it.
+    CHECK(stratum::aquifer::baseLevel(-64, 96) < stratum::aquifer::kLavaLevel + 12);
 }

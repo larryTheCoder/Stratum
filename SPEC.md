@@ -929,10 +929,24 @@ Open:
   | `min_y` -48 | 8 (15.1%) | 8 |
 
   The `y mod 12` histogram is IDENTICAL at all three floors, shape included;
-  the `(y - min_y)` one moves with the floor. So the lattice is anchored in
-  absolute space, with its grid line at `y = 8 (mod 12)`, and does not shift
-  when the world floor does. The -64 and -80 worlds are block-identical
-  wherever they overlap.
+  the `(y - min_y)` one moves with the floor.
+
+  **That experiment was void as first run, and is recorded here because the
+  failure mode is easy to repeat.** The probe wrote `minecraft:overworld` as
+  the dimension TYPE, and a dimension's type — not its noise settings — fixes
+  the world's height. Every arm therefore generated at `min_y` -64: all three
+  worlds stored `yPos = -4`, two of them were the same world twice, and the
+  `(y - min_y) mod 12` shift that looked like a result was pure arithmetic.
+  `density-probe.sh` now emits a dimension type of its own whenever the floor
+  moves, and the re-run is a real test — the worlds genuinely differ, lava
+  reaching y = -78 at `min_y` -80 and stopping at -64 otherwise — and the
+  conclusion survives unchanged: the aquifer geometry above the floor does not
+  move with the floor.
+
+  The same fix settles a question that had been withdrawn as untestable: the
+  lava level is ABSOLUTE at -54, not `min_y + 10`. At `min_y` -80 lava still
+  tops out at y = -55 rather than -71, and at `min_y` -48 there is no lava at
+  all, the floor being above it.
 
   *Horizontally it is a Voronoi, and the spacing is not yet pinned.* The level
   field is large irregular flat regions rather than aligned blocks, which is
@@ -1212,11 +1226,17 @@ Open:
   the boundary measurement agrees: a centre at 4.4 puts the far boundary at
   12.4, and the observed boundary peak is 12 to 13.
 
-  Vertically the same reasoning runs one step in reverse. Cell edges were
-  measured at `y = 8 (mod 12)`; an edge lies half a pitch from a centre, so the
-  centre is at `12k + 2` and the cell is `[12k, 12k + 12)`. That is inference
-  from a measurement rather than a direct measurement, and it is flagged as
-  such in the header — the horizontal axes are what confirm the model it uses.
+  Vertically the first reading of this was WRONG, in a way worth recording.
+  Cell edges were taken from the highest AIR block and came out at
+  `y = 8 (mod 12)`, giving a centre at `12k + 2`. But an aquifer rests on a
+  stone floor about 2.4 blocks thick, so the highest air block sits several
+  blocks below the interface it was taken for. The two clean estimators — the
+  floor's own bottom and the fluid's bottom — bracket the interface at 9.68 and
+  11.61 (mod 12) over 262119 interfaces on four seeds, putting the vertical
+  centre near `12k + 4.6`. That is the SAME offset the horizontal axes give,
+  so one jitter law covers all three axes, and the correction makes the picture
+  more consistent rather than less. `cellOf` is unaffected: the cell is
+  `[12k, 12k + 12)` under either figure.
 
   What is still open is the jitter's DISTRIBUTION and the random source behind
   it. Only its mean is measured, so `cellOf` is the grid, not the centre.
@@ -1236,6 +1256,64 @@ Open:
   cells into one and shifts every cell after them. The filler still refuses
   `aquifers_enabled` by name, and will until the base, the floodedness gate,
   the barrier rule and the per-cell randomness are measured too.
+
+  **The jitter, the gate and the barrier, measured together (M3).** Twenty-three
+  probe dimensions at four seeds — 92 terrain-free worlds — were analysed by ten
+  agents, each question attacked from two independent angles and then
+  adversarially verified. The verification earned its place: it overturned
+  twenty-one of the fifty-five claims put to it, including several of this
+  project's own.
+
+  *The jitter is one law on all three axes.* A cell's centre is
+  `(16cx + jx, 12cy + jy, 16cz + jz)` with `j` drawn **per 3D cell**, and block
+  assignment is nearest-centre. The width is an ABSOLUTE range rather than a
+  fraction of each pitch: uniform on `[0, w)` with w = 9.15 +- 0.20 vertically
+  and 9.6 +- 0.2 horizontally, from position-free routes (per-cell mixture
+  counts) that do not depend on the block-sampling convention. Uniform `[0,12)`
+  is out at 7 sigma, symmetric triangular by 18-60 log-likelihood, and
+  pitch-proportional scaling predicts horizontal walls in residues 2-5 at 6.9%
+  against 0.4% observed.
+
+  That `j` is per 3D cell rather than per column is settled by an instrument
+  neither angle set out to build: the interface inside one cell is a TILTED
+  plane, not a flat height, and a plane fitted within a cell has RMS 0.42-0.65
+  blocks against 1.27-1.40 for a constant fit on the same window. Two stacked
+  cells sharing a horizontal centre would give an exactly horizontal plane.
+
+  *The floodedness gate is two exact constants and no randomness.*
+
+  ```
+  level = floodedness > 0.8 ? sea_level
+        : floodedness > 0.4 ? max(-54, min(40 * floorDiv(centreY, 40) + 20, psl))
+        :                     -54
+  ```
+
+  Both thresholds are bracketed to a ten-thousandth: at psl 96, floodedness
+  0.4000 gives only the lava floor and 0.4001 the full ladder; 0.8000 is
+  block-identical to 0.4001 and 0.8001 is sea everywhere. Reproduced on three
+  seeds. The gate is DETERMINISTIC — every cell in a world flips across that
+  ten-thousandth, which excludes any per-cell threshold spread wider than 1e-4
+  and retires the "per-cell randomness" this SPEC inferred twice.
+  Below `sea_level - 8` an ocean branch adds a depth-dependent bonus of roughly
+  `max(0, 1 - (psl - centreY)/58)`; the 58 is bracketed only to 56.6-58.4 and
+  is NOT settled.
+
+  *The barrier is geometry, not a threshold.* A stone sheet is written at every
+  cell interface where the two cells place different blocks, unconditionally —
+  0 bare interfaces in 1.33 million, and no direct water-to-lava contact
+  anywhere. Even at `barrier` = -2 all 261277 vertical interfaces still carry
+  stone, so the documented input range never suppresses one. Sheets are about
+  2.4 blocks thick, and **99.5% of barrier volume is the FLOOR of one aquifer
+  resting on air** rather than a partition between two touching fluids. The
+  `aquifer_barrier` input controls only SAME-block interfaces: from -2 to +2 the
+  mandatory sheets move by 0.03 blocks while water-stone-water grows 501 to 5536
+  and lava-stone-lava 171 to 1942.
+
+  That floor is also what corrupted this project's earlier vertical numbers. The
+  "highest air block" estimator sits below a 2.4-block floor, and the fluid
+  bottom above it; the two teams measured one interface with two estimators
+  separated by exactly that thickness and agreed to within 0.09 blocks once it
+  was accounted for.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the

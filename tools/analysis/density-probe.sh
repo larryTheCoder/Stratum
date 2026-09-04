@@ -169,8 +169,26 @@ for entry in spec:
     router.update(entry.get('router', {}))
     router['final_density'] = final_density
 
+    # The DIMENSION TYPE fixes the world's logical height, not the noise
+    # settings, so a probe that varies min_y has to ship its own type or the
+    # server quietly keeps -64..319 and the sweep measures nothing. That
+    # mistake produced a null experiment once already.
+    dimension_type = 'minecraft:overworld'
+    if min_y != -64 or height != 384:
+        dimension_type = f'stratum:{name}'
+        (pack / 'dimension_type').mkdir(parents=True, exist_ok=True)
+        (pack / 'dimension_type' / f'{name}.json').write_text(json.dumps({
+            'ultrawarm': False, 'natural': True, 'coordinate_scale': 1.0,
+            'has_skylight': True, 'has_ceiling': False, 'ambient_light': 0.0,
+            'monster_spawn_light_level': 0, 'monster_spawn_block_light_limit': 0,
+            'piglin_safe': False, 'bed_works': True, 'respawn_anchor_works': False,
+            'has_raids': True, 'logical_height': height, 'min_y': min_y, 'height': height,
+            'infiniburn': '#minecraft:infiniburn_overworld',
+            'effects': 'minecraft:overworld',
+        }))
+
     (pack / 'dimension' / f'{name}.json').write_text(json.dumps({
-        'type': 'minecraft:overworld',
+        'type': dimension_type,
         'generator': {
             'type': 'minecraft:noise',
             'settings': f'stratum:{name}',
