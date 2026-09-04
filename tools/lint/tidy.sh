@@ -7,9 +7,14 @@
 # pushing. Format is wired in (lint.format) because it costs a quarter of a
 # second; this does not.
 #
-# The pre-push routine is this and tools/lint/warnings.sh: clang-tidy here,
-# and the project warning set as errors there. `ctest --preset dev` covers
-# formatting and the tests but neither of those.
+# The pre-push routine is this, tools/lint/warnings.sh and
+# tools/lint/optimised.sh: clang-tidy here, the project warning set as errors
+# there, and the unit tests built optimised in the third. `ctest --preset dev`
+# covers formatting and the tests in DEBUG, and none of those three.
+#
+# The optimised run is not redundant with the debug one. A dangling reference
+# into a nlohmann::json proxy passed every debug test on three platforms and
+# failed both of CI's release legs.
 #
 # The version matters. clang-tidy 18, 19 and 21 each report a different set of
 # findings on this tree, so "clean locally" means nothing unless the major

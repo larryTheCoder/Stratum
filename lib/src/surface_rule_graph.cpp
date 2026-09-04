@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,6 +29,23 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
                                                               "minecraft:hole",
                                                               "minecraft:steep",
                                                               "minecraft:temperature"};
+
+/// The position of @p name in @p names, or nothing.
+///
+/// An index rather than an iterator on purpose: std::array's iterator is a raw
+/// pointer in libstdc++ and a class type in MSVC's library, so
+/// `const auto found` and `const auto* const found` are each correct on one
+/// and a compile error on the other. clang-tidy asks for the pointer spelling;
+/// following it here broke both Windows legs.
+[[nodiscard]] std::optional<std::size_t> indexOfName(std::span<const std::string_view> names,
+                                                     std::string_view name) noexcept {
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == name) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
 
 [[noreturn]] void fail(const data::ResourceLocation& id, const std::string& what) {
     throw RuleError("surface rule of '" + id.toString() + "': " + what);
@@ -82,7 +101,13 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
              std::string(where) +
                  " must be an object naming exactly one of absolute, above_bottom or below_top");
     }
-    const auto& [key, value] = *json.items().begin();
+    // json.begin(), not *json.items().begin(). items() returns a proxy object
+    // that dies at the end of the full expression, so binding into it leaves
+    // both halves dangling — which debug builds happened to survive and the
+    // release legs did not.
+    const auto entry = json.begin();
+    const std::string& key = entry.key();
+    const nlohmann::json& value = entry.value();
     if (!value.is_number_integer()) {
         fail(id, std::string(where) + "'s " + key + " must be a whole number of blocks");
     }
@@ -232,15 +257,15 @@ RuleIndex Resolver::readRule(const nlohmann::json& json) {
         fail(id, "a rule must be an object with a string \"type\"");
     }
     const auto name = json.at("type").get<std::string>();
-    const auto* const found = std::ranges::find(kRuleNames, name);
-    if (found == kRuleNames.end()) {
+    const std::optional<std::size_t> found = indexOfName(kRuleNames, name);
+    if (!found.has_value()) {
         fail(id, "'" + name +
                      "' is not a surface rule this build knows; the four are sequence, condition, "
                      "block and bandlands");
     }
 
     Rule entry;
-    entry.type = static_cast<RuleType>(found - kRuleNames.begin());
+    entry.type = static_cast<RuleType>(*found);
     switch (entry.type) {
         case RuleType::Sequence: {
             const nlohmann::json& list = require(json, "sequence", id, name);
@@ -271,13 +296,13 @@ ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
         fail(id, "a condition must be an object with a string \"type\"");
     }
     const auto name = json.at("type").get<std::string>();
-    const auto* const found = std::ranges::find(kConditionNames, name);
-    if (found == kConditionNames.end()) {
+    const std::optional<std::size_t> found = indexOfName(kConditionNames, name);
+    if (!found.has_value()) {
         fail(id, "'" + name + "' is not a surface rule condition this build knows");
     }
 
     Condition entry;
-    entry.type = static_cast<ConditionType>(found - kConditionNames.begin());
+    entry.type = static_cast<ConditionType>(*found);
     switch (entry.type) {
         case ConditionType::Biome: {
             const nlohmann::json& list = require(json, "biome_is", id, name);
