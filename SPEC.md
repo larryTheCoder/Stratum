@@ -684,6 +684,38 @@ Open:
   RNGs, four position mixes and four seedings. All landed at chance. They are
   written down so the next attempt starts past them.
 
+  **The draw is not an independent per-position value at all (M4).** With the
+  bracketing instrument the correlation can be measured as a correlation
+  rather than as an agreement rate, and it has a shape:
+
+  | vertical lag | 1 | 2 | 3 | 4 |
+  |---|---|---|---|---|
+  | rho | **+0.273** | +0.133 | +0.055 | -0.003 |
+
+  against +0.010 and +0.018 one and two blocks sideways. So the value behaves
+  like a field with a vertical correlation length of about three blocks and no
+  horizontal correlation whatever — which is not what ANY hash of (x, y, z)
+  produces, and is why nineteen of them scored at chance.
+
+  Splitting the lag-1 pairs by whether they share a vertical cell — the probe
+  dimension has `size_vertical: 1`, so four blocks — gives +0.314 within a
+  cell against +0.104 across a boundary. Suggestive, and not conclusive: over
+  a y range of six, "across a boundary" is one particular pair of heights, so
+  cell membership and height are confounded. Widening it needs bands chosen
+  for higher y, which the current spec does not carry.
+
+  **The world seed does matter.** Re-running the bracket sweep at seed 7 and
+  again at 42 and comparing the same positions: 4.04% of them land in the same
+  thirty-second, against 3.1% by chance. Mostly decorrelated, so the seed is
+  in the derivation — with a small excess that one more seed would say was
+  real or not.
+
+  What this changes is the search. The target is not a well-mixed function of
+  position; it is something with vertical structure over about three blocks.
+  A per-column generator whose draws are consumed walking down, or a value
+  cached across part of a cell, would both look like this, and neither is a
+  hash.
+
   **What the vertical correlation looks like, in the values themselves.** The
   bands used for bracketing put a threshold at every height, not only at
   y = 1 — band k has `p(y) = (1 + k - y)/32` — so the same run brackets the
