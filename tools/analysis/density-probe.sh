@@ -113,14 +113,18 @@ import json, os, pathlib
 spec = json.load(open(os.environ['SPEC']))
 pack = pathlib.Path(os.environ['PACK'])
 k = float(os.environ['PROBE_K'])
-min_y = int(os.environ['PROBE_MIN_Y'])
-height = int(os.environ['PROBE_HEIGHT'])
+default_min_y = int(os.environ['PROBE_MIN_Y'])
+default_height = int(os.environ['PROBE_HEIGHT'])
 names = set()
 for entry in spec:
     name = entry['name']
     if name in names:
         raise SystemExit(f'duplicate probe name: {name}')
     names.add(name)
+    # The world's own vertical extent is per-entry, because where a lattice is
+    # ANCHORED can only be told apart from its spacing by moving the floor.
+    min_y = int(entry.get('min_y', default_min_y))
+    height = int(entry.get('height', default_height))
     # Two shapes. A DENSITY probe wraps the function under test in
     # `K * flat_cache(f) + gradient` so its value shows up as a terrain
     # height. A SURFACE RULE probe does not: it takes `raw_final_density`
@@ -148,6 +152,22 @@ for entry in spec:
     # effect follows the cell lattice has to be able to move the lattice.
     size_vertical = entry.get('size_vertical', 1)
     size_horizontal = entry.get('size_horizontal', 1)
+    # Aquifers, and the two settings that only mean anything with them on.
+    # A probe that wants to SEE the aquifer has to be able to turn it on and
+    # give it a fluid and a sea level to work against; everything else here
+    # wants it off, which stays the default.
+    aquifers = entry.get('aquifers_enabled', False)
+    sea_level = entry.get('sea_level', min_y)
+    default_fluid = entry.get('default_fluid', {'Name': 'minecraft:air'})
+    # Router entries default to the constant 0 that a density probe wants.
+    # `router` overrides them by name, which is how the aquifer's own four
+    # inputs get vanilla's noises instead of zero.
+    router = {'barrier': 0, 'fluid_level_floodedness': 0, 'fluid_level_spread': 0,
+              'lava': 0, 'temperature': 0, 'vegetation': 0, 'continents': 0,
+              'erosion': 0, 'depth': 0, 'ridges': 0, 'preliminary_surface_level': 0,
+              'vein_toggle': 0, 'vein_ridged': 0, 'vein_gap': 0}
+    router.update(entry.get('router', {}))
+    router['final_density'] = final_density
 
     (pack / 'dimension' / f'{name}.json').write_text(json.dumps({
         'type': 'minecraft:overworld',
@@ -158,25 +178,19 @@ for entry in spec:
         },
     }))
     (pack / 'worldgen' / 'noise_settings' / f'{name}.json').write_text(json.dumps({
-        'sea_level': min_y,
+        'sea_level': sea_level,
         'disable_mob_generation': True,
-        'aquifers_enabled': False,
+        'aquifers_enabled': aquifers,
         'ore_veins_enabled': False,
         'legacy_random_source': False,
         'default_block': {'Name': 'minecraft:stone'},
-        'default_fluid': {'Name': 'minecraft:air'},
+        'default_fluid': default_fluid,
         'noise': {'min_y': min_y, 'height': height,
                   'size_horizontal': size_horizontal,
                   'size_vertical': size_vertical},
         'spawn_target': [],
         'surface_rule': surface_rule,
-        'noise_router': {
-            'barrier': 0, 'fluid_level_floodedness': 0, 'fluid_level_spread': 0,
-            'lava': 0, 'temperature': 0, 'vegetation': 0, 'continents': 0,
-            'erosion': 0, 'depth': 0, 'ridges': 0, 'preliminary_surface_level': 0,
-            'vein_toggle': 0, 'vein_ridged': 0, 'vein_gap': 0,
-            'final_density': final_density,
-        },
+        'noise_router': router,
     }))
 print(len(spec))
 PY

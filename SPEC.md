@@ -893,6 +893,62 @@ Open:
   here, with the server as the authority — the same arrangement that settled
   the blended noise.
 
+  **An open world is a better instrument than a cave (M3).** The catch above
+  is that a fluid top is `min(fluid level, cavity ceiling)`, so terrain
+  contaminates every estimate. The way past it is to delete the terrain: a
+  dimension whose `raw_final_density` is the constant -1 has no solid block
+  anywhere, so nothing can clip a fluid top and every boundary in the chunk
+  belongs to the aquifer. `tools/analysis/density-probe.sh` carries
+  `aquifers_enabled`, `sea_level`, `default_fluid`, per-entry `min_y` and
+  `height`, and a `router` map that overrides individual entries, which is
+  what lets a probe hand the aquifer vanilla's own four noises while holding
+  everything else at zero.
+
+  A cross-section of that world shows the whole mechanism at once: the sea
+  aquifer's water from y = 62 down to about -12, a transition zone of stone
+  barriers and drained air pockets, and a global lava floor below.
+
+  *The global lava level is -54.* Lava is 100% of blocks at y <= -56, 89.2%
+  at -55, and **0.00%** at -54 — a hard edge. That is the same exclusive
+  convention the sea uses: `sea_level` 63 puts the water top at 62, and a lava
+  level of -54 puts the lava top at -55. The one documented constant, the 0.3
+  lava threshold, now has a measured level to go with it.
+
+  *The vertical cell is twelve blocks, anchored to absolute y.* Where a column
+  stops belonging to the sea aquifer and starts belonging to a deeper cell is
+  a cell edge, and those heights concentrate hard: by residue mod 12 they run
+  14.8% at 0 down to 2.1% at 7, while mod 6 is flat to a chi-square per degree
+  of freedom of 2.5 — which is exactly what folding a period-12 distribution
+  in half produces. Running the identical probe at three world floors settles
+  the anchor:
+
+  | | peak residue of `y mod 12` | peak residue of `(y - min_y) mod 12` |
+  |---|---|---|
+  | `min_y` -64 | 8 (14.8%) | 0 |
+  | `min_y` -80 | 8 (14.8%) | 4 |
+  | `min_y` -48 | 8 (15.1%) | 8 |
+
+  The `y mod 12` histogram is IDENTICAL at all three floors, shape included;
+  the `(y - min_y)` one moves with the floor. So the lattice is anchored in
+  absolute space, with its grid line at `y = 8 (mod 12)`, and does not shift
+  when the world floor does. The -64 and -80 worlds are block-identical
+  wherever they overlap.
+
+  *Horizontally it is a Voronoi, and the spacing is not yet pinned.* The level
+  field is large irregular flat regions rather than aligned blocks, which is
+  what jittered centres inside grid cells produce, so no modulus lines up with
+  the boundaries — every candidate from 4 to 24 sits within 1.3x of the
+  background step rate. What the field does say is scale: two-point
+  disagreement rises to a plateau by a separation of about twelve to sixteen
+  columns. Consistent with a sixteen-wide grid, not established by it, and the
+  estimator to build next is one that finds the CENTRES rather than the edges.
+
+  *One contamination to know about.* Where the probe's water meets its lava
+  the server's fluid physics makes obsidian and cobblestone — 2821 blocks,
+  0.045% — after generation rather than during it. Small enough to ignore for
+  geometry, not small enough to ignore when this becomes a bit-exact
+  comparison.
+
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the
   density in dispute of order 1e-3 — real, not a tie resolved differently,
