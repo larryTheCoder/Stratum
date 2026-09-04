@@ -943,6 +943,66 @@ Open:
   columns. Consistent with a sixteen-wide grid, not established by it, and the
   estimator to build next is one that finds the CENTRES rather than the edges.
 
+  **The fluid level, as a formula (M3).** The probe's `router` map overrides
+  single entries, so the aquifer's own inputs can be held at CONSTANTS while
+  vanilla's machinery runs around them. With `lava` pinned to -1 no fluid is
+  lava, so every water-to-air boundary is a fluid level and can be read
+  straight off. Sweeping `fluid_level_spread` at nine values from -1 to 1,
+  with `fluid_level_floodedness` at 0, gives -32, -29, -26, -23, -20, -20,
+  -17, -14, -11: steps of exactly three, with a doubled step at zero, which is
+  a floor rather than a round.
+
+  Two forms fit those nine. Ten more values chosen to separate them settle it:
+
+  | spread | 0.29 | 0.31 | 0.58 | 0.62 | 0.88 | -0.29 | -0.31 | -0.58 | -0.62 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | level | -20 | -17 | -17 | -14 | -14 | -23 | -26 | -26 | -29 |
+
+  `3 * floor(spread * 3.5)` predicts five of these wrongly; the transitions sit
+  at spread = +-0.3, +-0.6, +-0.9, so
+
+  ```
+  fluid level = base + 3 * floorDiv(floor(spread * 10), 3)
+  ```
+
+  which is `base + 3 * floor(spread * 10 / 3)` — the same function, and the
+  bracketing puts the multiplier in (9.68, 10.34), consistent with exactly ten.
+  Note the two floors: this is a place where a C++ `/` on a negative value
+  would silently disagree with vanilla for every cell below the offset, which
+  is what §5's `floorDiv` rule exists for.
+
+  *The offset is -20 and does not follow the sea.* At `sea_level` 63 and 32 the
+  spread-controlled level is -20 in both, while the sea plateau itself moves
+  from 62 to 31 as expected. At `sea_level` 0 and -32 the world comes out with
+  no fluid at all, so the aquifer's fluid region is not simply "below sea
+  level" and the offset is not measured from it.
+
+  *Floodedness is a gate with at least three regimes, and the name is a trap.*
+  Held constant with the spread at 0: at -1 to -0.25 essentially every column
+  takes the sea level; at 0 the spread controls, though only 3% of columns; at
+  0.75 and 1.0, 27-29% of columns sit at a fixed deep level of -54 that the
+  spread does NOT move. So higher floodedness means LESS flooded here, and the
+  deep branch is not the spread branch.
+
+  *The aquifer carries randomness of its own.* With all four of its inputs
+  pinned to constants, 27% of columns still differ from the other 73%. Nothing
+  in the router can explain that, so the flooded decision is not a pure
+  function of the four noises — which is the jittered-centre randomness the
+  horizontal geometry already implied, showing up in a second place.
+
+  **Horizontally the spacing is bounded, not pinned (M3).** Three independent
+  estimates agree and none is decisive: two-point disagreement plateaus by a
+  separation of twelve to sixteen columns; segmenting the level field where
+  the spread noise runs gives regions averaging 134 columns, about 11.6
+  across; and the non-flooded blobs at floodedness 1.0 average 189 columns,
+  about 13.8 across. All three are consistent with a sixteen-wide grid and
+  none excludes twelve. The obstacle is structural rather than statistical: in
+  every configuration found so far either almost every cell is flooded to the
+  sea, or the non-flooded ones all share ONE level, so adjacent cells merge
+  and a count of regions undercounts cells. What is needed is a configuration
+  where neighbouring cells reliably take DIFFERENT levels; until then the
+  horizontal number stays a bound.
+
   *One contamination to know about.* Where the probe's water meets its lava
   the server's fluid physics makes obsidian and cobblestone — 2821 blocks,
   0.045% — after generation rather than during it. Small enough to ignore for
