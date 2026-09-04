@@ -75,6 +75,33 @@ inline constexpr std::int32_t kLavaLevel = -54;
 inline constexpr double kFloodedLocalThreshold = 0.4;
 inline constexpr double kFloodedSeaThreshold = 0.8;
 
+/// The centre jitter is an INTEGER draw on nine values — `nextInt(9)` or any
+/// equivalent — the same absolute width on all three axes, drawn once per 3D
+/// cell. It is NOT a continuous uniform, which is what the first measurement
+/// of it concluded.
+///
+/// Discreteness is settled on a channel that needs no model: for vertically
+/// adjacent cell pairs the DIFFERENCE of horizontal jitters is an integer.
+/// Period-1 Rayleigh over 1032 pairs gives R = 0.290 (jx) and 0.310 (jz)
+/// against a chance level of 0.028 — p = 2e-38 and 1e-43 — while the control
+/// that matters, the same difference between same-layer horizontal
+/// neighbours, gives R = 0.019 at p = 0.56. An estimator artefact would show
+/// in both. The barrier-thickness channel agrees independently: the slab
+/// width t satisfies dy = K/t for a single global K near 23.6, and dy is
+/// integral in every seed separately.
+///
+/// Nine rather than ten follows from a model-free readout: a threshold cell
+/// takes the upper level exactly when its jitter clears 8, and P = 0.1289
+/// +- 0.0148 over 512 such cells. Ten values predict 0.200 (4.8 sigma out);
+/// nine predict 0.111 (1.2 sigma). Twelve and sixteen are excluded by orders
+/// of magnitude.
+///
+/// The draw's OFFSET is not pinned — the values are `phi, phi+1, ... phi+8`
+/// for some constant phi degenerate with the estimator's own calibration —
+/// and neither is the RNG that produces them. Roughly 1.9e9 candidate
+/// derivations across five families have been refuted (SPEC §11).
+inline constexpr std::int32_t kJitterValues = 9;
+
 /// The fluid level a cell takes for a given `fluid_level_spread`, relative to
 /// whatever base the cell is measured from.
 ///
@@ -154,9 +181,9 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// and under 2% by ten blocks away.
 ///
 /// That residual is now ACCOUNTED FOR rather than merely bounded: it is the
-/// vertical centre jitter, uniform on about `[0, 9.2)`, plus the aquifer's own
-/// 2.4-block stone floor. Spending it needs the centre, which needs the jitter
-/// draw, which is the one part of the geometry still unmeasured.
+/// vertical centre jitter (see `kJitterValues`) plus the aquifer's own stone
+/// floor, about 2.4 blocks thick. Spending it needs the centre, which needs
+/// the jitter DRAW — the one part of the geometry still unrecovered.
 [[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
 
 } // namespace stratum::aquifer

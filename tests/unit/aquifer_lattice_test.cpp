@@ -142,3 +142,18 @@ TEST_CASE("the measured aquifer constants are recorded as measured", "[aquifer]"
     // otherwise fall through it.
     CHECK(stratum::aquifer::baseLevel(-64, 96) < stratum::aquifer::kLavaLevel + 12);
 }
+
+TEST_CASE("the centre jitter is a nine-valued integer draw", "[aquifer]") {
+    // Nine, not ten: a threshold cell takes the upper level exactly when its
+    // jitter clears 8, measured at 0.1289 +- 0.0148 over 512 cells. Ten values
+    // would put that at 0.200, which is 4.8 sigma away; nine put it at 0.111.
+    CHECK(stratum::aquifer::kJitterValues == 9);
+
+    // The jitter has to fit inside the cell it belongs to on every axis, which
+    // it does with room to spare on the horizontal ones and only just on the
+    // vertical one — the constraint that makes a single absolute width, rather
+    // than a per-axis fraction of the pitch, the only consistent reading.
+    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchY);
+    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchX);
+    CHECK(stratum::aquifer::kJitterValues <= stratum::aquifer::kCellPitchZ);
+}

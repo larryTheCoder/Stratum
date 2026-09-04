@@ -1267,12 +1267,11 @@ Open:
   *The jitter is one law on all three axes.* A cell's centre is
   `(16cx + jx, 12cy + jy, 16cz + jz)` with `j` drawn **per 3D cell**, and block
   assignment is nearest-centre. The width is an ABSOLUTE range rather than a
-  fraction of each pitch: uniform on `[0, w)` with w = 9.15 +- 0.20 vertically
-  and 9.6 +- 0.2 horizontally, from position-free routes (per-cell mixture
-  counts) that do not depend on the block-sampling convention. Uniform `[0,12)`
-  is out at 7 sigma, symmetric triangular by 18-60 log-likelihood, and
-  pitch-proportional scaling predicts horizontal walls in residues 2-5 at 6.9%
-  against 0.4% observed.
+  fraction of each pitch — uniform `[0,12)` is out at 7 sigma, symmetric
+  triangular by 18-60 log-likelihood, and pitch-proportional scaling predicts
+  horizontal walls in residues 2-5 at 6.9% against 0.4% observed. **The law is
+  a nine-valued INTEGER draw**, corrected below from the continuous reading
+  first taken.
 
   That `j` is per 3D cell rather than per column is settled by an instrument
   neither angle set out to build: the interface inside one cell is a TILTED
@@ -1314,6 +1313,56 @@ Open:
   bottom above it; the two teams measured one interface with two estimators
   separated by exactly that thickness and agreed to within 0.09 blocks once it
   was accounted for.
+
+  **The jitter draw: the law is settled, the derivation is not (M3).** A second
+  round put ten more agents on it — a per-cell ground truth first, then five
+  search families in parallel, then adversarial verification of the negative.
+  The verification overturned the ground truth's own headline, which is the
+  result that matters.
+
+  *It is an integer draw on nine values, not a continuous uniform.* The
+  sharpest channel needs no model at all: for vertically adjacent cell pairs
+  the DIFFERENCE of horizontal jitters is an integer. Period-1 Rayleigh over
+  1032 pairs gives R = 0.290 (jx) and 0.310 (jz) against a chance level of
+  0.028 — p = 2e-38 and 1e-43 — while the control that matters, the same
+  difference between SAME-LAYER horizontal neighbours, gives R = 0.019 at
+  p = 0.56. An estimator artefact would show in both channels; this shows in
+  one. The barrier thickness agrees independently: the slab width t satisfies
+  `dy = K/t` for one global K near 23.6, dy is integral in each of the four
+  seeds separately, and 0 of 400 lattice-destroying null resamples reach the
+  observed statistic.
+
+  Nine rather than ten then follows from the model-free threshold readout,
+  `P(jy >= 8) = 0.1289 +- 0.0148` over 512 cells: ten values predict 0.200 and
+  are 4.8 sigma out, nine predict 0.111 and sit 1.2 sigma away. Discreteness is
+  also what closes the width dispute — a continuous law could escape the same
+  bound through a free half-block offset, and an integer one cannot, because
+  the indicator `n + phi >= 8` reduces to `n >= 8` for any phi.
+
+  What is NOT pinned is the draw's offset — the values are `phi ... phi+8` for
+  a constant degenerate with the estimator's own calibration — and the RNG
+  behind them.
+
+  *The derivation was not found, and the negative is trustworthy.* Roughly
+  1.9e9 candidates across five families were scored and refuted: positional
+  Xoroshiro from every plausible aquifer salt, the legacy `java.util.Random`
+  path, a 24-constant grid of positional seed mixes against 25 salts and 32
+  state assemblies, and their draw-slot and axis permutations. The screen has
+  demonstrated power rather than assumed it: the dataset's two independent
+  estimates of the same quantity correlate at 0.959, so a correct derivation
+  would score there, and the best candidate anywhere reached 0.19. An
+  independent fit-free re-scoring — which fluid level each cell took, no plane
+  fit and no recovered value — puts every named candidate at or below the
+  measured chance baseline of 68.5% against 98.7-99.7% for the truth.
+
+  Four things the list does NOT cover, recorded so the next attempt starts
+  past them rather than at them: three successive `nextInt(9)` draws, where
+  rejection sampling shifts the later slots and a fixed-slot correlation screen
+  cannot see it; integer horizontal jitters, never tested as such; the
+  exact-match score, which only becomes available now that the draw is known to
+  be 9-valued and is far sharper than a correlation; and a ground truth refit
+  under the integer constraint with the offset free, which should collapse the
+  present 0.6-block per-cell error and make every later search cheaper.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the
