@@ -1073,6 +1073,48 @@ Open:
   that is the next step, and until it exists no formula for the base should be
   written down.
 
+  **The per-cell readout, and what it shows (M3).**
+  `tools/analysis/aquifer-cells.cpp` enumerates every fluid body in every
+  column and tags each by the lattice cell its top sits in, which is the
+  instrument the base needed. The first thing it prints settles why the earlier
+  numbers misbehaved: a column holds **three to eight separate fluid bodies**,
+  four most often. Every measurement before this took one number per world, so
+  it was reading whichever body happened to be topmost.
+
+  Grouped by cell layer, the levels resolve into ladders three apart — the
+  spread quantisation, now visibly operating PER CELL:
+
+  | cell y | span | the ladder | cell ceiling `12(cy+1)` |
+  |---|---|---|---|
+  | -5 | [-60,-49] | -54, at 100% of 16382 bodies | -48 |
+  | -3 | [-36,-25] | -29, -26, (-24) | -24 |
+  | -2 | [-24,-13] | -23, -20, -17 | -12 |
+  | 0 | [0,11] | ..., 9, 10, 11, 12 | 12 |
+  | 1 | [12,23] | 14, 17, 20, 23 | 24 |
+  | 3 | [36,47] | 42, 45, 48 | 48 |
+  | 4 | [48,59] | 51, 54, 57, 60 | 60 |
+
+  Two things follow. **The base is the cell's own ceiling, not a world
+  constant**: for layers -3, 0, 3 and 4 the ladder's top rung is exactly
+  `12(cy + 1)`, and the spread only ever lowers it — which is what makes a
+  cell dry, since the offset reaches -12 and can drop a level below the cell's
+  own floor. That also explains the air beneath the psl-96 water body, and it
+  retires the idea that the base saturates in the preliminary surface: what
+  saturated was which cell the old readout was looking at.
+
+  **And something beyond the four inputs is still moving it.** The ladders'
+  residues mod 3 differ by layer — 1 for cell -2, 2 for cell 1, 0 for cell 4 —
+  and `base = 12(cy + 1)` cannot produce that, because 12 is divisible by 3.
+  So a further per-cell term sits inside the base, which is consistent with
+  the randomness already seen when all four router inputs were held constant
+  and 27% of columns still differed. Measuring THAT is the next step, and the
+  readout that will do it now exists.
+
+  One number came out of this cleanly enough to record on its own: the lava
+  floor's cell, `cy = -5` spanning `[-60, -49]`, reports level -54 unanimously
+  across 16382 bodies, agreeing exactly with the global lava level measured
+  from the block census.
+
   **The grid origin, from centres instead of boundaries (M3).** Boundaries
   could not settle the anchor because a boundary's position is the grid origin
   convolved with the centre jitter. A RUN's midpoint estimates the centre
