@@ -117,21 +117,27 @@ TEST_CASE("what cannot be run is named, and what can be is not", "[surface]") {
                                {"then_run", block("minecraft:stone")}});
     CHECK(runnable.unrunnable().empty());
 
-    const RuleGraph refused = resolve(nlohmann::json{{"type", "minecraft:condition"},
-                                                     {"if_true", {{"type", "minecraft:steep"}}},
-                                                     {"then_run", block("minecraft:stone")}});
+    const RuleGraph refused = resolve(nlohmann::json{
+        {"type", "minecraft:condition"},
+        {"if_true", nlohmann::json{{"type", "minecraft:biome"},
+                                   {"biome_is", nlohmann::json::array({"minecraft:plains"})}}},
+        {"then_run", block("minecraft:stone")}});
     REQUIRE(refused.unrunnable().size() == 1U);
-    CHECK(refused.unrunnable()[0] == "minecraft:steep");
+    CHECK(refused.unrunnable()[0] == "minecraft:biome");
 
     // And the reason says what is missing, not merely that something is.
-    const auto reason = RuleGraph::unrunnableReason(ConditionType::Steep);
+    const auto reason = RuleGraph::unrunnableReason(ConditionType::Biome);
     REQUIRE(reason.has_value());
-    CHECK_THAT(std::string(*reason),
-               ContainsSubstring("neighbouring columns") && ContainsSubstring("SPEC"));
+    CHECK_THAT(std::string(*reason), ContainsSubstring("biome"));
 
-    // vertical_gradient is no longer among them: its random source was
-    // recovered and checked against the server on 27 million blocks.
-    CHECK_FALSE(RuleGraph::unrunnableReason(ConditionType::VerticalGradient).has_value());
+    // Seven condition types have left this list as their semantics were
+    // measured. Only the two that read a biome remain.
+    for (const ConditionType settled :
+         {ConditionType::VerticalGradient, ConditionType::Hole, ConditionType::Steep,
+          ConditionType::StoneDepth, ConditionType::Water, ConditionType::YAbove,
+          ConditionType::NoiseThreshold}) {
+        CHECK_FALSE(RuleGraph::unrunnableReason(settled).has_value());
+    }
 }
 
 TEST_CASE("a malformed surface rule is refused by name", "[surface]") {

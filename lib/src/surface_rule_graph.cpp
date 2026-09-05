@@ -177,28 +177,18 @@ bool verticalGradientFires(const rng::PositionalSource& source, const std::int32
 
 std::optional<std::string_view> RuleGraph::unrunnableReason(ConditionType type) noexcept {
     switch (type) {
-        case ConditionType::Hole:
-            return "it fires on 0.04% of ordinary terrain, too rarely to have been derived, and "
-                   "nothing documents whether its test is on a surface depth of exactly zero or "
-                   "at most zero (SPEC §11)";
-        case ConditionType::Steep:
-            return "its predicate needs the heights of neighbouring columns, which no permitted "
-                   "source states and which the filler's per-column shape cannot reach "
-                   "(SPEC §11)";
-        case ConditionType::StoneDepth:
-            return "the direction and strictness of its comparison are not documented, and a "
-                   "wrong choice moves every surface layer by a block (SPEC §11)";
-        case ConditionType::Water:
-        case ConditionType::YAbove:
-            return "it needs the surface depth, which no part of this build computes yet";
         case ConditionType::Biome:
         case ConditionType::Temperature:
             return "it reads the biome at the position, which the filler does not carry";
+        case ConditionType::Hole:
         case ConditionType::NoiseThreshold:
-            return "the y its noise is sampled at, and whether its thresholds are inclusive, are "
-                   "both undocumented (SPEC §11)";
+        case ConditionType::Steep:
+        case ConditionType::StoneDepth:
+        case ConditionType::Water:
+        case ConditionType::YAbove:
         case ConditionType::AbovePreliminarySurface:
         case ConditionType::Not:
+        case ConditionType::VerticalGradient:
         default:
             return std::nullopt;
     }

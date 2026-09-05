@@ -731,6 +731,41 @@ Open:
   second place in one session where the server has been asked directly and
   disagreed with it.
 
+- **Seven more surface conditions run, and the overworld is down to three (M4).**
+  A round of measurement settled the semantics that were blocking them, and
+  they are implemented in `stratum::surface::Executor` as:
+
+  | condition | rule |
+  |---|---|
+  | surface depth | `(int)(2.75 * surface(x,0,z) + 3.0 + 0.25 * u)`, truncating, no clamp |
+  | `hole` | `surfaceDepth(x, z) <= 0` — it never looks at the terrain |
+  | `y_above` | `y + (add_stone_depth ? stoneDepthAbove : 0) >= anchor + multiplier * surfaceDepth` |
+  | `water` | the same with the column's LATCHED water height plus `offset` in the anchor's place; unconditionally TRUE where the column holds no fluid |
+  | `stone_depth` | `depth <= offset + (add_surface_depth ? surfaceDepth : 0) + (int)((secondary + 1) * 0.5 * range)`, on a 0-based depth |
+  | `steep` | `(hW - hE >= 4) || (hS - hN >= 4)`, neighbours clamped inside the block's own chunk |
+  | `noise_threshold` | `min <= noise.sample(x, 0.0, z) <= max`, closed, sampled at a literal y of zero |
+
+  Three of those are worth stating twice because the obvious reading is wrong.
+  The surface depth's jitter comes from the world seed's UNSALTED positional
+  source — fork once, no name, no MD5 — where `vertical_gradient` forks, salts
+  and forks AGAIN; mixing them up is the easiest mistake here. `stoneDepthAbove`
+  SKIPS fluid without resetting, so a stone run below a water band does not
+  inherit the top of the world. And `steep` is asymmetric on purpose: west
+  minus east, south minus north, with `abs()` refuted by 17375 columns that
+  have to stay false.
+
+  What is left for the overworld is **three**: `biome` and `temperature`, which
+  need the biome plumbed into the rule context rather than any derivation —
+  the biome source itself is exact — and `bandlands`, whose colour table
+  generator is not derived. The list went ten, nine, three in three steps.
+
+  *An API trap found while testing, and closed.* An `Executor` keeps pointers
+  to its graph, geometry and noises, so compiling from a TEMPORARY graph
+  dangles — and `Executor::compile(RuleGraph::resolve(json, id), seed, geom)`
+  reads like it ought to work. It is now a deleted rvalue overload, so that is
+  a compile error rather than a crash at the first `apply`, which is where it
+  actually surfaced.
+
 - **Surface rules RUN, for the trees this build can run whole (M4).**
   `stratum::surface::Executor` walks a resolved graph and returns the block the
   rules place at a position, or nothing where they place none — which is the

@@ -89,22 +89,24 @@ TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
     const auto id = stratum::data::ResourceLocation::parse("minecraft:overworld");
     const auto graph = stratum::surface::RuleGraph::resolve(loaded.settings.at(id).surfaceRule, id);
 
-    // Nine of the fifteen types the overworld uses cannot be run yet, and the
-    // list is asserted whole rather than counted: when one of them is settled
-    // it leaves this list, and that should be a visible, deliberate edit.
+    // THREE of the fifteen types the overworld uses cannot be run, and the
+    // list is asserted whole rather than counted: when one is settled it
+    // leaves this list, and that should be a visible, deliberate edit.
     //
-    // `minecraft:vertical_gradient` is the first to leave. Its random source
-    // was recovered and checked against the server on 27 million blocks
-    // (SPEC §11), which is what took this list from ten to nine.
+    // It has shrunk from ten to three in two steps. vertical_gradient went
+    // when its random source was recovered; then surface depth was derived,
+    // and with it hole, steep, stone_depth, water, y_above and
+    // noise_threshold all became implementable (SPEC §11).
+    //
+    // What is left is two conditions that read the biome — which is a matter
+    // of plumbing rather than derivation, since the biome source itself is
+    // exact — and bandlands, whose colour table generator is not derived.
     const std::vector<std::string> expected{
-        "minecraft:bandlands",       "minecraft:biome", "minecraft:hole",
-        "minecraft:noise_threshold", "minecraft:steep", "minecraft:stone_depth",
-        "minecraft:temperature",     "minecraft:water", "minecraft:y_above",
+        "minecraft:bandlands",
+        "minecraft:biome",
+        "minecraft:temperature",
     };
     CHECK(graph.unrunnable() == expected);
 
-    // The six that are not in that list are the ones that need nothing this
-    // build lacks: the three structural rules, plus `not`,
-    // `above_preliminary_surface` and now `vertical_gradient`.
-    CHECK(graph.unrunnable().size() == 9U);
+    CHECK(graph.unrunnable().size() == 3U);
 }
