@@ -200,12 +200,20 @@ README by design (M5), and the Java-to-Bedrock mapping layer that belongs at
 of M5 that is in place.
 
 So: shape is finished, materials are perhaps a third finished, and
-integration is ahead of us. A world that could be walked around needs surface
-depth and the aquifer's barrier threshold. `vertical_gradient`'s random
-source — nineteen refuted derivations, and the project's longest-standing
-open problem — is now settled: it turned out to be the same primitive the
-aquifer's cell centres use, and it is checked against the server on 27
-million blocks.
+integration is ahead of us. `vertical_gradient`'s random source — nineteen
+refuted derivations, and the project's longest-standing open problem — is now
+settled: it turned out to be the same primitive the aquifer's cell centres
+use, and it is checked against the server on 27 million blocks.
+
+The aquifer is close behind it. Its lattice, its centre jitter, the fluid
+level a cell takes — ocean branch included — and the barrier predicate are all
+derived from the server's own output and implemented. What is still missing is
+not a constant: it is where those inputs are SAMPLED. Every probe behind the
+level rule held the preliminary surface and the floodedness fixed, so the
+predicate is settled while its sample positions are not, and in a real world
+the surface varies per column and feeds the rule directly. Until that is
+measured the filler refuses `aquifers_enabled` by name rather than generating
+a world that is quietly wrong. SPEC §10 lists the three gaps.
 
 ## Capability matrix (v1)
 

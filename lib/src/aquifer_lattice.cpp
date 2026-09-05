@@ -31,6 +31,67 @@ std::int32_t baseLevel(const std::int32_t y, const std::int32_t preliminarySurfa
     return std::min(onLattice, preliminarySurface);
 }
 
+std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t preliminarySurface,
+                         const double spread) noexcept {
+    const std::int32_t onLattice =
+        (kBasePitch * javamath::floorDiv(centreY, kBasePitch)) + kBasePhase;
+    // The cap goes on AFTER the offset — measured, and the two orders differ
+    // wherever a positive spread would lift the ladder through the surface.
+    return std::max(kLavaLevel, std::min(onLattice + spreadOffset(spread), preliminarySurface));
+}
+
+std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
+    const std::int32_t ladder = ladderLevel(cell.centreY, cell.preliminarySurface, cell.spread);
+
+    std::int32_t level = kLavaLevel;
+    if (cell.preliminarySurface < cell.seaLevel - kOceanGateOffset) {
+        // `depth` is a plain signed subtraction and may be negative; it never
+        // divides, so no floorDiv arises. The only division in the whole
+        // decision is the floorDiv inside `ladderLevel`.
+        const std::int32_t depth = cell.preliminarySurface - cell.centreY;
+        if (depth < kNearSurfaceDepth) {
+            // Unconditional, and deliberately a return rather than an
+            // assignment: this is the one path the deep-cell guard below does
+            // NOT override. Cells centred at -55, -56 and -57 within three
+            // blocks of the preliminary surface were observed taking the sea
+            // at floodedness -2.0 and at 0.95 alike.
+            return cell.seaLevel;
+        }
+
+        // Clamped at zero and only at zero. Without the clamp a cell with
+        // floodedness just above 0.4 would turn to lava past depth 61, where
+        // the server was observed keeping the ladder out to depth 160.
+        const double reach =
+            std::max(0.0, static_cast<double>(kZeroBonusDepth) - static_cast<double>(depth));
+        if (cell.floodedness + (reach * kSeaBonusSlope) > kFloodedSeaThreshold) {
+            level = cell.seaLevel;
+        } else if (cell.floodedness + (reach * kLocalBonusSlope) > kFloodedLocalThreshold) {
+            level = ladder;
+        } else {
+            level = kLavaLevel;
+        }
+    } else if (cell.floodedness > kFloodedSeaThreshold) {
+        // No depth term and no near-surface rule at all off the ocean branch.
+        level = cell.seaLevel;
+    } else if (cell.floodedness > kFloodedLocalThreshold) {
+        level = ladder;
+    }
+
+    // A cell centred below the lava sea never reaches the sea level THROUGH
+    // the gates. Measured at psl -54, which is the only place the two
+    // candidate placements of this guard can differ.
+    //
+    // The fallback is the ladder rather than a bare -54. The two are identical
+    // in every configuration measured, because the ladder clamps to -54 for
+    // these centres at spread 0; they part only when a positive spread offset
+    // lifts the clamped ladder above the lava. That case is still open, and it
+    // is worth at most one block of aquifer at the world bottom.
+    if (cell.centreY < kLavaLevel && level == cell.seaLevel) {
+        level = ladder;
+    }
+    return level;
+}
+
 CentreSource::CentreSource(const std::int64_t worldSeed) noexcept
     : base_(rng::positionalSourceFor(worldSeed, "minecraft:aquifer").base()) {}
 

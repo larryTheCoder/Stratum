@@ -218,4 +218,124 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// the jitter DRAW — the one part of the geometry still unrecovered.
 [[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
 
+/// The complete ladder level a cell takes when the floodedness gate sends it
+/// there: the lattice point below the cell's own centre, moved by the spread,
+/// capped by the preliminary surface, and floored at the lava sea.
+///
+/// The order is measured, not assumed. The cap is applied AFTER the spread
+/// offset: at psl 67 a cell whose lattice point plus offset came to 69 was
+/// observed at 67, not at 69 nor at 66. And the `max` against the lava level
+/// is what stops a deep cell's ladder from sinking below the world's lava.
+[[nodiscard]] std::int32_t ladderLevel(std::int32_t centreY, std::int32_t preliminarySurface,
+                                       double spread) noexcept;
+
+// ---------------------------------------------------------------------------
+// The fluid-level decision, including the ocean branch.
+// ---------------------------------------------------------------------------
+//
+// This corrects the previous entry outright. SPEC recorded the ocean branch as
+// ONE bonus `max(0, 1 - d/K)` added to the floodedness before the same two
+// gates, with K somewhere in 56.6-58.4 (five per-layer estimators) and later
+// 55.32-55.56 (one per-cell fit). Both are wrong, and not by a little: there
+// is no single bonus at all. The two gates carry DIFFERENT slopes, so no
+// value of K can be right.
+//
+// The refutation does not depend on assuming the bonus is linear. Any one
+// bonus added before two fixed thresholds forces the gap between the two
+// crossing floodednesses to be constant in depth; measured, that gap runs
+// 0.4750, 0.4500, 0.4125, 0.4000 at depths 8, 24, 48 and 56 or more. Two
+// independent verifiers found this at different depths and on different seeds.
+//
+// The old per-cell bracket was an artefact of three things at once: it fitted
+// one K to the sea gate only, over floodedness 0.60-0.79 only, at one
+// preliminary surface only, through a readout that calls every cell centred
+// below the lava level dry whatever its level. Both verifiers reproduced that
+// failure mode from the description and named it.
+//
+// What replaced it was measured over roughly 1370 probe dimensions on 12 world
+// seeds, preliminary surfaces from -54 to 141, sea levels 32 to 200, with the
+// spread, the barrier and the lava level all varied. Four whole-model per-cell
+// scores, never pooled across seeds: 99.9902%, 99.9806%, 99.9902%, 99.9858%.
+// The same cells score 13-77% under the honest null (no ocean branch) and
+// 86-97% under the K model this replaces.
+
+/// How near the preliminary surface a cell's centre must be for the ocean
+/// branch to flood it whatever the floodedness says. Bracketed to one block:
+/// at a floodedness of -2.0, two full below any gate, depths 0 to 3 are still
+/// the sea and depth 4 is dry.
+inline constexpr std::int32_t kNearSurfaceDepth = 4;
+
+/// How far below `sea_level` the preliminary surface must fall for the ocean
+/// branch to run at all. Strict, and relative to the sea rather than absolute:
+/// the boundary moves one-for-one with `sea_level` across 32, 40, 63, 100 and
+/// 200, which excludes a hard-coded height.
+inline constexpr std::int32_t kOceanGateOffset = 8;
+
+/// The depth at which both of the ocean branch's bonuses reach zero. The two
+/// fitted lines extrapolate to 55.900-56.000 and 55.951-56.000, and 56 is the
+/// only integer in either; imposing it pins both slopes onto exact rationals.
+inline constexpr std::int32_t kZeroBonusDepth = 56;
+
+/// The two slopes, and the whole reason the single-K reading is dead. 11/640
+/// and 3/160 — different numbers, bracketed to a part in 10^5 by about forty
+/// integer crossing depths, each pinned by a pair of dimensions a
+/// ten-thousandth of floodedness apart.
+///
+/// Parametrised by SLOPE deliberately. Spelling either as an amplitude over
+/// `kZeroBonusDepth` — `1.05 * ((56.0 - d) / 56.0)` and its relatives — is
+/// refuted: those forms fire at depths where the server demonstrably does not,
+/// and the refutations come from two independent sessions on different seeds.
+inline constexpr double kSeaBonusSlope = 0.0171875; ///< 11/640
+inline constexpr double kLocalBonusSlope = 0.01875; ///< 3/160
+
+/// Everything the fluid-level decision reads. All of it is a function of the
+/// cell's exact jittered CENTRE, never of the cell index: at psl 0 and
+/// floodedness 0.6 the cell layer -4 spans y -48..-37 and splits inside
+/// itself, centres -44..-40 taking water and -48..-45 taking air.
+struct CellFluid {
+    /// The cell's centre, from `CentreSource::centreOf`.
+    std::int32_t centreY = 0;
+
+    /// `preliminary_surface_level`, FLOORED to an int. Not truncated: at psl
+    /// -10.4 and -10.6 the server behaves as -11 in both cases, while psl -10
+    /// behaves as -10. Truncation toward zero, round-half and carrying the
+    /// raw double each predict a different one of the four observed outcomes,
+    /// and all three are excluded.
+    std::int32_t preliminarySurface = 0;
+
+    /// The dimension's `sea_level`.
+    std::int32_t seaLevel = 0;
+
+    /// `fluid_level_floodedness`, sampled once per cell at the cell's own
+    /// centre y. (The x and z of that sample, and the sample position of the
+    /// surface and the spread, are NOT yet measured — see SPEC §11.)
+    double floodedness = 0.0;
+
+    /// `fluid_level_spread`.
+    double spread = 0.0;
+};
+
+/// The level a cell's fluid body tops out at: fluid occupies `y < level`, so
+/// `level` is the first air block above the body.
+///
+/// Both floodedness comparisons are STRICT, and that is measured rather than
+/// assumed — at each of about forty integer depths the gate is dry at the
+/// exact crossing floodedness and wet a ten-thousandth above it. Five of those
+/// crossings are exactly representable in binary (0.25, 0.078125, -0.5,
+/// -0.125, 0.4), so the strictness is settled with no floating-point
+/// ambiguity at all.
+///
+/// FLOATING POINT, and it matters here. `floodedness + reach * slope` is
+/// exactly the shape a fused multiply-add contracts, and with contraction on,
+/// the outcome flips at sea-gate depths 6 and 11 precisely at the crossing.
+/// §5's `-ffp-contract=off` / `/fp:precise` is load-bearing for this
+/// expression, and those two depths are the natural x86-64/ARM64 canary.
+///
+/// The integer restatements `11*d < 640*f + 104` and `3*d < 160*f + 104` are
+/// an oracle for reasoning, NOT the predicate: they agree with the form below
+/// across the whole ten-thousandth grid except within about an ulp of a
+/// crossing, where they differ because the crossing floodedness is not itself
+/// representable.
+[[nodiscard]] std::int32_t cellFluidLevel(const CellFluid& cell) noexcept;
+
 } // namespace stratum::aquifer

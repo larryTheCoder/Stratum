@@ -215,3 +215,216 @@ TEST_CASE("the centre is the cell corner plus its jitter", "[aquifer]") {
     CHECK(stratum::aquifer::cellOf(centre.x, centre.y, centre.z) ==
           stratum::aquifer::CellIndex{3, -4, 5});
 }
+
+// ---------------------------------------------------------------------------
+// The fluid-level decision, and the ocean branch in particular.
+//
+// The vectors below are the server's own crossings. At each depth the gate is
+// dry at the exact crossing floodedness and wet a ten-thousandth above it, and
+// each of those pairs is a pair of probe dimensions that differ in nothing but
+// that ten-thousandth. Between them they pin both slopes, the depth at which
+// the bonus vanishes, and the strictness — in one set of assertions.
+// ---------------------------------------------------------------------------
+
+namespace {
+using stratum::aquifer::CellFluid;
+using stratum::aquifer::cellFluidLevel;
+using stratum::aquifer::kLavaLevel;
+
+constexpr std::int32_t kSea = 63;
+
+// An ocean-branch cell at a given depth below the preliminary surface. The
+// surface is put well under `sea_level - 8` so the branch is live, and the
+// centre is then placed to give exactly that depth.
+CellFluid oceanCellAt(const std::int32_t depth, const double floodedness,
+                      const std::int32_t preliminarySurface = 0) {
+    CellFluid cell;
+    cell.preliminarySurface = preliminarySurface;
+    cell.centreY = preliminarySurface - depth;
+    cell.seaLevel = kSea;
+    cell.floodedness = floodedness;
+    cell.spread = 0.0;
+    return cell;
+}
+
+// The two crossings, as exact rationals. A cell takes the sea when
+// 11*d < 640*f + 104 and the ladder when 3*d < 160*f + 104, so the crossing
+// floodedness is where those hold with equality.
+constexpr double seaCrossing(const std::int32_t depth) {
+    return static_cast<double>((11 * depth) - 104) / 640.0;
+}
+
+constexpr double localCrossing(const std::int32_t depth) {
+    return static_cast<double>((3 * depth) - 104) / 160.0;
+}
+} // namespace
+
+TEST_CASE("the ocean branch's sea gate crosses where the server crossed", "[aquifer]") {
+    // Seven depths measured on seeds 3141593 and 777777 at preliminary
+    // surfaces 39, 67 and 76, plus the two endpoints. A wrong slope moves
+    // every one of them; a slope shared with the ladder gate moves all but
+    // the endpoint.
+    // The surface sits at 40 so that even the deepest of these keeps its centre
+    // above the lava sea, where the deep-cell guard would otherwise mask the
+    // gate being tested.
+    for (const std::int32_t depth : {4, 8, 10, 12, 30, 36, 42, 48, 56}) {
+        const double crossing = seaCrossing(depth);
+        INFO("sea gate at depth " << depth);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, 40)) != kSea);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, 40)) == kSea);
+    }
+}
+
+TEST_CASE("the ocean branch's ladder gate crosses on a different slope", "[aquifer]") {
+    // The whole refutation of the single-K reading is that these do not sit on
+    // the line above. Depth 12 is the negative-operand case: at a preliminary
+    // surface of -24 the surface, the centre, the depth's operands and the
+    // floorDiv inside the ladder are all negative at once.
+    for (const std::int32_t depth : {6, 8, 12, 16, 20, 24, 28, 32, 37, 48, 56}) {
+        const double crossing = localCrossing(depth);
+        INFO("ladder gate at depth " << depth);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, 40)) == kLavaLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, 40)) != kLavaLevel);
+    }
+
+    // The negative-operand cases, per §5. At a preliminary surface of -24 the
+    // surface, the centre, both operands of the depth and the floorDiv inside
+    // the ladder are all negative at once — the shape a truncating division
+    // gets wrong. The depths stop at 16 because past that the centre drops
+    // onto the lattice step below, whose ladder clamps to the lava sea and so
+    // stops distinguishing the two outcomes.
+    for (const std::int32_t depth : {6, 8, 12, 16}) {
+        const double crossing = localCrossing(depth);
+        INFO("ladder gate at depth " << depth << ", everything negative");
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, -24)) == kLavaLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, -24)) != kLavaLevel);
+    }
+}
+
+TEST_CASE("the two gates do not share a slope", "[aquifer]") {
+    // Non-parametric, and it assumes nothing about the shape of the bonus. Any
+    // ONE bonus added before two fixed thresholds forces the gap between the
+    // two crossings to be constant in depth. The server's gap is not constant:
+    // it runs 0.4750, 0.4500, 0.4125 and 0.4000 at these depths. No value of
+    // K, and no non-linear bonus either, can produce that.
+    const auto gapIs = [](std::int32_t depth, double expected) {
+        return std::bit_cast<std::uint64_t>(seaCrossing(depth) - localCrossing(depth)) ==
+               std::bit_cast<std::uint64_t>(expected);
+    };
+    CHECK(gapIs(8, 0.4750));
+    CHECK(gapIs(24, 0.4500));
+    CHECK(gapIs(48, 0.4125));
+    CHECK(gapIs(56, 0.4000));
+    // At and past the clamp both bonuses are gone, so what remains is the bare
+    // distance between the two thresholds — which is where the gap was
+    // heading, and where a single bonus would have held it all along.
+    CHECK(gapIs(56,
+                stratum::aquifer::kFloodedSeaThreshold - stratum::aquifer::kFloodedLocalThreshold));
+}
+
+TEST_CASE("the near-surface rule floods whatever the floodedness says", "[aquifer]") {
+    // Floodedness -2.0 is two full below the lower gate. Depths 0 to 3 are
+    // still the sea; depth 4 is not.
+    for (const std::int32_t depth : {0, 1, 2, 3}) {
+        INFO("depth " << depth);
+        CHECK(cellFluidLevel(oceanCellAt(depth, -2.0)) == kSea);
+    }
+    CHECK(cellFluidLevel(oceanCellAt(4, -2.0)) != kSea);
+}
+
+TEST_CASE("the ocean branch's bonus is clamped at zero, not extrapolated", "[aquifer]") {
+    // A floodedness inside the ladder band keeps the ladder out to depth 160.
+    // An unclamped bonus would go negative and turn these to lava past about
+    // depth 61, which is what the clamp exists to prevent.
+    // The centres are chosen to keep the ladder at -20, which is neither the
+    // lava sea nor the sea level, so all three outcomes are distinguishable.
+    // Depth 160 needs a surface of 120, and so a sea level high enough to keep
+    // the ocean branch live under it.
+    const auto ladderAt = [](std::int32_t centre, std::int32_t surface, std::int32_t sea) {
+        CellFluid cell;
+        cell.centreY = centre;
+        cell.preliminarySurface = surface;
+        cell.seaLevel = sea;
+        cell.floodedness = 0.5;
+        return cellFluidLevel(cell);
+    };
+    CHECK(ladderAt(-16, 40, kSea) == -20); // depth 56, exactly at the clamp
+    CHECK(ladderAt(-21, 40, kSea) == -20); // depth 61, where an unclamped
+    CHECK(ladderAt(-40, 40, kSea) == -20); // depth 80, bonus has gone negative
+    CHECK(ladderAt(-40, 120, 200) == -20); // depth 160, and still the ladder
+
+    // And past the clamp the branch reduces exactly to the plain gates.
+    CHECK(cellFluidLevel(oceanCellAt(56, 0.85, 40)) == kSea);
+    CHECK(cellFluidLevel(oceanCellAt(56, 0.4, 40)) == kLavaLevel);
+}
+
+TEST_CASE("the ocean branch runs strictly below sea_level minus eight", "[aquifer]") {
+    // The boundary moves one-for-one with sea_level rather than sitting at an
+    // absolute height: measured at sea 32, 40, 63 and 100. Depth 20 is deep
+    // enough that the two branches disagree.
+    const auto flooded = [](std::int32_t preliminarySurface, std::int32_t sea) {
+        CellFluid cell;
+        cell.preliminarySurface = preliminarySurface;
+        cell.centreY = preliminarySurface - 20;
+        cell.seaLevel = sea;
+        cell.floodedness = 0.6;
+        return cellFluidLevel(cell) == sea;
+    };
+    for (const std::int32_t sea : {32, 40, 63, 100, 200}) {
+        INFO("sea level " << sea);
+        CHECK(flooded(sea - 9, sea));       // on the branch, and the bonus carries it
+        CHECK_FALSE(flooded(sea - 8, sea)); // off it, and 0.6 is below 0.8
+    }
+}
+
+TEST_CASE("the depth tracks the preliminary surface, not the height", "[aquifer]") {
+    // The same depth gives the same crossing forty blocks apart.
+    for (const std::int32_t depth : {30, 42}) {
+        const double crossing = seaCrossing(depth);
+        INFO("depth " << depth);
+        for (const std::int32_t surface : {30, -10}) {
+            CHECK(cellFluidLevel(oceanCellAt(depth, crossing, surface)) != kSea);
+            CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, surface)) == kSea);
+        }
+    }
+}
+
+TEST_CASE("a cell below the lava sea reaches the sea only near the surface", "[aquifer]") {
+    // The one place the two candidate placements of this guard differ, and the
+    // reason it sits after the near-surface rule rather than before it: at a
+    // preliminary surface of -54, cells centred at -55, -56 and -57 were
+    // observed taking the sea at floodedness -2.0 and at 0.95 alike.
+    for (const std::int32_t centre : {-55, -56, -57}) {
+        INFO("centre " << centre);
+        CellFluid cell;
+        cell.preliminarySurface = -54;
+        cell.centreY = centre;
+        cell.seaLevel = kSea;
+        cell.floodedness = -2.0;
+        CHECK(cellFluidLevel(cell) == kSea);
+        cell.floodedness = 0.95;
+        CHECK(cellFluidLevel(cell) == kSea);
+    }
+    // Through the gates, though, it never reaches the sea: the same centre put
+    // well below the surface takes the ladder instead.
+    CellFluid deep;
+    deep.preliminarySurface = -20;
+    deep.centreY = -60;
+    deep.seaLevel = kSea;
+    deep.floodedness = 0.95;
+    CHECK(cellFluidLevel(deep) != kSea);
+}
+
+TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "[aquifer]") {
+    // Measured: a cell whose lattice point plus offset came to 69 under a
+    // surface of 67 was observed at 67, so the cap is applied last.
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) == 67);
+    CHECK(stratum::aquifer::ladderLevel(50, 200, 0.9) == 69);
+    // Capping first and then adding the offset gives 69 for the first of
+    // those, which is two blocks above the surface the server was given and
+    // two above where the server put it.
+    CHECK(stratum::aquifer::baseLevel(50, 67) + stratum::aquifer::spreadOffset(0.9) == 69);
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) != 69);
+    // And the ladder never sinks below the lava sea.
+    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0) == kLavaLevel);
+}

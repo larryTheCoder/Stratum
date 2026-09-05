@@ -360,6 +360,36 @@ Its own component (`lib/mapping/`), its own tests:
   `preliminary_surface_level`. A hand-written list would have carried the
   older name and refused every vanilla noise settings file, for a reason the
   error would not have made obvious.
+
+  The aquifer, as of this entry: the cell lattice, the centre jitter and its
+  RNG derivation, the ladder the fluid level sits on, the floodedness gate, the
+  ocean branch and the barrier predicate are all derived, implemented and under
+  test (§11). **M3 does not close on that, and the filler keeps refusing
+  `aquifers_enabled` by name.** Three things stand between the pieces and a
+  world:
+
+  1. **Where the inputs are sampled.** Every one of the ~1370 probe dimensions
+     behind the ocean branch held `preliminary_surface_level` and
+     `fluid_level_floodedness` at constants, so what is settled is the
+     PREDICATE, not where it reads. One slice is closed — floodedness is
+     sampled once per cell at the cell's own jittered centre y, from two
+     step-function probes over 128 cells with no exceptions — and it is
+     single-sourced. The x and z of that sample, and the sample position of the
+     surface and the spread in all three axes, are unmeasured. In a real
+     overworld the surface varies per column and feeds the depth directly, so
+     this governs the branch's output as much as 11/640 does. This is the
+     largest remaining risk in the aquifer and it is not a constant.
+  2. **Which sources compete.** The barrier predicate is exact on the pair it
+     is given, but about 13% of the server's real barriers come from a third
+     source rather than the nearest two.
+  3. **Fluid TYPE, not level.** A ladder aquifer at level -20 was observed
+     filled with lava at `psl` 20/30 and with water at `psl` 0, with the lava
+     router pinned at -1.0 and the level 34 blocks above the global lava sea,
+     plus obsidian where the bodies meet water. One reading attributes this to
+     a two-nearest-source blend, another to a type rule of its own; nobody has
+     adjudicated them. Every residual across four campaigns is one of these
+     blocks, so it is small — but a wrong fluid type is a parity bug of exactly
+     the same class as a wrong level.
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
 - **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
@@ -1307,34 +1337,112 @@ Open:
   seeds. The gate is DETERMINISTIC — every cell in a world flips across that
   ten-thousandth, which excludes any per-cell threshold spread wider than 1e-4
   and retires the "per-cell randomness" this SPEC inferred twice.
-  Below `sea_level - 8` an ocean branch adds a depth-dependent bonus of
-  `max(0, 1 - (psl - centreY)/K)`. **K is not settled, and the bracket recorded
-  here was wrong.**
+  **The ocean branch, settled — and it is not the shape recorded here twice
+  before (M3).** Below `sea_level - 8` the decision changes. This SPEC recorded
+  that change as ONE bonus `max(0, 1 - d/K)` added to the floodedness before
+  the same two gates, first with `K` in 56.6-58.4 from five per-layer
+  estimators and then with `K` in 55.32-55.56 from a per-cell fit. **Both are
+  deleted, not amended. There is no single bonus, so no value of K can be
+  right.**
 
-  It was 56.6-58.4, from five estimators that all worked per LAYER. Measuring
-  it per CELL disagrees with that outright. The centres are known exactly now,
-  so `d = psl - centreY` is exact rather than approximated by a layer's middle,
-  and a cell takes the sea level iff `f + max(0, 1 - d/K) > 0.8` — that is, iff
-  `d < K * (0.2 + f)`. Each floodedness therefore brackets K from both sides:
+  ```
+  cy   = the cell's jittered centre y                    // never the cell index
+  psl  = floor(preliminary_surface_level)                // FLOOR, see below
+  L    = max(-54, min(40 * floorDiv(cy, 40) + 20 + spreadOffset(spread), psl))
+  d    = psl - cy                                        // signed, may be negative
 
-  | f | 0.600 | 0.640 | 0.740 | 0.780 | 0.790 |
-  |---|---|---|---|---|---|
-  | max wet d | 44 | 46 | 52 | 54 | 54 |
-  | min dry d | 45 | 47 | 53 | 55 | 55 |
-  | K in | [55.00, 56.25) | [54.76, 55.95) | [55.32, 56.38) | [55.10, 56.12) | [54.55, 55.56) |
+  if (psl < sea_level - 8) {                             // strict; sea-relative
+      if (d < 4)                       return sea_level; // unconditional
+      reach = max(0, 56 - d)
+      if (f + reach * 11/640 > 0.8)    level = sea_level
+      else if (f + reach * 3/160 > 0.4) level = L
+      else                              level = -54
+  } else {
+      level = f > 0.8 ? sea_level : f > 0.4 ? L : -54
+  }
+  if (cy < -54 && level == sea_level)  level = L         // after `d < 4`, not before
+  ```
 
-  Seven such intervals intersect at **K in [55.32, 55.56)**, which does not
-  overlap 56.6-58.4 at all. The per-layer estimators were reading a boundary
-  smeared over eight blocks by the centre jitter, which is exactly the width of
-  their disagreement.
+  Both floodedness comparisons are strict; equality falls through.
 
-  This is recorded rather than acted on. The new bracket has not been
-  cross-checked at a second `preliminary_surface_level` or a second seed, and
-  55.32-55.56 contains no obviously intended constant — so what it most
-  reliably establishes is that the OLD figure cannot be used, not yet what
-  should replace it. **M3 cannot close until this is settled**: the ocean
-  branch governs a large share of the overworld, and a wrong constant there is
-  a world that generates and is quietly wrong.
+  *The two gates carry different slopes, and that is what kills the old
+  reading.* The refutation does not assume the bonus is linear. Any ONE bonus
+  added before two fixed thresholds forces the gap between the two crossing
+  floodednesses to be constant in depth. Measured, that gap runs
+
+  | d | 8 | 24 | 48 | >= 56 |
+  |---|---|---|---|---|
+  | gap | 0.4750 | 0.4500 | 0.4125 | 0.4000 |
+
+  Two verifiers found this independently, at different depths and on different
+  seeds. Separately, a monotone single bonus would force
+  `D_local(f) = D_sea(f + 0.4)`; two measured pairs are disjoint by up to three
+  blocks. The slopes are 1/58.18 and 1/53.33 and their feasible intervals are
+  disjoint by ~250 times their widths — within a single `psl`, not only pooled.
+
+  *Where the constants come from.* About forty integer crossing depths were
+  bracketed to a ten-thousandth of floodedness, in disjoint (depth, psl, seed)
+  sets across four campaigns; every one lands on the two lines. Both lines
+  extrapolate to the same zero-bonus depth, 55.900-56.000 and 55.951-56.000,
+  and 56 is the only integer in either. Imposing 56 puts the slopes on
+  `640/11` and `160/3` exactly and excludes the neighbouring candidates. Five
+  of the crossing floodednesses are exactly representable in binary (0.25,
+  0.078125, -0.5, -0.125, 0.4), so the strictness is settled with no
+  floating-point ambiguity at all.
+
+  *Why the old per-cell bracket was wrong, since it was this project's own.* It
+  fitted one K to the sea gate only, over floodedness 0.60-0.79 only, at
+  `psl` 0 only, through a readout that calls every cell centred below -54 dry
+  whatever its level. Both verifiers reproduced that failure mode from the
+  description and named it unprompted. Reading the LEVEL of each cell rather
+  than whether its centre is wet — and refusing to guess when a barrier ends
+  the fluid run ambiguously — moved agreement from 99.79% to 99.93% on its own.
+
+  *Scale.* ~1370 probe dimensions, 12 world seeds, `psl` -54 to 141, sea levels
+  32 to 200, spread 0/±0.3/±0.7/+0.9, barrier +1/-2, lava ±1. Four whole-model
+  per-cell scores, never pooled across seeds: **99.9902%, 99.9806%, 99.9902%,
+  99.9858%**. The same cells score 13-77% under the honest null (no ocean
+  branch) and 86-97% under the K model this replaces. Of 48 of 63 `psl` values
+  the score is exactly 100%.
+
+  *Three details that a plausible reading gets wrong.*
+
+  - **`psl` is floored, not truncated.** At -10.4 and -10.6 the server behaves
+    as -11 in both cases while -10 behaves as -10. Truncation toward zero,
+    round-half and carrying the raw double each predict a different one of the
+    four observed outcomes, and all three are excluded. Measured twice
+    independently (also at -20.5/-20.25).
+  - **The `psl` cap is applied AFTER the spread offset.** At `psl` 67, a cell
+    whose lattice point plus offset came to 69 was observed at 67.
+  - **The deep-cell guard sits after the near-surface rule, not before it.** At
+    `psl` -54, cells centred at -55, -56 and -57 with `d` = 1, 2, 3 DO take the
+    sea level, at floodedness -2.0 and 0.95 alike. Putting the guard first
+    writes lava where the server writes water in every ocean cell that is both
+    below the lava sea and within three of the preliminary surface.
+
+  *Floating point, and it is load-bearing.* `f + reach * slope` is exactly the
+  shape a fused multiply-add contracts, and with contraction on the outcome
+  flips at sea-gate depths 6 and 11 precisely at the crossing. §5's
+  `-ffp-contract=off` / `/fp:precise` is required for this expression, and
+  those two depths are the natural x86-64/ARM64 canary. The surviving
+  equivalence class is bit-identical over 12.6M evaluations:
+  `f + (56.0-d)*0.0171875`, `f + 1.1*((56.0-d)/64.0)`, `f + (1.1*(56.0-d))/64.0`
+  and `f - (d-56.0)*0.0171875`. Spelling it as an amplitude over 56 —
+  `1.05 * ((56.0 - d) / 56.0)` and relatives — is REFUTED at observed depths,
+  from two independent sessions on different seeds. Parametrise by the slope.
+  The integer restatements `11*d < 640*f + 104` and `3*d < 160*f + 104` are a
+  reasoning oracle, not the predicate: they agree across the whole
+  ten-thousandth grid except within about an ulp of a crossing, where they
+  differ because the crossing floodedness is not itself representable. One
+  rearrangement, `(56.0-d)*m > 0.8-f`, is still indistinguishable from the
+  shipped form outside ~6 ulp of a crossing; it is measure-zero against real
+  noise, but recorded so that a golden landing there is not read as a bug.
+
+  **Refuse `psl <= min_y`.** At `psl` -64, the world floor, 65 of 130 cells
+  disagree and the sea/ladder boundary sits at centre -43/-44 instead of where
+  this rule puts it. `psl` -54 fits, and every value from -48 to 141 fits
+  exactly; the band -63 to -55 is unexplored. This is a refusal, not an
+  approximation (§8).
 
   *The barrier is geometry, not a threshold.* A stone sheet is written at every
   cell interface where the two cells place different blocks, unconditionally —
@@ -1399,10 +1507,54 @@ Open:
   nearest source sits beyond the second, exactness runs 0.53 where three
   sources compete and 0.97 where only two do — so the two-source barrier rule
   is 97% block-exact, which bounds the per-cell jitter error at about 1.5%.
-  The shortfall is the barrier THRESHOLD, whose optimum moves between probes
-  (23 on most, 22 on two, 12 on one) while the Voronoi boundaries stay inside
-  the observed slab 99.3% of the time. That threshold is the last unrecovered
-  number in the aquifer.
+  The shortfall was the barrier THRESHOLD, whose apparent optimum moved
+  between probes (23 on most, 22 on two, 12 on one) while the Voronoi
+  boundaries stayed inside the observed slab 99.3% of the time. **That moving
+  optimum was the clue, not the noise: there is no threshold on the
+  separation.** 23 is the value the real rule takes over the commonest
+  geometry.
+
+  **The barrier rule, recovered (M3).** It is an exact, deterministic
+  comparison. Every quantity in it is an integer and nothing divides, so no
+  floorDiv arises; the only floating-point is the `barrier` router value, and
+  only when the block sits within three of the nearer plane. For a block at
+  integer position `P`, with `A` and `B` the two nearest cell centres by
+  SQUARED euclidean distance from `P` itself (not from the block centre),
+  `dA <= dB`, and `lA`, `lB` their fluid levels:
+
+  ```
+  if ((y < lA) == (y < lB))     no barrier      // the pair must disagree
+  separation = dB - dA
+  if (separation >= 25)         no barrier      // the similarity clamps at 0
+  above = y - min(lA, lB)                       // >= 0, distance to the air plane
+  below = max(lA, lB) - y                       // >= 1, distance to the fluid plane
+  pressure = above < below ? 2*above + 7 : 4*below - 2
+  if (nearer plane within 3)    pressure += 6 * barrier
+  stone  <=>  (25 - separation) * pressure > 75
+  ```
+
+  The block centre `y + 0.5` sits `above + 0.5` from the lower plane and
+  `below - 0.5` from the upper; the rule uses whichever is nearer, and a tie —
+  which happens only for odd gaps, at `below == above + 1` — goes to the LOWER
+  plane. The `barrier` router value is read at the block's own position, not at
+  either centre, and only reaches three blocks: beyond that, thirteen barrier
+  constants from -1.0 to +4.0 give byte-identical output.
+
+  The comparison is STRICT, pinned by three independent exact-equality cases
+  that all place no stone: `above` 4 with separation 20, `above` 9 with
+  separation 22, and `below` 2 at `barrier` 1.5 with separation 20. The last of
+  those is pinned by stone counts of 191403 / 191403 / 191405 at `barrier`
+  1.4999999 / 1.5 / 1.5000001. The clamp at separation 25 is real rather than
+  cosmetic: without it a negative similarity times a negative pressure makes
+  stone, observed firing 478 times at `barrier` -1.0.
+
+  Reproduces **251,658,240 blocks across 40 dimensions on six world seeds**,
+  including a holdout generated after the rule was frozen.
+
+  **Still short of the whole barrier, and this is why the filler keeps its
+  refusal:** about 13% of the server's real barriers come from a THIRD source
+  rather than from the nearest two. The predicate above is exact on the pairs
+  it is given; the pair selection is not yet complete.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the
