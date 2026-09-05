@@ -1307,9 +1307,34 @@ Open:
   seeds. The gate is DETERMINISTIC — every cell in a world flips across that
   ten-thousandth, which excludes any per-cell threshold spread wider than 1e-4
   and retires the "per-cell randomness" this SPEC inferred twice.
-  Below `sea_level - 8` an ocean branch adds a depth-dependent bonus of roughly
-  `max(0, 1 - (psl - centreY)/58)`; the 58 is bracketed only to 56.6-58.4 and
-  is NOT settled.
+  Below `sea_level - 8` an ocean branch adds a depth-dependent bonus of
+  `max(0, 1 - (psl - centreY)/K)`. **K is not settled, and the bracket recorded
+  here was wrong.**
+
+  It was 56.6-58.4, from five estimators that all worked per LAYER. Measuring
+  it per CELL disagrees with that outright. The centres are known exactly now,
+  so `d = psl - centreY` is exact rather than approximated by a layer's middle,
+  and a cell takes the sea level iff `f + max(0, 1 - d/K) > 0.8` — that is, iff
+  `d < K * (0.2 + f)`. Each floodedness therefore brackets K from both sides:
+
+  | f | 0.600 | 0.640 | 0.740 | 0.780 | 0.790 |
+  |---|---|---|---|---|---|
+  | max wet d | 44 | 46 | 52 | 54 | 54 |
+  | min dry d | 45 | 47 | 53 | 55 | 55 |
+  | K in | [55.00, 56.25) | [54.76, 55.95) | [55.32, 56.38) | [55.10, 56.12) | [54.55, 55.56) |
+
+  Seven such intervals intersect at **K in [55.32, 55.56)**, which does not
+  overlap 56.6-58.4 at all. The per-layer estimators were reading a boundary
+  smeared over eight blocks by the centre jitter, which is exactly the width of
+  their disagreement.
+
+  This is recorded rather than acted on. The new bracket has not been
+  cross-checked at a second `preliminary_surface_level` or a second seed, and
+  55.32-55.56 contains no obviously intended constant — so what it most
+  reliably establishes is that the OLD figure cannot be used, not yet what
+  should replace it. **M3 cannot close until this is settled**: the ocean
+  branch governs a large share of the overworld, and a wrong constant there is
+  a world that generates and is quietly wrong.
 
   *The barrier is geometry, not a threshold.* A stone sheet is written at every
   cell interface where the two cells place different blocks, unconditionally —
