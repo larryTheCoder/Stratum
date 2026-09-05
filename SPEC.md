@@ -826,26 +826,35 @@ Open:
   vanilla's own overworld can reach them. Written directly into a probe's own
   rule tree they are reachable, and four of the five gave something up.
 
-  * **`temperature` compares a HEIGHT-ADJUSTED temperature — the flat
-    threshold was wrong.** The original sweep varied a fixed biome's
-    temperature and found true up to 0.29 and false from 0.30, with a single
-    position of 98304 at exactly 0.30 coming out true. That one exception was
-    the whole story. The sweep it called for — of terrain HEIGHT rather than
-    of temperature — has now been run, with columns solid to y = 0, 64, 128,
-    192, 256 and 310 at five biome temperatures:
+  * **`temperature` is SETTLED, and it compares a height-adjusted value.** It
+    was recorded here for two milestones as a flat strict threshold at 0.30 on
+    the biome's own temperature, on a sweep that varied temperature and never
+    varied height. Sweeping height refuted it, and the rule is:
 
-    | biome temperature | 0.15 | 0.29 | 0.30 | 0.31 | 0.45 |
-    |---|---|---|---|---|---|
-    | fires from y | -46 | 58 | 66 | 74 | 186 |
+    ```
+    origin = sea_level + 17
+    t      = biomeTemperature                       // float32 throughout
+    if (y > origin)
+        t -= (8*simplex(x/8, z/8) + (float)y - (float)origin) * 0.05f / 40.0f
+    fires  iff  t < 0.15f
+    ```
 
-    The condition fires ABOVE a height that moves with the biome's temperature
-    at about eight blocks per 0.01, or 800 blocks per unit. A flat threshold
-    cannot produce that. What is left to separate is the per-column term:
-    the figures above are the extreme over 16384 columns rather than a median,
-    and a noise-modulated adjustment would scatter the boundary column by
-    column, which is consistent with the one residual the linear fit leaves
-    (the 0.15 row sits eight blocks off the line through the other four).
-  * **`bandlands` paints terracotta banding**, and the band table is readable
+    Three details are load-bearing and each was measured rather than assumed.
+    Every step after the noise is FLOAT32 and evaluated left to right; widening
+    to double disagrees with the server. `* 0.05f / 40.0f` is NOT the
+    algebraically equal `* 0.00125f` — the grouping is what is pinned, and the
+    folded constant is refuted. And the noise is a 2D simplex over a
+    permutation from a Java LCG seeded with the CONSTANT 1234: no world seed,
+    no salt, so this field is identical in every world.
+
+    The origin follows `sea_level`, one for one, and moves with neither `min_y`
+    nor the world top — checked at five sea levels. The slope is eight blocks
+    per 0.01 of biome temperature; at any single column the integer boundary
+    lands eight or nine apart depending where the noise puts the fraction,
+    which is why the earlier "one position of 98304 at exactly 0.30 came out
+    true" was the whole story rather than an anomaly.
+
+  * **`bandlands` paints terracotta banding**  * **`bandlands` paints terracotta banding**, and the band table is readable
     straight off: plain terracotta, orange, red, white and light grey, in
     that order of frequency, over a fixed column.
   * **`steep` fires on 16.9% of columns** of a gently varying terrain — a

@@ -91,24 +91,22 @@ TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
     const auto id = stratum::data::ResourceLocation::parse("minecraft:overworld");
     const auto graph = stratum::surface::RuleGraph::resolve(loaded.settings.at(id).surfaceRule, id);
 
-    // TWO of the fifteen types the overworld uses cannot be run, and the
-    // list is asserted whole rather than counted: when one is settled it
-    // leaves this list, and that should be a visible, deliberate edit.
+    // ONE of the fifteen types the overworld uses cannot be run, and the list
+    // is asserted whole rather than counted: when one is settled it leaves
+    // this list, and that should be a visible, deliberate edit.
     //
-    // It has gone ten, nine, three, two. vertical_gradient left when its
+    // It has gone ten, nine, three, two, one. vertical_gradient left when its
     // random source was recovered; surface depth then unblocked hole, steep,
-    // stone_depth, water, y_above and noise_threshold together; and `biome`
-    // left because it never needed a derivation at all, only the biome
-    // plumbed into the rule context.
+    // stone_depth, water, y_above and noise_threshold together; `biome` left
+    // because it needed the biome plumbed through rather than derived; and
+    // `temperature` left once a height sweep showed it compares a
+    // height-adjusted value rather than the flat threshold recorded here for
+    // two milestones.
     //
-    // What is left is `temperature`, which compares a height-adjusted
-    // temperature whose per-column term is not derived, and `bandlands`,
-    // whose colour table generator is not derived (SPEC §11).
-    const std::vector<std::string> expected{
-        "minecraft:bandlands",
-        "minecraft:temperature",
-    };
+    // What remains is the bandlands RULE, whose colour table is generated from
+    // the world seed by a derivation this build does not have (SPEC §11).
+    const std::vector<std::string> expected{"minecraft:bandlands"};
     CHECK(graph.unrunnable() == expected);
 
-    CHECK(graph.unrunnable().size() == 2U);
+    CHECK(graph.unrunnable().size() == 1U);
 }

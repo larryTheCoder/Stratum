@@ -117,24 +117,28 @@ TEST_CASE("what cannot be run is named, and what can be is not", "[surface]") {
                                {"then_run", block("minecraft:stone")}});
     CHECK(runnable.unrunnable().empty());
 
-    const RuleGraph refused =
-        resolve(nlohmann::json{{"type", "minecraft:condition"},
-                               {"if_true", nlohmann::json{{"type", "minecraft:temperature"}}},
-                               {"then_run", block("minecraft:stone")}});
-    REQUIRE(refused.unrunnable().size() == 1U);
-    CHECK(refused.unrunnable()[0] == "minecraft:temperature");
+    const RuleGraph refused = resolve(
+        nlohmann::json{{"type", "minecraft:condition"},
+                       {"if_true", nlohmann::json{{"type", "minecraft:above_preliminary_surface"}}},
+                       {"then_run", block("minecraft:stone")}});
+    CHECK(refused.unrunnable().empty());
+
+    // What is left refused is the bandlands RULE, not any condition.
+    const RuleGraph bandlands = resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
+    REQUIRE(bandlands.unrunnable().size() == 1U);
+    CHECK(bandlands.unrunnable()[0] == "minecraft:bandlands");
 
     // And the reason says what is missing, not merely that something is.
-    const auto reason = RuleGraph::unrunnableReason(ConditionType::Temperature);
+    const auto reason = RuleGraph::unrunnableReason(RuleType::Bandlands);
     REQUIRE(reason.has_value());
-    CHECK_THAT(std::string(*reason), ContainsSubstring("per-column term"));
+    CHECK_THAT(std::string(*reason), ContainsSubstring("banding"));
 
     // Seven condition types have left this list as their semantics were
     // measured. Only the two that read a biome remain.
     for (const ConditionType settled :
          {ConditionType::VerticalGradient, ConditionType::Hole, ConditionType::Steep,
           ConditionType::StoneDepth, ConditionType::Water, ConditionType::YAbove,
-          ConditionType::NoiseThreshold, ConditionType::Biome}) {
+          ConditionType::NoiseThreshold, ConditionType::Biome, ConditionType::Temperature}) {
         CHECK_FALSE(RuleGraph::unrunnableReason(settled).has_value());
     }
 }

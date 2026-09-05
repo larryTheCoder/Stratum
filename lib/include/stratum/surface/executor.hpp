@@ -21,6 +21,7 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
+#include <stratum/noise/perlin.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -31,6 +32,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace stratum::surface {
 
@@ -54,10 +56,15 @@ struct Context {
     /// The column's preliminary surface level, for `above_preliminary_surface`.
     std::int32_t preliminarySurface = 0;
 
-    /// The biome at this position, for `biome` and `temperature`. Absent means
-    /// the caller does not carry one — which is only reachable for a tree that
-    /// names neither, since a tree that did would have been refused.
+    /// The biome at this position, for `biome`. Absent means the caller does
+    /// not carry one — which is only reachable for a tree that names neither,
+    /// since a tree that did would have been refused.
     std::optional<data::ResourceLocation> biome;
+
+    /// That biome's declared temperature, for `temperature`. A float32 on
+    /// purpose: vanilla holds it as one and the whole comparison is done in
+    /// single precision, so widening it here would change the answer.
+    float biomeTemperature = 0.0F;
 
     /// How deep this block sits in its run of solid, counting DOWN from the
     /// world top: 1 at the top of a run, reset by air, and — measured, not
@@ -120,7 +127,8 @@ public:
     /// case worth avoiding: most trees small enough to test by hand are one.
     [[nodiscard]] static Executor compile(const RuleGraph& graph, std::int64_t worldSeed,
                                           const settings::NoiseGeometry& geometry,
-                                          const density::NoiseRegistry* noises = nullptr);
+                                          const density::NoiseRegistry* noises = nullptr,
+                                          std::int32_t seaLevel = 0);
 
     /// An Executor keeps POINTERS to the graph, the geometry and the noises,
     /// so all three have to outlive it. Compiling from a temporary graph is
@@ -131,7 +139,7 @@ public:
     /// reads like it should work. This overload makes it a COMPILE error
     /// instead of a crash at the first `apply`, which is where it was found.
     static Executor compile(RuleGraph&&, std::int64_t, const settings::NoiseGeometry&,
-                            const density::NoiseRegistry* = nullptr) = delete;
+                            const density::NoiseRegistry* = nullptr, std::int32_t = 0) = delete;
 
     /// The surface depth at a column: an integer, constant down the column,
     /// and a pure function of the world seed and (x, z).
@@ -149,15 +157,37 @@ public:
     /// easiest mistake here and it cost this project two sessions.
     [[nodiscard]] std::int32_t surfaceDepth(std::int32_t x, std::int32_t z) const;
 
+    /// Whether `minecraft:temperature` fires — that is, whether it is cold
+    /// enough to freeze at this block.
+    ///
+    /// It compares a HEIGHT-ADJUSTED temperature, which is what took the long
+    /// time to establish: the flat threshold of 0.30 this project recorded for
+    /// two milestones was an artefact of never sweeping height. Above
+    /// `sea_level + 17` the biome's temperature is reduced with height, so the
+    /// firing boundary moves about eight blocks per 0.01 of temperature.
+    ///
+    /// Every step after the noise is FLOAT32 and left to right, and neither
+    /// half of that is decoration: widening to double, or folding
+    /// `* 0.05f / 40.0f` into the algebraically equal `* 0.00125f`, each
+    /// disagrees with the server (SPEC §11).
+    ///
+    /// The noise is a 2D simplex over a permutation from a Java LCG seeded
+    /// with the CONSTANT 1234 — no world seed, no salt. So this field is the
+    /// same in every world, which is worth knowing before looking for a seed
+    /// in it.
+    [[nodiscard]] bool freezing(std::int32_t x, std::int32_t y, std::int32_t z,
+                                float biomeTemperature) const noexcept;
+
     /// The block the rules place at @p at, or nullptr where they place none —
     /// which is the ordinary case, and means the filler's block stands.
     [[nodiscard]] const settings::BlockState* apply(const Context& at) const;
 
 private:
     Executor(const RuleGraph& graph, const settings::NoiseGeometry& geometry,
-             const density::NoiseRegistry* noises, std::int64_t worldSeed)
-        : graph_(&graph), geometry_(&geometry), noises_(noises),
-          jitter_(rng::XoroshiroPositionalFactory{worldSeed}.base()) {}
+             const density::NoiseRegistry* noises, std::int64_t worldSeed, std::int32_t seaLevel,
+             noise::PerlinNoise temperature)
+        : graph_(&graph), geometry_(&geometry), noises_(noises), seaLevel_(seaLevel),
+          temperature_(temperature), jitter_(rng::XoroshiroPositionalFactory{worldSeed}.base()) {}
 
     [[nodiscard]] const settings::BlockState* runRule(RuleIndex index, const Context& at) const;
     [[nodiscard]] bool test(ConditionIndex index, const Context& at) const;
@@ -166,6 +196,9 @@ private:
     const RuleGraph* graph_;
     const settings::NoiseGeometry* geometry_;
     const density::NoiseRegistry* noises_;
+    std::int32_t seaLevel_ = 0;
+    /// Seeded from the constant 1234, so it is built once and never varies.
+    noise::PerlinNoise temperature_;
     /// The unsalted positional source the surface depth's jitter comes from.
     rng::PositionalSource jitter_;
     /// Resolved once at compile, so no lookup happens per block.

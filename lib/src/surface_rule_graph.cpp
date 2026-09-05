@@ -178,17 +178,6 @@ bool verticalGradientFires(const rng::PositionalSource& source, const std::int32
 std::optional<std::string_view> RuleGraph::unrunnableReason(ConditionType type) noexcept {
     switch (type) {
         case ConditionType::Temperature:
-            // The height sweep that was missing has now been run, and it
-            // REFUTES the flat-threshold reading rather than confirming it.
-            // The condition fires above a height that moves with the biome's
-            // temperature at about eight blocks per 0.01 — y = -46, 58, 66, 74
-            // and 186 for temperatures 0.15, 0.29, 0.30, 0.31 and 0.45. So it
-            // is a height-adjusted temperature compared against a fixed
-            // threshold, and the adjustment carries a per-column term the
-            // sweep can see but has not yet separated.
-            return "it compares a HEIGHT-ADJUSTED temperature, not the biome's own: the firing "
-                   "height moves about eight blocks per 0.01 of biome temperature, and the "
-                   "per-column term in that adjustment is not yet derived (SPEC §11)";
         case ConditionType::Hole:
         case ConditionType::NoiseThreshold:
         case ConditionType::Steep:

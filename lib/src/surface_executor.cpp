@@ -1,5 +1,6 @@
 // Stratum — running a dimension's surface rules.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include <stratum/rng/java_random.hpp>
 #include <stratum/surface/executor.hpp>
 
 #include <algorithm>
@@ -47,7 +48,7 @@ constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary
 
 Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                            const settings::NoiseGeometry& geometry,
-                           const density::NoiseRegistry* noises) {
+                           const density::NoiseRegistry* noises, const std::int32_t seaLevel) {
     const std::vector<std::string> blocked = graph.unrunnable();
     if (!blocked.empty()) {
         std::string message = "this build cannot run " + std::to_string(blocked.size()) +
@@ -66,7 +67,11 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                              "a noise registry");
     }
 
-    Executor executor{graph, geometry, noises, worldSeed};
+    // Seeded from the constant 1234 rather than the world seed, so the field
+    // is identical in every world.
+    rng::JavaRandom temperatureRandom{1234};
+    Executor executor{graph,     geometry, noises,
+                      worldSeed, seaLevel, noise::PerlinNoise::fromRandom(temperatureRandom)};
     if (wantsDepth) {
         executor.surface_ = &noises->get(data::ResourceLocation::parse(std::string(kSurfaceNoise)));
         executor.surfaceSecondary_ =
@@ -101,6 +106,22 @@ std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) 
     // both refuted against the server, and the difference is visible because
     // the value goes below zero on roughly one column in 22000.
     return static_cast<std::int32_t>(raw);
+}
+
+bool Executor::freezing(const std::int32_t x, const std::int32_t y, const std::int32_t z,
+                        const float biomeTemperature) const noexcept {
+    const std::int32_t origin = seaLevel_ + 17;
+    float value = biomeTemperature;
+    if (y > origin) {
+        // Float32 and left to right from here down. `* 0.05F / 40.0F` is NOT
+        // `* 0.00125F`: the grouping is what was measured, and the folded
+        // constant disagrees with the server.
+        const auto field =
+            static_cast<float>(8.0 * temperature_.sampleSimplex2D(static_cast<double>(x) / 8.0,
+                                                                  static_cast<double>(z) / 8.0));
+        value -= (field + static_cast<float>(y) - static_cast<float>(origin)) * 0.05F / 40.0F;
+    }
+    return value < 0.15F;
 }
 
 const settings::BlockState* Executor::apply(const Context& at) const {
@@ -237,6 +258,8 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
         }
 
         case ConditionType::Temperature:
+            return freezing(at.x, at.y, at.z, at.biomeTemperature);
+
         default:
             throw ExecutionError("reached a condition type compile() should have refused");
     }

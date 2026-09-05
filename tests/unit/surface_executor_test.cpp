@@ -63,20 +63,18 @@ constexpr std::int64_t kSeed = 42;
 
 TEST_CASE("a tree with an unrunnable construct is refused whole, by name", "[surface]") {
     const auto geometry = overworldGeometry();
-    const RuleGraph graph = resolve(nlohmann::json{
-        {"type", "minecraft:sequence"},
-        {"sequence",
-         {nlohmann::json{{"type", "minecraft:condition"},
-                         {"if_true", gradient("minecraft:deepslate", -8, 8)},
-                         {"then_run", block("minecraft:deepslate")}},
-          nlohmann::json{{"type", "minecraft:condition"},
-                         {"if_true", nlohmann::json{{"type", "minecraft:temperature"}}},
-                         {"then_run", block("minecraft:stone")}}}}});
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:sequence"},
+                               {"sequence",
+                                {nlohmann::json{{"type", "minecraft:condition"},
+                                                {"if_true", gradient("minecraft:deepslate", -8, 8)},
+                                                {"then_run", block("minecraft:deepslate")}},
+                                 nlohmann::json{{"type", "minecraft:bandlands"}}}}});
 
     // The runnable half is not a licence to run the tree: one unrunnable
     // branch refuses all of it, and the message says which and why.
     CHECK_THROWS_WITH(Executor::compile(graph, kSeed, geometry),
-                      ContainsSubstring("minecraft:temperature") && ContainsSubstring("refused"));
+                      ContainsSubstring("minecraft:bandlands") && ContainsSubstring("refused"));
 }
 
 TEST_CASE("a runnable tree places what its rules say", "[surface]") {
@@ -269,4 +267,100 @@ TEST_CASE("the steep neighbours are clamped inside the block's own chunk", "[sur
     });
     CHECK(asked[0].first == 7);
     CHECK(asked[1].first == 9);
+}
+
+TEST_CASE("temperature compares a height-adjusted value, not the biome's own", "[surface]") {
+    // sea_level 63 puts the origin at 80, which is vanilla's overworld.
+    const auto geometry = overworldGeometry();
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:condition"},
+                               {"if_true", nlohmann::json{{"type", "minecraft:temperature"}}},
+                               {"then_run", block("minecraft:stone")}});
+    const Executor executor = Executor::compile(graph, kSeed, geometry, nullptr, 63);
+
+    // Below the origin no adjustment happens at all, so a warm biome never
+    // freezes however deep you go.
+    CHECK_FALSE(executor.freezing(0, -60, 0, 0.8F));
+    CHECK_FALSE(executor.freezing(0, 80, 0, 0.8F));
+
+    // A biome already below the threshold freezes everywhere, including under
+    // the origin where the adjustment is suppressed.
+    CHECK(executor.freezing(0, -60, 0, 0.1F));
+    CHECK(executor.freezing(0, 80, 0, 0.1F));
+
+    // Above the origin it gets colder with height, so each column has ONE
+    // boundary and everything above it freezes.
+    const auto boundary = [&](float temperature) {
+        for (std::int32_t y = 81; y <= 319; ++y) {
+            if (executor.freezing(0, y, 0, temperature)) {
+                return y;
+            }
+        }
+        return 1 << 20;
+    };
+    const std::int32_t cold = boundary(0.29F);
+    const std::int32_t mid = boundary(0.30F);
+    const std::int32_t warm = boundary(0.31F);
+    CHECK(cold < mid);
+    CHECK(mid < warm);
+
+    // Eight blocks per 0.01 of biome temperature — the slope that refuted the
+    // flat threshold this project carried for two milestones. At any ONE
+    // column the integer boundary lands 8 or 9 apart depending where the noise
+    // puts the fractional part, so the exact figure is the mean over columns.
+    CHECK(mid - cold >= 8);
+    CHECK(mid - cold <= 9);
+    CHECK(warm - mid >= 8);
+    CHECK(warm - mid <= 9);
+
+    double total = 0.0;
+    int counted = 0;
+    for (std::int32_t x = 0; x < 48; ++x)
+        for (std::int32_t z = 0; z < 48; ++z) {
+            const auto at = [&](float t) {
+                for (std::int32_t y = -64; y <= 319; ++y)
+                    if (executor.freezing(x, y, z, t))
+                        return y;
+                return 1 << 20;
+            };
+            total += static_cast<double>(at(0.31F) - at(0.29F));
+            ++counted;
+        }
+    // Two steps of 0.01, so sixteen blocks across 2304 columns.
+    CHECK(total / counted > 15.9);
+    CHECK(total / counted < 16.1);
+
+    // Once a column freezes it stays frozen all the way up.
+    for (std::int32_t y = mid; y <= 319; ++y) {
+        CHECK(executor.freezing(0, y, 0, 0.30F));
+    }
+
+    // And the field is seedless: built from the constant 1234, so a different
+    // world seed gives the identical boundary.
+    const Executor other = Executor::compile(graph, 12345, geometry, nullptr, 63);
+    CHECK(other.freezing(0, mid, 0, 0.30F));
+    CHECK_FALSE(other.freezing(0, mid - 1, 0, 0.30F));
+}
+
+TEST_CASE("the temperature origin follows sea level, not the world floor", "[surface]") {
+    const auto geometry = overworldGeometry();
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:condition"},
+                               {"if_true", nlohmann::json{{"type", "minecraft:temperature"}}},
+                               {"then_run", block("minecraft:stone")}});
+
+    const auto boundaryAt = [&](std::int32_t seaLevel) {
+        const Executor executor = Executor::compile(graph, kSeed, geometry, nullptr, seaLevel);
+        for (std::int32_t y = -64; y <= 319; ++y) {
+            if (executor.freezing(0, y, 0, 0.30F)) {
+                return y;
+            }
+        }
+        return 1 << 20;
+    };
+
+    // Raising the sea by one raises the whole thing by one: the origin is
+    // sea_level + 17 and nothing else moves.
+    CHECK(boundaryAt(64) - boundaryAt(63) == 1);
+    CHECK(boundaryAt(0) < boundaryAt(63));
 }
