@@ -18,6 +18,7 @@ add_library(stratum_core STATIC
     src/chunk.cpp
     src/density_graph.cpp
     src/density_interpreter.cpp
+    src/surface_executor.cpp
     src/surface_rule_graph.cpp
     src/terrain_filler.cpp
     src/density_render.cpp

@@ -668,6 +668,32 @@ Open:
   returns nothing for `vertical_gradient`, and the earlier record of what was
   known and not known about it is superseded by the derivation above.
 
+- **Surface rules RUN, for the trees this build can run whole (M4).**
+  `stratum::surface::Executor` walks a resolved graph and returns the block the
+  rules place at a position, or nothing where they place none — which is the
+  ordinary case and means the filler's own block stands.
+
+  It refuses the same way the filler does, and for the same reason: a tree
+  containing one unrunnable construct is refused ENTIRE at compile, by name and
+  with the reason, rather than run with that branch quietly skipped. A surface
+  rule that sometimes does nothing is a world that generates and is silently
+  wrong, which §8 puts in the most severe class there is. Vanilla's overworld
+  is refused today — nine of its fifteen condition types are still unsettled —
+  and that is the honest position rather than a limitation to work around.
+
+  Two consequences worth stating. Because compile refuses first, a `Context`
+  missing a field can only ever be a programming error and never a wrong
+  world: a tree that asked for the biome would not have compiled. And because
+  the positional sources are built once per `random_name` at compile, a
+  gradient fired millions of times pays for no MD5 and no forking.
+
+  `above_preliminary_surface` is implemented from the DOCUMENTED reading,
+  `y >= preliminary_surface_level`, and its strictness has never been
+  separated by measurement — the one probe that reached it found the condition
+  true everywhere, which cannot distinguish `>=` from `>`. Both the executor
+  and its test say so in place, since it is exactly the kind of thing a later
+  reader would otherwise quietly "fix" in the wrong direction.
+
 - **Surface rules load whole, and refuse by name (M4).**
   `stratum::surface::RuleGraph` resolves the tree for every one of vanilla's
   seven dimensions: the overworld's is 287 rules over 141 conditions naming 7
