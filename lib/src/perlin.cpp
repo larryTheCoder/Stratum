@@ -244,7 +244,8 @@ OctaveNoise OctaveNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
                 rng::Seed128{.lo = baseLo ^ salt.lo, .hi = baseHi ^ salt.hi}};
 
             octaveNoise.octaves_.push_back(Octave{.noise = PerlinNoise::fromRandom(octaveRandom),
-                                                  .amplitude = amplitudes[i] * persistence,
+                                                  .amplitude = amplitudes[i],
+                                                  .persistence = persistence,
                                                   .frequency = frequency});
         }
         // Advanced even for a skipped octave: a zero amplitude means "this
@@ -259,8 +260,23 @@ OctaveNoise OctaveNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
 double OctaveNoise::sample(double x, double y, double z) const noexcept {
     double total = 0.0;
     for (const Octave& octave : octaves_) {
-        total += octave.amplitude * octave.noise.sample(x * octave.frequency, y * octave.frequency,
-                                                        z * octave.frequency);
+        // (sample * amplitude) * persistence, and the grouping is NOT free:
+        // floating-point multiplication does not associate, so folding the
+        // amplitude and the persistence together at construction — which is
+        // the obvious optimisation, and what this did until it was measured —
+        // gives a different double.
+        //
+        // It is invisible for amplitudes that are powers of two, where both
+        // groupings are exact, and every noise checked before this one had
+        // amplitudes drawn from {0, 1, 2}. It is NOT invisible for the seven
+        // vanilla noises that do not, among them minecraft:temperature, a
+        // biome-source parameter: 308 of 2304 columns differ by one ulp, and
+        // a probe putting the two candidate values in as exact thresholds had
+        // the server paint all 40 of one and none of the other (SPEC §11).
+        total +=
+            (octave.noise.sample(x * octave.frequency, y * octave.frequency, z * octave.frequency) *
+             octave.amplitude) *
+            octave.persistence;
     }
     return total;
 }

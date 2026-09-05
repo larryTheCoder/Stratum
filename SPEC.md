@@ -668,6 +668,38 @@ Open:
   returns nothing for `vertical_gradient`, and the earlier record of what was
   known and not known about it is superseded by the derivation above.
 
+- **Octave amplitudes do not associate, and this build had it wrong (M3).**
+  `OctaveNoise::sample` folded a noise's amplitude into its persistence at
+  construction and multiplied the sample by the product — `(a * p) * s`, the
+  obvious optimisation. Vanilla computes `(s * a) * p`, and floating-point
+  multiplication does not associate, so the two are different doubles.
+
+  It hid for as long as it did because both groupings are EXACT whenever the
+  amplitudes are powers of two, and every noise this project had checked drew
+  its amplitudes from {0, 1, 2}. Seven vanilla noises do not, among them
+  `minecraft:temperature` — a biome-source parameter — at `[1.5, 0, 1, 0, 0, 0]`.
+  Over a 48x48 grid at seed 4242, 308 of 2304 columns differ by one ulp.
+
+  *The server was asked directly, and it is not ambiguous.* A probe put the two
+  candidate values in as EXACT `noise_threshold` bounds — a degenerate interval
+  `[w, w]` fires only where the server's own value is bit-for-bit `w` — with
+  forty discriminating positions under each grouping. The server painted all
+  forty of `(s * a) * p` and **none** of the other.
+
+  *cubiomes sides with the old reading, and that is the interesting part.*
+  244 of the 252 climate vectors are unaffected and remain asserted bit-exact;
+  the 8 that move are all `temperature`, and 34 of the 42 temperature vectors
+  are still identical, 6 out by one ulp, one by three, one by five. So cubiomes
+  made the same fold. §2 already said agreement with it is strong evidence
+  rather than proof, and this is the first place that distinction has had to be
+  used: `vanilla_climate_test.cpp` now records the divergence and bounds it at
+  the measured maximum instead of asserting equality it cannot have.
+
+  Found by a surface-rule agent through `noise_threshold`, which is worth
+  noting because nothing about the bug is a surface-rule matter — it had been
+  sitting under the biome source and the density chain the whole time, invisible
+  to every check that used a power-of-two amplitude.
+
 - **Surface rules RUN, for the trees this build can run whole (M4).**
   `stratum::surface::Executor` walks a resolved graph and returns the block the
   rules place at a position, or nothing where they place none — which is the

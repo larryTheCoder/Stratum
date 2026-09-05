@@ -99,7 +99,10 @@ public:
 private:
     struct Octave {
         PerlinNoise noise;
+        /// The amplitude AS WRITTEN in the noise's parameters, and the
+        /// persistence for this octave, kept apart on purpose — see sample().
         double amplitude = 0.0;
+        double persistence = 0.0;
         double frequency = 0.0;
     };
 
