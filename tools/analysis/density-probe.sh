@@ -67,9 +67,15 @@ jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'ser
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
+# How much heap the server gets. Overridable because several probes may be in
+# flight at once — a fan-out of agents each running one — and the default is
+# sized for a machine that is otherwise idle. Three concurrent servers at the
+# default is most of a 29 GB box; generating 64 chunks needs far less.
+probe_xmx="${STRATUM_PROBE_XMX:-6G}"
+
 # The server outlives this script unless it is told not to. An interrupted
 # run — Ctrl-C, a killed parent, a session ending — used to leave a JVM
-# holding its -Xmx6G until the machine was rebooted, and three of them at once
+# holding its heap until the machine was rebooted, and three of them at once
 # is most of a 29 GB box. So the trap takes the server down as well as the
 # work directory, and covers the signals that actually happen rather than only
 # a clean exit.
@@ -256,7 +262,7 @@ log "starting the server (seed ${seed})"
 # `exec` so the subshell BECOMES java. Without it $! is the subshell, the
 # trap kills that, and the JVM it was meant to stop is orphaned — which is
 # exactly how three of them survived for thirteen hours.
-( cd "${server}" && exec java -Xmx6G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
+( cd "${server}" && exec java "-Xmx${probe_xmx}" -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
 server_pid=$!
 exec 3> "${pipe}"
 
