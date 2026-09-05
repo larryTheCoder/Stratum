@@ -150,7 +150,10 @@ TEST_CASE("normal noise scales by the count of contributing octaves", "[noise][n
           bits(NormalNoise::create(second, -3, padded).valueFactor()));
 
     Xoroshiro128PlusPlus third{INT64_C(1)};
-    CHECK(bits(NormalNoise::create(third, -3, two).valueFactor()) == bits(10.0 / 9.0));
+    // Not 10.0/9.0, though that is the same real number: the factor is
+    // 1/(6 * 0.1 * (1 + 1/n)) and the spelling is load-bearing (SPEC §11).
+    CHECK(bits(NormalNoise::create(third, -3, two).valueFactor()) ==
+          bits((1.0 / 6.0) / (0.1 * (1.0 + (1.0 / 2.0)))));
 }
 
 TEST_CASE("the permutation is a permutation", "[noise][perlin]") {

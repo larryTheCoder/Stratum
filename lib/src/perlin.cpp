@@ -308,7 +308,17 @@ NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
     const auto effective = static_cast<double>(last - first);
     // (5/3) * n / (n + 1), as a single division so it rounds the same way
     // the reference's literals do.
-    noise.valueFactor_ = (5.0 * effective) / (3.0 * (effective + 1.0));
+    noise.valueFactor_ = // 1 / (6 * expectedDeviation), with expectedDeviation = 0.1 * (1 + 1/n).
+                         //
+                         // The SPELLING is load-bearing, not a style choice. The algebraically
+                         // equal (5n) / (3(n+1)) that stood here is one ulp out at effective
+                         // counts 1, 2, 6, 9, 15, 16, 17 and 22 — which is 39 of vanilla's own
+                         // noises, among them `continentalness` and `jagged`. Nor is
+                         // 1/(6*(0.1*(1+1/n))) the same double; it diverges at fifteen further
+                         // counts. Probes put both candidate values in as EXACT noise_threshold
+                         // bounds on three noises of spans 1, 9 and 16 across two seeds, and the
+                         // server painted all 120 of this form and none of the other (SPEC §11).
+        (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / effective)));
     return noise;
 }
 

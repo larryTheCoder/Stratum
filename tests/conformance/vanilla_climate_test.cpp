@@ -58,6 +58,57 @@ using stratum::density::Point;
     return std::bit_cast<double>(value);
 }
 
+// How far a value may sit from cubiomes' answer.
+//
+// Two bugs found against the vanilla SERVER in September 2026 put this build
+// one ulp away from cubiomes on some noises, and it is cubiomes that is out
+// (SPEC §11). Both are in how a NormalNoise is assembled:
+//
+//   * octave amplitude grouping — vanilla computes (sample * amplitude) *
+//     persistence; folding the amplitude into the persistence at setup, as
+//     cubiomes and this build both did, gives a different double whenever an
+//     amplitude is not a power of two.
+//   * the value factor — 1/(6 * 0.1 * (1 + 1/n)) is one ulp from the
+//     algebraically equal (5n)/(3(n+1)) at effective octave counts
+//     1, 2, 6, 9, 15, 16, 17 and 22.
+//
+// Each was settled by putting the two candidate doubles in as EXACT
+// `noise_threshold` bounds and letting the server choose; it painted every
+// position of one and none of the other, 40 positions per test, on three
+// noises across two seeds.
+//
+// So these vectors can no longer be asserted bit-exact for every noise. They
+// are still asserted bit-exact for every noise the corrections do not reach,
+// and bounded for the two they do — which keeps the whole file's value as a
+// regression net while recording, rather than hiding, a real divergence.
+[[nodiscard]] std::int64_t ulpsApart(std::uint64_t left, std::uint64_t right) {
+    const auto a = static_cast<std::int64_t>(left);
+    const auto b = static_cast<std::int64_t>(right);
+    return a > b ? a - b : b - a;
+}
+
+// How far each noise may be from cubiomes, by cause. Zero means bit-exact,
+// which is still the answer for most of them. The bounds are the MEASURED
+// maxima rather than comfortable round numbers, so that a regression which
+// widened the gap would fail here.
+//
+//   * `temperature` has an amplitude of 1.5, so the grouping correction
+//     reaches it: up to five ulps over these vectors, 34 of 42 still exact.
+//   * `continentalness` (effective span 9) and `vegetation` (span 2) have
+//     spans the value-factor correction reaches: up to two ulps.
+//
+// Every other noise here has power-of-two amplitudes AND an unaffected span,
+// so neither correction can move it and it stays asserted bit-exact.
+[[nodiscard]] std::int64_t allowedUlps(std::string_view noise) {
+    if (noise == "minecraft:temperature") {
+        return 5;
+    }
+    if (noise == "minecraft:continentalness" || noise == "minecraft:vegetation") {
+        return 2;
+    }
+    return 0;
+}
+
 [[nodiscard]] std::filesystem::path findWorldgenTree() {
     const std::filesystem::path root{STRATUM_FIXTURES_DIR};
     if (!std::filesystem::is_directory(root)) {
@@ -142,34 +193,7 @@ TEST_CASE("the noises a world seed derives match cubiomes", "[conformance][densi
             registry.get(id).sample(fromBits(vector.x), fromBits(vector.y), fromBits(vector.z));
         CAPTURE(vector.seed, vector.noise);
 
-        // cubiomes folds a noise's amplitude into its persistence at setup and
-        // multiplies the sample by the product. This build did too, until the
-        // server was asked directly: floating-point multiplication does not
-        // associate, and vanilla computes (sample * amplitude) * persistence.
-        //
-        // The two groupings are IDENTICAL whenever the amplitudes are powers
-        // of two, which is every noise here but one — 244 of these 252 vectors
-        // are unaffected and are still asserted bit-exact. `temperature` has an
-        // amplitude of 1.5, and there the two part company by a single ulp.
-        //
-        // A probe put both candidate values in as exact `noise_threshold`
-        // bounds and let the server choose: it painted all 40 of the grouping
-        // this build now uses and none of cubiomes' (SPEC §11). So this is a
-        // divergence in cubiomes rather than a regression here, and the
-        // assertion records it instead of hiding it.
-        if (vector.noise == "minecraft:temperature") {
-            const auto ours = static_cast<std::int64_t>(bits(sampled));
-            const auto theirs = static_cast<std::int64_t>(vector.value);
-            const std::int64_t ulps = ours > theirs ? ours - theirs : theirs - ours;
-            // Measured across these 42 vectors: 34 identical, 6 out by one
-            // ulp, one by three, one by five. The bound is the measured
-            // maximum rather than something comfortable — the determinism
-            // contract (SPEC §5) promises identical bytes on every platform,
-            // so if this ever moves, that is worth failing over.
-            CHECK(ulps <= 5);
-            continue;
-        }
-        CHECK(bits(sampled) == vector.value);
+        CHECK(ulpsApart(bits(sampled), vector.value) <= allowedUlps(vector.noise));
     }
 }
 
@@ -211,7 +235,9 @@ TEST_CASE("vanilla's overworld climate functions match cubiomes",
         CHECK(bits(overworld->at("shift_z", corner)) == vector.shiftZ);
 
         // shifted_noise over those shifts, through flat_cache.
-        CHECK(bits(overworld->at("overworld/continents", corner)) == vector.continents);
+        // continents reaches minecraft:continentalness and carries its bound.
+        CHECK(ulpsApart(bits(overworld->at("overworld/continents", corner)), vector.continents) <=
+              allowedUlps("minecraft:continentalness"));
         CHECK(bits(overworld->at("overworld/erosion", corner)) == vector.erosion);
         CHECK(bits(overworld->at("overworld/ridges", corner)) == vector.ridges);
 
@@ -260,7 +286,8 @@ TEST_CASE("flat_cache relocates the sample to its column corner",
               Point{.x = (vector.quartX * 4) + 1, .y = 200, .z = (vector.quartZ * 4) + 3},
               Point{.x = (vector.quartX * 4) + 2, .y = -60, .z = (vector.quartZ * 4) + 2}}) {
             CAPTURE(vector.seed, vector.quartX, vector.quartZ, inside.x, inside.y, inside.z);
-            CHECK(bits(overworld->at("overworld/continents", inside)) == vector.continents);
+            CHECK(ulpsApart(bits(overworld->at("overworld/continents", inside)),
+                            vector.continents) <= allowedUlps("minecraft:continentalness"));
             CHECK(bits(overworld->at("overworld/erosion", inside)) == vector.erosion);
             CHECK(bits(overworld->at("overworld/offset", inside)) == vector.offset);
         }

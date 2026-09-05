@@ -700,6 +700,37 @@ Open:
   sitting under the biome source and the density chain the whole time, invisible
   to every check that used a power-of-two amplitude.
 
+- **The NormalNoise value factor is one ulp out, and the spelling is the
+  answer (M3).** `(5n) / (3(n+1))` stood in `perlin.cpp`. Vanilla computes
+  `1 / (6 * expectedDeviation)` with `expectedDeviation = 0.1 * (1 + 1/n)`,
+  and although the two are the same real number they are not the same double:
+  they part at effective octave counts 1, 2, 6, 9, 15, 16, 17 and 22.
+
+  That is **39 of vanilla's own noises** — thirty at span 1, three at span 2,
+  `patch` at 6, `continentalness`, `continentalness_large`, `gravel_layer` and
+  `soul_sand_layer` at 9, and `jagged` at 16. Two of those are climate
+  parameters the biome source reads.
+
+  Nor is any algebraically equal spelling safe: `1/(6*(0.1*(1+1/n)))`
+  diverges at fifteen further counts, and `(1.0/d)/6.0` at another set. The
+  form above is the one that reproduces the server.
+
+  *Settled the same way the grouping was, and more broadly.* Probes put both
+  candidate doubles in as EXACT `noise_threshold` bounds on three noises
+  spanning the affected range — `continentalness` (span 9),
+  `jagged` (16) and `noodle_thickness` (1) — across two seeds. The server
+  painted **all 120 positions of this form and none of the other**.
+
+  **What this costs, and what it buys.** cubiomes made both simplifications
+  too, so the climate vectors can no longer be asserted bit-exact throughout.
+  They are still exact for every noise neither correction reaches, and bounded
+  at the measured maximum for the three that they do — five ulps for
+  `temperature` (the grouping, via its 1.5 amplitude), two for
+  `continentalness` and `vegetation` (the value factor). §2 always said
+  agreement with cubiomes was strong evidence rather than proof; this is the
+  second place in one session where the server has been asked directly and
+  disagreed with it.
+
 - **Surface rules RUN, for the trees this build can run whole (M4).**
   `stratum::surface::Executor` walks a resolved graph and returns the block the
   rules place at a position, or nothing where they place none — which is the
