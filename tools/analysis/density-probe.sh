@@ -67,7 +67,24 @@ jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'ser
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+# The server outlives this script unless it is told not to. An interrupted
+# run — Ctrl-C, a killed parent, a session ending — used to leave a JVM
+# holding its -Xmx6G until the machine was rebooted, and three of them at once
+# is most of a 29 GB box. So the trap takes the server down as well as the
+# work directory, and covers the signals that actually happen rather than only
+# a clean exit.
+cleanup() {
+    if [[ -n "${server_pid:-}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
+        kill "${server_pid}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "${server_pid}" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "${server_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${work}"
+}
+trap cleanup EXIT INT TERM
 server="${work}/server"
 pack="${server}/world/datapacks/stratum-probe/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome" \
@@ -236,7 +253,10 @@ PROPERTIES
 pipe="${work}/console"
 mkfifo "${pipe}"
 log "starting the server (seed ${seed})"
-( cd "${server}" && java -Xmx6G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
+# `exec` so the subshell BECOMES java. Without it $! is the subshell, the
+# trap kills that, and the JVM it was meant to stop is orphaned — which is
+# exactly how three of them survived for thirteen hours.
+( cd "${server}" && exec java -Xmx6G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
 server_pid=$!
 exec 3> "${pipe}"
 
