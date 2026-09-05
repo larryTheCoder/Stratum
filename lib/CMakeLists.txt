@@ -15,6 +15,7 @@ add_library(stratum_core STATIC
     src/biome_parameter_list.cpp
     src/aquifer_barrier.cpp
     src/aquifer_lattice.cpp
+    src/aquifer_sampling.cpp
     src/blended.cpp
     src/chunk.cpp
     src/density_graph.cpp

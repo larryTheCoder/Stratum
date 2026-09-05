@@ -207,13 +207,26 @@ use, and it is checked against the server on 27 million blocks.
 
 The aquifer is close behind it. Its lattice, its centre jitter, the fluid
 level a cell takes — ocean branch included — and the barrier predicate are all
-derived from the server's own output and implemented. What is still missing is
-not a constant: it is where those inputs are SAMPLED. Every probe behind the
-level rule held the preliminary surface and the floodedness fixed, so the
-predicate is settled while its sample positions are not, and in a real world
-the surface varies per column and feeds the rule directly. Until that is
-measured the filler refuses `aquifers_enabled` by name rather than generating
-a world that is quietly wrong. SPEC §10 lists the three gaps.
+derived from the server's own output and implemented, and two of the three
+router inputs now have measured sample positions: the floodedness is read at
+the cell's own jittered centre, and the spread at the cell's lattice indices,
+which are different spaces and were established separately.
+
+The third is not, and it is the one that matters. `preliminary_surface_level`
+is read at absolute y = 0, but its horizontal read is **not a point sample at
+all** — three independent agents refuted that, one of them with an argument
+that needs no model: two worlds differing only in the low arm of the surface
+function put the same cells on the same side of any conceivable sample
+position, and the server writes air in one and water in the other. Until that
+is understood the filler refuses `aquifers_enabled` by name rather than
+generating a world that is quietly wrong. SPEC §10 lists the gaps.
+
+The instructive part is how the wrong answer looked. A point read scored
+exactly 1.00000 on 21,461 cells across six seeds — because every probe ever
+run against this input, about 1,370 dimensions of them, had held its low arm
+at the same value. A readout that varies a quantity's spatial pattern and
+never its values cannot see a value-dependent path, and reports perfect
+confidence in a law that is wrong.
 
 ## Capability matrix (v1)
 

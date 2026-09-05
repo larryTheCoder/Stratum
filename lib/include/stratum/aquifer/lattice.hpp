@@ -192,6 +192,20 @@ private:
 inline constexpr std::int32_t kBasePitch = 40;
 inline constexpr std::int32_t kBasePhase = 20;
 
+/// The 40-block band a cell's fluid level sits in — `floorDiv(centreY, 40)`.
+///
+/// The ladder is built from this band, and so is the address at which
+/// `fluid_level_spread` is read (see `sampling.hpp`); the aquifer computes it
+/// once and uses it for both, which is why it is spelled out rather than
+/// inlined twice.
+///
+/// The jitter is INSIDE the division. `floorDiv(centreY, 40)` and
+/// `floorDiv(12 * cellY, 40)` differ for five to nine cells per world, and the
+/// second is wrong on every one of them — while scoring 0.9954-0.9975, which
+/// is high enough to read as noise and is never 1.0000. It is also exactly
+/// what an implementer writes by mistake.
+[[nodiscard]] std::int32_t levelBand(std::int32_t centreY) noexcept;
+
 /// The base a cell's fluid level is measured from, before the spread moves it.
 ///
 /// Measured by pinning the spread to zero — which makes the offset exactly

@@ -368,28 +368,34 @@ Its own component (`lib/mapping/`), its own tests:
   `aquifers_enabled` by name.** Three things stand between the pieces and a
   world:
 
-  1. **Where the inputs are sampled.** Every one of the ~1370 probe dimensions
-     behind the ocean branch held `preliminary_surface_level` and
-     `fluid_level_floodedness` at constants, so what is settled is the
-     PREDICATE, not where it reads. One slice is closed — floodedness is
-     sampled once per cell at the cell's own jittered centre y, from two
-     step-function probes over 128 cells with no exceptions — and it is
-     single-sourced. The x and z of that sample, and the sample position of the
-     surface and the spread in all three axes, are unmeasured. In a real
-     overworld the surface varies per column and feeds the depth directly, so
-     this governs the branch's output as much as 11/640 does. This is the
-     largest remaining risk in the aquifer and it is not a constant.
+  1. **Where `preliminary_surface_level` is read, horizontally.** Two of the
+     three router inputs are now settled: `fluid_level_floodedness` at the
+     cell's own jittered centre and `fluid_level_spread` at the cell's lattice
+     indices (§11). psl's y is settled at absolute 0. Its HORIZONTAL read is
+     not a point sample at all — three agents refuted that independently — and
+     no aggregation shape fits everywhere. psl is not peripheral: it decides
+     the ocean gate, the unconditional near-surface return, the depth term and
+     the ladder's cap, and a point read and a minimum over ±16 blocks differ
+     routinely by 5 to 20 blocks of surface, which is enough to fill or empty a
+     whole aquifer body. This is the largest remaining risk in the aquifer.
   2. **Which sources compete.** The barrier predicate is exact on the pair it
      is given, but about 13% of the server's real barriers come from a third
      source rather than the nearest two.
-  3. **Fluid TYPE, not level.** A ladder aquifer at level -20 was observed
-     filled with lava at `psl` 20/30 and with water at `psl` 0, with the lava
-     router pinned at -1.0 and the level 34 blocks above the global lava sea,
-     plus obsidian where the bodies meet water. One reading attributes this to
-     a two-nearest-source blend, another to a type rule of its own; nobody has
-     adjudicated them. Every residual across four campaigns is one of these
-     blocks, so it is small — but a wrong fluid type is a parity bug of exactly
-     the same class as a wrong level.
+  3. **Fluid TYPE, not level — and the `lava` router entry has never been
+     measured by anyone.** All six sampling agents pinned it at -1.0, as did
+     every campaign before them, so its own sample position is unknown as well
+     as its rule. A ladder aquifer at level -20 was observed filled with lava
+     at `psl` 20/30 and with water at `psl` 0, with the level 34 blocks above
+     the global lava sea, plus obsidian where the bodies meet water. One
+     reading attributes this to a two-nearest-source blend, another to a type
+     rule of its own; nobody has adjudicated them. A correct level with a wrong
+     `lava` read still writes the wrong block.
+
+  The golden set gains one requirement before that refusal is lifted: **a
+  conformance case with a spatially varying `preliminary_surface_level`**.
+  ~1370 constant-psl dimensions are exactly how this project arrived at a
+  confident wrong law, and a green run over constant-psl fixtures proves
+  nothing about the input that broke.
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
 - **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
@@ -1555,6 +1561,118 @@ Open:
   refusal:** about 13% of the server's real barriers come from a THIRD source
   rather than from the nearest two. The predicate above is exact on the pairs
   it is given; the pair selection is not yet complete.
+
+  **Where the aquifer reads its router inputs (M3).** Everything above is a
+  PREDICATE, and every one of the ~1370 probe dimensions behind it held
+  `preliminary_surface_level` and `fluid_level_floodedness` at constants — so
+  the predicate was settled and the positions its inputs are read at were not.
+  Six agents across eleven world seeds, on instruments built independently of
+  each other, settled two of the three.
+
+  **The three do NOT share a sample position, and that is measured rather than
+  inferred.** On the same cells in the same worlds, the floodedness readout and
+  the spread readout agree at 0.4895-0.5421 horizontally and 0.4986-0.5415
+  vertically, which is chance. Each was established separately; the one agent
+  who argued by analogy from another quantity was refuted outright.
+
+  *`fluid_level_floodedness` — the cell's own jittered centre, in absolute
+  block coordinates, verbatim.* No quantisation, no offset, no rounding, and no
+  clamp: a cell centred below `min_y` still samples at its raw centre y
+  (25166/25174 and 21737/21737 water blocks below a floor at 16). One read per
+  cell. A per-block read is dead by three orders of magnitude rather than by a
+  score — it would have split 99.6% of cells under a one-block field and the
+  server split 4.8%. Five agents, ~30000 cells, per-seed scores 0.9954-1.0000
+  and 1.00000 on control-clean cells, against a 0.498-0.574 chance baseline.
+  The nearest rival is the centre quantised to two, at 0.618-0.627, wrong on
+  all 136 cells where the two differ. Also excluded on the same cells: the low
+  corner, the midpoint, quantisation to 4/8/16, the centre plus or minus one on
+  any axis (BELOW chance on y — a wrong answer a majority-class baseline alone
+  would have hidden), the cell index as a coordinate, the jitter alone, every
+  neighbouring cell, a fixed y at 0/`min_y`/`sea_level`/the surface, the axes
+  swapped, and the noise cell's corner. Closed by verification at negative
+  coordinates, on the ocean branch, at chunk edges, at extreme jitter, and at
+  negative cell indices in y.
+
+  *`fluid_level_spread` — the cell's lattice INDICES, not a position in block
+  space.* The cell index in x and z, and the 40-block band index
+  `floorDiv(centreY, 40)` in y. **The jitter is inside the division**:
+  `floorDiv(12 * cellY, 40)` differs on five to nine cells per world and is
+  wrong on every one of them, while scoring 0.9954-0.9975 — high enough to read
+  as noise and never 1.0000, and exactly what an implementer writes by mistake.
+
+  Recovered without a candidate list, which is what makes it solid: nine
+  dimensions each binary-encoding one bit of the sampled y gave per-band purity
+  1000/1000 on every bit and spelled the answer out, and a verifier repeated it
+  with three independent 13-arm combs searching y over [-2048, 2048]. Two
+  agents, ~29000 cells, 1.0000 per seed on five seeds including a post-hoc
+  holdout. Excluded: truncating the division (0.9417-0.9451), the centre y
+  itself — floodedness's own position — (0.4283-0.5416), every affine
+  `40b + k` for k in [-80, 120], and every horizontal candidate at or below the
+  0.53-0.62 baseline. Not an aggregate either: min/max/mean over neighbouring
+  bands 0.56-0.61, min over the 3x3 index neighbourhood 0.43-0.47. `cell.x`
+  versus `floorDiv(centre.x, 16)` is a PERMANENT tie, not a gap — the
+  horizontal jitter never reaches 16, so no world can separate them.
+
+  *`preliminary_surface_level` — y settled at absolute 0; the horizontal read
+  is NOT a point sample and is NOT settled.* The y is three-sourced, and one
+  source approaches from outside: a psl differing from a constant only on
+  y in [-1, 1] changes every block, one differing only on y in [300, 310]
+  changes nothing, and 0 of 6291456 blocks differ otherwise — so it is a read
+  near y = 0 and specifically not a minimum over y. Excluded: `min_y`,
+  `min_y + 64`, `sea_level`, the cell's own centre y.
+
+  The horizontal read defeated three agents and all three refuted the same
+  thing. **The sharpest refutation needs no model at all.** Take two worlds
+  identical in seed, jitter, sea level, floodedness, noise field and threshold,
+  differing only in the LOW arm of psl's `range_choice`. The partition of cells
+  into "samples the low arm" and "samples the high arm" is the same under any
+  position rule and under any aggregation over positions. 327 cells that sample
+  the HIGH arm in both are nonetheless entirely air in one world and entirely
+  water in the other, with byte-equal per-cell block counts. No sample position
+  can do that. Two more agents refuted it independently, one by inverting the
+  field (both polarities take the lower arm everywhere) and one by block-for-
+  block region diffs against a constant.
+
+  The best-supported reading is a MINIMUM-LIKE AGGREGATION over a horizontal
+  neighbourhood of order ±16 blocks at y = 0 — reached separately by two agents
+  — scoring 1.000/0.934/1.000/1.000/1.000 at wavelengths 8/32/80/160/400 where
+  the best point read scores 0.44-0.93. A static minimum over the whole
+  function is refuted: the output is genuinely spatially mixed at long
+  wavelength. But no support shape tried is exact everywhere, and the
+  aggregation does not cover the corner near the world floor, where a point
+  read at `floorDiv(centre.x, 4) * 4` and `floorDiv(centre.z, 4) * 4` is exact
+  on 21461 cells across six seeds and a minimum would flood every one. There is
+  an unexplained VALUE dependence there. **Neither model is shippable.**
+
+  **The failure mode, recorded so the instrument is not rebuilt.** All ~1370
+  earlier dimensions and the whole corpus that produced that exact 1.00000 held
+  psl's low arm at -64. A readout that varies the spatial PATTERN of a quantity
+  and never its VALUES cannot see a value-dependent code path, and returns a
+  confident, exactly-100%, wrong law. A future psl instrument must sweep the arm
+  VALUES across the world floor, the lava level and the ordinary surface range,
+  not only the spatial frequency.
+
+  *The `cy < -54` guard is neither confirmed nor refuted.* One agent proposed
+  replacing it with a psl-relative `cy < psl + 21`, fitted from a single
+  dimension at psl = -64; its verifier ran constant-psl dimensions at -40, 0,
+  60 and 120 and found the plain near-surface rule `psl - cy < 4` at all four,
+  with no guard term. Four values beat one, and the one sits in the anomalous
+  corner — which is `psl <= min_y`, the regime this SPEC already refuses. The
+  guard stays as written; whether anything special happens below the lava sea
+  is unresolvable until the horizontal read is.
+
+  *Instrument findings worth more than the results.* Chunks are forceloaded, so
+  water ticks after generation and flowing water can become a source, lifting a
+  cell's apparent top — counting non-source water put "non-flat" cells at
+  50-63% and drove every candidate to 0.53-0.65. **`default_fluid` of
+  `minecraft:packed_ice` fixes it at the source**: the aquifer places it exactly
+  where it places water (964/964 identical brackets) and nothing flows; the same
+  world gives a +2 wobble on 99 cells with water and zero with ice. Suppressing
+  barriers to free up evidence is the opposite of helpful — `barrier` = -50
+  gives 1355/1371 with 16 anomalous cells, `barrier` = +2 gives 1380/1380.
+  And a probe dimension whose name contains an UPPERCASE letter is silently
+  dropped by the server as an invalid path, after which the harness times out
+  on an empty world.
 
   **What is genuinely left is small.** With aquifers out of the way, 1.7% of
   columns are still off, every one of them by exactly one block, with the

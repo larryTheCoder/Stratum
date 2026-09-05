@@ -26,15 +26,21 @@ CellIndex cellOf(const std::int32_t x, const std::int32_t y, const std::int32_t 
                      .z = javamath::floorDiv(z, kCellPitchZ)};
 }
 
+std::int32_t levelBand(const std::int32_t centreY) noexcept {
+    // floorDiv, not `/`. A cell centred at y = -8 sits in band -1; truncation
+    // puts it in band 0, which moves its ladder by forty blocks and reads the
+    // spread from the wrong place.
+    return javamath::floorDiv(centreY, kBasePitch);
+}
+
 std::int32_t baseLevel(const std::int32_t y, const std::int32_t preliminarySurface) noexcept {
-    const std::int32_t onLattice = (kBasePitch * javamath::floorDiv(y, kBasePitch)) + kBasePhase;
+    const std::int32_t onLattice = (kBasePitch * levelBand(y)) + kBasePhase;
     return std::min(onLattice, preliminarySurface);
 }
 
 std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t preliminarySurface,
                          const double spread) noexcept {
-    const std::int32_t onLattice =
-        (kBasePitch * javamath::floorDiv(centreY, kBasePitch)) + kBasePhase;
+    const std::int32_t onLattice = (kBasePitch * levelBand(centreY)) + kBasePhase;
     // The cap goes on AFTER the offset — measured, and the two orders differ
     // wherever a positive spread would lift the ladder through the surface.
     return std::max(kLavaLevel, std::min(onLattice + spreadOffset(spread), preliminarySurface));
