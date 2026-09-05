@@ -70,15 +70,13 @@ TEST_CASE("a tree with an unrunnable construct is refused whole, by name", "[sur
                          {"if_true", gradient("minecraft:deepslate", -8, 8)},
                          {"then_run", block("minecraft:deepslate")}},
           nlohmann::json{{"type", "minecraft:condition"},
-                         {"if_true", nlohmann::json{{"type", "minecraft:biome"},
-                                                    {"biome_is",
-                                                     nlohmann::json::array({"minecraft:plains"})}}},
+                         {"if_true", nlohmann::json{{"type", "minecraft:temperature"}}},
                          {"then_run", block("minecraft:stone")}}}}});
 
     // The runnable half is not a licence to run the tree: one unrunnable
     // branch refuses all of it, and the message says which and why.
     CHECK_THROWS_WITH(Executor::compile(graph, kSeed, geometry),
-                      ContainsSubstring("minecraft:biome") && ContainsSubstring("refused"));
+                      ContainsSubstring("minecraft:temperature") && ContainsSubstring("refused"));
 }
 
 TEST_CASE("a runnable tree places what its rules say", "[surface]") {

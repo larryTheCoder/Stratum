@@ -826,13 +826,25 @@ Open:
   vanilla's own overworld can reach them. Written directly into a probe's own
   rule tree they are reachable, and four of the five gave something up.
 
-  * **`temperature` is a threshold at 0.30, strict.** Sweeping a fixed
-    biome's temperature: true at -0.5, 0.0, 0.14 through 0.29 inclusive, and
-    false from 0.30 up. One position of 98304 at exactly 0.30 came out true,
-    which is evidence of a position-dependent adjustment near the top of the
-    world; separating "0.30 flat" from "a lower threshold plus an adjustment"
-    needs a sweep of terrain HEIGHT, not of temperature, and has not been
-    done.
+  * **`temperature` compares a HEIGHT-ADJUSTED temperature — the flat
+    threshold was wrong.** The original sweep varied a fixed biome's
+    temperature and found true up to 0.29 and false from 0.30, with a single
+    position of 98304 at exactly 0.30 coming out true. That one exception was
+    the whole story. The sweep it called for — of terrain HEIGHT rather than
+    of temperature — has now been run, with columns solid to y = 0, 64, 128,
+    192, 256 and 310 at five biome temperatures:
+
+    | biome temperature | 0.15 | 0.29 | 0.30 | 0.31 | 0.45 |
+    |---|---|---|---|---|---|
+    | fires from y | -46 | 58 | 66 | 74 | 186 |
+
+    The condition fires ABOVE a height that moves with the biome's temperature
+    at about eight blocks per 0.01, or 800 blocks per unit. A flat threshold
+    cannot produce that. What is left to separate is the per-column term:
+    the figures above are the extreme over 16384 columns rather than a median,
+    and a noise-modulated adjustment would scatter the boundary column by
+    column, which is consistent with the one residual the linear fit leaves
+    (the 0.15 row sits eight blocks off the line through the other four).
   * **`bandlands` paints terracotta banding**, and the band table is readable
     straight off: plain terracotta, orange, red, white and light grey, in
     that order of frequency, over a fixed column.

@@ -67,10 +67,12 @@ TEST_CASE("every dimension's surface rules resolve, and say what cannot run",
         CHECK(graph.conditionCount() == found->second.conditions);
         CHECK(graph.referencedNoises().size() == found->second.noises);
 
-        if (id.toString() == "minecraft:end") {
-            // Nothing in it is refused, which makes it the one dimension whose
-            // surface rules this build could execute the moment there is an
-            // executor to run them.
+        // Which dimensions are fully runnable is itself the progress report,
+        // so it is asserted per dimension rather than counted. The End was
+        // first and was alone for a long time; the nether joined it once
+        // vertical_gradient and the surface depth landed, since between them
+        // they cover everything its rules use.
+        if (id.toString() == "minecraft:end" || id.toString() == "minecraft:nether") {
             CHECK(graph.unrunnable().empty());
         } else {
             CHECK_FALSE(graph.unrunnable().empty());
@@ -89,24 +91,24 @@ TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
     const auto id = stratum::data::ResourceLocation::parse("minecraft:overworld");
     const auto graph = stratum::surface::RuleGraph::resolve(loaded.settings.at(id).surfaceRule, id);
 
-    // THREE of the fifteen types the overworld uses cannot be run, and the
+    // TWO of the fifteen types the overworld uses cannot be run, and the
     // list is asserted whole rather than counted: when one is settled it
     // leaves this list, and that should be a visible, deliberate edit.
     //
-    // It has shrunk from ten to three in two steps. vertical_gradient went
-    // when its random source was recovered; then surface depth was derived,
-    // and with it hole, steep, stone_depth, water, y_above and
-    // noise_threshold all became implementable (SPEC §11).
+    // It has gone ten, nine, three, two. vertical_gradient left when its
+    // random source was recovered; surface depth then unblocked hole, steep,
+    // stone_depth, water, y_above and noise_threshold together; and `biome`
+    // left because it never needed a derivation at all, only the biome
+    // plumbed into the rule context.
     //
-    // What is left is two conditions that read the biome — which is a matter
-    // of plumbing rather than derivation, since the biome source itself is
-    // exact — and bandlands, whose colour table generator is not derived.
+    // What is left is `temperature`, which compares a height-adjusted
+    // temperature whose per-column term is not derived, and `bandlands`,
+    // whose colour table generator is not derived (SPEC §11).
     const std::vector<std::string> expected{
         "minecraft:bandlands",
-        "minecraft:biome",
         "minecraft:temperature",
     };
     CHECK(graph.unrunnable() == expected);
 
-    CHECK(graph.unrunnable().size() == 3U);
+    CHECK(graph.unrunnable().size() == 2U);
 }

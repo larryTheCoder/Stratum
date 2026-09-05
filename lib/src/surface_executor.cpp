@@ -2,7 +2,9 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include <stratum/surface/executor.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <ranges>
 #include <set>
 #include <string>
 
@@ -224,7 +226,16 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             // (SPEC §11). Flagged rather than presented as settled.
             return at.y >= at.preliminarySurface;
 
-        case ConditionType::Biome:
+        case ConditionType::Biome: {
+            // The caller supplies the biome; compile() has already refused any
+            // tree that names this condition when none can be, so an absent
+            // one here is a programming error rather than a wrong world.
+            if (!at.biome.has_value()) {
+                throw ExecutionError("a biome condition reached the executor without a biome");
+            }
+            return std::ranges::find(condition.biomes, *at.biome) != condition.biomes.end();
+        }
+
         case ConditionType::Temperature:
         default:
             throw ExecutionError("reached a condition type compile() should have refused");
