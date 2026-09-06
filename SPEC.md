@@ -368,32 +368,43 @@ Its own component (`lib/mapping/`), its own tests:
   `aquifers_enabled` by name.** Three things stand between the pieces and a
   world:
 
-  1. **`preliminary_surface_level`'s scan is established only for surfaces
-     smooth on the scale of its own window.** Every corpus behind it — six
-     campaigns, thirteen seeds — used a psl field varying on ~100 blocks. Vary
-     the feature scale with everything else fixed and the model degrades:
-     1.00000 at 100 blocks, then 0.8676 at 40, 0.8761 at 16, 0.8685 at 8 and
-     0.9609 at 1. Zero corrupt cells in those worlds, so it is not the
-     instrument; 4-13% of the misses are cells with no low sample anywhere in
-     the settled thirteen positions and no abort, which can only happen if the
-     server read a position the scan does not cover. Dropping any single offset
-     makes every dimension worse, so it is not a spurious offset either.
+  1. **`PslRead::anchor` as the depth path's gate is single-sourced.** One
+     agent, one instrument family, and an asymmetry — the near surface gates on
+     the window's minimum while the depth path gates on the anchor — of exactly
+     the shape that has now been wrong twice here. It decides whether a cell
+     floods. What closes it: a field where the two differ by more than eight
+     blocks, with the floodedness combed so that
+     `reach = max(0, 56 - (gate - centreY))` becomes an integer readout of the
+     gate, so both values are read on the same cells.
 
-     Real terrain's psl varies on exactly these scales, so this is the largest
-     open risk in the aquifer, and no conformance case built on a smooth psl
-     proves anything about a real world. What closes it: re-derive the scan
-     against psl fields with 8-40 block features.
+  2. **Three corrections to `cellFluidLevel` are measured but unverified.** All
+     three are invisible to every other corpus, which is why they went unseen
+     and why nothing contradicts them — and also why none is landed:
+     the `centreY >= -54` conjunct in the aborting near-surface return is
+     wrong (needs an arm below -74 to see; 88 cells); the floor branch fires
+     only when the scan aborted on its first sample, i.e. `gate == cap` (needs
+     a three-valued field, and it fires at ORDINARY sea levels, so real
+     deep-ocean terrain reaches it; 109 cells); and the `aborted` guard on the
+     sea gate has the wrong shape — the branch is taken, yields lambda rather
+     than `sea_level`, and still trips the trailing guard (needs
+     `sea_level < -54`). With all three the model is 1.00000 on 410842 cells
+     and without them 0.9958. One instrument found all three, and this
+     project's own history says that is a hypothesis.
 
-     *The ocean branch's slopes are NOT the problem, and this SPEC said they
-     were.* The 0.21-0.69 figure recorded here was the psl scan's ABORT: when a
-     window sample falls below -62 the floodedness-gated `sea_level` outcome is
-     refused, and the code had no such term. Three instruments on nine seeds
-     confirm 11/640 and 3/160 at 1.00000 under a constant surface, and a
-     per-depth bracketing instrument pins the bonus to 1e-6 at every depth
-     4..56 without assuming linearity. The clean control is decisive: a low arm
-     of exactly -62 (nothing aborts) scores 1.00000 under the old model, and
-     -63 collapses it to 0.807-0.897.
-  2. **Which sources compete.** The barrier predicate is exact on the pair it
+     *The smooth-surface blocker this list carried is CLOSED.* The scan was
+     re-derived at twenty feature scales from 0.5 to 100 blocks, on smooth,
+     two-scale and discontinuous fields, at both coordinate signs, on 23 seeds,
+     by three model-free sieves over 2401, 83521 and 103041 candidate offsets
+     whose intersections are exactly the thirteen positions with ZERO
+     unexplained cells. The 0.87 was a wrong CONSUMER model in the measuring
+     harness — a level predictor missing the ocean branch scores 0.823-0.882 on
+     the very cells where the full rule is 1.00000 — compounded by the lava sea
+     below `min(-54, sea_level)` painting whole worlds regardless of the
+     aquifer, and by a phantom class that a wet/dry readout of the abort
+     manufactures out of cells the trailing guard floors. "Zero corrupt cells,
+     so it is not the instrument" was a false inference, and it is the sentence
+     that sent a whole campaign after the wrong thing.
+  3. **Which sources compete.** The barrier predicate is exact on the pair it
      is given, but about 13% of the server's real barriers come from a third
      source rather than the nearest two.
 
@@ -401,8 +412,9 @@ Its own component (`lib/mapping/`), its own tests:
      have measured sample positions (§11), including psl's horizontal read,
      which is an aborting minimum over an asymmetric thirteen-point window and
      took three campaigns to pin.
-  3. **Fluid TYPE, not level — and the `lava` router entry has never been
-     measured by anyone.** All six sampling agents pinned it at -1.0, as did
+  4. **Fluid TYPE, not level — and the `lava` router entry has never been
+     measured by anyone.** On its own this is decisive: a correct level with a
+     wrong `lava` read still writes the wrong block. All six sampling agents pinned it at -1.0, as did
      every campaign before them, so its own sample position is unknown as well
      as its rule. A ladder aquifer at level -20 was observed filled with lava
      at `psl` 20/30 and with water at `psl` 0, with the level 34 blocks above
@@ -1671,7 +1683,13 @@ Open:
   Three independent non-parametric sieves — each marking an offset impossible
   the moment one cell contradicts it, none hypothesising a shape — arrived at
   exactly these thirteen out of thousands of candidates, on seven seeds and
-  both coordinate signs. Every dense or symmetric alternative loses on the same
+  both coordinate signs. **A later campaign re-derived them at twenty feature
+  scales from half a block to a hundred**, on smooth, two-scale and
+  discontinuous fields, on 23 seeds, by three more sieves over 2401, 83521 and
+  103041 candidates: the intersections are exactly these thirteen with ZERO
+  unexplained cells, and one dimension of one seed already collapses 1089
+  candidates to them. The support does not grow at short wavelength — which was
+  the open question, and the answer is that it never was the problem. Every dense or symmetric alternative loses on the same
   cells: the 4x3 without the spur 0.9261, the 5x3 0.8366, the 3x3 0.7082, the
   4x4 0.6732, the 5x5 0.4436, a point read 0.0700. Adding the spur's mirror at
   `(+32, 0)` or its neighbours at `(-48, ±16)` violates outright. Why it is
@@ -1720,6 +1738,26 @@ Open:
   nine misses of the rival model in an earlier round fall in exactly this
   class. It still needs a second instrument before the filler leans on it, and
   it is the mandatory conformance case.
+
+  **The anchor arms the abort.** The scan's first sample is not exempt from
+  the threshold, and this SPEC said it was. The two spellings differ on exactly
+  one shape — a cell whose anchor is below -62 while every window sample is
+  above it — and 329 such cells across seventeen seeds and four independent
+  instruments back the armed reading, none the exemption. The failure mode is
+  worth naming: the experiment that established "the anchor is read first and
+  unconditionally" measured the VALUE an aborting anchor contributes, which is
+  the same either way, and that value was then read as evidence about the state
+  of the FLAG.
+
+  A free invariant falls out, and is asserted in the tests: with the anchor
+  armed, `aborted` and `cap <= -63` are the same predicate over every field
+  that can exist, since `cap` is the whole window's minimum always and -62 is
+  an integer. Under the exempt spelling that identity fails on precisely the
+  discriminating class. What is genuinely tied is only where the flag is
+  TESTED — "the anchor arms it" and "the near-surface return additionally
+  requires a clean anchor" are indistinguishable, because reaching the other
+  branch with a low anchor forces `sea_level <= -55`, where lambda IS
+  `sea_level` and both outcomes are the same number.
 
   **The abort refuses the sea.** When a window sample falls below -62 the
   floodedness-gated `sea_level` outcome does not happen. This is the whole

@@ -260,15 +260,61 @@ TEST_CASE("the surface read is a minimum, and its abort is strict", "[aquifer]")
           PslRead{.gate = -62, .cap = -62, .anchor = 100, .aborted = false});
 }
 
-TEST_CASE("the anchor is read before anything can abort", "[aquifer]") {
+TEST_CASE("the anchor seeds the minimum and arms the abort", "[aquifer]") {
     // V4, and the 200-of-200 observation behind it: a cell whose own anchor
     // sample is below the threshold takes THAT value, not its neighbours'
     // minimum. An implementation that scans in raster order without seeding
     // from the anchor, or that skips low samples, returns -50 here.
+    //
+    // The flag is the other half, and this test asserted it wrongly for a day.
+    // The anchor does NOT escape the abort — 329 cells across seventeen seeds
+    // and four instruments say so, none of them backing the exemption. Note
+    // the VALUE is identical either way, which is exactly how the two got
+    // conflated: only `aborted` moves.
     Oracle oracle{kAnchorX, kAnchorZ, -50.0};
     oracle.at(0, 0, -70.0);
     CHECK(readPreliminarySurface(oracle, kCentre) ==
-          PslRead{.gate = -70, .cap = -70, .anchor = -70, .aborted = false});
+          PslRead{.gate = -70, .cap = -70, .anchor = -70, .aborted = true});
+
+    // The cells that separate the two spellings need a low anchor with every
+    // window sample clean — the shape no corpus had built. Here the window is
+    // entirely above the threshold and the anchor alone is below it.
+    Oracle lowAnchor{kAnchorX, kAnchorZ, 100.0};
+    lowAnchor.at(0, 0, -63.0);
+    const PslRead armed = readPreliminarySurface(lowAnchor, kCentre);
+    CHECK(armed.aborted);
+    CHECK(armed.gate == -63);
+    CHECK(armed.anchor == -63);
+
+    // And the threshold at the anchor is the same one the window uses: -62.00
+    // arms nothing across 17064 cells, -62.01 arms it.
+    Oracle atThreshold{kAnchorX, kAnchorZ, 100.0};
+    atThreshold.at(0, 0, -62.0);
+    CHECK_FALSE(readPreliminarySurface(atThreshold, kCentre).aborted);
+    Oracle pastThreshold{kAnchorX, kAnchorZ, 100.0};
+    pastThreshold.at(0, 0, -62.01);
+    CHECK(readPreliminarySurface(pastThreshold, kCentre).aborted);
+}
+
+TEST_CASE("the abort flag is exactly the whole window's minimum being low", "[aquifer]") {
+    // A free invariant, and a one-line guard against ever reintroducing the
+    // anchor exemption. `cap` is the whole window's minimum ALWAYS — it is
+    // order-free and abort-free — and -62 is an integer, so floor(m) <= -63
+    // exactly when m < -62. Under the exempt spelling the identity fails on
+    // precisely the discriminating class, so a regression breaks this test
+    // rather than a golden.
+    const auto invariantHolds = [](const Oracle& oracle, const CellIndex centre) {
+        const PslRead read = readPreliminarySurface(oracle, centre);
+        return read.aborted == (read.cap <= -63);
+    };
+    for (const double anchorValue : {200.0, 0.0, -62.0, -62.01, -63.0, -70.0, -1000.0}) {
+        for (const double windowValue : {200.0, 0.0, -62.0, -62.01, -70.0}) {
+            INFO("anchor " << anchorValue << ", window " << windowValue);
+            Oracle oracle{kAnchorX, kAnchorZ, windowValue};
+            oracle.at(0, 0, anchorValue);
+            CHECK(invariantHolds(oracle, kCentre));
+        }
+    }
 }
 
 TEST_CASE("the surface window is scanned z-outer, ascending", "[aquifer]") {

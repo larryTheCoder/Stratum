@@ -238,13 +238,21 @@ the real cause was that a cell whose scan aborts is refused the sea outcome
 entirely. Three independent instruments on nine seeds then confirmed the slopes
 to within 1e-6 at every depth.
 
+That scan was then suspected of only working on surfaces that vary slowly, and
+it was re-derived at twenty feature scales from half a block to a hundred, on
+23 seeds, by three model-free sieves over as many as 103,041 candidate
+positions. It comes back the same thirteen positions every time, with zero
+unexplained cells. The suspicion was a wrong consumer model in the measuring
+harness — and, underneath it, the fact that below `min(-54, sea_level)` the
+world is lava whatever the aquifer decides, so an instrument can paint a whole
+world with something the aquifer never chose and still pass a corruption check.
+
 So the aquifer's geometry, its levels, its barriers and all its router reads
-are derived. The filler still refuses `aquifers_enabled` by name, for one
-remaining reason: the surface scan is established only for surfaces that vary
-slowly. Every corpus behind it used a surface varying on about a hundred
-blocks, and agreement falls from 1.0000 to 0.87 once the features shrink to
-between eight and forty. Real terrain varies on exactly those scales. SPEC §10
-lists what is left.
+are derived. The filler still refuses `aquifers_enabled` by name, and the
+reason has now moved four times as each blocker closed and the next surfaced.
+Today it is the fluid TYPE: the `lava` router entry has never been measured by
+anybody, and a correct level with a wrong lava read still writes the wrong
+block. SPEC §10 lists the rest.
 
 ## Capability matrix (v1)
 

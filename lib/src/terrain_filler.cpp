@@ -85,28 +85,29 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // difference is 1.12% of all blocks, four fifths of it water that should
     // have been air.
     // What is settled: the cell lattice, the centre jitter, the fluid level
-    // rule including its ocean branch, the barrier predicate, and where all
-    // three router inputs are read — including the surface's horizontal read,
-    // which is an aborting minimum over an asymmetric thirteen-point window.
-    // The ocean branch's two slopes were suspected for a day and are now
-    // confirmed by three independent instruments on nine seeds.
+    // rule including its ocean branch, the barrier predicate, and every one of
+    // the surface scan's reads — the last of which was re-derived at twenty
+    // feature scales from half a block to a hundred and comes back the same
+    // thirteen positions every time. The surface is no longer why this
+    // refuses; that sentence stood here for a day and was wrong.
     //
-    // What is not: that window is established only for surfaces SMOOTH on the
-    // scale of the window itself. Every corpus behind it used a surface
-    // varying on about a hundred blocks; vary the feature scale with all else
-    // fixed and agreement falls from 1.0000 to 0.87, with a share of the
-    // misses being cells the settled window cannot explain at all. Real
-    // terrain varies on exactly those scales, so filling now would ship a
-    // world that generates and is quietly wrong — the most severe class of bug
-    // in SPEC §8. Measured on one golden seed, aquifers move 1.12% of all
-    // blocks, four fifths of it water that should have been air.
+    // What is not, and any one of these is enough: the depth path's gate on
+    // the anchor rests on a single instrument, and it decides whether a cell
+    // floods; three measured corrections to the level rule are unverified, one
+    // of which fires at ordinary sea levels; about 13% of the server's real
+    // barriers come from a third source this build cannot see; and the `lava`
+    // router entry has never been measured by anybody, so a correct level
+    // still writes the wrong block. Filling now would generate a world that is
+    // wrong without failing — the most severe class in SPEC §8. Measured on
+    // one golden seed, aquifers move 1.12% of all blocks, four fifths of it
+    // water that should have been air.
     if (settings.aquifersEnabled) {
         throw FillError("this dimension sets aquifers_enabled, and this build does not yet "
                         "implement the aquifer fill decision (SPEC §11). Its geometry, its fluid "
-                        "levels, its barriers and its router reads are all derived, but the "
-                        "surface read is only established for surfaces that vary slowly, and "
-                        "real terrain does not; refusing rather than generating a world that is "
-                        "quietly wrong");
+                        "levels, its barriers and its surface reads are derived, but the fluid "
+                        "TYPE is not — the lava router entry has never been measured — and three "
+                        "corrections to the level rule are still single-sourced; refusing rather "
+                        "than generating a world that is quietly wrong");
     }
     if (settings.oreVeinsEnabled) {
         throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "

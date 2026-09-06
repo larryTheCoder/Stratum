@@ -116,7 +116,15 @@ inline constexpr std::int32_t kPreliminarySurfaceSampleY = 0;
 /// forceload of the origin quadrant, and that is exactly how a truncating
 /// reading survived 1370 dimensions unnoticed. Off the origin they part
 /// decisively: 1294 exact readings give floorDiv 1.0000 against truncation
-/// 0.16-0.55.
+/// 0.16-0.55, and two later campaigns earned it again at short wavelength on
+/// the negative fringe, 1.0000 against 0.771-0.955.
+///
+/// Quantising BEFORE offsetting versus after is a PERMANENT TIE, not a
+/// measurement: every one of the thirteen offsets is a multiple of sixteen, so
+/// `floorDiv(c, 4) * 4 + d` and `floorDiv(c + d, 4) * 4` are the same integer
+/// identically. So is "an explicit anchor rule" versus "a quart cache wrapping
+/// the entry". Separating either needs a consumer that reads the surface at a
+/// position that is not a multiple of four, and none is known to exist.
 inline constexpr std::int32_t kPslAnchorQuantum = 4;
 
 /// The pitch of the window's lattice. Not the noise cell: `size_horizontal` 2
@@ -221,13 +229,25 @@ template<typename Sampler>
     const std::int32_t anchorZ =
         javamath::floorDiv(centre.z, kPslAnchorQuantum) * kPslAnchorQuantum;
 
-    // The anchor is read first and UNCONDITIONALLY, before any abort can fire.
-    // Measured, not assumed: 200 of 200 cells whose own anchor sample is below
-    // the threshold take that value rather than their neighbours' minimum.
+    // The anchor is read first, and its value seeds the prefix minimum
+    // unconditionally — 200 of 200 cells whose own anchor sample is below the
+    // threshold take THAT value rather than their neighbours' minimum, and
+    // that half is reconfirmed on 6702 and 5268 further cells.
+    //
+    // It does NOT escape the abort, and this comment used to say it did. The
+    // failure mode is worth naming: that experiment measured the VALUE of
+    // `gate` on an aborting anchor, and the value was then read as evidence
+    // about the state of the FLAG. The two are independent, and the cells that
+    // separate them need an anchor below the threshold with every window
+    // sample above it — a shape no corpus had built.
     const double seed = psl(anchorX, kPreliminarySurfaceSampleY, anchorZ);
     double prefix = seed;
     double whole = seed;
-    bool aborted = false;
+    // The anchor ARMS the abort. This line read `false` for a day, and the
+    // difference shows only on a cell whose anchor is low while every window
+    // sample is clean — 329 such cells across seventeen seeds and four
+    // instruments, none of them backing the exemption.
+    bool aborted = seed < kPslAbortBelow;
 
     for (const auto& offset : kPslWindow) {
         const double value =
@@ -255,10 +275,24 @@ template<typename Sampler>
 }
 
 /// WHAT REMAINS A PERMANENT TIE, rather than an open measurement. `cap`'s value
-/// on an aborting cell is only ever consumed through `max(-54, min(ladder, ·))`
-/// and every aborting sample is below -62, so "the whole window's minimum",
-/// "the aborting sample" and "any sentinel at or below -54" cannot be told
-/// apart by any consumer that exists. The same saturation makes it undecidable
-/// whether an abort also short-circuits the anchor read.
+/// on an aborting cell is only ever consumed through `max(lambda, min(ladder,
+/// ·))` and every aborting sample is below -62, so "the whole window's
+/// minimum", "the aborting sample" and "any sentinel at or below the lava
+/// level" cannot be told apart by any consumer that exists.
+///
+/// Whether the anchor arms the abort was ALSO listed here as undecidable, and
+/// it is not: 329 cells over seventeen seeds decide it, and the armed reading
+/// is right on every one. What is genuinely tied is only where the flag is
+/// TESTED — "the anchor arms it" and "the near-surface return additionally
+/// requires the anchor to clear the threshold" are indistinguishable, because
+/// reaching the other branch with a low anchor forces `sea_level <= -55`,
+/// where lambda IS `sea_level` and both outcomes are the same number. The
+/// simpler spelling is taken.
+///
+/// With the anchor armed, `aborted` and `cap <= -63` are the SAME predicate
+/// over every field that can exist — `cap` is the whole window's minimum
+/// always, and -62 is an integer, so `floor(m) <= -63` exactly when `m < -62`.
+/// The tests assert that identity, because it is a one-line guard against ever
+/// reintroducing the exemption.
 
 } // namespace stratum::aquifer
