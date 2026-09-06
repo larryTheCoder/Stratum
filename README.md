@@ -212,21 +212,28 @@ router inputs now have measured sample positions: the floodedness is read at
 the cell's own jittered centre, and the spread at the cell's lattice indices,
 which are different spaces and were established separately.
 
-The third is not, and it is the one that matters. `preliminary_surface_level`
-is read at absolute y = 0, but its horizontal read is **not a point sample at
-all** — three independent agents refuted that, one of them with an argument
-that needs no model: two worlds differing only in the low arm of the surface
-function put the same cells on the same side of any conceivable sample
-position, and the server writes air in one and water in the other. Until that
-is understood the filler refuses `aquifers_enabled` by name rather than
-generating a world that is quietly wrong. SPEC §10 lists the gaps.
+The third took three campaigns. `preliminary_surface_level` is read at
+absolute y = 0, and horizontally it is **not a point sample at all**: it is a
+minimum over thirteen positions on a 16-block lattice, anchored on the cell's
+own quantised centre, scanned in a fixed order and abandoned the moment a
+sample falls below −62. The window is not a square — it reaches 48 blocks west
+and 16 east, north and south — and nobody can say why. One scan feeds two
+different values to two different consumers.
 
-The instructive part is how the wrong answer looked. A point read scored
-exactly 1.00000 on 21,461 cells across six seeds — because every probe ever
-run against this input, about 1,370 dimensions of them, had held its low arm
-at the same value. A readout that varies a quantity's spatial pattern and
-never its values cannot see a value-dependent path, and reports perfect
-confidence in a law that is wrong.
+The instructive part is how the wrong answer looked on the way there. A point
+read scored exactly 1.00000 on 21,461 cells across six seeds, because every
+probe ever run against this input — about 1,370 dimensions — had held one of
+its two values fixed, and on a two-valued field an aborting minimum and a point
+read are the same function. A readout that varies a quantity's spatial pattern
+and never its values cannot see a value-dependent path, and reports perfect
+confidence in a law that is wrong. Three values separate them instantly.
+
+So the aquifer's geometry, its levels, its barriers and all three of its
+sample positions are now derived. The filler still refuses `aquifers_enabled`
+by name, for a different reason than before: the ocean branch's depth term was
+itself fitted from wet/dry bits near its two thresholds, and it scores 0.21 to
+0.69 in the middle of the floodedness band where most overworld aquifers sit.
+SPEC §10 lists what is left.
 
 ## Capability matrix (v1)
 

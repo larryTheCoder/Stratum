@@ -302,6 +302,20 @@ inline constexpr std::int32_t kZeroBonusDepth = 56;
 inline constexpr double kSeaBonusSlope = 0.0171875; ///< 11/640
 inline constexpr double kLocalBonusSlope = 0.01875; ///< 3/160
 
+/// SUSPECT AWAY FROM WHERE THEY WERE FITTED, and this is why the filler still
+/// refuses aquifers. Restricted to the cells that actually enter the reach
+/// path — `psl < sea_level - 8` and `psl - centreY >= 4` — at a floodedness of
+/// 0.6, the two slopes score 0.2099, 0.2390 and 0.6894 on three worlds where
+/// every other cell scores 1.0000 over 5194 cells.
+///
+/// The forty crossing depths behind them were read as wet/dry BITS near the
+/// 0.4 and 0.8 thresholds. That is the same instrument weakness that produced
+/// an exactly-100% wrong law for `preliminary_surface_level` twice: a readout
+/// that only sees which side of a gate a value falls on cannot see a term that
+/// is right at the ends and wrong in the middle. One instrument, unreplicated,
+/// but its controls are clean and the failure is not marginal. Re-derive both
+/// with the exact-integer level readout before wiring the filler (SPEC §10).
+
 /// Everything the fluid-level decision reads. All of it is a function of the
 /// cell's exact jittered CENTRE, never of the cell index: at psl 0 and
 /// floodedness 0.6 the cell layer -4 spans y -48..-37 and splits inside

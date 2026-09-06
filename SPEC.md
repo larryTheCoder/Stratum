@@ -368,19 +368,31 @@ Its own component (`lib/mapping/`), its own tests:
   `aquifers_enabled` by name.** Three things stand between the pieces and a
   world:
 
-  1. **Where `preliminary_surface_level` is read, horizontally.** Two of the
-     three router inputs are now settled: `fluid_level_floodedness` at the
-     cell's own jittered centre and `fluid_level_spread` at the cell's lattice
-     indices (§11). psl's y is settled at absolute 0. Its HORIZONTAL read is
-     not a point sample at all — three agents refuted that independently — and
-     no aggregation shape fits everywhere. psl is not peripheral: it decides
-     the ocean gate, the unconditional near-surface return, the depth term and
-     the ladder's cap, and a point read and a minimum over ±16 blocks differ
-     routinely by 5 to 20 blocks of surface, which is enough to fill or empty a
-     whole aquifer body. This is the largest remaining risk in the aquifer.
+  1. **The ocean branch's depth term is wrong away from where it was fitted.**
+     Restricted to the cells that actually enter that path — `psl < sea_level -
+     8` and `psl - centreY >= 4` — at a floodedness of 0.6, the two settled
+     slopes score **0.2099, 0.2390 and 0.6894** on three worlds where every
+     other cell scores 1.0000 (5194/5194). The slopes were fitted from wet/dry
+     BITS near the 0.4 and 0.8 thresholds and appear not to extrapolate to the
+     middle of the band, which is where most overworld aquifers sit. Single
+     instrument, unreplicated — but the controls are clean and the failure is
+     not marginal. This is now the largest risk in the aquifer, and it is a hit
+     on constants this SPEC records as settled.
+
+     What closes it: re-derive both slopes with a readout that drives the reach
+     path directly, sweeping floodedness over {0.42, 0.45, 0.5, 0.55, 0.6, 0.7,
+     0.78} and `psl - centreY` over the whole [4, 56], using the exact-integer
+     level readout — a spread chosen so the ladder never binds — rather than a
+     bit. The bit instrument near the thresholds is the same weakness that
+     produced a wrong law for psl twice.
   2. **Which sources compete.** The barrier predicate is exact on the pair it
      is given, but about 13% of the server's real barriers come from a third
      source rather than the nearest two.
+
+     Where psl is read is no longer on this list: all three router inputs now
+     have measured sample positions (§11), including psl's horizontal read,
+     which is an aborting minimum over an asymmetric thirteen-point window and
+     took three campaigns to pin.
   3. **Fluid TYPE, not level — and the `lava` router entry has never been
      measured by anyone.** All six sampling agents pinned it at -1.0, as did
      every campaign before them, so its own sample position is unknown as well
@@ -1621,36 +1633,109 @@ Open:
   near y = 0 and specifically not a minimum over y. Excluded: `min_y`,
   `min_y + 64`, `sea_level`, the cell's own centre y.
 
-  The horizontal read defeated three agents and all three refuted the same
-  thing. **The sharpest refutation needs no model at all.** Take two worlds
-  identical in seed, jitter, sea level, floodedness, noise field and threshold,
-  differing only in the LOW arm of psl's `range_choice`. The partition of cells
-  into "samples the low arm" and "samples the high arm" is the same under any
-  position rule and under any aggregation over positions. 327 cells that sample
-  the HIGH arm in both are nonetheless entirely air in one world and entirely
-  water in the other, with byte-equal per-cell block counts. No sample position
-  can do that. Two more agents refuted it independently, one by inverting the
-  field (both polarities take the lower arm everywhere) and one by block-for-
-  block region diffs against a constant.
+  **The horizontal read, settled (M3).** Three campaigns and six agents; the
+  first two produced a confident wrong law and this one explains why. It is not
+  a point sample, and it is not the symmetric neighbourhood the last entry
+  guessed at.
 
-  The best-supported reading is a MINIMUM-LIKE AGGREGATION over a horizontal
-  neighbourhood of order ±16 blocks at y = 0 — reached separately by two agents
-  — scoring 1.000/0.934/1.000/1.000/1.000 at wavelengths 8/32/80/160/400 where
-  the best point read scores 0.44-0.93. A static minimum over the whole
-  function is refuted: the output is genuinely spatially mixed at long
-  wavelength. But no support shape tried is exact everywhere, and the
-  aggregation does not cover the corner near the world floor, where a point
-  read at `floorDiv(centre.x, 4) * 4` and `floorDiv(centre.z, 4) * 4` is exact
-  on 21461 cells across six seeds and a minimum would flood every one. There is
-  an unexplained VALUE dependence there. **Neither model is shippable.**
+  ```
+  X = floorDiv(centre.x, 4) * 4        // floorDiv, never `/`
+  Z = floorDiv(centre.z, 4) * 4
+  m = full = psl(X, 0, Z)              // the anchor, read first and unconditionally
+  aborted = false
+  for (dx, dz) in the window, IN ORDER:
+      v = psl(X + dx, 0, Z + dz)
+      if (!aborted) { if (v < -62) aborted = true; else m = min(m, v); }
+      full = min(full, v)
+  gate = floor(m)                      // the ocean gate and the near-surface return
+  cap  = floor(aborted ? full : m)     // the ladder's cap
+  ```
 
-  **The failure mode, recorded so the instrument is not rebuilt.** All ~1370
-  earlier dimensions and the whole corpus that produced that exact 1.00000 held
-  psl's low arm at -64. A readout that varies the spatial PATTERN of a quantity
-  and never its VALUES cannot see a value-dependent code path, and returns a
-  confident, exactly-100%, wrong law. A future psl instrument must sweep the arm
-  VALUES across the world floor, the lava level and the ordinary surface range,
-  not only the spatial frequency.
+  The window is thirteen positions on a 16-block lattice, and it is NOT a
+  square — it reaches 48 blocks west and 16 east, north and south:
+
+  ```
+  dz = -16 :  dx = -32 -16   0  +16
+  dz =   0 :  dx = -48 -32 -16   0  +16     <- the spur is on this row only
+  dz = +16 :  dx = -32 -16   0  +16
+  ```
+
+  Three independent non-parametric sieves — each marking an offset impossible
+  the moment one cell contradicts it, none hypothesising a shape — arrived at
+  exactly these thirteen out of thousands of candidates, on seven seeds and
+  both coordinate signs. Every dense or symmetric alternative loses on the same
+  cells: the 4x3 without the spur 0.9261, the 5x3 0.8366, the 3x3 0.7082, the
+  4x4 0.6732, the 5x5 0.4436, a point read 0.0700. Adding the spur's mirror at
+  `(+32, 0)` or its neighbours at `(-48, ±16)` violates outright. Why it is
+  asymmetric is unexplained.
+
+  *The aggregation is `min`, and that is measured on exact integers rather than
+  on bits.* Two agents built readouts returning the integer psl the aquifer
+  actually used — one by lifting the ladder cap out of the way with a spread of
+  3.0, the other by driving the cap branch directly — and scored rank 0 at
+  1.0000 over 4769 and 2837 exact readings, against second-smallest 0.17-0.48,
+  third-smallest 0.02-0.16, and median, mean, maximum and second-largest all at
+  0.0000. A model-free argument agrees without any support model: under a
+  minimum the number of value-permutations of a tercile field that read wet
+  equals the number of level sets the window touches, and under a median, mode,
+  maximum or "the value where the noise is extremal" it is exactly one; two or
+  three were observed on every seed, and the non-contiguous pattern never once.
+
+  *The scan ORDER is load-bearing*, because the scan aborts: `dz` outer
+  ascending, `dx` inner ascending, spur first in its row. Pinned twice — 0 of
+  200 random permutations reach the winning score and all eleven adjacent
+  transpositions lose; separately, 19 rival orders score at most 0.9756 against
+  1.0000, with x-outer at 0.82-0.89 and z-descending at 0.77-0.87. The break
+  must leave both loops: a row-only break scores 0.8864 and skip-and-continue
+  0.8662.
+
+  *The abort is an absolute -62, strict.* -61.99 and -62.00 do not fire; -62.01
+  does. Invariant under `min_y` in {-48, -64, -80, -96, -128} and `sea_level`
+  in {40, 100, 128, 200} — which kills "the world floor plus two" outright,
+  since at `min_y` -128 that would put it at -126 and a -70 arm would not
+  abort, and it does. It coincides with the lava level minus eight; that
+  identity is UNPROVEN, and separating it from an arbitrary constant needs a
+  world with `sea_level` below -54.
+
+  **Two consumers, one scan.** The gate stops at the aborting sample and the
+  cap does not, and the argument is arithmetic rather than a fit: with
+  `sea_level` 40, floodedness 0.6, spread 0 and a ladder at -20, the settled
+  level rule yields 40 or -20 for EVERY psl and both leave the cell wet — yet
+  858 of 858 such cells with a non-centre sample below -62 are observed dry at
+  the lava level, which requires `min(ladder, psl) <= -54` in a branch only
+  reachable when `psl >= sea_level - 8`. No single psl value satisfies both,
+  and constant-psl controls at -70, -64, -63, -62, -58, -54, -40, 0, 40 and 100
+  all flood exactly those cells, so it is the spike and not the value that
+  empties them. Corroborated by a second campaign on five further seeds with no
+  cross-talk. One-value models score 0.7554-0.8199 against 1.0000.
+
+  On an aborting cell `cap` is always below -54 and is only ever consumed
+  through `max(-54, min(ladder, ·))`, so "the whole window's minimum", "the
+  aborting sample" and "any sentinel at or below -54" are a PERMANENT tie
+  rather than an open measurement; so is whether the abort short-circuits the
+  anchor read.
+
+  **Why the previous two campaigns got an exact 1.00000 for a wrong law.** On a
+  TWO-valued psl field the aborting prefix-minimum is identically the point
+  read, so a corpus that varies psl's spatial pattern and never its values
+  cannot tell them apart. A three-valued field separates them immediately: of
+  425 cells where the minimum is the low arm and the point read is the high
+  arm, 258 return the MIDDLE arm, which neither model predicts. The same trap
+  had already been named one level up — "sweep values, not frequencies" — and
+  it caught a second instance of itself.
+
+  Rounding is `floor` toward negative infinity: 3475/3475 against round 0.4855,
+  ceil 0.0000, and truncation toward zero 0.9209, failing exactly on the
+  negative values. The anchor's division is `floorDiv` for the same reason, and
+  it is invisible in the origin quadrant — which is the only place any probe
+  ever looked, because `tools/analysis/density-probe.sh` hardcodes a forceload
+  of `0 0 127 127`. **That hardcoding hid the sign question for 1370
+  dimensions and deserves an `--origin` flag before the next campaign.**
+  Off-origin the two part decisively: floorDiv 1.0000 on 1294 exact readings
+  against truncation 0.16-0.55.
+
+  Neither `4` nor `16` is the noise cell: `size_horizontal` 2 and 4 leave both
+  unchanged, cell-for-cell identical with 0 differing of 836.
 
   *The `cy < -54` guard is neither confirmed nor refuted.* One agent proposed
   replacing it with a psl-relative `cy < psl + 21`, fitted from a single

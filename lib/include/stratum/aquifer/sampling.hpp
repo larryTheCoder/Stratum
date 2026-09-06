@@ -17,7 +17,12 @@
 #pragma once
 
 #include <stratum/aquifer/lattice.hpp>
+#include <stratum/javamath.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace stratum::aquifer {
@@ -105,42 +110,166 @@ struct SamplePos {
 /// Excluded: `min_y`, `min_y + 64`, `sea_level`, and the cell's own centre y.
 inline constexpr std::int32_t kPreliminarySurfaceSampleY = 0;
 
-/// THERE IS DELIBERATELY NO `preliminarySurfaceSample` HERE.
+/// How `preliminary_surface_level`'s read is anchored: the cell's own jittered
+/// centre, quantised down to a multiple of four. `floorDiv`, never `/` — the
+/// two agree everywhere the probe harness looked, because it hardcodes a
+/// forceload of the origin quadrant, and that is exactly how a truncating
+/// reading survived 1370 dimensions unnoticed. Off the origin they part
+/// decisively: 1294 exact readings give floorDiv 1.0000 against truncation
+/// 0.16-0.55.
+inline constexpr std::int32_t kPslAnchorQuantum = 4;
+
+/// The pitch of the window's lattice. Not the noise cell: `size_horizontal` 2
+/// and 4 leave both this and the quantum unchanged (1.0000 on 356 readings,
+/// while size-scaled variants score 0.09-0.55).
+inline constexpr std::int32_t kPslStride = 16;
+
+/// The value at which the scan gives up. ABSOLUTE, and strict: -61.99 and
+/// -62.00 do not fire, -62.01 does, each at 1.0000. Invariant under `min_y` in
+/// {-48, -64, -80, -96, -128} and `sea_level` in {40, 100, 128, 200}, which
+/// kills the "world floor plus two" reading outright — at `min_y` -128 that
+/// would put the constant at -126, so a -70 arm would not abort, and it does.
 ///
-/// Its horizontal read is NOT a point sample, and shipping one would be worse
-/// than shipping nothing. Three agents refuted the point-sample law
-/// independently, and the sharpest of them needs no model at all: take two
-/// worlds identical in seed, jitter, sea level, floodedness, noise field and
-/// threshold, differing only in the LOW arm of the psl function. The partition
-/// of cells into "samples the low arm" and "samples the high arm" is the same
-/// under any position rule and under any aggregation over positions. 327 cells
-/// that sample the HIGH arm in both are nonetheless entirely air in one world
-/// and entirely water in the other, with byte-equal per-cell block counts.
-/// No sample position can do that.
+/// It coincides with `kLavaLevel - 8`. That identity is UNPROVEN: an arbitrary
+/// constant fits everything measured just as well, and separating them needs a
+/// world with `sea_level` below -54, which pushes every observable interface
+/// into the one zone this campaign could not read.
+inline constexpr double kPslAbortBelow = -62.0;
+
+/// The window, as offsets from the anchor, IN SCAN ORDER. The anchor itself is
+/// not in the list: it is read first and separately.
 ///
-/// The best-supported reading is a MINIMUM-LIKE AGGREGATION over a horizontal
-/// neighbourhood of order +-16 blocks at y = 0, which two agents reached
-/// separately and which scores 1.000 / 0.934 / 1.000 / 1.000 / 1.000 at noise
-/// wavelengths of 8, 32, 80, 160 and 400 blocks where the best point read
-/// scores 0.44-0.93. But no support shape tried is exact everywhere, and the
-/// aggregation does not cover the corner near the world floor, where a point
-/// read at `floorDiv(centre.x, 4) * 4` and `floorDiv(centre.z, 4) * 4` is
-/// exact on 21461 cells across six seeds and a minimum would flood every one
-/// of them. There is an unexplained VALUE dependence there, and neither model
-/// is shippable.
+/// This is not a square, and the asymmetry is measured rather than assumed —
+/// it reaches 48 blocks west and 16 east, north and south. Three independent
+/// non-parametric sieves, on seven seeds and both coordinate signs, marked an
+/// offset impossible the moment one cell contradicted it and each arrived at
+/// exactly these thirteen positions out of thousands of candidates. Every
+/// dense or symmetric shape loses: the 4x3 without the spur scores 0.9261, the
+/// 5x3 0.8366, the 3x3 0.7082, the 4x4 0.6732, the 5x5 0.4436, and a point
+/// read 0.0700. Adding the spur's mirror at `(+32, 0)`, or its neighbours at
+/// `(-48, +-16)`, violates outright. Nobody can explain why it is asymmetric.
 ///
-/// THE FAILURE MODE, recorded so the instrument is not rebuilt. All ~1370
-/// earlier dimensions and the whole corpus that produced that exact 1.00000
-/// held psl's low arm at -64. A readout that varies the spatial PATTERN of a
-/// quantity and never its VALUES cannot see a value-dependent path, and
-/// returns a confident, exactly-100%, wrong law. A future psl instrument must
-/// sweep the arm values across the world floor, the lava level and the
-/// ordinary surface range, not only the spatial frequency.
+/// THE ORDER IS LOAD-BEARING, because the scan aborts. `dz` outer ascending,
+/// `dx` inner ascending, with the spur first in its row. Pinned twice: 0 of
+/// 200 random permutations reach the winning score and all eleven adjacent
+/// transpositions lose; separately, 19 rival orders score at most 0.9756
+/// against 1.0000, with x-outer at 0.82-0.89 and z-descending at 0.77-0.87.
+inline constexpr std::size_t kPslWindowSize = 12;
+
+/// One offset from the anchor. Horizontal only — the window has no vertical
+/// extent, and cells sharing a column at different layers each get their own
+/// anchor and are predicted exactly.
+struct PslOffset {
+    std::int32_t dx = 0;
+    std::int32_t dz = 0;
+
+    [[nodiscard]] constexpr bool operator==(const PslOffset&) const noexcept = default;
+};
+
+inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
+    {.dx = -32, .dz = -16},
+    {.dx = -16, .dz = -16},
+    {.dx = 0, .dz = -16},
+    {.dx = 16, .dz = -16},
+    {.dx = -48, .dz = 0},
+    {.dx = -32, .dz = 0},
+    {.dx = -16, .dz = 0},
+    {.dx = 16, .dz = 0},
+    {.dx = -32, .dz = 16},
+    {.dx = -16, .dz = 16},
+    {.dx = 0, .dz = 16},
+    {.dx = 16, .dz = 16},
+}};
+
+/// The two values one scan produces. They differ only on a cell where the scan
+/// aborted, and there `cap` is always below the lava level, so `L`'s clamp
+/// saturates.
+struct PslRead {
+    /// What the ocean gate (`psl < sea_level - 8`) and the unconditional
+    /// near-surface return (`psl - centreY < 4`) consume: the minimum over the
+    /// STRICT PREFIX, stopping before the sample that aborted.
+    std::int32_t gate = 0;
+
+    /// What the ladder's cap (`max(-54, min(ladder, psl))`) consumes: the
+    /// minimum over the WHOLE window, aborting sample included.
+    std::int32_t cap = 0;
+
+    [[nodiscard]] constexpr bool operator==(const PslRead&) const noexcept = default;
+};
+
+/// Read `preliminary_surface_level` for one cell.
 ///
-/// Until that is settled the filler refuses `aquifers_enabled` by name (SPEC
-/// §8). psl is not a peripheral input: it decides the ocean gate, the
-/// unconditional near-surface return, the depth term and the ladder's cap, and
-/// a point read and a minimum over +-16 differ routinely by 5 to 20 blocks of
-/// surface — enough to fill or empty a whole aquifer body.
+/// This is the shape that defeated three campaigns, and none of the pieces is
+/// guessable. It is not a point sample: two worlds differing only in the low
+/// arm of the surface function put the same cells on the same side of any
+/// conceivable sample position, and yet 327 cells that sample the high arm in
+/// both are entirely air in one and entirely water in the other. It is a
+/// minimum — rank 0, confirmed on exact integer readings rather than on bits,
+/// with the second-smallest at 0.17-0.48 and the median, mean and maximum at
+/// 0.0000. And it aborts on a value, which is what made the earlier campaigns
+/// see a "point read near the world floor": on a TWO-valued field the aborting
+/// prefix-minimum is identically the point read, so a corpus that never varied
+/// psl's values could not tell them apart and reported an exact 1.00000 for a
+/// law that is wrong. A three-valued field separates them at once — of 425
+/// cells where the minimum is the low arm and the point read is the high arm,
+/// 258 return the MIDDLE arm, which neither model predicts.
+///
+/// TWO CONSUMERS, ONE SCAN. The gate stops at the aborting sample and the cap
+/// does not. The argument is arithmetic rather than a fit: with `sea_level` 40,
+/// floodedness 0.6 and a ladder at -20, the settled level rule yields 40 or -20
+/// for EVERY psl, and both leave the cell wet — yet 858 of 858 such cells with
+/// a non-centre sample below -62 are observed dry at the lava level, which
+/// needs `min(ladder, psl) <= -54` in a branch only reachable when
+/// `psl >= sea_level - 8`. No single psl value satisfies both. Constant-psl
+/// controls at -70, -64, -63, -62, -58, -54, -40, 0, 40 and 100 all flood
+/// those same cells, so it is the spike and not the value that empties them.
+///
+/// @param psl    anything callable as `double(std::int32_t x, std::int32_t y,
+///               std::int32_t z)` — the router entry, or a stub in a test.
+/// @param centre the cell's jittered centre, from `CentreSource::centreOf`.
+template<typename Sampler>
+[[nodiscard]] PslRead readPreliminarySurface(const Sampler& psl, const CellIndex centre) {
+    const std::int32_t anchorX =
+        javamath::floorDiv(centre.x, kPslAnchorQuantum) * kPslAnchorQuantum;
+    const std::int32_t anchorZ =
+        javamath::floorDiv(centre.z, kPslAnchorQuantum) * kPslAnchorQuantum;
+
+    // The anchor is read first and UNCONDITIONALLY, before any abort can fire.
+    // Measured, not assumed: 200 of 200 cells whose own anchor sample is below
+    // the threshold take that value rather than their neighbours' minimum.
+    const double seed = psl(anchorX, kPreliminarySurfaceSampleY, anchorZ);
+    double prefix = seed;
+    double whole = seed;
+    bool aborted = false;
+
+    for (const auto& offset : kPslWindow) {
+        const double value =
+            psl(anchorX + offset.dx, kPreliminarySurfaceSampleY, anchorZ + offset.dz);
+        if (!aborted) {
+            if (value < kPslAbortBelow) {
+                // The aborting sample is NOT folded into the gate's minimum,
+                // and the scan stops there — it does not skip and continue.
+                // "Skip and continue" scores 0.8662 and a row-only break
+                // 0.8864, against 1.0000 for stopping outright.
+                aborted = true;
+            } else {
+                prefix = std::min(prefix, value);
+            }
+        }
+        whole = std::min(whole, value);
+    }
+
+    // Floor toward negative infinity, on the double, once. Not round (0.4855),
+    // not truncation toward zero (0.9209 — failing exactly on the negatives).
+    return PslRead{.gate = static_cast<std::int32_t>(std::floor(prefix)),
+                   .cap = static_cast<std::int32_t>(std::floor(aborted ? whole : prefix))};
+}
+
+/// WHAT REMAINS A PERMANENT TIE, rather than an open measurement. `cap`'s value
+/// on an aborting cell is only ever consumed through `max(-54, min(ladder, ·))`
+/// and every aborting sample is below -62, so "the whole window's minimum",
+/// "the aborting sample" and "any sentinel at or below -54" cannot be told
+/// apart by any consumer that exists. The same saturation makes it undecidable
+/// whether an abort also short-circuits the anchor read.
 
 } // namespace stratum::aquifer
