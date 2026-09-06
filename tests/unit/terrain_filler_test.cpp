@@ -105,13 +105,19 @@ private:
 TEST_CASE("a dimension with aquifers is refused, by name", "[terrain][filler]") {
     // The whole reason this is a refusal and not a best effort: where aquifers
     // run, the block is not a function of the density, and filling as though
-    // it were floods every cave in the world. SPEC §8 puts that in the most
-    // severe class there is.
+    // it were is wrong in a way that still generates. SPEC §8 puts that in the
+    // most severe class there is.
+    //
+    // What is asserted is the setting's own name and the SPEC pointer, not the
+    // reason — the reason has already moved three times as one blocker closed
+    // and the next surfaced, and pinning today's wording here only makes the
+    // test fail on days the refusal gets more accurate.
     const TempTree tree;
     tree.defineSettings("test", flatSettings(/*aquifers=*/true, /*oreVeins=*/false));
     const LoadedSettings loaded = tree.load();
-    CHECK_THROWS_WITH(compileFrom(tree, loaded),
-                      ContainsSubstring("aquifers_enabled") && ContainsSubstring("flood"));
+    CHECK_THROWS_WITH(compileFrom(tree, loaded), ContainsSubstring("aquifers_enabled") &&
+                                                     ContainsSubstring("SPEC §11") &&
+                                                     ContainsSubstring("refusing"));
 }
 
 TEST_CASE("a dimension with ore veins is refused, by name", "[terrain][filler]") {

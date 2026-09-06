@@ -181,21 +181,8 @@ inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
     {.dx = 16, .dz = 16},
 }};
 
-/// The two values one scan produces. They differ only on a cell where the scan
-/// aborted, and there `cap` is always below the lava level, so `L`'s clamp
-/// saturates.
-struct PslRead {
-    /// What the ocean gate (`psl < sea_level - 8`) and the unconditional
-    /// near-surface return (`psl - centreY < 4`) consume: the minimum over the
-    /// STRICT PREFIX, stopping before the sample that aborted.
-    std::int32_t gate = 0;
-
-    /// What the ladder's cap (`max(-54, min(ladder, psl))`) consumes: the
-    /// minimum over the WHOLE window, aborting sample included.
-    std::int32_t cap = 0;
-
-    [[nodiscard]] constexpr bool operator==(const PslRead&) const noexcept = default;
-};
+// `PslRead` — the four values one scan yields — lives in `lattice.hpp`,
+// because it is what the level rule consumes.
 
 /// Read `preliminary_surface_level` for one cell.
 ///
@@ -262,7 +249,9 @@ template<typename Sampler>
     // Floor toward negative infinity, on the double, once. Not round (0.4855),
     // not truncation toward zero (0.9209 — failing exactly on the negatives).
     return PslRead{.gate = static_cast<std::int32_t>(std::floor(prefix)),
-                   .cap = static_cast<std::int32_t>(std::floor(aborted ? whole : prefix))};
+                   .cap = static_cast<std::int32_t>(std::floor(aborted ? whole : prefix)),
+                   .anchor = static_cast<std::int32_t>(std::floor(seed)),
+                   .aborted = aborted};
 }
 
 /// WHAT REMAINS A PERMANENT TIE, rather than an open measurement. `cap`'s value

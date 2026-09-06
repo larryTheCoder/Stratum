@@ -239,7 +239,7 @@ constexpr std::int32_t kSea = 63;
 CellFluid oceanCellAt(const std::int32_t depth, const double floodedness,
                       const std::int32_t preliminarySurface = 0) {
     CellFluid cell;
-    cell.preliminarySurface = preliminarySurface;
+    cell.surface = stratum::aquifer::constantSurface(preliminarySurface);
     cell.centreY = preliminarySurface - depth;
     cell.seaLevel = kSea;
     cell.floodedness = floodedness;
@@ -343,7 +343,7 @@ TEST_CASE("the ocean branch's bonus is clamped at zero, not extrapolated", "[aqu
     const auto ladderAt = [](std::int32_t centre, std::int32_t surface, std::int32_t sea) {
         CellFluid cell;
         cell.centreY = centre;
-        cell.preliminarySurface = surface;
+        cell.surface = stratum::aquifer::constantSurface(surface);
         cell.seaLevel = sea;
         cell.floodedness = 0.5;
         return cellFluidLevel(cell);
@@ -364,7 +364,7 @@ TEST_CASE("the ocean branch runs strictly below sea_level minus eight", "[aquife
     // enough that the two branches disagree.
     const auto flooded = [](std::int32_t preliminarySurface, std::int32_t sea) {
         CellFluid cell;
-        cell.preliminarySurface = preliminarySurface;
+        cell.surface = stratum::aquifer::constantSurface(preliminarySurface);
         cell.centreY = preliminarySurface - 20;
         cell.seaLevel = sea;
         cell.floodedness = 0.6;
@@ -397,7 +397,7 @@ TEST_CASE("a cell below the lava sea reaches the sea only near the surface", "[a
     for (const std::int32_t centre : {-55, -56, -57}) {
         INFO("centre " << centre);
         CellFluid cell;
-        cell.preliminarySurface = -54;
+        cell.surface = stratum::aquifer::constantSurface(-54);
         cell.centreY = centre;
         cell.seaLevel = kSea;
         cell.floodedness = -2.0;
@@ -408,7 +408,7 @@ TEST_CASE("a cell below the lava sea reaches the sea only near the surface", "[a
     // Through the gates, though, it never reaches the sea: the same centre put
     // well below the surface takes the ladder instead.
     CellFluid deep;
-    deep.preliminarySurface = -20;
+    deep.surface = stratum::aquifer::constantSurface(-20);
     deep.centreY = -60;
     deep.seaLevel = kSea;
     deep.floodedness = 0.95;
@@ -418,13 +418,179 @@ TEST_CASE("a cell below the lava sea reaches the sea only near the surface", "[a
 TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "[aquifer]") {
     // Measured: a cell whose lattice point plus offset came to 69 under a
     // surface of 67 was observed at 67, so the cap is applied last.
-    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) == 67);
-    CHECK(stratum::aquifer::ladderLevel(50, 200, 0.9) == 69);
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9, kSea) == 67);
+    CHECK(stratum::aquifer::ladderLevel(50, 200, 0.9, kSea) == 69);
     // Capping first and then adding the offset gives 69 for the first of
     // those, which is two blocks above the surface the server was given and
     // two above where the server put it.
     CHECK(stratum::aquifer::baseLevel(50, 67) + stratum::aquifer::spreadOffset(0.9) == 69);
-    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) != 69);
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9, kSea) != 69);
     // And the ladder never sinks below the lava sea.
-    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0) == kLavaLevel);
+    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0, kSea) == kLavaLevel);
+}
+
+// ---------------------------------------------------------------------------
+// The ocean branch's four psl consumers, and the two places the earlier
+// version of this code was wrong.
+//
+// Everything below is stated against a stubbed `PslRead`, so it needs no world
+// and no noise. The four values only ever diverge when the surface varies in
+// space, which is exactly why ~1370 probe dimensions could measure the slopes
+// correctly and never notice there were four of them.
+// ---------------------------------------------------------------------------
+
+namespace {
+using stratum::aquifer::constantSurface;
+using stratum::aquifer::lambdaLevel;
+using stratum::aquifer::PslRead;
+
+CellFluid cellWith(const PslRead surface, const std::int32_t seaLevel, const std::int32_t centreY,
+                   const double floodedness, const double spread = 0.0) {
+    CellFluid cell;
+    cell.surface = surface;
+    cell.seaLevel = seaLevel;
+    cell.centreY = centreY;
+    cell.floodedness = floodedness;
+    cell.spread = spread;
+    return cell;
+}
+} // namespace
+
+TEST_CASE("the bonus is a product over a divisor, not a pre-divided constant", "[aquifer]") {
+    // The two cells that refute the committed spelling. `fl(11/640)` rounds UP
+    // by 1.39e-18, and over the reachable range that is enough to fire the sea
+    // gate where the server does not — at exactly two reaches, 45 and 50, on
+    // 48 cells across thirteen dimensions and three seeds.
+    //
+    // Reach 45 is depth 11 and reach 50 is depth 6, which are the only two
+    // reaches in [0, 52] where the spellings can differ, so these two cases
+    // plus a control are complete coverage of the defect.
+    const auto seaGateFires = [](double floodedness, std::int32_t depth) {
+        const std::int32_t seaLevel = 240;
+        const std::int32_t surface = 150;
+        return cellFluidLevel(cellWith(constantSurface(surface), seaLevel, surface - depth,
+                                       floodedness)) == seaLevel;
+    };
+    CHECK_FALSE(seaGateFires(0.0265625, 11)); // committed spelling said sea; server is dry
+    CHECK_FALSE(seaGateFires(-0.059375, 6));  // likewise
+    // The control: a hair higher and it does fire, so the cases above are not
+    // simply testing a gate that never fires.
+    CHECK(seaGateFires(0.0265626, 11));
+    CHECK(seaGateFires(-0.0593749, 6));
+
+    // The arithmetic itself, so a future edit that reintroduces the
+    // pre-divided constant fails here rather than in a golden.
+    CHECK_FALSE(0.0265625 + ((45 * 11.0) / 640.0) > 0.8); // the server's answer
+    CHECK(0.0265625 + (45 * (11.0 / 640.0)) > 0.8);       // what the old spelling gave
+    CHECK_FALSE(-0.059375 + ((50 * 11.0) / 640.0) > 0.8);
+    CHECK(-0.059375 + (50 * (11.0 / 640.0)) > 0.8);
+    // And the spelling `reach / 640.0 * 11.0`, refuted on the server at
+    // floodedness -0.425 and depth 12.
+    CHECK(-0.425 + (44 / 160.0 * 3.0) > 0.4);
+    CHECK_FALSE(-0.425 + ((44 * 3.0) / 160.0) > 0.4);
+}
+
+TEST_CASE("every level below the lava sea moves with sea_level", "[aquifer]") {
+    // Λ. Invisible until somebody mapped the global fluid picker with aquifers
+    // off: below min(-54, sea_level) the world is lava whatever the aquifer
+    // says, so no block readout can separate any level at or below it, and
+    // four campaigns read the lava sea's top and recorded it as a level.
+    CHECK(lambdaLevel(200) == -54);
+    CHECK(lambdaLevel(63) == -54);
+    CHECK(lambdaLevel(-54) == -54);
+    CHECK(lambdaLevel(-56) == -56);
+    CHECK(lambdaLevel(-100) == -100);
+
+    // The third outcome is Λ, measured at sea_level -56 where -54 sits two
+    // blocks ABOVE the floor and the distinction becomes visible at last.
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3)) == -56);
+    // The ladder's lower clamp is Λ too: at sea -100 with a surface of -70,
+    // cells read -70 through a band where a bare -54 would have cut them off.
+    CHECK(cellFluidLevel(cellWith(constantSurface(-70), -100, -60, 0.6)) == -70);
+    CHECK(stratum::aquifer::ladderLevel(-60, -70, 0.0, -100) == -70);
+}
+
+TEST_CASE("the trailing guard tests the branch, not the number", "[aquifer]") {
+    // The one place those two readings part, and it is the configuration the
+    // guard was measured in. At sea_level -56 the third outcome is ALSO -56,
+    // so a numeric `level == sea_level` test would floor it to -54 — and the
+    // server does not. Same world, same cells, same surface: floodedness 1.0
+    // reads -54 and 0.3 reads -56.
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 1.0, 1.0)) == -54);
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3, 1.0)) == -56);
+    // The threshold is Λ rather than -54: a cell centred AT Λ is not below it.
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -56, 1.0, 1.0)) == -56);
+    // And the replacement is the literal lava level, which here is ABOVE Λ.
+    CHECK(stratum::aquifer::kLavaLevel > lambdaLevel(-56));
+}
+
+TEST_CASE("the near-surface path is an early return that the guard cannot reach", "[aquifer]") {
+    // Two purpose-built campaigns put cells centred below the lava level wet
+    // to the top of their territory. An assignment rather than a return would
+    // have floored every one of them.
+    CHECK(cellFluidLevel(cellWith(constantSurface(-60), 200, -58, 1.0)) == 200);
+    // Depth 3 takes the sea whatever the floodedness says; depth 4 does not.
+    CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 147, -2.0)) == 200);
+    CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 146, -2.0)) == lambdaLevel(200));
+}
+
+TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
+    // The whole explanation of a failure this project first read as the slopes
+    // being wrong in the middle of the floodedness band. A cell whose scan
+    // aborted cannot take the sea through a floodedness gate — and the
+    // committed code, which had no such term, predicted sea for most of them.
+    const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -54);
+    // Without the abort the same cell floods.
+    const PslRead quiet{.gate = 100, .cap = 100, .anchor = 100, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(quiet, 200, 0, 0.9)) == 200);
+
+    // But an aborting cell near the surface still floods, if it sits more than
+    // twenty blocks clear of the scan's own low sample. The offset is exactly
+    // 20: nineteen and twenty-one each lose more than forty cells.
+    const PslRead low{.gate = -70, .cap = -70, .anchor = -70, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(low, 200, -49, 0.0)) == 200);
+    CHECK(cellFluidLevel(cellWith(low, 200, -50, 0.0)) == -54);
+    CHECK(cellFluidLevel(cellWith(low, 200, -45, 0.0)) == 200);
+    CHECK(cellFluidLevel(cellWith(low, 200, -55, 0.0)) == -54);
+    // And the near-surface flip still sits at gate - 4.
+    CHECK(cellFluidLevel(cellWith(aborted, 200, 97, 0.9)) == 200);
+}
+
+TEST_CASE("the depth path gates on the anchor while the rest gate on the minimum", "[aquifer]") {
+    // The asymmetry that produced the failure, and the only load-bearing
+    // finding here resting on one instrument. The two readings separate only
+    // where sea_level - 8 falls between the anchor and the window minimum,
+    // which no campaign had until one went looking.
+    //
+    // Anchor 100, minimum 40, sea 68 so the threshold is 60: the anchor is
+    // above it and the minimum below. The centre is deep enough that the
+    // near-surface rule cannot pre-empt the question.
+    const PslRead split{.gate = 40, .cap = 40, .anchor = 100, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(split, 68, 20, 0.6)) == 20);
+    // Gating on the minimum instead would enter the depth path, where a reach
+    // of 36 carries floodedness 0.6 well past the sea gate.
+    CHECK(0.6 + ((36 * 11.0) / 640.0) > 0.8);
+
+    // The control that isolates it: the SAME sea level and the same cell, with
+    // gate and cap identical, differing in the anchor alone. When the anchor
+    // agrees with the minimum both readings enter the depth path and the cell
+    // floods; when it does not, only the minimum-gated reading would, and the
+    // server keeps the ladder.
+    const PslRead agreed{.gate = 40, .cap = 40, .anchor = 40, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(agreed, 68, 20, 0.6)) == 68);
+    CHECK(cellFluidLevel(cellWith(split, 68, 20, 0.6)) == 20);
+}
+
+TEST_CASE("the ladder's cap reads the scan's own minimum", "[aquifer]") {
+    // The cap reads `cap`, not `gate`: the two other candidates score 0.90 and
+    // 0.87, and the server backs `cap` on half the cells where they differ.
+    const PslRead split{.gate = 150, .cap = 60, .anchor = 150, .aborted = false};
+    CHECK(stratum::aquifer::ladderLevel(90, split.cap, 0.0, 240) == 60);
+    CHECK(stratum::aquifer::ladderLevel(90, split.gate, 0.0, 240) == 100);
+
+    // The reach clamps at zero, so a cell far below the surface still takes
+    // the ladder rather than turning to lava. Spread 3.0 offsets it by 30.
+    CHECK(cellFluidLevel(cellWith(constantSurface(150), 240, 90, 0.5, 3.0)) == 130);
+    CHECK(stratum::aquifer::spreadOffset(3.0) == 30);
 }

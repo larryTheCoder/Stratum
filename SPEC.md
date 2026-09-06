@@ -368,23 +368,31 @@ Its own component (`lib/mapping/`), its own tests:
   `aquifers_enabled` by name.** Three things stand between the pieces and a
   world:
 
-  1. **The ocean branch's depth term is wrong away from where it was fitted.**
-     Restricted to the cells that actually enter that path — `psl < sea_level -
-     8` and `psl - centreY >= 4` — at a floodedness of 0.6, the two settled
-     slopes score **0.2099, 0.2390 and 0.6894** on three worlds where every
-     other cell scores 1.0000 (5194/5194). The slopes were fitted from wet/dry
-     BITS near the 0.4 and 0.8 thresholds and appear not to extrapolate to the
-     middle of the band, which is where most overworld aquifers sit. Single
-     instrument, unreplicated — but the controls are clean and the failure is
-     not marginal. This is now the largest risk in the aquifer, and it is a hit
-     on constants this SPEC records as settled.
+  1. **`preliminary_surface_level`'s scan is established only for surfaces
+     smooth on the scale of its own window.** Every corpus behind it — six
+     campaigns, thirteen seeds — used a psl field varying on ~100 blocks. Vary
+     the feature scale with everything else fixed and the model degrades:
+     1.00000 at 100 blocks, then 0.8676 at 40, 0.8761 at 16, 0.8685 at 8 and
+     0.9609 at 1. Zero corrupt cells in those worlds, so it is not the
+     instrument; 4-13% of the misses are cells with no low sample anywhere in
+     the settled thirteen positions and no abort, which can only happen if the
+     server read a position the scan does not cover. Dropping any single offset
+     makes every dimension worse, so it is not a spurious offset either.
 
-     What closes it: re-derive both slopes with a readout that drives the reach
-     path directly, sweeping floodedness over {0.42, 0.45, 0.5, 0.55, 0.6, 0.7,
-     0.78} and `psl - centreY` over the whole [4, 56], using the exact-integer
-     level readout — a spread chosen so the ladder never binds — rather than a
-     bit. The bit instrument near the thresholds is the same weakness that
-     produced a wrong law for psl twice.
+     Real terrain's psl varies on exactly these scales, so this is the largest
+     open risk in the aquifer, and no conformance case built on a smooth psl
+     proves anything about a real world. What closes it: re-derive the scan
+     against psl fields with 8-40 block features.
+
+     *The ocean branch's slopes are NOT the problem, and this SPEC said they
+     were.* The 0.21-0.69 figure recorded here was the psl scan's ABORT: when a
+     window sample falls below -62 the floodedness-gated `sea_level` outcome is
+     refused, and the code had no such term. Three instruments on nine seeds
+     confirm 11/640 and 3/160 at 1.00000 under a constant surface, and a
+     per-depth bracketing instrument pins the bonus to 1e-6 at every depth
+     4..56 without assuming linearity. The clean control is decisive: a low arm
+     of exactly -62 (nothing aborts) scores 1.00000 under the old model, and
+     -63 collapses it to 0.807-0.897.
   2. **Which sources compete.** The barrier predicate is exact on the pair it
      is given, but about 13% of the server's real barriers come from a third
      source rather than the nearest two.
@@ -1697,8 +1705,63 @@ Open:
   identity is UNPROVEN, and separating it from an arbitrary constant needs a
   world with `sea_level` below -54.
 
-  **Two consumers, one scan.** The gate stops at the aborting sample and the
-  cap does not, and the argument is arithmetic rather than a fit: with
+  **Four consumers, one scan — and they do not agree.** The scan yields four
+  values and the ocean branch reads a different one in each place. The near
+  surface gate, its depth test and the reach read the window's PREFIX minimum;
+  the ladder's cap reads the whole window's minimum; the DEPTH PATH's own gate
+  reads the ANCHOR sample alone; and the trailing guard reads no psl at all
+  (all eight candidate sources tie with zero differing cells).
+
+  The anchor gate is the one finding here resting on a single agent and a
+  single instrument family, and the asymmetry — near surface on the minimum,
+  depth path on the anchor — is exactly the shape that has been wrong twice in
+  this codebase. Its controls are good: worlds where the two readings coincide
+  score 1.0000 for both, the effect moves one-for-one with `sea_level`, and all
+  nine misses of the rival model in an earlier round fall in exactly this
+  class. It still needs a second instrument before the filler leans on it, and
+  it is the mandatory conformance case.
+
+  **The abort refuses the sea.** When a window sample falls below -62 the
+  floodedness-gated `sea_level` outcome does not happen. This is the whole
+  explanation of a failure this SPEC recorded for a day as the ocean branch's
+  slopes being wrong in the middle of the floodedness band. The clean control
+  settles it: a low arm of exactly -62, where nothing aborts, scores 1.00000
+  under the model that has no abort term, and -63 collapses it to 0.807-0.897.
+  An aborting cell near the surface still floods if it clears the scan's own
+  low sample by more than twenty blocks — the offset is exactly 20, and the
+  term reads the whole-window minimum.
+
+  **Every "-54" that is a LEVEL moves with `sea_level`.** Below
+  `min(-54, sea_level)` the world is lava unconditionally, whatever the aquifer
+  decides — measured with aquifers disabled at four sea levels, and nobody had
+  done it. So no block readout can separate any level at or below that
+  boundary, and four campaigns read the lava sea's top and recorded it as a
+  level. A world with `sea_level` -56, where -54 sits two blocks above the
+  floor, makes it visible: the third outcome and the ladder's lower clamp are
+  both that boundary, on 9740 and 3501 discriminating cells.
+
+  The trailing guard is the exception that proves it — its replacement is the
+  LITERAL -54, which at `sea_level` -56 is ABOVE the boundary. And it tests
+  which BRANCH produced the level rather than whether the number equals
+  `sea_level`: those coincide for every ordinary sea and part exactly where the
+  guard was measured, since at -56 the third outcome is also -56 and a numeric
+  test would floor it. Same world, same cells: floodedness 1.0 reads -54 and
+  0.3 reads -56.
+
+  **The bonus is a product over a divisor, never a pre-divided constant.**
+  `fl(11/640)` rounds UP by 1.39e-18, which is enough to fire the sea gate
+  where the server does not — at exactly two reaches, 45 and 50, on 48 cells
+  over thirteen dimensions, three seeds and both coordinate signs. The
+  surviving spellings are `f + (reach * 11.0) / 640.0`, its FMA, and the
+  cross-multiplied form; `reach / 640.0 * 11.0` and exact-rational comparison
+  are both refuted against the server. **This corrects §5's own claim about
+  this line:** `-ffp-contract=off` stays project policy, but it is not what
+  makes this expression right — with the pre-divided constant the line IS an
+  FMA shape and the contracted form happens to agree while the uncontracted one
+  does not. Written as a product over a divisor there is nothing to contract.
+
+  **Two consumers of the older reading, one scan.** The gate stops at the
+  aborting sample and the cap does not, and the argument is arithmetic rather than a fit: with
   `sea_level` 40, floodedness 0.6, spread 0 and a ladder at -20, the settled
   level rule yields 40 or -20 for EVERY psl and both leave the cell wet — yet
   858 of 858 such cells with a non-centre sample below -62 are observed dry at

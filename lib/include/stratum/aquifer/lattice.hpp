@@ -238,10 +238,16 @@ inline constexpr std::int32_t kBasePhase = 20;
 ///
 /// The order is measured, not assumed. The cap is applied AFTER the spread
 /// offset: at psl 67 a cell whose lattice point plus offset came to 69 was
-/// observed at 67, not at 69 nor at 66. And the `max` against the lava level
-/// is what stops a deep cell's ladder from sinking below the world's lava.
-[[nodiscard]] std::int32_t ladderLevel(std::int32_t centreY, std::int32_t preliminarySurface,
-                                       double spread) noexcept;
+/// observed at 67, not at 69 nor at 66.
+///
+/// The cap reads the scan's `cap`, not its `gate` — the two other candidates
+/// score 0.9039 and 0.8719, and on the 6473 cells where they differ the server
+/// backs `cap` on 3152 that `gate` gets wrong. And the lower clamp is
+/// `lambdaLevel(seaLevel)` rather than a bare -54: at `sea_level` -100 with a
+/// surface of -70, 79 cells read exactly -70 through a fluid band where -54
+/// would have cut them off, and two campaigns found this from opposite sides.
+[[nodiscard]] std::int32_t ladderLevel(std::int32_t centreY, std::int32_t cap, double spread,
+                                       std::int32_t seaLevel) noexcept;
 
 // ---------------------------------------------------------------------------
 // The fluid-level decision, including the ocean branch.
@@ -290,31 +296,121 @@ inline constexpr std::int32_t kOceanGateOffset = 8;
 /// only integer in either; imposing it pins both slopes onto exact rationals.
 inline constexpr std::int32_t kZeroBonusDepth = 56;
 
+/// VINDICATED, and the scare is worth recording because this header carried
+/// the opposite claim for a day. A campaign reported these scoring 0.21-0.69
+/// on the cells that enter the reach path at floodedness 0.6, which read as
+/// "fitted from wet/dry bits near the two thresholds, and wrong in the middle
+/// of the band". It was not. Three mutually independent instruments on nine
+/// seeds ran the same measurement with the surface held CONSTANT — which makes
+/// all four psl consumers agree by construction — and got 1.00000 on every
+/// reach-path cell.
+///
+/// The sharpest of them made floodedness a piecewise-constant function of the
+/// sampled y, so ONE dimension carries a different floodedness at EVERY
+/// integer depth. That brackets the bonus per depth rather than fitting a
+/// slope, which kills "right at the ends, wrong in the middle" without
+/// assuming linearity at all: |bonus(d) - (56-d)*11/640| < 1e-6 at every depth
+/// 4..56, and exactly zero past the clamp out to 252.
+///
+/// What the failure actually was: the scan's ABORT (`PslRead::aborted`). The
+/// control is decisive — a low arm of exactly -62, where nothing aborts,
+/// scores 1.00000 under the model that has no abort term, and -63 collapses it
+/// to 0.807.
+///
+/// Spelling either bonus as an amplitude over `kZeroBonusDepth` —
+/// `1.05 * ((56.0 - d) / 56.0)` and its relatives — remains refuted: those
+/// forms fire at depths where the server demonstrably does not, from two
+/// independent sessions on different seeds.
 /// The two slopes, and the whole reason the single-K reading is dead. 11/640
-/// and 3/160 — different numbers, bracketed to a part in 10^5 by about forty
-/// integer crossing depths, each pinned by a pair of dimensions a
-/// ten-thousandth of floodedness apart.
+/// and 3/160 — different numbers. Their feasible intervals are disjoint by a
+/// factor of 500 against their own widths and were tightened to 3.5e-8 by six
+/// campaigns on thirteen seeds, with each constant strictly INTERIOR rather
+/// than sitting at a bracket's closed edge.
 ///
-/// Parametrised by SLOPE deliberately. Spelling either as an amplitude over
-/// `kZeroBonusDepth` — `1.05 * ((56.0 - d) / 56.0)` and its relatives — is
-/// refuted: those forms fire at depths where the server demonstrably does not,
-/// and the refutations come from two independent sessions on different seeds.
-inline constexpr double kSeaBonusSlope = 0.0171875; ///< 11/640
-inline constexpr double kLocalBonusSlope = 0.01875; ///< 3/160
+/// SPELLED AS A NUMERATOR OVER A DENOMINATOR, and that is measured rather than
+/// stylistic. A pre-divided `double` constant is REFUTED: `fl(11/640)` rounds
+/// UP by 1.39e-18, and over the reachable range that is enough to fire the sea
+/// gate where the server does not, at exactly two reaches — 45 and 50 — on 48
+/// cells over thirteen dimensions, three seeds and both coordinate signs. The
+/// surviving spellings are `f + (reach * 11.0) / 640.0`, its FMA, and the
+/// cross-multiplied `640.0 * f + 11.0 * reach > 512.0`; they agree on every
+/// one of 700000 grid points and on 145862 measured cells. `reach / 640.0 *
+/// 11.0` and exact-rational comparison are both refuted on the server.
+///
+/// This also CORRECTS a claim this header used to make. `-ffp-contract=off`
+/// remains project policy (§5), but it is not what makes this line right: with
+/// the pre-divided constant the expression IS an FMA shape and the contracted
+/// form happens to agree while the uncontracted one does not. Written as a
+/// product over a divisor there is no multiply-add to contract, and the line
+/// stops depending on contraction at all.
+inline constexpr double kSeaBonusNumerator = 11.0;
+inline constexpr double kSeaBonusDenominator = 640.0;
+inline constexpr double kLocalBonusNumerator = 3.0;
+inline constexpr double kLocalBonusDenominator = 160.0;
 
-/// SUSPECT AWAY FROM WHERE THEY WERE FITTED, and this is why the filler still
-/// refuses aquifers. Restricted to the cells that actually enter the reach
-/// path — `psl < sea_level - 8` and `psl - centreY >= 4` — at a floodedness of
-/// 0.6, the two slopes score 0.2099, 0.2390 and 0.6894 on three worlds where
-/// every other cell scores 1.0000 over 5194 cells.
+/// How far above the surface read an aborting near-surface cell must sit to
+/// still take the sea. Exactly 20, pinned on eight purpose-built dimensions
+/// where 19 and 21 each lose more than forty cells and are right on at most
+/// one; the term reads the scan's `cap`, and it is independent of `sea_level`,
+/// of the surface's high value and of the floodedness.
+inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
+
+/// The level a cell falls to when nothing floods it — and it is NOT always the
+/// lava level. Every "-54" in this rule that is a LEVEL rather than a
+/// threshold moves with `sea_level`.
 ///
-/// The forty crossing depths behind them were read as wet/dry BITS near the
-/// 0.4 and 0.8 thresholds. That is the same instrument weakness that produced
-/// an exactly-100% wrong law for `preliminary_surface_level` twice: a readout
-/// that only sees which side of a gate a value falls on cannot see a term that
-/// is right at the ends and wrong in the middle. One instrument, unreplicated,
-/// but its controls are clean and the failure is not marginal. Re-derive both
-/// with the exact-integer level readout before wiring the filler (SPEC §10).
+/// Invisible until somebody mapped the global fluid picker with aquifers
+/// disabled: below `min(-54, sea_level)` the world is lava unconditionally,
+/// whatever the aquifer decides. So no block readout can distinguish any level
+/// at or below that boundary — every candidate paints identical chunks — and
+/// four campaigns read the lava sea's top and recorded it as a level. Building
+/// a world with `sea_level` -56, where -54 sits two blocks ABOVE the floor,
+/// makes the distinction visible: the third outcome is this, on 9740
+/// discriminating cells, and a bare -54 is right on 8729 of them.
+[[nodiscard]] constexpr std::int32_t lambdaLevel(const std::int32_t seaLevel) noexcept {
+    return kLavaLevel < seaLevel ? kLavaLevel : seaLevel;
+}
+
+/// What one scan of `preliminary_surface_level` yields. Four values, because
+/// the ocean branch has four consumers and they do not agree on which to read
+/// (see `sampling.hpp` for how the scan produces them, and for why it is a
+/// scan at all rather than a sample).
+struct PslRead {
+    /// The window's prefix minimum, stopping before any aborting sample. Read
+    /// by the near-surface gate, the near-surface depth test, and the reach.
+    std::int32_t gate = 0;
+
+    /// The whole window's minimum, aborting sample included. Read by the
+    /// ladder's cap and by the aborting near-surface floor.
+    std::int32_t cap = 0;
+
+    /// The anchor sample alone — the first read, before the window. Read by
+    /// the DEPTH PATH's gate, and by nothing else.
+    ///
+    /// SINGLE-SOURCED. One agent, one instrument family, and an asymmetry
+    /// (near-surface on the minimum, depth path on the anchor) of exactly the
+    /// shape that has been wrong twice in this codebase. Its controls are good
+    /// — worlds where the two models coincide score 1.0000 for both, and the
+    /// effect moves one-for-one with `sea_level` — but it needs a second
+    /// instrument before the filler leans on it.
+    std::int32_t anchor = 0;
+
+    /// Whether a window sample fell below the scan's threshold. When it did,
+    /// the floodedness-gated `sea_level` outcome is REFUSED — which is the
+    /// entire explanation of a failure this project first read as the slopes
+    /// being wrong in the middle of the band.
+    bool aborted = false;
+
+    [[nodiscard]] constexpr bool operator==(const PslRead&) const noexcept = default;
+};
+
+/// The surface read of a dimension whose `preliminary_surface_level` is
+/// constant in space. All four consumers then agree by construction, which is
+/// why ~1370 probe dimensions could measure the slopes correctly and still
+/// never see that there were four of them.
+[[nodiscard]] constexpr PslRead constantSurface(const std::int32_t surface) noexcept {
+    return PslRead{.gate = surface, .cap = surface, .anchor = surface, .aborted = false};
+}
 
 /// Everything the fluid-level decision reads. All of it is a function of the
 /// cell's exact jittered CENTRE, never of the cell index: at psl 0 and
@@ -324,12 +420,14 @@ struct CellFluid {
     /// The cell's centre, from `CentreSource::centreOf`.
     std::int32_t centreY = 0;
 
-    /// `preliminary_surface_level`, FLOORED to an int. Not truncated: at psl
-    /// -10.4 and -10.6 the server behaves as -11 in both cases, while psl -10
-    /// behaves as -10. Truncation toward zero, round-half and carrying the
-    /// raw double each predict a different one of the four observed outcomes,
-    /// and all three are excluded.
-    std::int32_t preliminarySurface = 0;
+    /// The scan of `preliminary_surface_level`, FLOORED to ints. Not
+    /// truncated: at psl -10.4 and -10.6 the server behaves as -11 in both
+    /// cases, while -10 behaves as -10; truncation toward zero, round-half and
+    /// carrying the raw double each predict a different one of the four
+    /// observed outcomes, and all three are excluded.
+    ///
+    /// Use `constantSurface(p)` for a dimension whose surface does not vary.
+    PslRead surface{};
 
     /// The dimension's `sea_level`.
     std::int32_t seaLevel = 0;

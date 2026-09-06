@@ -228,12 +228,23 @@ read are the same function. A readout that varies a quantity's spatial pattern
 and never its values cannot see a value-dependent path, and reports perfect
 confidence in a law that is wrong. Three values separate them instantly.
 
-So the aquifer's geometry, its levels, its barriers and all three of its
-sample positions are now derived. The filler still refuses `aquifers_enabled`
-by name, for a different reason than before: the ocean branch's depth term was
-itself fitted from wet/dry bits near its two thresholds, and it scores 0.21 to
-0.69 in the middle of the floodedness band where most overworld aquifers sit.
-SPEC §10 lists what is left.
+That scan yields four values, and the ocean branch reads a different one in
+each place — the near surface on the window's prefix minimum, the ladder's cap
+on the whole window's, the depth path's own gate on the anchor sample alone,
+and the trailing guard on none of them. Getting that wrong is what made the
+branch look broken: a run reported the depth term scoring 0.21 where it should
+have been exact, this project recorded the two slopes as suspect for a day, and
+the real cause was that a cell whose scan aborts is refused the sea outcome
+entirely. Three independent instruments on nine seeds then confirmed the slopes
+to within 1e-6 at every depth.
+
+So the aquifer's geometry, its levels, its barriers and all its router reads
+are derived. The filler still refuses `aquifers_enabled` by name, for one
+remaining reason: the surface scan is established only for surfaces that vary
+slowly. Every corpus behind it used a surface varying on about a hundred
+blocks, and agreement falls from 1.0000 to 0.87 once the features shrink to
+between eight and forty. Real terrain varies on exactly those scales. SPEC §10
+lists what is left.
 
 ## Capability matrix (v1)
 
