@@ -372,17 +372,17 @@ Its own component (`lib/mapping/`), its own tests:
 
   **Remaining, and both are well specified.**
 
-  1. *The one-block residual.* With aquifers out of the way, 1.7% of columns
-     are still off, every one of them by exactly one block, with the density in
-     dispute of order 1e-3 — real, not a tie resolved differently.
-     `golden_terrain_no_aquifer_test.cpp` pins it at 253 of 256 columns exact
-     with the worst at one block. Tier A is bit-exact, so this is a genuine
-     failure of M3's own criterion and not a rounding footnote. §11 records what
-     it is not: it does not vanish at cell corners, so it is not interpolation.
-     The next instrument is named there — the datapack probe against a
-     y-independent slice of the chain, where an amplified window reads a
-     difference of 1e-4 directly, because block heights saturate at half a
-     block and cannot resolve it further.
+  1. *The one-block residual, now localised.* 1.71% of columns are off by
+     exactly one block with aquifers out of the way. §11 records the
+     measurement: comparing every block rather than every column's height, the
+     disagreements are **zero at the cell's y boundary** over 94208 blocks and
+     12 to 37 at each of the other seven offsets, with identical exposure to
+     near-zero densities at all eight. So it IS the vertical interpolation,
+     which is the opposite of what this SPEC said before the measurement was
+     made. Not the cell height, not the blend order, not a cache node. Two
+     populations: ordinary surface shifts under 1e-3, and 24 cave-roof blocks
+     at y 17..21 wrong by up to 7.8e-2. Tier A is bit-exact, so this is a
+     genuine failure of M3's own criterion.
   2. *Four unevaluable router functions*, all of them cave or End functions,
      with `weird_scaled_sampler` the first thing met on the caves path.
 
@@ -1876,18 +1876,64 @@ Open:
   dropped by the server as an invalid path, after which the harness times out
   on an empty world.
 
-  **What is genuinely left is small.** With aquifers out of the way, 1.7% of
-  columns are still off, every one of them by exactly one block, with the
-  density in dispute of order 1e-3 — real, not a tie resolved differently,
-  but two orders of magnitude below what the aquifer gap contributed. It does
-  not correlate strongly with the cell lattice: by cell y-offset the
-  disagreement rate runs 5.4% at offset 0 down to 0.3% at offset 2, and
-  columns on a cell corner in both x and z do only slightly better than
-  columns on neither (1.37% against 1.95%). An interpolation error would
-  vanish at the corners, and this does not. Block heights cannot resolve it
-  further — they saturate at half a block — so the next instrument is the
-  datapack probe run against a y-independent slice of the chain, where an
-  amplified window can read a difference of 1e-4 directly.
+  **The one-block residual, localised (M3).** With aquifers out of the way,
+  1.71% of columns are off — 16104 of 16384 exact over a full region — every
+  one of them by exactly one block. This entry previously recorded that it
+  "does not correlate strongly with the cell lattice" and that "an
+  interpolation error would vanish at the corners, and this does not". **Both
+  are wrong, and the opposite is true.**
+
+  The earlier measurement bucketed disagreeing COLUMNS by the y offset of their
+  height. Bucketing BLOCKS instead — every block in the region compared against
+  what the server actually wrote, 741376 of them rather than one per column —
+  gives:
+
+  | y offset in the cell | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+  |---|---|---|---|---|---|---|---|---|
+  | disagreements | **0** | 12 | 32 | 14 | 15 | 25 | 37 | 13 |
+
+  Offset 0 is the cell boundary — the one y where `minecraft:interpolated`
+  returns its argument rather than a blend — and it is clean over 94208 blocks.
+  Under a uniform distribution 18.5 would be expected there; the probability of
+  zero is about 2e-9. The x and z offsets show nothing: 0.016% to 0.024% across
+  all four, with no ordering.
+
+  *And it is not an absence of close calls.* At offset 0, 5029 blocks carry a
+  density within 1e-2 of zero and 515 within 1e-3, against 5067/512 to
+  5782/577 at the other seven. The exposure is identical; only the boundary
+  never comes out wrong.
+
+  *Nor is the cell height wrong*, which would produce the same shape by making
+  our lattice coarser than vanilla's. Scored over the same blocks: height 8
+  disagrees on 148, and 4, 16 and 2 on 9512, 22232 and 11992. The documented
+  `size_vertical * 4` is right.
+
+  *Nor is it the blend order*, which `density_interpreter.cpp` flags as
+  unverified. Reassociating three lerps moves the last bits, of order 1e-16;
+  the disagreements run to 7.8e-2.
+
+  **It is two populations, not one**, and 145 of the 148 are one-directional —
+  we call air what the server made solid.
+
+  * **124 small**, |density| mostly under 1e-3, y 17..47. Ordinary one-block
+    surface shifts; the disputed block is usually `minecraft:gravel`, which is
+    simply what the surface rule paints on a sea floor.
+  * **24 large**, |density| up to 7.8e-2, all at y 17..21, all `minecraft:stone`
+    with **water directly below**. That is a cave roof, not the surface, and a
+    7.8e-2 sign error is three orders of magnitude past rounding.
+
+  `cache_all_in_cell` would explain the shape exactly — a value computed once
+  per cell agrees at the corner and drifts inside — but the overworld's chain
+  does not contain one: 15 `cache_2d`, 12 `cache_once`, 16 `flat_cache`, 8
+  `interpolated`, and no `cache_all_in_cell` anywhere.
+
+  So what remains is that our interior values are a lerp of two corner values
+  the server agrees with, and the server's interior values are not that lerp.
+  The next instrument has to read the server's own density BETWEEN cell
+  boundaries: a datapack probe whose `raw_final_density` wraps vanilla's
+  `final_density` in a `range_choice`, bisected across dimensions, read at
+  positions where the indicator is exact. `golden_terrain_no_aquifer_test.cpp`
+  pins the offset-0 claim so that a change here has to move it deliberately.
 
   `tests/conformance/golden_terrain_test.cpp` pins a cheap sample so the
   number has to move deliberately; it samples every eighth column across 8x8

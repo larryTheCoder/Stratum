@@ -148,3 +148,107 @@ TEST_CASE("the terrain chain, compared without aquifers in the way", "[conforman
     // the same columns.
     CHECK(result.exact == 253U);
 }
+
+TEST_CASE("the terrain residual lives strictly between the cell's y boundaries",
+          "[conformance][terrain]") {
+    // The heightmap test above says 1.7% of columns are off by one block. This
+    // one says WHERE, and it compares blocks rather than heights — the
+    // heightmap only reports a column's topmost solid, so it cannot see that
+    // the disagreements avoid one y offset entirely.
+    //
+    // The overworld's interpolation cell is 4 wide and 8 tall (size_horizontal
+    // 1, size_vertical 2), and `min_y` is -64, so `(y + 64) % 8 == 0` is a cell
+    // boundary — the one place `minecraft:interpolated` returns its argument
+    // rather than a blend of two corners. Over the whole region that offset is
+    // clean and every other offset is not, which is the opposite of what SPEC
+    // recorded before this test existed.
+    //
+    // This is not an absence of close calls at the boundary. Over the wider
+    // band y in [-60, 120] on these same chunks, offset 0 carries 5029
+    // densities within 1e-2 of zero and 515 within 1e-3, against 5067/512 to
+    // 5782/577 at the other seven — the same exposure. The sign simply never
+    // comes out wrong there: 0 of 94208, where the other offsets contribute
+    // between 12 and 37 each.
+    //
+    // Nor is it the cell height being wrong, which would produce the same
+    // shape. Scored over the same blocks, a height of 8 disagrees on 148, and
+    // 4, 16 and 2 disagree on 9512, 22232 and 11992.
+    const std::filesystem::path tree = fixtures() / "worldgen";
+    const std::filesystem::path region =
+        fixtures() / "probes" / "no-aquifer" / ("seed-" + std::to_string(kSeed)) / "r.0.0.mca";
+    if (!std::filesystem::is_directory(tree) || !std::filesystem::is_regular_file(region)) {
+        SKIP("no aquifer-free probe at " << region);
+    }
+
+    const auto pack = stratum::data::Pack::open(tree);
+    const auto loaded = stratum::settings::loadAll(pack);
+    const auto& overworld =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:overworld"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), kSeed, stratum::density::RandomSource::Xoroshiro);
+    const stratum::density::Interpreter interpreter(
+        loaded.graph, noises,
+        stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
+                                       .height = overworld.geometry.cellHeight()});
+    const auto root = overworld.router.at(stratum::settings::RouterEntry::FinalDensity);
+    const int cellHeight = overworld.geometry.cellHeight();
+    const int minY = overworld.geometry.minY;
+    const auto file = stratum::region::RegionFile::open(region);
+
+    // Every disagreement anywhere in the region sits in y 17..47, so this band
+    // holds all of them while keeping the test to about fifty thousand
+    // evaluations.
+    constexpr int kLowY = 10;
+    constexpr int kHighY = 60;
+    long long onBoundary = 0;
+    long long betweenBoundaries = 0;
+    long long boundaryBlocks = 0;
+    for (std::int32_t chunkZ = 0; chunkZ < 4; ++chunkZ) {
+        for (std::int32_t chunkX = 0; chunkX < 4; ++chunkX) {
+            if (!file.hasChunk(chunkX, chunkZ)) {
+                continue;
+            }
+            const auto chunk = stratum::chunk::Chunk::decode(
+                stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    for (int y = kLowY; y <= kHighY; ++y) {
+                        const auto* block = chunk.blockAt(localX, y, localZ);
+                        if (block == nullptr) {
+                            continue;
+                        }
+                        // What OCEAN_FLOOR counts: neither air nor fluid.
+                        const std::string name = block->toString();
+                        const bool serverSolid = name.find("air") == std::string::npos &&
+                                                 name.find("water") == std::string::npos &&
+                                                 name.find("lava") == std::string::npos;
+                        const bool oursSolid =
+                            interpreter.evaluate(root, Point{.x = (chunkX * 16) + localX,
+                                                             .y = y,
+                                                             .z = (chunkZ * 16) + localZ}) > 0.0;
+                        const bool atBoundary = (y - minY) % cellHeight == 0;
+                        if (atBoundary) {
+                            ++boundaryBlocks;
+                        }
+                        if (serverSolid == oursSolid) {
+                            continue;
+                        }
+                        if (atBoundary) {
+                            ++onBoundary;
+                        } else {
+                            ++betweenBoundaries;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The test has to be exercising something, or the claim below is vacuous.
+    REQUIRE(boundaryBlocks > 10000);
+    CHECK(betweenBoundaries > 0);
+
+    // The claim. If this ever becomes non-zero, the fault has moved out of the
+    // interpolation and the analysis in SPEC §11 needs redoing.
+    CHECK(onBoundary == 0);
+}
