@@ -103,7 +103,8 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // water that should have been air.
     if (settings.aquifersEnabled) {
         throw FillError("this dimension sets aquifers_enabled, and this build does not yet "
-                        "implement the aquifer fill decision (SPEC §11). Its geometry, its fluid "
+                        "implement the aquifer fill decision (SPEC §10 milestone MA, §11). Its "
+                        "geometry, its fluid "
                         "levels, its barriers and its surface reads are derived, but the fluid "
                         "TYPE is not — the lava router entry has never been measured — and three "
                         "corrections to the level rule are still single-sourced; refusing rather "

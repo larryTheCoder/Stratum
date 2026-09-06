@@ -9,9 +9,11 @@ Snowcapped, Spyglass) work as content for a Bedrock server.
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
-- **Status:** Milestone **M3** closing, **M4** under way. Terrain SHAPE
-  generates and is checked against the vanilla server; terrain MATERIALS are
-  partly done and contain the project's one genuinely stuck problem. See
+- **Status:** Milestone **M3** closing, **M4** under way, and **MA**
+  (aquifers) is now a parallel track rather than a step inside M3 — it had
+  become an open research programme, and nothing behind it in the plan needed
+  it. Terrain SHAPE generates and is checked against the vanilla server;
+  terrain MATERIALS are partly done. See
   [What generates today](#what-generates-today) for the honest breakdown.
   Subcommands that are not implemented fail loudly with the milestone that
   owns them.

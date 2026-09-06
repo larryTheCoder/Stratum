@@ -344,8 +344,17 @@ Its own component (`lib/mapping/`), its own tests:
   claim: an independent reimplementation agreeing with us, rather than
   Mojang's own output.
 - **M3** — 3D density: full noise router, cell sampling + trilinear
-  interpolation, all cache node types, aquifer fill decision, compiled flat
-  execution program, Tier-A goldens passing for terrain shape.
+  interpolation, all cache node types, compiled flat execution program, Tier-A
+  goldens passing for terrain shape.
+
+  The aquifer fill decision was part of this milestone and is now **MA**, a
+  parallel track. It was moved because it had stopped being a step on the way
+  to terrain shape and become an open research programme in its own right —
+  four campaigns deep, with the last one's remaining blocker being a router
+  entry nobody has measured at all — while everything behind it in the plan
+  (surface rules, biomes, the bindings this project exists to feed) needed
+  none of it. Sequencing only: nothing ships with aquifers approximated, and
+  the filler refuses `aquifers_enabled` by name until MA closes.
 
   Landed: noise settings — geometry, flags, block states and the fifteen-entry
   noise router, whose inline density functions resolve into the *same* graph
@@ -361,12 +370,43 @@ Its own component (`lib/mapping/`), its own tests:
   older name and refused every vanilla noise settings file, for a reason the
   error would not have made obvious.
 
-  The aquifer, as of this entry: the cell lattice, the centre jitter and its
-  RNG derivation, the ladder the fluid level sits on, the floodedness gate, the
-  ocean branch and the barrier predicate are all derived, implemented and under
-  test (§11). **M3 does not close on that, and the filler keeps refusing
-  `aquifers_enabled` by name.** Three things stand between the pieces and a
-  world:
+  **Remaining, and both are well specified.**
+
+  1. *The one-block residual.* With aquifers out of the way, 1.7% of columns
+     are still off, every one of them by exactly one block, with the density in
+     dispute of order 1e-3 — real, not a tie resolved differently.
+     `golden_terrain_no_aquifer_test.cpp` pins it at 253 of 256 columns exact
+     with the worst at one block. Tier A is bit-exact, so this is a genuine
+     failure of M3's own criterion and not a rounding footnote. §11 records what
+     it is not: it does not vanish at cell corners, so it is not interpolation.
+     The next instrument is named there — the datapack probe against a
+     y-independent slice of the chain, where an amplified window reads a
+     difference of 1e-4 directly, because block heights saturate at half a
+     block and cannot resolve it further.
+  2. *Four unevaluable router functions*, all of them cave or End functions,
+     with `weird_scaled_sampler` the first thing met on the caves path.
+
+- **M4** — Biomes + surface: multi-noise biome source, surface rules,
+  Tier-A goldens passing end-to-end in Java block space.
+- **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
+  output, per-world freeze storage, PocketMine world-load path, perf pass.
+- **M6 (v2)** — Staged features/structures with declared read/write radii;
+  scripting escape hatch evaluation.
+- **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
+  M4, M5 or M6: it is a parallel track, and the numeric milestones proceed past
+  it. It gates only the capability matrix's aquifer row (§8) and any golden
+  whose dimension sets `aquifers_enabled`.
+
+  Landed and under test (§11): the cell lattice, the centre jitter and its RNG
+  derivation, the ladder, the floodedness gate, the ocean branch with both its
+  slopes, the barrier predicate, and where all three router inputs are read —
+  including the surface's thirteen-position aborting-minimum scan, re-derived
+  at twenty feature scales.
+
+  Four things remain. Three are verification of measurements already in hand,
+  each with its separating configuration named and costing about one probe
+  world; the fourth is unexplored and is the reason this is a track rather than
+  a task.
 
   1. **`PslRead::anchor` as the depth path's gate is single-sourced.** One
      agent, one instrument family, and an asymmetry — the near surface gates on
@@ -391,51 +431,27 @@ Its own component (`lib/mapping/`), its own tests:
      and without them 0.9958. One instrument found all three, and this
      project's own history says that is a hypothesis.
 
-     *The smooth-surface blocker this list carried is CLOSED.* The scan was
-     re-derived at twenty feature scales from 0.5 to 100 blocks, on smooth,
-     two-scale and discontinuous fields, at both coordinate signs, on 23 seeds,
-     by three model-free sieves over 2401, 83521 and 103041 candidate offsets
-     whose intersections are exactly the thirteen positions with ZERO
-     unexplained cells. The 0.87 was a wrong CONSUMER model in the measuring
-     harness — a level predictor missing the ocean branch scores 0.823-0.882 on
-     the very cells where the full rule is 1.00000 — compounded by the lava sea
-     below `min(-54, sea_level)` painting whole worlds regardless of the
-     aquifer, and by a phantom class that a wet/dry readout of the abort
-     manufactures out of cells the trailing guard floors. "Zero corrupt cells,
-     so it is not the instrument" was a false inference, and it is the sentence
-     that sent a whole campaign after the wrong thing.
   3. **Which sources compete.** The barrier predicate is exact on the pair it
      is given, but about 13% of the server's real barriers come from a third
      source rather than the nearest two.
 
-     Where psl is read is no longer on this list: all three router inputs now
-     have measured sample positions (§11), including psl's horizontal read,
-     which is an aborting minimum over an asymmetric thirteen-point window and
-     took three campaigns to pin.
-  4. **Fluid TYPE, not level — and the `lava` router entry has never been
-     measured by anyone.** On its own this is decisive: a correct level with a
-     wrong `lava` read still writes the wrong block. All six sampling agents pinned it at -1.0, as did
-     every campaign before them, so its own sample position is unknown as well
-     as its rule. A ladder aquifer at level -20 was observed filled with lava
-     at `psl` 20/30 and with water at `psl` 0, with the level 34 blocks above
-     the global lava sea, plus obsidian where the bodies meet water. One
-     reading attributes this to a two-nearest-source blend, another to a type
-     rule of its own; nobody has adjudicated them. A correct level with a wrong
-     `lava` read still writes the wrong block.
+  4. **Fluid TYPE, and the `lava` router entry, which nobody has measured.**
+     On its own this is decisive: a correct level with a wrong `lava` read
+     still writes the wrong block. Every campaign pinned it at -1.0, so neither
+     its rule nor its sample position is known. A ladder aquifer at level -20
+     was observed filled with lava at `psl` 20/30 and with water at `psl` 0,
+     with the level 34 blocks above the global lava sea, plus obsidian where
+     the bodies meet water. One reading attributes this to a two-nearest-source
+     blend, another to a type rule of its own; nobody has adjudicated them.
 
-  The golden set gains one requirement before that refusal is lifted: **a
+  The golden set gains one requirement before the refusal lifts: **a
   conformance case with a spatially varying `preliminary_surface_level`**.
   ~1370 constant-psl dimensions are exactly how this project arrived at a
-  confident wrong law, and a green run over constant-psl fixtures proves
+  confident wrong law twice, and a green run over constant-psl fixtures proves
   nothing about the input that broke.
-- **M4** — Biomes + surface: multi-noise biome source, surface rules,
-  Tier-A goldens passing end-to-end in Java block space.
-- **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
-  output, per-world freeze storage, PocketMine world-load path, perf pass.
-- **M6 (v2)** — Staged features/structures with declared read/write radii;
-  scripting escape hatch evaluation.
 
-Each milestone closes only when its tests run in CI on all targets.
+Each milestone closes only when its tests run in CI on all targets. MA is a
+track rather than a step: the numeric milestones do not wait on it.
 
 ---
 
@@ -615,7 +631,7 @@ Open:
   arithmetic. `tools/analysis/aquifer-free-probe.sh` produces the reference,
   and `golden_terrain_no_aquifer_test.cpp` pins the comparison against it.
 
-  **`find_top_surface` is settled (M3).** minecraft.wiki gives the semantics —
+  **`find_top_surface` is settled (MA).** minecraft.wiki gives the semantics —
   "scans through a column of an input density and returns the topmost y-level
   that is above 0. If no such position exists within the bounds, the
   lower_bound is returned" — and leaves four things open. All four were
@@ -935,7 +951,7 @@ Open:
     terrain and so said nothing. It needs terrain where the preliminary
     surface and the real one differ, which the probe did not arrange.
 
-  **The aquifer fill decision: what it is, and what it will cost (M3).**
+  **The aquifer fill decision: what it is, and what it will cost (MA).**
   Scoped, not started. Three things are now known about it.
 
   *It is undocumented.* minecraft.wiki describes what the four router entries
@@ -1339,7 +1355,7 @@ Open:
   `aquifers_enabled` by name, and will until the base, the floodedness gate,
   the barrier rule and the per-cell randomness are measured too.
 
-  **The jitter, the gate and the barrier, measured together (M3).** Twenty-three
+  **The jitter, the gate and the barrier, measured together (MA).** Twenty-three
   probe dimensions at four seeds — 92 terrain-free worlds — were analysed by ten
   agents, each question attacked from two independent angles and then
   adversarially verified. The verification earned its place: it overturned
@@ -1499,7 +1515,7 @@ Open:
   separated by exactly that thickness and agreed to within 0.09 blocks once it
   was accounted for.
 
-  **The jitter draw, recovered (M3).** Three rounds and about 1.9e9 refuted
+  **The jitter draw, recovered (MA).** Three rounds and about 1.9e9 refuted
   candidates in, the derivation fell out once two things changed: a ground
   truth refit under the integer constraint, and scoring by EXACT MATCH of a
   cell's draw rather than by correlation against a noisy table.
@@ -1552,7 +1568,7 @@ Open:
   separation.** 23 is the value the real rule takes over the commonest
   geometry.
 
-  **The barrier rule, recovered (M3).** It is an exact, deterministic
+  **The barrier rule, recovered (MA).** It is an exact, deterministic
   comparison. Every quantity in it is an integer and nothing divides, so no
   floorDiv arises; the only floating-point is the `barrier` router value, and
   only when the block sits within three of the nearer plane. For a block at
@@ -1594,7 +1610,7 @@ Open:
   rather than from the nearest two. The predicate above is exact on the pairs
   it is given; the pair selection is not yet complete.
 
-  **Where the aquifer reads its router inputs (M3).** Everything above is a
+  **Where the aquifer reads its router inputs (MA).** Everything above is a
   PREDICATE, and every one of the ~1370 probe dimensions behind it held
   `preliminary_surface_level` and `fluid_level_floodedness` at constants — so
   the predicate was settled and the positions its inputs are read at were not.
@@ -1653,7 +1669,7 @@ Open:
   near y = 0 and specifically not a minimum over y. Excluded: `min_y`,
   `min_y + 64`, `sea_level`, the cell's own centre y.
 
-  **The horizontal read, settled (M3).** Three campaigns and six agents; the
+  **The horizontal read, settled (MA).** Three campaigns and six agents; the
   first two produced a confident wrong law and this one explains why. It is not
   a point sample, and it is not the symmetric neighbourhood the last entry
   guessed at.
@@ -1997,7 +2013,7 @@ Open:
     three stacks.** Nothing here answers this, and the overworld is such a
     dimension.
 
-  **What measuring the field settled (M3).** Two of the three are now
+  **What measuring the field settled (MA).** Two of the three are now
   answered, by statistics rather than by a candidate. The seeding is unknown,
   so the two fields cannot be compared point by point — they are different
   realisations. But a field's *spectrum*, its *distribution shape* and its
