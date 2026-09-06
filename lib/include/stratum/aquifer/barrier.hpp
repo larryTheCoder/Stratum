@@ -58,6 +58,33 @@ struct BarrierAt {
     double barrier = 0.0;
 };
 
+/// REFUTED AS A GENERAL MODEL, and kept only until its replacement is built.
+///
+/// This predicate has no density term and sees only two sources. Measured
+/// against the server across a sweep of the caller's density, its agreement
+/// swings 92.88% at D = -0.05 — WORSE than the 99.99% majority baseline on
+/// those same blocks — to 95.87% at D = -1.5 and 59.63% at D = -6.0. A rule
+/// whose accuracy tracks an input it does not read is not a refinement of the
+/// truth; it is a different model that happens to fit where that input is far
+/// from zero.
+///
+/// What replaces it (spec Q6.6, shape confirmed, exact numerics not yet):
+///
+///     solid =  D + s12*P(A1,A2) > 0
+///           || (s13 > 0 && D + s12*s13*P(A1,A3) > 0)
+///           || (s23 > 0 && D + s12*s23*P(A2,A3) > 0)
+///
+/// with `D` the caller's density, `s_ij = 1 - (d_j - d_i)/25` on squared
+/// distances, and three ranked sources rather than two — which is where the
+/// 13% of the server's barriers this rule cannot see have been going. The
+/// additive-D shape, its monotonicity, and the widening to three-way junctions
+/// are confirmed (0 violations in 1053963 pairwise checks on two seeds); the
+/// pressure function's own divisors are not yet measured, so the replacement
+/// is not written here rather than written wrongly.
+///
+/// It cannot be wired yet in any case: nothing in this build selects three
+/// ranked sources, and `BarrierAt` has no field for a third or for `D`.
+
 /// Whether the server writes stone here.
 ///
 /// The comparison is `(25 - separation) * pressure > 75`, and it is STRICT:

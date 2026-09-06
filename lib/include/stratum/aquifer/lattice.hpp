@@ -128,6 +128,26 @@ struct CellIndex {
 ///
 /// Every axis floors toward negative infinity: below y = 0, and west or north
 /// of the origin, a truncating division would fold two cells into one.
+///
+/// THE INDEX IS COMPUTED ON SHIFTED COORDINATES. This is the spec's Q3.2, and
+/// it is confirmed: `(-5, +1, -5)` uniquely survived an elimination sweep over
+/// all 270 shifts the geometry admits, on five seeds at 6291456 blocks each,
+/// and was then re-derived from scratch by a second instrument on two further
+/// seeds in both coordinate signs. 264 of the 266 wrong horizontal pairs are
+/// refuted by at least one real barrier block they call impossible. The
+/// vertical component was the last to fall: `+1` and `+2` differ on about
+/// 0.0003% of blocks, and three targeted probe worlds built at those exact
+/// coordinates came back barrier-stone where `+1` predicts possible and `+2`
+/// predicts impossible, 3 of 3.
+///
+/// The shift is why a cell's own centre does NOT map back to that cell here.
+/// `cellOf` names the HOME cell of the candidate window, not the owner of the
+/// point: the window runs forward only in x and z, so the centre of cell `i`
+/// lands in home cell `i - 1` or `i`, and cell `i` is a candidate either way.
+inline constexpr std::int32_t kCellShiftX = -5;
+inline constexpr std::int32_t kCellShiftY = 1;
+inline constexpr std::int32_t kCellShiftZ = -5;
+
 [[nodiscard]] CellIndex cellOf(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
 
 /// The centre jitter, drawn once per 3D cell. It is an INTEGER draw, and the

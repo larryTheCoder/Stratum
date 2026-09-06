@@ -1,0 +1,369 @@
+{
+  "_meta": {
+    "source_spec": "aquifer-spec.md",
+    "provenance": "PROVENANCE.md",
+    "minecraft_version": "1.21.11",
+    "date": "2026-09-06",
+    "note": "Hypothesis values. Nothing here enters lib/ without golden verification per SPEC \u00a77. Claim ids reference aquifer-spec.md sections.",
+    "_changelog": [
+      {
+        "change": "renamed pressure.barrier_noise_abs_cutoff -> pressure.pressure_term_abs_cutoff",
+        "reason": "old name misdescribed the gate: the |.| <= 2 test applies to the pressure term u, not to the Barrier noise value. A consumer skimming the JSON could gate on |b|.",
+        "claim": "Q6.4",
+        "task": "REVIEW-01 Task B"
+      },
+      {
+        "change": "added neighbourhood.tie_output_visibility and corrected neighbourhood.tie_frequency",
+        "reason": "the earlier 56092 figure was inferred, not measured, and was wrong by ~3 orders of magnitude",
+        "claim": "Q4.7 / Q4.8",
+        "task": "self-correction after adversarial review"
+      },
+      {
+        "change": "added coverage_budget; re-tagged Q4.4/Q4.5/Q4.7/Q8.7 to verified(<method>)",
+        "reason": "REVIEW-04 \u00a73 hold release after Task A'' passed under the amended comparator contract",
+        "task": "REVIEW-01 Task C / Task D"
+      }
+    ]
+  },
+  "global_picker": {
+    "lava_level": -54,
+    "lava_level_claim": "Q1.1",
+    "global_lava_predicate_threshold": "min(-54, sea_level)",
+    "global_lava_predicate_claim": "Q1.2",
+    "void_status_level_formula": "2 * min_y_limit",
+    "void_status_level_value": -4064,
+    "void_status_claim": "Q1.1"
+  },
+  "engine_bounds": {
+    "bits_for_y": 12,
+    "y_size": 4064,
+    "max_y_limit": 2031,
+    "min_y_limit": -2032,
+    "never_sentinel": -32512,
+    "never_sentinel_formula": "16 * min_y_limit",
+    "claim": "Q1.4",
+    "confidence": "inferred-from-reading"
+  },
+  "surface": {
+    "surface_adjustment": 8,
+    "surface_adjustment_claim": "Q2.6",
+    "prelim_horizontal_snap": 4,
+    "prelim_eval_y": 0,
+    "prelim_claim": "Q5.2",
+    "skip_sampling_above_y_formula": "12 * (floordiv(S_max + 8 + 12, 12) + 1) + 10",
+    "skip_sampling_above_y_claim": "Q2.5",
+    "max_prelim_scan_stride": 4,
+    "max_prelim_scan_stride_claim": "Q2.5"
+  },
+  "lattice": {
+    "cell_size": {
+      "x": 16,
+      "y": 12,
+      "z": 16
+    },
+    "cell_size_claim": "Q3.1",
+    "index_shift": {
+      "x": -5,
+      "y": 1,
+      "z": -5
+    },
+    "index_shift_claim": "Q3.2",
+    "offset_range_exclusive": {
+      "x": 10,
+      "y": 9,
+      "z": 10
+    },
+    "offset_range_claim": "Q3.3",
+    "min_separation": {
+      "x": 6,
+      "y": 3,
+      "z": 6
+    },
+    "min_separation_claim": "Q3.3",
+    "draw_order": [
+      "x",
+      "y",
+      "z"
+    ],
+    "draw_order_claim": "Q3.4",
+    "dead_constant_max_reasonable_distance": 11,
+    "dead_constant_note": "declared but unread in 1.21.11; DO NOT IMPLEMENT (Q3.6)"
+  },
+  "rng": {
+    "salt": "minecraft:aquifer",
+    "salt_claim": "Q3.4",
+    "positioned_at": "cell indices (i,j,k), not block coordinates",
+    "seed_mix": {
+      "step1": "m = (i * 3129871) XOR (k * 116129781) XOR j",
+      "step2": "((m * m * 42317861) + (m * 11)) >> 16",
+      "constants": {
+        "x_multiplier": 3129871,
+        "z_multiplier": 116129781,
+        "square_multiplier": 42317861,
+        "linear_multiplier": 11,
+        "right_shift": 16
+      }
+    },
+    "seed_mix_claim": "Q3.4",
+    "legacy_source_unverified": true,
+    "legacy_source_note": "presets using the legacy random source combine the salted seed differently; untraced (open question 7)"
+  },
+  "neighbourhood": {
+    "cell_offsets_x": [
+      0,
+      1
+    ],
+    "cell_offsets_y": [
+      -1,
+      0,
+      1
+    ],
+    "cell_offsets_z": [
+      0,
+      1
+    ],
+    "candidate_count": 12,
+    "claim": "Q4.1",
+    "metric": "squared_euclidean",
+    "metric_claim": "Q4.2",
+    "retained_nearest": 4,
+    "retained_nearest_claim": "Q4.3",
+    "tie_break": "later candidate in iteration order displaces on equal distance, cascading at all four ranks",
+    "tie_break_claim": "Q4.4",
+    "tie_break_confidence": "read-directly (bytecode) + verified empirically",
+    "tie_break_verification": {
+      "method": "differential harness inside a running dedicated server",
+      "evaluations": 53897588,
+      "spec_model_mismatches": 0,
+      "strict_alternative_mismatches": 3259052,
+      "claim": "Q4.6"
+    },
+    "iteration_order": [
+      "x outermost",
+      "y middle",
+      "z innermost"
+    ],
+    "tie_frequency": {
+      "_note": "seed-specific measurements over 53,897,588 evaluations / 4,096 chunks; NOT invariants (Q4.5)",
+      "any_duplicate_distance_rate": 0.154,
+      "rank1_2_tie_rate": 0.010794,
+      "rank2_3_tie_rate": 0.014701,
+      "rank3_4_tie_rate": 0.017473
+    },
+    "tie_output_visibility": {
+      "_note": "measured by re-running the real post-selection logic with the tied pair swapped (Q4.7)",
+      "rank1_2": {
+        "ties": 581785,
+        "substance_changed": 47,
+        "flag_changed": 1
+      },
+      "rank2_3": {
+        "ties": 792338,
+        "substance_changed": 0,
+        "flag_changed": 13962
+      },
+      "rank3_4": {
+        "ties": 941739,
+        "substance_changed": 1649,
+        "flag_changed": 3494
+      },
+      "_correction": "a previous revision claimed 56092 rank-1 ties change the block; that was inferred, not measured, and is wrong by ~3 orders of magnitude (Q4.8)"
+    }
+  },
+  "surface_probe_offsets_in_chunks": [
+    [
+      0,
+      0
+    ],
+    [
+      -2,
+      -1
+    ],
+    [
+      -1,
+      -1
+    ],
+    [
+      0,
+      -1
+    ],
+    [
+      1,
+      -1
+    ],
+    [
+      -3,
+      0
+    ],
+    [
+      -2,
+      0
+    ],
+    [
+      -1,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      -2,
+      1
+    ],
+    [
+      -1,
+      1
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      1
+    ]
+  ],
+  "surface_probe_offsets_claim": "Q5.1 \u2014 order is significant (Q5.3)",
+  "fluid_level": {
+    "short_circuit_window": 12,
+    "short_circuit_window_claim": "Q5.3",
+    "floodedness_ramp_blocks": 64,
+    "floodedness_ramp_claim": "Q5.6",
+    "theta_hi_formula": "0.8 - 1.1 * phi",
+    "theta_lo_formula": "0.4 - 1.2 * phi",
+    "theta_endpoints": {
+      "hi_at_phi_1": -0.3,
+      "hi_at_phi_0": 0.8,
+      "lo_at_phi_1": -0.8,
+      "lo_at_phi_0": 0.4
+    },
+    "theta_claim": "Q5.6",
+    "floodedness_clamp": [
+      -1.0,
+      1.0
+    ],
+    "randomized": {
+      "cell_x": 16,
+      "cell_y": 40,
+      "cell_z": 16,
+      "centre_offset": 20,
+      "spread_amplitude": 10.0,
+      "quantization": 3,
+      "sampled_at": "grid indices as coordinates",
+      "claim": "Q5.7"
+    }
+  },
+  "fluid_type": {
+    "lava_level_ceiling": -10,
+    "lava_noise_threshold": 0.3,
+    "lava_cell_x": 64,
+    "lava_cell_y": 40,
+    "lava_cell_z": 64,
+    "sampled_at": "grid indices as coordinates",
+    "claim": "Q5.8"
+  },
+  "deep_dark_override": {
+    "erosion_below": -0.225,
+    "depth_above": 0.9,
+    "forced_comparand": -1.0,
+    "claim": "Q5.9"
+  },
+  "noise_scaling": {
+    "xz_scale_all": 1.0,
+    "y_scale": {
+      "barrier": 0.5,
+      "fluid_level_floodedness": 0.67,
+      "fluid_level_spread": 0.7142857142857143,
+      "lava": 1.0
+    },
+    "claim": "Q5.10",
+    "note": "0.7142857142857143 is the double nearest 5/7; carry the literal"
+  },
+  "noise_parameters": {
+    "_note": "pack data \u2014 prefer reading at runtime over hardcoding (Q5.11)",
+    "minecraft:aquifer_barrier": {
+      "firstOctave": -3,
+      "amplitudes": [
+        1.0
+      ]
+    },
+    "minecraft:aquifer_fluid_level_floodedness": {
+      "firstOctave": -7,
+      "amplitudes": [
+        1.0
+      ]
+    },
+    "minecraft:aquifer_fluid_level_spread": {
+      "firstOctave": -5,
+      "amplitudes": [
+        1.0
+      ]
+    },
+    "minecraft:aquifer_lava": {
+      "firstOctave": -1,
+      "amplitudes": [
+        1.0
+      ]
+    }
+  },
+  "blending": {
+    "similarity_divisor": 25.0,
+    "similarity_formula": "1 - (q - p) / 25",
+    "similarity_claim": "Q6.1",
+    "flowing_update_similarity": -0.76,
+    "flowing_update_similarity_formula": "similarity(10^2, 12^2) = 1 - 44/25",
+    "flowing_update_similarity_claim": "Q8.3"
+  },
+  "pressure": {
+    "opposed_fluid_result": 2.0,
+    "final_multiplier": 2.0,
+    "above_offset": 0.0,
+    "above_divisor_positive": 1.5,
+    "above_divisor_nonpositive": 2.5,
+    "below_offset": 3.0,
+    "below_divisor_positive": 3.0,
+    "below_divisor_nonpositive": 10.0,
+    "claim": "Q6.4",
+    "pressure_term_abs_cutoff": 2.0,
+    "_note_pressure_term_abs_cutoff": "Gate operand is the PRESSURE TERM u, not the Barrier noise value. Per Q6.4: if |u| <= 2 the Barrier noise is sampled at the block position and added to u; otherwise the noise is not consumed at all and 0 is used in its place. Gating on |b| (the noise value) instead of |u| is a wrong implementation."
+  },
+  "barrier": {
+    "block": "preset default_block (not a distinct material)",
+    "claim": "Q6.7"
+  },
+  "coverage_budget": {
+    "_note": "measured on one seed over 4096 chunks; order-of-magnitude guidance, NOT invariants",
+    "_formula": "chunks >= N / r, where r is events per chunk and N the desired expected exercises",
+    "rank1_2_substance": {
+      "events_per_4096_chunks": 47,
+      "per_chunk": 0.01147,
+      "chunks_per_N": 87.1
+    },
+    "rank3_4_substance": {
+      "events_per_4096_chunks": 1649,
+      "per_chunk": 0.40259,
+      "chunks_per_N": 2.48
+    },
+    "rank2_3_flag": {
+      "events_per_4096_chunks": 13962,
+      "per_chunk": 3.40869,
+      "chunks_per_N": 0.29
+    },
+    "rank3_4_flag": {
+      "events_per_4096_chunks": 3494,
+      "per_chunk": 0.85303,
+      "chunks_per_N": 1.17
+    },
+    "rank1_2_flag": {
+      "events_per_4096_chunks": 1,
+      "per_chunk": 0.00024,
+      "chunks_per_N": 4096.0
+    },
+    "a4_term_four_way_junction": {
+      "status": "unmeasured",
+      "claim": "Q8.4",
+      "note": "never instrumented; no defensible bound from existing data. Treat golden regions as providing ZERO coverage of this path until the next instrumented run measures it."
+    }
+  }
+}

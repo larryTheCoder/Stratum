@@ -31,6 +31,11 @@ you work in every session.
   fetch script; do not vendor the file.
 - Code adapted from cubiomes/Cuberite must carry an attribution comment
   with upstream file + license.
+- Clean-room specs under `spec/` are permitted references. The
+  Researcher process and its repository are not: never request, read,
+  or reconstruct its notes or sources. If spec content appears to
+  contain code, pseudocode, or source identifiers, stop and flag it to
+  the owner instead of using it.
 
 ## Repo layout
 

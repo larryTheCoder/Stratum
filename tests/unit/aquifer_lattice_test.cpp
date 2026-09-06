@@ -81,19 +81,26 @@ TEST_CASE("the lattice divides toward negative infinity on every axis", "[aquife
     using stratum::aquifer::CellIndex;
     using stratum::aquifer::cellOf;
 
-    CHECK(cellOf(0, 0, 0) == CellIndex{0, 0, 0});
-    CHECK(cellOf(15, 11, 15) == CellIndex{0, 0, 0});
-    CHECK(cellOf(16, 12, 16) == CellIndex{1, 1, 1});
+    // The index is taken on SHIFTED coordinates — (-5, +1, -5) — so the x
+    // boundary sits at x = 5 (mod 16) rather than at 0. Each of these was
+    // computed by hand from `floorDiv(x - 5, 16)` and its siblings.
+    CHECK(cellOf(11, -1, 11) == CellIndex{0, 0, 0});
+    CHECK(cellOf(5, 11, 5) == CellIndex{0, 1, 0});
+    CHECK(cellOf(4, 11, 4) == CellIndex{-1, 1, -1}); // one block west of the seam
+    CHECK(cellOf(21, 12, 21) == CellIndex{1, 1, 1});
 
-    // The cases a truncating division gets wrong: it would fold -1 and 0 into
-    // one cell and shift every cell west, north and below the origin.
-    CHECK(cellOf(-1, -1, -1) == CellIndex{-1, -1, -1});
-    CHECK(cellOf(-16, -12, -16) == CellIndex{-1, -1, -1});
-    CHECK(cellOf(-17, -13, -17) == CellIndex{-2, -2, -2});
+    // The cases a truncating division gets wrong. The shift makes these more
+    // dangerous rather than less: a coordinate that was safely positive can be
+    // negative once shifted, so a `/` here is wrong for x in [0, 5) too.
+    CHECK(cellOf(-1, -2, -1) == CellIndex{-1, -1, -1});
+    CHECK(cellOf(-6, 0, -22) == CellIndex{-1, 0, -2});
+    CHECK(cellOf(0, 0, 0) == CellIndex{-1, 0, -1});
+    CHECK(cellOf(-11, -14, -11) == CellIndex{-1, -2, -1});
+    CHECK(cellOf(-12, -12, -12) == CellIndex{-2, -1, -2});
 
     // The world floor of vanilla's overworld, which is not a multiple of 12.
     CHECK(cellOf(0, -64, 0).y == -6);
-    CHECK(cellOf(0, -60, 0).y == -5);
+    CHECK(cellOf(0, -59, 0).y == -5);
 }
 
 TEST_CASE("the base sits on its own lattice, capped by the surface", "[aquifer]") {
@@ -210,10 +217,18 @@ TEST_CASE("the centre is the cell corner plus its jitter", "[aquifer]") {
     CHECK(centre.y == (-4 * stratum::aquifer::kCellPitchY) + jitter.y);
     CHECK(centre.z == (5 * stratum::aquifer::kCellPitchZ) + jitter.z);
 
-    // Every centre lies inside its own cell, which is what makes the grid a
-    // partition rather than an overlapping mess.
-    CHECK(stratum::aquifer::cellOf(centre.x, centre.y, centre.z) ==
-          stratum::aquifer::CellIndex{3, -4, 5});
+    // A centre does NOT map back to its own cell, and that is the shift doing
+    // its job rather than a defect. `cellOf` names the HOME cell of the
+    // candidate window; the window runs forward only in x and z, so the centre
+    // of cell i lands in home cell i - 1 or i, and cell i is a candidate from
+    // either. What must hold is that the cell is always reachable.
+    const auto home = stratum::aquifer::cellOf(centre.x, centre.y, centre.z);
+    CHECK(home.x >= 2);
+    CHECK(home.x <= 3);
+    CHECK(home.z >= 4);
+    CHECK(home.z <= 5);
+    CHECK(home.y >= -5);
+    CHECK(home.y <= -4);
 }
 
 // ---------------------------------------------------------------------------

@@ -431,9 +431,20 @@ Its own component (`lib/mapping/`), its own tests:
      and without them 0.9958. One instrument found all three, and this
      project's own history says that is a hypothesis.
 
-  3. **Which sources compete.** The barrier predicate is exact on the pair it
-     is given, but about 13% of the server's real barriers come from a third
-     source rather than the nearest two.
+  3. **Which sources compete — mechanism now identified, formula still open.**
+     About 13% of the server's real barriers come from a third source. The
+     clean-room spec's Q6.6 explains the shape and it is structurally
+     confirmed (§11), but four things stand between that and code, and the
+     first is a prerequisite for the rest: (a) nothing in this build SELECTS
+     ranked sources at all — the twelve-candidate window, the metric and the
+     tie-break are confirmed but unwritten, and `placesBarrier` today receives
+     two levels from a caller that does not exist; (b) the pressure function's
+     divisors and its gate are unmeasured; (c) the specific numeric
+     contribution of the third and fourth terms — the part the 13% is actually
+     about — was excluded by construction from the density sweep that confirmed
+     the shape; (d) Q6.3's water-over-lava exception is untested by every
+     angle. Each has a named experiment, and (a) is one probe world plus new
+     code rather than research.
 
   4. **Fluid TYPE, and the `lava` router entry, which nobody has measured.**
      On its own this is decisive: a correct level with a wrong `lava` read
@@ -1610,6 +1621,64 @@ Open:
   rather than from the nearest two. The predicate above is exact on the pairs
   it is given; the pair selection is not yet complete.
 
+  **Selection and barrier, verified against the clean-room spec (MA).** The
+  first campaign run under §12's clean-room provision. Every claim below is
+  sorted as §12 requires — cited to the spec claim AND to the measurement that
+  confirms it, or marked untested. Nothing was adopted on the spec's word.
+
+  *Confirmed, and landed.* The cell index is computed on SHIFTED coordinates,
+  `floorDiv(x - 5, 16)`, `floorDiv(y + 1, 12)`, `floorDiv(z - 5, 16)` — spec
+  Q3.2. The shift is the unique survivor of an elimination sweep over all 270
+  values the geometry admits, on five seeds at 6291456 blocks each, and was
+  re-derived from scratch by a second instrument on two further seeds in both
+  coordinate signs; 264 of the 266 wrong horizontal pairs are refuted by a real
+  barrier block they call impossible. The vertical component needed its own
+  experiment: `+1` and `+2` differ on ~0.0003% of blocks, and three probe
+  worlds built at those exact coordinates came back barrier-stone where `+1`
+  predicts possible and `+2` does not, 3 of 3.
+
+  *Confirmed, not yet landed because the code to hold them does not exist.*
+  The metric is integer squared euclidean from the block's own position, not
+  the block centre — Q4.2, 1742/1742 and 1690/1690 against 0/n for a `+0.5`
+  variant. The fourth-ranked source never reaches the substance decision —
+  Q4.3, 2582 targeted blocks chosen because two models disagree on rank 4 alone.
+  Ties displace toward the LATER candidate — Q4.4, 228/228 and 334/334, where
+  this project's own "first wins" scores 12.3%. `s12 <= 0` short-circuits to
+  the nearest source — Q6.2. The barrier block is the preset's `default_block`
+  — Q6.7, 100% of solid positions on two worlds with different defaults.
+
+  *Refuted.* This build's barrier predicate, as a general model. It has no
+  density term and sees two sources; against a density sweep its agreement runs
+  92.88% at D = -0.05 (below the 99.99% majority baseline), 95.87% at -1.5 and
+  59.63% at -6.0. Q6.6's additive-D three-term shape is confirmed structurally,
+  including monotonicity widened to three-way junctions with 0 violations in
+  1053963 pairwise checks.
+
+  *Untested, and named as such rather than passed through.* Q4.1's twelve-cell
+  window — the asymmetric and symmetric candidate sets disagree on rank 2 in
+  107 of 82944 blocks and every one lies outside the barrier-reachable shell,
+  so the corpus cannot tell them apart. Q6.1's divisor 25 was not re-measured
+  this round. Q6.4's four divisors, its `h > 0` split and its `|u| <= 2` gate
+  are unmeasured beyond "some monotone density-dependent mechanism exists"; the
+  above/below thickness asymmetry it predicts is inconclusive, showing +0.92
+  points in the predicted direction at one density and -1.78 in the opposite
+  direction at another. Q6.3, the water-over-lava exception, was touched by no
+  angle at all.
+
+  *A correction to this project's own arithmetic.* An earlier note here read
+  "the spec's 12 candidates always contain the true nearest centre — 0
+  exceptions in 1105920 blocks". A wider search finds that rate is small but
+  NOT zero: about 19 rank-1 and 15300 rank-2 misses per 6291456 blocks, from
+  the window being forward-only in x and z. No barrier verdict changed, but the
+  claim as stated was too strong.
+
+  *And a confirmation of the level rule from an unexpected direction.* Both
+  first-pass instruments in this campaign disagreed with the server by 12-29%
+  until a verifier traced it to their own oracles omitting the
+  `centreY < lambda && tookSea` guard that this build already carries. With it
+  restored both went to 100%. The guard was derived here independently, and two
+  outside instruments had to rediscover it before they could measure anything.
+
   **Where the aquifer reads its router inputs (MA).** Everything above is a
   PREDICATE, and every one of the ~1370 probe dimensions behind it held
   `preliminary_surface_level` and `fluid_level_floodedness` at constants — so
@@ -2589,10 +2658,15 @@ Open:
   extracted assets, no golden fixtures derived from them. Users obtain
   vanilla presets by pointing `tools/fetch-vanilla` (or the in-server
   equivalent) at the official jar they download from Mojang.
-- No decompiled or unobfuscated Mojang source code is read, pasted,
-  transcribed, or paraphrased into this repository — in any language.
-  Behavior is implemented from: minecraft.wiki / datapack.wiki
-  documentation, mcdoc schemas, licensed references (§2), and observed
-  input/output of the vanilla server via the conformance harness.
+- No Mojang source code — decompiled or unobfuscated — is read, pasted,
+  transcribed, or paraphrased in this repository or by Implementer
+  sessions. Since commit 7f8a5ebe, behavior may additionally derive from
+  **clean-room specifications**: filtered, audited documents produced by
+  an isolated Researcher process under `RESEARCHER-BRIEF.md`, containing
+  methods, constants, and behavioral contracts only. Prior to that
+  commit, no Mojang source was read anywhere in this project. Clean-room
+  specs are hypotheses: every value they supply still enters `lib/` only
+  through golden verification (§7), and each adopted value's §11 entry
+  cites both the spec claim and the confirming evidence.
 - Third-party datapacks are user-supplied content; the engine loads them,
   the repo does not redistribute them.
