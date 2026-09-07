@@ -434,17 +434,17 @@ Its own component (`lib/mapping/`), its own tests:
   3. **Which sources compete — mechanism now identified, formula still open.**
      About 13% of the server's real barriers come from a third source. The
      clean-room spec's Q6.6 explains the shape and it is structurally
-     confirmed (§11), but four things stand between that and code, and the
-     first is a prerequisite for the rest: (a) nothing in this build SELECTS
-     ranked sources at all — the twelve-candidate window, the metric and the
-     tie-break are confirmed but unwritten, and `placesBarrier` today receives
-     two levels from a caller that does not exist; (b) the pressure function's
-     divisors and its gate are unmeasured; (c) the specific numeric
+     confirmed (§11), but four things stood between that and code, and the
+     first was a prerequisite for the rest: (a) **DONE** — `selection.hpp`
+     ranks four sources per block (window, integer metric, later-wins
+     tie-break), with golden coverage on 637252 of the server's own barrier
+     blocks and 0.99993 on the substance it decides; (b) the pressure
+     function's divisors and its gate are unmeasured; (c) the specific numeric
      contribution of the third and fourth terms — the part the 13% is actually
      about — was excluded by construction from the density sweep that confirmed
      the shape; (d) Q6.3's water-over-lava exception is untested by every
-     angle. Each has a named experiment, and (a) is one probe world plus new
-     code rather than research.
+     angle. Each of the remaining three has a named experiment. `BarrierAt`
+     still carries no third source and no `D`, so wiring waits on (b).
 
   4. **Fluid TYPE, and the `lava` router entry, which nobody has measured.**
      On its own this is decisive: a correct level with a wrong `lava` read
@@ -1678,6 +1678,52 @@ Open:
   `centreY < lambda && tookSea` guard that this build already carries. With it
   restored both went to 100%. The guard was derived here independently, and two
   outside instruments had to rediscover it before they could measure anything.
+
+  **The selection layer, built and scored (MA).** The prerequisite named by
+  the campaign above: nothing in this build chose which cells compete, so
+  `placesBarrier` had no caller and could not have had one. `selection.hpp`
+  now ranks four sources per block — the twelve-cell window, the integer
+  squared-euclidean metric from the block's own position, and the later-wins
+  tie-break at all four ranks.
+
+  *Two readouts of the open-void probe, and neither touches the refuted
+  barrier predicate.* All three terms of Q6.6 carry `s12` as a factor, so a
+  barrier can exist only where `d2 - d1 < 25`. Every one of **637252 stone
+  blocks the server wrote across four seeds** satisfies that, with the bound
+  TIGHT rather than roomy — about two thousand blocks sit at exactly 24. And
+  on a block the server left non-solid the barrier has fallen through, so the
+  substance is the nearest source's own reading: `y < cellFluidLevel(rank 1)`
+  predicts **0.99993 to 0.99996 of 16663703 blocks**, which closes over the
+  shift, the window, the metric, the tie-break, the centre jitter and the
+  level rule at once, with no fitted quantity anywhere in the loop.
+
+  *The first readout has teeth, and the second's residual is not the
+  selection.* On the same stone the unshifted cell index puts 3.16% where it
+  says no barrier can exist, and the horizontal neighbours `(-4,+1,-4)` and
+  `(-6,+1,-6)` put 11 and 19 blocks there. What it does NOT separate is `+1`
+  from `+2` vertically — both score zero, which is why that component needed
+  three purpose-built probe worlds. The 5e-5 residual of the second readout is
+  fixed by 0 blocks under a brute-force search over a 5x7x5 neighbourhood of
+  cells, so it is the fluid TYPE rule or the `lava` entry (blocker 4), not the
+  window.
+
+  *Q4.1 stays untested, and the reason is now reproduced from this build's own
+  centres rather than taken from the campaign.* The asymmetric and symmetric
+  27-cell sets agree on the nearest source on all but about two blocks in a
+  million, and where they part at rank 2 the nearest pair has already stopped
+  competing — 44 of 3993 disagreements inside the barrier shell over 3538944
+  blocks, and 0 of them changing a predicted block on any of the four probe
+  worlds. `tests/unit/aquifer_selection_test.cpp` keeps that executable, so it
+  speaks up if the rate ever moves.
+
+  *Two spec claims sharpened rather than confirmed.* Q4.1 says the shift makes
+  a forward-only window "still bracket the block"; measured over 786432 blocks
+  on five seeds it is 0.9978-1.0000 horizontally rather than exactly 1, and
+  exactly 1 vertically. And the earlier note here that the twelve candidates
+  always contain the true nearest centre is re-measured against a 7x9x7
+  brute force: 7 to 20 rank-1 misses per 3538944 blocks (2.0e-6 to 5.7e-6) and
+  2.2e-3 to 2.7e-3 at rank 2. Without the shift those become 0.8-3.1% and
+  8.6-13.2%, which is what makes the unit case discriminating.
 
   **Where the aquifer reads its router inputs (MA).** Everything above is a
   PREDICATE, and every one of the ~1370 probe dimensions behind it held

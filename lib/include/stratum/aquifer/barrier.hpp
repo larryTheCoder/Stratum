@@ -82,8 +82,13 @@ struct BarrierAt {
 /// pressure function's own divisors are not yet measured, so the replacement
 /// is not written here rather than written wrongly.
 ///
-/// It cannot be wired yet in any case: nothing in this build selects three
-/// ranked sources, and `BarrierAt` has no field for a third or for `D`.
+/// HALF OF THAT PREREQUISITE IS NOW BUILT. `selection.hpp` ranks four sources
+/// per block — the window, the integer metric and the later-wins tie-break —
+/// and scores 0.99993 against the server on the substance it decides. What is
+/// still missing is on this side of the line: `BarrierAt` carries no third
+/// source and no `D`, and Q6.4's pressure function has unmeasured divisors and
+/// an unmeasured gate, so rewiring now would replace a refuted two-source rule
+/// with a guessed three-source one.
 
 /// Whether the server writes stone here.
 ///
