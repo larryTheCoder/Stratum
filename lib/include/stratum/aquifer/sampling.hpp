@@ -9,11 +9,17 @@
 // answer to that question, for the two inputs where there is one.
 //
 // Measured by six agents across eleven world seeds, on instruments built
-// independently of each other. The headline is that the three inputs DO NOT
-// share a sample position, and that is measured rather than inferred: on the
-// same cells in the same worlds, the floodedness readout and the spread
-// readout agree at 0.4895-0.5421 horizontally and 0.4986-0.5415 vertically,
-// which is chance. Each was established on its own.
+// independently of each other. The headline is that the inputs DO NOT share a
+// sample position, and that is measured rather than inferred: on the same
+// cells in the same worlds, the floodedness readout and the spread readout
+// agree at 0.4895-0.5421 horizontally and 0.4986-0.5415 vertically, which is
+// chance. Each was established on its own.
+//
+// There are FOUR of them now, and the fourth makes the point harder than the
+// first three did. `lava` is read on a contracted lattice like the spread —
+// and on a DIFFERENT horizontal pitch, 64 against the spread's 16. Two
+// entries that look alike in shape and are not alike in numbers is exactly
+// the pair an implementer collapses into one.
 #pragma once
 
 #include <stratum/aquifer/lattice.hpp>
@@ -96,6 +102,22 @@ struct SamplePos {
 /// horizontal jitter never reaches 16, so the two spellings are a permanent
 /// tie rather than an open question.
 [[nodiscard]] SamplePos spreadSample(CellIndex cell, CellIndex centre) noexcept;
+
+/// Where `lava` is read: the source's centre, contracted to indices — the
+/// cell index on a SIXTY-FOUR block horizontal pitch, and the same 40-block
+/// band in y that the spread and the ladder use.
+///
+/// The horizontal pitch is the measurement. On 3125 cells over four seeds the
+/// type rule scores 0.99873 at pitch 64 and 0.9424, 0.9472 and 0.9418 at
+/// pitches 16, 32 and 128 — all three at or below the 0.94176 null, so 64 is
+/// not merely the best of the four, it is the only one that beats guessing.
+///
+/// `floorDiv`, never `/`: the aquifer runs on both sides of the origin and a
+/// truncating division folds the cells either side of it into one. The probe
+/// harness forceloads the origin quadrant, which is precisely how a
+/// truncating reading of the surface anchor survived 1370 dimensions
+/// unnoticed (see `kPslAnchorQuantum`).
+[[nodiscard]] SamplePos lavaSample(CellIndex centre) noexcept;
 
 /// The one axis of `preliminary_surface_level`'s read that IS settled: it is
 /// evaluated at absolute y = 0, whatever the cell's centre y, the cell layer,

@@ -446,14 +446,17 @@ Its own component (`lib/mapping/`), its own tests:
      angle. Each of the remaining three has a named experiment. `BarrierAt`
      still carries no third source and no `D`, so wiring waits on (b).
 
-  4. **Fluid TYPE, and the `lava` router entry, which nobody has measured.**
-     On its own this is decisive: a correct level with a wrong `lava` read
-     still writes the wrong block. Every campaign pinned it at -1.0, so neither
-     its rule nor its sample position is known. A ladder aquifer at level -20
-     was observed filled with lava at `psl` 20/30 and with water at `psl` 0,
-     with the level 34 blocks above the global lava sea, plus obsidian where
-     the bodies meet water. One reading attributes this to a two-nearest-source
-     blend, another to a type rule of its own; nobody has adjudicated them.
+  4. **Fluid TYPE — measured, and mostly closed.** `fluid_type.hpp` scores
+     0.99873 per source on 3125 sources over four seeds against a 0.94176
+     null, and the `lava` entry's own read position is settled: contracted
+     indices on a SIXTY-FOUR block horizontal pitch, where the spread's is 16
+     (§11). Two pieces are open and neither needs a campaign: the level
+     ceiling is bracketed to [-14, -5] and wants one probe whose surface caps
+     the ladder inside that range, and strictness at exactly 0.3 wants a
+     `lava` entry driven to that double rather than through a noise. A third
+     is carried on the spec's word — whether a source already reading lava is
+     exempt — and cannot be observed, since those sources sit below the lava
+     sea.
 
   The golden set gains one requirement before the refusal lifts: **a
   conformance case with a spatially varying `preliminary_surface_level`**.
@@ -1724,6 +1727,54 @@ Open:
   brute force: 7 to 20 rank-1 misses per 3538944 blocks (2.0e-6 to 5.7e-6) and
   2.2e-3 to 2.7e-3 at rank 2. Without the shift those become 0.8-3.1% and
   8.6-13.2%, which is what makes the unit case discriminating.
+
+  **The fluid TYPE, measured at last (MA).** This project built about 1370
+  probe dimensions and every one of them pinned the `lava` router entry at the
+  constant -1.0, so the type rule went four campaigns without a single
+  measurement. The corpus that could answer it was already on disk: the
+  `elava` arm of the comb probes, the one arm that gives `lava` vanilla's own
+  noise. Nobody had looked, because nobody had a hypothesis worth testing
+  until the clean-room spec supplied one (Q5.8) — which is the §12 provision
+  working as intended.
+
+  *The readout is per SOURCE.* Every fluid block is attributed to its rank-1
+  source — which the selection layer above made possible for the first time —
+  so a source is one observation rather than its thousands of correlated
+  blocks, and the instrument is falsifiable before any candidate is scored:
+  if the type were not a property of the source, sources would come out
+  holding both fluids. 3125 sources over four seeds.
+
+  *Confirmed.* A source's fluid is the dimension's `default_fluid`, overridden
+  to lava when its level is low enough and `|lava| > 0.3` at the source's
+  centre contracted to indices. **0.99873** against a **0.94176** majority
+  null, predicting 180 of 182 lava sources with 2 false positives.
+
+  *The sharpest part, and the one no analogy would have reached.* `lava` is
+  read on a lattice of horizontal pitch **64** — not the **16** the spread
+  uses, though both are contracted-index reads and look alike in shape. Pitch
+  16 scores 0.9424, pitch 32 0.9472 and pitch 128 0.9418: every rival is at or
+  BELOW the null, so 64 is not the best of four, it is the only one that beats
+  guessing. The vertical pitch IS the spread's 40, and that was measured
+  separately — 20 and 80 both lose.
+
+  *The 0.3 threshold is a peak, not a plateau.* 0.25 leaves 78 false
+  positives, 0.35 leaves 31 false negatives, 0.30 leaves 2 of each. It is the
+  only aquifer constant published anywhere this project may read, and it is
+  now measured rather than adopted. The comparison is on the ABSOLUTE value:
+  signed scores 0.96896 on the same sources.
+
+  *Not measured, and marked in the header rather than guessed.* The level
+  ceiling is bracketed to [-14, -5] and no tighter, because with the probe's
+  surface at 96 the ladder produces no level in between. Strictness at exactly
+  0.3 is the spec's word. Whether a source already reading lava is exempt
+  cannot be observed at all, those sources being below the lava sea. And no
+  `default_fluid` but water has been in this position.
+
+  *One thing left unexplained rather than explained away.* About 4% of sources
+  hold both fluids above the global lava sea, and the minority blocks are
+  spread over y -21 to -54 rather than piled at the boundary. The leading
+  candidate is Q6.3's water-over-lava exception, which no instrument in this
+  project has touched. It is excluded from the score and counted in the test.
 
   **Where the aquifer reads its router inputs (MA).** Everything above is a
   PREDICATE, and every one of the ~1370 probe dimensions behind it held

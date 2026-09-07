@@ -104,11 +104,10 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     if (settings.aquifersEnabled) {
         throw FillError("this dimension sets aquifers_enabled, and this build does not yet "
                         "implement the aquifer fill decision (SPEC §10 milestone MA, §11). Its "
-                        "geometry, its fluid "
-                        "levels, its barriers and its surface reads are derived, but the fluid "
-                        "TYPE is not — the lava router entry has never been measured — and three "
-                        "corrections to the level rule are still single-sourced; refusing rather "
-                        "than generating a world that is quietly wrong");
+                        "geometry, its fluid levels, its source selection, its fluid type and its "
+                        "surface reads are derived, but its barrier is refuted as a general model "
+                        "and three corrections to the level rule are still single-sourced; "
+                        "refusing rather than generating a world that is quietly wrong");
     }
     if (settings.oreVeinsEnabled) {
         throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "

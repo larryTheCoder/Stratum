@@ -9,6 +9,7 @@ add_executable(stratum_unit_tests
     surface_executor_test.cpp
     surface_rule_test.cpp
     aquifer_barrier_test.cpp
+    aquifer_fluid_type_test.cpp
     aquifer_lattice_test.cpp
     aquifer_sampling_test.cpp
     aquifer_selection_test.cpp
