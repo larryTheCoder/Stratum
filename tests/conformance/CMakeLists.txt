@@ -31,6 +31,7 @@ add_executable(stratum_conformance_tests
     nbt_structures_test.cpp
     vanilla_aquifer_fluid_type_test.cpp
     vanilla_aquifer_jitter_test.cpp
+    vanilla_aquifer_varying_surface_test.cpp
     vanilla_aquifer_selection_test.cpp
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
