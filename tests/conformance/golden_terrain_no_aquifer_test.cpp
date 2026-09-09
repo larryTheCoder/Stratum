@@ -26,9 +26,17 @@
 // column is off by more than one block. That residual is REAL — at a
 // disagreeing column the density in dispute is of order 1e-3, not 1e-15, so it
 // is not a tie broken differently — but it is two orders of magnitude below
-// what the aquifer gap was contributing, and it does not correlate strongly
-// with the cell lattice, which is the first thing it would if the
-// interpolation were wrong.
+// what the aquifer gap was contributing.
+//
+// CORRECTED, not what an earlier pass of this comment said: it DOES correlate
+// with the cell lattice, strongly — SPEC §11 records disagreements bucketed
+// by y-offset-in-cell, and a since-corrected claim that offset 0 (the cell
+// corner) was exactly clean turned out to be an artifact of this test's own
+// sparse column sampling (every eighth) rather than a property of the
+// formula. A full-column scan finds corner-level disagreements too, some of
+// them THIS BUILD's own computation being wrong before any interpolation
+// runs at all. See SPEC §11 and `tools/analysis/final-density-probe.sh`,
+// which reads the server's real density at an arbitrary point directly.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12). Without it
 // this skips.

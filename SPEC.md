@@ -372,16 +372,20 @@ Its own component (`lib/mapping/`), its own tests:
 
   **Remaining, and both are well specified.**
 
-  1. *The one-block residual, now localised.* 1.71% of columns are off by
-     exactly one block with aquifers out of the way. §11 records the
-     measurement: comparing every block rather than every column's height, the
-     disagreements are **zero at the cell's y boundary** over 94208 blocks and
-     12 to 37 at each of the other seven offsets, with identical exposure to
-     near-zero densities at all eight. So it IS the vertical interpolation,
-     which is the opposite of what this SPEC said before the measurement was
-     made. Not the cell height, not the blend order, not a cache node. Two
-     populations: ordinary surface shifts under 1e-3, and 24 cave-roof blocks
-     at y 17..21 wrong by up to 7.8e-2. Tier A is bit-exact, so this is a
+  1. *The one-block residual, in progress rather than localised.* 1.71% of
+     columns are off by exactly one block with aquifers out of the way. §11
+     records the measurement and a correction to it: an earlier pass read
+     "zero at the cell's y boundary" over 94208 blocks, but that count
+     inherited a sparse, every-eighth-column sample from
+     `golden_terrain_no_aquifer_test.cpp`; a full-column scan finds 322
+     disagreements rather than 148, including corner (offset-0) misses. Not
+     the cell height, not the blend order, not a cache node — those stay
+     ruled out. A wrapped-`range_choice` probe now reads the server's own
+     density at any point directly, validated against a corner already known
+     correct, and has pinned three corners where THIS BUILD's own value is
+     wrong before any interpolation runs — the opposite sign from the
+     already-known 24-block cave-roof population. Root cause open; the
+     instrument to find it now exists. Tier A is bit-exact, so this is a
      genuine failure of M3's own criterion.
   2. *Four unevaluable router functions*, all of them cave or End functions,
      with `weird_scaled_sampler` the first thing met on the caves path.
@@ -2274,6 +2278,62 @@ Open:
   number has to move deliberately; it samples every eighth column across 8x8
   chunks rather than filling one chunk, because a single chunk of seed 42
   comes out 256 of 256 and would have hidden the residual entirely.
+
+  **CORRECTION. "Zero at offset 0" does not hold, and the reason it looked
+  that way is the same failure mode this project keeps finding: the 94208
+  figure came from `golden_terrain_no_aquifer_test.cpp`'s own sampling — every
+  eighth COLUMN, 256 of the region's 16384 — carried through to the block-level
+  bucketing. A FULL scan of every column, at least across a realistic
+  elevation band, finds 322 disagreements rather than 148, including 35 more
+  at offset 0 alone. The earlier "probability of zero is about 2e-9" was
+  correct arithmetic on an incomplete sample; it was never a property of the
+  formula.
+
+  **The next instrument — the wrapped `range_choice` — is now built**
+  (`tools/analysis/final-density-probe.sh`) and VALIDATED before being trusted:
+  `raw_final_density` is set to vanilla's own `final_density` tree, copied
+  verbatim out of the extracted fixtures, wrapped in one `range_choice` whose
+  output becomes the probe's own solid/air decision — so a bisection of the
+  threshold across dimensions reads the SERVER's real density at any point
+  directly, not just its sign. At a corner this build already agrees with
+  vanilla on (8, 40, 124), the server's own value bisects to
+  0.3095–0.30951 — matching this build's computed 0.3095045697 to five
+  digits. The technique is faithful.
+
+  **And at three of the NEW offset-0 disagreements, it is decisive: this
+  build's own corner computation is wrong, not merely the interpolation
+  between corners.** All three sit on the same lake floor, at y=48 — one
+  cell above (6, 24, 8, 40, 124), a corner already confirmed correct on the
+  very same column:
+
+  | column | this build | vanilla (bisected) | gap |
+  |---|---|---|---|
+  | (8, 48, 124) | +0.0003472549 | [-0.002, -0.001) | 0.0013–0.0023 |
+  | (6, 48, 120) | +0.0013010066 | [-0.0015, -0.001) | 0.0023–0.0028 |
+  | (24, 48, 113) | +0.0008666713 | [-0.002, -0.0015) | 0.0024–0.0029 |
+
+  Every one of these is a CORNER — offset 0, where `interpolated` returns its
+  argument verbatim, no lerp involved. This build calls each barely solid;
+  vanilla's own value is comfortably negative, off by roughly 2–3
+  thousandths, three orders of magnitude past the 1e-16 blend-order noise
+  already ruled out. **So the premise this project worked from — "our
+  interior values are a lerp of two corner values the server agrees with" —
+  is not the whole picture: at least this population is wrong at the corner
+  itself**, before any interpolation runs at all. It shares nothing with the
+  already-documented 24-large cave-roof population's DIRECTION — that
+  population has this build reading LOW where vanilla reads high (we call
+  air what the server made solid); this lake-floor population has this
+  build reading HIGH where vanilla reads low (we call solid what the server
+  left as water) — the opposite sign, and, since it is a corner rather than
+  an interpolated point, a different mechanism.
+
+  Root cause is OPEN. All three lake-floor corners sit at the same absolute
+  y (48) on the same probe region, which narrows the search — is y=48
+  special, or does this lake merely happen to sit there — but does not
+  settle it; the working control corner at y=40 is the same column, one
+  cell down. The wrapped-probe technique itself is now the instrument for
+  finding out: it can bisect any further corner to the same precision in
+  one server run.
 
   *No documentation and no oracle here* — `end_islands` and, as it was,
   `old_blended_noise`, `weird_scaled_sampler` and `blend_density`; the last
