@@ -67,10 +67,23 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // An aborting cell is floored instead, unless it sits clear of the
         // scan's own low sample by more than twenty blocks. Both terms read
         // `cap`; `gate` and `anchor` are right on 0 of 2067 cells.
-        return (cell.centreY >= kLavaLevel &&
-                cell.centreY > cell.surface.cap + kNearSurfaceFloorOffset)
+        //
+        // BOTH the comparand and the floor are `lambda`, not the bare
+        // `kLavaLevel` this line used to read. Measured at `sea_level` -70,
+        // where the two part company: 251229 blocks the old comparand calls
+        // wet up to y=-55 are observed dry at every one, 0/251229. The
+        // comparand cannot be separated from the floor the same way — lambda
+        // equals `sea_level` on every `sea_level < -54` world by definition,
+        // so a cell that takes the "true" branch and a cell that takes the
+        // "false" branch under a lambda-based comparand are indistinguishable
+        // downstream, whatever comparand put them there. That is a PERMANENT
+        // TIE, not an open measurement: no world can separate them, and using
+        // `lambda` in both places is adopted because it is a no-op at every
+        // `sea_level` this project had already verified (lambda equals
+        // `kLavaLevel` there), not because the comparand itself was isolated.
+        return (cell.centreY >= lambda && cell.centreY > cell.surface.cap + kNearSurfaceFloorOffset)
                    ? cell.seaLevel
-                   : kLavaLevel;
+                   : lambda;
     }
 
     std::int32_t level = lambda;

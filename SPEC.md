@@ -417,19 +417,34 @@ Its own component (`lib/mapping/`), its own tests:
      `reach = max(0, 56 - (gate - centreY))` becomes an integer readout of the
      gate, so both values are read on the same cells.
 
-  2. **Three corrections to `cellFluidLevel` are measured but unverified.** All
-     three are invisible to every other corpus, which is why they went unseen
-     and why nothing contradicts them — and also why none is landed:
-     the `centreY >= -54` conjunct in the aborting near-surface return is
-     wrong (needs an arm below -74 to see; 88 cells); the floor branch fires
-     only when the scan aborted on its first sample, i.e. `gate == cap` (needs
-     a three-valued field, and it fires at ORDINARY sea levels, so real
-     deep-ocean terrain reaches it; 109 cells); and the `aborted` guard on the
-     sea gate has the wrong shape — the branch is taken, yields lambda rather
-     than `sea_level`, and still trips the trailing guard (needs
-     `sea_level < -54`). With all three the model is 1.00000 on 410842 cells
-     and without them 0.9958. One instrument found all three, and this
-     project's own history says that is a hypothesis.
+  2. **One of three corrections to `cellFluidLevel` is now LANDED, with a
+     second instrument behind it; two remain unverified.** All three were
+     invisible to every other corpus, which is why they went unseen — and
+     with all three the original instrument scored 1.00000 on 410842 cells
+     against 0.9958 without them. One instrument found all three, and this
+     project's own history says that alone is a hypothesis.
+
+     *Landed.* The `centreY >= -54` conjunct in the aborting near-surface
+     return was wrong, and is now `centreY >= lambda` — both the comparand
+     and the return value, which was the bare literal `kLavaLevel` before.
+     A second, independent instrument (the `sea_level < -54` world below)
+     confirms it directly: 251229 blocks the old reading called wet up to
+     y=-55 are observed dry at every one, 0/251229, over 1966080 blocks.
+     The comparand itself is a PERMANENT TIE, not a further measurement —
+     `lambda` equals `sea_level` on every world that can even ask the
+     question, so no corpus can separate "the comparand" from "the return
+     value" once both are lambda-based; using `lambda` in both places is a
+     no-op at every already-verified sea_level, not an isolated finding.
+
+     *Still unverified.* The floor branch fires only when the scan aborted
+     on its first sample, i.e. `gate == cap` (needs a field where they
+     differ AND the near-surface path is in play — the `sea_level < -54`
+     probe below used a constant psl, which trivially always has
+     `gate == cap`, so it does not touch this one); and the `aborted` guard
+     on the sea gate has the wrong shape — the branch is taken, yields
+     lambda rather than `sea_level`, and still trips the trailing guard
+     (needs `sea_level < -54`, which now exists as a probe shape, but this
+     specific configuration was not the one built).
 
   3. **Which sources compete — mechanism now identified, formula still open.**
      About 13% of the server's real barriers come from a third source. The
@@ -1730,6 +1745,56 @@ Open:
   brute force: 7 to 20 rank-1 misses per 3538944 blocks (2.0e-6 to 5.7e-6) and
   2.2e-3 to 2.7e-3 at rank 2. Without the shift those become 0.8-3.1% and
   8.6-13.2%, which is what makes the unit case discriminating.
+
+  **A world with `sea_level` below the lava, and two things it settles
+  (MA).** `kLavaLevel = -54` is a compile-time constant; `lambdaLevel(seaLevel)`
+  is not — it equals `sea_level` itself once `sea_level < -54`. At every
+  `sea_level` this project had ever generated a world with, from 32 through
+  200, the two coincide, so any place in the level rule that SHOULD read
+  `lambda` and instead reads a bare `-54` or `-62` is invisible. One probe,
+  `tools/analysis/aquifer-lowsea-probe.sh` at `sea_level` -70, is the first
+  world shape that pulls them apart.
+
+  *The abort threshold moves with `sea_level`, confirmed by exact-value
+  bisection.* `kPslAbortBelow` used to be a bare `-62.0` that "coincided with
+  `kLavaLevel - 8`" — flagged UNPROVEN because every prior measurement
+  (`min_y` in five values, `sea_level` in {40,100,128,200}) never separates a
+  bare constant from `lambdaLevel(seaLevel) - 8`, since they agree at every
+  one of those. Eleven dimensions bisecting BOTH candidates at `sea_level`
+  -70 settle it: every world from -55 up through -78.00 is BYTE-IDENTICAL to
+  the others, and -78.01 alone flips — refuting the bare -62 outright (it
+  sits nowhere near the true boundary here) and confirming
+  `lambdaLevel(-70) - 8 = -78` exactly. It is now `abortThreshold(seaLevel)`,
+  a function rather than a constant, reducing to the old figure at every
+  sea_level this project had already verified.
+
+  *The aborting near-surface floor is `lambda`, not the literal `kLavaLevel`
+  — MA blocker 2's first correction, landed.* One dimension, psl pinned deep
+  enough to abort under any candidate threshold, read as a column height
+  profile that sweeps many cell centres for free: 251229 blocks the old
+  reading calls wet up to y=-55 are observed dry at every one, 0/251229, over
+  1966080 blocks total (0.8722 under the old reading, 1.0000 under `lambda`).
+  The comparand (`centreY >= lambda` rather than `>= kLavaLevel`) cannot be
+  separated from the return value the same way: `lambda` equals `sea_level`
+  on every world low enough to ask the question, so a cell that takes the
+  "true" branch and one that takes the "false" branch are indistinguishable
+  downstream once both are lambda-based. That is a PERMANENT TIE, not a
+  further measurement — using `lambda` in both places is adopted because it
+  is a no-op everywhere already verified, not because the comparand was
+  isolated on its own.
+
+  *A methodological correction recorded rather than silently fixed.* The
+  first version of the near-surface analysis found a smooth, centreY-varying
+  spread of levels even in worlds that clearly should NOT abort, and nearly
+  mistook it for a bug. It was the trailing guard and barrier stone, both
+  already-verified, unrelated behaviour, doing exactly what they document —
+  visible here only because the probe reads many different cell centres in
+  one pass. The fix was not to model them but to compare whole-world
+  signatures against a known-not-aborted reference rather than a single
+  block: since `aborted` is the only psl-dependent quantity the off-depth-
+  path sea branch reads, every world that does not abort must be
+  BYTE-IDENTICAL to every other one that does not, regardless of how far
+  apart their psl values sit — which is what the golden case checks.
 
   **The fluid TYPE, measured at last (MA).** This project built about 1370
   probe dimensions and every one of them pinned the `lava` router entry at the

@@ -6,6 +6,7 @@
 // off the water-to-air boundary in a world with no terrain in it. The base of
 // -20 is the offset that configuration produced.
 #include <stratum/aquifer/lattice.hpp>
+#include <stratum/aquifer/sampling.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -455,9 +456,11 @@ TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "
 // ---------------------------------------------------------------------------
 
 namespace {
+using stratum::aquifer::CellIndex;
 using stratum::aquifer::constantSurface;
 using stratum::aquifer::lambdaLevel;
 using stratum::aquifer::PslRead;
+using stratum::aquifer::readPreliminarySurface;
 
 CellFluid cellWith(const PslRead surface, const std::int32_t seaLevel, const std::int32_t centreY,
                    const double floodedness, const double spread = 0.0) {
@@ -537,6 +540,47 @@ TEST_CASE("the trailing guard tests the branch, not the number", "[aquifer]") {
     CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -56, 1.0, 1.0)) == -56);
     // And the replacement is the literal lava level, which here is ABOVE Λ.
     CHECK(stratum::aquifer::kLavaLevel > lambdaLevel(-56));
+}
+
+TEST_CASE("the aborting near-surface floor is lambda, not a bare -54", "[aquifer]") {
+    // Measured at `sea_level` -70, where lambda(-70) and the compile constant
+    // `kLavaLevel`(-54) finally part company: 251229 blocks the old bare-(-54)
+    // reading called wet up to y=-55 are observed dry at every one, 0/251229,
+    // over an aborting-near-surface probe of 1966080 blocks total. A cell
+    // whose centre sits comfortably above lambda still takes the sea, exactly
+    // as before -- this only moves the FLOOR a cell falls to when it does not.
+    const PslRead deeplyAborting = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; }, CellIndex{0, 0, 0}, -70);
+    REQUIRE(deeplyAborting.aborted);
+
+    // Comfortably above lambda(-70): still takes the sea, same as at ordinary
+    // sea levels where this project's earlier vectors already pinned it.
+    CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -50, 0.5)) == -70);
+    // Below lambda: floors to lambda(-70), NOT to the literal kLavaLevel(-54)
+    // this line used to return. Every centreY in the measured range agrees.
+    CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -100, 0.5)) == -70);
+    CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -190, 0.5)) == -70);
+
+    // At an ORDINARY sea level this is a no-op: lambda(63) == kLavaLevel(-54),
+    // so the fix cannot regress anything the barrier campaign already
+    // verified there. Same shape, same cap+20 exemption, unchanged answer.
+    const PslRead ordinaryAborting = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; }, CellIndex{0, 0, 0}, 63);
+    CHECK(cellFluidLevel(cellWith(ordinaryAborting, 63, -100, 0.5)) ==
+          stratum::aquifer::kLavaLevel);
+
+    // The `cap + 20` exemption itself is UNTOUCHED by this fix — this probe
+    // never varied it, and the comparand is still `cap`. Checked at an
+    // ORDINARY sea level, where lambda(63) == kLavaLevel(-54) and the two
+    // outcomes are numerically distinct, so the exemption's own boundary
+    // stays observable rather than collapsing the way it does at -70.
+    const PslRead ordinaryNearCap = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return -65.0; }, CellIndex{0, 0, 0}, 63);
+    REQUIRE(ordinaryNearCap.aborted);
+    REQUIRE(ordinaryNearCap.cap == -65);                                  // cap+20 = -45
+    CHECK(cellFluidLevel(cellWith(ordinaryNearCap, 63, -40, 0.5)) == 63); // > cap+20: sea
+    CHECK(cellFluidLevel(cellWith(ordinaryNearCap, 63, -50, 0.5)) ==
+          stratum::aquifer::kLavaLevel); // >= lambda but <= cap+20: floor
 }
 
 TEST_CASE("the near-surface path is an early return that the guard cannot reach", "[aquifer]") {

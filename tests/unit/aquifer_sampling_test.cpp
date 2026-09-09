@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <bit>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -219,7 +220,7 @@ TEST_CASE("only the thirteen measured offsets are in the window", "[aquifer]") {
     for (const auto& offset : stratum::aquifer::kPslWindow) {
         oracle.at(offset.dx, offset.dz, 100.0);
     }
-    CHECK(readPreliminarySurface(oracle, kCentre) ==
+    CHECK(readPreliminarySurface(oracle, kCentre, 63) ==
           PslRead{.gate = 100, .cap = 100, .anchor = 100, .aborted = false});
 
     // And the near misses, each of which a symmetric or dense window would
@@ -230,7 +231,7 @@ TEST_CASE("only the thirteen measured offsets are in the window", "[aquifer]") {
         INFO("offset " << outside.first << "," << outside.second);
         Oracle probe{kAnchorX, kAnchorZ, 100.0};
         probe.at(outside.first, outside.second, -1000.0);
-        CHECK(readPreliminarySurface(probe, kCentre) ==
+        CHECK(readPreliminarySurface(probe, kCentre, 63) ==
               PslRead{.gate = 100, .cap = 100, .anchor = 100, .aborted = false});
     }
 }
@@ -239,14 +240,14 @@ TEST_CASE("the surface read is a minimum, and its abort is strict", "[aquifer]")
     // V2. Everything at the threshold exactly: `value < -62.0` is false there,
     // so nothing aborts and the minimum is the threshold itself.
     Oracle flat{kAnchorX, kAnchorZ, -62.0};
-    CHECK(readPreliminarySurface(flat, kCentre) ==
+    CHECK(readPreliminarySurface(flat, kCentre, 63) ==
           PslRead{.gate = -62, .cap = -62, .anchor = -62, .aborted = false});
 
     // V3. A hair below it aborts, and the two consumers part: the gate keeps
     // the anchor's own value, the cap takes the aborting sample.
     Oracle fires{kAnchorX, kAnchorZ, 50.0};
     fires.at(0, 0, 100.0).at(-32, -16, -62.01);
-    CHECK(readPreliminarySurface(fires, kCentre) ==
+    CHECK(readPreliminarySurface(fires, kCentre, 63) ==
           PslRead{.gate = 100, .cap = -63, .anchor = 100, .aborted = true});
 
     // The same case a hundredth higher does not abort — and the threshold
@@ -256,7 +257,7 @@ TEST_CASE("the surface read is a minimum, and its abort is strict", "[aquifer]")
     // measured at 0.866 against this one's 1.0000.
     Oracle holds{kAnchorX, kAnchorZ, 50.0};
     holds.at(0, 0, 100.0).at(-32, -16, -62.0);
-    CHECK(readPreliminarySurface(holds, kCentre) ==
+    CHECK(readPreliminarySurface(holds, kCentre, 63) ==
           PslRead{.gate = -62, .cap = -62, .anchor = 100, .aborted = false});
 }
 
@@ -273,7 +274,7 @@ TEST_CASE("the anchor seeds the minimum and arms the abort", "[aquifer]") {
     // conflated: only `aborted` moves.
     Oracle oracle{kAnchorX, kAnchorZ, -50.0};
     oracle.at(0, 0, -70.0);
-    CHECK(readPreliminarySurface(oracle, kCentre) ==
+    CHECK(readPreliminarySurface(oracle, kCentre, 63) ==
           PslRead{.gate = -70, .cap = -70, .anchor = -70, .aborted = true});
 
     // The cells that separate the two spellings need a low anchor with every
@@ -281,7 +282,7 @@ TEST_CASE("the anchor seeds the minimum and arms the abort", "[aquifer]") {
     // entirely above the threshold and the anchor alone is below it.
     Oracle lowAnchor{kAnchorX, kAnchorZ, 100.0};
     lowAnchor.at(0, 0, -63.0);
-    const PslRead armed = readPreliminarySurface(lowAnchor, kCentre);
+    const PslRead armed = readPreliminarySurface(lowAnchor, kCentre, 63);
     CHECK(armed.aborted);
     CHECK(armed.gate == -63);
     CHECK(armed.anchor == -63);
@@ -290,10 +291,10 @@ TEST_CASE("the anchor seeds the minimum and arms the abort", "[aquifer]") {
     // arms nothing across 17064 cells, -62.01 arms it.
     Oracle atThreshold{kAnchorX, kAnchorZ, 100.0};
     atThreshold.at(0, 0, -62.0);
-    CHECK_FALSE(readPreliminarySurface(atThreshold, kCentre).aborted);
+    CHECK_FALSE(readPreliminarySurface(atThreshold, kCentre, 63).aborted);
     Oracle pastThreshold{kAnchorX, kAnchorZ, 100.0};
     pastThreshold.at(0, 0, -62.01);
-    CHECK(readPreliminarySurface(pastThreshold, kCentre).aborted);
+    CHECK(readPreliminarySurface(pastThreshold, kCentre, 63).aborted);
 }
 
 TEST_CASE("the abort flag is exactly the whole window's minimum being low", "[aquifer]") {
@@ -304,7 +305,7 @@ TEST_CASE("the abort flag is exactly the whole window's minimum being low", "[aq
     // precisely the discriminating class, so a regression breaks this test
     // rather than a golden.
     const auto invariantHolds = [](const Oracle& oracle, const CellIndex centre) {
-        const PslRead read = readPreliminarySurface(oracle, centre);
+        const PslRead read = readPreliminarySurface(oracle, centre, 63);
         return read.aborted == (read.cap <= -63);
     };
     for (const double anchorValue : {200.0, 0.0, -62.0, -62.01, -63.0, -70.0, -1000.0}) {
@@ -323,7 +324,7 @@ TEST_CASE("the surface window is scanned z-outer, ascending", "[aquifer]") {
     // first and reports -40 to the gate.
     Oracle oracle{kAnchorX, kAnchorZ, 200.0};
     oracle.at(-32, -16, -64.0).at(-16, 0, -40.0);
-    CHECK(readPreliminarySurface(oracle, kCentre) ==
+    CHECK(readPreliminarySurface(oracle, kCentre, 63) ==
           PslRead{.gate = 200, .cap = -64, .anchor = 200, .aborted = true});
 
     // V6. The spur is first in its own row, so a value there is folded in
@@ -331,13 +332,13 @@ TEST_CASE("the surface window is scanned z-outer, ascending", "[aquifer]") {
     // dropping it — leaves the gate at 200.
     Oracle spur{kAnchorX, kAnchorZ, 200.0};
     spur.at(-48, 0, -40.0).at(-32, 0, -64.0);
-    CHECK(readPreliminarySurface(spur, kCentre) ==
+    CHECK(readPreliminarySurface(spur, kCentre, 63) ==
           PslRead{.gate = -40, .cap = -64, .anchor = 200, .aborted = true});
 
     // V7. The spur is not mirrored: (+32, 0) is outside the window.
     Oracle mirrored{kAnchorX, kAnchorZ, 200.0};
     mirrored.at(32, 0, -40.0);
-    CHECK(readPreliminarySurface(mirrored, kCentre) ==
+    CHECK(readPreliminarySurface(mirrored, kCentre, 63) ==
           PslRead{.gate = 200, .cap = 200, .anchor = 200, .aborted = false});
 }
 
@@ -349,7 +350,7 @@ TEST_CASE("one scan feeds the gate and the cap different values", "[aquifer]") {
     // 858 times out of 858.
     Oracle oracle{kAnchorX, kAnchorZ, 200.0};
     oracle.at(0, -16, -70.0);
-    const PslRead read = readPreliminarySurface(oracle, kCentre);
+    const PslRead read = readPreliminarySurface(oracle, kCentre, 63);
     CHECK(read == PslRead{.gate = 200, .cap = -70, .anchor = 200, .aborted = true});
 
     stratum::aquifer::CellFluid cell;
@@ -369,7 +370,7 @@ TEST_CASE("one scan feeds the gate and the cap different values", "[aquifer]") {
     // branch after all.
     Oracle quiet{kAnchorX, kAnchorZ, 200.0};
     quiet.at(0, -16, -50.0);
-    const PslRead same = readPreliminarySurface(quiet, kCentre);
+    const PslRead same = readPreliminarySurface(quiet, kCentre, 63);
     CHECK(same == PslRead{.gate = -50, .cap = -50, .anchor = 200, .aborted = false});
     cell.surface = same;
     CHECK(stratum::aquifer::cellFluidLevel(cell) == 40);
@@ -380,17 +381,17 @@ TEST_CASE("the surface value floors toward negative infinity", "[aquifer]") {
     // the negative one, which is the whole trap.
     Oracle negative{kAnchorX, kAnchorZ, 100.0};
     negative.at(-16, 0, -0.5);
-    CHECK(readPreliminarySurface(negative, kCentre) ==
+    CHECK(readPreliminarySurface(negative, kCentre, 63) ==
           PslRead{.gate = -1, .cap = -1, .anchor = 100, .aborted = false});
 
     Oracle positive{kAnchorX, kAnchorZ, 100.0};
     positive.at(-16, 0, 40.9);
-    CHECK(readPreliminarySurface(positive, kCentre) ==
+    CHECK(readPreliminarySurface(positive, kCentre, 63) ==
           PslRead{.gate = 40, .cap = 40, .anchor = 100, .aborted = false});
 
     Oracle aborting{kAnchorX, kAnchorZ, 200.0};
     aborting.at(0, 0, 10.0).at(-16, 0, -62.5);
-    CHECK(readPreliminarySurface(aborting, kCentre) ==
+    CHECK(readPreliminarySurface(aborting, kCentre, 63) ==
           PslRead{.gate = 10, .cap = -63, .anchor = 10, .aborted = true});
 }
 
@@ -401,7 +402,7 @@ TEST_CASE("the surface window works off the origin quadrant", "[aquifer]") {
     constexpr CellIndex centre{-125, 50, -121};
     Oracle oracle{-128, -124, 200.0};
     oracle.at(-32, -16, -70.0);
-    CHECK(readPreliminarySurface(oracle, centre) ==
+    CHECK(readPreliminarySurface(oracle, centre, 63) ==
           PslRead{.gate = 200, .cap = -70, .anchor = 200, .aborted = true});
 }
 
@@ -414,7 +415,51 @@ TEST_CASE("the surface is read at absolute zero, whatever the cell", "[aquifer]"
     };
     for (const CellIndex centre : {CellIndex{37, -16, 22}, CellIndex{37, 130, 22}}) {
         INFO("centre y " << centre.y);
-        CHECK(readPreliminarySurface(identity, centre) ==
+        CHECK(readPreliminarySurface(identity, centre, 63) ==
               PslRead{.gate = 0, .cap = 0, .anchor = 0, .aborted = false});
     }
+}
+
+TEST_CASE("the abort threshold moves with sea_level below -54", "[aquifer]") {
+    // V14. Settled at `sea_level` -70, by exact-value bisection matching the
+    // technique that pinned the ordinary threshold: eleven server dimensions
+    // from -55 up through -78.00 came back BYTE-IDENTICAL to each other, and
+    // -78.01 alone flipped. -78 is `lambdaLevel(-70) - kOceanGateOffset`, not
+    // `kLavaLevel - 8`, and this is the first world that could tell the two
+    // apart — at every sea_level tested before, they coincide.
+    using stratum::aquifer::abortThreshold;
+    // Exact-bit comparison, matching this file's own convention for a value
+    // computed once and expected to land on an exact double: -Wfloat-equal
+    // is part of the project's warning set for good reason everywhere else,
+    // but every input and output here is an integer difference cast to
+    // double, so bit-exactness is the correct claim rather than a fragile one.
+    const auto bits = [](const double v) { return std::bit_cast<std::uint64_t>(v); };
+    CHECK(bits(abortThreshold(-70)) == bits(-78.0));
+    CHECK(bits(abortThreshold(-100)) == bits(-108.0));
+
+    // Every sea_level this project had already verified is untouched: the
+    // ordinary reading falls out of the same formula rather than being a
+    // separate case.
+    CHECK(bits(abortThreshold(63)) == bits(-62.0));
+    CHECK(bits(abortThreshold(200)) == bits(-62.0));
+    CHECK(bits(abortThreshold(40)) == bits(-62.0));
+    CHECK(bits(abortThreshold(-54)) == bits(-62.0)); // the boundary: lambda(-54) = -54
+
+    // The exact bisection, reproduced as a known-answer vector rather than
+    // trusted from the constant alone. -78.00 does not fire; -78.01 does —
+    // matching the ordinary threshold's own -62.00/-62.01 pair exactly, one
+    // world lower.
+    Oracle atThreshold{kAnchorX, kAnchorZ, 100.0};
+    atThreshold.at(0, 0, -78.0);
+    CHECK_FALSE(readPreliminarySurface(atThreshold, kCentre, -70).aborted);
+    Oracle pastThreshold{kAnchorX, kAnchorZ, 100.0};
+    pastThreshold.at(0, 0, -78.01);
+    CHECK(readPreliminarySurface(pastThreshold, kCentre, -70).aborted);
+
+    // And the classic -62 boundary is NOT special here — it sits well inside
+    // the "does not abort" region once sea_level drops this low, refuting the
+    // bare-constant reading this file carried before.
+    Oracle classic{kAnchorX, kAnchorZ, 100.0};
+    classic.at(0, 0, -62.01);
+    CHECK_FALSE(readPreliminarySurface(classic, kCentre, -70).aborted);
 }

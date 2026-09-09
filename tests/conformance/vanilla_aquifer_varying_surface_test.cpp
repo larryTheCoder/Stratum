@@ -193,8 +193,8 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
                                 }
                                 return field.at(sx, sz);
                             };
-                            const PslRead read =
-                                stratum::aquifer::readPreliminarySurface(sampler, centre);
+                            const PslRead read = stratum::aquifer::readPreliminarySurface(
+                                sampler, centre, kSeaLevel);
                             if (!reachable) {
                                 continue;
                             }

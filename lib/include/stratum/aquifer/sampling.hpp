@@ -154,17 +154,29 @@ inline constexpr std::int32_t kPslAnchorQuantum = 4;
 /// while size-scaled variants score 0.09-0.55).
 inline constexpr std::int32_t kPslStride = 16;
 
-/// The value at which the scan gives up. ABSOLUTE, and strict: -61.99 and
-/// -62.00 do not fire, -62.01 does, each at 1.0000. Invariant under `min_y` in
-/// {-48, -64, -80, -96, -128} and `sea_level` in {40, 100, 128, 200}, which
-/// kills the "world floor plus two" reading outright — at `min_y` -128 that
-/// would put the constant at -126, so a -70 arm would not abort, and it does.
+/// The value at which the scan gives up. Strict: -61.99 and -62.00 do not
+/// fire, -62.01 does, each at 1.0000 at ordinary sea levels — but it is NOT
+/// absolute, and that correction is measured rather than assumed.
 ///
-/// It coincides with `kLavaLevel - 8`. That identity is UNPROVEN: an arbitrary
-/// constant fits everything measured just as well, and separating them needs a
-/// world with `sea_level` below -54, which pushes every observable interface
-/// into the one zone this campaign could not read.
-inline constexpr double kPslAbortBelow = -62.0;
+/// `kLavaLevel - 8` fit every measurement through `sea_level` in
+/// {40, 100, 128, 200}, and was flagged UNPROVEN because those never separate
+/// it from a bare constant: `lambdaLevel(seaLevel)` equals `kLavaLevel` at
+/// every one of them. A world with `sea_level` -70 does separate them, and
+/// settles it decisively: eleven dimensions bisecting both candidates found
+/// the boundary at exactly -78.00 / -78.01, matching
+/// `lambdaLevel(-70) - 8 = -78` and refuting the bare -62 outright — every
+/// dimension from -55 up through -78.00 is BYTE-IDENTICAL, and -78.01 alone
+/// flips. So this is `lambdaLevel(seaLevel) - kOceanGateOffset`, which reduces
+/// to the figure above (`kLavaLevel - 8 = -62`) at every ordinary sea level
+/// this project had already verified, and moves with `sea_level` below -54
+/// exactly as `lambdaLevel` itself does.
+///
+/// Invariant under `min_y` in {-48, -64, -80, -96, -128}, which kills the
+/// "world floor plus two" reading outright — at `min_y` -128 that would put
+/// the constant at -126, so a -70 arm would not abort, and it does.
+[[nodiscard]] constexpr double abortThreshold(const std::int32_t seaLevel) noexcept {
+    return static_cast<double>(lambdaLevel(seaLevel) - kOceanGateOffset);
+}
 
 /// The window, as offsets from the anchor, IN SCAN ORDER. The anchor itself is
 /// not in the list: it is read first and separately.
@@ -241,11 +253,19 @@ inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
 /// controls at -70, -64, -63, -62, -58, -54, -40, 0, 40 and 100 all flood
 /// those same cells, so it is the spike and not the value that empties them.
 ///
-/// @param psl    anything callable as `double(std::int32_t x, std::int32_t y,
-///               std::int32_t z)` — the router entry, or a stub in a test.
-/// @param centre the cell's jittered centre, from `CentreSource::centreOf`.
+/// @param psl      anything callable as `double(std::int32_t x,
+///                 std::int32_t y, std::int32_t z)` — the router entry, or a
+///                 stub in a test.
+/// @param centre   the cell's jittered centre, from `CentreSource::centreOf`.
+/// @param seaLevel the dimension's `sea_level` — see `abortThreshold`. Every
+///                 vector written before this parameter existed assumed an
+///                 ordinary sea (>= -54), where it is a no-op; those vectors
+///                 were updated to pass one explicitly rather than silently
+///                 keep the old fixed threshold.
 template<typename Sampler>
-[[nodiscard]] PslRead readPreliminarySurface(const Sampler& psl, const CellIndex centre) {
+[[nodiscard]] PslRead readPreliminarySurface(const Sampler& psl, const CellIndex centre,
+                                             const std::int32_t seaLevel) {
+    const double abortBelow = abortThreshold(seaLevel);
     const std::int32_t anchorX =
         javamath::floorDiv(centre.x, kPslAnchorQuantum) * kPslAnchorQuantum;
     const std::int32_t anchorZ =
@@ -269,13 +289,13 @@ template<typename Sampler>
     // difference shows only on a cell whose anchor is low while every window
     // sample is clean — 329 such cells across seventeen seeds and four
     // instruments, none of them backing the exemption.
-    bool aborted = seed < kPslAbortBelow;
+    bool aborted = seed < abortBelow;
 
     for (const auto& offset : kPslWindow) {
         const double value =
             psl(anchorX + offset.dx, kPreliminarySurfaceSampleY, anchorZ + offset.dz);
         if (!aborted) {
-            if (value < kPslAbortBelow) {
+            if (value < abortBelow) {
                 // The aborting sample is NOT folded into the gate's minimum,
                 // and the scan stops there — it does not skip and continue.
                 // "Skip and continue" scores 0.8662 and a row-only break
