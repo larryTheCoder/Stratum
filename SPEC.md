@@ -370,23 +370,19 @@ Its own component (`lib/mapping/`), its own tests:
   older name and refused every vanilla noise settings file, for a reason the
   error would not have made obvious.
 
-  **Remaining, and both are well specified.**
+  **One item remains; the other closed.**
 
-  1. *The one-block residual, in progress rather than localised.* 1.71% of
-     columns are off by exactly one block with aquifers out of the way. §11
-     records the measurement and a correction to it: an earlier pass read
-     "zero at the cell's y boundary" over 94208 blocks, but that count
-     inherited a sparse, every-eighth-column sample from
-     `golden_terrain_no_aquifer_test.cpp`; a full-column scan finds 322
-     disagreements rather than 148, including corner (offset-0) misses. Not
-     the cell height, not the blend order, not a cache node — those stay
-     ruled out. A wrapped-`range_choice` probe now reads the server's own
-     density at any point directly, validated against a corner already known
-     correct, and has pinned three corners where THIS BUILD's own value is
-     wrong before any interpolation runs — the opposite sign from the
-     already-known 24-block cave-roof population. Root cause open; the
-     instrument to find it now exists. Tier A is bit-exact, so this is a
-     genuine failure of M3's own criterion.
+  1. **RESOLVED. The one-block residual.** §11 has the full chase: a claim
+     of "zero at the cell's y boundary" that turned out to be a sparse-
+     sampling artifact, a corrected reading that found this build's own
+     cell-corner computation wrong (not merely the interpolation between
+     corners), and — once the clean-room provision (§12) supplied
+     `spec/blended-noise-spec.md` — the actual mechanism: one missing
+     epsilon in `PerlinNoise::sample`'s fold, inside `old_blended_noise`'s
+     Modern reading. Fixed and confirmed independently against the server:
+     an exhaustive block-level rescan that found 322 disagreements now
+     finds 0. `golden_terrain_no_aquifer_test.cpp` is 256 of 256 exact
+     columns; Tier A's bit-exactness criterion holds for the density chain.
   2. *Four unevaluable router functions*, all of them cave or End functions,
      with `weird_scaled_sampler` the first thing met on the caves path.
 
@@ -2374,14 +2370,43 @@ Open:
   investigation is the first evidence that guess is measurably wrong rather
   than merely unconfirmed.
 
-  Exact mechanism is still OPEN. The octave loop and its per-octave
-  fold/cap (`lib/src/blended.cpp`'s `smearCap`, `lib/src/perlin.cpp`'s
-  `PerlinNoise::sample` fold block) are C++ control flow, not a JSON tree —
-  the wrapped-`range_choice` technique that carried this investigation this
-  far cannot reach inside a single compiled function to bisect one octave
-  from another. Continuing needs either an alternate formula to test
-  against the same bisected points, or a numeric approach that does not
-  depend on decomposing the tree further.
+  **RESOLVED. The clean-room provision (§12) supplied exactly the tool the
+  wrapped-probe technique could not be: a way to see inside a single
+  compiled function.** `spec/blended-noise-spec.md` (run 02, differentially
+  verified against the unmodified jar rather than merely read) gives the
+  fold formula in full. Comparing it line by line against
+  `lib/src/perlin.cpp`'s `PerlinNoise::sample` found one concrete
+  difference: Q2.2/Q2.3's `fold = ⌊clamp_source/d + 1e-7⌋ · d` carries an
+  epsilon before the floor that this build's fold did not have.
+
+  Every other piece of the fold this build already had matched the spec
+  exactly on inspection — the cap formula, the `c ≥ 0` condition (vacuously
+  satisfied here since the Modern reading's cap is never negative above
+  y=0), which axis the interpolation weight uses (unfolded, matching this
+  build's existing `fadeY`) — which is why one line was the whole fix
+  rather than a rewrite.
+
+  **Confirmed independently of the spec's own claim, not merely adopted on
+  its word (§12's rule).** Adding the epsilon and re-bisecting all five
+  known corners via `tools/analysis/final-density-probe.sh`: the three that
+  were wrong (the lake-floor cluster) now land exactly inside the server's
+  own bisected bracket; the two that were already right (the scattered
+  control corners) are bit-for-bit unmoved. A full exhaustive block-level
+  rescan of the same fixture that found 322 disagreements now finds **0**.
+  `tests/unit/blended_test.cpp` pins all five corners as known-answer
+  vectors, cited to both the spec claim and this confirming measurement.
+
+  **This was the entire M3 one-block residual, not a fraction of it.**
+  `golden_terrain_no_aquifer_test.cpp` moves from 253/256 exact columns to
+  256/256; `golden_terrain_test.cpp`'s seed -1 section moves from 249 to
+  252 of 256, with the remaining four an entirely separate, already-known
+  gap — the aquifer fill decision this build does not implement (MA), not
+  a density error. Why one missing epsilon explains an error up to 2e-2 in
+  the final density rather than something proportional to 1e-7: when it
+  matters, the floor lands on the WRONG side of an exact-integer boundary,
+  folding onto an adjacent, unrelated lattice cell — a discontinuous jump,
+  not a rounding-scale correction. Recorded fully in `lib/src/perlin.cpp`'s
+  own comment at the fix.
 
   *No documentation and no oracle here* — `end_islands` and, as it was,
   `old_blended_noise`, `weird_scaled_sampler` and `blend_density`; the last

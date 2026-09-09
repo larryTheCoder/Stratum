@@ -154,8 +154,28 @@ double PerlinNoise::sample(double x, double y, double z, double yScale,
     if (!isZero(yScale)) {
         // Fold y back onto a slab: the interpolation weight keeps its full
         // fade, while the gradient sees the folded offset.
+        //
+        // THE EPSILON IS LOAD-BEARING, and its absence was M3's whole
+        // one-block residual (SPEC §11) — every one of it, not a fraction:
+        // an exhaustive block-level rescan went from 322 disagreements to 0
+        // the moment this line gained it. Without the epsilon, a
+        // `clamped/yScale` that lands within a rounding error of an exact
+        // integer floors to the WRONG side under ordinary floating-point
+        // error, which folds onto the ADJACENT lattice cell — an entirely
+        // unrelated gradient, not a small correction. That is why an
+        // omission this tiny produced errors up to 2e-2 in the final
+        // density rather than something proportional to the epsilon
+        // itself: `clean-room spec/blended-noise-spec.md Q2.2/Q2.3` names
+        // it as `⌊clamp_source/d + 1e-7⌋ · d`, a float literal widened to
+        // double, nudging an exact multiple to round up rather than down.
+        // Confirmed against the server independently of that claim: three
+        // corners bisected via `tools/analysis/final-density-probe.sh`
+        // that disagreed with vanilla before this line changed now land
+        // exactly inside the server's own bisected bracket, and three
+        // more scattered corners that already agreed are unmoved — no
+        // regression on the cells this was already right on.
         const double clamped = (yMax < localY) ? yMax : localY;
-        localY -= std::floor(clamped / yScale) * yScale;
+        localY -= std::floor((clamped / yScale) + 1.0e-7) * yScale;
     }
 
     const auto cornerA = static_cast<std::uint8_t>(at(latticeX) + latticeY);

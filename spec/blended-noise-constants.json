@@ -1,0 +1,178 @@
+{
+  "_meta": {
+    "source_spec": "blended-noise-spec.md",
+    "provenance": "PROVENANCE.md (run 02 section)",
+    "minecraft_version": "1.21.11",
+    "date": "2026-09-09",
+    "note": "Hypothesis values, but verified(differential-harness) on nearly every claim this time -- see spec claim tags for exactly which. Nothing here enters lib/ without golden verification per SPEC section 7.",
+    "_changelog": [
+      {
+        "change": "initial publication of blended-noise-spec.md and this file",
+        "reason": "RESEARCH-RUN-02.md, an owner-certified Implementer-wall reopen of the closed run 01 repository",
+        "task": "RESEARCH-RUN-02"
+      },
+      {
+        "change": "corrected Q3.1's topic sentence in blended-noise-spec.md (named the wrong branch as dead)",
+        "reason": "REVIEW-06 gate: the topic sentence said 'd != 0 is dead' when the proof body, the DO-NOT-IMPLEMENT clause, and this file's own dead_branches.zero_divisor_fallback entry all correctly identify d = 0 as the dead branch",
+        "task": "REVIEW-06 section 1"
+      }
+    ]
+  },
+  "pack_parameters": {
+    "_note": "runtime data -- registry field names, permitted per the filtration contract",
+    "xz_scale": {
+      "codec_range": [
+        0.001,
+        1000.0
+      ]
+    },
+    "y_scale": {
+      "codec_range": [
+        0.001,
+        1000.0
+      ]
+    },
+    "xz_factor": {
+      "codec_range": [
+        0.001,
+        1000.0
+      ]
+    },
+    "y_factor": {
+      "codec_range": [
+        0.001,
+        1000.0
+      ]
+    },
+    "smear_scale_multiplier": {
+      "codec_range": [
+        1.0,
+        8.0
+      ]
+    }
+  },
+  "structure": {
+    "sampler_octave_counts": {
+      "min_limit": 16,
+      "max_limit": 16,
+      "main": 8
+    },
+    "sampler_octave_ranges": {
+      "min_limit": [
+        -15,
+        0
+      ],
+      "max_limit": [
+        -15,
+        0
+      ],
+      "main": [
+        -7,
+        0
+      ]
+    },
+    "total_layers_constructed": 40,
+    "layer_amplitude": 1.0,
+    "claim": "Q1.1/Q1.2"
+  },
+  "frequency_multiplier": {
+    "constant": 684.412,
+    "formula": "xz_multiplier = 684.412 * xz_scale; y_multiplier = 684.412 * y_scale",
+    "claim": "Q1.3"
+  },
+  "max_value": {
+    "formula": "684.412 * y_scale + 2.0",
+    "min_value_formula": "-(684.412 * y_scale + 2.0)",
+    "claim": "Q1 (verified numerically, harness section C)",
+    "note": "closed form; the underlying per-octave amplitude-sum telescopes to exactly 1.0 whenever every octave in a full contiguous range carries amplitude 1.0, which is always true here"
+  },
+  "combination": {
+    "selector_formula": "(main_octave_sum / 10.0 + 1.0) / 2.0",
+    "limit_scale_divisor": 512.0,
+    "final_scale_divisor": 128.0,
+    "main_uses_factor_divided_coordinates": true,
+    "limit_samplers_use_factor_divided_coordinates": false,
+    "claim": "Q1.4"
+  },
+  "wrap": {
+    "divisor": 33554432,
+    "formula": "wrap(v) = v - floor(v/33554432 + 0.5) * 33554432",
+    "applies_to": "the x,y,z position arguments only -- never the fold divisor or cap bound",
+    "claim": "Q1.6"
+  },
+  "fold_cap": {
+    "epsilon": 1e-07,
+    "epsilon_precision": "float literal in source, widened to double at the addition",
+    "divisor_to_cap_bound_ratio": "exactly smear_scale_multiplier",
+    "smear_scale_multiplier_enters_at": "the divisor only, never the cap bound",
+    "cap_condition": "cap_bound >= 0.0 AND cap_bound < yfrac",
+    "fold_formula": "fold = floor(clamp_source/divisor + 1e-7) * divisor, where clamp_source = cap_bound if the cap condition holds, else yfrac",
+    "value_uses_folded_fraction": true,
+    "interpolation_weight_uses_unfolded_fraction": true,
+    "interpolation_weight_note": "the y-axis blend weight is smoothstep(yfrac), the TRUE fraction -- folding only changes which lattice-corner value gets sampled, never the blend smoothness. Getting this backwards was caught and fixed during harness authoring; see AUDIT.md.",
+    "claim": "Q2.1/Q2.2"
+  },
+  "dead_branches": {
+    "zero_divisor_fallback": {
+      "status": "DO-NOT-IMPLEMENT",
+      "reachability": "divisor is a product/quotient of strictly-positive codec-bounded quantities; can never be zero under current pack schema",
+      "claim": "Q3.1"
+    },
+    "cap_below_y_zero": {
+      "status": "provably never binds for world Y < 0, at any octave, under any in-range pack parameters",
+      "note": "the fold itself still occurs unconditionally below y=0 -- only the CAP sub-branch is dead there",
+      "claim": "Q3.2"
+    },
+    "skip_layer_construction": {
+      "status": "DO-NOT-IMPLEMENT for this mechanism",
+      "reachability": "gated on a layer's amplitude being exactly zero; every layer this mechanism requests has amplitude 1.0 by the fixed, gapless octave ranges of Q1.2",
+      "claim": "Q4.5"
+    },
+    "derivative_noise_variant": {
+      "status": "entirely unreferenced in the whole decompiled tree, not just this mechanism",
+      "claim": "Q5.3"
+    }
+  },
+  "rng_construction": {
+    "sampler_order": [
+      "min_limit",
+      "max_limit",
+      "main"
+    ],
+    "sampler_order_note": "all three share ONE RandomSource instance, advanced in sequence across all three constructions",
+    "per_sampler_octave_order": "highest frequency first (octave 0), then descending through coarser octaves in strict order to the sampler's coarsest octave",
+    "per_layer_draws": "3 floating-point draws (that layer's own xo,yo,zo offsets), then 256 draws performing an in-place 256-entry permutation shuffle",
+    "layers_ever_skipped_for_this_mechanism": 0,
+    "seed_derivation": {
+      "method": "positional fork of the world seed",
+      "salt": "minecraft:terrain",
+      "note": "runtime salt string, permitted; read one level up from the mechanism itself, at its wiring site"
+    },
+    "claim": "Q4.1-Q4.5, Q5.1"
+  },
+  "external_inputs": {
+    "complete_set": [
+      "derived RandomSource (via seed + terrain salt)",
+      "block position (x,y,z)",
+      "xz_scale",
+      "y_scale",
+      "xz_factor",
+      "y_factor",
+      "smear_scale_multiplier"
+    ],
+    "not_pack_configurable": [
+      "octave counts (16/16/8)",
+      "octave ranges (-15..0, -15..0, -7..0)"
+    ],
+    "claim": "Q5.1/Q5.2"
+  },
+  "verification_summary": {
+    "harness_sections": 8,
+    "sections_passed": 8,
+    "total_differential_trials": "approximately 34500 (200 + 40 + 5 + 20000 + 6048 + 112 + 8 + 8000)",
+    "mismatches_after_the_one_correction": 0,
+    "max_absolute_difference_after_correction": 0.0,
+    "tolerance": 1e-09,
+    "one_correction_recorded": "Q2.2's interpolation-weight axis; see AUDIT.md"
+  }
+}

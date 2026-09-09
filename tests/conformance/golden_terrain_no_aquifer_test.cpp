@@ -15,28 +15,32 @@
 // arithmetic.
 //
 // The difference the aquifer step makes, on seed -1 over the same 4096
-// columns:
+// columns, AS MEASURED WHILE THE RESIDUAL BELOW WAS STILL OPEN:
 //
-//              with aquifers      without
-//   exact         96.167%         98.267%
-//   within one    97.949%        100.000%
-//   worst        50 blocks        1 block
+//              with aquifers      without (then)      without (now)
+//   exact         96.167%         98.267%              100.000%
+//   within one    97.949%        100.000%              100.000%
+//   worst        50 blocks        1 block               0 blocks
 //
-// So what is left once aquifers are out of the way is small and uniform: no
-// column is off by more than one block. That residual is REAL — at a
-// disagreeing column the density in dispute is of order 1e-3, not 1e-15, so it
-// is not a tie broken differently — but it is two orders of magnitude below
-// what the aquifer gap was contributing.
+// RESOLVED. What was left once aquifers were out of the way traced, after
+// several wrong turns recorded here and in SPEC §11, to one missing epsilon
+// in `PerlinNoise::sample`'s fold — `old_blended_noise`'s Modern reading,
+// which `base_3d_noise` is. A clean-room spec (`spec/blended-noise-spec.md`
+// Q2.2/Q2.3) named `⌊clamp_source/d + 1e-7⌋ · d`; this build had the floor
+// without the epsilon. Confirmed independently against the server via
+// `tools/analysis/final-density-probe.sh`, which bisects vanilla's own
+// density at an arbitrary point directly rather than trusting its sign:
+// every corner the epsilon moved now lands inside the server's own bisected
+// bracket, and the corners it does not touch are bit-for-bit unmoved. An
+// exhaustive block-level rescan of this same fixture went from 322
+// disagreements to 0.
 //
-// CORRECTED, not what an earlier pass of this comment said: it DOES correlate
-// with the cell lattice, strongly — SPEC §11 records disagreements bucketed
-// by y-offset-in-cell, and a since-corrected claim that offset 0 (the cell
-// corner) was exactly clean turned out to be an artifact of this test's own
-// sparse column sampling (every eighth) rather than a property of the
-// formula. A full-column scan finds corner-level disagreements too, some of
-// them THIS BUILD's own computation being wrong before any interpolation
-// runs at all. See SPEC §11 and `tools/analysis/final-density-probe.sh`,
-// which reads the server's real density at an arbitrary point directly.
+// THE WRONG TURN worth keeping the record of: this comment used to say the
+// residual "does not correlate strongly with the cell lattice", then
+// corrected itself to say the opposite — that CELL CORNERS themselves were
+// wrong, not just the interpolation between them — before the epsilon was
+// found. Both readings were of the same underlying bug seen from different
+// angles; neither was the mechanism. See SPEC §11 for the full chase.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12). Without it
 // this skips.
@@ -152,35 +156,38 @@ TEST_CASE("the terrain chain, compared without aquifers in the way", "[conforman
     CHECK(result.withinOne == result.columns);
 
     // Pinned rather than thresholded, like its sibling. If this moves, the
-    // density chain moved. 253 of 256 here against 249 with aquifers on, over
-    // the same columns.
-    CHECK(result.exact == 253U);
+    // density chain moved. EXACT, now — every one of these 256 columns,
+    // since the fold's epsilon landed (SPEC §11). Before it: 253 of 256.
+    CHECK(result.exact == result.columns);
 }
 
-TEST_CASE("the terrain residual lives strictly between the cell's y boundaries",
+TEST_CASE("the terrain chain agrees with the server at every block, not just every heightmap",
           "[conformance][terrain]") {
-    // The heightmap test above says 1.7% of columns are off by one block. This
-    // one says WHERE, and it compares blocks rather than heights — the
-    // heightmap only reports a column's topmost solid, so it cannot see that
-    // the disagreements avoid one y offset entirely.
+    // This test's own history is worth keeping, because it is the shape of
+    // the bug it eventually found. It was first written to say WHERE the
+    // heightmap test's residual lived: the overworld's interpolation cell is
+    // 4 wide and 8 tall, `(y + 64) % 8 == 0` is a cell boundary — the one
+    // place `minecraft:interpolated` returns its argument rather than a
+    // blend — and this test's original sample found that offset clean and
+    // every other offset not. Widening the sample later found corner
+    // (offset-0) disagreements too, which SPEC §11 first read as "the
+    // interpolation isn't the whole story" and only later, correctly, as
+    // this build's OWN cell-corner computation being wrong before any
+    // interpolation ran at all.
     //
-    // The overworld's interpolation cell is 4 wide and 8 tall (size_horizontal
-    // 1, size_vertical 2), and `min_y` is -64, so `(y + 64) % 8 == 0` is a cell
-    // boundary — the one place `minecraft:interpolated` returns its argument
-    // rather than a blend of two corners. Over the whole region that offset is
-    // clean and every other offset is not, which is the opposite of what SPEC
-    // recorded before this test existed.
+    // Neither reading was the mechanism. It was one missing epsilon in
+    // `PerlinNoise::sample`'s fold, inside `old_blended_noise`'s Modern
+    // reading (`base_3d_noise`) — found via a clean-room spec
+    // (`spec/blended-noise-spec.md` Q2.2/Q2.3) and confirmed directly
+    // against the server (`tools/analysis/final-density-probe.sh`). Fixed,
+    // the asymmetry this test was built to characterise is gone: every
+    // block agrees, not just the corners, not just most of the offsets.
     //
-    // This is not an absence of close calls at the boundary. Over the wider
-    // band y in [-60, 120] on these same chunks, offset 0 carries 5029
-    // densities within 1e-2 of zero and 515 within 1e-3, against 5067/512 to
-    // 5782/577 at the other seven — the same exposure. The sign simply never
-    // comes out wrong there: 0 of 94208, where the other offsets contribute
-    // between 12 and 37 each.
-    //
-    // Nor is it the cell height being wrong, which would produce the same
-    // shape. Scored over the same blocks, a height of 8 disagrees on 148, and
-    // 4, 16 and 2 disagree on 9512, 22232 and 11992.
+    // What remains worth keeping is the INSTRUMENT — this checks the
+    // server's placed block against this build's density sign at every
+    // block in range, not just a column's topmost solid the way the
+    // heightmap test above does. That is strictly more than the heightmap
+    // test can see, and it is what should trip first if this regresses.
     const std::filesystem::path tree = fixtures() / "worldgen";
     const std::filesystem::path region =
         fixtures() / "probes" / "no-aquifer" / ("seed-" + std::to_string(kSeed)) / "r.0.0.mca";
@@ -203,9 +210,10 @@ TEST_CASE("the terrain residual lives strictly between the cell's y boundaries",
     const int minY = overworld.geometry.minY;
     const auto file = stratum::region::RegionFile::open(region);
 
-    // Every disagreement anywhere in the region sits in y 17..47, so this band
-    // holds all of them while keeping the test to about fifty thousand
-    // evaluations.
+    // A band covering ordinary overworld terrain elevation — including y=24
+    // and y=48, both cell corners the fold's missing epsilon used to get
+    // wrong before it was found — while keeping the test to about fifty
+    // thousand evaluations rather than the whole column height.
     constexpr int kLowY = 10;
     constexpr int kHighY = 60;
     long long onBoundary = 0;
@@ -252,11 +260,15 @@ TEST_CASE("the terrain residual lives strictly between the cell's y boundaries",
         }
     }
 
-    // The test has to be exercising something, or the claim below is vacuous.
+    // The test has to be exercising something, or the claims below are
+    // vacuous — the sample needs to actually reach the cell boundary.
     REQUIRE(boundaryBlocks > 10000);
-    CHECK(betweenBoundaries > 0);
 
-    // The claim. If this ever becomes non-zero, the fault has moved out of the
-    // interpolation and the analysis in SPEC §11 needs redoing.
+    // The claim, now symmetric: EXACT agreement, at corners and between
+    // them alike. Before the fold's epsilon this was 0 on-boundary against
+    // a nonzero between-boundaries count — the asymmetry this test used to
+    // exist to characterise. If either ever becomes non-zero again, SPEC
+    // §11's fold-epsilon fix has regressed or a new mechanism has appeared.
     CHECK(onBoundary == 0);
+    CHECK(betweenBoundaries == 0);
 }

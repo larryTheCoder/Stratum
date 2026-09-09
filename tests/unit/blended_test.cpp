@@ -1,17 +1,23 @@
-// Stratum — the legacy blended noise, against cubiomes.
+// Stratum — the legacy blended noise, against cubiomes and against vanilla.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The vectors here pin three things: the LCG-seeded Perlin construction, the
-// order the three octave stacks are drawn in, and the octave loop and blend
-// that turn them into a value.
+// The vectors here pin three things against CUBIOMES: the LCG-seeded Perlin
+// construction, the order the three octave stacks are drawn in, and the
+// octave loop and blend that turn them into a value.
 //
-// They pin nothing about `smear_scale_multiplier`, because cubiomes models
-// the pre-1.18 noise and that parameter did not exist then; nothing about
-// the coordinate wrap, because cubiomes has it commented out; and nothing
-// about how a dimension that does not declare `legacy_random_source` seeds
-// any of it. Those three gaps are why `old_blended_noise` is still refused
-// by the interpreter, and this file is careful not to look like it closed
-// them.
+// They pin nothing about `smear_scale_multiplier` against cubiomes, because
+// cubiomes models the pre-1.18 noise and that parameter did not exist then;
+// nothing about the coordinate wrap, because cubiomes has it commented out.
+// Those two gaps are permanent — cubiomes simply does not cover this
+// ground, and no amount of testing against it closes them.
+//
+// `smear_scale_multiplier`, the modern seeding (a dimension that does not
+// declare `legacy_random_source`), and `old_blended_noise` itself are NO
+// LONGER refused or unverified, though — see the smear tests below and
+// `BlendedNoise::modern`'s own doc comment for the seeding, and the fold's
+// epsilon tests at the end of this file for the last piece: a clean-room
+// spec (`spec/blended-noise-spec.md`) plus direct server bisection
+// (`tools/analysis/final-density-probe.sh`) closed what cubiomes could not.
 
 #include "blended_vectors.inc"
 
@@ -264,4 +270,47 @@ TEST_CASE("the measured cap leaves the multiplier out of itself", "[noise][blend
         CHECK(bits(built(true, multiplier).sample(11, 0, 23)) ==
               bits(built(true, 1.0).sample(11, 0, 23)));
     }
+}
+
+// ---------------------------------------------------------------------------
+// The fold's epsilon (SPEC §11, MA's sibling correction). Confirmed against
+// the clean-room `spec/blended-noise-spec.md` Q2.2/Q2.3, and independently
+// against the server via `tools/analysis/final-density-probe.sh`, which
+// bisects vanilla's own density at a point directly rather than trusting
+// its sign. This is the whole of M3's one-block residual: an exhaustive
+// block-level rescan went from 322 disagreements to 0 the moment the fold
+// gained `+ 1e-7` before its floor.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("the fold's epsilon matches the server, at the corners it moved", "[noise][blended]") {
+    // seed -1, minecraft:overworld/base_3d_noise's own five parameters
+    // (worldgen/density_function/overworld/base_3d_noise.json) — the exact
+    // shape the interpreter builds for that node.
+    const BlendedNoise noise = BlendedNoise::modern(-1, overworldShape(8.0));
+
+    // Three corners the epsilon FIXES: this build called each of these
+    // wrong before the epsilon existed, and each now bisects into the
+    // server's own bracket (final-density-probe.sh, seed -1):
+    //   (8,48,124):  this build -0.0187 (wrong) -> server [-0.025,-0.02)
+    //   (6,48,120):  this build -0.0126 (wrong) -> server [-0.03,-0.02)
+    //   (24,48,113): this build  0.0402 (wrong) -> server [0.02,0.0402)
+    // All three are cell corners (y offset 0 in the overworld's 8-tall
+    // cell) on the same lake floor that first surfaced this.
+    CHECK(bits(noise.sample(8, 48, 124)) == 0xbf997440260c8632ULL);
+    CHECK(bits(noise.sample(6, 48, 120)) == 0xbf959580edbb4df8ULL);
+    CHECK(bits(noise.sample(24, 48, 113)) == 0x3f9cfc71337244aaULL);
+
+    // Two more the epsilon fixes at unrelated, scattered locations — proof
+    // this is not the one lake's own quirk: y=48 wrong again at a second,
+    // unrelated column, and y=24, which nothing had touched before either.
+    //   (100,48,20): this build 0.0331 (wrong) -> server [0.034,0.04)
+    //   (60,24,60):  this build 0.1883 (wrong) -> server [0.17,0.18)
+    CHECK(bits(noise.sample(100, 48, 20)) == 0x3fa30d92d133ba8eULL);
+    CHECK(bits(noise.sample(60, 24, 60)) == 0x3fc692b822718010ULL);
+
+    // And the control the epsilon must NOT move: a corner this build
+    // already agreed with the server on before the fix existed. Unchanged
+    // to the bit — the epsilon only nudges a floor across an exact-integer
+    // boundary, and this point was never near one.
+    CHECK(bits(noise.sample(8, 40, 124)) == 0xbf7799dac3ba1e00ULL);
 }

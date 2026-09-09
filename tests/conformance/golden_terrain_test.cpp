@@ -5,45 +5,49 @@
 // `final_density` evaluates end to end for the first time — climate, splines,
 // the blended noise, the cell lattice, and the caves that reach terrain
 // through `min`s nested deep inside it. This is the test that says how close
-// that is to vanilla, and the answer is CLOSE BUT NOT RIGHT.
+// that is to vanilla, and the answer is now CLOSE, AND RIGHT EXCEPT WHERE A
+// WHOLE UNIMPLEMENTED FEATURE SAYS SO.
 //
 // A chunk's stored OCEAN_FLOOR heightmap is the highest block that is neither
 // air nor fluid. That is NOT the same as where `final_density` last crossed
-// zero, and the difference is the whole story of this test.
+// zero, and the difference used to be the whole story of this test — until
+// its two components resolved to two very different things.
 //
-// **What the residual turned out to be.** Vanilla's overworld runs aquifers,
-// and an aquifer places a stone BARRIER between two bodies of water at
-// different levels — solid blocks that no density function produced. Where
-// that happens, OCEAN_FLOOR reports the barrier, high above the terrain, and
-// a comparison against `final_density` reads it as the terrain being wrong.
+// **The aquifer fill decision.** Vanilla's overworld runs aquifers, and an
+// aquifer places a stone BARRIER between two bodies of water at different
+// levels — solid blocks no density function produced. Where that happens,
+// OCEAN_FLOOR reports the barrier, high above the terrain, and a comparison
+// against `final_density` reads it as the terrain being wrong. This build
+// does not implement the aquifer fill decision at all (SPEC §10, milestone
+// MA) — this gap is real, and it is the whole remaining reason this test's
+// seed -1 section does not read 256 of 256.
 //
-// It was measured, not argued. Regenerating seed -1 from vanilla's own
-// overworld settings with `aquifers_enabled: false` and nothing else changed
-// (tools/analysis/aquifer-free-probe.sh) moves the same 4096 columns from
+// **The density chain's own residual — RESOLVED.** golden_terrain_no_aquifer_
+// test.cpp isolates the density chain from the aquifer gap above, and it used
+// to find something real but small there too: 1.7% of columns off by exactly
+// one block. That traced, eventually, to one missing epsilon in
+// `PerlinNoise::sample`'s fold — `old_blended_noise`'s Modern reading,
+// confirmed via a clean-room spec and direct server bisection (SPEC §11,
+// `spec/blended-noise-spec.md`, `tools/analysis/final-density-probe.sh`).
+// Fixed: this build's own arithmetic now agrees with the server exactly,
+// everywhere that test looks.
 //
-//   96.167% exact, 97.949% within one block, worst 50 blocks
+// So what the two sections below measure, now, is ONLY the aquifer gap:
 //
-// to
+//   seed 42: 256 of 256 columns exact — no aquifer barriers on this seed
+//   seed -1: 252 of 256 exact, worst 28 blocks — every remaining miss is a
+//            barrier OCEAN_FLOOR reports that no density function placed
 //
-//   98.267% exact, 100.000% within one block, worst 1 block
+// The worst column, (104, 112), is the aquifer mechanism in miniature: gravel
+// over stone at y = 27-28 floating in water with aquifers on, water all the
+// way down with them off, and OCEAN_FLOOR moving 28 -> 9 — where this build's
+// density does turn positive, correctly, once the aquifer is out of the way.
 //
-// The worst column, (104, 112), is the mechanism in miniature: gravel over
-// stone at y = 27-28 floating in water with aquifers on, water all the way
-// down with them off, and OCEAN_FLOOR moving 28 -> 9 — where this build's
-// density does turn positive.
-//
-// So the numbers below measure the AQUIFER FILL DECISION this build does not
-// implement (SPEC §7 Tier A), not an error in the density chain. They are
-// still pinned, because they are the size of that gap and it should move
-// deliberately:
-//
-//   seed 42: 254 of 256 columns exact, all within one block
-//   seed -1: 249 of 256 exact, 252 within one block, worst 28 blocks
-//
-// golden_terrain_no_aquifer_test.cpp is the one that measures the density
-// chain itself. What it finds there is real but small: 1.7% of columns off by
-// exactly one block, the density within about 1e-3 of vanilla's at the block
-// in dispute. Neither test should be read as "terrain works".
+// Do not read a 256-of-256 seed as "terrain works end to end" — it means this
+// particular seed has no aquifer barriers to expose the gap that still
+// exists. golden_terrain_no_aquifer_test.cpp is what actually certifies the
+// density chain, and MA's own tests are what will certify the aquifer once
+// it exists.
 //
 // Sampling: every eighth column over 8x8 chunks, so 256 columns spread across
 // 128x128 blocks rather than packed into one chunk. That matters — a single
@@ -174,16 +178,17 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         const Comparison result = compare(42);
         REQUIRE(result.columns == 256U);
         // Pinning exact counts is only sound if no column is near a tie.
-        // Measured, the closest is 4.9e-06 from zero — nine orders of
+        // Measured, the closest is 1.4e-05 from zero — six orders of
         // magnitude above double rounding — so an x86-64/ARM64 contraction
         // difference cannot move these numbers. If that ever stops being
         // true, this fails instead of the counts going quietly flaky.
         CHECK(result.margin > 1.0e-9);
-        // Two columns out, both by exactly one block — the aquifer gap is small
-        // on this seed.
-        CHECK(result.exact == 254U);
+        // Every column exact — this seed has no aquifer barriers, and the
+        // density chain's own residual is closed (SPEC §11's fold epsilon).
+        // Before that fix: 254 of 256, worst 1.
+        CHECK(result.exact == 256U);
         CHECK(result.withinOne == 256U);
-        CHECK(result.worst == 1);
+        CHECK(result.worst == 0);
     }
 
     SECTION("seed -1") {
@@ -194,10 +199,13 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         const Comparison result = compare(-1);
         REQUIRE(result.columns == 256U);
         CHECK(result.margin > 1.0e-9);
-        // Worse, and worse in kind — this seed has aquifer barriers: 28 blocks is not a boundary
-        // being resolved differently, it is a column whose terrain this build gets wrong. This is
-        // the number to watch when the residual is chased.
-        CHECK(result.exact == 249U);
+        // What is left, now, is ENTIRELY the aquifer gap: this seed has
+        // barriers, and 28 blocks is a column whose terrain this build gets
+        // wrong specifically because it does not place them (SPEC §10,
+        // milestone MA) — not a density error. Before the fold epsilon:
+        // 249 of 256, 252 within one; the four newly-exact columns were
+        // ordinary density misses, distinct from the barrier gap below.
+        CHECK(result.exact == 252U);
         CHECK(result.withinOne == 252U);
         CHECK(result.worst == 28);
     }
