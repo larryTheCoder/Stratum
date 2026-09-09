@@ -30,6 +30,7 @@ add_executable(stratum_conformance_tests
     golden_regions_test.cpp
     nbt_structures_test.cpp
     vanilla_aquifer_fluid_type_test.cpp
+    vanilla_aquifer_depthgate_test.cpp
     vanilla_aquifer_jitter_test.cpp
     vanilla_aquifer_lowsea_test.cpp
     vanilla_aquifer_varying_surface_test.cpp

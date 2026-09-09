@@ -403,19 +403,25 @@ Its own component (`lib/mapping/`), its own tests:
   including the surface's thirteen-position aborting-minimum scan, re-derived
   at twenty feature scales.
 
-  Four things remain. Three are verification of measurements already in hand,
-  each with its separating configuration named and costing about one probe
-  world; the fourth is unexplored and is the reason this is a track rather than
-  a task.
+  Four things stood between MA and closing; one is now resolved. The other
+  three were verification of measurements already in hand, each with its
+  separating configuration named and costing about one probe world; the
+  fourth is unexplored and is the reason this is a track rather than a task.
 
-  1. **`PslRead::anchor` as the depth path's gate is single-sourced.** One
-     agent, one instrument family, and an asymmetry — the near surface gates on
-     the window's minimum while the depth path gates on the anchor — of exactly
-     the shape that has now been wrong twice here. It decides whether a cell
-     floods. What closes it: a field where the two differ by more than eight
-     blocks, with the floodedness combed so that
-     `reach = max(0, 56 - (gate - centreY))` becomes an integer readout of the
-     gate, so both values are read on the same cells.
+  1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
+     second instrument.** The asymmetry — the near surface gates on the
+     window's minimum while the depth path gates on the anchor — was exactly
+     the shape that had been wrong twice here, so it stayed open on one
+     instrument's word alone. A second, independent probe (§11) built the
+     named separating configuration — a field where the two differ by 60
+     blocks, eight times the required margin, combed across nine
+     floodedness values — and reads each cell strictly inside its own
+     ~12-block territory rather than across a wide band that mostly belongs
+     to other cells, which is what sank the first attempt at this probe.
+     202 of 210 genuinely discriminating cells confirm anchor-gating; the
+     eight exceptions are two specific cells whose ladder level exactly
+     equals their own centreY, a boundary tie rather than a rival pattern.
+     No code changed — current code was already right.
 
   2. **One of three corrections to `cellFluidLevel` is now LANDED, with a
      second instrument behind it; two remain unverified.** All three were
@@ -1745,6 +1751,41 @@ Open:
   brute force: 7 to 20 rank-1 misses per 3538944 blocks (2.0e-6 to 5.7e-6) and
   2.2e-3 to 2.7e-3 at rank 2. Without the shift those become 0.8-3.1% and
   8.6-13.2%, which is what makes the unit case discriminating.
+
+  **A second instrument for the depth path's gate, and a wrong first attempt
+  at building one (MA blocker 1, CLOSED).** The near-surface path gates on
+  `gate`, the scan's prefix minimum; the depth path gates on `anchor`, the
+  single sample at the cell's own quart position — an asymmetry resting on
+  one instrument, of exactly the shape that has been wrong twice before here.
+  `tools/analysis/aquifer-depthgate-probe.sh` builds the named separating
+  configuration: two psl regions, HIGH (100) and LOW (40), each around 100
+  blocks — comfortably larger than the scan window's 48-block reach — so
+  cells near a region boundary have their ANCHOR sample in the HIGH region
+  while a WINDOW OFFSET pokes into the LOW one, separating the two by 60
+  blocks against blocker 1's required eight. Nine floodedness values comb
+  0.05 through 0.85.
+
+  *The first readout was wrong, and worth recording precisely.* Scanning
+  each candidate cell's WHOLE plausible level range (from lambda up to the
+  ladder, roughly 74 blocks) for "the topmost fluid block" picked up
+  neighbouring cells' territory almost everywhere — a cell's own vertical
+  span is its ~12-block pitch, not 74 blocks — and produced a smooth,
+  centreY-correlated smear that matched NEITHER hypothesis, on a corpus that
+  had looked clean (a self-consistency filter even seemed to validate it,
+  since neighbouring cells sharing a region can coincidentally share a
+  boundary-adjacent reading). The fix was reading each cell at its OWN
+  geometric centre — always its own nearest source by construction, and
+  strictly inside its own territory — rather than searching a wide band.
+
+  *Confirmed: anchor-gating, matching current code.* 202 of 210 genuinely
+  discriminating cells — filtered to where the two hypotheses' predictions
+  differ AT the cell's own centre, not merely where the predicted LEVELS
+  differ somewhere — match anchor-gating, across eight floodedness values
+  and dozens of distinct cell geometries. The eight exceptions are two
+  specific cells, recurring across four floodedness values, whose ladder
+  level exactly equals their own centreY — a boundary tie in the readout
+  (testing the FIRST AIR block itself), not a rival pattern. No code
+  changed; the second instrument backs what the first one found.
 
   **A world with `sea_level` below the lava, and two things it settles
   (MA).** `kLavaLevel = -54` is a compile-time constant; `lambdaLevel(seaLevel)`

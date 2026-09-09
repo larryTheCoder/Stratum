@@ -617,10 +617,22 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
 }
 
 TEST_CASE("the depth path gates on the anchor while the rest gate on the minimum", "[aquifer]") {
-    // The asymmetry that produced the failure, and the only load-bearing
-    // finding here resting on one instrument. The two readings separate only
-    // where sea_level - 8 falls between the anchor and the window minimum,
-    // which no campaign had until one went looking.
+    // MA blocker 1, closed: a second, independent instrument now confirms
+    // this rather than resting on the one that found it. A probe with two
+    // large psl regions (100 and 40, sized well past the scan window's own
+    // 48-block reach) puts many cells' ANCHOR in the high region while their
+    // WINDOW pokes into the low one -- anchor and gate differing by 60, eight
+    // times the required margin -- and reads each cell at its own centre,
+    // strictly inside its own ~12-block territory rather than across a wide
+    // band that mostly belongs to other cells. 202 of 210 genuinely
+    // discriminating cells, across eight floodedness values and dozens of
+    // distinct geometries, match anchor-gating; the eight exceptions are two
+    // specific cells whose ladder level exactly equals their own centreY --
+    // a boundary tie in the readout, not a rival pattern.
+    //
+    // The two readings separate only where sea_level - 8 falls between the
+    // anchor and the window minimum, which no campaign had until one went
+    // looking.
     //
     // Anchor 100, minimum 40, sea 68 so the threshold is 60: the anchor is
     // above it and the minimum below. The centre is deep enough that the
