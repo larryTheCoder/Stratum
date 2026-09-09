@@ -11,7 +11,9 @@
 //
 // WHAT IS AND IS NOT ESTABLISHED. This is the sharpest example in the
 // project so far of an oracle that covers some of a computation and not all
-// of it, so it is worth being exact:
+// of it, so it is worth being exact. This section is HISTORICAL — it
+// describes the state before the Modern reading and the modern seeding
+// (below) landed, kept because the gaps it names turned out to matter:
 //
 //   * The octave loop, the per-octave scaling, and the final
 //     `clampedLerp(0.5 + 0.05*blend, min/512, max/512)` are checked
@@ -21,22 +23,26 @@
 //   * `smearScaleMultiplier` is **not**. cubiomes models the pre-1.18 noise,
 //     which had no such parameter, so agreement only pins the multiplier-of-
 //     one case. Vanilla's own data uses 8.0 and 4.0, and where the number
-//     enters the formula is a guess this code makes and does not verify.
+//     enters the formula was a GUESS — flagged here as unverified before
+//     anyone had a way to check it end-to-end. It is now measurably WRONG:
+//     a wrapped-`range_choice` probe reading vanilla's own `base_3d_noise`
+//     directly (SPEC §11, the M3 residual entry) finds this build's Modern
+//     reading disagreeing with the server at several corners, spread across
+//     unrelated columns and elevations — not a location-specific glitch.
+//     The fold/cap mechanism below (`smearCap`, and the corresponding fold
+//     in `PerlinNoise::sample`) is the named suspect; the exact mistake is
+//     still open.
 //   * The wrap in maintainPrecision is not checked either: cubiomes has it
 //     commented out as "useless in practice", so the two agree only while
 //     no coordinate reaches the wrap.
-//   * How a dimension that does *not* declare `legacy_random_source` seeds
-//     these octaves is now *partly* known, and nothing in this file
-//     implements it. A search against the deepslate vectors puts the
-//     derivation at
-//     `XoroshiroPositionalFactory(seed).fromHashOf("minecraft:terrain")`,
-//     drawn sequentially in the order min, max, main — each part supported
-//     by its own control (SPEC §11). What is still missing is whatever makes
-//     the sampling formula agree: that search plateaus at a correlation of
-//     0.809, and nothing swept so far moves it.
 //
-// Which is why `old_blended_noise` remains refused by the interpreter. This
-// is the verified half of it, not the whole (SPEC §11).
+// The modern seeding this section called "partly known" and stuck at a
+// correlation of 0.809 is SETTLED below (`BlendedNoise::modern`, `Reading`):
+// `XoroshiroPositionalFactory(seed).fromHashOf("minecraft:terrain")`, every
+// part checked against deepslate's exact values (SPEC §11). `old_blended_noise`
+// is no longer refused by the interpreter — it is evaluated via the Modern
+// reading — but per the smearScaleMultiplier finding above, "evaluated" is
+// not yet "verified everywhere."
 
 #pragma once
 

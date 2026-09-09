@@ -2327,13 +2327,61 @@ Open:
   left as water) — the opposite sign, and, since it is a corner rather than
   an interpolated point, a different mechanism.
 
-  Root cause is OPEN. All three lake-floor corners sit at the same absolute
-  y (48) on the same probe region, which narrows the search — is y=48
-  special, or does this lake merely happen to sit there — but does not
-  settle it; the working control corner at y=40 is the same column, one
-  cell down. The wrapped-probe technique itself is now the instrument for
-  finding out: it can bisect any further corner to the same precision in
-  one server run.
+  **NARROWED, via the wrapped-probe technique extended to bisect a NAMED
+  SUB-function directly rather than only `final_density` as a whole** — the
+  probe script now accepts an optional target `function`, so a wrong value
+  can be chased down through `final_density`'s own reference tree, one named
+  function at a time, in the same server run.
+
+  *The noodle-cave branch is ruled out.* `final_density`'s outer `min` picks
+  between the terrain tree and `minecraft:overworld/caves/noodle`; at every
+  tested point — wrong and correct alike — the noodle branch's own value
+  (0.4 to 64.0) is nowhere near the minimum, so it is never what gets
+  selected. Whatever is wrong lives in the terrain branch.
+
+  *`sloped_cheese` itself is wrong at all three lake-floor corners and right
+  at the control*, bisected directly: this build's 0.0003–0.0013 (SOLID)
+  against vanilla's confirmed-negative values at all three, and this
+  build's 1.0015 matching vanilla's own bisected 1.0014–1.0015 at the
+  control. Inside `sloped_cheese`, `jaggedness` reads exactly 0.0 and
+  `factor` reads exactly 3.9500000477 at all four points — identical,
+  ruling both out as the differentiator — which reduces the search to
+  `depth` and `base_3d_noise`.
+
+  *`depth` matches vanilla exactly at all four points, bisected directly* —
+  this build's own computed values land inside the server's bisected
+  bracket every time, including at the two lake-floor corners that share an
+  identical depth value despite being different columns. `depth` is ruled
+  out.
+
+  ***`base_3d_noise` — `minecraft:overworld/base_3d_noise`, i.e.
+  `old_blended_noise`'s Modern reading — is the source.*** Bisected
+  directly at all three lake-floor corners: wrong at every one, by 0.0013
+  to over 0.02. And it is NOT specific to this lake or to y=48: three more
+  corners picked for scatter — two far-away columns, one at y=24 which no
+  earlier measurement had touched — bisect to TWO more clear mismatches
+  (y=48 at a second, unrelated column; y=24) against three matches (y=32,
+  y=40, y=56). y=48 disagreeing at two independent, unrelated columns rules
+  out "this lake" as the explanation; y=24 also disagreeing rules out "y=48
+  specifically." **This reads as a genuine, non-trivial-rate disagreement in
+  the Modern reading itself, not a location- or elevation-specific one.**
+
+  This CORRECTS "settled above" a few paragraphs down: `old_blended_noise`
+  was derived and landed, not verified end-to-end. `blended.hpp`'s own
+  header already flagged the gap without anyone connecting it to this
+  residual: "`smearScaleMultiplier` is not [checked]... where the number
+  enters the formula is a guess this code makes and does not verify." This
+  investigation is the first evidence that guess is measurably wrong rather
+  than merely unconfirmed.
+
+  Exact mechanism is still OPEN. The octave loop and its per-octave
+  fold/cap (`lib/src/blended.cpp`'s `smearCap`, `lib/src/perlin.cpp`'s
+  `PerlinNoise::sample` fold block) are C++ control flow, not a JSON tree —
+  the wrapped-`range_choice` technique that carried this investigation this
+  far cannot reach inside a single compiled function to bisect one octave
+  from another. Continuing needs either an alternate formula to test
+  against the same bisected points, or a numeric approach that does not
+  depend on decomposing the tree further.
 
   *No documentation and no oracle here* — `end_islands` and, as it was,
   `old_blended_noise`, `weird_scaled_sampler` and `blend_density`; the last

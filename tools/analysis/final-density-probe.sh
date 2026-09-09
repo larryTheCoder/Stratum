@@ -39,6 +39,14 @@
 # Each threshold becomes its own dimension; the point itself is read directly
 # off the block placed at (x, y, z) in every one of them, in ONE server run.
 #
+# An optional "function" field names a DIFFERENT density function to wrap
+# instead of `final_density` — any resource location this build's own graph
+# can resolve, verbatim, e.g. "minecraft:overworld/sloped_cheese". This is
+# how a disagreement gets bisected down through final_density's own named
+# sub-functions once the top-level value is known to be wrong: wrap a
+# sub-function directly and the answer says whether the bug is inside it or
+# in whatever wraps it.
+#
 # A CONTROL IS BUILT IN, and it is why one target should always be a CORNER
 # (y offset 0) this build already agrees with vanilla on. If the wrapped
 # probe's bisected value does not land on this build's own computed value
@@ -72,31 +80,47 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 spec="${work}/finaldensity.json"
 
-env SETTINGS="${settings}" TARGETS="${targets}" python3 - "${spec}" <<'PY'
-import json, os, sys
+env SETTINGS="${settings}" TARGETS="${targets}" REPO_ROOT="${repo_root}" python3 - "${spec}" <<'PY'
+import json, os, sys, pathlib
 
 overworld = json.load(open(os.environ['SETTINGS']))
 final_density = overworld['noise_router']['final_density']
 sea_level = overworld['sea_level']
 default_fluid = overworld['default_fluid']
 targets = json.load(open(os.environ['TARGETS']))
+worldgen = pathlib.Path(os.environ['REPO_ROOT']) / '.fixtures' / '1.21.11' / 'worldgen'
 
-def wrapped(threshold):
-    return {"type": "minecraft:range_choice", "input": final_density,
+def named_function(location):
+    # "minecraft:overworld/sloped_cheese" -> worldgen/density_function/overworld/sloped_cheese.json.
+    # Read fresh, never cached across targets: a function referenced by two
+    # targets should not share identity, since each becomes its OWN isolated
+    # probe dimension.
+    namespace, _, path = location.partition(':')
+    if not path:
+        path, namespace = namespace, 'minecraft'
+    return json.load(open(worldgen / 'density_function' / (path + '.json')))
+
+def wrapped(tree, threshold):
+    return {"type": "minecraft:range_choice", "input": tree,
             "min_inclusive": -1000.0, "max_exclusive": threshold,
             "when_in_range": -1.0, "when_out_of_range": 1.0}
 
 spec = []
 names = set()
-for t in targets:
+for target_index, t in enumerate(targets):
+    tree = named_function(t['function']) if 'function' in t else final_density
     for i, threshold in enumerate(t['thresholds']):
-        name = f"p{t['x']}_{t['y']}_{t['z']}_{i}".replace('-', 'm')
+        # The target's own INDEX in the file is part of the name, not just
+        # its coordinates: two targets can share (x, y, z) while naming
+        # different functions to wrap there, and collapsing them into one
+        # dimension would silently answer the wrong question for one of them.
+        name = f"p{target_index}_{t['x']}_{t['y']}_{t['z']}_{i}".replace('-', 'm')
         if name in names:
             raise SystemExit(f'duplicate probe name: {name}')
         names.add(name)
         spec.append({
             "name": name,
-            "raw_final_density": wrapped(threshold),
+            "raw_final_density": wrapped(tree, threshold),
             "aquifers_enabled": False,
             "sea_level": sea_level,
             "default_fluid": default_fluid,
