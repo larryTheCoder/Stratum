@@ -29,19 +29,42 @@
 // chunks — and nothing short of comparing against real blocks would have said
 // so.
 //
+// SURFACE RULES ARE NOW WIRED IN (M4) — a resolved `surface::RuleGraph` and
+// the overworld's own biome parameter table go into `ChunkFiller::compile`
+// below — and the 82.013% above has not moved, because the overworld's own
+// tree still names two things this build cannot run it with: `bandlands`,
+// whose terracotta band ORDER is not derived (its colours are), and its one
+// `temperature` condition, which needs a biome's own declared temperature
+// and has nothing supplying one yet (SPEC §11). This is asserted directly
+// (`runsSurfaceRules()` / `surfaceRulesBlockedBy()`) rather than left to be
+// inferred from the count staying put, so the day either closes, THIS
+// assertion fails first and says why the numbers below moved rather than
+// leaving that to be rediscovered.
+//
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include <stratum/biome/parameter_list.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/rule_graph.hpp>
 #include <stratum/terrain/filler.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
+
+using Catch::Matchers::ContainsSubstring;
 
 namespace {
 
@@ -83,9 +106,38 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     overworld.aquifersEnabled = false;
     overworld.oreVeinsEnabled = false;
 
+    // Not under `tree`: the pack ships only `{"preset": "minecraft:overworld"}`
+    // for this — the real table is compiled into the jar, and
+    // tools/fetch-vanilla asks the server's own data generator to dump it
+    // instead (see biome/parameter_list.hpp).
+    const std::filesystem::path parametersPath =
+        fixtures() / "biome_parameters" / "minecraft" / "overworld.json";
+    if (!std::filesystem::is_regular_file(parametersPath)) {
+        SKIP("no biome parameter list at " << parametersPath);
+    }
+    std::ifstream parametersFile(parametersPath);
+    std::stringstream parametersJson;
+    parametersJson << parametersFile.rdbuf();
+    const auto biomeParameters = stratum::biome::ParameterList::fromJson(
+        nlohmann::json::parse(parametersJson.str()),
+        stratum::data::ResourceLocation::parse("minecraft:overworld"));
+    const auto surfaceRules = stratum::surface::RuleGraph::resolve(
+        overworld.surfaceRule, stratum::data::ResourceLocation::parse("minecraft:overworld"));
+
     const auto noises = stratum::density::NoiseRegistry::create(
         pack, loaded.graph.referencedNoises(), kSeed, stratum::density::RandomSource::Xoroshiro);
-    const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld);
+    const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld,
+                                                               &surfaceRules, &biomeParameters);
+
+    // See the file comment: wired in, still blocked, by name, on purpose.
+    // Two reasons, not one — `bandlands` (SPEC §11) and the overworld's
+    // single `temperature` condition, which needs a biome's own declared
+    // temperature and has nothing supplying one yet (ChunkFiller::compile's
+    // own doc).
+    CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 2U);
+    CHECK(filler.surfaceRulesBlockedBy().front() == "minecraft:bandlands");
+    CHECK_THAT(filler.surfaceRulesBlockedBy().back(), ContainsSubstring("minecraft:temperature"));
 
     const auto file = stratum::region::RegionFile::open(region);
 

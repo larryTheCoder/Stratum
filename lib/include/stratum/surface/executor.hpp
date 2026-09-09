@@ -116,8 +116,11 @@ public:
     /// Compiles @p graph for one world seed.
     ///
     /// Throws ExecutionError naming every construct this build cannot run,
-    /// with the reason for each. Vanilla's overworld is refused today: nine of
-    /// its fifteen condition types are still unsettled (SPEC §11).
+    /// with the reason for each. Vanilla's overworld is refused today, but
+    /// down to one: `bandlands`, whose terracotta band ORDER is not derived
+    /// (its colours are). Every one of the fifteen condition types runs; the
+    /// Nether's own tree — no `bandlands` anywhere in it — compiles whole
+    /// (SPEC §11).
     /// @p noises must hold every entry `graph.referencedNoises()` names, plus
     /// `minecraft:surface` and `minecraft:surface_secondary` if any rule reads
     /// a surface depth. A missing one is an error at compile, naming the

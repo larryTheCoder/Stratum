@@ -876,10 +876,14 @@ Open:
   minus east, south minus north, with `abs()` refuted by 17375 columns that
   have to stay false.
 
-  What is left for the overworld is **three**: `biome` and `temperature`, which
-  need the biome plumbed into the rule context rather than any derivation —
-  the biome source itself is exact — and `bandlands`, whose colour table
-  generator is not derived. The list went ten, nine, three in three steps.
+  What is left for the overworld is **one construct**: `bandlands`, whose
+  colour table generator is not derived. `biome` and `temperature` both run —
+  the list went ten, nine, three, one in four steps — but the overworld's own
+  tree still refuses on `bandlands` alone, and separately its one
+  `temperature` condition has nowhere to get a biome's declared temperature
+  from yet (`ChunkFiller` wiring, below). The Nether's tree has neither: no
+  `bandlands` anywhere in it, and no `temperature` condition either, so it
+  is the first real dimension whose surface rules compile whole.
 
   *An API trap found while testing, and closed.* An `Executor` keeps pointers
   to its graph, geometry and noises, so compiling from a TEMPORARY graph
@@ -898,14 +902,19 @@ Open:
   with the reason, rather than run with that branch quietly skipped. A surface
   rule that sometimes does nothing is a world that generates and is silently
   wrong, which §8 puts in the most severe class there is. Vanilla's overworld
-  is refused today — nine of its fifteen condition types are still unsettled —
-  and that is the honest position rather than a limitation to work around.
+  is refused today, but down to one construct — `bandlands` — and that is the
+  honest position rather than a limitation to work around.
 
-  Two consequences worth stating. Because compile refuses first, a `Context`
-  missing a field can only ever be a programming error and never a wrong
-  world: a tree that asked for the biome would not have compiled. And because
-  the positional sources are built once per `random_name` at compile, a
-  gradient fired millions of times pays for no MD5 and no forking.
+  One consequence worth stating. Because compile refuses first, a `Context`
+  missing a field for a construct this build genuinely CANNOT run is a
+  programming error and never a wrong world. `biome` itself is not one of
+  those any more — every condition type runs, given a `Context` that carries
+  what it asks for — so that guarantee now belongs to the CALLER that builds
+  the Context, not to `Executor::compile` alone: see `ChunkFiller`, below, for
+  what happens to a tree that reads `biome` when no caller-supplied biome data
+  exists to answer it. And because the positional sources are built once per
+  `random_name` at compile, a gradient fired millions of times pays for no MD5
+  and no forking.
 
   `above_preliminary_surface` is implemented from the DOCUMENTED reading,
   `y >= preliminary_surface_level`, and its strictness has never been
@@ -921,19 +930,23 @@ Open:
   types are read; anything the schema does not define is an error naming the
   type, never a skip.
 
-  Resolving is separated from RUNNING on purpose. The structure of every type
-  is documented and can be loaded today; the semantics of ten of them are not
-  settled, and §8 would rather refuse a rule by name than approximate it. So
-  the graph reports what it cannot execute and why — and the reasons are the
-  measurements above rather than "unimplemented": `vertical_gradient` says its
-  probability is settled and its random source is not, `hole` says it fires on
-  0.04% of terrain and its comparison is undocumented, `steep` says its
-  predicate needs neighbouring columns the filler cannot reach.
+  Resolving is separated from RUNNING on purpose, and that split is what let
+  RUNNING catch up construct by construct without either side waiting on the
+  other. `unrunnableReason` reports what it cannot execute and why, and by now
+  that is down to `bandlands` alone — every one of the eleven condition types
+  is settled; the four rule types were already three structural ones plus
+  `bandlands` from the start. The reasons recorded along the way, while they
+  still applied, were the measurements above rather than "unimplemented":
+  `vertical_gradient` said its probability was settled and its random source
+  was not, `hole` said it fired on 0.04% of terrain and its comparison was
+  undocumented, `steep` said its predicate needed neighbouring columns the
+  filler could not yet reach.
 
-  Five constructs are already runnable — the three structural rules, `not`,
-  and `above_preliminary_surface`, the last only because `find_top_surface`
-  landed. That makes `minecraft:end`, whose whole surface rule is one `block`,
-  the one dimension this build could decorate the moment there is an executor.
+  `minecraft:end`, whose whole surface rule is one `block`, was the first
+  dimension this build could decorate the moment there was an executor at
+  all — no condition, so nothing to settle. The Nether's tree is the first
+  REAL one: 41 conditions, none of them `bandlands`, all eleven types
+  runnable, and it compiles whole.
 
   The schema is written out rather than generated, and that is a debt (§11).
   Five of the fifteen are absent from mcdoc entirely, so they would be
@@ -942,6 +955,66 @@ Open:
   could be generated and are not: the generator cannot parse either
   surface-rule mcdoc file, and the types they refer to live in a third file it
   cannot parse either.
+
+- **`surface::Executor` is wired into `ChunkFiller` (M4).** Every unit and
+  conformance test until now ran the executor directly, against a
+  hand-supplied `Context` — the filler never called it, and `fill()` produced
+  bare stone, fluid and air no matter what a dimension's surface rules said.
+  `ChunkFiller::compile` now takes an optional resolved `RuleGraph` and an
+  optional `biome::ParameterList`, and when the tree runs whole, `fill()`
+  makes a second pass over the chunk after its ordinary density pass and asks
+  the executor what replaces what it just placed.
+
+  The second pass is what supplies the `Context` fields the executor cannot
+  derive on its own, each read back from the FIRST pass's own blocks rather
+  than recomputed: `stoneDepthAbove`/`stoneDepthBelow` from a run counted top
+  down and bottom up over the category (solid, fluid or air) the filler
+  already decided, the latched water height from the same top-down scan, and
+  `steep`'s four neighbour heights from a WORLD_SURFACE scan of the whole
+  chunk, clamped to it by `fillSteepNeighbours` exactly as a per-column caller
+  would have to. `biome` and `preliminary_surface_level` are resolved through
+  the same noise router and `biome::ParameterList` the biome source itself
+  uses (§ biome source), at the biome grid's own quarter resolution rather
+  than once a block.
+
+  Two things are refused the same way an unrunnable construct is, rather than
+  either crashing on a missing `Context` field or running silently wrong: a
+  tree that reads `biome` with no `ParameterList` supplied, and a tree that
+  reads `temperature` at all — vanilla's `temperature` needs a biome's own
+  DECLARED value, and nothing in this build resolves one from a biome's
+  identifier yet, so it is refused rather than run against a made-up 0.0F.
+  `ChunkFiller::surfaceRulesBlockedBy()` reports both alongside whatever
+  `RuleGraph::unrunnable()` itself found, so a caller sees one list, not two
+  different reasons two different ways.
+
+  Consequence for the two real dimensions with fixtures. The overworld's own
+  tree still refuses — `bandlands` (above) plus its one `temperature`
+  condition — so `golden_fill_test.cpp`'s 82.013% has not moved; that is
+  asserted directly now (`runsSurfaceRules() == false`,
+  `surfaceRulesBlockedBy()` names both), not left to be inferred from a count
+  staying put. The Nether's tree compiles and needs neither `biome` data nor
+  a fabricated temperature to run — but its `noise_settings` sets
+  `legacy_random_source: true`, and `NoiseRegistry::create` refuses
+  `RandomSource::Legacy` outright (§11: nothing available says how a name
+  becomes an LCG seed here), so there is no way yet to build the density
+  chain the Nether's blocks would need in the first place. Wiring the
+  executor in did not, and could not, close either gap; what it closes is the
+  distance between "the executor can run this tree" and "the filler asked
+  it to."
+
+  Correctness, found while wiring rather than assumed: `y_above` and `water`
+  both read `condition.addSurfaceDepth` for their `add_stone_depth` field —
+  the WRONG one; `StoneDepth`'s own `add_surface_depth` field happens to share
+  a type and a default with it, and nothing before this caught the two being
+  swapped. Every `add_stone_depth: true` was silently treated as false. This
+  table's own `y_above` row already documented the right field name; the code
+  read the other one. Vanilla's overworld and Nether trees together set it on
+  ten `y_above`/`water` conditions — seven of them in the Nether tree that
+  just started compiling whole, so this would have been the first thing to
+  get a real dimension's blocks quietly wrong the moment that tree could run
+  end to end. Fixed by reading `addStoneDepth`; every existing test that
+  exercised either field had it set to `false` in both spellings, so nothing
+  masked the bug and nothing regressed fixing it.
 
 - **The other four undocumented surface constructs, measured (M4).** In
   vanilla's data these all sit under a `biome` condition, so no probe of

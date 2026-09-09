@@ -173,7 +173,14 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
         }
 
         case ConditionType::YAbove: {
-            const std::int32_t left = at.y + (condition.addSurfaceDepth ? at.stoneDepthAbove : 0);
+            // `add_stone_depth`, not `add_surface_depth` — the two conditions
+            // that read a stone-depth run and the one that reads a surface
+            // depth are different fields on Condition for exactly this
+            // reason, and this case was reading the wrong one: every
+            // `add_stone_depth: true` was silently treated as false. Real
+            // impact, not a hypothetical — vanilla's own overworld and Nether
+            // trees together set it on ten y_above/water conditions.
+            const std::int32_t left = at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0);
             const std::int32_t right = condition.anchor.resolve(*geometry_) +
                                        (condition.surfaceDepthMultiplier * depthFor(condition, at));
             return left >= right;
@@ -185,7 +192,8 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             if (!at.waterHeight.has_value()) {
                 return true;
             }
-            const std::int32_t left = at.y + (condition.addSurfaceDepth ? at.stoneDepthAbove : 0);
+            // `add_stone_depth`, not `add_surface_depth` — see YAbove above.
+            const std::int32_t left = at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0);
             const std::int32_t right = *at.waterHeight + condition.offset +
                                        (condition.surfaceDepthMultiplier * depthFor(condition, at));
             return left >= right;

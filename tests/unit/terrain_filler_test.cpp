@@ -1,8 +1,11 @@
 // Stratum — the chunk filler.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include <stratum/biome/parameter_list.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/executor.hpp>
+#include <stratum/surface/rule_graph.hpp>
 #include <stratum/terrain/filler.hpp>
 
 #include <nlohmann/json.hpp>
@@ -16,11 +19,14 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
+using stratum::biome::ParameterList;
 using stratum::data::Pack;
 using stratum::settings::LoadedSettings;
 using stratum::settings::RouterEntry;
+using stratum::surface::RuleGraph;
 using stratum::terrain::ChunkBuffer;
 using stratum::terrain::ChunkFiller;
 using stratum::terrain::FillError;
@@ -92,12 +98,53 @@ private:
     };
 }
 
-[[nodiscard]] ChunkFiller compileFrom(const TempTree& tree, const LoadedSettings& loaded) {
+[[nodiscard]] ChunkFiller compileFrom(const TempTree& tree, const LoadedSettings& loaded,
+                                      const RuleGraph* surfaceRules = nullptr,
+                                      const ParameterList* biomeParameters = nullptr) {
     const auto& settings =
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
     static stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
         tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
-    return ChunkFiller::compile(loaded.graph, noises, settings);
+    return ChunkFiller::compile(loaded.graph, noises, settings, surfaceRules, biomeParameters);
+}
+
+[[nodiscard]] RuleGraph resolveSurface(const nlohmann::json& json) {
+    return RuleGraph::resolve(json, stratum::data::ResourceLocation::parse("minecraft:test"));
+}
+
+[[nodiscard]] nlohmann::json block(const std::string& name) {
+    return nlohmann::json{{"type", "minecraft:block"}, {"result_state", {{"Name", name}}}};
+}
+
+[[nodiscard]] nlohmann::json gradient(const std::string& randomName, int trueAt, int falseAt) {
+    return nlohmann::json{{"type", "minecraft:vertical_gradient"},
+                          {"random_name", randomName},
+                          {"true_at_and_below", {{"absolute", trueAt}}},
+                          {"false_at_and_above", {{"absolute", falseAt}}}};
+}
+
+[[nodiscard]] nlohmann::json condition(const nlohmann::json& ifTrue,
+                                       const nlohmann::json& thenRun) {
+    return nlohmann::json{
+        {"type", "minecraft:condition"}, {"if_true", ifTrue}, {"then_run", thenRun}};
+}
+
+/// One entry, matching everywhere: every axis covers the climate the flat
+/// dimension's constant-zero router produces. Enough to prove biome
+/// resolution is threaded through without needing a real parameter table.
+[[nodiscard]] ParameterList plainsEverywhere() {
+    const nlohmann::json axis = nlohmann::json::array({-1.0, 1.0});
+    const nlohmann::json json{{"biomes",
+                               {{{"biome", "minecraft:plains"},
+                                 {"parameters",
+                                  {{"temperature", axis},
+                                   {"humidity", axis},
+                                   {"continentalness", axis},
+                                   {"erosion", axis},
+                                   {"depth", axis},
+                                   {"weirdness", axis},
+                                   {"offset", 0.0}}}}}}};
+    return ParameterList::fromJson(json, stratum::data::ResourceLocation::parse("minecraft:test"));
 }
 
 } // namespace
@@ -210,4 +257,213 @@ TEST_CASE("the corner cache changes speed and not values", "[terrain][filler]") 
         }
     }
     CHECK(compared == 19U * 19U * 48U);
+}
+
+TEST_CASE("an unrunnable surface tree is refused whole, and the filler falls back to bare blocks",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(nlohmann::json{{"type", "minecraft:bandlands"}});
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+
+    CHECK_FALSE(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy() == std::vector<std::string>{"minecraft:bandlands"});
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    // Blocked, not silently mis-run: exactly the bare fill from before an
+    // executor existed at all.
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:water");
+    CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
+}
+
+TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pipeline",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(
+        condition(gradient("minecraft:bedrock_floor", -16, -15), block("minecraft:bedrock")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy().empty());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // y = -16 is at-and-below the gradient's certain floor: no draw, always
+    // true, on every column.
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:bedrock");
+    CHECK(buffer.at(15, -16, 15).name.toString() == "minecraft:bedrock");
+    // y = -15 is at-and-above the certain ceiling: always false, so the
+    // filler's own stone stands.
+    CHECK(buffer.at(0, -15, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("stone_depth reads the run the filler itself placed, not a fresh scan",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                {"offset", 1},
+                                                {"add_surface_depth", false},
+                                                {"secondary_depth_range", 0},
+                                                {"surface_type", "floor"}},
+                                 block("minecraft:andesite")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // Solid from the floor up to y = -1, so the run counts 1 at y = -1 and
+    // grows going down. depth is the run minus one, so its top two blocks
+    // — depth 0 and depth 1 — pass the <= 1 threshold and the third does
+    // not. Undecorated by an outer y_above or water check, the way vanilla
+    // always nests stone_depth, so this says nothing about the fluid or air
+    // above; only these three positions are asserted.
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:andesite");
+    CHECK(buffer.at(0, -2, 0).name.toString() == "minecraft:andesite");
+    CHECK(buffer.at(0, -3, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("water reads the filler's own latched height, not sea_level directly",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:water"},
+                                                {"offset", -2},
+                                                {"surface_depth_multiplier", 0},
+                                                {"add_stone_depth", false}},
+                                 block("minecraft:ice")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // Water fills y = 0..7, so the latched height is 8 — one above the
+    // topmost fluid block, not sea_level compared directly. offset -2 moves
+    // the fired boundary down to y = 6.
+    CHECK(buffer.at(0, 5, 0).name.toString() == "minecraft:water");
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:ice");
+    CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:ice");
+}
+
+TEST_CASE("biome reads the biome the climate router and parameter list compute",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(
+        condition(nlohmann::json{{"type", "minecraft:biome"}, {"biome_is", {"minecraft:plains"}}},
+                  block("minecraft:podzol")));
+    const ParameterList biomes = plainsEverywhere();
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface, &biomes);
+    REQUIRE(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy().empty());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // The flat dimension's climate router is constant zero everywhere, and
+    // the table's one entry matches it everywhere, so the biome is
+    // "minecraft:plains" for every block — solid, fluid and air alike.
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:podzol");
+    CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:podzol");
+    CHECK(buffer.at(15, 31, 15).name.toString() == "minecraft:podzol");
+}
+
+TEST_CASE("a tree that reads the biome without a parameter list is blocked, not crashed",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(
+        condition(nlohmann::json{{"type", "minecraft:biome"}, {"biome_is", {"minecraft:plains"}}},
+                  block("minecraft:podzol")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface); // no ParameterList
+
+    CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:biome"));
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("a tree that reads the biome's declared temperature is blocked",
+          "[terrain][filler][surface]") {
+    // This build has no source for a biome's own declared temperature
+    // outside the executor's unit tests (SPEC §11) — a real gap, distinct
+    // from an unrunnable construct, and reported the same honest way.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(condition(
+        nlohmann::json{{"type", "minecraft:temperature"}}, block("minecraft:packed_ice")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+
+    CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:temperature"));
+}
+
+TEST_CASE("above_preliminary_surface reads the column's own level, not a per-block guess",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+                                 block("minecraft:glowstone")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // preliminary_surface_level is the flat dimension's constant zero: below
+    // it the filler's own solid stone stands, and at y = 0 the rule fires.
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:glowstone");
+}
+
+TEST_CASE("steep reads neighbours clamped to this chunk, never a block outside it",
+          "[terrain][filler][surface]") {
+    // The flat dimension's height is the same in every column, so steep
+    // never fires anywhere on it — this is a sanity check that the
+    // world-surface scan and the local-coordinate clamping at the chunk's
+    // own edges (fillSteepNeighbours' own semantics are covered directly in
+    // surface_executor_test.cpp) run cleanly end to end, not a claim that
+    // every geometry is exercised.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(
+        condition(nlohmann::json{{"type", "minecraft:steep"}}, block("minecraft:magma_block")));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(15, -1, 15).name.toString() == "minecraft:stone");
+    CHECK(buffer.paletteSize() == 3U);
 }
