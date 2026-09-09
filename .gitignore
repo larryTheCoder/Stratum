@@ -12,6 +12,16 @@
 **/vanilla_worldgen/
 **/generated/data/minecraft/worldgen/
 
+# The Researcher process and its repository are not a permitted reference
+# (CLAUDE.md's provenance rule) -- only its filtered output under spec/ is.
+# PROVENANCE.md and RESEARCHER-BRIEF.md are its own notes and provenance
+# tracking, and must never land here; they already did once, by accident, in
+# 761b8a1. AUDIT.md is deliberately not listed here -- the owner asked to
+# leave it as committed rather than have this rule reach it too.
+/PROVENANCE.md
+/RESEARCHER-BRIEF.md
+/RESEARCH-RUN-*.md
+
 # --- Build ---
 /build/
 /out/
