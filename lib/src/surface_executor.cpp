@@ -110,6 +110,7 @@ buildClayBands(rng::Xoroshiro128PlusPlus& random) {
         std::int32_t baseWidth;
         std::string_view color;
     };
+
     constexpr std::array<BandPass, 3> kBandPasses{{
         {1, "yellow_terracotta"},
         {2, "brown_terracotta"},
@@ -277,7 +278,8 @@ const settings::BlockState& Executor::clayBandAt(const std::size_t index) const 
 
 const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const std::int32_t y,
                                                   const std::int32_t z) const {
-    const double raw = clayBandsOffset_->sample(static_cast<double>(x), 0.0, static_cast<double>(z));
+    const double raw =
+        clayBandsOffset_->sample(static_cast<double>(x), 0.0, static_cast<double>(z));
     // Round-half-up (Java's Math.round: floor(v + 0.5)) — ties go toward
     // positive infinity, not away from zero (spec/bandlands-spec.md Q4.4).
     const auto offset = static_cast<std::int32_t>(std::floor((raw * 4.0) + 0.5));
@@ -292,8 +294,7 @@ const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const st
     if (index < 0 || index >= static_cast<std::int32_t>(kClayBandsSize)) {
         throw ExecutionError(
             "bandlands' index (" + std::to_string(index) + ") is outside its " +
-            std::to_string(kClayBandsSize) +
-            "-entry table at y = " + std::to_string(y) +
+            std::to_string(kClayBandsSize) + "-entry table at y = " + std::to_string(y) +
             " — this is vanilla's own unguarded arithmetic doing this, reproduced rather than "
             "clamped (spec/bandlands-spec.md Q5.1); not reachable inside vanilla's own overworld "
             "height range, but a tall or deep custom dimension can reach it");

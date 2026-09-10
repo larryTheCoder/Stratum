@@ -104,8 +104,7 @@ TEST_CASE("noises named by conditions are collected once each", "[surface]") {
     CHECK(noises[1] == ResourceLocation::parse("minecraft:surface"));
 }
 
-TEST_CASE("every rule type and every condition type this schema defines runs",
-          "[surface]") {
+TEST_CASE("every rule type and every condition type this schema defines runs", "[surface]") {
     // above_preliminary_surface runs: find_top_surface landed, so the
     // preliminary surface level is a thing this build computes. `not` runs
     // because it is only a negation.

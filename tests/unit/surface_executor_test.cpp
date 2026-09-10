@@ -101,7 +101,7 @@ private:
     const std::vector<stratum::data::ResourceLocation> wanted{
         stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset")};
     return stratum::density::NoiseRegistry::create(tree.pack(), wanted, seed,
-                                                    stratum::density::RandomSource::Xoroshiro);
+                                                   stratum::density::RandomSource::Xoroshiro);
 }
 
 /// The block one of the golden 192-entry tables names at @p index, from a
