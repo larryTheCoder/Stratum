@@ -537,32 +537,42 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
+            // Monotonic, NOT the resetting stone-depth run: once solid has
+            // been crossed anywhere above the current position in this
+            // column, every non-solid (fluid OR air) position from there on
+            // down stays out of surface rules' reach, no matter how many
+            // more solid runs and non-solid gaps follow — real vanilla only
+            // ever rewrites the column's FIRST (topmost, reached straight
+            // from the sky) non-solid stretch, plus whatever solid it
+            // crosses at any depth. `stoneDepthAbove` cannot stand in for
+            // this: air resets IT on purpose (Context's own doc), which is
+            // exactly what a deep cave's own air needs to NOT look like open
+            // sky here.
+            //
+            // Confirmed against the real server (tools/analysis, see SPEC
+            // §11): a datapack whose ENTIRE surface_rule is the overworld's
+            // own bare, unconditioned `deepslate` vertical_gradient — no
+            // above_preliminary_surface, no bedrock floor, nothing else
+            // gating it — still leaves exactly the same 475 fluid blocks
+            // untouched that vanilla's full 287-rule tree does, in the same
+            // aquifer-free probe golden_fill_test.cpp reads, every one of
+            // them inside a fluid-filled cave-void with solid rock already
+            // crossed above it. With a real aquifer's own air pockets in
+            // play (golden_fill_aquifer_test.cpp), most of that same gap is
+            // air, not fluid — solid crossed above a drained cell, painted
+            // over the same way. The topmost/open case (real ocean straight
+            // from the sky, nothing solid crossed yet) stays reachable,
+            // which is what a rule keyed on `water` — freezing ice onto a
+            // lake's own surface — needs.
+            bool crossedSolid = false;
             for (std::int32_t y = topY - 1; y >= minY; --y) {
-                // A FLUID position only stays eligible for surface rules
-                // while it is part of the column's FIRST (topmost, reached
-                // straight from the sky) fluid body — `stoneDepthAbove == 0`,
-                // meaning no solid has been crossed yet on the way down. A
-                // deeper, isolated cave-void's fluid inherits a nonzero run
-                // carried over from the solid rock above it (Context's own
-                // doc: fluid neither breaks a stone-depth run nor counts
-                // toward it), and real vanilla never rewrites that fluid at
-                // all — confirmed against the real server (tools/analysis,
-                // see SPEC §11): a datapack whose ENTIRE surface_rule is the
-                // overworld's own bare, unconditioned `deepslate`
-                // vertical_gradient — no above_preliminary_surface, no
-                // bedrock floor, nothing else gating it — still leaves
-                // exactly the same 475 fluid blocks untouched that vanilla's
-                // full 287-rule tree does, in the same aquifer-free probe
-                // golden_fill_test.cpp reads, and every one of those 475 is
-                // inside a fluid-filled void with solid stone already
-                // crossed above it. The topmost/open-water case (real ocean
-                // straight from the sky, `stoneDepthAbove == 0` throughout)
-                // is left reachable, which is what a rule keyed on `water`
-                // — freezing ice onto a lake's own surface — needs.
                 const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                if (category == Category::Fluid &&
-                    stoneDepthAbove[static_cast<std::size_t>(y - minY)] != 0) {
-                    continue;
+                if (category != Category::Solid) {
+                    if (crossedSolid) {
+                        continue;
+                    }
+                } else {
+                    crossedSolid = true;
                 }
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);

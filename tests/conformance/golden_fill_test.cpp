@@ -24,17 +24,23 @@
 // still leaves exactly the same 475 fluid blocks untouched, and every one of
 // them sits inside a fluid-filled cave-void with solid rock already crossed
 // above it in the same column. The real gate is `ChunkFiller`'s own second
-// pass, not anything the rule tree can express: a FLUID position stays
-// eligible for surface rules only while it is the column's FIRST (topmost,
-// reached straight from the sky) fluid body — `stoneDepthAbove == 0`,
-// meaning no solid has been crossed yet — closed in `applySurfaceRules`
-// (terrain_filler.cpp). A deeper, isolated pocket's fluid inherits a nonzero
-// run carried over from the solid rock above it (fluid neither breaks a
-// stone-depth run nor counts toward it) and stays untouched, while the
-// topmost/open-water case a rule keyed on `water` needs — freezing ice onto
-// a lake's own surface — is unaffected; see
+// pass, not anything the rule tree can express: a NON-SOLID position (fluid
+// or air alike) stays eligible for surface rules only while it is part of
+// the column's FIRST (topmost, reached straight from the sky) non-solid
+// stretch — closed in `applySurfaceRules` (terrain_filler.cpp) with a plain
+// monotonic "has solid been crossed yet" flag, deliberately not
+// `stoneDepthAbove`, which resets on air on purpose and so cannot tell a
+// deep cave's own air from the open sky. That distinction is invisible here
+// — this probe runs `aquifers_enabled: false`, so every non-solid position
+// below sea level is fluid, never air — and only showed up once the same
+// fix ran against a real aquifer's own air pockets
+// (golden_fill_aquifer_test.cpp, SPEC §11: 451 of that file's 461 mismatches
+// were air, not fluid, under an earlier fluid-only version of this guard).
+// The topmost/open-water case a rule keyed on `water` needs — freezing ice
+// onto a lake's own surface — stays reachable; see the pre-existing "water
+// reads the filler's own latched height" unit test, and
 // `terrain_filler_test.cpp`'s "an unconditioned rule never rewrites a buried
-// fluid pocket's own fluid" for the isolated regression.
+// fluid pocket's own fluid" for the isolated buried-fluid regression.
 //
 // The off-by-one this comparison caught, which is why it is here: `sea_level`
 // is EXCLUSIVE. With vanilla's 63 the water stops at 62. An inclusive

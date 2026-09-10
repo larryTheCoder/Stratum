@@ -130,20 +130,51 @@ private:
 [[nodiscard]] nlohmann::json buriedNotchSettings() {
     nlohmann::json settings = flatSettings(false, false);
     const nlohmann::json solidBelowSky = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
-                                                         {"from_y", -1},
-                                                         {"to_y", 1},
-                                                         {"from_value", 1.0},
-                                                         {"to_value", -1.0}};
+                                                        {"from_y", -1},
+                                                        {"to_y", 1},
+                                                        {"from_value", 1.0},
+                                                        {"to_value", -1.0}};
     const nlohmann::json notchFloor = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
-                                                      {"from_y", -10},
-                                                      {"to_y", -8},
-                                                      {"from_value", 1.0},
-                                                      {"to_value", -1.0}};
+                                                     {"from_y", -10},
+                                                     {"to_y", -8},
+                                                     {"from_value", 1.0},
+                                                     {"to_value", -1.0}};
     const nlohmann::json notchRoof = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
-                                                     {"from_y", -8},
-                                                     {"to_y", -6},
-                                                     {"from_value", -1.0},
-                                                     {"to_value", 1.0}};
+                                                    {"from_y", -8},
+                                                    {"to_y", -6},
+                                                    {"from_value", -1.0},
+                                                    {"to_value", 1.0}};
+    settings["noise_router"]["final_density"] =
+        nlohmann::json{{"type", "minecraft:min"},
+                       {"argument1", solidBelowSky},
+                       {"argument2", nlohmann::json{{"type", "minecraft:max"},
+                                                    {"argument1", notchFloor},
+                                                    {"argument2", notchRoof}}}};
+    return settings;
+}
+
+/// The same shape as buriedNotchSettings(), moved entirely above sea_level
+/// (8) so the notch is AIR rather than fluid: solid from the world floor up
+/// through y = 20, a buried air notch at y in [20, 22]..[22, 24], solid again
+/// up through y = 27, and open sky above that — the shape a real underground
+/// cave has, as opposed to the column's own open sky.
+[[nodiscard]] nlohmann::json buriedAirNotchSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    const nlohmann::json solidBelowSky = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                        {"from_y", 27},
+                                                        {"to_y", 29},
+                                                        {"from_value", 1.0},
+                                                        {"to_value", -1.0}};
+    const nlohmann::json notchFloor = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                     {"from_y", 20},
+                                                     {"to_y", 22},
+                                                     {"from_value", 1.0},
+                                                     {"to_value", -1.0}};
+    const nlohmann::json notchRoof = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                    {"from_y", 22},
+                                                    {"to_y", 24},
+                                                    {"from_value", -1.0},
+                                                    {"to_value", 1.0}};
     settings["noise_router"]["final_density"] =
         nlohmann::json{{"type", "minecraft:min"},
                        {"argument1", solidBelowSky},
@@ -524,14 +555,52 @@ TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own flui
     // an unconditioned rule reaches.
     CHECK(buffer.at(0, -10, 0).name.toString() == "minecraft:end_stone");
     CHECK(buffer.at(0, -6, 0).name.toString() == "minecraft:end_stone");
-    // The notch itself — solid rock already crossed above it, so
-    // stoneDepthAbove is nonzero going in — keeps its own fluid untouched.
+    // The notch itself — solid rock already crossed above it on the way
+    // down — keeps its own fluid untouched.
     CHECK(buffer.at(0, -8, 0).name.toString() == "minecraft:water");
-    // The column's OWN topmost fluid, reached with nothing solid above it
-    // yet (stoneDepthAbove == 0 throughout), stays reachable — the same
-    // distinction "water reads the filler's own latched height" exercises
-    // through a condition instead of a bare rule.
+    // The column's OWN topmost fluid, reached with no solid crossed above
+    // it yet, stays reachable — the same distinction "water reads the
+    // filler's own latched height" exercises through a condition instead of
+    // a bare rule.
     CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:end_stone");
+}
+
+TEST_CASE("an unconditioned rule never rewrites a buried air pocket either",
+          "[terrain][filler][surface]") {
+    // The same mechanism as the buried-fluid case above, but for AIR — and
+    // the one that actually matters most in practice: measured against a
+    // real aquifer-on overworld region (golden_fill_aquifer_test.cpp,
+    // SPEC §11), 451 of that golden's 461 category mismatches were exactly
+    // this — a real cave's own drained/air cell, painted solid by the same
+    // unconditioned `deepslate` rule, because a fluid-only guard
+    // (`Context::stoneDepthAbove == 0`) cannot tell a deep cave's air from
+    // the column's own open sky: air resets `stoneDepthAbove` on purpose
+    // (Context's own doc), which is exactly what a buried pocket and open
+    // sky have in common under that field alone. The real gate is
+    // monotonic — has ANY solid been crossed above this position, however
+    // many air/solid transitions came before it — not the resetting run.
+    const TempTree tree;
+    tree.defineSettings("test", buriedAirNotchSettings());
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(block("minecraft:end_stone"));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // Solid rock on both sides of the notch is rewritten like anything else
+    // an unconditioned rule reaches.
+    CHECK(buffer.at(0, 20, 0).name.toString() == "minecraft:end_stone");
+    CHECK(buffer.at(0, 27, 0).name.toString() == "minecraft:end_stone");
+    // The buried air notch — solid rock already crossed above it — keeps
+    // its own air untouched, unlike a fluid-only guard would.
+    CHECK(buffer.at(0, 22, 0).name.toString() == "minecraft:air");
+    // The column's own open sky, with no solid crossed above it yet, stays
+    // reachable — the same distinction the buried-fluid test draws for
+    // water.
+    CHECK(buffer.at(0, 31, 0).name.toString() == "minecraft:end_stone");
 }
 
 TEST_CASE("biome reads the biome the climate router and parameter list compute",

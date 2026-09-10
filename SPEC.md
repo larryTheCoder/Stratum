@@ -423,11 +423,13 @@ Its own component (`lib/mapping/`), its own tests:
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
   `golden_fill_aquifer_test.cpp` pins, and 6290723 of 6291456 (99.988%) over
   a wider 64-chunk sweep — a residual small enough that the two still-open
-  narrow pieces above plausibly explain the whole of it. What remains is
-  those two pieces themselves, plus ore veins (M3, untouched) and the
-  deepslate surface-rule gap `golden_fill_test.cpp` already named, now with
-  more real terrain for it to misfire on — none of which is unique to
-  aquifers, which is why this still reads as a track.
+  narrow pieces above plausibly explain the whole of it. WITH the real
+  287-rule surface tree also running, `golden_fill_aquifer_test.cpp` is now
+  393216 of 393216 too (§11: the deepslate surface-rule gap
+  `golden_fill_test.cpp` named is CLOSED, not carried). What remains is the
+  two still-open barrier/fluid-type pieces themselves, plus ore veins (M3,
+  untouched) — none of which is unique to aquifers, which is why this still
+  reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -551,14 +553,16 @@ Its own component (`lib/mapping/`), its own tests:
      `surface::RuleGraph` at all, isolating the aquifer's own decision) is
      EXACT on 393216 of 393216 blocks' category over the four chunks
      `golden_fill_test.cpp` already uses. WITH the real 287-rule surface
-     tree running, category is 392755 of 393216 (99.883%) — not a new gap:
-     it is `golden_fill_test.cpp`'s own already-documented, still-unsolved
-     one (the unconditioned `deepslate` rule firing by Y alone) reached far
-     more often, because a real aquifer carves genuinely different terrain —
-     air pockets and drained cells a flat sea level never produces — for
-     that same rule to misfire on. Confirmed by construction: the RAW pass
-     was already exact, so nothing past the first pass belongs to the
-     aquifer.
+     tree running, category is now ALSO 393216 of 393216. It first read
+     392755 (99.883%, 461 short) — not a new gap: `golden_fill_test.cpp`'s
+     own already-documented one (the unconditioned `deepslate` rule firing
+     by Y alone), reached far more often because a real aquifer carves
+     genuinely different terrain — air pockets and drained cells a flat sea
+     level never produces — for that same rule to misfire on. Confirmed by
+     construction: the RAW pass was already exact, so nothing past the
+     first pass belonged to the aquifer. 451 of the 461 were air, not
+     fluid, and closing them is what took the general fix (§11) rather than
+     a fluid-only one.
 
      *A performance finding, not just a correctness one.* The first version
      of this recomputed every ranked source's own `preliminary_surface_level`
@@ -1167,23 +1171,41 @@ Open:
   can express it, because it isn't a property of any one rule. It is
   `ChunkFiller::applySurfaceRules`'s own second pass, which previously asked
   the executor about every position regardless of what the first pass had
-  placed there. A FLUID position stays eligible for surface rules only while
-  it is the column's FIRST (topmost, reached straight from the sky) fluid
-  body — `Context::stoneDepthAbove == 0`, meaning no solid has been crossed
-  yet on the way down. A deeper, isolated pocket's fluid inherits a nonzero
-  run carried over from the solid rock above it, because fluid neither
-  breaks a stone-depth run nor counts toward it (`Context`'s own doc) — and
-  real vanilla never rewrites that fluid at all. The topmost/open-water case
-  stays reachable, which is what a rule keyed on `water` — freezing ice onto
-  a lake's own surface — needs, and the pre-existing
-  "water reads the filler's own latched height" unit test is what caught an
-  earlier, too-broad version of this fix (skipping ALL non-solid positions)
-  before it landed. `golden_fill_test.cpp` now reads 393216 of 393216 exact,
-  both granularities, no residual — and
+  placed there.
+
+  The first fix landed was narrower than the real rule, and a second golden
+  (below) is what caught the gap. A FLUID-only guard —
+  `Context::stoneDepthAbove == 0`, meaning no solid crossed yet on the way
+  down, so a deeper pocket's fluid (inheriting a nonzero run carried over
+  from the solid above it, since fluid neither breaks a stone-depth run nor
+  counts toward it) stays untouched while the column's first/topmost fluid
+  body stays reachable — closed this file's 475-block gap exactly (both
+  granularities, no residual) and left the pre-existing "water reads the
+  filler's own latched height" unit test passing, since it exercises the
+  topmost/open-water case a `water`-keyed rule (freezing ice onto a lake's
+  own surface) needs. But `golden_fill_aquifer_test.cpp` — measuring the
+  same rule against a REAL aquifer's own air/fluid transitions rather than a
+  flat, aquifer-free sea level — still read 461 short after that fix, and
+  451 of those 461 were AIR, not fluid: `stoneDepthAbove` resets on air BY
+  DESIGN (`Context`'s own doc), which is exactly what makes a deep cave's
+  own air indistinguishable from the column's open sky under a
+  fluid-shaped guard.
+
+  The general rule both goldens now confirm: a NON-SOLID position (fluid or
+  air alike) stays eligible for surface rules only while it is part of the
+  column's FIRST (topmost, reached straight from the sky) non-solid
+  stretch. Once solid has been crossed anywhere above a position — a plain
+  monotonic flag, deliberately NOT `stoneDepthAbove`, which resets on air on
+  purpose — every non-solid position below that stays out of reach for the
+  rest of the column, however many more solid runs and non-solid gaps
+  follow, and real vanilla never rewrites any of them. Both
+  `golden_fill_test.cpp` (393216 of 393216) and `golden_fill_aquifer_test.cpp`
+  (393216 of 393216) read exact with this version — the aquifer-free probe
+  has no air below sea level to have told the two guards apart on its own.
   "an unconditioned rule never rewrites a buried fluid pocket's own fluid"
-  (`terrain_filler_test.cpp`) is the isolated regression: a hand-built buried
-  notch, solid on both sides, converted by an unconditioned `block` rule
-  everywhere except the notch itself.
+  (`terrain_filler_test.cpp`) is the isolated regression: a hand-built
+  buried notch, solid on both sides, converted by an unconditioned `block`
+  rule everywhere except the notch itself.
 
   Correctness, found while wiring rather than assumed: `y_above` and `water`
   both read `condition.addSurfaceDepth` for their `add_stone_depth` field —

@@ -21,18 +21,26 @@
 //     time, not a purpose-built void-column probe.
 //
 //   * **WITH SURFACE RULES** — the overworld's real 287-rule tree, same as
-//     `golden_fill_test.cpp`. Category is 392755 of 393216 — 99.883%, not
-//     99.988% — and the shortfall is NOT a new gap: it is `golden_fill_test.cpp`'s
-//     own already-documented, already-unsolved one (`deepslate`'s bare,
-//     unconditioned `vertical_gradient` firing by Y alone whenever the
-//     entry above it fails) reached far more often, because a real aquifer
-//     carves genuinely different terrain — air pockets and drained cells a
-//     flat sea level never produces — for that same unconditioned rule to
-//     misfire on. 451 of the 461 category mismatches here are air the
-//     unconditioned rule painted solid; the aquifer decided them right, and
-//     the surface tree overwrote the decision after the fact. Confirmed by
-//     construction: every one of the RAW pass's 393216 categories was
-//     already exact, so nothing past the first pass can be the aquifer's.
+//     `golden_fill_test.cpp`. Category is 393216 of 393216 — exact, both
+//     passes. It USED to stop at 392755 (99.883%, 461 short), and the
+//     shortfall was never a new gap: it was `golden_fill_test.cpp`'s own
+//     already-documented `deepslate` residual, reached far more often
+//     because a real aquifer carves genuinely different terrain — air
+//     pockets and drained cells a flat sea level never produces — for that
+//     same unconditioned rule to misfire on. 451 of the 461 mismatches were
+//     air the unconditioned rule painted solid; only 10 were fluid. That
+//     told against the first fix `golden_fill_test.cpp`'s own residual
+//     took: a FLUID-only guard (`Context::stoneDepthAbove == 0`) closed the
+//     475-block aquifer-free gap but left every one of these 451 air
+//     mismatches standing, since air resets `stoneDepthAbove` on purpose
+//     (Context's own doc) — indistinguishable, by that field alone, from
+//     the column's own open sky. The general fix in
+//     `ChunkFiller::applySurfaceRules` tracks a monotonic "solid crossed
+//     yet" flag instead, covering fluid and air alike, and closes this to
+//     393216 exact together with `golden_fill_test.cpp`'s own 393216.
+//     Confirmed by construction: every one of the RAW pass's 393216
+//     categories was already exact, so nothing past the first pass was
+//     ever the aquifer's to answer for.
 //
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>
@@ -202,10 +210,10 @@ TEST_CASE("the aquifer wiring places the blocks the server placed, before any su
     CHECK(rawSameCategory == 393216U);
 
     // With the real 287-rule surface tree running: pinned, not bounded,
-    // same reasoning as golden_fill_test.cpp. The shortfall from
-    // `rawSameCategory` is the file comment's own deepslate finding, not a
-    // new one — this number moves if THAT closes, or if the aquifer wiring
-    // regresses; either way it is worth seeing move.
-    CHECK(sameCategory == 392755U);
-    CHECK(exact == 392755U);
+    // same reasoning as golden_fill_test.cpp — and now equal to `blocks`
+    // itself. Anything short of 393216 here means either the aquifer wiring
+    // regressed or the buried-fluid/buried-air gap the file comment
+    // describes reopened.
+    CHECK(sameCategory == 393216U);
+    CHECK(exact == 393216U);
 }
