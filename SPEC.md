@@ -1203,9 +1203,11 @@ Open:
   (393216 of 393216) read exact with this version — the aquifer-free probe
   has no air below sea level to have told the two guards apart on its own.
   "an unconditioned rule never rewrites a buried fluid pocket's own fluid"
-  (`terrain_filler_test.cpp`) is the isolated regression: a hand-built
-  buried notch, solid on both sides, converted by an unconditioned `block`
-  rule everywhere except the notch itself.
+  and its sibling "...a buried air pocket either" (`terrain_filler_test.cpp`)
+  are the isolated regressions: a hand-built buried notch, solid on both
+  sides, converted by an unconditioned `block` rule everywhere except the
+  notch itself — once with the notch below sea level (fluid), once above it
+  (air).
 
   Correctness, found while wiring rather than assumed: `y_above` and `water`
   both read `condition.addSurfaceDepth` for their `add_stone_depth` field —
