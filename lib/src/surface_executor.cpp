@@ -377,10 +377,23 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
         }
 
         case ConditionType::StoneDepth: {
+            const bool ceiling = condition.surfaceType == "ceiling";
+            const std::int32_t run = ceiling ? at.stoneDepthBelow : at.stoneDepthAbove;
+            // 0 means the position is not in a solid run AT ALL — reset by
+            // air, per Context's own doc — and "N blocks deep in stone"
+            // cannot be true where there is no stone to be deep in. Without
+            // this guard the stored-counter-minus-one below reads that as
+            // depth -1, which trivially satisfies almost any non-negative
+            // offset: measured against a real probe world, this painted
+            // grass and dirt across the entire sky above the terrain and
+            // deepslate over open water, 292005 of 393216 blocks in four
+            // chunks (golden_fill_test.cpp).
+            if (run <= 0) {
+                return false;
+            }
             // The stored counter is 1 at a run's top; the comparison is
             // against a 0-based depth, hence the -1.
-            const bool ceiling = condition.surfaceType == "ceiling";
-            const std::int32_t depth = (ceiling ? at.stoneDepthBelow : at.stoneDepthAbove) - 1;
+            const std::int32_t depth = run - 1;
             std::int32_t threshold = condition.offset;
             if (condition.addSurfaceDepth) {
                 threshold += surfaceDepth(at.x, at.z);

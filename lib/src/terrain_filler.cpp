@@ -147,7 +147,8 @@ ChunkFiller::ChunkFiller(const density::Graph& graph, const density::NoiseRegist
 ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::NoiseRegistry& noises,
                                  const settings::NoiseSettings& settings,
                                  const surface::RuleGraph* surfaceRules,
-                                 const biome::ParameterList* biomeParameters) {
+                                 const biome::ParameterList* biomeParameters,
+                                 const biome::TemperatureTable* biomeTemperatures) {
     // Refused, not approximated. A dimension with aquifers does not decide its
     // blocks from the density alone, and filling it as though it did produces
     // a world that generates and is wrong — which SPEC §8 treats as the most
@@ -198,21 +199,28 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
         // message glued together out of several.
         filler.surfaceRulesBlockedBy_ = surfaceRules->unrunnable();
         const SurfaceNeeds needs = surfaceNeedsOf(*surfaceRules);
-        if (needs.biome && biomeParameters == nullptr) {
+        // `temperature` needs to know WHICH biome a block sits in before it
+        // can look up that biome's declared value, so it leans on the same
+        // climate search `biome` itself does — a tree naming only
+        // `temperature` still needs a ParameterList, even though it never
+        // names `biome` directly.
+        const bool needsBiomeIdentity = needs.biome || needs.temperature;
+        if (needsBiomeIdentity && biomeParameters == nullptr) {
             filler.surfaceRulesBlockedBy_.emplace_back(
-                "minecraft:biome (this dimension's rules read the biome, and no "
-                "biome::ParameterList was supplied to ChunkFiller::compile)");
+                "minecraft:biome (this dimension's rules read the biome, directly or through a "
+                "biome's declared temperature, and no biome::ParameterList was supplied to "
+                "ChunkFiller::compile)");
         }
-        if (needs.temperature) {
+        if (needs.temperature && biomeTemperatures == nullptr) {
             // Not a construct — the executor runs `temperature` fine, given
-            // a biome's own declared value. Nothing in this build resolves
-            // one from a biome's identifier yet (SPEC §11), and 0.0F is not
-            // an honest stand-in: it would run the condition against the
-            // wrong number rather than not run it, which is the class of
-            // wrong SPEC §8 exists to keep out.
+            // a biome's own declared value; 0.0F is not an honest stand-in
+            // for one, since it would run the condition against the wrong
+            // number rather than not run it, which is the class of wrong
+            // SPEC §8 exists to keep out.
             filler.surfaceRulesBlockedBy_.emplace_back(
-                "minecraft:temperature (this build has no source yet for a biome's own "
-                "declared temperature)");
+                "minecraft:temperature (this dimension's rules read a biome's declared "
+                "temperature, and no biome::TemperatureTable was supplied to "
+                "ChunkFiller::compile)");
         }
         if (needs.bandlands &&
             noises.find(data::ResourceLocation::parse("minecraft:clay_bands_offset")) == nullptr) {
@@ -229,14 +237,16 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
 
         if (filler.surfaceRulesBlockedBy_.empty()) {
             filler.surfaceNeedsBiome_ = needs.biome;
+            filler.surfaceNeedsTemperature_ = needs.temperature;
             filler.surfaceNeedsPreliminarySurface_ = needs.preliminarySurface;
             filler.surfaceNeedsSteep_ = needs.steep;
             filler.biomeParameters_ = biomeParameters;
+            filler.biomeTemperatures_ = biomeTemperatures;
             if (needs.preliminarySurface) {
                 filler.interpreter_.requireEvaluable(
                     settings.router.at(settings::RouterEntry::PreliminarySurfaceLevel));
             }
-            if (needs.biome) {
+            if (needsBiomeIdentity) {
                 for (const settings::RouterEntry entry :
                      {settings::RouterEntry::Temperature, settings::RouterEntry::Vegetation,
                       settings::RouterEntry::Continents, settings::RouterEntry::Erosion,
@@ -414,15 +424,19 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
 
             // The biome grid is quarter-resolution and constant within a
             // cell, so this is resolved once per four y levels rather than
-            // once a block. A sentinel bool rather than optional<int32_t>:
-            // every read of the cached value is already guarded by it, and
-            // spelling that as has_value()/operator* left the guard too
-            // indirect for bugprone-unchecked-optional-access to see.
+            // once a block — and `temperature` rides the same grid, since it
+            // has to know which biome a block sits in before it can look up
+            // that biome's own declared value. A sentinel bool rather than
+            // optional<int32_t>: every read of the cached value is already
+            // guarded by it, and spelling that as has_value()/operator* left
+            // the guard too indirect for bugprone-unchecked-optional-access
+            // to see.
+            const bool needsBiomeIdentity = surfaceNeedsBiome_ || surfaceNeedsTemperature_;
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
             for (std::int32_t y = topY - 1; y >= minY; --y) {
-                if (surfaceNeedsBiome_) {
+                if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);
                     if (!biomeQuartYKnown || biomeQuartY != quartY) {
                         const std::int32_t qx = quartSnap(x);
@@ -445,7 +459,12 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                         biomeQuartY = quartY;
                         biomeQuartYKnown = true;
                     }
-                    context.biome = biomeId;
+                    if (surfaceNeedsBiome_) {
+                        context.biome = biomeId;
+                    }
+                    if (surfaceNeedsTemperature_) {
+                        context.biomeTemperature = biomeTemperatures_->at(biomeId);
+                    }
                 }
 
                 context.y = y;

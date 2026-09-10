@@ -13,6 +13,7 @@ configure_file(
 
 add_library(stratum_core STATIC
     src/biome_parameter_list.cpp
+    src/biome_temperature_table.cpp
     src/aquifer_barrier.cpp
     src/aquifer_lattice.cpp
     src/aquifer_sampling.cpp
@@ -59,6 +60,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/biome/parameter_list.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/biome/temperature_table.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"

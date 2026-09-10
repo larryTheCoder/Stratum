@@ -11,16 +11,24 @@
 //
 // TWO GRANULARITIES, because they measure different things.
 //
-//   * **Category** — solid, fluid or air — is what the FILLER decides, and it
-//     is exact: 393216 of 393216 blocks. Nothing this build places is in the
-//     wrong category anywhere in four chunks.
-//   * **Exact block** is 82.013%, and every one of the remaining 17.987% is a
-//     SURFACE RULE this build does not run yet: deepslate and bedrock (both
-//     vertical gradients that reach the whole column, not a skin at the top),
-//     and gravel, dirt and grass at the surface itself.
+//   * **Category** — solid, fluid or air — is what the FILLER decides before
+//     any surface rule runs, and it is exact: 393216 of 393216 blocks.
+//   * **Exact block**, with the whole overworld surface-rule tree now
+//     RUNNING (M4, below), is 392741 of 393216 — 99.879%. All 475 stragglers
+//     are one known, narrow gap: `deepslate`'s own rule (the tree's third
+//     top-level sequence entry) is a bare `vertical_gradient` with nothing
+//     else gating it, so once it is REACHED — which happens whenever the
+//     entry above it, `above_preliminary_surface`, is false or its own
+//     composition sub-tree placed nothing — it fires by Y alone and
+//     overwrites whatever category is there. Measured here: it wins on 475
+//     FLUID blocks between y -40 and y 0, all inside this aquifer-free
+//     probe's deep ocean trenches, where the real server left the water
+//     untouched. What stops it in the real server at exactly these
+//     positions is not settled — SPEC §11 records it as an open question
+//     rather than a guess.
 //
 // Reporting only the second would read as terrain being one part in five
-// wrong. Reporting only the first would hide that the world is bare stone.
+// wrong. Reporting only the first would hide the 475-block gap that remains.
 //
 // The off-by-one this comparison caught, which is why it is here: `sea_level`
 // is EXCLUSIVE. With vanilla's 63 the water stops at 62. An inclusive
@@ -29,23 +37,26 @@
 // chunks — and nothing short of comparing against real blocks would have said
 // so.
 //
-// SURFACE RULES ARE NOW WIRED IN (M4) — a resolved `surface::RuleGraph` and
-// the overworld's own biome parameter table go into `ChunkFiller::compile`
-// below — and the 82.013% above has not moved, because the overworld's own
-// tree still names one thing this build cannot run it with: its single
-// `temperature` condition, which needs a biome's own declared temperature
-// and has nothing supplying one yet (SPEC §11). `bandlands`, the tree's
-// other one-time blocker, closed — its colour table's construction is now
-// derived clean-room and confirmed exactly against three world seeds and
-// 532224 real blocks (spec/bandlands-spec.md) — so it no longer appears
-// here at all. This is asserted directly (`runsSurfaceRules()` /
-// `surfaceRulesBlockedBy()`) rather than left to be inferred from the count
-// staying put, so the day `temperature` closes too, THIS assertion fails
-// first and says why the numbers below moved rather than leaving that to be
-// rediscovered.
+// SURFACE RULES NOW RUN (M4). The overworld's own tree named one last thing
+// `ChunkFiller` could not supply — its single `temperature` condition needs
+// a biome's own DECLARED value, and `biome::TemperatureTable` now resolves
+// one (from the same `worldgen/biome` entries `pack` already parsed). This
+// is the first time the real 287-rule, 141-condition tree has run end to end
+// against real blocks, and it caught a real bug immediately: `stone_depth`
+// compared a stored run counter that is legitimately 0 off the top of any
+// solid run (Context's own doc — reset by air) as `0 - 1 = -1`, which
+// trivially satisfies almost any non-negative threshold. Before the fix,
+// every grass/dirt/sand composition rule this tree contains fired at EVERY
+// position above the terrain, not just the top of it — grass painted the
+// entire sky, and deepslate painted over open water — 292005 of 393216
+// blocks in four chunks, caught by this very assertion. `Executor::test`'s
+// `ConditionType::StoneDepth` case now refuses outright when the run counter
+// is 0, closing that. The 475-block residual above is a second, much
+// narrower gap the same run surfaced, left open rather than guessed at.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/nbt/reader.hpp>
@@ -109,42 +120,74 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     overworld.aquifersEnabled = false;
     overworld.oreVeinsEnabled = false;
 
-    // Not under `tree`: the pack ships only `{"preset": "minecraft:overworld"}`
-    // for this — the real table is compiled into the jar, and
-    // tools/fetch-vanilla asks the server's own data generator to dump it
-    // instead (see biome/parameter_list.hpp).
-    const std::filesystem::path parametersPath =
-        fixtures() / "biome_parameters" / "minecraft" / "overworld.json";
-    if (!std::filesystem::is_regular_file(parametersPath)) {
-        SKIP("no biome parameter list at " << parametersPath);
-    }
-    std::ifstream parametersFile(parametersPath);
-    std::stringstream parametersJson;
-    parametersJson << parametersFile.rdbuf();
-    const auto biomeParameters = stratum::biome::ParameterList::fromJson(
-        nlohmann::json::parse(parametersJson.str()),
-        stratum::data::ResourceLocation::parse("minecraft:overworld"));
     const auto surfaceRules = stratum::surface::RuleGraph::resolve(
         overworld.surfaceRule, stratum::data::ResourceLocation::parse("minecraft:overworld"));
 
-    // referencedNoises() is the DENSITY graph's own contract; `bandlands`'
-    // one registered noise is a SURFACE construct's need and has to be
-    // asked for explicitly, same as ChunkFiller::compile's own doc already
-    // says for minecraft:surface/minecraft:surface_secondary.
+    // The probe world's own generator sets `biome_source` to `minecraft:fixed`,
+    // pinned to one synthetic biome everywhere — `stratum:probe`, declaring
+    // `temperature: 0.8` (tools/analysis/aquifer-free-probe.sh) — rather than
+    // running the overworld's real multi-noise search. Resolving through the
+    // overworld's own 7593-entry table here would answer a question vanilla
+    // never asked when this region was generated, so this builds a
+    // ParameterList with one entry spanning the whole climate space instead —
+    // the same answer a `minecraft:fixed` source gives without searching at
+    // all. [-2, 2] on every axis is wider than any real sample reaches
+    // (biome::QuantizedPoint::fitness's own doc), so nothing here can fall
+    // outside it.
+    const auto probeBiome = stratum::data::ResourceLocation::parse("stratum:probe");
+    const nlohmann::json wholeClimate = nlohmann::json::array({-2.0, 2.0});
+    const auto biomeParameters = stratum::biome::ParameterList::fromJson(
+        nlohmann::json{{"biomes",
+                        {{{"biome", probeBiome.toString()},
+                          {"parameters",
+                           {{"temperature", wholeClimate},
+                            {"humidity", wholeClimate},
+                            {"continentalness", wholeClimate},
+                            {"erosion", wholeClimate},
+                            {"depth", wholeClimate},
+                            {"weirdness", wholeClimate},
+                            {"offset", 0.0}}}}}}},
+        probeBiome);
+
+    // Its own declared temperature, read the same way a real `worldgen/biome`
+    // entry would be — just from a scratch tree rather than the fixture
+    // pack, since the synthetic `stratum:probe` biome is never in it.
+    const std::filesystem::path probeBiomeTree =
+        std::filesystem::temp_directory_path() / "stratum-golden-fill-probe-biome";
+    std::filesystem::remove_all(probeBiomeTree);
+    std::filesystem::create_directories(probeBiomeTree / "biome");
+    {
+        std::ofstream probeBiomeFile(probeBiomeTree / "biome" / "probe.json");
+        probeBiomeFile << nlohmann::json{{"temperature", 0.8}}.dump();
+    }
+    const auto biomeTemperatures = stratum::biome::TemperatureTable::fromPack(
+        stratum::data::Pack::openWorldgenTree(probeBiomeTree, "stratum"));
+    std::filesystem::remove_all(probeBiomeTree);
+
+    // referencedNoises() is the DENSITY graph's own contract and knows
+    // nothing about what the SURFACE graph needs — its own
+    // referencedNoises() covers the noises its `noise_threshold` conditions
+    // name, but `minecraft:surface`/`minecraft:surface_secondary`
+    // (read by every `stone_depth` condition) and
+    // `minecraft:clay_bands_offset` (`bandlands`) are needs of a RULE or
+    // CONDITION type itself rather than a name any condition carries, so
+    // Executor::compile's own doc asks for them explicitly.
     auto wantedNoises = loaded.graph.referencedNoises();
+    const auto surfaceNoises = surfaceRules.referencedNoises();
+    wantedNoises.insert(wantedNoises.end(), surfaceNoises.begin(), surfaceNoises.end());
+    wantedNoises.push_back(stratum::data::ResourceLocation::parse("minecraft:surface"));
+    wantedNoises.push_back(stratum::data::ResourceLocation::parse("minecraft:surface_secondary"));
     wantedNoises.push_back(stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset"));
     const auto noises = stratum::density::NoiseRegistry::create(
         pack, wantedNoises, kSeed, stratum::density::RandomSource::Xoroshiro);
-    const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld,
-                                                               &surfaceRules, &biomeParameters);
+    const auto filler = stratum::terrain::ChunkFiller::compile(
+        loaded.graph, noises, overworld, &surfaceRules, &biomeParameters, &biomeTemperatures);
 
-    // See the file comment: wired in, still blocked, by name, on purpose —
-    // now down to one reason: the overworld's single `temperature`
-    // condition, which needs a biome's own declared temperature and has
-    // nothing supplying one yet (ChunkFiller::compile's own doc).
-    CHECK_FALSE(filler.runsSurfaceRules());
-    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
-    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:temperature"));
+    // See the file comment: wired in, and now RUNNING — the overworld's
+    // tree named one last thing ChunkFiller could not supply, and the
+    // biome-temperature loader above closes it.
+    CHECK(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy().empty());
 
     const auto file = stratum::region::RegionFile::open(region);
 
@@ -195,11 +238,17 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     REQUIRE(chunks == 4U);
     REQUIRE(blocks == 393216U);
 
-    // Every block, in the right category. This is the filler's own claim and
-    // it is exact — not a threshold, and not rounded.
-    CHECK(sameCategory == blocks);
+    // Category, pinned to the one known gap the file comment names: 475
+    // blocks where the bare, unconditioned `deepslate` rule wins over real
+    // fluid in a deep ocean trench. Not `blocks` any more — that would hide
+    // a regression here behind a threshold, same reasoning as `exact` below.
+    CHECK(sameCategory == 392741U);
 
-    // And the exact-block number, pinned. It moves when surface rules land,
-    // and it should move upward; anything else means the filler changed.
-    CHECK(exact == 322490U);
+    // The exact-block number, pinned. This is the first run of the whole
+    // 287-rule, 141-condition tree end to end, and every one of the 392741
+    // category matches is ALSO an exact match — the same 475-block gap
+    // accounts for the entire shortfall from `blocks`. It moves when either
+    // gap named in the file comment closes, or when something else does;
+    // anything else means the filler changed.
+    CHECK(exact == 392741U);
 }

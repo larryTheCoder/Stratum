@@ -1,6 +1,7 @@
 // Stratum — the chunk filler.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -23,6 +24,7 @@
 
 using Catch::Matchers::ContainsSubstring;
 using stratum::biome::ParameterList;
+using stratum::biome::TemperatureTable;
 using stratum::data::Pack;
 using stratum::settings::LoadedSettings;
 using stratum::settings::RouterEntry;
@@ -62,6 +64,16 @@ public:
         std::filesystem::create_directories(path_ / "noise");
         std::ofstream out(path_ / "noise" / "clay_bands_offset.json");
         out << R"({"firstOctave": -8, "amplitudes": [1.0]})";
+        return *this;
+    }
+
+    /// Writes `worldgen/biome/<name>.json` declaring only `temperature`, so
+    /// a `biome::TemperatureTable` built from this tree's own Pack has
+    /// something to read back for `minecraft:temperature`.
+    const TempTree& defineBiomeTemperature(std::string_view name, double temperature) const {
+        std::filesystem::create_directories(path_ / "biome");
+        std::ofstream out(path_ / "biome" / (std::string(name) + ".json"));
+        out << nlohmann::json{{"temperature", temperature}}.dump();
         return *this;
     }
 
@@ -110,12 +122,14 @@ private:
 
 [[nodiscard]] ChunkFiller compileFrom(const TempTree& tree, const LoadedSettings& loaded,
                                       const RuleGraph* surfaceRules = nullptr,
-                                      const ParameterList* biomeParameters = nullptr) {
+                                      const ParameterList* biomeParameters = nullptr,
+                                      const TemperatureTable* biomeTemperatures = nullptr) {
     const auto& settings =
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
     static stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
         tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
-    return ChunkFiller::compile(loaded.graph, noises, settings, surfaceRules, biomeParameters);
+    return ChunkFiller::compile(loaded.graph, noises, settings, surfaceRules, biomeParameters,
+                                biomeTemperatures);
 }
 
 [[nodiscard]] RuleGraph resolveSurface(const nlohmann::json& json) {
@@ -155,6 +169,14 @@ private:
                                    {"weirdness", axis},
                                    {"offset", 0.0}}}}}}};
     return ParameterList::fromJson(json, stratum::data::ResourceLocation::parse("minecraft:test"));
+}
+
+/// `minecraft:plains` declaring @p temperature, read back from @p tree's own
+/// Pack — the same tree plainsEverywhere()'s ParameterList names, so a test
+/// combining both resolves one consistent biome.
+[[nodiscard]] TemperatureTable plainsTemperature(const TempTree& tree, double temperature) {
+    tree.defineBiomeTemperature("plains", temperature);
+    return TemperatureTable::fromPack(tree.pack());
 }
 
 } // namespace
@@ -459,11 +481,12 @@ TEST_CASE("a tree that uses bandlands without its noise built is blocked, not cr
     CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
 }
 
-TEST_CASE("a tree that reads the biome's declared temperature is blocked",
+TEST_CASE("a tree that reads temperature needs the biome's identity too, and names both gaps",
           "[terrain][filler][surface]") {
-    // This build has no source for a biome's own declared temperature
-    // outside the executor's unit tests (SPEC §11) — a real gap, distinct
-    // from an unrunnable construct, and reported the same honest way.
+    // `temperature` never names `biome` itself, but it cannot answer without
+    // knowing WHICH biome a block sits in first — the same climate search
+    // `biome` needs. Neither is supplied here, so both gaps are named,
+    // rather than the second only surfacing once the first is fixed.
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));
     const LoadedSettings loaded = tree.load();
@@ -472,8 +495,51 @@ TEST_CASE("a tree that reads the biome's declared temperature is blocked",
     const ChunkFiller filler = compileFrom(tree, loaded, &surface);
 
     CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 2U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy()[0], ContainsSubstring("minecraft:biome"));
+    CHECK_THAT(filler.surfaceRulesBlockedBy()[1], ContainsSubstring("minecraft:temperature"));
+}
+
+TEST_CASE("a tree that reads temperature without a temperature table is blocked, not crashed",
+          "[terrain][filler][surface]") {
+    // Its biome identity is resolvable here — only the biome's own DECLARED
+    // temperature is missing, so this isolates that one gap from the last
+    // test's two.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(condition(
+        nlohmann::json{{"type", "minecraft:temperature"}}, block("minecraft:packed_ice")));
+    const ParameterList biomes = plainsEverywhere();
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface, &biomes); // no TemperatureTable
+
+    CHECK_FALSE(filler.runsSurfaceRules());
     REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
     CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:temperature"));
+}
+
+TEST_CASE("temperature reads the biome's own declared value, not a made-up one",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(condition(
+        nlohmann::json{{"type", "minecraft:temperature"}}, block("minecraft:packed_ice")));
+    const ParameterList biomes = plainsEverywhere();
+    // Below `sea_level + 17` (25 here), freezing() compares the declared
+    // value unadjusted (surface::Executor::freezing's own doc); 0.1 sits
+    // comfortably under its 0.15 threshold, so this fires everywhere the
+    // flat dimension's floor reaches, without leaning on the height term.
+    const TemperatureTable temperatures = plainsTemperature(tree, 0.1);
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface, &biomes, &temperatures);
+    REQUIRE(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy().empty());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:packed_ice");
+    CHECK(buffer.at(15, -1, 9).name.toString() == "minecraft:packed_ice");
 }
 
 TEST_CASE("above_preliminary_surface reads the column's own level, not a per-block guess",

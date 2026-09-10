@@ -254,6 +254,40 @@ TEST_CASE("stone_depth counts from a run's own edge, not from the world's", "[su
     CHECK(bottom.apply(deep) != nullptr);
 }
 
+TEST_CASE("stone_depth is false off the top of any run, not depth -1", "[surface]") {
+    // A run counter of 0 means "reset by air" (Context's own doc), not "one
+    // past the top of a solid run" — the naive `0 - 1 = -1` reading trivially
+    // satisfies almost any non-negative offset, which is exactly what let a
+    // biome-composition sequence fire at every position above real terrain
+    // instead of only its top: measured against a real probe world, 292005
+    // of 393216 blocks in four chunks (golden_fill_test.cpp), grass painting
+    // the whole sky and deepslate painting over open water.
+    const auto geometry = overworldGeometry();
+    const auto rule = [](const char* type, int offset) {
+        return nlohmann::json{{"type", "minecraft:condition"},
+                              {"if_true", nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                         {"offset", offset},
+                                                         {"add_surface_depth", false},
+                                                         {"secondary_depth_range", 0},
+                                                         {"surface_type", type}}},
+                              {"then_run", block("minecraft:stone")}};
+    };
+
+    // offset 5 is generous enough that the old `-1 <= 5` reading would fire;
+    // a position off the top of any run must still refuse it.
+    const RuleGraph floorGraph = resolve(rule("floor", 5));
+    const Executor floor = Executor::compile(floorGraph, kSeed, geometry);
+    Context notInARun = at(0, 100, 0);
+    notInARun.stoneDepthAbove = 0;
+    CHECK(floor.apply(notInARun) == nullptr);
+
+    const RuleGraph ceilingGraph = resolve(rule("ceiling", 5));
+    const Executor ceiling = Executor::compile(ceilingGraph, kSeed, geometry);
+    Context notInARunEither = at(0, 100, 0);
+    notInARunEither.stoneDepthBelow = 0;
+    CHECK(ceiling.apply(notInARunEither) == nullptr);
+}
+
 TEST_CASE("water is unconditionally true in a column with no fluid at all", "[surface]") {
     const auto geometry = overworldGeometry();
     const RuleGraph graph =

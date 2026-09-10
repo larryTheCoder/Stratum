@@ -103,12 +103,13 @@ TEST_CASE("the overworld names nothing left unrunnable", "[conformance][surface]
     // against three world seeds and 532224 real blocks
     // (spec/bandlands-spec.md, SPEC §11).
     //
-    // What is NOT settled by this: ChunkFiller still refuses to actually run
-    // the overworld's rules, because nothing supplies a biome's own declared
-    // temperature for its one `temperature` condition yet
-    // (ChunkFiller::compile's own doc, SPEC §11). That is a missing INPUT,
-    // not an unrunnable CONSTRUCT — the distinction this file's own tests
-    // exist to keep visible — and terrain/filler.hpp's ChunkFiller is where
-    // it is tracked.
+    // This file only checks that the SCHEMA has nothing left unrunnable in
+    // it — whether `ChunkFiller` can actually RUN a tree is a distinct
+    // question (a missing INPUT, not an unrunnable CONSTRUCT) tracked in
+    // terrain/filler.hpp's own doc. As of `biome::TemperatureTable`
+    // (SPEC §11), the overworld's own tree runs end to end against real
+    // blocks too — see golden_fill_test.cpp — so both questions this file
+    // and that one ask now answer the same way for every dimension with
+    // fixtures.
     CHECK(graph.unrunnable().empty());
 }

@@ -725,12 +725,13 @@ Open:
     cache belongs to the calling task, not to the interpreter, because a
     compiled pipeline is immutable and shared between threads (§4.1).
 
-  Against the aquifer-free reference, over four chunks and 393216 blocks:
-  **every block is in the right category** — solid, fluid or air — and 82.013%
-  are the exact right block. All of the remaining 17.987% is surface rules
-  this build does not run: deepslate and bedrock, which are vertical gradients
-  reaching the whole column rather than a skin at the top, and gravel, dirt
-  and grass at the surface.
+  Against the aquifer-free reference, over four chunks and 393216 blocks,
+  WITH the overworld's full 287-rule surface-rule tree now running (below):
+  **99.879% are the exact right block** (392741 of 393216), and every one of
+  those category matches is ALSO an exact match — one 475-block gap accounts
+  for the whole remaining shortfall, all of it `deepslate`'s own bare,
+  unconditioned `vertical_gradient` winning over real fluid in a deep ocean
+  trench (§11).
 
   **What it refuses.** A dimension with `aquifers_enabled` or
   `ore_veins_enabled` is refused by name at compile, not filled approximately.
@@ -878,13 +879,15 @@ Open:
 
   **RESOLVED.** `biome` and `temperature` both run, and so, now, does
   `bandlands` — the list went ten, nine, three, one, zero. The overworld's
-  own tree compiles WHOLE: nothing left in the schema refuses it. What still
-  keeps `ChunkFiller` from actually running it is a missing INPUT, not an
-  unrunnable construct — its one `temperature` condition has nowhere to get
-  a biome's declared temperature from yet (`ChunkFiller` wiring, below). The
-  Nether's tree needed neither `bandlands` nor `temperature` to begin with,
-  so it was the first real dimension whose surface rules compiled whole; the
-  other six joined it once `bandlands` closed.
+  own tree compiles WHOLE: nothing left in the schema refuses it. What used
+  to keep `ChunkFiller` from actually running it was a missing INPUT, not an
+  unrunnable construct — its one `temperature` condition had nowhere to get
+  a biome's declared temperature from — and that closed too, with
+  `biome::TemperatureTable` (`ChunkFiller` wiring, below); the overworld's
+  own tree now runs end to end against real blocks. The Nether's tree needed
+  neither `bandlands` nor `temperature` to begin with, so it was the first
+  real dimension whose surface rules compiled whole; the other six joined it
+  once `bandlands` closed.
 
   *An API trap found while testing, and closed.* An `Executor` keeps pointers
   to its graph, geometry and noises, so compiling from a TEMPORARY graph
@@ -966,10 +969,11 @@ Open:
   conformance test until now ran the executor directly, against a
   hand-supplied `Context` — the filler never called it, and `fill()` produced
   bare stone, fluid and air no matter what a dimension's surface rules said.
-  `ChunkFiller::compile` now takes an optional resolved `RuleGraph` and an
-  optional `biome::ParameterList`, and when the tree runs whole, `fill()`
-  makes a second pass over the chunk after its ordinary density pass and asks
-  the executor what replaces what it just placed.
+  `ChunkFiller::compile` now takes an optional resolved `RuleGraph`, an
+  optional `biome::ParameterList`, and an optional `biome::TemperatureTable`,
+  and when the tree runs whole, `fill()` makes a second pass over the chunk
+  after its ordinary density pass and asks the executor what replaces what it
+  just placed.
 
   The second pass is what supplies the `Context` fields the executor cannot
   derive on its own, each read back from the FIRST pass's own blocks rather
@@ -981,34 +985,78 @@ Open:
   would have to. `biome` and `preliminary_surface_level` are resolved through
   the same noise router and `biome::ParameterList` the biome source itself
   uses (§ biome source), at the biome grid's own quarter resolution rather
-  than once a block.
+  than once a block — and `temperature`, once a tree names it, rides the SAME
+  grid, since it has to know which biome a block sits in before it can look
+  up that biome's own declared value.
 
-  Two things are refused the same way an unrunnable construct is, rather than
-  either crashing on a missing `Context` field or running silently wrong: a
-  tree that reads `biome` with no `ParameterList` supplied, and a tree that
-  reads `temperature` at all — vanilla's `temperature` needs a biome's own
-  DECLARED value, and nothing in this build resolves one from a biome's
-  identifier yet, so it is refused rather than run against a made-up 0.0F.
+  Three things are refused the same way an unrunnable construct is, rather
+  than either crashing on a missing `Context` field or running silently
+  wrong: a tree that reads `biome` (directly, or through `temperature`) with
+  no `ParameterList` supplied; and a tree that reads `temperature` with no
+  `TemperatureTable` supplied — vanilla's `temperature` needs a biome's own
+  DECLARED value, and 0.0F is not an honest stand-in for one.
   `ChunkFiller::surfaceRulesBlockedBy()` reports both alongside whatever
-  `RuleGraph::unrunnable()` itself found, so a caller sees one list, not two
-  different reasons two different ways.
+  `RuleGraph::unrunnable()` itself found, so a caller sees one list, not
+  several different reasons several different ways.
 
-  Consequence for the two real dimensions with fixtures. The overworld's own
-  tree compiles whole now — `bandlands` closed (below) — but `ChunkFiller`
-  still refuses it, on the one input its `temperature` condition needs and
-  nothing yet supplies; so `golden_fill_test.cpp`'s 82.013% has not moved.
-  That is asserted directly (`runsSurfaceRules() == false`,
-  `surfaceRulesBlockedBy()` naming `temperature` alone, where it used to name
-  `bandlands` too), not left to be inferred from a count staying put. The
-  Nether's tree compiles and needs neither `biome` data nor
-  a fabricated temperature to run — but its `noise_settings` sets
+  **`biome::TemperatureTable` closes the DECLARED-value gap.** It reads
+  every `worldgen/biome` entry a `data::Pack` already parsed — the SAME
+  per-entry registry surface `biome::ParameterList` sits beside, not a
+  separate walk of the directory — and maps each biome's identifier to its
+  own `temperature` field, float32 throughout to match how
+  `Executor::freezing` compares it. `ChunkFiller` resolves a biome's
+  identity once (the multi-noise search, same as `biome` itself) and looks
+  its declared temperature up in this table, cached at the same quarter-grid
+  cadence as the identity itself.
+
+  Consequence for the two real dimensions with fixtures. **The overworld's
+  own tree now RUNS**, wired end to end for the first time
+  (`golden_fill_test.cpp`, above) — `bandlands` closed the last unrunnable
+  CONSTRUCT, and this closes the last missing INPUT. Running the real
+  287-rule, 141-condition tree against real blocks for the first time caught
+  a real bug immediately, closed in the same change: see `stone_depth`,
+  below. The Nether's tree compiles and needs neither `biome` data nor a
+  temperature table to run — but its `noise_settings` sets
   `legacy_random_source: true`, and `NoiseRegistry::create` refuses
   `RandomSource::Legacy` outright (§11: nothing available says how a name
   becomes an LCG seed here), so there is no way yet to build the density
-  chain the Nether's blocks would need in the first place. Wiring the
-  executor in did not, and could not, close either gap; what it closes is the
+  chain the Nether's blocks would need in the first place. Closing the
+  temperature gap did not, and could not, touch that one; it closes the
   distance between "the executor can run this tree" and "the filler asked
-  it to."
+  it to and had everything the tree needed."
+
+  **`stone_depth` was false everywhere off the top of a solid run — a real
+  bug, found by this end-to-end run and closed in the same change.** The
+  comparison read the stored run counter minus one against a threshold; a
+  counter of 0 (Context's own doc: reset by air, meaning "not in a run at
+  all") became `0 - 1 = -1`, which trivially satisfies almost any
+  non-negative offset. Before the fix, every grass/dirt/sand composition
+  rule the overworld's tree contains fired at EVERY position above the real
+  terrain rather than only its top — grass painted the entire sky, deepslate
+  painted over open water — 292005 of 393216 blocks in four chunks, caught
+  directly by `golden_fill_test.cpp`'s category assertion the moment the
+  temperature gap stopped hiding it. `Executor::test`'s `StoneDepth` case now
+  refuses outright when the run counter is 0, rather than computing a depth
+  that was never a real position in any run. No existing test exercised a
+  0-valued counter before this — every isolated `Context` either defaulted
+  to 1 or set one explicitly — so this was invisible until the whole tree ran
+  against real terrain, the same way `bandlands`' pass(a) off-by-one only
+  showed up once more than one seed was probed.
+
+  **A second, narrower gap the same run surfaced, left open.** `deepslate`'s
+  own rule — the overworld tree's third top-level sequence entry — is a bare
+  `vertical_gradient` with nothing else gating it: `false_at_and_above: 8`,
+  `true_at_and_below: 0`, no `stone_depth`, no category check. Reached
+  whenever the entry above it (`above_preliminary_surface`'s own branch)
+  returns nothing, it fires by Y alone. Measured in `golden_fill_test.cpp`:
+  it wins over real FLUID on 475 of 393216 blocks, all between y -40 and y 0,
+  all inside this aquifer-free probe's deep ocean trenches, where the real
+  server left the water untouched. Why the real server does not reach — or
+  does not act on — this rule at exactly these positions is not settled;
+  SPEC §8 puts a silent guess here in the same severe class as an unrunnable
+  construct run wrong, so this is recorded as an open question rather than
+  one, pending the same black-box measurement technique that closed
+  `bandlands`.
 
   Correctness, found while wiring rather than assumed: `y_above` and `water`
   both read `condition.addSurfaceDepth` for their `add_stone_depth` field —

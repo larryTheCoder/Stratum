@@ -37,6 +37,7 @@
 #pragma once
 
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/temperature_table.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -99,19 +100,25 @@ public:
     /// Throws FillError, naming the flag, for a dimension whose blocks are
     /// not a function of the density alone.
     ///
-    /// @p surfaceRules and @p biomeParameters are both optional and both
-    /// external: like @p graph and @p noises, whatever they point to must
-    /// outlive this ChunkFiller. Passing neither reproduces exactly the
-    /// behaviour before surface rules existed here — bare stone, fluid and
-    /// air. Passing @p surfaceRules without @p biomeParameters is fine for a
-    /// tree that never reads `biome`; for one that does, it is treated the
-    /// same as an unrunnable construct rather than run with a missing
-    /// Context field (see `runsSurfaceRules()`).
-    [[nodiscard]] static ChunkFiller compile(const density::Graph& graph,
-                                             const density::NoiseRegistry& noises,
-                                             const settings::NoiseSettings& settings,
-                                             const surface::RuleGraph* surfaceRules = nullptr,
-                                             const biome::ParameterList* biomeParameters = nullptr);
+    /// @p surfaceRules, @p biomeParameters and @p biomeTemperatures are all
+    /// optional and all external: like @p graph and @p noises, whatever they
+    /// point to must outlive this ChunkFiller. Passing none of them
+    /// reproduces exactly the behaviour before surface rules existed here —
+    /// bare stone, fluid and air. Passing @p surfaceRules without
+    /// @p biomeParameters is fine for a tree that never reads `biome` or
+    /// `temperature`; passing @p biomeParameters without @p biomeTemperatures
+    /// is fine for one that reads `biome` but never `temperature`, since
+    /// `temperature` is the only construct that needs a biome's own
+    /// DECLARED value rather than just its identity. Any of these missing
+    /// for a tree that names the construct is treated the same as an
+    /// unrunnable construct rather than run with a missing Context field
+    /// (see `runsSurfaceRules()`).
+    [[nodiscard]] static ChunkFiller
+    compile(const density::Graph& graph, const density::NoiseRegistry& noises,
+            const settings::NoiseSettings& settings,
+            const surface::RuleGraph* surfaceRules = nullptr,
+            const biome::ParameterList* biomeParameters = nullptr,
+            const biome::TemperatureTable* biomeTemperatures = nullptr);
 
     /// Fills @p into with the chunk at chunk coordinates @p chunkX, @p chunkZ.
     ///
@@ -159,7 +166,9 @@ private:
     density::NodeIndex finalDensity_{};
 
     const biome::ParameterList* biomeParameters_ = nullptr;
+    const biome::TemperatureTable* biomeTemperatures_ = nullptr;
     bool surfaceNeedsBiome_ = false;
+    bool surfaceNeedsTemperature_ = false;
     bool surfaceNeedsPreliminarySurface_ = false;
     bool surfaceNeedsSteep_ = false;
     std::optional<surface::Executor> surfaceExecutor_;
