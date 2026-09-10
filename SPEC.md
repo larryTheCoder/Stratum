@@ -412,12 +412,13 @@ Its own component (`lib/mapping/`), its own tests:
   including the surface's thirteen-position aborting-minimum scan, re-derived
   at twenty feature scales.
 
-  Four things stood between MA and closing; two are now resolved. Three of
-  the four were verification of measurements already in hand, each with its
-  separating configuration named and costing about one probe world — two of
-  those three are closed below, the third (fluid TYPE) narrowed to one loose
-  end; the fourth is unexplored and is the reason this is a track rather than
-  a task.
+  Four things stood between MA and closing. Two (1, 2) are now fully CLOSED.
+  The barrier's third source (3) is closed for three of its four parts, with
+  Q6.3's water-over-lava exception still untested. Fluid TYPE (4) is narrowed
+  to one open piece, the level ceiling's exact value. None of the four is
+  wholly unexplored any longer — what remains is wiring `ChunkFiller` to
+  actually use any of it, which is its own untouched step and the reason
+  this stays a track rather than a task.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -472,20 +473,38 @@ Its own component (`lib/mapping/`), its own tests:
      0.0564-0.0924 on the depth path, 0.9812-0.9829 against 0.6612-0.6872 on
      the ocean branch, on 469575-913229 discriminating blocks each.
 
-  3. **Which sources compete — mechanism now identified, formula still open.**
-     About 13% of the server's real barriers come from a third source. The
-     clean-room spec's Q6.6 explains the shape and it is structurally
-     confirmed (§11), but four things stood between that and code, and the
-     first was a prerequisite for the rest: (a) **DONE** — `selection.hpp`
-     ranks four sources per block (window, integer metric, later-wins
-     tie-break), with golden coverage on 637252 of the server's own barrier
-     blocks and 0.99993 on the substance it decides; (b) the pressure
-     function's divisors and its gate are unmeasured; (c) the specific numeric
-     contribution of the third and fourth terms — the part the 13% is actually
-     about — was excluded by construction from the density sweep that confirmed
-     the shape; (d) Q6.3's water-over-lava exception is untested by every
-     angle. Each of the remaining three has a named experiment. `BarrierAt`
-     still carries no third source and no `D`, so wiring waits on (b).
+  3. **CLOSED for (a)-(c). Which sources compete, and how hard.** About
+     13-16% of the server's real barriers come from a third source the old
+     two-source-only `placesBarrier` could not see at all. Four things stood
+     between the clean-room spec's Q6.6 and code: (a) **DONE** —
+     `selection.hpp` ranks four sources per block (window, integer metric,
+     later-wins tie-break), with golden coverage on 637252 of the server's
+     own barrier blocks and 0.99993 on the substance it decides.
+     (b) **DONE, mostly by arithmetic rather than a probe.** At `D = -1` —
+     every Stratum aquifer probe's own density constant so far — Q6.4's
+     pressure function, with its stated divisors (1.5/2.5 near-fluid, 3
+     near-air), reproduces the OLD, already-confirmed two-source rule EXACTLY
+     over an exhaustive sweep of 39150 synthetic configurations: 0
+     mismatches. The old rule's own 251M-block server validation transitively
+     confirms those divisors; the fourth ("/10", `3+t<=0`) stays unmeasured —
+     not wrong, just never reached: 0 of 866 real-block mismatches touched it
+     across the barrier probe below, and it was never used at all, on either
+     seed. (c) **DONE.**
+     `tools/analysis/aquifer-barrier-probe.sh` drives `barrier`,
+     `fluid_level_floodedness` and `fluid_level_spread` with vanilla's own
+     REAL noises (a synthetic field built for MA blocker 2 had no reason to
+     produce genuine three-way junctions) at three density constants and two
+     seeds. The three-source formula rescues 83-98% of the two-source rule's
+     errors on real blocks, cutting the real-barrier miss rate from
+     13.19%/16.48% to 1.01%/1.02% overall, seed-to-seed — matching the ~13%
+     figure this project had already measured by a different route. `BarrierAt`
+     now carries `D` and a third ranked source (`lib/include/stratum/aquifer/
+     barrier.hpp`), and (d) remains: **Q6.3's water-over-lava exception is
+     still untested by every angle**, and this predicate does not implement it
+     yet. The mixed-fluid-type Π branch (`Π = 2.0`) is also still unmeasured —
+     every barrier probe so far holds `lava` at a constant specifically to
+     keep that question separate. `ChunkFiller` still refuses
+     `aquifers_enabled`; wiring is its own remaining step (blocker 4).
 
   4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
@@ -2033,6 +2052,53 @@ Open:
   brute force: 7 to 20 rank-1 misses per 3538944 blocks (2.0e-6 to 5.7e-6) and
   2.2e-3 to 2.7e-3 at rank 2. Without the shift those become 0.8-3.1% and
   8.6-13.2%, which is what makes the unit case discriminating.
+
+  **The barrier's third source, closed (MA blocker 3).** The campaign above
+  left Q6.4's divisors "unmeasured beyond 'some monotone density-dependent
+  mechanism exists'" and Q6.3 "touched by no angle at all". Both moved, the
+  first almost for free.
+
+  *Q6.4's divisors, confirmed by arithmetic rather than a probe.* At `D = -1`
+  — every Stratum aquifer probe's own density constant, this one included —
+  Q6.4's pressure function Π, with its stated divisors (1.5/2.5 for the
+  near-fluid branch, 3 for the near-air branch), reproduces the OLD
+  two-source-only `placesBarrier` EXACTLY over an exhaustive sweep of 39150
+  synthetic (level gap, block position, separation, barrier) combinations: 0
+  mismatches. That rule's own 251,658,240-block, 40-dimension, six-seed
+  server validation transitively confirms those two divisors — no new query
+  needed. The fourth divisor (10, for the near-air branch's `3 + t <= 0` sub
+  case) stays unmeasured: it never arises for an ADJACENT pair at all — `t`
+  is provably `above + 0.5 >= 0.5` there — so only a genuine third source can
+  reach it, and across every third-source pair either barrier-probe seed
+  produced, it never once did (0 uses, 0 of the 866 total real-block
+  mismatches). Implemented as the clean-room spec states; structurally inert
+  until a configuration that exercises it is found.
+
+  *The third source itself, confirmed on real barriers.*
+  `tools/analysis/aquifer-barrier-probe.sh` drives `barrier`,
+  `fluid_level_floodedness` and `fluid_level_spread` with vanilla's own REAL
+  noises — copied verbatim from the overworld's own `noise_router`, not a
+  synthetic field, because a field built to answer MA blocker 2's question
+  has no reason to produce the dense, irregular cell-to-cell variation a
+  genuine three-way junction needs — at three density constants (-0.3, -1.0,
+  -3.0) and two world seeds. For every stone/water/air block,
+  `tools/analysis/aquifer-barrier-analyze.cpp` ranks the three nearest
+  sources (selection.hpp) and calls this build's own `placesBarrier` twice:
+  once with all three, once with the third pushed far enough away to be
+  inert — the SAME committed function both times, not a parallel
+  reimplementation. The three-source reading rescues 83-98% of the
+  two-source rule's errors on 15,728,640 real blocks per seed, cutting the
+  real-barrier miss rate from 13.19%/16.48% to 1.01%/1.02% overall — matching
+  the ~13% this project had already measured by an entirely different route,
+  and landing within about a point of it on both seeds independently.
+
+  *Still open.* Q6.3's water-over-lava exception remains untested by every
+  angle, and `placesBarrier` does not implement it. The mixed-fluid-type
+  branch of Π (`Π = 2.0` when one source reads lava and the other water) is
+  also unmeasured — every barrier probe so far holds `lava` at a constant on
+  purpose, to keep that question separate rather than folding it in
+  unverified. `ChunkFiller` still does not call `placesBarrier` at all;
+  wiring it in is untouched.
 
   **A second instrument for the depth path's gate, and a wrong first attempt
   at building one (MA blocker 1, CLOSED).** The near-surface path gates on
