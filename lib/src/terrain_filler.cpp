@@ -538,6 +538,32 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
             for (std::int32_t y = topY - 1; y >= minY; --y) {
+                // A FLUID position only stays eligible for surface rules
+                // while it is part of the column's FIRST (topmost, reached
+                // straight from the sky) fluid body — `stoneDepthAbove == 0`,
+                // meaning no solid has been crossed yet on the way down. A
+                // deeper, isolated cave-void's fluid inherits a nonzero run
+                // carried over from the solid rock above it (Context's own
+                // doc: fluid neither breaks a stone-depth run nor counts
+                // toward it), and real vanilla never rewrites that fluid at
+                // all — confirmed against the real server (tools/analysis,
+                // see SPEC §11): a datapack whose ENTIRE surface_rule is the
+                // overworld's own bare, unconditioned `deepslate`
+                // vertical_gradient — no above_preliminary_surface, no
+                // bedrock floor, nothing else gating it — still leaves
+                // exactly the same 475 fluid blocks untouched that vanilla's
+                // full 287-rule tree does, in the same aquifer-free probe
+                // golden_fill_test.cpp reads, and every one of those 475 is
+                // inside a fluid-filled void with solid stone already
+                // crossed above it. The topmost/open-water case (real ocean
+                // straight from the sky, `stoneDepthAbove == 0` throughout)
+                // is left reachable, which is what a rule keyed on `water`
+                // — freezing ice onto a lake's own surface — needs.
+                const Category category = categorize(into.at(localX, y, localZ), *settings_);
+                if (category == Category::Fluid &&
+                    stoneDepthAbove[static_cast<std::size_t>(y - minY)] != 0) {
+                    continue;
+                }
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);
                     if (!biomeQuartYKnown || biomeQuartY != quartY) {

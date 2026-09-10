@@ -121,6 +121,38 @@ private:
     };
 }
 
+/// Solid everywhere below y = 1 (open water/air above it, as in
+/// flatSettings()) EXCEPT a buried notch at y in [-8, -6]..[-10, -8], carved
+/// out by maxing two more y_clamped_gradients against the flat plane's own
+/// solid region so the notch sits entirely below solid rock rather than open
+/// to the sky — the shape a real underground cave-void has, as opposed to the
+/// column's own topmost fluid body.
+[[nodiscard]] nlohmann::json buriedNotchSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    const nlohmann::json solidBelowSky = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                         {"from_y", -1},
+                                                         {"to_y", 1},
+                                                         {"from_value", 1.0},
+                                                         {"to_value", -1.0}};
+    const nlohmann::json notchFloor = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                      {"from_y", -10},
+                                                      {"to_y", -8},
+                                                      {"from_value", 1.0},
+                                                      {"to_value", -1.0}};
+    const nlohmann::json notchRoof = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                                     {"from_y", -8},
+                                                     {"to_y", -6},
+                                                     {"from_value", -1.0},
+                                                     {"to_value", 1.0}};
+    settings["noise_router"]["final_density"] =
+        nlohmann::json{{"type", "minecraft:min"},
+                       {"argument1", solidBelowSky},
+                       {"argument2", nlohmann::json{{"type", "minecraft:max"},
+                                                    {"argument1", notchFloor},
+                                                    {"argument2", notchRoof}}}};
+    return settings;
+}
+
 [[nodiscard]] ChunkFiller compileFrom(const TempTree& tree, const LoadedSettings& loaded,
                                       const RuleGraph* surfaceRules = nullptr,
                                       const ParameterList* biomeParameters = nullptr,
@@ -459,6 +491,47 @@ TEST_CASE("water reads the filler's own latched height, not sea_level directly",
     CHECK(buffer.at(0, 5, 0).name.toString() == "minecraft:water");
     CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:ice");
     CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:ice");
+}
+
+TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own fluid",
+          "[terrain][filler][surface]") {
+    // golden_fill_test.cpp's own residual, reproduced by hand: the
+    // overworld's `deepslate` rule is a bare, unconditioned
+    // `vertical_gradient` — no water check, no stone_depth, nothing — yet
+    // the real server never lets it (or anything else unconditioned) paint
+    // over a fluid-filled cave-void, only over the solid rock around it.
+    // Measured against the real server with the overworld's ENTIRE
+    // surface_rule replaced by just that one bare rule (SPEC §11): it still
+    // leaves exactly the same 475 fluid blocks alone that vanilla's real
+    // 287-rule tree does, in the same aquifer-free probe golden_fill_test.cpp
+    // reads. This uses an unconditioned `block` rule instead of
+    // `vertical_gradient` so the assertion needs no RNG — a `block` rule
+    // fires at every position it is asked about, unconditionally, same as
+    // the deepslate gradient does throughout the "certain" band the real
+    // 475-block residual sat in.
+    const TempTree tree;
+    tree.defineSettings("test", buriedNotchSettings());
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(block("minecraft:end_stone"));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // Solid rock on both sides of the notch is rewritten like anything else
+    // an unconditioned rule reaches.
+    CHECK(buffer.at(0, -10, 0).name.toString() == "minecraft:end_stone");
+    CHECK(buffer.at(0, -6, 0).name.toString() == "minecraft:end_stone");
+    // The notch itself — solid rock already crossed above it, so
+    // stoneDepthAbove is nonzero going in — keeps its own fluid untouched.
+    CHECK(buffer.at(0, -8, 0).name.toString() == "minecraft:water");
+    // The column's OWN topmost fluid, reached with nothing solid above it
+    // yet (stoneDepthAbove == 0 throughout), stays reachable — the same
+    // distinction "water reads the filler's own latched height" exercises
+    // through a condition instead of a bare rule.
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:end_stone");
 }
 
 TEST_CASE("biome reads the biome the climate router and parameter list compute",

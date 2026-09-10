@@ -825,11 +825,11 @@ Open:
 
   Against the aquifer-free reference, over four chunks and 393216 blocks,
   WITH the overworld's full 287-rule surface-rule tree now running (below):
-  **99.879% are the exact right block** (392741 of 393216), and every one of
-  those category matches is ALSO an exact match — one 475-block gap accounts
-  for the whole remaining shortfall, all of it `deepslate`'s own bare,
-  unconditioned `vertical_gradient` winning over real fluid in a deep ocean
-  trench (§11).
+  **100% are the exact right block** (393216 of 393216). A 475-block gap sat
+  here for a time — `deepslate`'s own bare, unconditioned `vertical_gradient`
+  winning over real fluid inside deep ocean trenches' cave-voids — and closed
+  once `ChunkFiller`'s own second pass, not the rule tree, turned out to be
+  where vanilla actually gates it (§11).
 
   **What it refuses.** A dimension with `ore_veins_enabled` is refused by
   name at compile, not filled approximately — not implemented at all, and
@@ -1142,20 +1142,48 @@ Open:
   against real terrain, the same way `bandlands`' pass(a) off-by-one only
   showed up once more than one seed was probed.
 
-  **A second, narrower gap the same run surfaced, left open.** `deepslate`'s
+  **A second, narrower gap the same run surfaced — RESOLVED.** `deepslate`'s
   own rule — the overworld tree's third top-level sequence entry — is a bare
   `vertical_gradient` with nothing else gating it: `false_at_and_above: 8`,
-  `true_at_and_below: 0`, no `stone_depth`, no category check. Reached
-  whenever the entry above it (`above_preliminary_surface`'s own branch)
-  returns nothing, it fires by Y alone. Measured in `golden_fill_test.cpp`:
-  it wins over real FLUID on 475 of 393216 blocks, all between y -40 and y 0,
-  all inside this aquifer-free probe's deep ocean trenches, where the real
-  server left the water untouched. Why the real server does not reach — or
-  does not act on — this rule at exactly these positions is not settled;
-  SPEC §8 puts a silent guess here in the same severe class as an unrunnable
-  construct run wrong, so this is recorded as an open question rather than
-  one, pending the same black-box measurement technique that closed
-  `bandlands`.
+  `true_at_and_below: 0`, no `stone_depth`, no category check. Measured in
+  `golden_fill_test.cpp`: it won over real FLUID on 475 of 393216 blocks, all
+  between y -40 and y 0, all inside this aquifer-free probe's deep ocean
+  trenches, where the real server left the water untouched.
+
+  The natural read was that `above_preliminary_surface` (the entry above it)
+  was the missing gate. It is not, and the same black-box measurement
+  technique that closed `bandlands` is what showed that: a datapack whose
+  ENTIRE `surface_rule` is that one bare `deepslate` rule — no
+  `above_preliminary_surface`, no bedrock floor, nothing else in the tree at
+  all — generated against the real server on the same seed still left
+  exactly the same 475 fluid blocks untouched. Every one of them sits inside
+  a fluid-filled cave-void (a normal density-carved cavity, flooded because
+  this probe runs with `aquifers_enabled: false`) with solid rock already
+  crossed above it in the same column, and the real 287-rule tree's own
+  count agrees with the isolated one exactly: 475 fluid blocks at y <= 0 in
+  both.
+
+  So the gate is not in the rule tree at all — no combination of conditions
+  can express it, because it isn't a property of any one rule. It is
+  `ChunkFiller::applySurfaceRules`'s own second pass, which previously asked
+  the executor about every position regardless of what the first pass had
+  placed there. A FLUID position stays eligible for surface rules only while
+  it is the column's FIRST (topmost, reached straight from the sky) fluid
+  body — `Context::stoneDepthAbove == 0`, meaning no solid has been crossed
+  yet on the way down. A deeper, isolated pocket's fluid inherits a nonzero
+  run carried over from the solid rock above it, because fluid neither
+  breaks a stone-depth run nor counts toward it (`Context`'s own doc) — and
+  real vanilla never rewrites that fluid at all. The topmost/open-water case
+  stays reachable, which is what a rule keyed on `water` — freezing ice onto
+  a lake's own surface — needs, and the pre-existing
+  "water reads the filler's own latched height" unit test is what caught an
+  earlier, too-broad version of this fix (skipping ALL non-solid positions)
+  before it landed. `golden_fill_test.cpp` now reads 393216 of 393216 exact,
+  both granularities, no residual — and
+  "an unconditioned rule never rewrites a buried fluid pocket's own fluid"
+  (`terrain_filler_test.cpp`) is the isolated regression: a hand-built buried
+  notch, solid on both sides, converted by an unconditioned `block` rule
+  everywhere except the notch itself.
 
   Correctness, found while wiring rather than assumed: `y_above` and `water`
   both read `condition.addSurfaceDepth` for their `add_stone_depth` field —

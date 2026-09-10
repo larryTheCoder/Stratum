@@ -9,26 +9,32 @@
 // empty biome, carvers cut caves and features drop lakes on top, and neither
 // is terrain.
 //
-// TWO GRANULARITIES, because they measure different things.
+// TWO GRANULARITIES, because they measure different things — and both are
+// exact: 393216 of 393216 blocks, category AND exact block alike.
 //
-//   * **Category** — solid, fluid or air — is what the FILLER decides before
-//     any surface rule runs, and it is exact: 393216 of 393216 blocks.
-//   * **Exact block**, with the whole overworld surface-rule tree now
-//     RUNNING (M4, below), is 392741 of 393216 — 99.879%. All 475 stragglers
-//     are one known, narrow gap: `deepslate`'s own rule (the tree's third
-//     top-level sequence entry) is a bare `vertical_gradient` with nothing
-//     else gating it, so once it is REACHED — which happens whenever the
-//     entry above it, `above_preliminary_surface`, is false or its own
-//     composition sub-tree placed nothing — it fires by Y alone and
-//     overwrites whatever category is there. Measured here: it wins on 475
-//     FLUID blocks between y -40 and y 0, all inside this aquifer-free
-//     probe's deep ocean trenches, where the real server left the water
-//     untouched. What stops it in the real server at exactly these
-//     positions is not settled — SPEC §11 records it as an open question
-//     rather than a guess.
-//
-// Reporting only the second would read as terrain being one part in five
-// wrong. Reporting only the first would hide the 475-block gap that remains.
+// The exact-block number USED to stop at 392741 (99.879%), 475 short. Every
+// straggler was `deepslate`'s own rule (the overworld tree's third top-level
+// sequence entry) — a bare `vertical_gradient` with nothing else gating it —
+// firing by Y alone over FLUID it should have left alone, all between y -40
+// and y 0, all inside this aquifer-free probe's deep ocean trenches. The
+// natural read was that `above_preliminary_surface` (the entry above it) was
+// the missing gate; it is not. Confirmed against the real server (SPEC §11):
+// a datapack whose ENTIRE surface_rule is that one bare rule — no
+// above_preliminary_surface, no bedrock floor, nothing else in the tree —
+// still leaves exactly the same 475 fluid blocks untouched, and every one of
+// them sits inside a fluid-filled cave-void with solid rock already crossed
+// above it in the same column. The real gate is `ChunkFiller`'s own second
+// pass, not anything the rule tree can express: a FLUID position stays
+// eligible for surface rules only while it is the column's FIRST (topmost,
+// reached straight from the sky) fluid body — `stoneDepthAbove == 0`,
+// meaning no solid has been crossed yet — closed in `applySurfaceRules`
+// (terrain_filler.cpp). A deeper, isolated pocket's fluid inherits a nonzero
+// run carried over from the solid rock above it (fluid neither breaks a
+// stone-depth run nor counts toward it) and stays untouched, while the
+// topmost/open-water case a rule keyed on `water` needs — freezing ice onto
+// a lake's own surface — is unaffected; see
+// `terrain_filler_test.cpp`'s "an unconditioned rule never rewrites a buried
+// fluid pocket's own fluid" for the isolated regression.
 //
 // The off-by-one this comparison caught, which is why it is here: `sea_level`
 // is EXCLUSIVE. With vanilla's 63 the water stops at 62. An inclusive
@@ -51,8 +57,9 @@
 // entire sky, and deepslate painted over open water — 292005 of 393216
 // blocks in four chunks, caught by this very assertion. `Executor::test`'s
 // `ConditionType::StoneDepth` case now refuses outright when the run counter
-// is 0, closing that. The 475-block residual above is a second, much
-// narrower gap the same run surfaced, left open rather than guessed at.
+// is 0, closing that. The 475-block residual the file comment above
+// describes was a second, much narrower gap the same run surfaced — closed
+// too, not in the rule tree but in the pass around it.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>
@@ -238,17 +245,17 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     REQUIRE(chunks == 4U);
     REQUIRE(blocks == 393216U);
 
-    // Category, pinned to the one known gap the file comment names: 475
-    // blocks where the bare, unconditioned `deepslate` rule wins over real
-    // fluid in a deep ocean trench. Not `blocks` any more — that would hide
-    // a regression here behind a threshold, same reasoning as `exact` below.
-    CHECK(sameCategory == 392741U);
+    // Category, pinned to `blocks` itself — exact, not thresholded, so a
+    // regression here shows up immediately rather than hiding under a
+    // percentage.
+    CHECK(sameCategory == 393216U);
 
-    // The exact-block number, pinned. This is the first run of the whole
-    // 287-rule, 141-condition tree end to end, and every one of the 392741
-    // category matches is ALSO an exact match — the same 475-block gap
-    // accounts for the entire shortfall from `blocks`. It moves when either
-    // gap named in the file comment closes, or when something else does;
-    // anything else means the filler changed.
-    CHECK(exact == 392741U);
+    // The exact-block number, pinned to `blocks` too. This is the first run
+    // of the whole 287-rule, 141-condition tree end to end, and every one of
+    // the 393216 category matches is ALSO an exact match — the 475-block
+    // buried-fluid gap the file comment describes accounted for the entire
+    // shortfall until `applySurfaceRules` stopped reaching a fluid position
+    // once solid had already been crossed above it. Anything short of
+    // 393216 here means the filler changed.
+    CHECK(exact == 393216U);
 }
