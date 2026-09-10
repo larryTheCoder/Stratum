@@ -1049,9 +1049,56 @@ Open:
     which is why the earlier "one position of 98304 at exactly 0.30 came out
     true" was the whole story rather than an anomaly.
 
-  * **`bandlands` paints terracotta banding**  * **`bandlands` paints terracotta banding**, and the band table is readable
-    straight off: plain terracotta, orange, red, white and light grey, in
-    that order of frequency, over a fixed column.
+  * **`bandlands` is a 192-entry table read with a per-column phase shift —
+    structure confirmed, exact contents still open.** `tools/analysis/
+    bandlands-probe.sh` puts `bandlands` alone at the root of a probe's own
+    tree, over a column made fully solid by a constant `raw_final_density`,
+    and reads every block back: 128x128 columns, the full -64..319 height,
+    over three separate server runs (two world seeds, plus a `sea_level`
+    variant of the first).
+
+    Every one of the 3 x 16384 = 49152 columns sampled is an EXACT cyclic
+    shift of a single 192-entry colour table — `floorMod(y + shift, 192)`
+    indexes it, with zero exceptions across all three runs. The table's
+    LENGTH (192) held across both world seeds; its CONTENTS did not — the two
+    seeds' colour histograms disagree (orange_terracotta is 19.8% of all
+    blocks at seed 42, 14.1% at seed -1), so the table is a function of the
+    world seed, not a fixed constant.
+
+    The per-column shift is a smooth, coherent field over (x, z) — its own
+    slice images show curved iso-contours, not noise scattered block to
+    block — landing in a narrow band (roughly 63-66 in every run) that did
+    NOT move when `sea_level` was changed from -64 to 63, holding `min_y`
+    fixed. So the shift's baseline is independent of `sea_level`; what it IS
+    keyed to (`min_y`, a plain constant, or something else) is not yet
+    separated, and the small (~±2) part that clearly varies between seeds and
+    across the sampled area is what actually paints the shift field's curves.
+
+    **cubiomes (MIT) says nothing here** — it has no `terracotta` reference
+    anywhere in it; it only ever places biome IDs, never blocks. **Cuberite
+    (Apache-2.0)** does implement a mesa/terracotta generator
+    (`src/Generating/CompoGenBiomal.cpp`), and its SHAPE matches this
+    project's own measurement well: a pattern array built once per seed by
+    walking it end to end, laying down 1-2 "layers" of a weighted-random
+    colour and a weighted-random width (mostly 1, sometimes 2-3), separated
+    by runs of plain (hardened) clay, plus a low-frequency 2D "floor" noise
+    that offsets where in the array a column starts reading. That is
+    corroboration of the ALGORITHM'S SHAPE, not its numbers: Cuberite targets
+    a pre-1.13 version with a 512-entry array (`2 * ChunkHeight` at
+    `ChunkHeight = 256`) and its own non-Mojang RNG, neither of which is what
+    1.21.11 measures out to (a 192-entry array). Its colour-weight table does
+    not fit either — checked against this project's own seed-42 histogram,
+    its white and light-grey weights are half of what 1.21.11 shows and its
+    yellow weight is double.
+
+    What is still missing to write this: the exact RNG this build already has
+    (Java LCG or Xoroshiro128++) that seeds the table, and its seed
+    derivation (raw world seed? salted by name, like `vertical_gradient`? a
+    constant, like `temperature`'s 1234?); the exact weighted colour/width
+    distribution for 1.21.11; and the exact noise construct, scale and seed
+    behind the per-column shift. None of that separates from output alone
+    with the probes run so far — this is the same class of wall
+    `old_blended_noise`'s fold hit before the clean-room provision (§12).
   * **`steep` fires on 16.9% of columns** of a gently varying terrain — a
     workable signal, but deriving the predicate needs neighbouring columns'
     heights, which the filler's per-column API cannot currently reach.
