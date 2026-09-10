@@ -1049,30 +1049,40 @@ Open:
     which is why the earlier "one position of 98304 at exactly 0.30 came out
     true" was the whole story rather than an anomaly.
 
-  * **`bandlands` is a 192-entry table read with a per-column phase shift —
-    structure confirmed, exact contents still open.** `tools/analysis/
+  * **`bandlands` indexes a 192-entry table with a BIT-EXACT formula — the
+    table's own contents are what remains open.** `tools/analysis/
     bandlands-probe.sh` puts `bandlands` alone at the root of a probe's own
     tree, over a column made fully solid by a constant `raw_final_density`,
     and reads every block back: 128x128 columns, the full -64..319 height,
     over three separate server runs (two world seeds, plus a `sea_level`
-    variant of the first).
+    variant of the first). `tools/analysis/bandlands-dump.cpp` turns a run
+    into a colour histogram, a per-column offset map and PNG slices;
+    `tools/analysis/bandlands-offset-check.cpp` samples a named density noise
+    at the same grid for direct comparison.
 
     Every one of the 3 x 16384 = 49152 columns sampled is an EXACT cyclic
-    shift of a single 192-entry colour table — `floorMod(y + shift, 192)`
-    indexes it, with zero exceptions across all three runs. The table's
-    LENGTH (192) held across both world seeds; its CONTENTS did not — the two
-    seeds' colour histograms disagree (orange_terracotta is 19.8% of all
-    blocks at seed 42, 14.1% at seed -1), so the table is a function of the
-    world seed, not a fixed constant.
+    shift of a single 192-entry colour table. The pack ships a REGISTERED
+    noise this build can already build byte for byte —
+    `worldgen/noise/clay_bands_offset.json`, one octave at firstOctave -8 —
+    and it is exactly the field driving the shift:
 
-    The per-column shift is a smooth, coherent field over (x, z) — its own
-    slice images show curved iso-contours, not noise scattered block to
-    block — landing in a narrow band (roughly 63-66 in every run) that did
-    NOT move when `sea_level` was changed from -64 to 63, holding `min_y`
-    fixed. So the shift's baseline is independent of `sea_level`; what it IS
-    keyed to (`min_y`, a plain constant, or something else) is not yet
-    separated, and the small (~±2) part that clearly varies between seeds and
-    across the sampled area is what actually paints the shift field's curves.
+    ```
+    index(x, y, z) = floorMod(y + round(4 * clay_bands_offset(x, 0, z)), 192)
+    block           = TABLE[index]
+    ```
+
+    `round` is round-half-up (`floor(v + 0.5)`), not truncation: the
+    measured colour transitions land exactly on the raw noise value's own
+    ±0.125, ±0.375, ... boundaries — a quarter-step centred at zero — which
+    only round-half-up produces. Checked against BOTH seeds with zero degrees
+    of freedom left to fit: having read the noise value at one point,
+    (0, 0), the formula predicts all other 16383 columns exactly, in both
+    runs, with zero exceptions. (The `sea_level`-varying run is the same seed
+    as the first and reproduces it exactly, confirming the formula reads
+    neither `sea_level` nor `min_y`.) The table's LENGTH (192) held across
+    both world seeds; its CONTENTS did not — the colour histograms disagree
+    between them — so the table itself is a function of the world seed, built
+    once, not the noise.
 
     **cubiomes (MIT) says nothing here** — it has no `terracotta` reference
     anywhere in it; it only ever places biome IDs, never blocks. **Cuberite
@@ -1081,23 +1091,35 @@ Open:
     project's own measurement well: a pattern array built once per seed by
     walking it end to end, laying down 1-2 "layers" of a weighted-random
     colour and a weighted-random width (mostly 1, sometimes 2-3), separated
-    by runs of plain (hardened) clay, plus a low-frequency 2D "floor" noise
-    that offsets where in the array a column starts reading. That is
-    corroboration of the ALGORITHM'S SHAPE, not its numbers: Cuberite targets
-    a pre-1.13 version with a 512-entry array (`2 * ChunkHeight` at
-    `ChunkHeight = 256`) and its own non-Mojang RNG, neither of which is what
-    1.21.11 measures out to (a 192-entry array). Its colour-weight table does
-    not fit either — checked against this project's own seed-42 histogram,
-    its white and light-grey weights are half of what 1.21.11 shows and its
-    yellow weight is double.
+    by runs of plain (hardened) clay, plus a low-frequency 2D "floor" noise —
+    the same role `clay_bands_offset` fills here — that offsets where in the
+    array a column starts reading. That is corroboration of the ALGORITHM'S
+    SHAPE, not its numbers: Cuberite targets a pre-1.13 version with a
+    512-entry array (`2 * ChunkHeight` at `ChunkHeight = 256`) and its own
+    non-Mojang RNG for the table, neither of which is what 1.21.11 measures
+    out to (192 entries). Its 15-entry colour-weight list does not fit
+    exactly either, though a MINIMAL edit of it does much better: bump white
+    and light grey from 1 entry to 2 each and drop yellow from 2 to 1, and
+    the resulting 6/2/2/2/2/1 split over 15 matches seed 42's measured
+    colour breakdown to within a point or two on every colour. Seed -1's
+    breakdown does not fit nearly as well (orange and brown are each off by
+    ten-plus points) — plausibly small-sample noise, since a 192-entry table
+    holds on the order of 30-40 independent colour choices and a 6-category
+    multinomial that small swings this much on its own, but this is a
+    HYPOTHESIS about the weight list, not a second confirmation of it, and it
+    is recorded as exactly that.
 
     What is still missing to write this: the exact RNG this build already has
-    (Java LCG or Xoroshiro128++) that seeds the table, and its seed
-    derivation (raw world seed? salted by name, like `vertical_gradient`? a
-    constant, like `temperature`'s 1234?); the exact weighted colour/width
-    distribution for 1.21.11; and the exact noise construct, scale and seed
-    behind the per-column shift. None of that separates from output alone
-    with the probes run so far — this is the same class of wall
+    (Java LCG or Xoroshiro128++) that builds the table, its seed derivation
+    (the same `clay_bands_offset` positional source, read once at a fixed
+    reference point, is the natural guess but is untested), the exact order
+    it is drawn in (Cuberite's own `IntNoise1DInt(idx)` — one hash per
+    remaining array position, decomposed by repeated `/` and `%`, rather
+    than a single advancing stream — is a real alternative shape, not just
+    Cuberite's own detail), and the exact weighted colour/width distribution
+    for 1.21.11. None of that separates from the two tables in hand without
+    a lot more trial and error against this build's own RNG primitives, which
+    was attempted and did not land quickly — this is the same class of wall
     `old_blended_noise`'s fold hit before the clean-room provision (§12).
   * **`steep` fires on 16.9% of columns** of a gently varying terrain — a
     workable signal, but deriving the predicate needs neighbouring columns'
