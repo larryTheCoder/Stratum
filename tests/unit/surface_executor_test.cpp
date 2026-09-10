@@ -1,6 +1,7 @@
 // Stratum — running a dimension's surface rules.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include <stratum/data/pack.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -12,7 +13,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -59,23 +64,86 @@ constexpr std::int64_t kSeed = 42;
                           {"false_at_and_above", {{"absolute", falseAt}}}};
 }
 
+/// A worldgen tree holding just `clay_bands_offset`, written on the fly —
+/// `bandlands`' one registered noise (spec/bandlands-spec.md Q4.3).
+class ClayBandsTree {
+public:
+    ClayBandsTree() : path_(std::filesystem::temp_directory_path() / uniqueName()) {
+        const std::filesystem::path noiseDir = path_ / "noise";
+        std::filesystem::create_directories(noiseDir);
+        std::ofstream out(noiseDir / "clay_bands_offset.json");
+        out << R"({"firstOctave": -8, "amplitudes": [1.0]})";
+    }
+
+    ClayBandsTree(const ClayBandsTree&) = delete;
+    ClayBandsTree& operator=(const ClayBandsTree&) = delete;
+
+    ~ClayBandsTree() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    [[nodiscard]] stratum::data::Pack pack() const {
+        return stratum::data::Pack::openWorldgenTree(path_);
+    }
+
+private:
+    [[nodiscard]] static std::string uniqueName() {
+        static int counter = 0;
+        return "stratum-bandlands-test-" + std::to_string(++counter);
+    }
+
+    std::filesystem::path path_;
+};
+
+[[nodiscard]] stratum::density::NoiseRegistry clayBandsOffsetNoise(const ClayBandsTree& tree,
+                                                                   std::int64_t seed) {
+    const std::vector<stratum::data::ResourceLocation> wanted{
+        stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset")};
+    return stratum::density::NoiseRegistry::create(tree.pack(), wanted, seed,
+                                                    stratum::density::RandomSource::Xoroshiro);
+}
+
+/// The block one of the golden 192-entry tables names at @p index, from a
+/// single-letter code: t=terracotta, o=orange, y=yellow, b=brown, r=red,
+/// w=white, l=light_gray (all `_terracotta`). Read directly off the real
+/// server via tools/analysis/bandlands-probe.sh and bandlands-dump.cpp.
+[[nodiscard]] stratum::data::ResourceLocation clayBlockOf(char code) {
+    switch (code) {
+        case 't':
+            return stratum::data::ResourceLocation::parse("minecraft:terracotta");
+        case 'o':
+            return stratum::data::ResourceLocation::parse("minecraft:orange_terracotta");
+        case 'y':
+            return stratum::data::ResourceLocation::parse("minecraft:yellow_terracotta");
+        case 'b':
+            return stratum::data::ResourceLocation::parse("minecraft:brown_terracotta");
+        case 'r':
+            return stratum::data::ResourceLocation::parse("minecraft:red_terracotta");
+        case 'w':
+            return stratum::data::ResourceLocation::parse("minecraft:white_terracotta");
+        case 'l':
+            return stratum::data::ResourceLocation::parse("minecraft:light_gray_terracotta");
+        default:
+            throw std::logic_error("bad clay code");
+    }
+}
+
+[[nodiscard]] RuleGraph bandlandsGraph() {
+    return resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
+}
+
 } // namespace
 
-TEST_CASE("a tree with an unrunnable construct is refused whole, by name", "[surface]") {
-    const auto geometry = overworldGeometry();
-    const RuleGraph graph =
-        resolve(nlohmann::json{{"type", "minecraft:sequence"},
-                               {"sequence",
-                                {nlohmann::json{{"type", "minecraft:condition"},
-                                                {"if_true", gradient("minecraft:deepslate", -8, 8)},
-                                                {"then_run", block("minecraft:deepslate")}},
-                                 nlohmann::json{{"type", "minecraft:bandlands"}}}}});
-
-    // The runnable half is not a licence to run the tree: one unrunnable
-    // branch refuses all of it, and the message says which and why.
-    CHECK_THROWS_WITH(Executor::compile(graph, kSeed, geometry),
-                      ContainsSubstring("minecraft:bandlands") && ContainsSubstring("refused"));
-}
+// There is no longer a real example of "a tree with an unrunnable
+// construct": `bandlands` was the last one (spec/bandlands-spec.md), and
+// every rule type and condition type this schema defines now compiles.
+// `Executor::compile`'s whole-tree refusal (any one unrunnable construct
+// refuses everything, not just its own branch) is still real code — it
+// exists for whatever a future data pack format adds that this build does
+// not understand yet — but nothing in today's 1.21.11 schema can exercise it
+// with real JSON any more, since RuleGraph::resolve() itself already rejects
+// an unknown "type" string before compile() is ever reached.
 
 TEST_CASE("a runnable tree places what its rules say", "[surface]") {
     const auto geometry = overworldGeometry();
@@ -363,4 +431,93 @@ TEST_CASE("the temperature origin follows sea level, not the world floor", "[sur
     // sea_level + 17 and nothing else moves.
     CHECK(boundaryAt(64) - boundaryAt(63) == 1);
     CHECK(boundaryAt(0) < boundaryAt(63));
+}
+
+// bandlands (spec/bandlands-spec.md). The golden 192-entry tables below are
+// not a derivation checked against itself: they are what tools/analysis/
+// bandlands-probe.sh and bandlands-dump.cpp read directly off the real,
+// unmodified 1.21.11 server at seeds 42 and -1, over 49152 sampled columns
+// with zero exceptions (SPEC §11). Reproducing them exactly is this build's
+// own independent confirmation of the clean-room spec, not a restatement of
+// it.
+
+TEST_CASE("bandlands' table matches the server's own, seed 42", "[surface][bandlands]") {
+    const ClayBandsTree tree;
+    const auto noises = clayBandsOffsetNoise(tree, 42);
+    const RuleGraph graph = bandlandsGraph();
+    const Executor executor =
+        Executor::compile(graph, 42, overworldGeometry(), &noises, /*seaLevel=*/63);
+
+    constexpr std::string_view kGolden =
+        "wttobwlottblwltttotbbrotttotttlwttottotrototttorrrwotttototttott"
+        "tttlwlttottotottottylwoytttotwrrtyttwtttttotttotlwttotttototowlt"
+        "ottolwlolwlbbbbbbbottorottlwtbrrbtttotttyyytttbbbtototrrtottotot";
+    REQUIRE(kGolden.size() == stratum::surface::kClayBandsSize);
+    for (std::size_t i = 0; i < kGolden.size(); ++i) {
+        CAPTURE(i);
+        CHECK(executor.clayBandAt(i).name == clayBlockOf(kGolden[i]));
+    }
+}
+
+TEST_CASE("bandlands' table matches the server's own, seed -1", "[surface][bandlands]") {
+    const ClayBandsTree tree;
+    const auto noises = clayBandsOffsetNoise(tree, -1);
+    const RuleGraph graph = bandlandsGraph();
+    const Executor executor =
+        Executor::compile(graph, -1, overworldGeometry(), &noises, /*seaLevel=*/63);
+
+    constexpr std::string_view kGolden =
+        "wrrrottotttttotttlwlttottyttotttlwlrrrtbbbbotlwbbbbbbttotrblwttt"
+        "lwltlwltbbtoytrrrottolwtttotttolwttototoyyyttttowttttottttbbttlw"
+        "ltttyotttotottytttttottbbbbbyottttotttttottbbbttttotybbotttrrrto";
+    REQUIRE(kGolden.size() == stratum::surface::kClayBandsSize);
+    for (std::size_t i = 0; i < kGolden.size(); ++i) {
+        CAPTURE(i);
+        CHECK(executor.clayBandAt(i).name == clayBlockOf(kGolden[i]));
+    }
+}
+
+TEST_CASE("bandlands reads through apply(), not just the raw table", "[surface][bandlands]") {
+    // The same seed-42 table as above, reached the ordinary way: a sequence
+    // like vanilla's own, `condition -> bandlands`, walked by apply().
+    const ClayBandsTree tree;
+    const auto noises = clayBandsOffsetNoise(tree, 42);
+    const RuleGraph graph = resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
+    const Executor executor =
+        Executor::compile(graph, 42, overworldGeometry(), &noises, /*seaLevel=*/63);
+
+    const auto* placed = executor.apply(at(0, -64, 0));
+    REQUIRE(placed != nullptr);
+    // index(0, -64, 0) = floorMod(-64 + shift, 192); table[k] was built from
+    // y = k - g0 at (0,0), so this is the same read path bandlandsAt() takes
+    // directly, exercised through apply() and runRule() instead.
+    CHECK(placed->name == executor.bandlandsAt(0, -64, 0).name);
+}
+
+TEST_CASE("bandlands' index reproduces vanilla's own reachable crash, not a clamp",
+          "[surface][bandlands]") {
+    // spec/bandlands-spec.md Q5.1: vanilla's own index arithmetic is not
+    // safe for extreme y, and the real server was confirmed to throw
+    // ArrayIndexOutOfBoundsException reaching it — not a hypothetical this
+    // build invented. A dimension whose geometry reaches far enough down
+    // hits it here too, deliberately, rather than silently clamping into a
+    // colour vanilla never placed.
+    const ClayBandsTree tree;
+    const auto noises = clayBandsOffsetNoise(tree, 42);
+    const RuleGraph graph = bandlandsGraph();
+    const auto deepGeometry = stratum::settings::NoiseGeometry{
+        .minY = -2048, .height = 2048 + 320, .sizeHorizontal = 1, .sizeVertical = 2};
+    const Executor executor = Executor::compile(graph, 42, deepGeometry, &noises, 63);
+
+    // Ordinary y still reads fine.
+    CHECK_NOTHROW(executor.bandlandsAt(0, -64, 0));
+    // Far enough down, vanilla's own single '+192'-then-'%' goes negative.
+    CHECK_THROWS_WITH(executor.bandlandsAt(0, -2032, 0), ContainsSubstring("outside"));
+}
+
+TEST_CASE("clayBandAt refuses a tree that never named bandlands", "[surface][bandlands]") {
+    const auto graph = resolve(nlohmann::json{{"type", "minecraft:block"},
+                                              {"result_state", {{"Name", "minecraft:stone"}}}});
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry());
+    CHECK_THROWS_WITH(executor.clayBandAt(0), ContainsSubstring("bandlands"));
 }

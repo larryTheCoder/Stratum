@@ -48,8 +48,7 @@ TEST_CASE("every dimension's surface rules resolve, and say what cannot run",
     const std::map<std::string, Shape> expected{
         {"minecraft:amplified", {.rules = 287, .conditions = 141, .noises = 7}},
         {"minecraft:caves", {.rules = 288, .conditions = 142, .noises = 7}},
-        // The End's is a single `block` rule: no conditions, no noises, and
-        // the only one of the seven this build could run today.
+        // The End's is a single `block` rule: no conditions, no noises.
         {"minecraft:end", {.rules = 1, .conditions = 0, .noises = 0}},
         {"minecraft:floating_islands", {.rules = 284, .conditions = 139, .noises = 7}},
         {"minecraft:large_biomes", {.rules = 287, .conditions = 141, .noises = 7}},
@@ -67,21 +66,19 @@ TEST_CASE("every dimension's surface rules resolve, and say what cannot run",
         CHECK(graph.conditionCount() == found->second.conditions);
         CHECK(graph.referencedNoises().size() == found->second.noises);
 
-        // Which dimensions are fully runnable is itself the progress report,
-        // so it is asserted per dimension rather than counted. The End was
-        // first and was alone for a long time; the nether joined it once
-        // vertical_gradient and the surface depth landed, since between them
-        // they cover everything its rules use.
-        if (id.toString() == "minecraft:end" || id.toString() == "minecraft:nether") {
-            CHECK(graph.unrunnable().empty());
-        } else {
-            CHECK_FALSE(graph.unrunnable().empty());
-        }
+        // Every dimension is fully runnable now, and that is itself the
+        // progress report — asserted per dimension rather than counted, so
+        // a future regression names which one broke. The End was first and
+        // was alone for a long time; the Nether joined it once
+        // vertical_gradient and the surface depth landed; the remaining
+        // five joined together once `bandlands` closed
+        // (spec/bandlands-spec.md, SPEC §11) — it was the last construct
+        // any of the seven trees named.
+        CHECK(graph.unrunnable().empty());
     }
 }
 
-TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
-          "[conformance][surface]") {
+TEST_CASE("the overworld names nothing left unrunnable", "[conformance][surface]") {
     const std::filesystem::path tree = worldgenTree();
     if (!std::filesystem::is_directory(tree)) {
         SKIP("no extracted vanilla worldgen under " << STRATUM_FIXTURES_DIR);
@@ -91,22 +88,27 @@ TEST_CASE("the overworld names exactly the constructs SPEC accounts for",
     const auto id = stratum::data::ResourceLocation::parse("minecraft:overworld");
     const auto graph = stratum::surface::RuleGraph::resolve(loaded.settings.at(id).surfaceRule, id);
 
-    // ONE of the fifteen types the overworld uses cannot be run, and the list
-    // is asserted whole rather than counted: when one is settled it leaves
-    // this list, and that should be a visible, deliberate edit.
+    // RESOLVED. This list — asserted whole rather than counted throughout
+    // its life, so that closing an entry was always a visible, deliberate
+    // edit — has gone ten, nine, three, two, one, zero.
     //
-    // It has gone ten, nine, three, two, one. vertical_gradient left when its
-    // random source was recovered; surface depth then unblocked hole, steep,
-    // stone_depth, water, y_above and noise_threshold together; `biome` left
-    // because it needed the biome plumbed through rather than derived; and
-    // `temperature` left once a height sweep showed it compares a
-    // height-adjusted value rather than the flat threshold recorded here for
-    // two milestones.
+    // vertical_gradient left when its random source was recovered; surface
+    // depth then unblocked hole, steep, stone_depth, water, y_above and
+    // noise_threshold together; `biome` left because it needed the biome
+    // plumbed through rather than derived; `temperature` left once a height
+    // sweep showed it compares a height-adjusted value rather than the flat
+    // threshold recorded here for two milestones; and `bandlands`, the
+    // overworld's own last remaining construct, closed once its colour
+    // table's construction was derived clean-room and confirmed exactly
+    // against three world seeds and 532224 real blocks
+    // (spec/bandlands-spec.md, SPEC §11).
     //
-    // What remains is the bandlands RULE, whose colour table is generated from
-    // the world seed by a derivation this build does not have (SPEC §11).
-    const std::vector<std::string> expected{"minecraft:bandlands"};
-    CHECK(graph.unrunnable() == expected);
-
-    CHECK(graph.unrunnable().size() == 1U);
+    // What is NOT settled by this: ChunkFiller still refuses to actually run
+    // the overworld's rules, because nothing supplies a biome's own declared
+    // temperature for its one `temperature` condition yet
+    // (ChunkFiller::compile's own doc, SPEC §11). That is a missing INPUT,
+    // not an unrunnable CONSTRUCT — the distinction this file's own tests
+    // exist to keep visible — and terrain/filler.hpp's ChunkFiller is where
+    // it is tracked.
+    CHECK(graph.unrunnable().empty());
 }

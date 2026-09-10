@@ -104,11 +104,11 @@ TEST_CASE("noises named by conditions are collected once each", "[surface]") {
     CHECK(noises[1] == ResourceLocation::parse("minecraft:surface"));
 }
 
-TEST_CASE("what cannot be run is named, and what can be is not", "[surface]") {
+TEST_CASE("every rule type and every condition type this schema defines runs",
+          "[surface]") {
     // above_preliminary_surface runs: find_top_surface landed, so the
     // preliminary surface level is a thing this build computes. `not` runs
-    // because it is only a negation. Everything else in the tree is refused
-    // with a reason (SPEC §11).
+    // because it is only a negation.
     const RuleGraph runnable =
         resolve(nlohmann::json{{"type", "minecraft:condition"},
                                {"if_true",
@@ -123,22 +123,19 @@ TEST_CASE("what cannot be run is named, and what can be is not", "[surface]") {
                        {"then_run", block("minecraft:stone")}});
     CHECK(refused.unrunnable().empty());
 
-    // What is left refused is the bandlands RULE, not any condition.
+    // `bandlands` was the last remaining construct, closed by the clean-room
+    // provision (spec/bandlands-spec.md, SPEC §11) — it now runs, the same
+    // as every other rule type.
     const RuleGraph bandlands = resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
-    REQUIRE(bandlands.unrunnable().size() == 1U);
-    CHECK(bandlands.unrunnable()[0] == "minecraft:bandlands");
+    CHECK(bandlands.unrunnable().empty());
+    CHECK_FALSE(RuleGraph::unrunnableReason(RuleType::Bandlands).has_value());
 
-    // And the reason says what is missing, not merely that something is.
-    const auto reason = RuleGraph::unrunnableReason(RuleType::Bandlands);
-    REQUIRE(reason.has_value());
-    CHECK_THAT(std::string(*reason), ContainsSubstring("banding"));
-
-    // Seven condition types have left this list as their semantics were
-    // measured. Only the two that read a biome remain.
+    // Every condition type this schema defines runs, the same way.
     for (const ConditionType settled :
          {ConditionType::VerticalGradient, ConditionType::Hole, ConditionType::Steep,
           ConditionType::StoneDepth, ConditionType::Water, ConditionType::YAbove,
-          ConditionType::NoiseThreshold, ConditionType::Biome, ConditionType::Temperature}) {
+          ConditionType::NoiseThreshold, ConditionType::Biome, ConditionType::Temperature,
+          ConditionType::AbovePreliminarySurface, ConditionType::Not}) {
         CHECK_FALSE(RuleGraph::unrunnableReason(settled).has_value());
     }
 }

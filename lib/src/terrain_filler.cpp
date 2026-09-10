@@ -52,6 +52,7 @@ struct SurfaceNeeds {
     bool temperature = false;
     bool preliminarySurface = false;
     bool steep = false;
+    bool bandlands = false;
 };
 
 [[nodiscard]] SurfaceNeeds surfaceNeedsOf(const surface::RuleGraph& graph) {
@@ -72,6 +73,12 @@ struct SurfaceNeeds {
                 break;
             default:
                 break;
+        }
+    }
+    for (surface::RuleIndex i = 0; i < graph.ruleCount(); ++i) {
+        if (graph.rule(i).type == surface::RuleType::Bandlands) {
+            needs.bandlands = true;
+            break;
         }
     }
     return needs;
@@ -206,6 +213,18 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
             filler.surfaceRulesBlockedBy_.emplace_back(
                 "minecraft:temperature (this build has no source yet for a biome's own "
                 "declared temperature)");
+        }
+        if (needs.bandlands &&
+            noises.find(data::ResourceLocation::parse("minecraft:clay_bands_offset")) == nullptr) {
+            // Also not a construct — `bandlands` itself runs fine
+            // (spec/bandlands-spec.md, SPEC §11) — but Executor::compile
+            // would otherwise throw NoiseError reaching for a noise nobody
+            // asked the registry to build, and that reads as a crash rather
+            // than an honest "blocked, here is why".
+            filler.surfaceRulesBlockedBy_.emplace_back(
+                "minecraft:bandlands (this dimension's rules use bandlands, and no "
+                "minecraft:clay_bands_offset noise was built into the registry supplied to "
+                "ChunkFiller::compile)");
         }
 
         if (filler.surfaceRulesBlockedBy_.empty()) {

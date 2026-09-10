@@ -150,11 +150,9 @@ std::string_view conditionTypeName(ConditionType type) noexcept {
     return kConditionNames[static_cast<std::size_t>(type)];
 }
 
-std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType type) noexcept {
-    if (type == RuleType::Bandlands) {
-        return "it paints the mesa banding, and while a probe shows which terracotta it places "
-               "(SPEC §11) the order the bands run in is not settled and nothing documents it";
-    }
+std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType) noexcept {
+    // Every rule type runs: `bandlands` was the last one, closed by the
+    // clean-room provision (spec/bandlands-spec.md, SPEC §11).
     return std::nullopt;
 }
 

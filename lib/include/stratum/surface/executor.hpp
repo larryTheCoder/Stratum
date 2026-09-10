@@ -27,6 +27,8 @@
 #include <stratum/surface/rule_graph.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -35,6 +37,10 @@
 #include <utility>
 
 namespace stratum::surface {
+
+/// The length of `bandlands`' colour table — a literal in vanilla's own
+/// source, not derived from any pack parameter (spec/bandlands-spec.md Q1.1).
+inline constexpr std::size_t kClayBandsSize = 192;
 
 /// Raised when a rule tree cannot be executed, naming what stopped it.
 class ExecutionError : public std::runtime_error {
@@ -116,14 +122,16 @@ public:
     /// Compiles @p graph for one world seed.
     ///
     /// Throws ExecutionError naming every construct this build cannot run,
-    /// with the reason for each. Vanilla's overworld is refused today, but
-    /// down to one: `bandlands`, whose terracotta band ORDER is not derived
-    /// (its colours are). Every one of the fifteen condition types runs; the
-    /// Nether's own tree — no `bandlands` anywhere in it — compiles whole
-    /// (SPEC §11).
+    /// with the reason for each — which, per spec/bandlands-spec.md closing
+    /// `bandlands`, is nothing left in the schema itself: every rule type and
+    /// every condition type runs. What can still make a REAL dimension's
+    /// compile fail is a missing input this construct needs at read time
+    /// (a `Context` field the caller cannot supply, or a noise `noises`
+    /// does not hold) rather than an unsupported construct.
     /// @p noises must hold every entry `graph.referencedNoises()` names, plus
     /// `minecraft:surface` and `minecraft:surface_secondary` if any rule reads
-    /// a surface depth. A missing one is an error at compile, naming the
+    /// a surface depth, and `minecraft:clay_bands_offset` if any rule uses
+    /// `bandlands`. A missing one is an error at compile, naming the
     /// identifier, rather than on the chunk that first reached it.
     ///
     /// It may be null for a tree that needs neither — which is not a special
@@ -185,6 +193,23 @@ public:
     /// which is the ordinary case, and means the filler's block stands.
     [[nodiscard]] const settings::BlockState* apply(const Context& at) const;
 
+    /// The block `bandlands` places at @p x, @p y, @p z: one entry of this
+    /// dimension's clay-bands table, indexed by a per-column noise-derived
+    /// shift (spec/bandlands-spec.md Q4). Throws ExecutionError if @p x/@p z's
+    /// index falls outside the table — vanilla's own unguarded index
+    /// arithmetic can do this for extreme y (Q5.1), and this reproduces that
+    /// exactly rather than clamping it into something vanilla never places.
+    [[nodiscard]] const settings::BlockState& bandlandsAt(std::int32_t x, std::int32_t y,
+                                                          std::int32_t z) const;
+
+    /// One entry of this dimension's clay-bands table, built once at compile
+    /// from the world seed (spec/bandlands-spec.md Q2-Q3). Exposed directly
+    /// so the table's construction can be checked against the server's own
+    /// array without going through bandlandsAt()'s noise-driven read path.
+    /// Throws ExecutionError if this tree never names `bandlands` — the
+    /// table is only ever built when something will read it.
+    [[nodiscard]] const settings::BlockState& clayBandAt(std::size_t index) const;
+
 private:
     Executor(const RuleGraph& graph, const settings::NoiseGeometry& geometry,
              const density::NoiseRegistry* noises, std::int64_t worldSeed, std::int32_t seaLevel,
@@ -210,6 +235,13 @@ private:
     /// One positional source per `random_name`, built at compile so that
     /// running a rule costs no MD5 and no forking.
     std::map<std::string, rng::PositionalSource> gradients_;
+
+    /// `bandlands`' own state: the table, built once (empty/default-filled
+    /// until clayBandsBuilt_ says otherwise), and the noise its per-column
+    /// shift reads. Built only when the tree names `bandlands` at all.
+    bool clayBandsBuilt_ = false;
+    std::array<settings::BlockState, kClayBandsSize> clayBands_{};
+    const noise::NormalNoise* clayBandsOffset_ = nullptr;
 };
 
 } // namespace stratum::surface

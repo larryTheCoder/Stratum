@@ -1,0 +1,173 @@
+{
+  "_meta": {
+    "source_spec": "bandlands-spec.md",
+    "provenance": "PROVENANCE.md (run 03 section)",
+    "minecraft_version": "1.21.11",
+    "date": "2026-09-10",
+    "note": "Hypothesis values, verified(differential-harness) on nearly every claim per this run's raised bar. Nothing here enters lib/ without golden verification per SPEC section 7.",
+    "_changelog": [
+      {
+        "change": "initial publication of bandlands-spec.md and this file",
+        "reason": "RESEARCH-RUN-03.md, an owner-certified Implementer-wall reopen of the closed run 01/02 repository",
+        "task": "RESEARCH-RUN-03"
+      },
+      {
+        "change": "scrubbed advance_formula_note's description of how the source realizes the +2 across its loop structure",
+        "reason": "REVIEW-08 \u00a71: source-structure content with no behavioral content of its own; value, mis-derivation warning, and evidence retained",
+        "task": "REVIEW-08 \u00a71"
+      },
+      {
+        "change": "rephrased corrections_recorded to remove this driver's own read-path check method name",
+        "reason": "REVIEW-08 \u00a72: a camelCase source-adjacent identifier missed by a sweep that was never actually run against this file's final version",
+        "task": "REVIEW-08 \u00a72"
+      }
+    ]
+  },
+  "structure": {
+    "array_size": 192,
+    "array_size_is_literal": true,
+    "built": "once per dimension, alongside other per-dimension noise samplers, at shared per-dimension state construction",
+    "claim": "Q1.1/Q1.2"
+  },
+  "construction": {
+    "salt": "minecraft:clay_bands",
+    "salt_claim": "Q3.2",
+    "default_color": "terracotta",
+    "pass_order": [
+      "sparse_scatter_a",
+      "band_pass_yellow",
+      "band_pass_brown",
+      "band_pass_red",
+      "sparse_scatter_c"
+    ],
+    "sparse_scatter_a": {
+      "advance_formula": "draw + 2",
+      "advance_formula_note": "the value is draw+2, not draw+1 -- a naive derivation easily lands on +1 and is behaviorally wrong (every gap comes out one cell too short); verified by full-array match against the real method",
+      "draw_range": [
+        0,
+        4
+      ],
+      "color": "orange_terracotta",
+      "claim": "Q2.2"
+    },
+    "band_passes": {
+      "_note": "one shared procedure, called three times with these (base_width, color) pairs, in this order",
+      "calls": [
+        {
+          "base_width": 1,
+          "color": "yellow_terracotta"
+        },
+        {
+          "base_width": 2,
+          "color": "brown_terracotta"
+        },
+        {
+          "base_width": 1,
+          "color": "red_terracotta"
+        }
+      ],
+      "run_count_range": [
+        6,
+        15
+      ],
+      "width_offset_range": [
+        0,
+        2
+      ],
+      "width_formula": "base_width + uniform[0,2]",
+      "start_index_range": [
+        0,
+        191
+      ],
+      "truncates_at_array_end": true,
+      "wraps_at_array_end": false,
+      "overlaps_allowed": true,
+      "later_run_wins_on_overlap": true,
+      "claim": "Q2.3"
+    },
+    "sparse_scatter_c": {
+      "target_count_range": [
+        9,
+        15
+      ],
+      "primary_color": "white_terracotta",
+      "secondary_color": "light_gray_terracotta",
+      "secondary_left_guard": "index - 1 > 0",
+      "secondary_right_guard": "index + 1 < array_length",
+      "secondary_probability_each_side": 0.5,
+      "advance_range": [
+        4,
+        19
+      ],
+      "advance_formula": "uniform[0,15] + 4",
+      "advance_has_hidden_extra_increment": false,
+      "claim": "Q2.4"
+    },
+    "consumption_order": "sparse_scatter_a (in full) -> band_pass yellow (in full) -> band_pass brown (in full) -> band_pass red (in full) -> sparse_scatter_c (in full)",
+    "consumption_order_claim": "Q2.5",
+    "randomness_shape": "one continuously-advancing shared source, threaded through all five passes in order",
+    "randomness_shape_claim": "Q3.1"
+  },
+  "read_path": {
+    "noise_salt": "clay_bands_offset",
+    "noise_pack_params": {
+      "firstOctave": -8,
+      "amplitudes": [
+        1.0
+      ]
+    },
+    "noise_sample_coordinates": "(x, 0, z) -- y is NEVER passed to the noise call",
+    "noise_y_independence_claim": "Q4.2",
+    "offset_formula": "round(noise_value * 4.0)",
+    "round_tie_rule": "floor(v + 0.5) -- ties round toward POSITIVE infinity, not away from zero, not toward even",
+    "round_tie_examples": {
+      "2.5": 3,
+      "-2.5": -2,
+      "0.5": 1,
+      "-0.5": 0
+    },
+    "round_claim": "Q4.4",
+    "index_formula": "(y + offset + 192) % 192",
+    "index_formula_note": "a SINGLE '+192' before a single Java '%' -- NOT provably nonnegative; distinct from a safe double-mod form",
+    "index_formula_claim": "Q4.5"
+  },
+  "reachability_finding": {
+    "_note": "NOT a dead branch -- the opposite of the usual house pattern. A live, reproduced hazard.",
+    "predicate": "index goes negative (and the real method throws ArrayIndexOutOfBoundsException) whenever y + offset + 192 < 0",
+    "observed_offset_range_200000_samples": [
+      -6,
+      5
+    ],
+    "worst_case_threshold": "y < -186 (at offset = -6)",
+    "reachable_in_world_height_range": true,
+    "reachable_down_to_at_least": -2032,
+    "demonstrated_by": "direct call to the real unmodified method at (x=0, y=-2032, z=0), all seeds tried, every call threw",
+    "sweep_result": "4073 of 9045 wide-sweep trials threw ArrayIndexOutOfBoundsException, 100% correctly reproduced by the faithful independent reimplementation",
+    "what_might_prevent_it_in_real_play": "unknown -- would live in the surrounding surface-rule tree, out of this run's scope",
+    "policy_decision_needed": "whether an implementation reproduces the crash-prone shape exactly, or special-cases it -- an explicit Implementer/owner decision, not this spec's to make",
+    "claim": "Q5.1"
+  },
+  "external_inputs": {
+    "complete_set": [
+      "world seed (via minecraft:clay_bands salt, construction only)",
+      "block position (x,y,z) (x,z reach the noise; y reaches only the index arithmetic)",
+      "clay_bands_offset noise pack parameters"
+    ],
+    "not_read": [
+      "biome (anywhere in this mechanism)",
+      "world-shape parameters: min Y, height, sea level"
+    ],
+    "claim": "Q6.1/Q6.2/Q6.3"
+  },
+  "verification_summary": {
+    "harness_sections": 6,
+    "sections_passed": 6,
+    "total_differential_trials": "approximately 25188 (1920 + 4 + 11 + 9045 + 200000-offset-sweep + 14000)",
+    "mismatches_after_two_corrections": 0,
+    "corrections_recorded": [
+      "the read-path check originally compared against a SAFER double-mod reduction than the source uses, so it silently disagreed with the source's real crash behavior instead of reproducing it -- fixed to use the source's exact single-add reduction shape",
+      "an embedded-quote string literal broke compilation on the first fix attempt -- rephrased, not a logic error"
+    ],
+    "tolerance": "exact (discrete block-state identity and thrown-exception agreement, not floating point)"
+  }
+}

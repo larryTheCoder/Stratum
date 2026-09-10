@@ -32,14 +32,17 @@
 // SURFACE RULES ARE NOW WIRED IN (M4) — a resolved `surface::RuleGraph` and
 // the overworld's own biome parameter table go into `ChunkFiller::compile`
 // below — and the 82.013% above has not moved, because the overworld's own
-// tree still names two things this build cannot run it with: `bandlands`,
-// whose terracotta band ORDER is not derived (its colours are), and its one
+// tree still names one thing this build cannot run it with: its single
 // `temperature` condition, which needs a biome's own declared temperature
-// and has nothing supplying one yet (SPEC §11). This is asserted directly
-// (`runsSurfaceRules()` / `surfaceRulesBlockedBy()`) rather than left to be
-// inferred from the count staying put, so the day either closes, THIS
-// assertion fails first and says why the numbers below moved rather than
-// leaving that to be rediscovered.
+// and has nothing supplying one yet (SPEC §11). `bandlands`, the tree's
+// other one-time blocker, closed — its colour table's construction is now
+// derived clean-room and confirmed exactly against three world seeds and
+// 532224 real blocks (spec/bandlands-spec.md) — so it no longer appears
+// here at all. This is asserted directly (`runsSurfaceRules()` /
+// `surfaceRulesBlockedBy()`) rather than left to be inferred from the count
+// staying put, so the day `temperature` closes too, THIS assertion fails
+// first and says why the numbers below moved rather than leaving that to be
+// rediscovered.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>
@@ -124,20 +127,24 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     const auto surfaceRules = stratum::surface::RuleGraph::resolve(
         overworld.surfaceRule, stratum::data::ResourceLocation::parse("minecraft:overworld"));
 
+    // referencedNoises() is the DENSITY graph's own contract; `bandlands`'
+    // one registered noise is a SURFACE construct's need and has to be
+    // asked for explicitly, same as ChunkFiller::compile's own doc already
+    // says for minecraft:surface/minecraft:surface_secondary.
+    auto wantedNoises = loaded.graph.referencedNoises();
+    wantedNoises.push_back(stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset"));
     const auto noises = stratum::density::NoiseRegistry::create(
-        pack, loaded.graph.referencedNoises(), kSeed, stratum::density::RandomSource::Xoroshiro);
+        pack, wantedNoises, kSeed, stratum::density::RandomSource::Xoroshiro);
     const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld,
                                                                &surfaceRules, &biomeParameters);
 
-    // See the file comment: wired in, still blocked, by name, on purpose.
-    // Two reasons, not one — `bandlands` (SPEC §11) and the overworld's
-    // single `temperature` condition, which needs a biome's own declared
-    // temperature and has nothing supplying one yet (ChunkFiller::compile's
-    // own doc).
+    // See the file comment: wired in, still blocked, by name, on purpose —
+    // now down to one reason: the overworld's single `temperature`
+    // condition, which needs a biome's own declared temperature and has
+    // nothing supplying one yet (ChunkFiller::compile's own doc).
     CHECK_FALSE(filler.runsSurfaceRules());
-    REQUIRE(filler.surfaceRulesBlockedBy().size() == 2U);
-    CHECK(filler.surfaceRulesBlockedBy().front() == "minecraft:bandlands");
-    CHECK_THAT(filler.surfaceRulesBlockedBy().back(), ContainsSubstring("minecraft:temperature"));
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:temperature"));
 
     const auto file = stratum::region::RegionFile::open(region);
 

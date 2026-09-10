@@ -55,6 +55,16 @@ public:
         return *this;
     }
 
+    /// Writes `worldgen/noise/clay_bands_offset` — `bandlands`' one
+    /// registered noise (spec/bandlands-spec.md Q4.3) — so a filler that
+    /// uses bandlands has something to build a NoiseRegistry from.
+    const TempTree& defineClayBandsOffsetNoise() const {
+        std::filesystem::create_directories(path_ / "noise");
+        std::ofstream out(path_ / "noise" / "clay_bands_offset.json");
+        out << R"({"firstOctave": -8, "amplitudes": [1.0]})";
+        return *this;
+    }
+
     [[nodiscard]] LoadedSettings load() const {
         return stratum::settings::loadAll(Pack::open(path_));
     }
@@ -259,25 +269,49 @@ TEST_CASE("the corner cache changes speed and not values", "[terrain][filler]") 
     CHECK(compared == 19U * 19U * 48U);
 }
 
-TEST_CASE("an unrunnable surface tree is refused whole, and the filler falls back to bare blocks",
+TEST_CASE("bandlands runs through the whole filler pipeline, not just the executor",
           "[terrain][filler][surface]") {
+    // `bandlands` was the last construct this build could not run at all
+    // (spec/bandlands-spec.md, SPEC §11); surface_executor_test.cpp checks
+    // its own table against the server directly, so this only needs to
+    // prove ChunkFiller actually wires it through: the noise it needs
+    // reaches Executor::compile, and a placed block reaches the buffer.
+    // Built directly rather than through compileFrom()/TempTree's shared
+    // static registry, since this is the one test here that needs a real
+    // noise in it.
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));
+    tree.defineClayBandsOffsetNoise();
     const LoadedSettings loaded = tree.load();
+    const auto& settings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    // referencedNoises() is the DENSITY graph's own contract and knows
+    // nothing about what a surface tree needs — `clay_bands_offset` has to
+    // be asked for explicitly, the same way ChunkFiller::compile's own doc
+    // says a caller must for `minecraft:surface`/`minecraft:surface_secondary`.
+    auto wanted = loaded.graph.referencedNoises();
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
     const RuleGraph surface = resolveSurface(nlohmann::json{{"type", "minecraft:bandlands"}});
-    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    const ChunkFiller filler =
+        ChunkFiller::compile(loaded.graph, noises, settings, &surface, /*biomeParameters=*/nullptr);
 
-    CHECK_FALSE(filler.runsSurfaceRules());
-    CHECK(filler.surfaceRulesBlockedBy() == std::vector<std::string>{"minecraft:bandlands"});
+    REQUIRE(filler.runsSurfaceRules());
+    CHECK(filler.surfaceRulesBlockedBy().empty());
 
-    ChunkBuffer buffer(
-        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    ChunkBuffer buffer(settings.geometry);
     filler.fill(0, 0, buffer);
-    // Blocked, not silently mis-run: exactly the bare fill from before an
-    // executor existed at all.
-    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
-    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:water");
-    CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
+    // bandlands always places something (its table has no "place nothing"
+    // entry, only colours — surface_executor_test.cpp's own golden-table
+    // tests establish that), so every block the density chain left solid,
+    // fluid or air is replaced by one of its seven terracotta colours.
+    const auto isClay = [](const std::string& name) {
+        return name == "minecraft:terracotta" || name.ends_with("_terracotta");
+    };
+    CHECK(isClay(buffer.at(0, -16, 0).name.toString()));
+    CHECK(isClay(buffer.at(0, 0, 0).name.toString()));
+    CHECK(isClay(buffer.at(0, 8, 0).name.toString()));
 }
 
 TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pipeline",
@@ -398,6 +432,26 @@ TEST_CASE("a tree that reads the biome without a parameter list is blocked, not 
     CHECK_FALSE(filler.runsSurfaceRules());
     REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
     CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:biome"));
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("a tree that uses bandlands without its noise built is blocked, not crashed",
+          "[terrain][filler][surface]") {
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(nlohmann::json{{"type", "minecraft:bandlands"}});
+    // compileFrom()'s shared registry never asked for clay_bands_offset —
+    // see the dedicated test above for a filler that runs bandlands with it.
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+
+    CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:bandlands"));
 
     ChunkBuffer buffer(
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);

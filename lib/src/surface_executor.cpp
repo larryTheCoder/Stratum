@@ -4,10 +4,14 @@
 #include <stratum/surface/executor.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <ranges>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace stratum::surface {
 
@@ -44,6 +48,125 @@ constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary
     return false;
 }
 
+/// Does this tree place `bandlands` anywhere? Only then is its table built
+/// and its noise required.
+[[nodiscard]] bool usesBandlands(const RuleGraph& graph) {
+    for (RuleIndex index = 0; index < graph.ruleCount(); ++index) {
+        if (graph.rule(index).type == RuleType::Bandlands) {
+            return true;
+        }
+    }
+    return false;
+}
+
+constexpr std::string_view kClayBandsOffsetNoise = "minecraft:clay_bands_offset";
+/// The salt `clay_bands`' own construction RNG is derived with — the same
+/// "fork the world seed, salt with this name's MD5" shape every other named
+/// object in this project derives from (spec/bandlands-spec.md Q3.2).
+constexpr std::string_view kClayBandsSalt = "minecraft:clay_bands";
+
+[[nodiscard]] settings::BlockState clayColor(std::string_view name) {
+    return settings::BlockState{.name = data::ResourceLocation{"minecraft", std::string(name)},
+                                .properties = {}};
+}
+
+/// `bandlands`' table: 192 entries, one fixed random source threaded through
+/// five passes in order, each overwriting some of what came before it
+/// (spec/bandlands-spec.md Q2). Built once per dimension, never touched
+/// again after compile.
+[[nodiscard]] std::array<settings::BlockState, kClayBandsSize>
+buildClayBands(rng::Xoroshiro128PlusPlus& random) {
+    constexpr auto kSize = static_cast<std::int32_t>(kClayBandsSize);
+    std::array<settings::BlockState, kClayBandsSize> bands;
+    bands.fill(clayColor("terracotta"));
+
+    // Pass (a): a sparse scatter of orange, stepping by draw+2 in total
+    // (Q2.2) — but split across two additions, not one. `index0 = 0` reads
+    // literally: each iteration writes at `index + draw + 1`, THEN advances
+    // one further to the base the next iteration's loop check and draw both
+    // see. Collapsing that into a single `index += draw + 2` before writing
+    // looks equivalent and is not: it changes which value the loop condition
+    // sees at the boundary, so it stops one iteration early or late for
+    // seeds where that boundary matters. Caught against real server output,
+    // not assumed from the spec's prose — one of three probed seeds agreed
+    // with the collapsed form by coincidence, and the other two did not,
+    // which is what exposed it (SPEC §11's clean-room provision expects
+    // independent golden verification of every claim for exactly this
+    // reason).
+    {
+        std::int32_t index = 0;
+        while (index < kSize) {
+            index += random.nextInt(5) + 1;
+            if (index < kSize) {
+                bands[static_cast<std::size_t>(index)] = clayColor("orange_terracotta");
+            }
+            ++index;
+        }
+    }
+
+    // Passes (b): three "band" calls sharing one procedure, in this order
+    // and with these (base width, colour) pairs (Q2.3).
+    struct BandPass {
+        std::int32_t baseWidth;
+        std::string_view color;
+    };
+    constexpr std::array<BandPass, 3> kBandPasses{{
+        {1, "yellow_terracotta"},
+        {2, "brown_terracotta"},
+        {1, "red_terracotta"},
+    }};
+    for (const BandPass& pass : kBandPasses) {
+        const std::int32_t runCount = 6 + random.nextInt(10);
+        for (std::int32_t run = 0; run < runCount; ++run) {
+            const std::int32_t width = pass.baseWidth + random.nextInt(3);
+            const std::int32_t start = random.nextInt(kSize);
+            // Truncates silently at the array's end rather than wrapping;
+            // later runs overwrite earlier ones and earlier passes both.
+            for (std::int32_t offset = 0; offset < width; ++offset) {
+                const std::int32_t position = start + offset;
+                if (position >= kSize) {
+                    break;
+                }
+                bands[static_cast<std::size_t>(position)] = clayColor(pass.color);
+            }
+        }
+    }
+
+    // Pass (c): a final sparse scatter of white, with an independent chance
+    // of light grey on each still-in-bounds neighbour — the left guard is
+    // `index - 1 > 0`, strictly, not `>= 0`; that asymmetry is vanilla's own,
+    // not a mistake to "fix" here (Q2.4).
+    //
+    // The "fair coin" is bit 0 of the raw draw, NOT this class's own
+    // nextBoolean() (bit 63, the sign of the top 32 bits) — measured
+    // directly against the real server: bit 0 predicted all 27 reachable
+    // coin flips across the two golden tables exactly, bit 63 disagreed on
+    // more than a third of them. Whether nextBoolean() itself needs
+    // revisiting for OTHER call sites is a separate question this
+    // construct's own verification does not settle; nothing else in this
+    // codebase has exercised nextBoolean() against a server-verified vector
+    // before now.
+    {
+        const auto fairCoin = [&random]() noexcept { return (random.nextLong() & 1) != 0; };
+        const std::int32_t target = 9 + random.nextInt(7);
+        std::int32_t placed = 0;
+        std::int32_t index = 0;
+        while (placed < target && index < kSize) {
+            bands[static_cast<std::size_t>(index)] = clayColor("white_terracotta");
+            if (index - 1 > 0 && fairCoin()) {
+                bands[static_cast<std::size_t>(index - 1)] = clayColor("light_gray_terracotta");
+            }
+            if (index + 1 < kSize && fairCoin()) {
+                bands[static_cast<std::size_t>(index + 1)] = clayColor("light_gray_terracotta");
+            }
+            ++placed;
+            index += random.nextInt(16) + 4;
+        }
+    }
+
+    return bands;
+}
+
 } // namespace
 
 Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
@@ -61,8 +184,9 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     }
 
     const bool wantsDepth = readsSurfaceDepth(graph);
+    const bool wantsBandlands = usesBandlands(graph);
     const bool wantsNoise = !graph.referencedNoises().empty();
-    if (noises == nullptr && (wantsDepth || wantsNoise)) {
+    if (noises == nullptr && (wantsDepth || wantsBandlands || wantsNoise)) {
         throw ExecutionError("these surface rules read noise, so they cannot be compiled without "
                              "a noise registry");
     }
@@ -76,6 +200,17 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
         executor.surface_ = &noises->get(data::ResourceLocation::parse(std::string(kSurfaceNoise)));
         executor.surfaceSecondary_ =
             &noises->get(data::ResourceLocation::parse(std::string(kSurfaceSecondaryNoise)));
+    }
+    if (wantsBandlands) {
+        executor.clayBandsOffset_ =
+            &noises->get(data::ResourceLocation::parse(std::string(kClayBandsOffsetNoise)));
+        // One fork of the world seed, salted with this name's MD5 — built
+        // once here and never touched again after the table is filled
+        // (spec/bandlands-spec.md Q3.2).
+        rng::Xoroshiro128PlusPlus tableRandom =
+            rng::XoroshiroPositionalFactory{worldSeed}.fromHashOf(kClayBandsSalt);
+        executor.clayBands_ = buildClayBands(tableRandom);
+        executor.clayBandsBuilt_ = true;
     }
     // One source per name, so that a rule fired millions of times pays for no
     // MD5 and no forking.
@@ -128,6 +263,44 @@ const settings::BlockState* Executor::apply(const Context& at) const {
     return runRule(graph_->root(), at);
 }
 
+const settings::BlockState& Executor::clayBandAt(const std::size_t index) const {
+    if (!clayBandsBuilt_) {
+        throw ExecutionError("this tree was compiled without bandlands, so it has no clay-bands "
+                             "table to read");
+    }
+    if (index >= kClayBandsSize) {
+        throw ExecutionError("clay-bands index " + std::to_string(index) + " is outside the " +
+                             std::to_string(kClayBandsSize) + "-entry table");
+    }
+    return clayBands_[index];
+}
+
+const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const std::int32_t y,
+                                                  const std::int32_t z) const {
+    const double raw = clayBandsOffset_->sample(static_cast<double>(x), 0.0, static_cast<double>(z));
+    // Round-half-up (Java's Math.round: floor(v + 0.5)) — ties go toward
+    // positive infinity, not away from zero (spec/bandlands-spec.md Q4.4).
+    const auto offset = static_cast<std::int32_t>(std::floor((raw * 4.0) + 0.5));
+    // Vanilla's OWN index arithmetic: one Java '%' after a single '+192', not
+    // a safe floorMod (spec/bandlands-spec.md Q4.5). C++'s '%' on int32_t
+    // already matches Java's here — both truncate toward zero — so this is
+    // deliberately the raw operator, not javamath::floorMod: for a
+    // sufficiently negative y this can itself go negative, reproducing
+    // vanilla's own reproduced ArrayIndexOutOfBoundsException (Q5.1) rather
+    // than silently wrapping it into something vanilla never places.
+    const std::int32_t index = (y + offset + 192) % 192;
+    if (index < 0 || index >= static_cast<std::int32_t>(kClayBandsSize)) {
+        throw ExecutionError(
+            "bandlands' index (" + std::to_string(index) + ") is outside its " +
+            std::to_string(kClayBandsSize) +
+            "-entry table at y = " + std::to_string(y) +
+            " — this is vanilla's own unguarded arithmetic doing this, reproduced rather than "
+            "clamped (spec/bandlands-spec.md Q5.1); not reachable inside vanilla's own overworld "
+            "height range, but a tall or deep custom dimension can reach it");
+    }
+    return clayBands_[static_cast<std::size_t>(index)];
+}
+
 const settings::BlockState* Executor::runRule(const RuleIndex index, const Context& at) const {
     const Rule& rule = graph_->rule(index);
     switch (rule.type) {
@@ -144,8 +317,11 @@ const settings::BlockState* Executor::runRule(const RuleIndex index, const Conte
         case RuleType::Condition:
             return test(rule.condition, at) ? runRule(rule.thenRun, at) : nullptr;
         case RuleType::Bandlands:
+            return &bandlandsAt(at.x, at.y, at.z);
         default:
-            // compile() refuses these, so reaching one is a bug in this file
+            // compile() refuses anything else this build cannot run, so
+            // reaching one here is a bug in this file rather than a real
+            // construct slipping through.
             throw ExecutionError("reached a rule type compile() should have refused");
     }
 }

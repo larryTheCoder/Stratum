@@ -876,14 +876,15 @@ Open:
   minus east, south minus north, with `abs()` refuted by 17375 columns that
   have to stay false.
 
-  What is left for the overworld is **one construct**: `bandlands`, whose
-  colour table generator is not derived. `biome` and `temperature` both run —
-  the list went ten, nine, three, one in four steps — but the overworld's own
-  tree still refuses on `bandlands` alone, and separately its one
-  `temperature` condition has nowhere to get a biome's declared temperature
-  from yet (`ChunkFiller` wiring, below). The Nether's tree has neither: no
-  `bandlands` anywhere in it, and no `temperature` condition either, so it
-  is the first real dimension whose surface rules compile whole.
+  **RESOLVED.** `biome` and `temperature` both run, and so, now, does
+  `bandlands` — the list went ten, nine, three, one, zero. The overworld's
+  own tree compiles WHOLE: nothing left in the schema refuses it. What still
+  keeps `ChunkFiller` from actually running it is a missing INPUT, not an
+  unrunnable construct — its one `temperature` condition has nowhere to get
+  a biome's declared temperature from yet (`ChunkFiller` wiring, below). The
+  Nether's tree needed neither `bandlands` nor `temperature` to begin with,
+  so it was the first real dimension whose surface rules compiled whole; the
+  other six joined it once `bandlands` closed.
 
   *An API trap found while testing, and closed.* An `Executor` keeps pointers
   to its graph, geometry and noises, so compiling from a TEMPORARY graph
@@ -901,9 +902,11 @@ Open:
   containing one unrunnable construct is refused ENTIRE at compile, by name and
   with the reason, rather than run with that branch quietly skipped. A surface
   rule that sometimes does nothing is a world that generates and is silently
-  wrong, which §8 puts in the most severe class there is. Vanilla's overworld
-  is refused today, but down to one construct — `bandlands` — and that is the
-  honest position rather than a limitation to work around.
+  wrong, which §8 puts in the most severe class there is. As of `bandlands`
+  closing, nothing in vanilla's schema triggers this refusal for any of the
+  seven dimensions any more — the mechanism stays, for whatever a future data
+  pack format adds that this build does not understand yet, but today it has
+  nothing left to name.
 
   One consequence worth stating. Because compile refuses first, a `Context`
   missing a field for a construct this build genuinely CANNOT run is a
@@ -932,21 +935,24 @@ Open:
 
   Resolving is separated from RUNNING on purpose, and that split is what let
   RUNNING catch up construct by construct without either side waiting on the
-  other. `unrunnableReason` reports what it cannot execute and why, and by now
-  that is down to `bandlands` alone — every one of the eleven condition types
-  is settled; the four rule types were already three structural ones plus
-  `bandlands` from the start. The reasons recorded along the way, while they
-  still applied, were the measurements above rather than "unimplemented":
-  `vertical_gradient` said its probability was settled and its random source
-  was not, `hole` said it fired on 0.04% of terrain and its comparison was
-  undocumented, `steep` said its predicate needed neighbouring columns the
-  filler could not yet reach.
+  other. `unrunnableReason` reports what it cannot execute and why — and, as
+  of `bandlands` closing, reports nothing at all: every one of the eleven
+  condition types and all four rule types run. The reasons recorded along the
+  way, while they still applied, were the measurements above rather than
+  "unimplemented": `vertical_gradient` said its probability was settled and
+  its random source was not, `hole` said it fired on 0.04% of terrain and its
+  comparison was undocumented, `steep` said its predicate needed neighbouring
+  columns the filler could not yet reach, and `bandlands` said its colour
+  table's construction was not derived — until the clean-room provision
+  derived it (below).
 
   `minecraft:end`, whose whole surface rule is one `block`, was the first
   dimension this build could decorate the moment there was an executor at
-  all — no condition, so nothing to settle. The Nether's tree is the first
+  all — no condition, so nothing to settle. The Nether's tree was the first
   REAL one: 41 conditions, none of them `bandlands`, all eleven types
-  runnable, and it compiles whole.
+  runnable, and it compiled whole before any of the other five did. All seven
+  now compile whole; `vanilla_surface_rules_test.cpp` asserts it per
+  dimension rather than once, so a future regression names which one broke.
 
   The schema is written out rather than generated, and that is a debt (§11).
   Five of the fifteen are absent from mcdoc entirely, so they would be
@@ -988,11 +994,13 @@ Open:
   different reasons two different ways.
 
   Consequence for the two real dimensions with fixtures. The overworld's own
-  tree still refuses — `bandlands` (above) plus its one `temperature`
-  condition — so `golden_fill_test.cpp`'s 82.013% has not moved; that is
-  asserted directly now (`runsSurfaceRules() == false`,
-  `surfaceRulesBlockedBy()` names both), not left to be inferred from a count
-  staying put. The Nether's tree compiles and needs neither `biome` data nor
+  tree compiles whole now — `bandlands` closed (below) — but `ChunkFiller`
+  still refuses it, on the one input its `temperature` condition needs and
+  nothing yet supplies; so `golden_fill_test.cpp`'s 82.013% has not moved.
+  That is asserted directly (`runsSurfaceRules() == false`,
+  `surfaceRulesBlockedBy()` naming `temperature` alone, where it used to name
+  `bandlands` too), not left to be inferred from a count staying put. The
+  Nether's tree compiles and needs neither `biome` data nor
   a fabricated temperature to run — but its `noise_settings` sets
   `legacy_random_source: true`, and `NoiseRegistry::create` refuses
   `RandomSource::Legacy` outright (§11: nothing available says how a name
@@ -1049,78 +1057,99 @@ Open:
     which is why the earlier "one position of 98304 at exactly 0.30 came out
     true" was the whole story rather than an anomaly.
 
-  * **`bandlands` indexes a 192-entry table with a BIT-EXACT formula — the
-    table's own contents are what remains open.** `tools/analysis/
-    bandlands-probe.sh` puts `bandlands` alone at the root of a probe's own
-    tree, over a column made fully solid by a constant `raw_final_density`,
-    and reads every block back: 128x128 columns, the full -64..319 height,
-    over three separate server runs (two world seeds, plus a `sea_level`
-    variant of the first). `tools/analysis/bandlands-dump.cpp` turns a run
-    into a colour histogram, a per-column offset map and PNG slices;
-    `tools/analysis/bandlands-offset-check.cpp` samples a named density noise
-    at the same grid for direct comparison.
+  * **`bandlands` — RESOLVED. A 192-entry table, its construction and its
+    read path both bit-exact.** `tools/analysis/bandlands-probe.sh` puts
+    `bandlands` alone at the root of a probe's own tree, over a column made
+    fully solid by a constant `raw_final_density`, and reads every block
+    back — the same technique `temperature`, `hole`, `steep` and
+    `above_preliminary_surface` were each measured with, since vanilla's own
+    tree gates `bandlands` behind a `biome` condition no probe of the real
+    overworld can reach around. `bandlands-dump.cpp` turns a run into a
+    colour histogram, a per-column offset map and PNG slices;
+    `bandlands-offset-check.cpp` and `bandlands-e2e-check.cpp` sample the
+    registered noise and the compiled `Executor` directly for comparison.
 
-    Every one of the 3 x 16384 = 49152 columns sampled is an EXACT cyclic
-    shift of a single 192-entry colour table. The pack ships a REGISTERED
-    noise this build can already build byte for byte —
-    `worldgen/noise/clay_bands_offset.json`, one octave at firstOctave -8 —
-    and it is exactly the field driving the shift:
+    **The read path**, confirmed first and independently of the table's own
+    construction:
 
     ```
-    index(x, y, z) = floorMod(y + round(4 * clay_bands_offset(x, 0, z)), 192)
+    index(x, y, z) = (y + round(4 * clay_bands_offset(x, 0, z)) + 192) % 192
     block           = TABLE[index]
     ```
 
-    `round` is round-half-up (`floor(v + 0.5)`), not truncation: the
-    measured colour transitions land exactly on the raw noise value's own
-    ±0.125, ±0.375, ... boundaries — a quarter-step centred at zero — which
-    only round-half-up produces. Checked against BOTH seeds with zero degrees
-    of freedom left to fit: having read the noise value at one point,
-    (0, 0), the formula predicts all other 16383 columns exactly, in both
-    runs, with zero exceptions. (The `sea_level`-varying run is the same seed
-    as the first and reproduces it exactly, confirming the formula reads
-    neither `sea_level` nor `min_y`.) The table's LENGTH (192) held across
-    both world seeds; its CONTENTS did not — the colour histograms disagree
-    between them — so the table itself is a function of the world seed, built
-    once, not the noise.
+    `clay_bands_offset` is the pack's own registered noise
+    (`worldgen/noise/clay_bands_offset.json`, one octave, firstOctave -8),
+    built through the ordinary modern noise-registry path and sampled at
+    `y = 0` always. `round` is round-half-up (`floor(v + 0.5)`), not
+    truncation: measured colour transitions land exactly on the raw noise
+    value's own ±0.125, ±0.375, ... boundaries — a quarter-step centred at
+    zero — which only round-half-up produces. The `%` is Java's own,
+    truncating, sign-follows-dividend operator — `javamath::floorMod` would
+    be the reflex here and would be WRONG: for a sufficiently negative `y` or
+    noise-derived offset, `y + offset + 192` is itself negative, and Java's
+    `%` on a negative dividend returns a negative array index. This is not
+    hypothetical: reproduced directly, `Executor::bandlandsAt` throws at
+    `y = -2032` for every seed tried, matching vanilla's own reachable
+    `ArrayIndexOutOfBoundsException` there (unreachable inside the
+    overworld's own -64..319 height, reachable in a taller or deeper custom
+    dimension). Checked against three world seeds and 532224 real blocks
+    read directly off probe regions (`bandlands-e2e-check.cpp`), zero
+    exceptions, zero remaining free parameters.
+
+    **The table's construction** came from a clean-room derivation
+    (`spec/bandlands-spec.md`, run 03) once black-box measurement alone
+    stalled the same way `old_blended_noise`'s fold once did (§12). One
+    continuously-advancing random source — the world seed's positional
+    factory, forked once and salted with the MD5 of `minecraft:clay_bands`
+    — is threaded through five passes in a fixed order, each free to
+    overwrite what an earlier one placed: a sparse scatter of orange
+    (step size `draw(0,4)+2`, split across two additions rather than one —
+    see below); three "band" passes sharing one procedure, called with
+    `(width 1, yellow)`, `(width 2, brown)`, `(width 1, red)` in that order,
+    each drawing 6-15 runs of a `base+draw(0,2)`-wide, randomly-placed,
+    truncated-not-wrapped stripe; and a final sparse scatter of white with an
+    independent chance of light grey on each in-bounds neighbour — whose left
+    guard is `index - 1 > 0`, strictly, not `>= 0`, an asymmetry that is
+    vanilla's own and not a mistake to "fix". The table starts entirely
+    plain terracotta.
+
+    Implementing the spec's own prose caught two real, independently-found
+    bugs, both settled by checking against real server output rather than by
+    re-reading the prose harder:
+
+    - The orange scatter's step is split across two `+1`s, not one `+2`
+      before the write. `index0 = 0` reads literally — each iteration writes
+      at `index + draw + 1`, THEN advances one further to the base the next
+      iteration's loop condition and draw both see. Collapsing that into one
+      `index += draw + 2` before writing looks equivalent and is not: it
+      changes which value the loop condition sees at the boundary, so the
+      pass stops one iteration early or late for some seeds. One of three
+      probed seeds (42) agreed with the collapsed form by coincidence; the
+      other two (-1, 12345) did not, which is what exposed it — checked
+      end-to-end against 532224 real blocks per seed, not just the table's
+      192 entries, since a coincidental match at 192 points is exactly the
+      kind of thing worth over-verifying.
+    - The final scatter's "fair coin" is bit 0 of the raw 64-bit draw, not
+      this project's own `Xoroshiro128PlusPlus::nextBoolean()` (bit 63, the
+      sign of the top 32 bits). Bit 0 predicted all 27 reachable coin flips
+      across two probed seeds' tables exactly; bit 63 disagreed on more than
+      a third of them. Nothing else in this codebase had exercised
+      `nextBoolean()` against a server-verified vector before this — whether
+      it needs revisiting for its other call sites is untouched by this
+      finding and not investigated.
 
     **cubiomes (MIT) says nothing here** — it has no `terracotta` reference
     anywhere in it; it only ever places biome IDs, never blocks. **Cuberite
-    (Apache-2.0)** does implement a mesa/terracotta generator
-    (`src/Generating/CompoGenBiomal.cpp`), and its SHAPE matches this
-    project's own measurement well: a pattern array built once per seed by
-    walking it end to end, laying down 1-2 "layers" of a weighted-random
-    colour and a weighted-random width (mostly 1, sometimes 2-3), separated
-    by runs of plain (hardened) clay, plus a low-frequency 2D "floor" noise —
-    the same role `clay_bands_offset` fills here — that offsets where in the
-    array a column starts reading. That is corroboration of the ALGORITHM'S
-    SHAPE, not its numbers: Cuberite targets a pre-1.13 version with a
-    512-entry array (`2 * ChunkHeight` at `ChunkHeight = 256`) and its own
-    non-Mojang RNG for the table, neither of which is what 1.21.11 measures
-    out to (192 entries). Its 15-entry colour-weight list does not fit
-    exactly either, though a MINIMAL edit of it does much better: bump white
-    and light grey from 1 entry to 2 each and drop yellow from 2 to 1, and
-    the resulting 6/2/2/2/2/1 split over 15 matches seed 42's measured
-    colour breakdown to within a point or two on every colour. Seed -1's
-    breakdown does not fit nearly as well (orange and brown are each off by
-    ten-plus points) — plausibly small-sample noise, since a 192-entry table
-    holds on the order of 30-40 independent colour choices and a 6-category
-    multinomial that small swings this much on its own, but this is a
-    HYPOTHESIS about the weight list, not a second confirmation of it, and it
-    is recorded as exactly that.
-
-    What is still missing to write this: the exact RNG this build already has
-    (Java LCG or Xoroshiro128++) that builds the table, its seed derivation
-    (the same `clay_bands_offset` positional source, read once at a fixed
-    reference point, is the natural guess but is untested), the exact order
-    it is drawn in (Cuberite's own `IntNoise1DInt(idx)` — one hash per
-    remaining array position, decomposed by repeated `/` and `%`, rather
-    than a single advancing stream — is a real alternative shape, not just
-    Cuberite's own detail), and the exact weighted colour/width distribution
-    for 1.21.11. None of that separates from the two tables in hand without
-    a lot more trial and error against this build's own RNG primitives, which
-    was attempted and did not land quickly — this is the same class of wall
-    `old_blended_noise`'s fold hit before the clean-room provision (§12).
+    (Apache-2.0)**, read before the clean-room provision as a structural
+    hint, does implement a mesa/terracotta generator for an older version
+    (`src/Generating/CompoGenBiomal.cpp`) whose SHAPE matches — a pattern
+    array built once per seed, laid down in coloured layers separated by
+    plain clay, offset by a low-frequency 2D noise — but not its numbers: a
+    512-entry array against 1.21.11's 192, its own non-Mojang RNG, and a
+    15-entry colour-weight list that does not fit 1.21.11's measured
+    breakdown. That mismatch was the right call to make at the time: it is
+    exactly why this was escalated to the clean-room provision rather than
+    guessed from the structural hint alone.
   * **`steep` fires on 16.9% of columns** of a gently varying terrain — a
     workable signal, but deriving the predicate needs neighbouring columns'
     heights, which the filler's per-column API cannot currently reach.
