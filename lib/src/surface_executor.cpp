@@ -155,10 +155,10 @@ buildClayBands(rng::Xoroshiro128PlusPlus& random) {
         while (placed < target && index < kSize) {
             bands[static_cast<std::size_t>(index)] = clayColor("white_terracotta");
             if (index - 1 > 0 && fairCoin()) {
-                bands[static_cast<std::size_t>(index - 1)] = clayColor("light_gray_terracotta");
+                bands[static_cast<std::size_t>(index) - 1] = clayColor("light_gray_terracotta");
             }
             if (index + 1 < kSize && fairCoin()) {
-                bands[static_cast<std::size_t>(index + 1)] = clayColor("light_gray_terracotta");
+                bands[static_cast<std::size_t>(index) + 1] = clayColor("light_gray_terracotta");
             }
             ++placed;
             index += random.nextInt(16) + 4;

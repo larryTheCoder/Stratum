@@ -150,7 +150,7 @@ std::string_view conditionTypeName(ConditionType type) noexcept {
     return kConditionNames[static_cast<std::size_t>(type)];
 }
 
-std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType) noexcept {
+std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType /*type*/) noexcept {
     // Every rule type runs: `bandlands` was the last one, closed by the
     // clean-room provision (spec/bandlands-spec.md, SPEC §11).
     return std::nullopt;
