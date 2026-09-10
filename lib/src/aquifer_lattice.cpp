@@ -66,7 +66,18 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         }
         // An aborting cell is floored instead, unless it sits clear of the
         // scan's own low sample by more than twenty blocks. Both terms read
-        // `cap`; `gate` and `anchor` are right on 0 of 2067 cells.
+        // `cap`; `gate` and `anchor` are right on 0 of 2067 cells — and MA
+        // blocker 2's own remaining "still unverified" mark on this term is
+        // now closed too: every earlier probe that could abort here held psl
+        // CONSTANT, which makes `gate` and `cap` the same number by
+        // construction (see sampling.hpp's own note on `readPreliminarySurface`)
+        // and so could never separate them from this comparand specifically.
+        // `tools/analysis/aquifer-nearsurface-probe.sh` drives a genuinely
+        // varying psl instead: read block-by-block rather than by fluid body
+        // (a body-boundary reading is corrupted here by water/lava contact
+        // turning to obsidian mid-column), `cap` scores a perfect 1.0000
+        // against `gate`'s 0.9266-0.9358 on 7.8M+ discriminating blocks
+        // across two seeds.
         //
         // BOTH the comparand and the floor are `lambda`, not the bare
         // `kLavaLevel` this line used to read. Measured at `sea_level` -70,
@@ -103,7 +114,15 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         const auto reach = static_cast<double>(std::max(0, kZeroBonusDepth - depth));
 
         // Product over divisor, never a pre-divided constant — see the slope
-        // constants in the header. The abort refuses the sea outcome outright.
+        // constants in the header. The abort refuses the sea outcome
+        // outright — MA blocker 2's other remaining mark, now closed the
+        // same way as the floor branch above: `aquifer-nearsurface-probe.sh`
+        // drives `aborted` true while floodedness alone would cross this
+        // gate, and reading `!aborted` as written scores 0.9911-0.9941
+        // against 0.0564-0.0924 for ignoring it, on 469575-541125
+        // discriminating blocks across two seeds. The ocean branch's own
+        // copy of this guard below scores 0.9812-0.9829 against
+        // 0.6612-0.6872 the same way.
         if (!cell.surface.aborted &&
             cell.floodedness + ((reach * kSeaBonusNumerator) / kSeaBonusDenominator) >
                 kFloodedSeaThreshold) {

@@ -583,6 +583,29 @@ TEST_CASE("the aborting near-surface floor is lambda, not a bare -54", "[aquifer
           stratum::aquifer::kLavaLevel); // >= lambda but <= cap+20: floor
 }
 
+TEST_CASE("the near-surface floor also reads the scan's cap, not its gate", "[aquifer]") {
+    // MA blocker 2's own remaining mark on this comparand, closed rather than
+    // left at "0 of 2067 cells" (aquifer_lattice.cpp's own comment): every
+    // earlier probe that could even abort here held psl CONSTANT, which
+    // makes `gate` and `cap` the same number by construction
+    // (readPreliminarySurface, sampling.hpp) and so could never separate
+    // them from THIS comparand specifically — as opposed to the ladder's own
+    // read of `cap`, settled separately above ("the ladder's cap reads the
+    // scan's own minimum").
+    //
+    // `tools/analysis/aquifer-nearsurface-probe.sh` drives a genuinely
+    // varying psl and reads block-by-block rather than by fluid body (a
+    // body-boundary reading is corrupted here by water/lava contact turning
+    // to obsidian mid-column, which a first version of the analyzer learned
+    // the hard way): `cap` scores a perfect 1.0000 against `gate`'s
+    // 0.9266-0.9358 on 7.8M+ discriminating blocks across two seeds.
+    const PslRead split{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    // gate - centreY = 2, inside the near-surface window. cap+20 = -50,
+    // gate+20 = 0: a centreY of -22 sits strictly between them, so the two
+    // readings disagree outright — cap says sea, gate would say floor.
+    CHECK(cellFluidLevel(cellWith(split, 63, -22, 0.5)) == 63);
+}
+
 TEST_CASE("the near-surface path is an early return that the guard cannot reach", "[aquifer]") {
     // Two purpose-built campaigns put cells centred below the lava level wet
     // to the top of their territory. An assignment rather than a return would
@@ -598,6 +621,16 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // being wrong in the middle of the floodedness band. A cell whose scan
     // aborted cannot take the sea through a floodedness gate — and the
     // committed code, which had no such term, predicted sea for most of them.
+    //
+    // MA blocker 2's own remaining mark on this guard, closed: every earlier
+    // probe that could exercise it held psl CONSTANT, so `aborted` was never
+    // true while floodedness alone would otherwise cross the gate in a world
+    // that could also vary. `aquifer-nearsurface-probe.sh` builds that
+    // configuration directly and reads block-by-block: reading `!aborted` as
+    // written scores 0.9911-0.9941 against 0.0564-0.0924 for ignoring it on
+    // the depth path, and 0.9812-0.9829 against 0.6612-0.6872 on the ocean
+    // branch's own copy of the same guard, on 469575-913229 discriminating
+    // blocks across two seeds.
     const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
     CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -54);
     // Without the abort the same cell floods.

@@ -412,10 +412,12 @@ Its own component (`lib/mapping/`), its own tests:
   including the surface's thirteen-position aborting-minimum scan, re-derived
   at twenty feature scales.
 
-  Four things stood between MA and closing; one is now resolved. The other
-  three were verification of measurements already in hand, each with its
-  separating configuration named and costing about one probe world; the
-  fourth is unexplored and is the reason this is a track rather than a task.
+  Four things stood between MA and closing; two are now resolved. Three of
+  the four were verification of measurements already in hand, each with its
+  separating configuration named and costing about one probe world — two of
+  those three are closed below, the third (fluid TYPE) narrowed to one loose
+  end; the fourth is unexplored and is the reason this is a track rather than
+  a task.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -432,12 +434,13 @@ Its own component (`lib/mapping/`), its own tests:
      equals their own centreY, a boundary tie rather than a rival pattern.
      No code changed — current code was already right.
 
-  2. **One of three corrections to `cellFluidLevel` is now LANDED, with a
-     second instrument behind it; two remain unverified.** All three were
-     invisible to every other corpus, which is why they went unseen — and
-     with all three the original instrument scored 1.00000 on 410842 cells
-     against 0.9958 without them. One instrument found all three, and this
-     project's own history says that alone is a hypothesis.
+  2. **CLOSED. One correction to `cellFluidLevel` is LANDED; the other two
+     needed no code change and are now confirmed against the server.** All
+     three were invisible to every other corpus, which is why they went
+     unseen — and with all three the original instrument scored 1.00000 on
+     410842 cells against 0.9958 without them. One instrument found all
+     three, and this project's own history says that alone is a hypothesis;
+     it no longer stands alone.
 
      *Landed.* The `centreY >= -54` conjunct in the aborting near-surface
      return was wrong, and is now `centreY >= lambda` — both the comparand
@@ -451,15 +454,23 @@ Its own component (`lib/mapping/`), its own tests:
      value" once both are lambda-based; using `lambda` in both places is a
      no-op at every already-verified sea_level, not an isolated finding.
 
-     *Still unverified.* The floor branch fires only when the scan aborted
-     on its first sample, i.e. `gate == cap` (needs a field where they
-     differ AND the near-surface path is in play — the `sea_level < -54`
-     probe below used a constant psl, which trivially always has
-     `gate == cap`, so it does not touch this one); and the `aborted` guard
-     on the sea gate has the wrong shape — the branch is taken, yields
-     lambda rather than `sea_level`, and still trips the trailing guard
-     (needs `sea_level < -54`, which now exists as a probe shape, but this
-     specific configuration was not the one built).
+     *Now confirmed, both without a code change.* Both were open because
+     every probe that could reach them held `preliminary_surface_level`
+     CONSTANT, which makes the scan's `gate` and `cap` the same number by
+     construction (`readPreliminarySurface`, §11) — trivially true of the
+     `sea_level < -54` world above too, so landing the correction there
+     could not touch either. `tools/analysis/aquifer-nearsurface-probe.sh`
+     drives a genuinely varying psl instead, held at floodedness 0.9 (past
+     both level-rule gates, so only the abort state is left to vary an
+     outcome), and reads every block rather than by fluid body — a
+     body-boundary reading is corrupted here by water/lava contact turning
+     to obsidian mid-column, which is why the analyzer's own first version
+     scored 0.51 before that fix. The near-surface floor's comparand reads
+     `cap`, not `gate`: a perfect 1.0000 against 0.9266-0.9358 on 7.8M+
+     discriminating blocks across two seeds. The `aborted` guard on the sea
+     outcome is correct as written on both its copies: 0.9911-0.9941 against
+     0.0564-0.0924 on the depth path, 0.9812-0.9829 against 0.6612-0.6872 on
+     the ocean branch, on 469575-913229 discriminating blocks each.
 
   3. **Which sources compete — mechanism now identified, formula still open.**
      About 13% of the server's real barriers come from a third source. The
