@@ -3,6 +3,7 @@ add_executable(stratum_unit_tests
     biome_temperature_table_test.cpp
     blended_test.cpp
     chunk_test.cpp
+    chunk_writer_test.cpp
     cli_test.cpp
     deepslate_oracle_test.cpp
     density_graph_test.cpp
@@ -21,6 +22,7 @@ add_executable(stratum_unit_tests
     javamath_test.cpp
     md5_test.cpp
     nbt_test.cpp
+    nbt_writer_test.cpp
     noise_settings_test.cpp
     noise_test.cpp
     pack_test.cpp
@@ -29,6 +31,7 @@ add_executable(stratum_unit_tests
     render_test.cpp
     region_diff_test.cpp
     region_file_test.cpp
+    region_file_writer_test.cpp
     validate_test.cpp
     version_test.cpp
     xoroshiro_test.cpp

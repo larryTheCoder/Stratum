@@ -134,6 +134,147 @@ std::vector<std::uint16_t> unpackIndices(const std::vector<std::int64_t>& packed
     return indices;
 }
 
+std::vector<std::int64_t> packIndices(const std::vector<std::uint16_t>& indices, int bitsPerEntry) {
+    if (bitsPerEntry < 1 || bitsPerEntry > 32) {
+        throw FormatError("cannot pack entries " + std::to_string(bitsPerEntry) + " bits wide");
+    }
+    const auto bits = static_cast<unsigned>(bitsPerEntry);
+    const std::size_t perLong = 64U / bits;
+    const std::size_t needed = (indices.size() + perLong - 1U) / perLong;
+    std::vector<std::uint64_t> words(needed, 0U);
+    const std::uint64_t mask = (std::uint64_t{1} << bits) - 1U;
+
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+        const std::size_t word = i / perLong;
+        const unsigned shift = static_cast<unsigned>(i % perLong) * bits;
+        words[word] |= (static_cast<std::uint64_t>(indices[i]) & mask) << shift;
+    }
+
+    std::vector<std::int64_t> packed;
+    packed.reserve(words.size());
+    for (const std::uint64_t word : words) {
+        packed.push_back(static_cast<std::int64_t>(word));
+    }
+    return packed;
+}
+
+namespace {
+
+[[nodiscard]] nbt::Tag encodeBlockState(const BlockState& state) {
+    nbt::Tag::Compound entry;
+    entry.push_back(nbt::NamedTag{.name = "Name", .value = nbt::Tag{state.name}});
+    if (!state.properties.empty()) {
+        nbt::Tag::Compound properties;
+        for (const auto& [key, value] : state.properties) {
+            properties.push_back(nbt::NamedTag{.name = key, .value = nbt::Tag{value}});
+        }
+        entry.push_back(nbt::NamedTag{.name = "Properties", .value = nbt::Tag{properties}});
+    }
+    return nbt::Tag{entry};
+}
+
+/// A paletted container's `palette` list plus, when the palette holds more
+/// than one entry, its packed `data` — the single-entry omission is
+/// decodePalettedContainer's own rule (chunk.cpp, above), mirrored exactly
+/// rather than re-derived.
+template<typename PaletteEntry, typename EncodeEntry>
+[[nodiscard]] nbt::Tag::Compound encodePalettedContainer(const std::vector<PaletteEntry>& palette,
+                                                         const std::vector<std::uint16_t>& indices,
+                                                         int floorBits, EncodeEntry&& encodeEntry) {
+    nbt::Tag::List paletteList{.elementType = nbt::TagType::End, .elements = {}};
+    for (const PaletteEntry& entry : palette) {
+        paletteList.elements.push_back(encodeEntry(entry));
+    }
+    // A list's declared element type has to match what its elements
+    // actually are (block palettes are compounds, biome palettes are bare
+    // strings) — read from the first one rather than assumed, so this stays
+    // correct for whatever EncodeEntry is handed. An empty palette keeps
+    // TagType::End, the same declared type nbt::Tag::List{} defaults to.
+    if (!paletteList.elements.empty()) {
+        paletteList.elementType = paletteList.elements.front().type();
+    }
+
+    nbt::Tag::Compound container;
+    container.push_back(nbt::NamedTag{.name = "palette", .value = nbt::Tag{paletteList}});
+    if (palette.size() > 1) {
+        const int bits = bitsPerEntryFor(palette.size(), floorBits);
+        container.push_back(
+            nbt::NamedTag{.name = "data", .value = nbt::Tag{packIndices(indices, bits)}});
+    }
+    return container;
+}
+
+} // namespace
+
+nbt::Tag encode(const ChunkData& chunk) {
+    nbt::Tag::Compound root;
+    root.push_back(nbt::NamedTag{.name = "DataVersion", .value = nbt::Tag{chunk.dataVersion}});
+    root.push_back(nbt::NamedTag{.name = "xPos", .value = nbt::Tag{chunk.x}});
+    root.push_back(nbt::NamedTag{.name = "zPos", .value = nbt::Tag{chunk.z}});
+    root.push_back(nbt::NamedTag{.name = "yPos", .value = nbt::Tag{chunk.lowestSection}});
+    root.push_back(nbt::NamedTag{.name = "Status", .value = nbt::Tag{chunk.status}});
+    root.push_back(nbt::NamedTag{.name = "LastUpdate", .value = nbt::Tag{std::int64_t{0}}});
+    root.push_back(nbt::NamedTag{.name = "InhabitedTime", .value = nbt::Tag{std::int64_t{0}}});
+    // No light data anywhere (see encode()'s own doc): the server recomputes
+    // it, rather than this build guessing at vanilla's sparse per-section
+    // storage convention.
+    root.push_back(nbt::NamedTag{.name = "isLightOn", .value = nbt::Tag{std::int8_t{0}}});
+    root.push_back(nbt::NamedTag{
+        .name = "structures",
+        .value = nbt::Tag{nbt::Tag::Compound{
+            nbt::NamedTag{.name = "References", .value = nbt::Tag{nbt::Tag::Compound{}}},
+            nbt::NamedTag{.name = "starts", .value = nbt::Tag{nbt::Tag::Compound{}}}}}});
+
+    if (!chunk.heightmaps.empty()) {
+        nbt::Tag::Compound heightmapsCompound;
+        const int origin = (chunk.lowestSection * kSectionSize) - 1;
+        for (const auto& [kind, heights] : chunk.heightmaps) {
+            std::vector<std::uint16_t> raw;
+            raw.reserve(heights.size());
+            for (const std::optional<int>& height : heights) {
+                raw.push_back(
+                    static_cast<std::uint16_t>(height.has_value() ? (*height - origin) : 0));
+            }
+            constexpr int kBitsPerHeight = 9;
+            heightmapsCompound.push_back(
+                nbt::NamedTag{.name = std::string(heightmapName(kind)),
+                              .value = nbt::Tag{packIndices(raw, kBitsPerHeight)}});
+        }
+        root.push_back(nbt::NamedTag{.name = "Heightmaps", .value = nbt::Tag{heightmapsCompound}});
+    }
+
+    nbt::Tag::List sectionsList{.elementType = nbt::TagType::Compound, .elements = {}};
+    nbt::Tag::List postProcessing{.elementType = nbt::TagType::List, .elements = {}};
+    for (const Section& section : chunk.sections) {
+        nbt::Tag::Compound sectionCompound;
+        sectionCompound.push_back(
+            nbt::NamedTag{.name = "block_states",
+                          .value = nbt::Tag{encodePalettedContainer(section.palette, section.blocks,
+                                                                    4, encodeBlockState)}});
+        if (!section.biomePalette.empty()) {
+            sectionCompound.push_back(
+                nbt::NamedTag{.name = "biomes",
+                              .value = nbt::Tag{encodePalettedContainer(
+                                  section.biomePalette, section.biomes, 1,
+                                  [](const std::string& name) { return nbt::Tag{name}; })}});
+        }
+        // Genuinely signed — sections run from -4 upward since 1.18 — the
+        // same sign this field carries on the way in (Chunk::decode's own
+        // note).
+        sectionCompound.push_back(
+            nbt::NamedTag{.name = "Y", .value = nbt::Tag{static_cast<std::int8_t>(section.y)}});
+        sectionsList.elements.emplace_back(sectionCompound);
+        postProcessing.elements.emplace_back(nbt::Tag::List{});
+    }
+    root.push_back(nbt::NamedTag{.name = "sections", .value = nbt::Tag{sectionsList}});
+    root.push_back(nbt::NamedTag{.name = "PostProcessing", .value = nbt::Tag{postProcessing}});
+    root.push_back(nbt::NamedTag{.name = "block_entities", .value = nbt::Tag{nbt::Tag::List{}}});
+    root.push_back(nbt::NamedTag{.name = "block_ticks", .value = nbt::Tag{nbt::Tag::List{}}});
+    root.push_back(nbt::NamedTag{.name = "fluid_ticks", .value = nbt::Tag{nbt::Tag::List{}}});
+
+    return nbt::Tag{root};
+}
+
 Chunk Chunk::decode(const nbt::Tag& root) {
     Chunk chunk;
 

@@ -276,4 +276,120 @@ std::vector<std::byte> RegionFile::readChunk(std::int32_t chunkX, std::int32_t c
                       " is not supported");
 }
 
+namespace {
+
+void appendBigEndian32(std::vector<std::byte>& out, std::uint32_t value) {
+    out.push_back(static_cast<std::byte>(value >> 24U));
+    out.push_back(static_cast<std::byte>(value >> 16U));
+    out.push_back(static_cast<std::byte>(value >> 8U));
+    out.push_back(static_cast<std::byte>(value));
+}
+
+void writeBigEndian24At(std::byte* entry, std::uint32_t value) {
+    entry[0] = static_cast<std::byte>(value >> 16U);
+    entry[1] = static_cast<std::byte>(value >> 8U);
+    entry[2] = static_cast<std::byte>(value);
+}
+
+void writeBigEndian32At(std::byte* entry, std::uint32_t value) {
+    entry[0] = static_cast<std::byte>(value >> 24U);
+    entry[1] = static_cast<std::byte>(value >> 16U);
+    entry[2] = static_cast<std::byte>(value >> 8U);
+    entry[3] = static_cast<std::byte>(value);
+}
+
+[[nodiscard]] std::vector<std::byte> deflate(const std::vector<std::byte>& input,
+                                             const std::string& what) {
+    uLongf bound = compressBound(static_cast<uLong>(input.size()));
+    std::vector<std::byte> output(bound);
+    const int status = compress2(reinterpret_cast<Bytef*>(output.data()), &bound,
+                                 reinterpret_cast<const Bytef*>(input.data()),
+                                 static_cast<uLong>(input.size()), Z_DEFAULT_COMPRESSION);
+    if (status != Z_OK) {
+        throw FormatError(what + ": zlib deflate failed (status " + std::to_string(status) + ")");
+    }
+    output.resize(bound);
+    return output;
+}
+
+} // namespace
+
+void writeRegion(const std::filesystem::path& path, std::int32_t regionX, std::int32_t regionZ,
+                 const std::map<std::pair<std::int32_t, std::int32_t>, ChunkPayload>& chunks,
+                 std::size_t paddingSectors) {
+    const std::string name = path.filename().string();
+
+    std::vector<std::byte> body; // everything after the 8 KiB header
+    std::array<std::uint32_t, kChunksPerRegion> locationWords{};
+    std::array<std::uint32_t, kChunksPerRegion> timestampWords{};
+    std::size_t nextSector = 2; // 0 and 1 are the header itself
+
+    for (const auto& [coord, payload] : chunks) {
+        const auto& [chunkX, chunkZ] = coord;
+        if (javamath::floorDiv(chunkX, kChunksPerAxis) != regionX ||
+            javamath::floorDiv(chunkZ, kChunksPerAxis) != regionZ) {
+            throw FormatError(name + ": chunk (" + std::to_string(chunkX) + ", " +
+                              std::to_string(chunkZ) + ") is not inside region (" +
+                              std::to_string(regionX) + ", " + std::to_string(regionZ) + ")");
+        }
+        const std::string what =
+            name + ": chunk (" + std::to_string(chunkX) + ", " + std::to_string(chunkZ) + ")";
+
+        const std::vector<std::byte> compressed = deflate(payload.nbt, what);
+        // The declared length counts the compression byte alongside the
+        // payload, the same convention readChunk() decodes.
+        const auto declared = static_cast<std::uint32_t>(compressed.size() + 1U);
+
+        std::vector<std::byte> framed;
+        framed.reserve(compressed.size() + 5U);
+        appendBigEndian32(framed, declared);
+        framed.push_back(static_cast<std::byte>(Compression::Zlib));
+        framed.insert(framed.end(), compressed.begin(), compressed.end());
+
+        const std::size_t sectors = (framed.size() + kSectorBytes - 1U) / kSectorBytes;
+        if (sectors > 255U) {
+            throw FormatError(what + ": needs " + std::to_string(sectors) +
+                              " sectors, more than the 255 the sector table can address");
+        }
+        framed.resize(sectors * kSectorBytes, std::byte{0});
+
+        const std::size_t index = RegionFile::indexFor(chunkX, chunkZ);
+        locationWords[index] =
+            (static_cast<std::uint32_t>(nextSector) << 8U) | static_cast<std::uint32_t>(sectors);
+        timestampWords[index] = static_cast<std::uint32_t>(payload.timestamp);
+
+        body.insert(body.end(), framed.begin(), framed.end());
+        nextSector += sectors;
+
+        // Free space, owned by nothing — see this function's own doc for
+        // why. Zero-filled so a reader that ever mis-stepped into it would
+        // find nothing that parses as anything, rather than stale bytes
+        // that happened to look like a chunk.
+        if (paddingSectors > 0) {
+            body.resize(body.size() + (paddingSectors * kSectorBytes), std::byte{0});
+            nextSector += paddingSectors;
+        }
+    }
+
+    std::vector<std::byte> out;
+    out.reserve(kHeaderBytes + body.size());
+    out.resize(kHeaderBytes, std::byte{0});
+    for (std::size_t index = 0; index < static_cast<std::size_t>(kChunksPerRegion); ++index) {
+        writeBigEndian24At(out.data() + (index * 4U), locationWords[index] >> 8U);
+        out[(index * 4U) + 3U] = static_cast<std::byte>(locationWords[index] & 0xFFU);
+        writeBigEndian32At(out.data() + kSectorBytes + (index * 4U), timestampWords[index]);
+    }
+    out.insert(out.end(), body.begin(), body.end());
+
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        throw FormatError("cannot open for writing: " + path.string());
+    }
+    stream.write(reinterpret_cast<const char*>(out.data()),
+                 static_cast<std::streamsize>(out.size()));
+    if (!stream) {
+        throw FormatError("short write on region file: " + path.string());
+    }
+}
+
 } // namespace stratum::region

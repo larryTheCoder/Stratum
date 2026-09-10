@@ -383,8 +383,17 @@ Its own component (`lib/mapping/`), its own tests:
      an exhaustive block-level rescan that found 322 disagreements now
      finds 0. `golden_terrain_no_aquifer_test.cpp` is 256 of 256 exact
      columns; Tier A's bit-exactness criterion holds for the density chain.
-  2. *Four unevaluable router functions*, all of them cave or End functions,
-     with `weird_scaled_sampler` the first thing met on the caves path.
+  2. **RESOLVED for the overworld.** `weird_scaled_sampler` — the first of
+     the four named functions this bullet used to name, and the one sitting
+     on the overworld's own caves path — is settled (§11: both rarity
+     ladders measured off the real server, the formula itself pulled from
+     Mojang's own 26.2 removal changelog, not the wiki, which has the two
+     ladders swapped). With it, the overworld's `final_density` evaluates
+     end to end for the first time — this is what actually carves the
+     tunnels, overhangs and floating terrain `generate-world.cpp` produces
+     (SPEC §11, "the terrain chain runs end to end"). Whatever remains of
+     the other three named functions is End-dimension-specific and does not
+     block overworld generation; it has not been re-surveyed since.
 
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
@@ -1071,6 +1080,45 @@ Open:
   end to end. Fixed by reading `addStoneDepth`; every existing test that
   exercised either field had it set to `false` in both spellings, so nothing
   masked the bug and nothing regressed fixing it.
+
+- **A write path exists now, deliberately outside every milestone this
+  document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
+  round-trip tested against a real chunk's own bytes), `chunk::encode` (the
+  inverse of `chunk::decode`, taking a caller-built `ChunkData` — the same
+  `Section`/`BlockState` shapes `decode` already produces), and
+  `region::writeRegion` (the inverse of `RegionFile::open`/`readChunk`)
+  together let this build's own terrain be written as `region/*.mca` files a
+  real Java Edition 1.21.11 server loads and serves without regenerating —
+  proven by injecting generated regions into a real server's world folder
+  and force-loading them, not merely by round-tripping through this build's
+  own reader. Deliberately scoped narrow: every chunk is written `Status:
+  "minecraft:full"` with `isLightOn: 0` and no `SkyLight`/`BlockLight`
+  anywhere — the server relights on load rather than this reproducing
+  vanilla's sparse per-section light storage, which nothing here has
+  measured closely enough to claim (this document's own standing rule
+  against guessing silently). There is no `level.dat` writer; a caller
+  supplies an existing world folder's `region/` directory rather than this
+  producing a save on its own. `tools/analysis/generate-world.cpp` is the
+  one caller today, and is deliberately not a `stratum` subcommand — a
+  one-off deliverable script, not a feature this build claims end to end.
+  A real bug surfaced building it and is now regression-tested
+  (`chunk_writer_test.cpp`): `encodePalettedContainer`'s palette list
+  hard-coded a Compound element type for every paletted container, correct
+  for block-state palettes but wrong for biome palettes (bare strings) —
+  invisible through `Chunk::decode()` alone, since it reads a list's
+  elements directly and never checks its declared type, and only showing up
+  once real bytes reached a real server's own NBT reader as `EOFException`/
+  `unknown tag type 20` a few kilobytes downstream of the first bad list.
+  Two performance fixes came out of the same effort, applied to
+  `ChunkFiller::applySurfaceRules` itself rather than the one-off tool,
+  since they are real for any caller that supplies `biome`/`temperature`
+  data — its per-column climate-router reads had no `CornerCache` at all
+  (measured 87 times slower per the `interpolated` node's own doc) and its
+  biome search repeated the same query, uncached, for every one of up to 16
+  columns sharing a quart-cell against the real overworld's 7593-row table;
+  together these took one real chunk's second pass from about 8 seconds to
+  about 0.5. Bit-for-bit identical before and after — `golden_fill_test.cpp`
+  still reads 392741 — a cache only changes speed, never a value.
 
 - **The other four undocumented surface constructs, measured (M4).** In
   vanilla's data these all sit under a `biome` condition, so no probe of

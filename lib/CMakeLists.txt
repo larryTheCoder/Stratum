@@ -31,6 +31,7 @@ add_library(stratum_core STATIC
     src/pack.cpp
     src/pack_validate.cpp
     src/nbt_reader.cpp
+    src/nbt_writer.cpp
     src/noise_settings.cpp
     src/noise_parameters.cpp
     src/noise_registry.cpp

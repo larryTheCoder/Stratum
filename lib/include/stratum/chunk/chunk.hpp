@@ -145,8 +145,54 @@ private:
 [[nodiscard]] std::vector<std::uint16_t> unpackIndices(const std::vector<std::int64_t>& packed,
                                                        int bitsPerEntry, std::size_t count);
 
+/// The exact inverse of unpackIndices: packs @p indices, @p bitsPerEntry
+/// wide each, into longs the same way — no entry straddles one, so the top
+/// `64 % bitsPerEntry` bits of the last long are zero padding, not the start
+/// of another entry.
+[[nodiscard]] std::vector<std::int64_t> packIndices(const std::vector<std::uint16_t>& indices,
+                                                    int bitsPerEntry);
+
 /// Bits per entry for a palette of @p paletteSize, given a floor. Blocks use
 /// a floor of 4, biomes 1.
 [[nodiscard]] int bitsPerEntryFor(std::size_t paletteSize, int floorBits) noexcept;
+
+/// Plain data for one chunk, shaped to BUILD rather than to query — encode's
+/// own input, the mirror of what decode() produces. Heightmaps are supplied
+/// by the caller rather than derived here: only the caller knows how to
+/// categorise a block for each of the four kinds (OCEAN_FLOOR needs to know
+/// what counts as fluid, MOTION_BLOCKING_NO_LEAVES what counts as a leaf),
+/// and encode() has no block semantics of its own — it is a pure structural
+/// transform, the same division applySurfaceRules already draws between
+/// what the caller computes and what a lower layer just accepts.
+struct ChunkData {
+    std::int32_t x = 0;
+    std::int32_t z = 0;
+    std::int32_t dataVersion = 0;
+    std::int32_t lowestSection = 0;
+    /// "minecraft:full" is what a Java Edition server accepts as complete
+    /// and serves to a client without running any further generation stage
+    /// on it — the one this exists to write.
+    std::string status = "minecraft:full";
+    std::vector<Section> sections;
+    /// One entry per Heightmap kind actually known; a kind not present here
+    /// is simply not written. 256 values each, in ZX order, matching
+    /// Chunk::heightmap()'s own return shape — this is its inverse.
+    std::vector<std::pair<Heightmap, std::vector<std::optional<int>>>> heightmaps;
+};
+
+/// Builds the NBT a real Java Edition server can load a chunk from — the
+/// mirror of decode(), and round-trip tested against it
+/// (tests/conformance/nbt_writer_test.cpp does the same for the NBT layer
+/// underneath this one).
+///
+/// Writes `isLightOn: 0` and no light data (`SkyLight`/`BlockLight`) at
+/// all, in every section, deliberately: vanilla's own on-disk storage of
+/// light is sparse in a way one observed chunk does not pin down closely
+/// enough to reproduce honestly (SPEC's own "do not guess silently"), and
+/// `isLightOn: 0` is a well-documented, standard escape hatch — the server
+/// recomputes lighting itself the first time a chunk with it set is loaded,
+/// which is exactly the well-trodden path chunks written by external tools
+/// already rely on.
+[[nodiscard]] nbt::Tag encode(const ChunkData& chunk);
 
 } // namespace stratum::chunk

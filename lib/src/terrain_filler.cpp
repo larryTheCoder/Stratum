@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace stratum::terrain {
@@ -370,6 +372,27 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     std::vector<std::int32_t> stoneDepthAbove(static_cast<std::size_t>(geometry.height));
     std::vector<std::int32_t> stoneDepthBelow(static_cast<std::size_t>(geometry.height));
 
+    // One cache for every density read this whole second pass makes —
+    // `preliminarySurface` and the six climate router entries alike — shared
+    // across every column of the chunk, the same way the first pass's own
+    // cache is. `interpolated` nodes recompute their eight corners from
+    // scratch with no cache, measured at 87 times slower over a cell
+    // (ChunkFiller::fill's own comment); a tree that reads `biome` or
+    // `temperature` calls the climate router for every one of 256 columns,
+    // so leaving this uncached here cost the same multiple across the whole
+    // chunk rather than one cell.
+    density::Interpreter::CornerCache surfaceCache(interpreter_.cacheSize());
+
+    // Cached across the WHOLE chunk, not just down one column: a chunk is
+    // only 4 quart-cells wide, so up to 16 of its 256 columns share the same
+    // one — and without this, each repeated a from-scratch linear search
+    // over the biome parameter table (7593 rows for the real overworld)
+    // rather than reusing the first column's answer. Measured
+    // (tools/analysis/generate-world.cpp): this took a real chunk's second
+    // pass from about 8 seconds to about 0.5.
+    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, data::ResourceLocation>
+        biomeCache;
+
     for (int localZ = 0; localZ < kChunkWidth; ++localZ) {
         for (int localX = 0; localX < kChunkWidth; ++localX) {
             const std::int32_t x = baseX + localX;
@@ -384,7 +407,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             if (surfaceNeedsPreliminarySurface_) {
                 context.preliminarySurface = static_cast<std::int32_t>(interpreter_.evaluate(
                     settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
-                    density::Point{.x = x, .y = 0, .z = z}));
+                    density::Point{.x = x, .y = 0, .z = z}, surfaceCache));
             }
 
             // Top-down: the stone-depth run counting from the world's top,
@@ -432,6 +455,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // the guard too indirect for bugprone-unchecked-optional-access
             // to see.
             const bool needsBiomeIdentity = surfaceNeedsBiome_ || surfaceNeedsTemperature_;
+            const std::int32_t qx = quartSnap(x);
+            const std::int32_t qz = quartSnap(z);
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
@@ -439,23 +464,34 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);
                     if (!biomeQuartYKnown || biomeQuartY != quartY) {
-                        const std::int32_t qx = quartSnap(x);
-                        const std::int32_t qz = quartSnap(z);
-                        const density::Point at{.x = qx, .y = quartY, .z = qz};
-                        const biome::ClimateSample sample{
-                            .temperature = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Temperature), at),
-                            .humidity = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Vegetation), at),
-                            .continentalness = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Continents), at),
-                            .erosion = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Erosion), at),
-                            .depth = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Depth), at),
-                            .weirdness = interpreter_.evaluate(
-                                settings_->router.at(settings::RouterEntry::Ridges), at)};
-                        biomeId = biomeParameters_->find(sample);
+                        const auto key = std::tuple{qx, quartY, qz};
+                        const auto cached = biomeCache.find(key);
+                        if (cached != biomeCache.end()) {
+                            biomeId = cached->second;
+                        } else {
+                            const density::Point at{.x = qx, .y = quartY, .z = qz};
+                            const biome::ClimateSample sample{
+                                .temperature = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Temperature), at,
+                                    surfaceCache),
+                                .humidity = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Vegetation), at,
+                                    surfaceCache),
+                                .continentalness = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Continents), at,
+                                    surfaceCache),
+                                .erosion = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Erosion), at,
+                                    surfaceCache),
+                                .depth = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Depth), at,
+                                    surfaceCache),
+                                .weirdness = interpreter_.evaluate(
+                                    settings_->router.at(settings::RouterEntry::Ridges), at,
+                                    surfaceCache)};
+                            biomeId = biomeParameters_->find(sample);
+                            biomeCache.emplace(key, biomeId);
+                        }
                         biomeQuartY = quartY;
                         biomeQuartYKnown = true;
                     }

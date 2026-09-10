@@ -20,8 +20,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace stratum::region {
@@ -101,5 +103,46 @@ private:
     std::vector<std::byte> bytes_;
     std::string name_;
 };
+
+/// One chunk's payload for write(): raw, UNCOMPRESSED NBT bytes (as
+/// nbt::write produces) plus the timestamp vanilla would record beside it.
+struct ChunkPayload {
+    std::int32_t timestamp = 0;
+    std::vector<std::byte> nbt;
+};
+
+/// Writes a region file to @p path covering the 32x32 chunks whose
+/// coordinates floorDiv to (@p regionX, @p regionZ) — the region open()
+/// would need to read them back from. A chunk absent from @p chunks is left
+/// empty in the file, exactly as vanilla leaves one never generated; a key
+/// in @p chunks outside this region is refused rather than silently
+/// misplaced into whatever slot indexFor() would fold it to.
+///
+/// Each present chunk is zlib-compressed (scheme 2 — what this build's own
+/// fixtures use, confirmed against one directly rather than assumed) and
+/// laid out exactly as open() reads it: an 8 KiB header, then sectors
+/// starting at index 2, allocated to chunks in ascending index order with no
+/// gaps — a valid layout open() accepts, though not the only one a real
+/// server's own incremental rewrites could produce.
+///
+/// Throws FormatError naming the chunk if any single chunk's compressed
+/// payload, plus @p paddingSectors, would need more than 255 sectors (the
+/// sector count field's own limit) — the same case open() would refuse on
+/// the way back in.
+///
+/// @p paddingSectors reserves that many EMPTY sectors after every present
+/// chunk — free space in the file, not owned by anything, exactly like the
+/// gaps a server's own incremental rewrites leave behind. It exists for one
+/// reason: a chunk written with no light data at all (surface::Executor's
+/// own doc on why) grows the moment a real server first loads it and
+/// computes light for it, and a file with zero slack anywhere forces that
+/// growth to extend the file itself — observed to race and corrupt the
+/// sector table when a server's own spawn-area preparation touches many
+/// chunks in one region at once (SPEC §11). Padding does not make that race
+/// impossible in principle; it makes it far less likely by giving ordinary
+/// growth somewhere to land without ever touching the file's own length.
+void writeRegion(const std::filesystem::path& path, std::int32_t regionX, std::int32_t regionZ,
+                 const std::map<std::pair<std::int32_t, std::int32_t>, ChunkPayload>& chunks,
+                 std::size_t paddingSectors = 0);
 
 } // namespace stratum::region
