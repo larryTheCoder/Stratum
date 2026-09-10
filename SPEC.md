@@ -476,17 +476,21 @@ Its own component (`lib/mapping/`), its own tests:
      angle. Each of the remaining three has a named experiment. `BarrierAt`
      still carries no third source and no `D`, so wiring waits on (b).
 
-  4. **Fluid TYPE — measured, and mostly closed.** `fluid_type.hpp` scores
-     0.99873 per source on 3125 sources over four seeds against a 0.94176
-     null, and the `lava` entry's own read position is settled: contracted
-     indices on a SIXTY-FOUR block horizontal pitch, where the spread's is 16
-     (§11). Two pieces are open and neither needs a campaign: the level
-     ceiling is bracketed to [-14, -5] and wants one probe whose surface caps
-     the ladder inside that range, and strictness at exactly 0.3 wants a
-     `lava` entry driven to that double rather than through a noise. A third
-     is carried on the spec's word — whether a source already reading lava is
-     exempt — and cannot be observed, since those sources sit below the lava
-     sea.
+  4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
+     scores 0.99873 per source on 3125 sources over four seeds against a
+     0.94176 null, and the `lava` entry's own read position is settled:
+     contracted indices on a SIXTY-FOUR block horizontal pitch, where the
+     spread's is 16 (§11). **Strictness at exactly 0.3 is now CLOSED**:
+     `aquifer-fluidtype-probe.sh` drove `lava` to the exact double 0.3 and to
+     its two adjacent doubles, and the server's own answer lands exactly
+     where the code already read it — strict `>`, confirmed to the ULP. The
+     **level ceiling is NARROWED, not yet pinned**: the same tool brackets it
+     from the original [-14, -5] down to {-10, -9} (-11 and -10 measure as
+     lava, -8 as water), and -10 — this build's own value — fits every
+     reading; -9 could not be reached to rule out on the attempt made. A
+     third piece is carried on the spec's word — whether a source already
+     reading lava is exempt — and cannot be observed, since those sources
+     sit below the lava sea.
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -2139,12 +2143,30 @@ Open:
   now measured rather than adopted. The comparison is on the ABSOLUTE value:
   signed scores 0.96896 on the same sources.
 
-  *Not measured, and marked in the header rather than guessed.* The level
-  ceiling is bracketed to [-14, -5] and no tighter, because with the probe's
-  surface at 96 the ladder produces no level in between. Strictness at exactly
-  0.3 is the spec's word. Whether a source already reading lava is exempt
-  cannot be observed at all, those sources being below the lava sea. And no
-  `default_fluid` but water has been in this position.
+  *Strictness at exactly 0.3, closed.* `tools/analysis/aquifer-fluidtype-probe.sh`
+  (group A) drives `lava` to a literal constant instead of through noise —
+  the exact double 0.3, and the two doubles immediately adjacent to it — at a
+  level forced to -32, deep enough that the still-open ceiling question
+  cannot interfere from either side of its own bracket. The transition is
+  exact and lands exactly where the code already read it: `lava == 0.3` on
+  the server comes back water, the very next representable double above it
+  comes back lava. Strict `>`, confirmed to the ULP rather than assumed.
+
+  *The level ceiling, narrowed from ten candidates to two.* The same tool
+  (group B/C) sweeps `fluid_level_spread` — past the ±1.0 any real noise
+  reaches, the same kind of extreme point already used elsewhere in this
+  corpus to pin an exact constant — and reads -11 and -10 as lava, -8 as
+  water. That brackets the true ceiling to {-10, -9}: the -10 this build
+  already used fits every reading and needs no correction, but -9 was not
+  directly reachable to rule out — the one other rung whose base is
+  congruent to it mod 3 collapsed to the lava-sea floor instead of the
+  target level on the attempt made, for a reason not yet understood. A
+  future probe should chase that rather than assume -10 without it.
+
+  *Still not measured, and marked in the header rather than guessed.*
+  Whether a source already reading lava is exempt cannot be observed at all,
+  those sources being below the lava sea. And no `default_fluid` but water
+  has been in this position.
 
   *One thing left unexplained rather than explained away.* About 4% of sources
   hold both fluids above the global lava sea, and the minority blocks are

@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
 
 using stratum::aquifer::CellIndex;
@@ -53,11 +54,15 @@ TEST_CASE("the lava threshold sits at three tenths", "[aquifer]") {
     CHECK(fluidTypeOf(deep(0.3001)) == FluidType::Lava);
     CHECK(fluidTypeOf(deep(-0.3001)) == FluidType::Lava);
 
-    // STRICTNESS IS NOT MEASURED. Exactly 0.3 cannot be reached through a
-    // noise, so this pins the spec's reading and nothing else. Settling it
-    // needs a probe whose `lava` entry is the constant 0.3 exactly — the same
-    // exact-double technique that pinned the barrier at 1.5.
+    // STRICTNESS IS MEASURED, to the ULP (`aquifer-fluidtype-probe.sh` group
+    // A): a `lava` entry driven to the exact double 0.3 came back water on
+    // the server, and the very next representable double above it came back
+    // lava — the same exact-double technique that pinned the barrier at 1.5,
+    // this time confirming rather than assuming the strict `>` this file
+    // already reads with.
     CHECK(fluidTypeOf(deep(kLavaThreshold)) == FluidType::Default);
+    CHECK(fluidTypeOf(deep(std::nextafter(kLavaThreshold, 0.0))) == FluidType::Default);
+    CHECK(fluidTypeOf(deep(std::nextafter(kLavaThreshold, 1.0))) == FluidType::Lava);
 }
 
 TEST_CASE("a source too high up never turns to lava", "[aquifer]") {
@@ -65,10 +70,17 @@ TEST_CASE("a source too high up never turns to lava", "[aquifer]") {
     CHECK(fluidTypeOf(deep(0.9, kLavaLevelCeiling + 1)) == FluidType::Default);
     CHECK(fluidTypeOf(deep(0.9, 63)) == FluidType::Default);
 
-    // The ceiling is BRACKETED to [-14, -5], not pinned: with the probe's
-    // surface at 96 the ladder produces no level in between, so every value
-    // in that range scores identically. Both ends of the bracket are still
-    // gates, which is what this checks.
+    // The ceiling is NARROWED to {-10, -9}, not yet pinned to one value
+    // (`aquifer-fluidtype-probe.sh` group B/C): -11 and -10 both measured as
+    // lava, -8 measured as water — -10, this file's own default, fits every
+    // reading; -9 could not be reached directly to test (fluid_type.hpp's
+    // own header explains why, and what the next attempt should try).
+    CHECK(fluidTypeOf(deep(0.9, -11)) == FluidType::Lava);
+    CHECK(fluidTypeOf(deep(0.9, -10)) == FluidType::Lava);
+    CHECK(fluidTypeOf(deep(0.9, -8)) == FluidType::Default);
+
+    // Both ends of the ORIGINAL, wider bracket still gate correctly, since
+    // {-10, -9} sits inside [-14, -5] — kept as a coarser sanity check.
     CHECK(fluidTypeOf(deep(0.9, -14)) == FluidType::Lava);
     CHECK(fluidTypeOf(deep(0.9, -4)) == FluidType::Default);
 }

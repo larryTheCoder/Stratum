@@ -30,18 +30,35 @@
 //   * The comparison is on the ABSOLUTE value. Signed scores 0.96896 on the
 //     same cells.
 //
-// WHAT IS NOT MEASURED, and is marked rather than guessed:
+// STRICTNESS AT 0.3 IS NOW SETTLED (`tools/analysis/aquifer-fluidtype-probe.sh`,
+// group A): a `lava` entry driven to a literal constant instead of through
+// noise, at a level forced to -32 (deep enough that the ceiling question
+// cannot interfere from either end of its own bracket), swept across the two
+// doubles adjacent to 0.3 (`math.nextafter`) and 0.3 itself. The transition
+// is exact and lands exactly where the code already reads it: `lava == 0.3`
+// is water, the very next representable double above it is lava. Strict
+// `>`, confirmed to the ULP rather than assumed.
 //
-//   * The level ceiling. Bracketed to [-14, -5] and no tighter, because with
-//     `preliminary_surface_level` at 96 the levels this corpus produces skip
-//     that range entirely. Separating it needs a probe whose surface caps the
-//     ladder inside it — one dimension, named in SPEC §10.
+// THE LEVEL CEILING IS NARROWED, not yet pinned (same tool, group B/C):
+// sweeping `fluid_level_spread` — including past the +-1.0 any real noise
+// reaches, the same kind of extreme point the rest of this corpus already
+// uses to pin an exact constant — reaches level -11 (LAVA, 14150 cells),
+// -10 (LAVA, 68 cells, a rarer configuration but unambiguous: 0 water) and
+// -8 (water, 14004 cells). That brackets the true ceiling to {-10, -9}: the
+// -10 default below fits every reading and needs no correction to stay
+// consistent with them, but -9 has not been RULED OUT — no reachable
+// configuration found in this pass produced a level of exactly -9 to test
+// it directly (attempts at the one other rung whose base is congruent to it
+// mod 3 collapsed to the lava-sea floor instead of the target level, for a
+// reason not yet understood — a future probe should chase that rather than
+// assume -10 without it).
+//
+// WHAT IS STILL NOT MEASURED, and is marked rather than guessed:
+//
 //   * Whether a source already reading lava is exempt. Those cells sit below
 //     the global lava sea, where nothing can be observed, so the conjunct is
 //     carried on the spec's word alone.
 //   * Any `default_fluid` other than water.
-//   * Strictness at exactly 0.3, which needs a `lava` entry driven to that
-//     double exactly rather than through a noise.
 #pragma once
 
 #include <stratum/aquifer/lattice.hpp>
@@ -62,11 +79,17 @@ inline constexpr std::int32_t kLavaIndexPitchXZ = 64;
 inline constexpr std::int32_t kLavaIndexPitchY = kBasePitch;
 
 /// How far the `lava` value must sit from zero for a source to turn to lava.
+/// STRICT, and confirmed to the ULP: a `lava` driven to exactly 0.3 is
+/// water, the next representable double above it is lava
+/// (`aquifer-fluidtype-probe.sh` group A — see this file's own header).
 inline constexpr double kLavaThreshold = 0.3;
 
 /// How low a source's fluid level must be before the lava override is even
-/// considered. BRACKETED, NOT PINNED: every value from -14 to -5 scores
-/// identically here, because the corpus produces no level in between.
+/// considered. NARROWED, NOT YET PINNED to the single value: -11 and -10
+/// both measure as lava, -8 as water, which brackets the true value to
+/// {-10, -9} — -10 fits every reading measured so far, but -9 has not been
+/// directly tested (`aquifer-fluidtype-probe.sh` group B/C — see this
+/// file's own header for why not, and what the next attempt should try).
 inline constexpr std::int32_t kLavaLevelCeiling = -10;
 
 /// Which fluid a source holds. `Air` is not a case: this answers "given that
