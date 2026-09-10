@@ -3,6 +3,7 @@
 #include <stratum/aquifer/barrier.hpp>
 
 #include <cmath>
+#include <limits>
 
 namespace stratum::aquifer {
 
@@ -31,7 +32,11 @@ double pressure(const std::int32_t levelA, const std::int32_t levelB, const std:
     // `std::abs` is not constexpr for doubles before C++23; this is not a
     // constexpr context, so it is used directly rather than a ternary.
     const double t = r - std::abs(h);
-    double u = NAN;
+    // `NAN` (`<cmath>`) is a `float` constant; assigning it here promotes
+    // float to double under Clang's `-Wdouble-promotion` (-Werror in CI,
+    // clang legs only — GCC does not flag it). `quiet_NaN<double>()` is
+    // already the right type.
+    double u = std::numeric_limits<double>::quiet_NaN();
     if (h > 0) {
         u = (t > 0) ? (t / 1.5) : (t / 2.5);
     } else {
