@@ -353,8 +353,10 @@ Its own component (`lib/mapping/`), its own tests:
   four campaigns deep, with the last one's remaining blocker being a router
   entry nobody has measured at all — while everything behind it in the plan
   (surface rules, biomes, the bindings this project exists to feed) needed
-  none of it. Sequencing only: nothing ships with aquifers approximated, and
-  the filler refuses `aquifers_enabled` by name until MA closes.
+  none of it. Sequencing only: nothing shipped with aquifers approximated
+  while MA was open, and the filler refused `aquifers_enabled` by name until
+  it measured enough to call — see MA's own section for what it calls now
+  and what two narrow pieces still are not.
 
   Landed: noise settings — geometry, flags, block states and the fifteen-entry
   noise router, whose inline density functions resolve into the *same* graph
@@ -415,10 +417,17 @@ Its own component (`lib/mapping/`), its own tests:
   Four things stood between MA and closing. Two (1, 2) are now fully CLOSED.
   The barrier's third source (3) is closed for three of its four parts, with
   Q6.3's water-over-lava exception still untested. Fluid TYPE (4) is narrowed
-  to one open piece, the level ceiling's exact value. None of the four is
-  wholly unexplored any longer — what remains is wiring `ChunkFiller` to
-  actually use any of it, which is its own untouched step and the reason
-  this stays a track rather than a task.
+  to one open piece, the level ceiling's exact value. **`ChunkFiller` now
+  calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
+  measured against a real, aquifer-on overworld region, the wiring's own
+  category decision is EXACT on 393216 of 393216 blocks over the four chunks
+  `golden_fill_aquifer_test.cpp` pins, and 6290723 of 6291456 (99.988%) over
+  a wider 64-chunk sweep — a residual small enough that the two still-open
+  narrow pieces above plausibly explain the whole of it. What remains is
+  those two pieces themselves, plus ore veins (M3, untouched) and the
+  deepslate surface-rule gap `golden_fill_test.cpp` already named, now with
+  more real terrain for it to misfire on — none of which is unique to
+  aquifers, which is why this still reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -503,8 +512,10 @@ Its own component (`lib/mapping/`), its own tests:
      still untested by every angle**, and this predicate does not implement it
      yet. The mixed-fluid-type Π branch (`Π = 2.0`) is also still unmeasured —
      every barrier probe so far holds `lava` at a constant specifically to
-     keep that question separate. `ChunkFiller` still refuses
-     `aquifers_enabled`; wiring is its own remaining step (blocker 4).
+     keep that question separate. Both are now called from real generation
+     (`ChunkFiller`, below) rather than only from purpose-built probes, and
+     neither has shown up as the identified cause of a real mismatch yet —
+     see the wiring note below for the numbers.
 
   4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
@@ -521,6 +532,50 @@ Its own component (`lib/mapping/`), its own tests:
      third piece is carried on the spec's word — whether a source already
      reading lava is exempt — and cannot be observed, since those sources
      sit below the lava sea.
+
+  5. **CLOSED. `ChunkFiller` now calls the aquifer.** `aquifer::computeSubstance`
+     (`lib/include/stratum/aquifer/substance.hpp`) combines everything above
+     into the one decision a caller needs — rank the four nearest sources,
+     read each of the three nearest ones' own fluid level, decide the
+     barrier or fall through to the nearest source's own reading, and its
+     type — and `ChunkFiller::fill()` calls it wherever `aquifers_enabled`
+     is set and its own density is non-positive (Q2.2). The old refusal is
+     gone.
+
+     *Measured against real generation, not a void-column probe.*
+     `tools/analysis/aquifer-on-probe.sh` builds vanilla's real overworld —
+     aquifers and all, only `ore_veins_enabled` forced off — with the same
+     empty-biome swap the aquifer-free sibling uses, so neither a carver nor
+     a feature is ever what a mismatch gets blamed on.
+     `golden_fill_aquifer_test.cpp` reads it two ways: RAW (no
+     `surface::RuleGraph` at all, isolating the aquifer's own decision) is
+     EXACT on 393216 of 393216 blocks' category over the four chunks
+     `golden_fill_test.cpp` already uses. WITH the real 287-rule surface
+     tree running, category is 392755 of 393216 (99.883%) — not a new gap:
+     it is `golden_fill_test.cpp`'s own already-documented, still-unsolved
+     one (the unconditioned `deepslate` rule firing by Y alone) reached far
+     more often, because a real aquifer carves genuinely different terrain —
+     air pockets and drained cells a flat sea level never produces — for
+     that same rule to misfire on. Confirmed by construction: the RAW pass
+     was already exact, so nothing past the first pass belongs to the
+     aquifer.
+
+     *A performance finding, not just a correctness one.* The first version
+     of this recomputed every ranked source's own `preliminary_surface_level`
+     scan — up to fourteen `density::Interpreter::evaluate` calls — on every
+     block that reached the aquifer, with no caching: measured at over 30
+     seconds a chunk, impractical for anything real. `aquifer::LevelCache`
+     memoizes a cell centre's own fluid level across one `fill()` call — a
+     chunk touches dozens of distinct centres, not thousands of blocks'
+     worth of them — and brought that to about 1 second a chunk, the same
+     shape of fix `ChunkFiller`'s own biome cache already used for surface
+     rules.
+
+     *Wider, still open.* Over a 64-chunk sweep of the same probe world
+     (6291456 blocks), RAW category is 6290723 exact — 99.988%, a 733-block
+     residual too small to localise further without a dedicated probe of its
+     own, but the wrong direction (mostly missed barriers, `solid->fluid`)
+     is consistent with the mixed-fluid-type Π gap rather than a new one.
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -776,13 +831,14 @@ Open:
   unconditioned `vertical_gradient` winning over real fluid in a deep ocean
   trench (§11).
 
-  **What it refuses.** A dimension with `aquifers_enabled` or
-  `ore_veins_enabled` is refused by name at compile, not filled approximately.
-  Vanilla's overworld sets both, so this filler cannot generate it today —
-  which is the honest position: with aquifers the block is not a function of
-  the density, and filling as though it were floods every cave in the world.
-  §8 puts a world that generates and is quietly wrong in the most severe class
-  there is, and this is exactly that case.
+  **What it refuses.** A dimension with `ore_veins_enabled` is refused by
+  name at compile, not filled approximately — not implemented at all, and
+  §8 puts a world that generates and is quietly wrong in the most severe
+  class there is. `aquifers_enabled` is no longer refused (MA, below):
+  `aquifer::computeSubstance` decides the block wherever the density alone
+  would not, called from `fill()` itself. Vanilla's overworld sets both
+  flags, so this filler still cannot generate it exactly today — ore veins
+  are the reason now, not aquifers.
 
   Surface rules are NOT refused, because they only ever replace blocks the
   filler already placed. A column without them is bare stone where grass and

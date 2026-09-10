@@ -6,19 +6,24 @@
 // shorter answer — and a longer list of things that are allowed to change it.
 //
 // WHAT THIS DOES. For every block of a chunk: the dimension's `default_block`
-// where `final_density` is positive, its `default_fluid` at or below
-// `sea_level` where it is not, and air above that. That is the whole rule.
+// where `final_density` is positive; below that, where `aquifers_enabled` is
+// set, the aquifer's own decision (`aquifer::computeSubstance` — the cell
+// lattice, the fluid level rule, source selection and the three-source
+// barrier, SPEC §10 milestone MA); otherwise the old shortcut, `default_fluid`
+// at or below `sea_level` and air above it.
 //
 // WHAT THIS DOES NOT DO, and refuses rather than approximating (SPEC §8):
 //
-//   * **Aquifers.** Where they run, the substance is not a function of the
-//     density at all: an aquifer decides a local fluid level, drains what is
-//     above it, and places stone BARRIERS between bodies of water at
-//     different levels. Measured on one golden seed, that is 1.12% of blocks
-//     — 81% of them water becoming air. A filler that ignored the flag would
-//     flood every cave in the world and call it terrain, so `compile` refuses
-//     a dimension with `aquifers_enabled` by name.
-//   * **Ore veins.** Same reasoning, smaller effect.
+//   * **Ore veins.** Not implemented at all; `compile` refuses a dimension
+//     with `ore_veins_enabled` by name.
+//   * **Two narrow pieces of the aquifer**, carried rather than guessed
+//     (`aquifer/substance.hpp`'s own header has the numbers): Q6.3's
+//     water-over-lava exception, and Pi's mixed-fluid-type branch. Measured
+//     against a real, aquifer-on overworld region
+//     (`golden_fill_aquifer_test.cpp`): EXACT on 393216 of 393216 blocks'
+//     category, before any surface rule runs, on the four chunks that test
+//     pins; over a wider 64-chunk sweep the residual — everything the two
+//     gaps above together could plausibly explain — is 733 of 6291456.
 //   * **Surface rules.** These are not refused, because they only ever
 //     REPLACE blocks this filler has already placed — a column filled without
 //     them is the same column with stone where grass, dirt, gravel, deepslate
@@ -36,6 +41,7 @@
 //     merely incomplete.
 #pragma once
 
+#include <stratum/aquifer/lattice.hpp>
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/density/graph.hpp>
@@ -173,6 +179,12 @@ private:
     bool surfaceNeedsSteep_ = false;
     std::optional<surface::Executor> surfaceExecutor_;
     std::vector<std::string> surfaceRulesBlockedBy_;
+
+    // Present only when settings_->aquifersEnabled — its own RNG derivation
+    // is per-world (the salted positional source, SPEC §4), so it is built
+    // once at compile() from the registry's own worldSeed() rather than
+    // re-derived per block.
+    std::optional<aquifer::CentreSource> aquiferCentres_;
 };
 
 } // namespace stratum::terrain

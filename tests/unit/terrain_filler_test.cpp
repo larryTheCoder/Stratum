@@ -95,11 +95,12 @@ private:
 /// A dimension whose final_density is a plain y gradient: positive below y=0
 /// and negative above it, so the terrain is a flat plane and every block is
 /// predictable without evaluating anything by hand.
-[[nodiscard]] nlohmann::json flatSettings(bool aquifers, bool oreVeins) {
+[[nodiscard]] nlohmann::json flatSettings(bool aquifers, bool oreVeins, double floodedness = 0.0) {
     nlohmann::json router = nlohmann::json::object();
     for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
         router[std::string(stratum::settings::routerEntryName(static_cast<RouterEntry>(i)))] = 0.0;
     }
+    router["fluid_level_floodedness"] = floodedness;
     router["final_density"] = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
                                              {"from_y", -1},
                                              {"to_y", 1},
@@ -181,22 +182,66 @@ private:
 
 } // namespace
 
-TEST_CASE("a dimension with aquifers is refused, by name", "[terrain][filler]") {
-    // The whole reason this is a refusal and not a best effort: where aquifers
-    // run, the block is not a function of the density, and filling as though
-    // it were is wrong in a way that still generates. SPEC §8 puts that in the
-    // most severe class there is.
-    //
-    // What is asserted is the setting's own name and the milestone that owns
-    // it, not the reason — the reason has already moved four times as one
-    // blocker closed and the next surfaced, and pinning today's wording here
-    // only makes the test fail on days the refusal gets more accurate.
+TEST_CASE("a dimension with aquifers now fills, draining where floodedness says to",
+          "[terrain][filler][aquifer]") {
+    // Every router entry constant zero: `fluid_level_floodedness` at 0.0
+    // clears neither of the level rule's gates (0.4, 0.8), so every cell
+    // falls through to `lambda` — `min(kLavaLevel, sea_level)` = -54 here,
+    // far below this dimension's own floor of -16. No cell can ever be wet:
+    // the aquifer drains what the old sea-level shortcut would have flooded.
     const TempTree tree;
     tree.defineSettings("test", flatSettings(/*aquifers=*/true, /*oreVeins=*/false));
     const LoadedSettings loaded = tree.load();
-    CHECK_THROWS_WITH(compileFrom(tree, loaded), ContainsSubstring("aquifers_enabled") &&
-                                                     ContainsSubstring("milestone MA") &&
-                                                     ContainsSubstring("refusing"));
+    const ChunkFiller filler = compileFrom(tree, loaded);
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // The gradient is still positive below y = 0: Q2.2 is unconditional, so
+    // the aquifer never touches this regardless of its own level.
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(7, -1, 9).name.toString() == "minecraft:stone");
+    // Where the plain rule placed water (y < sea_level = 8), the aquifer's
+    // own level rule now decides instead, and drains it.
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:air");
+    CHECK(buffer.at(15, 7, 15).name.toString() == "minecraft:air");
+    CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
+    CHECK(buffer.at(3, 31, 12).name.toString() == "minecraft:air");
+
+    // No barrier either: every cell's own level agrees (uniform router
+    // inputs), so no pair ever disagrees for placesBarrier to weigh.
+    CHECK(buffer.paletteSize() == 2U);
+}
+
+TEST_CASE("an aquifer above its own floodedness gate reproduces the plain sea, through the "
+          "real mechanism",
+          "[terrain][filler][aquifer]") {
+    // `fluid_level_floodedness` at 0.9 clears the ocean branch's sea gate
+    // (0.8) for every cell, so cellFluidLevel returns `sea_level` itself —
+    // not through the old shortcut, but through the level rule actually
+    // computing it.
+    const TempTree tree;
+    tree.defineSettings("test",
+                        flatSettings(/*aquifers=*/true, /*oreVeins=*/false, /*floodedness=*/0.9));
+    const LoadedSettings loaded = tree.load();
+    const ChunkFiller filler = compileFrom(tree, loaded);
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
+    // Water below sea_level = 8, matching the plain rule exactly — this
+    // time via selectSources, cellFluidLevel and placesBarrier all running,
+    // not a shortcut.
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:water");
+    CHECK(buffer.at(15, 7, 15).name.toString() == "minecraft:water");
+    // sea_level itself is the first air, same as the plain rule.
+    CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
+    CHECK(buffer.at(3, 31, 12).name.toString() == "minecraft:air");
+
+    CHECK(buffer.paletteSize() == 3U);
 }
 
 TEST_CASE("a dimension with ore veins is refused, by name", "[terrain][filler]") {

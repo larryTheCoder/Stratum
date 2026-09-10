@@ -1,6 +1,7 @@
 // Stratum — turning a density field into blocks.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/terrain/filler.hpp>
 
@@ -26,6 +27,16 @@ constexpr int kChunkWidth = 16;
     static const settings::BlockState kAir{.name = data::ResourceLocation{"minecraft", "air"},
                                            .properties = {}};
     return kAir;
+}
+
+/// The aquifer's lava reading. Not `default_fluid` — that is the dimension's
+/// own choice for the OTHER fluid type, and Q6.7's own "the barrier block is
+/// the caller's default block" has no analogue for lava: it is always the
+/// literal block, whatever `default_fluid` says.
+[[nodiscard]] const settings::BlockState& lava() {
+    static const settings::BlockState kLava{.name = data::ResourceLocation{"minecraft", "lava"},
+                                            .properties = {{"level", "0"}}};
+    return kLava;
 }
 
 /// Solid, fluid or air — what the FIRST pass decided, read back for the
@@ -151,37 +162,21 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                                  const surface::RuleGraph* surfaceRules,
                                  const biome::ParameterList* biomeParameters,
                                  const biome::TemperatureTable* biomeTemperatures) {
-    // Refused, not approximated. A dimension with aquifers does not decide its
-    // blocks from the density alone, and filling it as though it did produces
-    // a world that generates and is wrong — which SPEC §8 treats as the most
-    // severe class of bug there is. Measured on one golden seed, the
-    // difference is 1.12% of all blocks, four fifths of it water that should
-    // have been air.
-    // What is settled: the cell lattice, the centre jitter, the fluid level
-    // rule including its ocean branch, the barrier predicate, and every one of
-    // the surface scan's reads — the last of which was re-derived at twenty
-    // feature scales from half a block to a hundred and comes back the same
-    // thirteen positions every time. The surface is no longer why this
-    // refuses; that sentence stood here for a day and was wrong.
+    // WIRED (SPEC §10 milestone MA, §11): the cell lattice, the centre
+    // jitter, the fluid level rule (including its ocean branch and the
+    // depth path's anchor gate), source selection (selection.hpp), and the
+    // three-source barrier predicate (barrier.hpp) are all measured and
+    // called from here now, via `aquifer::computeSubstance`.
     //
-    // What is not, and any one of these is enough: the depth path's gate on
-    // the anchor rests on a single instrument, and it decides whether a cell
-    // floods; three measured corrections to the level rule are unverified, one
-    // of which fires at ordinary sea levels; about 13% of the server's real
-    // barriers come from a third source this build cannot see; and the `lava`
-    // router entry has never been measured by anybody, so a correct level
-    // still writes the wrong block. Filling now would generate a world that is
-    // wrong without failing — the most severe class in SPEC §8. Measured on
-    // one golden seed, aquifers move 1.12% of all blocks, four fifths of it
-    // water that should have been air.
-    if (settings.aquifersEnabled) {
-        throw FillError("this dimension sets aquifers_enabled, and this build does not yet "
-                        "implement the aquifer fill decision (SPEC §10 milestone MA, §11). Its "
-                        "geometry, its fluid levels, its source selection, its fluid type and its "
-                        "surface reads are derived, but its barrier is refuted as a general model "
-                        "and three corrections to the level rule are still single-sourced; "
-                        "refusing rather than generating a world that is quietly wrong");
-    }
+    // TWO GAPS ARE STILL CARRIED RATHER THAN GUESSED, and
+    // `aquifer/substance.hpp`'s own header has the numbers behind both: Q6.3's
+    // water-over-lava exception is not applied, so a water block directly
+    // above the global lava floor may get a barrier the real server would
+    // not place; and Pi's mixed-fluid-type branch is not applied, so a
+    // junction between a water body and a lava body is decided as though
+    // both were the same type. Neither is guessed at, and both are narrow —
+    // every barrier probe this project has run holds `lava` constant
+    // specifically to keep the second one out of scope.
     if (settings.oreVeinsEnabled) {
         throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "
                         "veins (SPEC §10, M3); refusing rather than generating a world missing "
@@ -192,6 +187,19 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // Raised here, at compile, rather than on the first block of the first
     // chunk: a caller that cannot generate should learn so before it starts.
     filler.interpreter_.requireEvaluable(filler.finalDensity_);
+
+    if (settings.aquifersEnabled) {
+        // The salted positional source (SPEC §4) is per-world, not per-block
+        // — built once here from the registry's own seed rather than
+        // re-derived on every call to fill().
+        filler.aquiferCentres_.emplace(noises.worldSeed());
+        for (const settings::RouterEntry entry :
+             {settings::RouterEntry::Barrier, settings::RouterEntry::FluidLevelFloodedness,
+              settings::RouterEntry::FluidLevelSpread, settings::RouterEntry::Lava,
+              settings::RouterEntry::PreliminarySurfaceLevel}) {
+            filler.interpreter_.requireEvaluable(settings.router.at(entry));
+        }
+    }
 
     if (surfaceRules != nullptr) {
         // Same policy `surface::Executor::compile` enforces on its own — a
@@ -279,6 +287,48 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     const std::int32_t topY = geometry.minY + geometry.height;
 
     density::Interpreter::CornerCache cache(interpreter_.cacheSize());
+    // A chunk touches dozens of distinct cell centres, not thousands of
+    // blocks' worth of them — see aquifer::LevelCache's own doc.
+    aquifer::LevelCache aquiferLevelCache;
+
+    // Only ever populated when settings_->aquifersEnabled; the five lambdas
+    // below capture these by reference and are only ever called from inside
+    // that same condition, so they never see a moved-from or absent
+    // optional. Looked up once per fill() call rather than per block — the
+    // NodeIndex is the same for the whole dimension.
+    const density::NodeIndex barrierNode =
+        settings_->aquifersEnabled ? settings_->router.at(settings::RouterEntry::Barrier)
+                                   : density::NodeIndex{};
+    const density::NodeIndex floodednessNode =
+        settings_->aquifersEnabled
+            ? settings_->router.at(settings::RouterEntry::FluidLevelFloodedness)
+            : density::NodeIndex{};
+    const density::NodeIndex spreadNode =
+        settings_->aquifersEnabled ? settings_->router.at(settings::RouterEntry::FluidLevelSpread)
+                                   : density::NodeIndex{};
+    const density::NodeIndex lavaNode = settings_->aquifersEnabled
+                                            ? settings_->router.at(settings::RouterEntry::Lava)
+                                            : density::NodeIndex{};
+    const density::NodeIndex pslNode =
+        settings_->aquifersEnabled
+            ? settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel)
+            : density::NodeIndex{};
+    const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return interpreter_.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+    };
+    const auto floodednessAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return interpreter_.evaluate(floodednessNode, density::Point{.x = x, .y = y, .z = z},
+                                     cache);
+    };
+    const auto spreadAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return interpreter_.evaluate(spreadNode, density::Point{.x = x, .y = y, .z = z}, cache);
+    };
+    const auto lavaAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return interpreter_.evaluate(lavaNode, density::Point{.x = x, .y = y, .z = z}, cache);
+    };
+    const auto pslAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return interpreter_.evaluate(pslNode, density::Point{.x = x, .y = y, .z = z}, cache);
+    };
 
     // Cell by cell, then block by block within the cell. The order is the
     // whole point: every block of a cell shares the eight corner values
@@ -309,8 +359,35 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                             // column in the world, which is 256 a chunk and
                             // exactly what the golden comparison found.
                             const settings::BlockState* block = &air();
+                            const std::int32_t blockX = baseX + localX;
+                            const std::int32_t blockZ = baseZ + localZ;
                             if (density > 0.0) {
+                                // Q2.2: unconditional, whatever the aquifer
+                                // would otherwise say — it only ever
+                                // replaces what would otherwise be
+                                // non-solid, or adds solid via the barrier.
                                 block = &settings_->defaultBlock;
+                            } else if (aquiferCentres_.has_value()) {
+                                const aquifer::AquiferQuery query{.x = blockX,
+                                                                  .y = y,
+                                                                  .z = blockZ,
+                                                                  .density = density,
+                                                                  .seaLevel = settings_->seaLevel};
+                                const aquifer::SubstanceAt result = aquifer::computeSubstance(
+                                    *aquiferCentres_, query, aquiferLevelCache, barrierAt,
+                                    floodednessAt, spreadAt, lavaAt, pslAt);
+                                switch (result.substance) {
+                                    case aquifer::Substance::Solid:
+                                        block = &settings_->defaultBlock;
+                                        break;
+                                    case aquifer::Substance::Fluid:
+                                        block = (result.fluidType == aquifer::FluidType::Lava)
+                                                    ? &lava()
+                                                    : &settings_->defaultFluid;
+                                        break;
+                                    case aquifer::Substance::Air:
+                                        break;
+                                }
                             } else if (y < settings_->seaLevel) {
                                 block = &settings_->defaultFluid;
                             }
