@@ -4,6 +4,12 @@
 #
 #   tools/analysis/density-probe.sh --accept-eula --spec <spec.json> [--seed N]
 #
+# STRATUM_PROBE_KEEP_WORK=1 in the environment keeps the work directory
+# (server, world, generated datapack) instead of deleting it on exit —
+# for diagnosing a probe that came back with unexpected output, where the
+# question is "what did the server actually see" rather than "what did it
+# generate".
+#
 # THE TRICK. A datapack gives a dimension the entire `final_density`
 #
 #     K * flat_cache(<the function under test>) + y_clamped_gradient(+1 .. -1)
@@ -88,7 +94,11 @@ cleanup() {
         done
         kill -9 "${server_pid}" 2>/dev/null || true
     fi
-    rm -rf "${work}"
+    if [[ -n "${STRATUM_PROBE_KEEP_WORK:-}" ]]; then
+        echo "keeping work dir at ${work} (STRATUM_PROBE_KEEP_WORK set)" >&2
+    else
+        rm -rf "${work}"
+    fi
 }
 trap cleanup EXIT INT TERM
 server="${work}/server"
@@ -178,8 +188,11 @@ for entry in spec:
     # Aquifers, and the two settings that only mean anything with them on.
     # A probe that wants to SEE the aquifer has to be able to turn it on and
     # give it a fluid and a sea level to work against; everything else here
-    # wants it off, which stays the default.
+    # wants it off, which stays the default. Ore veins are the same kind of
+    # flag, with no settings of their own to go with it.
     aquifers = entry.get('aquifers_enabled', False)
+    # Ore veins, the same way: off unless a probe asks for it by name.
+    ore_veins = entry.get('ore_veins_enabled', False)
     sea_level = entry.get('sea_level', min_y)
     default_fluid = entry.get('default_fluid', {'Name': 'minecraft:air'})
     # Router entries default to the constant 0 that a density probe wants.
@@ -222,7 +235,7 @@ for entry in spec:
         'sea_level': sea_level,
         'disable_mob_generation': True,
         'aquifers_enabled': aquifers,
-        'ore_veins_enabled': False,
+        'ore_veins_enabled': ore_veins,
         'legacy_random_source': False,
         'default_block': {'Name': 'minecraft:stone'},
         'default_fluid': default_fluid,

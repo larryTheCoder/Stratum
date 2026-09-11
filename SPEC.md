@@ -397,6 +397,54 @@ Its own component (`lib/mapping/`), its own tests:
      the other three named functions is End-dimension-specific and does not
      block overworld generation; it has not been re-surveyed since.
 
+  **Ore veins, started — the deterministic shape confirmed, the RNG still
+  open.** Unlike the aquifer, no clean-room spec covers this: there is no
+  `spec/ore-vein-spec.md`, so the starting hypothesis came from the
+  permitted public references (minecraft.wiki's "Ore vein" and "Noise
+  router" pages) rather than a researched brief, and every number those
+  pages give was treated as a hypothesis to confirm, not a fact to encode.
+  `tools/analysis/ore-vein-probe.sh` builds a fully solid column (density a
+  positive constant, so every block starts as stone) with vanilla's own
+  real `vein_toggle`/`vein_ridged`/`vein_gap` router entries, and
+  `tools/analysis/ore-vein-analyze.cpp` checks the documented algorithm
+  against what comes back.
+
+  *A real coupling, found rather than assumed.* A first attempt left
+  `aquifers_enabled` false — the honest reading of "isolate ore veins from
+  aquifers" — and got back 6291456 of 6291456 blocks as plain stone: not
+  one ore, filler or raw block, despite the vein inputs themselves clearing
+  their documented gates on a measurable fraction of positions. Setting
+  `aquifers_enabled` true as well — with density still a constant positive,
+  so the aquifer's own fluid decision can never apply to any block (Q2.2)
+  — immediately produced real vein output. The two flags are not
+  independent in the real server: ore veins are gated on the same enable
+  path aquifers use, even where the fluid logic itself never fires.
+
+  *Confirmed, across five seeds and 25608 real non-stone blocks, with ZERO
+  exceptions on every deterministic gate:* the y-range (`y` in `[-60, -8]`
+  for iron, `[0, 50]` for copper — the dead zone `[-8, 0)` between them
+  produces neither), the type/sign correspondence (`vein_toggle > 0` for
+  copper, `<= 0` for iron), the richness threshold (`|vein_toggle|` must
+  clear 0.6 at either y limit, falling linearly to 0.4 at 20 blocks
+  inside), `vein_ridged < 0` as necessary for any vein block at all, and
+  `vein_gap > -0.3` as necessary for ore over filler. The mapped-probability
+  formula (ore chance = `|vein_toggle|` mapped from `[0.4, 0.6]` to
+  `[0.1, 0.3]`) tracks closely: the largest bin (10584 blocks,
+  `|vein_toggle|` in `[0.59, 0.60)`) reads 29.44% against a predicted 29%.
+  The raw-ore rate reads 1.87% (98/5235), close to the documented 2% but
+  not yet pinned to it. Filler and ore block identities are confirmed too:
+  granite/copper_ore/raw_copper_block for copper, tuff/deepslate_iron_ore/
+  raw_iron_block for iron — iron's whole range sits below y=0, so it is
+  never anything but the deepslate variant.
+
+  *Still open, and the reason this is not yet code.* The three random
+  draws above (the 30% membership roll, the mapped-probability ore/filler
+  roll, the 2% raw roll) are confirmed only in aggregate rate and shape —
+  not in the per-block algorithm a bit-exact reimplementation needs to
+  match the same seed's exact blocks rather than merely its statistics. No
+  RNG derivation has been attempted yet. `ore_veins_enabled` stays refused
+  by name until it has.
+
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
 - **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
