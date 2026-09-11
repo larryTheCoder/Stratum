@@ -441,9 +441,59 @@ Its own component (`lib/mapping/`), its own tests:
   draws above (the 30% membership roll, the mapped-probability ore/filler
   roll, the 2% raw roll) are confirmed only in aggregate rate and shape —
   not in the per-block algorithm a bit-exact reimplementation needs to
-  match the same seed's exact blocks rather than merely its statistics. No
-  RNG derivation has been attempted yet. `ore_veins_enabled` stays refused
-  by name until it has.
+  match the same seed's exact blocks rather than merely its statistics.
+  `ore_veins_enabled` stays refused by name until it has.
+
+  *The membership roll's salt search, run and refuted.* `rng::
+  positionalSourceFor` (MD5-hashed salt → Xoroshiro128++, `.at(x,y,z).
+  nextFloat()`) is the leading hypothesis — it is the same mechanism
+  already confirmed bit-exact for `vertical_gradient`'s `random_name`
+  condition on 27 million real blocks, and `aquifer_lattice.cpp` already
+  uses the same construction under the literal salt `"minecraft:aquifer"`.
+  `tools/analysis/ore-vein-rng-dump.cpp` isolates the roll: it scans probe
+  worlds for every position clearing the confirmed deterministic gate
+  above (y-range, sign/type, richness, `vein_ridged < 0`) and records
+  whether the server actually touched it — 36725 candidate rows across
+  4 seeds (69.729% touched, notably close to `1 - 0.3`). Two structural
+  checks first ruled out a non-RNG explanation: touch rate is flat
+  (~69-70%, no trend) when binned against `vein_ridged`'s own magnitude,
+  against `vein_gap`'s value, and against `|vein_toggle|`'s value — the
+  roll genuinely does not correlate with any density value already in
+  hand, consistent with an independent per-block coin flip rather than a
+  hidden deterministic threshold.
+
+  `tools/analysis/ore-vein-rng-test.cpp` then tests salt candidates
+  against the dataset, checking both threshold directions (`draw < 0.3`
+  and `draw >= 0.3`) and reporting three views that catch different false
+  positives: the aggregate rate, the per-seed min/max (an aggregate hit
+  that is not ~uniform across every seed is an artifact of unequal
+  per-seed sample counts, not a real derivation — caught exactly this on
+  `"minecraft:vein_gap"`: 71.6% aggregate, but 45%/74%/80%/60% per-seed),
+  and a copper-vs-iron split (in case the two vein types use different
+  salts, which would dilute either type's real match into a confusing
+  ~65-80% on a combined test). Every candidate tried so far — all four
+  noise names the real density functions themselves reference
+  (`minecraft:ore_veininess`, `minecraft:ore_vein_a`, `minecraft:ore_vein_b`,
+  `minecraft:ore_gap`), the three router field names
+  (`minecraft:vein_toggle`, `minecraft:vein_ridged`, `minecraft:vein_gap`),
+  the confirmed `"minecraft:aquifer"` salt itself, and ~25 natural-language
+  guesses (`ore`, `ore_vein`, `ore_veins`, `vein`, `veins`, `mineral_vein`,
+  `mineral_veins`, `copper`, `iron`, `copper_ore`, `iron_ore`,
+  `raw_ore`, `vein_type`, `ore_type`, `vein_membership`,
+  `ore_membership`, `richness`, and others, each with and without the
+  `minecraft:` namespace) — is refuted: none reads anywhere near a
+  uniform ~100% in every seed and every type. Best so far is
+  `"minecraft:copper"` on copper-type positions only, at 80.4% aggregate
+  with a 58-81% per-seed spread — well short of the bar, not a hit.
+  cubiomes (MIT, permitted) was also checked and does not implement
+  block-level ore vein placement at all (its only "vein" grep hits are a
+  false positive substring inside `octaveInit`), so it offers no lead
+  here.
+
+  This is a genuine open research gap, not a queued mechanical step: the
+  mechanism (positional-source-plus-salt) is a strong hypothesis on
+  precedent, but the salt string itself has resisted a systematic search
+  of the obvious candidate space.
 
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.

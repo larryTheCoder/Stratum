@@ -73,6 +73,21 @@ Open:
       roll). Confirmed only in aggregate rate and shape so far — not the
       per-block algorithm a bit-exact reimplementation needs. This is the
       reason `ore_veins_enabled` is still refused by name.
+
+      A systematic salt search for the membership roll (the
+      `rng::positionalSourceFor` mechanism already confirmed for
+      `vertical_gradient` and for the aquifer's own `"minecraft:aquifer"`
+      salt) is a genuine research wall, not a queued step: ~30 candidates
+      tried — every noise name the real density functions reference, all
+      three router field names, the aquifer's own salt, and natural-
+      language guesses — all refuted under per-seed and per-type
+      validation (see SPEC.md's M3 section for the full list and the two
+      structural checks that ruled out a non-RNG explanation first).
+      cubiomes was checked and does not implement this feature at all.
+      Next leads: Cuberite has not yet been consulted (it predates 1.18's
+      terrain rewrite, so it likely doesn't help either, but it's
+      unverified); reconsidering whether the mechanism differs from
+      `positionalSourceFor` altogether remains open too.
 - [ ] Pinning "30%"/"2%"/"20 blocks" to more precision than a ~25000-block
       sample gives, once the RNG derivation makes single-block prediction
       possible at all.
