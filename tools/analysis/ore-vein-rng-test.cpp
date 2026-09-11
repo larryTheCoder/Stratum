@@ -28,6 +28,9 @@
 //       tools/analysis/ore-vein-rng-test.cpp -L build/dev/lib -lstratum_core -lz \
 //       -o build/ore-vein-rng-test
 //   build/ore-vein-rng-test dataset.csv salt1 salt2 ...
+//   build/ore-vein-rng-test dataset.csv --file candidates.txt   (one salt/line;
+//       silent unless a candidate's per-seed min clears 85% in some
+//       direction, to make large word-list sweeps readable)
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <algorithm>
@@ -108,8 +111,28 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr, "loaded %zu rows\n", rows.size());
 
-    for (int argi = 2; argi < argc; ++argi) {
-        const std::string salt = argv[argi];
+    std::vector<std::string> salts;
+    bool quietMode = false;
+    if (argc == 4 && std::string(argv[2]) == "--file") {
+        quietMode = true;
+        std::ifstream saltFile(argv[3]);
+        std::string saltLine;
+        while (std::getline(saltFile, saltLine)) {
+            if (!saltLine.empty()) {
+                salts.push_back(saltLine);
+            }
+        }
+        std::fprintf(stderr, "loaded %zu candidate salts from %s\n", salts.size(), argv[3]);
+    } else {
+        for (int argi = 2; argi < argc; ++argi) {
+            salts.emplace_back(argv[argi]);
+        }
+    }
+
+    long long checked = 0;
+    long long hits = 0;
+    for (const std::string& salt : salts) {
+        ++checked;
         Agreement less, geq, lessCu, geqCu, lessFe, geqFe;
         std::int64_t cachedSeed = 0;
         bool haveCached = false;
@@ -136,10 +159,23 @@ int main(int argc, char** argv) {
         }
         const auto [lessLo, lessHi] = less.perSeedMinMax();
         const auto [geqLo, geqHi] = geq.perSeedMinMax();
-        std::printf("salt=%-30s all: <0.3=%.1f%%[%.0f-%.0f] >=0.3=%.1f%%[%.0f-%.0f]"
-                    "   Cu: <0.3=%.1f%% >=0.3=%.1f%%   Fe: <0.3=%.1f%% >=0.3=%.1f%%\n",
-                    salt.c_str(), less.rate(), lessLo, lessHi, geq.rate(), geqLo, geqHi,
-                    lessCu.rate(), geqCu.rate(), lessFe.rate(), geqFe.rate());
+        // A real hit clears 85% even on its WORST seed — not just on
+        // average, which is exactly what let "minecraft:vein_gap" through
+        // before per-seed reporting existed.
+        const bool isHit = lessLo >= 85.0 || geqLo >= 85.0;
+        if (isHit) {
+            ++hits;
+        }
+        if (isHit || !quietMode) {
+            std::printf("salt=%-30s all: <0.3=%.1f%%[%.0f-%.0f] >=0.3=%.1f%%[%.0f-%.0f]"
+                        "   Cu: <0.3=%.1f%% >=0.3=%.1f%%   Fe: <0.3=%.1f%% >=0.3=%.1f%%%s\n",
+                        salt.c_str(), less.rate(), lessLo, lessHi, geq.rate(), geqLo, geqHi,
+                        lessCu.rate(), geqCu.rate(), lessFe.rate(), geqFe.rate(),
+                        isHit ? "   <-- HIT" : "");
+        }
+    }
+    if (quietMode) {
+        std::fprintf(stderr, "checked %lld candidates, %lld hit (per-seed min >= 85%%)\n", checked, hits);
     }
     return 0;
 }

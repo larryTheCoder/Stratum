@@ -77,17 +77,20 @@ Open:
       A systematic salt search for the membership roll (the
       `rng::positionalSourceFor` mechanism already confirmed for
       `vertical_gradient` and for the aquifer's own `"minecraft:aquifer"`
-      salt) is a genuine research wall, not a queued step: ~30 candidates
-      tried — every noise name the real density functions reference, all
-      three router field names, the aquifer's own salt, and natural-
-      language guesses — all refuted under per-seed and per-type
-      validation (see SPEC.md's M3 section for the full list and the two
-      structural checks that ruled out a non-RNG explanation first).
-      cubiomes was checked and does not implement this feature at all.
-      Next leads: Cuberite has not yet been consulted (it predates 1.18's
-      terrain rewrite, so it likely doesn't help either, but it's
-      unverified); reconsidering whether the mechanism differs from
-      `positionalSourceFor` altogether remains open too.
+      salt) is a genuine research wall, not a queued step: ~30 hand-picked
+      candidates plus a 1196-entry systematic word list, sequential draws
+      2-5 from every real noise/router salt (not just the first), and a
+      per-seed/per-type validated test harness — all refuted (see SPEC.md's
+      M3 section for the full list and the structural checks that ruled
+      out a non-RNG explanation first). Both of CLAUDE.md's permitted
+      external reference codebases were checked directly: cubiomes doesn't
+      implement ore veins at all (false-positive grep hit only), and
+      Cuberite's own README confirms it supports protocol 1.8-1.12.2 only
+      — it predates the 1.18 terrain rewrite that introduced this feature
+      by years, confirmed via zero hits for `NoiseRouter`/`DensityFunction`/
+      `ore_veininess` in its source. Neither offers a lead. Reconsidering
+      whether the mechanism differs from `positionalSourceFor` altogether
+      remains the main open avenue.
 - [ ] Pinning "30%"/"2%"/"20 blocks" to more precision than a ~25000-block
       sample gives, once the RNG derivation makes single-block prediction
       possible at all.

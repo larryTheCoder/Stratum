@@ -490,10 +490,32 @@ Its own component (`lib/mapping/`), its own tests:
   false positive substring inside `octaveInit`), so it offers no lead
   here.
 
+  *Broadened, still refuted.* Two follow-up angles were checked before
+  concluding this is a real wall rather than a shallow gap. First,
+  Cuberite (Apache-2.0, permitted) was checked directly rather than
+  assumed unhelpful: its own README states it supports protocol versions
+  1.8-1.12.2 only — it predates the entire 1.18 terrain rewrite that
+  introduced ore veins by several years, and a source search confirms
+  zero hits for `NoiseRouter`, `DensityFunction`, or `ore_veininess`
+  anywhere in its codebase. It has nothing to offer here. Second, the
+  hypothesis that the vein roll might draw sequentially from the SAME
+  generator instance as an already-confirmed salt (motivated by the real
+  `aquifers_enabled` coupling above) was tested directly: for
+  `"minecraft:aquifer"` and every real noise/router name, draws 2 through
+  5 taken from one `.at(x,y,z)` call were checked against `touched`, not
+  just the first draw — all converge tightly to the ~58% uncorrelated
+  baseline, refuted at every position in the sequence. A systematic
+  1196-candidate word list (geology/mining vocabulary crossed with the
+  short-salt convention `"minecraft:aquifer"`/`"minecraft:bedrock_floor"`/
+  `"minecraft:deepslate"` establish as real precedent for this exact RNG
+  mechanism) also produced zero hits.
+
   This is a genuine open research gap, not a queued mechanical step: the
   mechanism (positional-source-plus-salt) is a strong hypothesis on
-  precedent, but the salt string itself has resisted a systematic search
-  of the obvious candidate space.
+  precedent — proven bit-exact for two unrelated subsystems already — but
+  the salt string itself has resisted an unusually thorough search of the
+  candidate space, including both of CLAUDE.md's permitted external
+  reference codebases.
 
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
