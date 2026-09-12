@@ -48,8 +48,11 @@
 // exercises it is found. Also unmeasured: the mixed-fluid-type branch
 // (`Π = 2.0` when one source reads lava and the other water) — this
 // project's own barrier probes hold `lava` at a constant specifically to
-// keep that question separate, and Q6.3's water-over-lava exception, which
-// this predicate does not implement at all yet.
+// keep that question separate. Q6.3's water-over-lava exception is NOT this
+// predicate's to implement and no longer a gap: it sits in front of it, in
+// substance.hpp's `computeSubstance`, measured on the server (0 of 3320
+// blocks it applies to are stone; the bare predicate alone would have
+// written 134 of them).
 #pragma once
 
 #include <cstdint>

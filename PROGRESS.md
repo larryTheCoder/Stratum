@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-12 (surface-rule schema generation).
+Last swept: 2026-09-13 (the aquifer's lava-sea clauses).
 
 ## At a glance
 
@@ -17,7 +17,7 @@ Last swept: 2026-09-12 (surface-rule schema generation).
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 2 narrow pieces left |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 narrow piece left, 1 constant unpinned |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Not started |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -33,13 +33,34 @@ candidates), the three-source barrier predicate, and the fluid type rule.
 
 Open:
 
-- [ ] **Q6.3's water-over-lava exception.** Untested by every angle, not
-      implemented. A water block directly above the global lava floor can
-      still get a spurious barrier.
+- [x] **Q6.3's water-over-lava exception — closed, and smaller than it
+      read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,
+      because Q2.4 hands everything below it to the sea first. Measured on
+      the server (`tools/analysis/aquifer-waterlava-probe.sh`, three
+      seeds): where the row has water sources at all (a `sea_level` -70
+      arm) it applies to 278 / 1102 / 1940 blocks, the bare barrier logic
+      wrote stone on 14 / 50 / 70 of them and the server on 0 of 3320; one
+      row up the two decisions agree on every block; a nearest source
+      reading AIR on the same row still gets the server's barriers (93 /
+      239 / 244), so the asymmetry is real. On the shipped sea (63) its
+      population is EMPTY — no source reads water at y = -54 on any of 3
+      seeds x 3 densities x 16384 columns, and both sides write 0 stone
+      there. Landed in `computeSubstance`, pinned by
+      `vanilla_aquifer_waterlava_test.cpp`.
+- [x] **Q2.4, the global lava sea — found and closed by the same probe.**
+      The substance decision consulted the lattice below the sea, so a
+      block whose nearest source is centred above -54 came out WATER
+      there: 7682 / 5330 / 5736 of 16384 blocks per density wrong at sea
+      63, invisible to every category-only golden (water and lava are both
+      "fluid" to them). Now lava before any source is read: 16384 / 16384.
 - [ ] **The mixed-fluid-type Π branch** (`Π = 2.0` when two competing
       sources are different fluid types). Unmeasured — every barrier probe
       so far holds `lava` constant specifically to keep this question
-      separate from the barrier shape itself.
+      separate from the barrier shape itself. Its size is now visible for
+      the first time: on the `sea_level` -70 arm above, where lava-typed
+      sources crowd the rows just over the sea, the server writes 27-45%
+      more barriers on those rows than `placesBarrier` does, all in
+      junctions with a lava-typed source.
 - [ ] **The fluid-type level ceiling.** Narrowed to `{-10, -9}`, not pinned
       to one value; `-10` (the current code) fits every reading measured so
       far. SPEC names a next step: the one other reachable rung that should

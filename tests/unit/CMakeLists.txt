@@ -16,6 +16,7 @@ add_executable(stratum_unit_tests
     aquifer_lattice_test.cpp
     aquifer_sampling_test.cpp
     aquifer_selection_test.cpp
+    aquifer_substance_test.cpp
     terrain_filler_test.cpp
     density_render_test.cpp
     fdlibm_test.cpp

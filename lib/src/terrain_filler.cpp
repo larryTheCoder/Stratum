@@ -168,15 +168,14 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // three-source barrier predicate (barrier.hpp) are all measured and
     // called from here now, via `aquifer::computeSubstance`.
     //
-    // TWO GAPS ARE STILL CARRIED RATHER THAN GUESSED, and
-    // `aquifer/substance.hpp`'s own header has the numbers behind both: Q6.3's
-    // water-over-lava exception is not applied, so a water block directly
-    // above the global lava floor may get a barrier the real server would
-    // not place; and Pi's mixed-fluid-type branch is not applied, so a
-    // junction between a water body and a lava body is decided as though
-    // both were the same type. Neither is guessed at, and both are narrow —
+    // The global lava sea (Q2.4) and the water-over-lava exception on its
+    // top row (Q6.3) are in `computeSubstance` too, both measured against
+    // the server (`aquifer/substance.hpp`'s own header). ONE GAP IS STILL
+    // CARRIED RATHER THAN GUESSED: Pi's mixed-fluid-type branch is not
+    // applied, so a junction between a water body and a lava body is
+    // decided as though both were the same type. It is not guessed at, and
     // every barrier probe this project has run holds `lava` constant
-    // specifically to keep the second one out of scope.
+    // specifically to keep it out of scope.
     if (settings.oreVeinsEnabled) {
         throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "
                         "veins (SPEC §10, M3); refusing rather than generating a world missing "

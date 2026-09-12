@@ -8,24 +8,43 @@
 // (fluid_type.hpp). This combines them into the one function a caller
 // actually needs (SPEC §10, MA blocker 4).
 //
-// TWO GAPS ARE CARRIED HERE RATHER THAN GUESSED (barrier.hpp's own header
-// has the numbers behind both):
+// THE SEA'S TWO CLAUSES ARE LANDED AND MEASURED (`tools/analysis/
+// aquifer-waterlava-probe.sh`, three seeds, and the conformance case
+// `vanilla_aquifer_waterlava_test.cpp`):
 //
-//   * Q6.3's water-over-lava exception — a water block immediately above the
-//     global lava floor should never get a barrier, and this does not check
-//     for that, so it MAY place one where the real server would not.
-//   * Pi's mixed-fluid-type branch (`= 2.0` when the two competing sources
-//     read different fluid types) — `placesBarrier`'s Pi only knows the
-//     same-type, level-difference formula, so a junction between a water
-//     body and a lava body is decided as though both were the nearest
-//     source's own type.
+//   * Q2.4, the global lava sea. Below `lambda = min(-54, sea_level)` the
+//     answer is lava before any source is consulted. Without it the bare
+//     fall-through read the nearest source's own type there, which is WATER
+//     wherever that source is centred above the sea: wrong on 7682 / 5330 /
+//     5736 of 16384 blocks per density at sea 63, on every one of three
+//     seeds; with it, 16384 / 16384. (The category tests never saw this —
+//     water and lava are both "fluid" to them.)
+//   * Q6.3, the water-over-lava exception. On the sea's top row alone —
+//     the only row where `Global(y-1)` reads lava and Q2.4 has not already
+//     answered — a nearest source reading water is water outright, no
+//     barrier. Measured where the row HAS water sources (sea_level -70):
+//     the bare logic wrote stone on 14 / 50 / 70 of the 278 / 1102 / 1940
+//     blocks it applies to, the server on 0 of 3320; one row up the two
+//     decisions agree on every block; and a nearest source reading AIR on
+//     the same row still gets the server's barriers (93 / 239 / 244), so
+//     the asymmetry is real. On the shipped sea (63) the exception's
+//     population is EMPTY on three seeds — no source reads water at y = -54
+//     at all (its ladder sits at -60 plus a multiple of 3, so it needs a
+//     spread of 0.9 or a sea-gated source within five blocks of the sea),
+//     and both the server and this build write 0 stone on that row. Real,
+//     but in vanilla's own overworld close to unreachable.
 //
-// Both are measured to be RARE rather than untouched: every barrier probe
-// this project has run holds `lava` at a constant specifically to keep the
-// mixed-type question out of scope, and Q6.3 only ever applies to a water
-// source sitting directly on the global lava floor. Neither is nothing,
-// which is why they are named here instead of silently folded into "the
-// aquifer is wired now".
+// ONE GAP IS STILL CARRIED HERE RATHER THAN GUESSED (barrier.hpp's own
+// header has the numbers): Pi's mixed-fluid-type branch (`= 2.0` when the
+// two competing sources read different fluid types) — `placesBarrier`'s Pi
+// only knows the same-type, level-difference formula, so a junction between
+// a water body and a lava body is decided as though both were the nearest
+// source's own type. Every barrier probe this project has run holds `lava`
+// at a constant specifically to keep that question out of scope; the
+// sea_level -70 arm above, where lava-typed sources crowd the rows just
+// above the sea, is the first world to show its size — the server writes
+// 27-45% more barriers there than this predicate does, all of it in
+// junctions with a lava-typed source.
 #pragma once
 
 #include <stratum/aquifer/barrier.hpp>
@@ -125,11 +144,45 @@ private:
     std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::int32_t> cache_;
 };
 
+/// Q1.2's global picker, reduced to the one question the substance decision
+/// asks of it: does it read LAVA at `y`? The picker is a function of `y`
+/// alone — `A_lava = (-54, lava)` below `lambda = min(-54, sea_level)` and
+/// the default fluid at or above it — so "the global picker reads lava" is
+/// one comparison, with no lattice, no source and no noise behind it. Spelled
+/// out because two clauses read it at two DIFFERENT heights: Q2.4 at the
+/// block itself, Q6.3 one block below it.
+[[nodiscard]] constexpr bool globalReadsLava(const std::int32_t y,
+                                             const std::int32_t seaLevel) noexcept {
+    return y < lambdaLevel(seaLevel);
+}
+
+/// Q6.3, the water-over-lava exception: where the NEAREST source reads water
+/// at `y` and the global picker reads lava at `y - 1`, the block is that
+/// water outright — no pressure, no barrier noise, whatever the other
+/// sources say. Since `globalReadsLava(y - 1)` is `y <= lambda` and Q2.4
+/// has already handed every `y < lambda` to the sea, this can fire on
+/// EXACTLY ONE ROW per dimension: `y == lambda`, the first row above the
+/// lava sea. It is asymmetric on purpose — a nearest source reading AIR
+/// on that row gets the ordinary barrier decision (measured: the server
+/// writes those barriers).
+///
+/// "Water" is read as `FluidType::Default`: only a water `default_fluid` has
+/// ever been observed in this position (fluid_type.hpp carries the same
+/// assumption).
+[[nodiscard]] constexpr bool waterOverLava(const std::int32_t y, const std::int32_t seaLevel,
+                                           const std::int32_t nearestLevel,
+                                           const FluidType nearestType) noexcept {
+    const bool nearestReadsWater = y < nearestLevel && nearestType == FluidType::Default;
+    return nearestReadsWater && globalReadsLava(y - 1, seaLevel);
+}
+
 /// The full aquifer substance decision for one block (spec Q2.2-Q6.7,
 /// clean-room spec/aquifer-spec.md, and SPEC §11's own measurements of each
-/// piece): rank the four nearest sources, read each of the three nearest
-/// ones' own fluid level, decide the barrier or fall through to the nearest
-/// source's own reading, and — where that reading is fluid — its type.
+/// piece), in the spec's own order: the global lava sea first (Q2.4), then
+/// rank the four nearest sources and read each of the three nearest ones'
+/// own fluid level, then the water-over-lava exception (Q6.3), then the
+/// barrier (Q6.2-Q6.6), and finally the nearest source's own reading — and,
+/// where that reading is fluid, its type.
 ///
 /// Each sampler is called as `double(std::int32_t x, std::int32_t y,
 /// std::int32_t z)` at the position its own router entry reads at
@@ -147,11 +200,38 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
                                            LevelCache& cache, BarrierSampler&& barrier,
                                            FloodednessSampler&& floodedness, SpreadSampler&& spread,
                                            LavaSampler&& lava, PslSampler&& psl) {
+    // Q2.4: below the global lava sea the lattice is never consulted — the
+    // sea is lava whatever any source says, and it is literal lava, not the
+    // dimension's default fluid.
+    if (globalReadsLava(query.y, query.seaLevel)) {
+        return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
+    }
+
     const Selection selection = selectSources(centres, query.x, query.y, query.z);
 
     std::array<std::int32_t, 3> level{};
     for (std::size_t r = 0; r < 3; ++r) {
         level[r] = cache.levelOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread);
+    }
+
+    // The nearest source's own reading at this height, and — only where
+    // that reading is fluid — its type. Computed ONCE, here, because Q6.3
+    // needs it before the barrier and the fall-through needs it after.
+    const bool nearestReadsFluid = query.y < level[0];
+    FluidType nearestType = FluidType::Default;
+    if (nearestReadsFluid) {
+        const CellIndex& nearestCentre = selection.ranked[0].centre;
+        const SamplePos lavaPos = lavaSample(nearestCentre);
+        const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
+        nearestType = fluidTypeOf(FluidTypeAt{.centreY = nearestCentre.y,
+                                              .level = level[0],
+                                              .seaLevel = query.seaLevel,
+                                              .lava = lavaValue});
+        // Q6.3: water resting on the global lava sea is water, and no
+        // barrier is even considered — the `barrier` noise is not read.
+        if (waterOverLava(query.y, query.seaLevel, level[0], nearestType)) {
+            return SubstanceAt{.substance = Substance::Fluid, .fluidType = nearestType};
+        }
     }
 
     const double barrierNoise = barrier(query.x, query.y, query.z);
@@ -169,18 +249,10 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
 
     // The barrier has fallen through: the substance is the nearest source's
     // own reading outright (selection.hpp's own conformance case).
-    if (query.y >= level[0]) {
+    if (!nearestReadsFluid) {
         return SubstanceAt{.substance = Substance::Air};
     }
-
-    const CellIndex& nearestCentre = selection.ranked[0].centre;
-    const SamplePos lavaPos = lavaSample(nearestCentre);
-    const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
-    const FluidType type = fluidTypeOf(FluidTypeAt{.centreY = nearestCentre.y,
-                                                   .level = level[0],
-                                                   .seaLevel = query.seaLevel,
-                                                   .lava = lavaValue});
-    return SubstanceAt{.substance = Substance::Fluid, .fluidType = type};
+    return SubstanceAt{.substance = Substance::Fluid, .fluidType = nearestType};
 }
 
 } // namespace stratum::aquifer

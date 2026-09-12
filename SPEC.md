@@ -534,10 +534,11 @@ Its own component (`lib/mapping/`), its own tests:
   including the surface's thirteen-position aborting-minimum scan, re-derived
   at twenty feature scales.
 
-  Four things stood between MA and closing. Two (1, 2) are now fully CLOSED.
-  The barrier's third source (3) is closed for three of its four parts, with
-  Q6.3's water-over-lava exception still untested. Fluid TYPE (4) is narrowed
-  to one open piece, the level ceiling's exact value. **`ChunkFiller` now
+  Four things stood between MA and closing. Three (1, 2, 3) are now fully
+  CLOSED — the barrier's third source (3) including Q6.3's water-over-lava
+  exception, measured on the server and smaller than it read (see (d)).
+  Fluid TYPE (4) is narrowed to one open piece, the level ceiling's exact
+  value. The one barrier piece still open is the mixed-fluid-type Π branch. **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
   measured against a real, aquifer-on overworld region, the wiring's own
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
@@ -630,14 +631,29 @@ Its own component (`lib/mapping/`), its own tests:
      13.19%/16.48% to 1.01%/1.02% overall, seed-to-seed — matching the ~13%
      figure this project had already measured by a different route. `BarrierAt`
      now carries `D` and a third ranked source (`lib/include/stratum/aquifer/
-     barrier.hpp`), and (d) remains: **Q6.3's water-over-lava exception is
-     still untested by every angle**, and this predicate does not implement it
-     yet. The mixed-fluid-type Π branch (`Π = 2.0`) is also still unmeasured —
-     every barrier probe so far holds `lava` at a constant specifically to
-     keep that question separate. Both are now called from real generation
-     (`ChunkFiller`, below) rather than only from purpose-built probes, and
-     neither has shown up as the identified cause of a real mismatch yet —
-     see the wiring note below for the numbers.
+     barrier.hpp`). (d) **DONE. Q6.3's water-over-lava exception, measured
+     and landed** — in `computeSubstance`, in front of the predicate rather
+     than inside it. It reduces to Q1.2's picker, a function of `y` alone,
+     so it can fire on exactly ONE row, `y = lambda = min(-54, sea_level)`:
+     Q2.4 has already answered everything below. `tools/analysis/
+     aquifer-waterlava-probe.sh` (the barrier probe's configuration with
+     the sea inside the world, plus a `sea_level` -70 arm; three seeds)
+     found it real where the row has water sources — 278 / 1102 / 1940
+     blocks at sea -70, the bare logic writing stone on 14 / 50 / 70 of
+     them and the server on 0 of 3320, the two decisions identical one row
+     up, and a nearest source reading AIR on the same row still getting
+     the server's barriers (93 / 239 / 244) — and EMPTY on the shipped sea:
+     no source reads water at y = -54 on 3 seeds x 3 densities x 16384
+     columns, 0 stone on that row from either side. The same probe found
+     Q2.4 itself unimplemented (below the sea the decision read the
+     nearest source's type, water on 7682 / 5330 / 5736 of 16384 blocks
+     per density, invisible to category-only goldens); it is landed too,
+     16384 / 16384. The mixed-fluid-type Π branch (`Π = 2.0`) is still
+     unmeasured — every barrier probe holds `lava` at a constant
+     specifically to keep that question separate — and the sea -70 arm is
+     the first world to show its size: 27-45% more real barriers than the
+     predicate writes on the rows just above the sea, all in junctions with
+     a lava-typed source.
 
   4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
@@ -2367,13 +2383,78 @@ Open:
   the ~13% this project had already measured by an entirely different route,
   and landing within about a point of it on both seeds independently.
 
-  *Still open.* Q6.3's water-over-lava exception remains untested by every
-  angle, and `placesBarrier` does not implement it. The mixed-fluid-type
-  branch of Π (`Π = 2.0` when one source reads lava and the other water) is
-  also unmeasured — every barrier probe so far holds `lava` at a constant on
-  purpose, to keep that question separate rather than folding it in
-  unverified. `ChunkFiller` still does not call `placesBarrier` at all;
-  wiring it in is untouched.
+  *Still open at the time; since closed.* Q6.3's water-over-lava exception
+  was untested by every angle here, and `placesBarrier` did not implement
+  it; it is now measured and landed in `computeSubstance` (see "The lava
+  sea's two clauses" below). The mixed-fluid-type branch of Π (`Π = 2.0`
+  when one source reads lava and the other water) remains unmeasured —
+  every barrier probe so far holds `lava` at a constant on purpose, to keep
+  that question separate rather than folding it in unverified. `ChunkFiller`
+  did not yet call `placesBarrier` at all at this point; the wiring came
+  later.
+
+  **The lava sea's two clauses — Q6.3 measured, Q2.4 found (MA).** The
+  clean-room spec's Q6.3 says a nearest source reading water directly over
+  the global lava picker's lava is water, no barrier. The unlock is that
+  `Global` is Q1.2's trivial picker — lava strictly below `lambda =
+  min(-54, sea_level)`, a function of `y` alone — and Q2.4 already hands
+  every block below `lambda` to the sea before the lattice is consulted.
+  So the exception can fire on exactly ONE row per dimension, `y = lambda`,
+  which is why no earlier probe ever saw it: `aquifer-barrier-probe.sh`
+  sets `min_y` -48 specifically to keep the sea out of its world.
+
+  `tools/analysis/aquifer-waterlava-probe.sh` puts it back: the barrier
+  probe's own configuration (real barrier/floodedness/spread, psl a
+  constant 96, lava a constant 0.0, three densities) at `min_y` -64, plus a
+  `sea_level` -70 arm at `min_y` -80 so the row has to move with `lambda`.
+  Three seeds (42, 31337, 8675309). The analyzer and the conformance case
+  (`vanilla_aquifer_waterlava_test.cpp`) call the committed
+  `computeSubstance` end to end and, on the same inputs, the BARE
+  fall-through it used to be — `placesBarrier`, then the nearest source's
+  reading — so the score is exactly "where the old logic writes stone and
+  the server does not".
+
+  *On the shipped sea the row is empty.* At sea 63, across 3 seeds x 3
+  densities x 16384 columns, no source reads water at y = -54: a source's
+  ladder there sits at -60 plus a multiple of 3, so water on the row needs
+  a spread of 0.9 (offset +9) or a sea-gated source centred within five
+  blocks of the sea, and neither happened once. Server and build both
+  write 0 stone on the row. The water the server does show there is all
+  flow — `level` 1-7 spreading over the sea, `level` 8 falling from bodies
+  above; not one source block — which is also what makes the -54..-52 pile
+  of "fluid this build calls air" in the varying-surface residual read as
+  post-generation flow rather than as an aquifer decision.
+
+  *At sea -70 the ladder hands the row water, and the exception is real.*
+  It applies to 278 / 1102 / 1940 blocks; the bare logic writes stone on
+  14 / 50 / 70 of them; the server writes stone on 0 of 3320. One row up
+  the two decisions agree on every block (0 of 589824 across all rows
+  above, all arms). And the asymmetry holds: where the nearest source
+  reads AIR on the same row, the server still writes barriers (93 / 239 /
+  244), exactly as on the rows above — Q6.3 is a water rule, not a row
+  rule. Independent of `D`, as its position before Q6.6 requires: the three
+  densities behave identically.
+
+  *Q2.4 was not implemented either, and the same probe shows it.* Below
+  the sea the bare decision read the nearest source's own TYPE, which is
+  water wherever that source is centred above the sea: wrong on 7682 /
+  5330 / 5736 of 16384 blocks per density at sea 63 — invisible to every
+  category golden, which count water and lava alike as "fluid". Now lava
+  before any source is read: 16384 / 16384 at sea 63. At sea -70 the
+  server shows 16 / 166 / 41 water blocks below the row, all of them
+  falling water (`level` 8) directly under water with obsidian beneath:
+  water that arrived at the row after generation dropped into the lava
+  under it before that lava could turn to obsidian. Post-generation
+  mechanics, verified block by block (0 of 223 unexplained), not the
+  aquifer.
+
+  *What the low sea also shows, and is not this change's to fix.* The
+  sea -70 arm is the first world where lava-typed sources crowd the rows
+  just above the sea, and there `placesBarrier` misses 27-45% of the
+  server's real barriers on those rows, every miss in a junction with a
+  lava-typed source. That is the mixed-fluid-type Π branch, still held out
+  of scope on purpose, now with a measured size and a world that exercises
+  it.
 
   **A second instrument for the depth path's gate, and a wrong first attempt
   at building one (MA blocker 1, CLOSED).** The near-surface path gates on
@@ -2523,8 +2604,12 @@ Open:
   *One thing left unexplained rather than explained away.* About 4% of sources
   hold both fluids above the global lava sea, and the minority blocks are
   spread over y -21 to -54 rather than piled at the boundary. The leading
-  candidate is Q6.3's water-over-lava exception, which no instrument in this
-  project has touched. It is excluded from the score and counted in the test.
+  candidate at the time was Q6.3's water-over-lava exception; that is now
+  RULED OUT by its shape rather than by a probe — Q6.3 only ever turns a
+  would-be barrier into water on the sea's own top row, it never changes
+  which fluid a block holds, and it cannot reach y -21. The candidate is
+  now the mixed-fluid-type Π branch. It is excluded from the score and
+  counted in the test.
 
   **A surface that varies, and a model comparison that came out a tie for a
   provable reason (MA).** The probe SPEC §10 has demanded since the aquifer
@@ -2576,8 +2661,10 @@ Open:
   air and never the reverse, and the spec's model misses exactly the same
   ones. They pile at y -54 to -52 — the top of the global lava sea — and just
   under `sea_level` at y 57 to 61. Candidates: the `never` sentinel Q5.6
-  carries where this build floors to `lambda`, and Q6.3's water-over-lava
-  exception, which still nothing has measured.
+  carries where this build floors to `lambda`, and — at the time — Q6.3's
+  water-over-lava exception. Q6.3 is since measured and RULED OUT here by
+  its shape: it turns a would-be barrier into water, never air into fluid,
+  so it cannot produce a "fluid this build calls air" residual.
 
   *One thing this cost.* The probe first ran under the spec name `psl`, whose
   fixture directory already held a dozen arms from an earlier campaign; the
