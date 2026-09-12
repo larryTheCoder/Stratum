@@ -103,16 +103,20 @@ jobs:
           diff -u tests/unit/deepslate_vectors.inc "${RUNNER_TEMP}/deepslate_vectors.inc"
 
       - name: Generated schema is reproducible
-        # The density function schema is derived from mcdoc at a pinned
-        # commit (SPEC §11), so a hand-edit to the generated tables — or a
-        # reader that silently stopped understanding a construct — shows up
-        # here rather than as a datapack the engine wrongly rejects.
+        # The density function, noise settings and surface rule schemas are
+        # derived from mcdoc at a pinned commit (SPEC §11), so a hand-edit to
+        # the generated tables — or a reader that silently stopped
+        # understanding a construct — shows up here rather than as a datapack
+        # the engine wrongly rejects.
         run: |
           tools/mcdoc-sync
           git diff --exit-code -- lib/src/density_schema.inc \
               lib/include/stratum/density/node_types.inc \
               lib/src/settings_schema.inc \
-              lib/include/stratum/settings/router_entries.inc
+              lib/include/stratum/settings/router_entries.inc \
+              lib/src/surface_schema.inc \
+              lib/include/stratum/surface/rule_types.inc \
+              lib/include/stratum/surface/condition_types.inc
 
       - name: Install clang-tidy
         # Pinned: clang-tidy's check set changes between releases, so an

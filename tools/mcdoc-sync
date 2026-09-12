@@ -25,8 +25,9 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).parent / "mcdoc"))
 
 import mcdoc  # noqa: E402
+import surface  # noqa: E402
 from emit import (emit_node_types, emit_router_entries, emit_schema,  # noqa: E402
-                  emit_settings_schema)
+                  emit_settings_schema, emit_surface_schema, emit_surface_types)
 from settings import SettingsSchemaBuilder  # noqa: E402
 from schema import SchemaBuilder  # noqa: E402
 
@@ -56,6 +57,44 @@ def fetch(destination: pathlib.Path) -> pathlib.Path:
     if actual != MCDOC_COMMIT:
         raise SystemExit(f"error: expected vanilla-mcdoc {MCDOC_COMMIT} but got {actual}")
     return checkout
+
+
+def require(path: pathlib.Path) -> pathlib.Path:
+    if not path.is_file():
+        raise SystemExit(f"error: {path} is missing; has the schema moved?")
+    return path
+
+
+def generate_surface(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
+    """The two surface-rule dispatch families.
+
+    Three files, not two. material_condition.mcdoc uses `CaveSurface` and
+    `VerticalAnchor`, both declared in mod.mcdoc, and this reader resolves a
+    type by bare name rather than by which `use` line brought it in — so the
+    three are read into one namespace before anything is built from them.
+    """
+    worldgen = checkout / "java/data/worldgen"
+    paths = [require(worldgen / name) for name in
+             ("mod.mcdoc", "material_condition.mcdoc", "material_rule.mcdoc")]
+
+    _, builder = surface.read(paths, MINECRAFT_VERSION)
+    rules = builder.build_rules()
+    conditions = builder.build_conditions()
+    print(f"==> {len(rules)} surface rule types and {len(conditions)} condition types "
+          f"at {MINECRAFT_VERSION}", file=sys.stderr)
+
+    written = {
+        repository_root / "lib/include/stratum/surface/rule_types.inc":
+            emit_surface_types(rules, COMMAND, "surface rules"),
+        repository_root / "lib/include/stratum/surface/condition_types.inc":
+            emit_surface_types(conditions, COMMAND, "surface rule conditions"),
+        repository_root / "lib/src/surface_schema.inc":
+            emit_surface_schema(rules, conditions, COMMAND, MINECRAFT_VERSION, MCDOC_COMMIT),
+    }
+    for path, text in written.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"==> wrote {path.relative_to(repository_root)}", file=sys.stderr)
 
 
 def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
@@ -98,6 +137,8 @@ def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
         encoding="utf-8")
     print(f"==> wrote {router_entries.relative_to(repository_root)}", file=sys.stderr)
     print(f"==> wrote {settings_table.relative_to(repository_root)}", file=sys.stderr)
+
+    generate_surface(checkout, repository_root)
 
 
 def main() -> None:

@@ -27,6 +27,12 @@ class ResolvedField:
     kind: str
     optional: bool
     allows_reference: bool = False
+    # For a "List" kind, what one element of it is; "" for everything else.
+    # A list is a wrapper rather than a kind of its own so that every scalar
+    # kind composes with it — `[MaterialRuleRef]` and `[biome id]` are the
+    # same construct over different elements, and a schema that spelled each
+    # array field as its own kind would need a new one per element type.
+    element_kind: str = ""
     selector_values: tuple[str, ...] = ()
     # One entry per selector value, in the same order: the `///` lines mcdoc
     # documents that value with, joined, or "" for a value with none.
@@ -92,6 +98,17 @@ def _strip_gate(text: str) -> tuple[Gate, str]:
     return gate, text
 
 
+def _is_identifier(text: str) -> str:
+    """Whether a union arm is the bare `#[id="..."] string` half of one.
+
+    Attributes stripped first, so that the gate and the registry annotation
+    do not change the answer -- what is left has to be the word `string` and
+    nothing else. `[#[id="..."] string]`, an ARRAY of identifiers, is not.
+    """
+    _, body = _strip_gate(text)
+    return body.strip() == "string"
+
+
 def _unwrap(text: str) -> str:
     text = text.strip()
     while text.startswith("(") and text.endswith(")"):
@@ -124,8 +141,16 @@ class SchemaBuilder:
             if not live:
                 raise McdocError(f"{where}: no alternative applies at this version")
             # `id string | X` is the "reference or inline" shape.
-            if len(live) == 2 and any("string" in part for part in live):
-                inline = next(part for part in live if "string" not in part)
+            #
+            # Which arm is the identifier is decided by what the arm IS, not
+            # by whether the word "string" occurs in it. Those differ: at 26.3
+            # `biome_is` is `[#[id=...] string] | #[id=...] string`, where the
+            # word occurs in both arms and only one of them is an identifier.
+            # The looser test could find no inline arm at all there and died
+            # with a StopIteration rather than a refusal naming the field.
+            identifiers = [part for part in live if _is_identifier(part)]
+            if len(live) == 2 and len(identifiers) == 1:
+                inline = next(part for part in live if not _is_identifier(part))
                 mapped = self._map_type(inline, where)
                 mapped.allows_reference = True
                 return mapped
@@ -133,8 +158,27 @@ class SchemaBuilder:
                 return self._map_type(live[0], where)
             if len(live) == 1:
                 return self._map_type(live[0], where)
+            mapped = self._map_union(live, where)
+            if mapped is not None:
+                return mapped
             raise McdocError(f"{where}: cannot map the union {live!r}")
 
+        return self._map_leaf(text, where)
+
+    def _map_union(self, live: list[str], where: str) -> Optional[ResolvedField]:
+        """A last look at a union none of the rules above accounted for.
+
+        Nothing in the density-function schema needs one, so the base refuses.
+        A subclass whose schema has a union shape of its own -- mcdoc spells a
+        vertical anchor as a union of one-field structs -- returns it here
+        instead of overriding the whole of _map_type, which is where the
+        version gating and the reference/inline rule live.
+        """
+        del live, where
+        return None
+
+    def _map_leaf(self, text: str, where: str) -> ResolvedField:
+        """One non-union type expression, by name."""
         name = text.split("@")[0].strip()
 
         # The names the engine knows are matched before generic alias
@@ -164,6 +208,15 @@ class SchemaBuilder:
             return ResolvedField("", "Spline", False)
         if name in ("float", "double", "int", "long", "byte", "short"):
             return ResolvedField("", "Number", False)
+        return self._map_declared(name, where)
+
+    def _map_declared(self, name: str, where: str) -> ResolvedField:
+        """An enum or an alias this document declares, or a refusal.
+
+        The tail every schema shares. Enum gating in particular is subtle
+        enough that a second copy of it in another builder would be a second
+        place for a value from the wrong version to get into a table.
+        """
         if name in self.document.enums:
             # Filtered by gate: a value added or removed by version is not
             # one this version accepts, and a selector table that listed it
@@ -210,7 +263,8 @@ class SchemaBuilder:
 
     # -- the table -----------------------------------------------------
 
-    def build(self, registry: str) -> list[ResolvedType]:
+    def build(self, registry: str,
+              no_field_types: tuple[str, ...] = NO_FIELD_TYPES) -> list[ResolvedType]:
         by_key: dict[str, ResolvedType] = {}
         for dispatch in self.document.dispatches:
             if registry not in dispatch.registry or not dispatch.gate.applies_to(self.version):
@@ -226,7 +280,7 @@ class SchemaBuilder:
                     raise McdocError(f"{key!r} is dispatched twice at this version")
                 by_key[key] = ResolvedType(key=key, fields=tuple(fields))
 
-        for key in NO_FIELD_TYPES:
+        for key in no_field_types:
             if key not in by_key:
                 by_key[key] = ResolvedType(key=key, fields=())
 

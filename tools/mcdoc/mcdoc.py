@@ -76,7 +76,17 @@ class MapEntry:
 
 @dataclass
 class Spread:
-    """`...OtherStruct` or `...struct { ... }` inside a struct body."""
+    """`...OtherStruct`, `...struct { ... }`, or `...registry[[field]]`.
+
+    `target` is kept as the text that was written, not as a resolved name:
+    the third spelling is a DISPATCH on the value of a sibling field —
+    `...minecraft:material_condition[[type]]`, which material_condition.mcdoc
+    uses to say "the rest of this struct is whatever `type` selected" — and
+    there is no single struct it names. A caller that flattens a struct by
+    name will not find one called that and will say so, which is the right
+    answer: the concrete types behind such a spread are enumerated from
+    `Document.dispatches`, never by following the spread.
+    """
 
     target: Optional[str]
     inline_fields: list["Field | Spread"] = field(default_factory=list)
@@ -95,6 +105,11 @@ class Dispatch:
     target: str
     gate: Gate = field(default_factory=Gate)
     registry: str = ""
+    # The `<T>` of a generic dispatch, as written, or "". Recorded rather
+    # than discarded: a dispatch that is generic in its payload is a
+    # different thing from one that is not, and a builder that read the two
+    # the same way would be describing a type it had not looked at.
+    parameters: str = ""
 
 
 @dataclass
@@ -129,6 +144,36 @@ class Document:
     enums: dict[str, Enum] = field(default_factory=dict)
     dispatches: list[Dispatch] = field(default_factory=list)
     aliases: dict[str, str] = field(default_factory=dict)
+    # `type Name<T> = ...`. Kept apart from `aliases` on purpose: the body of
+    # one mentions its own parameters, so expanding it for a caller that
+    # looked it up by bare name would hand back a type mentioning `T`. A
+    # lookup here misses, and the caller raises "no mapping for type", which
+    # is the honest answer until something actually needs generics.
+    generic_aliases: dict[str, str] = field(default_factory=dict)
+
+    def merge(self, other: "Document", source: str = "<mcdoc>") -> None:
+        """Folds @p other's declarations into this one.
+
+        mcdoc is written as several files that refer to each other by bare
+        name across `use` lines — material_condition.mcdoc's `CaveSurface` is
+        declared in mod.mcdoc — and this reader resolves by bare name rather
+        than by import provenance. Merging is therefore how a caller gets one
+        namespace to resolve against.
+
+        A name declared twice is an error rather than a last-one-wins
+        overwrite: two files disagreeing about what a name means is exactly
+        the case where silently picking one emits a table that describes
+        neither.
+        """
+        for label, mine, theirs in (("struct", self.structs, other.structs),
+                                    ("enum", self.enums, other.enums),
+                                    ("type", self.aliases, other.aliases),
+                                    ("generic type", self.generic_aliases, other.generic_aliases)):
+            for name, declaration in theirs.items():
+                if name in mine:
+                    raise McdocError(f"{source}: {label} {name!r} is declared in two files")
+                mine[name] = declaration
+        self.dispatches.extend(other.dispatches)
 
 
 class _Reader:
@@ -194,6 +239,35 @@ class _Reader:
             raise self.fail("expected an identifier")
         self.position = match.end()
         return match.group(0)
+
+    def generic_parameters(self) -> str:
+        """A `<...>` parameter list written immediately after a name, or "".
+
+        Adjacency is required rather than skipped-to. A `<` on the next line
+        is not a parameter list in any mcdoc this reader has met, and taking
+        one would silently swallow the start of the next declaration.
+        """
+        if self.position >= len(self.text) or self.text[self.position] != "<":
+            return ""
+        return self.balanced("<", ">")
+
+    def dispatch_target(self) -> str:
+        """A spread's target as written: `Name`, or `namespace:name[[field]]`.
+
+        The second shape dispatches on a sibling field's value, so it names no
+        single struct; the text is kept and the caller decides. See Spread.
+        """
+        self.skip_trivia()
+        start = self.position
+        match = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)*").match(
+            self.text, self.position)
+        if match is None:
+            raise self.fail("expected a spread target")
+        self.position = match.end()
+        if self.position < len(self.text) and self.text[self.position] == "[":
+            self.balanced("[", "]")
+        self.generic_parameters()
+        return self.text[start : self.position]
 
     def string_literal(self) -> str:
         self.skip_trivia()
@@ -305,7 +379,7 @@ def _read_struct_body(reader: _Reader) -> list["Field | Spread | MapEntry"]:
                     reader.declared_structs[declared] = Struct(name=declared, members=fields)
                 members.append(Spread(target=None, inline_fields=fields, gate=gate))
             else:
-                members.append(Spread(target=reader.identifier(), gate=gate))
+                members.append(Spread(target=reader.dispatch_target(), gate=gate))
         elif reader.peek("["):
             key_type = reader.balanced("[", "]")
             reader.skip_trivia()
@@ -380,6 +454,29 @@ def _read_type(reader: _Reader) -> str:
     return text
 
 
+def parse_inline_struct(text: str, source: str = "<mcdoc>") -> Optional[Struct]:
+    """A `struct { ... }` written inside a type expression, or None.
+
+    Type expressions are kept as text (see _read_type), so a caller that has
+    to look INSIDE one reads it back through here rather than with a regex
+    over braces. mcdoc spells a vertical anchor as a union of one-field
+    structs, and which field each of those declares is the whole content of
+    the type -- `absolute`, `above_bottom`, `below_top`.
+
+    Anything after the closing brace raises: a caller asking what this struct
+    declares would otherwise be told, and would act on, half a type.
+    """
+    reader = _Reader(text.strip(), source)
+    if not reader.take("struct"):
+        return None
+    reader.skip_trivia()
+    name = None if reader.peek("{") else reader.identifier()
+    members = _read_struct_body(reader)
+    if not reader.at_end():
+        raise reader.fail("trailing text after a struct written inside a type")
+    return Struct(name=name, members=members)
+
+
 def parse(text: str, source: str = "<mcdoc>") -> Document:
     """Reads a whole mcdoc file. Raises on any construct not covered here."""
     document = Document()
@@ -400,6 +497,9 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
             reader.skip_trivia()
             target_registry = reader.rest_of_line_until("[")
             keys = [key.strip() for key in reader.balanced("[", "]").split(",") if key.strip()]
+            # `dispatch minecraft:int_provider[constant]<T> to ...` — a
+            # dispatch can be generic in the type it carries.
+            parameters = reader.generic_parameters()
             reader.skip_trivia()
             reader.expect("to")
             reader.skip_trivia()
@@ -409,14 +509,29 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
                 # A dispatch may name its struct or declare it anonymously,
                 # as `%unknown` does with an empty one.
                 if reader.peek("{"):
-                    name = f"<anonymous {len(document.structs)}>"
+                    # Named for its file as well as its position: several
+                    # files declare one, and Document.merge refuses a name
+                    # declared twice — correctly, since two files disagreeing
+                    # about a name is exactly what it is there to catch.
+                    name = f"<anonymous {source}:{len(document.structs)}>"
                 else:
                     name = reader.identifier()
                 document.structs[name] = Struct(name=name, members=_read_struct_body(reader))
                 document.dispatches.append(Dispatch(keys=keys, target=name, gate=gate))
+            elif reader.peek("("):
+                # A union of alternatives rather than one struct — the int
+                # providers are written this way. The text is kept whole, and
+                # a caller that tries to flatten it will not find a struct
+                # under that name and will say so. That refusal is correct
+                # until something Stratum generates actually dispatches into a
+                # union, which nothing at the pinned version does.
+                document.dispatches.append(
+                    Dispatch(keys=keys, target="(" + reader.balanced("(", ")") + ")", gate=gate))
             else:
-                document.dispatches.append(Dispatch(keys=keys, target=reader.identifier(), gate=gate))
+                target = reader.identifier() + reader.generic_parameters()
+                document.dispatches.append(Dispatch(keys=keys, target=target, gate=gate))
             document.dispatches[-1].registry = target_registry.strip()
+            document.dispatches[-1].parameters = parameters
             continue
 
         if reader.take("struct"):
@@ -441,8 +556,13 @@ def parse(text: str, source: str = "<mcdoc>") -> Document:
         if reader.take("type"):
             reader.skip_trivia()
             name = reader.identifier()
+            parameters = reader.generic_parameters()
             reader.expect("=")
-            document.aliases[name] = _read_type(reader)
+            body = _read_type(reader)
+            if parameters:
+                document.generic_aliases[name] = body
+            else:
+                document.aliases[name] = body
             continue
 
         raise reader.fail(f"unsupported construct: {reader.rest_of_line()[:60]!r}")
