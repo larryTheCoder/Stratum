@@ -15,49 +15,68 @@ namespace stratum::surface {
 
 namespace {
 
-constexpr std::array<std::string_view, 4> kRuleNames = {"minecraft:sequence", "minecraft:condition",
-                                                        "minecraft:block", "minecraft:bandlands"};
+template<typename Type>
+struct TypeInfo {
+    Type type;
+    std::string_view name;
+    std::span<const SchemaField> fields;
+};
 
-constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
-                                                              "minecraft:noise_threshold",
-                                                              "minecraft:not",
-                                                              "minecraft:stone_depth",
-                                                              "minecraft:vertical_gradient",
-                                                              "minecraft:water",
-                                                              "minecraft:y_above",
-                                                              "minecraft:above_preliminary_surface",
-                                                              "minecraft:hole",
-                                                              "minecraft:steep",
-                                                              "minecraft:temperature"};
+// The schema itself, generated from mcdoc for the pinned version by
+// tools/mcdoc-sync. Hand-editing it would defeat the point: the schema is
+// authoritative about which types exist and what fields they take.
+#include "surface_schema.inc"
 
-/// The position of @p name in @p names, or nothing.
+/// Whether row i of @p table is the type whose enumerator is i.
 ///
-/// An index rather than an iterator on purpose: std::array's iterator is a raw
-/// pointer in libstdc++ and a class type in MSVC's library, so
-/// `const auto found` and `const auto* const found` are each correct on one
-/// and a compile error on the other. clang-tidy asks for the pointer spelling;
-/// following it here broke both Windows legs.
-[[nodiscard]] std::optional<std::size_t> indexOfName(std::span<const std::string_view> names,
-                                                     std::string_view name) noexcept {
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == name) {
-            return i;
+/// The generator emits the enumerators and the table rows from one sorted
+/// list, so the two agree by construction — and this is what makes "by
+/// construction" a thing the compiler checks rather than a thing a comment
+/// claims, because every lookup below indexes the table with an enum value.
+template<typename Type, std::size_t Count>
+[[nodiscard]] constexpr bool rowsMatchEnumerators(const std::array<TypeInfo<Type>, Count>& table) {
+    for (std::size_t i = 0; i < Count; ++i) {
+        if (static_cast<std::size_t>(table[i].type) != i) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(rowsMatchEnumerators(kRuleTable), "kRuleTable is not in RuleType order");
+static_assert(rowsMatchEnumerators(kConditionTable),
+              "kConditionTable is not in ConditionType order");
+
+/// Whether @p type names a row of @p table at all. A type that came out of a
+/// file rather than out of the resolver can be any byte, and indexing the
+/// table with one of those aborts in a checked build.
+template<typename Type, std::size_t Count>
+[[nodiscard]] bool isKnownType(const std::array<TypeInfo<Type>, Count>& table, Type type) noexcept {
+    return static_cast<std::size_t>(type) < table.size();
+}
+
+template<typename Type, std::size_t Count>
+[[nodiscard]] std::optional<Type> typeFromName(const std::array<TypeInfo<Type>, Count>& table,
+                                               std::string_view name) noexcept {
+    for (const TypeInfo<Type>& info : table) {
+        if (info.name == name) {
+            return info.type;
         }
     }
     return std::nullopt;
 }
 
-[[noreturn]] void fail(const data::ResourceLocation& id, const std::string& what) {
-    throw RuleError("surface rule of '" + id.toString() + "': " + what);
+/// "floor, ceiling" — for an error that has to say what was allowed.
+[[nodiscard]] std::string joinValues(std::span<const std::string_view> values) {
+    std::string joined;
+    for (const std::string_view value : values) {
+        joined += (joined.empty() ? "" : ", ") + std::string(value);
+    }
+    return joined;
 }
 
-[[nodiscard]] const nlohmann::json& require(const nlohmann::json& object, const char* field,
-                                            const data::ResourceLocation& id,
-                                            std::string_view typeName) {
-    if (!object.contains(field)) {
-        fail(id, "'" + std::string(typeName) + "' has no \"" + field + "\"");
-    }
-    return object.at(field);
+[[noreturn]] void fail(const data::ResourceLocation& id, const std::string& what) {
+    throw RuleError("surface rule of '" + id.toString() + "': " + what);
 }
 
 /// The same shape settings::loadAll reads for `default_block`: a "Name" and
@@ -66,11 +85,11 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
 /// FIELD, and this one has to report against a rule.
 [[nodiscard]] settings::BlockState readBlockState(const nlohmann::json& json,
                                                   const data::ResourceLocation& id,
-                                                  std::string_view typeName) {
+                                                  std::string_view typeName,
+                                                  std::string_view fieldName) {
     if (!json.is_object() || !json.contains("Name")) {
-        fail(id, "'" + std::string(typeName) +
-                     "' needs \"result_state\" to be an object with a "
-                     "\"Name\"");
+        fail(id, "'" + std::string(typeName) + "' needs \"" + std::string(fieldName) +
+                     R"(" to be an object with a "Name")");
     }
     const nlohmann::json& name = json.at("Name");
     if (!name.is_string()) {
@@ -94,12 +113,18 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
     return state;
 }
 
+/// A vertical anchor, against the spellings the schema permits.
+///
+/// The three are not written out here: mcdoc spells `VerticalAnchor` as a
+/// union of one-field structs and the generator reads the set out of it, so
+/// the 26.3 addition of `relative_to_sea_level` will arrive as a table entry
+/// rather than as a bug report about a rule this build refuses.
 [[nodiscard]] VerticalAnchor readAnchor(const nlohmann::json& json,
-                                        const data::ResourceLocation& id, const char* where) {
+                                        const data::ResourceLocation& id, std::string_view where,
+                                        std::span<const std::string_view> spellings) {
     if (!json.is_object() || json.size() != 1) {
-        fail(id,
-             std::string(where) +
-                 " must be an object naming exactly one of absolute, above_bottom or below_top");
+        fail(id, std::string(where) + " must be an object naming exactly one of " +
+                     joinValues(spellings));
     }
     // json.begin(), not *json.items().begin(). items() returns a proxy object
     // that dies at the end of the full expression, so binding into it leaves
@@ -111,6 +136,12 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
     if (!value.is_number_integer()) {
         fail(id, std::string(where) + "'s " + key + " must be a whole number of blocks");
     }
+    if (std::ranges::find(spellings, key) == spellings.end()) {
+        fail(id, std::string(where) + " names '" + key +
+                     "', which is not a vertical anchor; the spellings are " +
+                     joinValues(spellings));
+    }
+
     VerticalAnchor anchor;
     anchor.value = value.get<std::int32_t>();
     if (key == "absolute") {
@@ -120,9 +151,14 @@ constexpr std::array<std::string_view, 11> kConditionNames = {"minecraft:biome",
     } else if (key == "below_top") {
         anchor.kind = VerticalAnchor::Kind::BelowTop;
     } else {
+        // The schema permits a spelling this build has no Kind for. That is
+        // 26.3's `relative_to_sea_level`, whose value depends on a sea level
+        // VerticalAnchor::resolve() is not given — so it is refused by name
+        // rather than resolved as something else (SPEC §8). Reachable only
+        // once the version pin moves.
         fail(id, std::string(where) + " names '" + key +
-                     "', which is not a vertical anchor; the three are absolute, above_bottom "
-                     "and below_top");
+                     "', which the schema permits but this build cannot resolve: "
+                     "VerticalAnchor::Kind has no case for it");
     }
     return anchor;
 }
@@ -143,11 +179,24 @@ std::int32_t VerticalAnchor::resolve(const settings::NoiseGeometry& geometry) co
 }
 
 std::string_view ruleTypeName(RuleType type) noexcept {
-    return kRuleNames[static_cast<std::size_t>(type)];
+    return isKnownType(kRuleTable, type) ? kRuleTable[static_cast<std::size_t>(type)].name
+                                         : "unknown";
 }
 
 std::string_view conditionTypeName(ConditionType type) noexcept {
-    return kConditionNames[static_cast<std::size_t>(type)];
+    return isKnownType(kConditionTable, type) ? kConditionTable[static_cast<std::size_t>(type)].name
+                                              : "unknown";
+}
+
+std::span<const SchemaField> fieldsOf(RuleType type) noexcept {
+    return isKnownType(kRuleTable, type) ? kRuleTable[static_cast<std::size_t>(type)].fields
+                                         : std::span<const SchemaField>{};
+}
+
+std::span<const SchemaField> fieldsOf(ConditionType type) noexcept {
+    return isKnownType(kConditionTable, type)
+               ? kConditionTable[static_cast<std::size_t>(type)].fields
+               : std::span<const SchemaField>{};
 }
 
 std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType /*type*/) noexcept {
@@ -235,9 +284,39 @@ std::vector<std::string> RuleGraph::unrunnable() const {
 
 namespace {
 
+/// One field's value, decoded the way the schema said to decode it. Which of
+/// these carry meaning depends on the kind — the same arrangement
+/// density::Node uses, and for the same reason: the type each field holds is
+/// something the schema already names, and a variant would make every use
+/// site name it a second time.
+struct FieldValue {
+    /// Condition, Rule, Id, and a List of any of those. A scalar of one of
+    /// those kinds fills its vector with exactly one entry, so that a list
+    /// and its element are read by the same code.
+    std::vector<ConditionIndex> conditions;
+    std::vector<RuleIndex> rules;
+    std::vector<data::ResourceLocation> ids;
+    settings::BlockState block;
+    VerticalAnchor anchor;
+    /// String and Selector.
+    std::string text;
+    double number = 0.0;
+    std::int32_t integer = 0;
+    bool boolean = false;
+};
+
 /// Resolution is two mutually recursive walks over the JSON, appending as it
 /// goes. A surface rule is a tree — vanilla shares nothing between branches —
 /// so there is no deduplication here and no need for one.
+///
+/// Each walk is driven by the generated schema rather than by a switch per
+/// type: for every field the table declares, the loop checks it is there
+/// unless the schema says it may be absent, reads its value the way the
+/// field's KIND says to, and hands it to a binder that knows which member of
+/// `Rule` or `Condition` that field's NAME feeds. So a field renamed upstream
+/// stops binding and says so by name, and a field ADDED upstream — `is_3d`
+/// on `noise_threshold` at 26.2, the whole of `ore_vein` at 26.3 — is a loud
+/// refusal rather than a value silently dropped on the floor (SPEC §8).
 struct Resolver {
     const data::ResourceLocation& id;
     std::vector<Rule>& rules;
@@ -245,14 +324,221 @@ struct Resolver {
 
     [[nodiscard]] RuleIndex readRule(const nlohmann::json& json);
     [[nodiscard]] ConditionIndex readCondition(const nlohmann::json& json);
+
+    [[nodiscard]] FieldValue readField(const SchemaField& field, const nlohmann::json& value,
+                                       std::string_view typeName);
+    void readScalar(FieldKind kind, const SchemaField& field, const nlohmann::json& value,
+                    std::string_view typeName, FieldValue& into);
+
+    void bindRule(Rule& entry, const SchemaField& field, FieldValue&& value,
+                  std::string_view typeName) const;
+    void bindCondition(Condition& entry, const SchemaField& field, FieldValue&& value,
+                       std::string_view typeName) const;
+
+    /// The value of @p field, or nothing when the schema permits its absence.
+    [[nodiscard]] const nlohmann::json*
+    present(const SchemaField& field, const nlohmann::json& json, std::string_view typeName) const {
+        if (json.contains(field.name)) {
+            return &json.at(std::string(field.name));
+        }
+        if (field.optional) {
+            return nullptr;
+        }
+        fail(id, "'" + std::string(typeName) + "' has no \"" + std::string(field.name) + "\"");
+    }
+
+    [[noreturn]] void wrongType(const SchemaField& field, const nlohmann::json& value,
+                                std::string_view typeName, const char* wanted) const {
+        fail(id, "'" + std::string(typeName) + "' needs \"" + std::string(field.name) +
+                     "\" to be " + wanted + ", not " + std::string(value.type_name()));
+    }
+
+    /// The single value a scalar field read, refusing anything else.
+    ///
+    /// The binders below are chosen by field NAME and the value was read by
+    /// field KIND, so a schema that turned one of the scalar fields into a
+    /// list would hand a binder a vector of some other length. Reading off
+    /// the front of an empty one is undefined; this is the refusal instead.
+    template<typename Value>
+    [[nodiscard]] const Value& only(const std::vector<Value>& values, const SchemaField& field,
+                                    std::string_view typeName) const {
+        if (values.size() != 1) {
+            fail(id, "'" + std::string(typeName) + "' needs \"" + std::string(field.name) +
+                         "\" to be one value, not " + std::to_string(values.size()));
+        }
+        return values.front();
+    }
 };
+
+void Resolver::readScalar(const FieldKind kind, const SchemaField& field,
+                          const nlohmann::json& value, const std::string_view typeName,
+                          FieldValue& into) {
+    switch (kind) {
+        case FieldKind::Rule:
+            // No field may be written as an identifier at the pinned version;
+            // the schema, not this code, is what says so.
+            if (value.is_string() && !field.allowsReference) {
+                fail(id, "'" + std::string(typeName) + "' does not accept an identifier for \"" +
+                             std::string(field.name) +
+                             "\" at this version; it must be given inline");
+            }
+            into.rules.push_back(readRule(value));
+            break;
+        case FieldKind::Condition:
+            if (value.is_string() && !field.allowsReference) {
+                fail(id, "'" + std::string(typeName) + "' does not accept an identifier for \"" +
+                             std::string(field.name) +
+                             "\" at this version; it must be given inline");
+            }
+            into.conditions.push_back(readCondition(value));
+            break;
+        case FieldKind::BlockState:
+            into.block = readBlockState(value, id, typeName, field.name);
+            break;
+        case FieldKind::Anchor:
+            into.anchor = readAnchor(value, id, field.name, field.values);
+            break;
+        case FieldKind::Selector:
+            if (!value.is_string()) {
+                wrongType(field, value, typeName, "a string");
+            }
+            into.text = value.get<std::string>();
+            if (std::ranges::find(field.values, into.text) == field.values.end()) {
+                fail(id, "'" + std::string(typeName) + "' has an unknown " +
+                             std::string(field.name) + " '" + into.text + "'; the values are " +
+                             joinValues(field.values));
+            }
+            break;
+        case FieldKind::Id:
+            if (!value.is_string()) {
+                wrongType(field, value, typeName, "an identifier");
+            }
+            into.ids.push_back(data::ResourceLocation::parse(value.get<std::string>()));
+            break;
+        case FieldKind::String:
+            if (!value.is_string()) {
+                wrongType(field, value, typeName, "a string");
+            }
+            into.text = value.get<std::string>();
+            break;
+        case FieldKind::Int:
+            if (!value.is_number_integer()) {
+                wrongType(field, value, typeName, "a whole number");
+            }
+            into.integer = value.get<std::int32_t>();
+            break;
+        case FieldKind::Number:
+            if (!value.is_number()) {
+                wrongType(field, value, typeName, "a number");
+            }
+            into.number = value.get<double>();
+            break;
+        case FieldKind::Boolean:
+            if (!value.is_boolean()) {
+                wrongType(field, value, typeName, "true or false");
+            }
+            into.boolean = value.get<bool>();
+            break;
+        case FieldKind::List:
+            // Caught by readField before it gets here; a list of lists is not
+            // a shape the generator emits.
+            fail(id, "'" + std::string(typeName) + "' declares \"" + std::string(field.name) +
+                         "\" as a list of lists, which this build does not read");
+    }
+}
+
+FieldValue Resolver::readField(const SchemaField& field, const nlohmann::json& value,
+                               const std::string_view typeName) {
+    FieldValue read;
+    if (field.kind != FieldKind::List) {
+        readScalar(field.kind, field, value, typeName, read);
+        return read;
+    }
+    if (!value.is_array()) {
+        wrongType(field, value, typeName, "an array");
+    }
+    for (const nlohmann::json& element : value) {
+        readScalar(field.elementKind, field, element, typeName, read);
+    }
+    return read;
+}
+
+void Resolver::bindRule(Rule& entry, const SchemaField& field, FieldValue&& value,
+                        const std::string_view typeName) const {
+    // By NAME, because a field's name is what says which member it feeds —
+    // `water` and `stone_depth` both declare an `int` first and they are
+    // different members. The KIND decided how the value above was read; the
+    // two together are what the schema contributes.
+    if (field.name == "sequence") {
+        entry.sequence = std::move(value.rules);
+    } else if (field.name == "if_true") {
+        entry.condition = only(value.conditions, field, typeName);
+    } else if (field.name == "then_run") {
+        entry.thenRun = only(value.rules, field, typeName);
+    } else if (field.name == "result_state") {
+        entry.block = std::move(value.block);
+    } else {
+        // The schema declares a field this build has nowhere to put. Refused
+        // by name rather than ignored: a rule read without one of its fields
+        // is a rule that means something else (SPEC §8).
+        fail(id, "'" + std::string(typeName) + "' declares \"" + std::string(field.name) +
+                     "\", which this build does not read");
+    }
+}
+
+void Resolver::bindCondition(Condition& entry, const SchemaField& field, FieldValue&& value,
+                             const std::string_view typeName) const {
+    if (field.name == "biome_is") {
+        // The one narrowing here that the schema does not carry: mcdoc
+        // declares a plain `[string]`, which permits an empty list, and this
+        // has refused one since before the table existed. Kept deliberately
+        // rather than widened by accident — changing what the loader accepts
+        // is not what deriving the schema was for.
+        if (value.ids.empty()) {
+            fail(id, "'" + std::string(typeName) + "' needs \"" + std::string(field.name) +
+                         "\" to be a non-empty array");
+        }
+        entry.biomes = std::move(value.ids);
+    } else if (field.name == "noise") {
+        entry.noise = only(value.ids, field, typeName);
+    } else if (field.name == "min_threshold") {
+        entry.minThreshold = value.number;
+    } else if (field.name == "max_threshold") {
+        entry.maxThreshold = value.number;
+    } else if (field.name == "invert") {
+        entry.invert = only(value.conditions, field, typeName);
+    } else if (field.name == "offset") {
+        entry.offset = value.integer;
+    } else if (field.name == "surface_type") {
+        entry.surfaceType = std::move(value.text);
+    } else if (field.name == "add_surface_depth") {
+        entry.addSurfaceDepth = value.boolean;
+    } else if (field.name == "secondary_depth_range") {
+        entry.secondaryDepthRange = value.integer;
+    } else if (field.name == "random_name") {
+        entry.randomName = std::move(value.text);
+    } else if (field.name == "true_at_and_below") {
+        entry.trueAtAndBelow = value.anchor;
+    } else if (field.name == "false_at_and_above") {
+        entry.falseAtAndAbove = value.anchor;
+    } else if (field.name == "anchor") {
+        entry.anchor = value.anchor;
+    } else if (field.name == "surface_depth_multiplier") {
+        entry.surfaceDepthMultiplier = value.integer;
+    } else if (field.name == "add_stone_depth") {
+        entry.addStoneDepth = value.boolean;
+    } else {
+        fail(id, "'" + std::string(typeName) + "' declares \"" + std::string(field.name) +
+                     "\", which this build does not read");
+    }
+}
 
 RuleIndex Resolver::readRule(const nlohmann::json& json) {
     if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
         fail(id, "a rule must be an object with a string \"type\"");
     }
     const auto name = json.at("type").get<std::string>();
-    const std::optional<std::size_t> found = indexOfName(kRuleNames, name);
+    const std::optional<RuleType> found = typeFromName(kRuleTable, name);
     if (!found.has_value()) {
         fail(id, "'" + name +
                      "' is not a surface rule this build knows; the four are sequence, condition, "
@@ -260,27 +546,14 @@ RuleIndex Resolver::readRule(const nlohmann::json& json) {
     }
 
     Rule entry;
-    entry.type = static_cast<RuleType>(*found);
-    switch (entry.type) {
-        case RuleType::Sequence: {
-            const nlohmann::json& list = require(json, "sequence", id, name);
-            if (!list.is_array()) {
-                fail(id, "'" + name + "' needs \"sequence\" to be an array");
-            }
-            for (const nlohmann::json& child : list) {
-                entry.sequence.push_back(readRule(child));
-            }
-            break;
+    entry.type = *found;
+    // `bandlands` has no fields, so this loop does nothing for it — which is
+    // the whole of what being absent from mcdoc costs it.
+    for (const SchemaField& field : fieldsOf(entry.type)) {
+        const nlohmann::json* const value = present(field, json, name);
+        if (value != nullptr) {
+            bindRule(entry, field, readField(field, *value, name), name);
         }
-        case RuleType::Condition:
-            entry.condition = readCondition(require(json, "if_true", id, name));
-            entry.thenRun = readRule(require(json, "then_run", id, name));
-            break;
-        case RuleType::Block:
-            entry.block = readBlockState(require(json, "result_state", id, name), id, name);
-            break;
-        case RuleType::Bandlands:
-            break;
     }
     rules.push_back(std::move(entry));
     return static_cast<RuleIndex>(rules.size() - 1);
@@ -291,73 +564,20 @@ ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
         fail(id, "a condition must be an object with a string \"type\"");
     }
     const auto name = json.at("type").get<std::string>();
-    const std::optional<std::size_t> found = indexOfName(kConditionNames, name);
+    const std::optional<ConditionType> found = typeFromName(kConditionTable, name);
     if (!found.has_value()) {
         fail(id, "'" + name + "' is not a surface rule condition this build knows");
     }
 
     Condition entry;
-    entry.type = static_cast<ConditionType>(*found);
-    switch (entry.type) {
-        case ConditionType::Biome: {
-            const nlohmann::json& list = require(json, "biome_is", id, name);
-            if (!list.is_array() || list.empty()) {
-                fail(id, "'" + name + "' needs \"biome_is\" to be a non-empty array");
-            }
-            for (const nlohmann::json& biome : list) {
-                if (!biome.is_string()) {
-                    fail(id, "'" + name + "' needs every \"biome_is\" entry to be an identifier");
-                }
-                entry.biomes.push_back(data::ResourceLocation::parse(biome.get<std::string>()));
-            }
-            break;
+    entry.type = *found;
+    // The four conditions absent from mcdoc take no fields, so the same loop
+    // covers them by doing nothing.
+    for (const SchemaField& field : fieldsOf(entry.type)) {
+        const nlohmann::json* const value = present(field, json, name);
+        if (value != nullptr) {
+            bindCondition(entry, field, readField(field, *value, name), name);
         }
-        case ConditionType::NoiseThreshold:
-            entry.noise =
-                data::ResourceLocation::parse(require(json, "noise", id, name).get<std::string>());
-            entry.minThreshold = require(json, "min_threshold", id, name).get<double>();
-            entry.maxThreshold = require(json, "max_threshold", id, name).get<double>();
-            break;
-        case ConditionType::Not:
-            entry.invert = readCondition(require(json, "invert", id, name));
-            break;
-        case ConditionType::StoneDepth:
-            entry.offset = require(json, "offset", id, name).get<std::int32_t>();
-            entry.addSurfaceDepth = require(json, "add_surface_depth", id, name).get<bool>();
-            entry.secondaryDepthRange =
-                require(json, "secondary_depth_range", id, name).get<std::int32_t>();
-            entry.surfaceType = require(json, "surface_type", id, name).get<std::string>();
-            if (entry.surfaceType != "floor" && entry.surfaceType != "ceiling") {
-                fail(id, "'" + name + "' has surface_type '" + entry.surfaceType +
-                             "'; the two are floor and ceiling");
-            }
-            break;
-        case ConditionType::VerticalGradient:
-            entry.randomName = require(json, "random_name", id, name).get<std::string>();
-            entry.trueAtAndBelow =
-                readAnchor(require(json, "true_at_and_below", id, name), id, "true_at_and_below");
-            entry.falseAtAndAbove =
-                readAnchor(require(json, "false_at_and_above", id, name), id, "false_at_and_above");
-            break;
-        case ConditionType::Water:
-            entry.offset = require(json, "offset", id, name).get<std::int32_t>();
-            entry.surfaceDepthMultiplier =
-                require(json, "surface_depth_multiplier", id, name).get<std::int32_t>();
-            entry.addStoneDepth = require(json, "add_stone_depth", id, name).get<bool>();
-            break;
-        case ConditionType::YAbove:
-            entry.anchor = readAnchor(require(json, "anchor", id, name), id, "anchor");
-            entry.surfaceDepthMultiplier =
-                require(json, "surface_depth_multiplier", id, name).get<std::int32_t>();
-            entry.addStoneDepth = require(json, "add_stone_depth", id, name).get<bool>();
-            break;
-        case ConditionType::AbovePreliminarySurface:
-        case ConditionType::Hole:
-        case ConditionType::Steep:
-        case ConditionType::Temperature:
-            // No fields. All four are absent from mcdoc entirely, which is
-            // why the schema here is written out (see the header).
-            break;
     }
     conditions.push_back(std::move(entry));
     return static_cast<ConditionIndex>(conditions.size() - 1);

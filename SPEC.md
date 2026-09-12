@@ -1180,13 +1180,60 @@ Open:
   now compile whole; `vanilla_surface_rules_test.cpp` asserts it per
   dimension rather than once, so a future regression names which one broke.
 
-  The schema is written out rather than generated, and that is a debt (§11).
-  Five of the fifteen are absent from mcdoc entirely, so they would be
-  hand-written whatever happens — the precedent is `tools/mcdoc/schema.py`,
-  which already hand-writes `blend_alpha` and `end_islands`. The other ten
-  could be generated and are not: the generator cannot parse either
-  surface-rule mcdoc file, and the types they refer to live in a third file it
-  cannot parse either.
+  **The schema is generated, and the debt that said otherwise is closed
+  (M4).** Ten of the fifteen come from `material_rule.mcdoc` and
+  `material_condition.mcdoc` and are emitted into `lib/src/surface_schema.inc`
+  and the two enumerator files beside it by `tools/mcdoc-sync`, exactly as the
+  density-function tables are. The remaining five — `bandlands`,
+  `above_preliminary_surface`, `hole`, `steep`, `temperature` — are absent
+  from mcdoc altogether and are hand-written permanently, the precedent being
+  `tools/mcdoc/schema.py`'s own `blend_alpha` and `end_islands`; each takes no
+  fields, so a name in a list is the whole of what is written by hand about
+  them.
+
+  Three things were in the way, and the first two were not what the note
+  standing here predicted. `use` lines were already skipped — the reader
+  stopped at line 12, not line 1. What actually stopped it was the
+  computed-dispatch spread `...minecraft:material_condition[[type]]`, a shape
+  `density_function.mcdoc` also uses but only ever inside an unparsed
+  type-alias text blob, so the spread reader had never met it; it now keeps
+  such a target as text, since no single struct is named by one. The third
+  file, `mod.mcdoc`, needed generic parameters — `type UniformInt<Base,
+  Spread>`, `dispatch minecraft:int_provider[constant]<T>` — which nothing had
+  needed before. A generic alias is recorded apart from the plain ones so that
+  a lookup by bare name misses rather than expanding a body that mentions its
+  own parameters. The three files are then merged into one namespace, because
+  mcdoc refers across them by bare name (`CaveSurface` and `VerticalAnchor`
+  are declared in `mod.mcdoc`) and this reader resolves by name rather than by
+  import provenance; a name declared twice is refused rather than overwritten.
+
+  Two things the generated table now decides that used to be written out, both
+  of which §11's own rule about *expanding* rather than name-matching an alias
+  demanded: `surface_type`'s `floor`/`ceiling` comes from `CaveSurface`, and a
+  vertical anchor's three spellings are read out of mcdoc's union of one-field
+  structs — so 26.3's `relative_to_sea_level` will arrive as a table entry,
+  and the loader refuses it by name today rather than mis-reading it.
+  `MaterialRuleRef`/`MaterialConditionRef` are expanded for the same reason:
+  their identifier spelling arrives at 26.3, and `allowsReference` follows the
+  union instead of a hard-coded answer.
+
+  The refactor was verified to be behaviour-preserving rather than assumed to
+  be: a dump of all seven dimensions' resolved trees — every node index, every
+  member of every node, the unrunnable list, the referenced noises, 2285
+  lines — is byte-for-byte identical before and after. One deliberate
+  narrowing survives and is marked as such in the loader: mcdoc declares
+  `biome_is` as a plain `[string]`, which permits an empty list, and this
+  build has refused one since before the table existed. Widening it is a
+  change to what the loader accepts and was not part of deriving the schema.
+
+  Two classes of silent failure the generated table closes, neither of which
+  the old switch could have caught. A field mcdoc RENAMES stops binding and
+  is refused by name. A field mcdoc ADDS — `is_3d` on `noise_threshold` at
+  26.2, the whole of `ore_vein` at 26.3 — is likewise refused rather than
+  dropped unread, which is what the hand-written switch would have done with
+  it. `tests/unit/surface_schema_test.cpp` builds its input FROM the schema
+  precisely so that this fails on the day the table grows the field, not on
+  the day somebody notices a wrong world.
 
 - **`surface::Executor` is wired into `ChunkFiller` (M4).** Every unit and
   conformance test until now ran the executor directly, against a
@@ -3474,6 +3521,18 @@ Open:
   covers it: CI already checks the generated tables are *reproducible*, which
   catches a hand-edit and not a reader that has quietly narrowed something,
   because regenerating from the same wrong reader diffs clean.
+
+  **A follow-on the surface-rule work found (M4).** The rule that picks the
+  identifier arm out of that union asked whether the word "string" occurred
+  in the arm's text. Two arms can both contain it: at 26.3 `biome_is` is
+  `[#[id=...] string] | #[id=...] string`, an array of identifiers beside a
+  single one, and the looser test then found no inline arm at all and died
+  with a `StopIteration` rather than a refusal naming the field. It now asks
+  what the arm IS — attributes stripped, exactly the word `string` and
+  nothing else — which an array of them is not. No effect on any generated
+  table at the pinned version; all four regenerate byte-identical. It is
+  recorded because the failure was reachable only from a version gate this
+  build does not target, and the next pin bump is when it would have landed.
 
   **Settled (M4): vanilla does not seed a nameless noise, it refuses to build
   the world.** The question this entry used to carry was how the seed is

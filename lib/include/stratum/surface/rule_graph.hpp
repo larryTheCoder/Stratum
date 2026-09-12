@@ -14,14 +14,17 @@
 // would rather refuse a rule by name than approximate it into a world that
 // generates and is quietly wrong.
 //
-// The schema is written out here rather than generated from mcdoc, and that
-// is a debt rather than a preference (SPEC §11). Five of the fifteen —
+// The schema is GENERATED from mcdoc for the pinned version (SPEC §11), the
+// same way the density-function tables are — see tools/mcdoc-sync. Ten of the
+// fifteen types come from `material_rule.mcdoc` and `material_condition.mcdoc`
+// and are described entirely by the generated tables below: their field names,
+// which are optional, what each field's value is, and the closed sets of
+// strings `surface_type` and a vertical anchor accept. The other five —
 // `bandlands`, `above_preliminary_surface`, `hole`, `steep` and `temperature`
-// — are not in mcdoc at all, so they would have to be written by hand
-// whatever happens, exactly as tools/mcdoc/schema.py already does for
-// `blend_alpha` and `end_islands`. The other ten could be generated, and the
-// generator cannot reach them yet: it cannot parse either surface-rule mcdoc
-// file, and the types they need live in a third file it cannot parse either.
+// — are absent from mcdoc altogether, so they are hand-written and always will
+// be, exactly as tools/mcdoc/schema.py already hand-writes `blend_alpha` and
+// `end_islands`. Each of those five takes no fields, which is the whole of
+// what is hand-written about them.
 #pragma once
 
 #include <stratum/data/resource_location.hpp>
@@ -32,8 +35,10 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace stratum::surface {
@@ -83,31 +88,67 @@ struct VerticalAnchor {
                                          std::int32_t trueAtAndBelow,
                                          std::int32_t falseAtAndAbove) noexcept;
 
-/// The four things a rule can be.
+/// The four things a rule can be. `sequence` tries each in turn and the first
+/// result wins; `condition` runs an inner rule where a condition holds;
+/// `block` places one; `bandlands` is the mesa banding, which places
+/// terracotta of several colours.
+///
+/// Generated from mcdoc, so the set follows the schema rather than memory —
+/// with `bandlands`, which mcdoc does not declare, added by name.
 enum class RuleType : std::uint8_t {
-    Sequence,  ///< try each in turn, first result wins
-    Condition, ///< run the inner rule where the condition holds
-    Block,     ///< place this block
-    Bandlands, ///< the mesa banding, which places terracotta of several colours
+#include <stratum/surface/rule_types.inc>
 };
 
-/// The eleven things a condition can be.
+/// The eleven things a condition can be, generated the same way. Four of them
+/// — `above_preliminary_surface`, `hole`, `steep`, `temperature` — are absent
+/// from mcdoc and are added by name.
 enum class ConditionType : std::uint8_t {
-    Biome,
-    NoiseThreshold,
-    Not,
-    StoneDepth,
-    VerticalGradient,
-    Water,
-    YAbove,
-    AbovePreliminarySurface,
-    Hole,
-    Steep,
-    Temperature,
+#include <stratum/surface/condition_types.inc>
 };
 
+/// "minecraft:vertical_gradient".
 [[nodiscard]] std::string_view ruleTypeName(RuleType type) noexcept;
 [[nodiscard]] std::string_view conditionTypeName(ConditionType type) noexcept;
+
+/// What one field of a rule or condition holds. A surface rule's vocabulary
+/// is its own rather than density::FieldKind's: the two families overlap on
+/// almost nothing, and a shared enum would offer each of them kinds the other
+/// one's schema can never produce.
+enum class FieldKind : std::uint8_t {
+    Rule,       ///< a nested rule
+    Condition,  ///< a nested condition
+    BlockState, ///< a block name, and its properties if it has any
+    Anchor,     ///< a vertical anchor: one of `values`, carrying a whole number
+    Selector,   ///< a fixed string, one of `values`
+    Id,         ///< an identifier naming a registry entry
+    String,     ///< a bare string, used as written — `random_name` is a salt
+    Int,        ///< a whole number
+    Number,     ///< a real number
+    Boolean,    ///< true or false
+    List,       ///< an array of `elementKind`
+};
+
+/// One field of a rule or condition type, as the schema declares it.
+struct SchemaField {
+    std::string_view name;
+    FieldKind kind = FieldKind::Number;
+    /// Absent fields are permitted, with a documented default.
+    bool optional = false;
+    /// Whether the value may be given as an identifier rather than written
+    /// out. No field at the pinned version may: mcdoc gains the identifier
+    /// spelling of `MaterialRuleRef` and `MaterialConditionRef` at 26.3, and
+    /// this follows the schema rather than anticipating it.
+    bool allowsReference = false;
+    /// For a List, what one element is. Meaningless for every other kind.
+    FieldKind elementKind = FieldKind::Number;
+    /// The permitted strings: a Selector's values, or an Anchor's spellings.
+    std::span<const std::string_view> values;
+};
+
+/// The fields a type takes, in the order the schema declares them. Empty for
+/// the five types mcdoc does not declare, each of which takes none.
+[[nodiscard]] std::span<const SchemaField> fieldsOf(RuleType type) noexcept;
+[[nodiscard]] std::span<const SchemaField> fieldsOf(ConditionType type) noexcept;
 
 using RuleIndex = std::uint32_t;
 using ConditionIndex = std::uint32_t;

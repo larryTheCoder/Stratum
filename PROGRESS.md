@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-11 (ore-vein probing session, uncommitted at last sweep).
+Last swept: 2026-09-12 (surface-rule schema generation).
 
 ## At a glance
 
@@ -103,8 +103,18 @@ Open:
       place. No oracle exists yet for how a noise's name becomes an LCG
       seed — a genuine open research gap, not a queued experiment.
 - [ ] `above_preliminary_surface` strictness (`>=` vs `>`) — unmeasured.
-- [ ] Surface-rule mcdoc schema generation debt — 5 of 15 condition/rule
-      types are hand-written rather than generated from schema.
+- [x] **Surface-rule mcdoc schema generation debt — closed.** All 10 of the
+      types mcdoc declares are now generated (`tools/mcdoc/surface.py`,
+      `lib/src/surface_schema.inc`), and the loader reads them through the
+      generated table rather than a hand-written switch. The other 5 —
+      `bandlands`, `above_preliminary_surface`, `hole`, `steep`,
+      `temperature` — are absent from mcdoc entirely and stay hand-written
+      permanently, exactly as `blend_alpha`/`end_islands` already are for
+      density functions; each takes no fields, so the name is all that is
+      written by hand. Behaviourally identical, measured rather than
+      assumed: all 7 dimensions' resolved trees dump byte-for-byte the same
+      before and after (2285 lines covering every node index, every member,
+      the unrunnable list and the referenced noises).
 
 ## M5 — Integration
 
