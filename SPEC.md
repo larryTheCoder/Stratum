@@ -303,17 +303,30 @@ default stays permissive, and the question stays open.
 
 ## 9. Bedrock mapping layer
 
-Its own component (`lib/mapping/`), its own tests, its own CMake target —
-`stratum_core` never links it (§11 has the started/open breakdown):
+Two different problems, and they do not share a layer — the split is a
+measured finding (§11), not a starting design:
 
-- Java block state → Bedrock runtime state, built from maintained mapping
-  data (GeyserMC mappings / pmmp upgrade schemas as reference inputs).
-  Unmappable states resolve through an explicit, configurable fallback
-  table — never a crash, never a silent stone substitution without a log.
-- Biome mapping: custom/datapack biomes fall back to the nearest vanilla
-  Bedrock biome (configurable) for client-side fog/color/music; the engine's
-  internal biome identity is preserved for generation purposes.
-- Mapping happens after conformance diffing (§7), never before.
+- **Biome mapping lives in `lib/mapping/`** (its own CMake target,
+  `stratum_mapping`, downstream of the conformance boundary —
+  `stratum_core` never links it): a Java biome id resolves to Bedrock's
+  numeric id from maintained mapping data (GeyserMC mappings as reference
+  input), with custom/datapack biomes falling back to the nearest vanilla
+  Bedrock biome (configurable) for client-side fog/color/music; the
+  engine's internal biome identity is preserved for generation purposes
+  either way. One compiled-in table per Minecraft version this build is
+  pinned to, regenerated when the pin moves — the same maintenance model
+  Bedrock-facing middleware itself uses for biomes (§11 has the evidence).
+- **Block state mapping does NOT live here.** Java block state → Bedrock
+  runtime state belongs entirely to each native binding — `ext/`'s PHP
+  layer for PocketMine-MP, and a Java equivalent for any future
+  Nukkit/CloudburstMC binding — one table per connected client's Bedrock
+  protocol version, selected per connection. `lib/`'s own engine emits
+  nothing beyond Java block state and carries no Bedrock awareness at all.
+  Unmappable states still resolve through an explicit, configurable
+  fallback table wherever the translation happens — never a crash, never a
+  silent stone substitution without a log.
+- Mapping happens after conformance diffing (§7), never before, on
+  whichever side of the C++/native-binding boundary it lands.
 
 ---
 
@@ -3953,6 +3966,83 @@ Open:
   Neither is a quick fetch-and-generate the way biome mapping was. Which
   approach to take is an open decision, not a blocker discovered too late
   to matter — see PROGRESS.md's M5 section for the standing options.
+
+- **M5's block state mapping moves out of `lib/mapping/` entirely — a
+  measured correction to the entry above, not a preference.** The question
+  was never which data source to read; it was which LAYER the translation
+  belongs in at all, and three independent, publicly inspectable codebases
+  answer it the same way. (Permitted references for this: community
+  Bedrock-facing middleware — NetherGamesMC's and pmmp's own public repos,
+  GeyserMC/Geyser and GeyserMC/mappings, CloudburstMC/Nukkit — read for
+  architecture, the same standing CLAUDE.md's provenance rule already gives
+  cubiomes and Cuberite for worldgen; none of it is Mojang source.)
+
+  *Multi-version Bedrock support is real, public, and per-connection.*
+  `NetherGamesMC/PocketMine-MP` (a public fork; its dedicated
+  `multiversion` repo is private and was not read) adds exactly the
+  machinery upstream `pmmp/PocketMine-MP`'s own `BlockTranslator.php`
+  names but does not build — its comment reads "...in case someone wants
+  to implement multi version." NGMC's version: a `PATHS` table keyed by
+  `ProtocolInfo` constant, one `canonical_block_states-{version}.nbt` per
+  protocol, a `TypeConverter` cached per protocol via
+  `ProtocolSingletonTrait`, and `NetworkSession::setProtocolId()` picking
+  the right one once the connecting client's version is known.
+  GeyserMC/Geyser's own `BlockRegistryPopulator.java` does the identical
+  thing independently — one `BlockMappings` per protocol-codec entry, all
+  held at once rather than one shared table serving every version.
+
+  *Why one compiled-in table cannot serve more than one Bedrock version.*
+  Since Bedrock 1.16.100, a block's network runtime id is not a stored
+  constant — it is the block's own array INDEX after the client's full
+  block state list is sorted by the FNV1 64-bit hash of each name
+  (Geyser's own source comment: "we no longer send a block palette... the
+  palette is sorted by the FNV1 64-bit hash of the name"). Adding,
+  renaming or removing any one block shifts the index of every unrelated
+  block that hashes near it in that order. Diffing GeyserMC/mappings'
+  `feature/1.20.70` against `feature/1.20.80` shows exactly this:
+  `minecraft:sapling` splitting into per-species identifiers restructures
+  the sorted list under every other entry. A table compiled for one
+  version is not merely stale for another — it is wrong the moment a
+  differently-versioned client connects, and fixing that from inside a
+  single shared C++ core means becoming N tables plus per-connection
+  selection logic, which is exactly the shape the two codebases above
+  already put in the native binding layer instead.
+
+  *CloudburstMC/Nukkit needs its own separate translation regardless of
+  any of this.* `BlockID.java` is Nukkit's own legacy id:meta scheme,
+  structurally the same shape as PMMP's own, with its own
+  `BlockStateMapping`/`BlockStateUpdaterVanilla` doing the Bedrock-network
+  translation — independent confirmation that block state translation is
+  a property of the CONSUMING platform, not something one shared engine
+  layer can own on every consumer's behalf at once.
+
+  *Biome mapping stays exactly where it landed — checked against the same
+  three codebases, not assumed safe by analogy to blocks.* A real
+  reassignment exists: GeyserMC/mappings' `minecraft:pale_garden` moves
+  from `bedrock_id` 62 to 193 between adjacent version branches — a
+  newly-introduced biome's placeholder id corrected, not an established
+  biome moving underfoot, but real drift either way. Despite that,
+  Geyser's own `BiomeIdentifierRegistryLoader` loads exactly ONE
+  `biomes.json`, unversioned, with its own comment explaining why: "The
+  server sends the corresponding Java network IDs, so we don't need to
+  worry about that now." NetherGamesMC's fork has a versioned
+  `BlockTranslator.php` and no `BiomeTranslator.php` at all — the
+  multi-version machinery they built for blocks was never extended to
+  biomes, in a codebase with every reason to build it if biomes needed it
+  too. Biome id drift happens at Minecraft-version granularity, the same
+  granularity `tools/mapping-sync`'s pin-and-regenerate model already
+  handles; it is not the per-connection, per-protocol problem block state
+  is.
+
+  Net effect: `lib/mapping/` keeps exactly what it already had (biome
+  mapping, §9) and loses block state mapping entirely. That work moves to
+  `ext/`'s PHP layer — PMMP's own `BlockStateDeserializer` already turns a
+  Bedrock blockstate NBT compound into a real `Block` object, so `ext/`
+  need only produce that NBT shape from this engine's own Java block
+  state, per connected protocol version, the way `BlockTranslator.php`
+  already does for PMMP's own world loading — and, eventually, an
+  equivalent Java-side translation for a Nukkit/CloudburstMC binding.
+  `lib/`'s engine gains no Bedrock awareness at all.
 
 ---
 

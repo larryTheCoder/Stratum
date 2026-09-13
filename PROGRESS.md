@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-13 (M5 started: biome mapping).
+Last swept: 2026-09-13 (M5: block state mapping's layer decided).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-13 (M5 started: biome mapping).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; block state mapping is `ext/`'s to build |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -166,9 +166,10 @@ Open:
 ## M5 — Integration
 
 Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
-project) is still an empty stub, waiting on block state mapping below.
-Also unstarted: chunkutils2 output, the PMMP world-load path, the
-performance pass.
+project) is still an empty stub, waiting on block state mapping below —
+which now belongs to `ext/` itself, not to `lib/mapping/` (see the
+architecture note under that bullet). Also unstarted: chunkutils2 output,
+the PMMP world-load path, the performance pass.
 
 - [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
       (`stratum_mapping`) now, downstream of the conformance boundary by
@@ -186,20 +187,54 @@ performance pass.
       climate parameters this library does not have yet — plausibly built
       on the same `biome::ParameterList`/climate-distance machinery M4's
       biome source already uses, unexplored so far.
-- [ ] **Block state mapping — not started; the data source is the open
-      decision, not the mapping shape.** Two candidates were checked
-      directly (SPEC.md's M5 entry has the detail):
-      - GeyserMC/mappings' `blocks.nbt` is a sparse diff keyed by Java block
-        state ordinal, resolved only by logic documented in GeyserMC's
-        `mappings-generator` (MIT, permitted, not yet read for this).
-      - PMMP's own `VanillaBlockMappings.php` is the more direct source —
-        it targets exactly what `ext/` needs to match — but is executable
-        PHP registration code, not data. Extracting it needs either a PHP
-        parse (fragile) or a real PMMP runtime to execute it against
-        (heavier setup, no parsing risk).
-      Whichever is chosen, unmappable states are meant to resolve through
-      an explicit, configurable fallback table (SPEC §9) — never a crash,
-      never a silent stone substitution without a log.
+- [x] **Architecture decided: block state mapping does not belong in
+      `lib/mapping/` at all — it lives in each native binding.** Not a
+      preference; measured against three independent, publicly inspectable
+      codebases (SPEC.md's M5 entry has the full evidence trail). Bedrock's
+      block network runtime id has been a hash-sorted INDEX over the
+      client's whole block list since 1.16.100, so any registry change
+      anywhere shifts unrelated blocks' ids — confirmed by diffing
+      GeyserMC/mappings' `feature/1.20.70`/`1.20.80` branches, where
+      `minecraft:sapling` splitting into per-species ids reshuffles the
+      sorted list under every other entry. A table compiled into a shared
+      C++ core cannot serve more than one connected Bedrock version at
+      once; it has to be per-connection, per-protocol-version data owned
+      by the binding that terminates that connection. NetherGamesMC's
+      public `PocketMine-MP` fork and GeyserMC/Geyser both independently
+      build exactly that (a table per protocol version, selected once the
+      client's version is known) — upstream `pmmp/PocketMine-MP`'s own
+      `BlockTranslator.php` even names the gap without filling it ("...in
+      case someone wants to implement multi version"). CloudburstMC/Nukkit
+      needs its own separate translation regardless, for the same reason
+      generalized: its `BlockID.java` is its own legacy scheme, entirely
+      independent of PMMP's.
+- [ ] **Block state mapping — not started; `ext/`'s to build, not
+      `lib/mapping/`'s.** PMMP's own `BlockStateDeserializer` already turns
+      a Bedrock blockstate NBT compound (`{name, states, version}`) into a
+      real `Block` object — `ext/` needs only produce that NBT shape from
+      this engine's own Java block state, per connected protocol version,
+      mirroring `BlockTranslator.php`'s own per-protocol table selection.
+      A future Nukkit/CloudburstMC binding needs the Java-side equivalent,
+      targeting its own legacy id:meta scheme instead. Unmappable states
+      are meant to resolve through an explicit, configurable fallback
+      table wherever this lands (SPEC §9) — never a crash, never a silent
+      stone substitution without a log.
+- [x] **Biome mapping's placement re-checked against the same three
+      codebases — confirmed correct, not merely assumed by analogy to
+      blocks.** A real biome id reassignment exists (GeyserMC/mappings:
+      `minecraft:pale_garden`'s `bedrock_id` moves 62 → 193 between
+      adjacent version branches — a new biome's placeholder id corrected,
+      not an established one moving underfoot), so biome ids are not
+      perfectly stable either. But Geyser's own
+      `BiomeIdentifierRegistryLoader` loads exactly ONE unversioned
+      `biomes.json` ("The server sends the corresponding Java network ids,
+      so we don't need to worry about that now" — its own comment), and
+      NetherGamesMC's fork has a versioned `BlockTranslator.php` but no
+      `BiomeTranslator.php` at all. Biome drift happens at
+      Minecraft-version granularity, which `tools/mapping-sync`'s
+      pin-and-regenerate model already handles; it is not blocks' per-
+      connection, per-protocol problem. `lib/mapping/`'s biome table stays
+      exactly as landed above.
 
 ## M6 (v2) — Staged features
 

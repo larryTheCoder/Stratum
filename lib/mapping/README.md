@@ -1,7 +1,7 @@
-# `lib/mapping/` — Java → Bedrock mapping layer
+# `lib/mapping/` — Bedrock biome mapping
 
-Milestone **M5** (SPEC §9). Started: biome mapping is landed; block state
-mapping has not.
+Milestone **M5** (SPEC §9). Scoped to biome mapping only — block state
+mapping does NOT live here; see below for why.
 
 This component is deliberately **downstream of the conformance boundary**:
 Tier-A parity is diffed in *Java block space* (SPEC §7) before anything is
@@ -18,22 +18,38 @@ vanilla biomes at the pinned Minecraft version resolve; see
 has no branch for exactly this build's pinned Java version) and
 `vanilla_biome_mapping_test.cpp` for the fixture-backed full-coverage check.
 
+One compiled-in table, unversioned by Bedrock protocol, is the right shape
+here — checked against the ecosystem's own practice rather than assumed:
+Geyser's own biome loader does the same (one `biomes.json`, no per-version
+selection; see SPEC.md's M5 entry for the full evidence), because biome id
+drift happens at Minecraft-version granularity, which regenerating this
+table on a version bump already covers.
+
 **Not yet landed:** the "nearest vanilla Bedrock biome" fallback SPEC §9
 wants for custom/datapack biomes. `bedrockBiomeId()` returns nothing for a
 biome outside the table rather than guessing at a default — see the
 function's own header for why a placeholder default was rejected in favor
 of an honest gap. PROGRESS.md names this as the next slice.
 
-## Not yet started: block state mapping
+## Not here: block state mapping
 
-Java block state → Bedrock runtime state is real remaining work, and its
-data-sourcing question is still open — see PROGRESS.md's M5 section.
-GeyserMC/mappings' own `blocks.nbt` (which biome mapping's source repo also
-ships) is a sparse diff format resolved by generator-specific logic, not
-self-contained data; PMMP's own `VanillaBlockMappings.php` is the most
-direct and relevant source (it is literally what `ext/`'s zend binding needs
-to match) but is executable PHP registration code, not declarative data —
-extracting it needs either a PHP parse or a real PMMP runtime. Unmappable
-states are meant to resolve through an explicit, configurable fallback table
-— never a crash, never a silent stone substitution without a log — once this
-lands.
+Java block state → Bedrock runtime state is real remaining work for M5, but
+it does not belong in this component — a measured architecture decision,
+not an oversight (SPEC.md's M5 entry has the full evidence). Unlike biome
+ids, Bedrock's block network runtime id has been a hash-sorted INDEX over a
+connected client's entire block list since 1.16.100: any registry change
+anywhere shifts unrelated blocks' ids, so a single table compiled into this
+shared C++ core cannot serve more than one connected Bedrock protocol
+version correctly. NetherGamesMC's PocketMine-MP fork and GeyserMC/Geyser
+both independently solve this the same way — one table per protocol
+version, selected per connection — and that selection logic belongs to
+whichever native binding terminates the connection.
+
+Block state mapping therefore lives in `ext/`'s PHP layer for
+PocketMine-MP (PMMP's own `BlockStateDeserializer` already turns a Bedrock
+blockstate NBT compound into a real `Block` object; `ext/` need only
+produce that shape from this engine's own Java block state, per protocol
+version), and will need an equivalent Java-side translation for any future
+Nukkit/CloudburstMC binding, targeting that platform's own legacy id:meta
+scheme instead. `lib/`'s engine emits pure Java block state and gains no
+Bedrock awareness at all.

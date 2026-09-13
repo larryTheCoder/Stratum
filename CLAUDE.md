@@ -16,6 +16,15 @@ you work in every session.
   (Spyglass) schema definitions, cubiomes (MIT), Cuberite (Apache-2.0),
   and the observed input/output of the vanilla server via the conformance
   harness.
+- **M5 (integration) has its own, separate reference list**, since it is
+  not worldgen-algorithm work and none of the above concerns it: community
+  Bedrock-facing middleware — `NetherGamesMC/PocketMine-MP` (public fork;
+  its dedicated `multiversion` repo is private and is never read),
+  `pmmp/PocketMine-MP`, `GeyserMC/Geyser`, `GeyserMC/mappings` and
+  `GeyserMC/mappings-generator` (all MIT), and `CloudburstMC/Nukkit`. Read
+  for architecture (how a target platform's own mapping/translation is
+  structured), same as cubiomes/Cuberite above — none of it is Mojang
+  source, and none of it feeds worldgen.
 - **deepslate (MIT, Misode) is a black-box oracle only.** Run it, record what
   it outputs, generate vectors from that — exactly as `tools/fetch-vanilla`
   treats the Minecraft server. Its source is NEVER read and nothing is ever
