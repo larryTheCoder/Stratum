@@ -22,7 +22,7 @@ fi
 files=()
 while IFS= read -r file; do
     files+=("${file}")
-done < <(find lib cli ext tests \
+done < <(find lib cli ext ext-nukkit tests \
     \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.inl' \) \
     -not -path '*/_deps/*' 2>/dev/null | sort)
 

@@ -62,6 +62,23 @@ if(TARGET stratum_cli)
     add_dependencies(stratum_unit_tests stratum_cli)
 endif()
 
+if(TARGET stratum_nukkit_pipeline)
+    # ext-nukkit/'s own plain-C++ half (no JVM, no JNI, needs no Java
+    # toolchain to test) — only present when -DSTRATUM_BUILD_EXT_NUKKIT=ON.
+    # Compiling a Pipeline needs a real datapack, so this one test file
+    # needs the fixtures dir tests/conformance/ already defines for the
+    # same reason — added here rather than moving the test there, since
+    # what it pins (this binding's own refusal behaviour) is not a vanilla
+    # golden diff.
+    target_sources(stratum_unit_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../ext-nukkit/tests/pipeline_test.cpp"
+    )
+    target_link_libraries(stratum_unit_tests PRIVATE stratum::nukkit_pipeline)
+    target_compile_definitions(stratum_unit_tests PRIVATE
+        "STRATUM_FIXTURES_DIR=\"${CMAKE_SOURCE_DIR}/.fixtures\""
+    )
+endif()
+
 stratum_configure_target(stratum_unit_tests)
 
 catch_discover_tests(stratum_unit_tests

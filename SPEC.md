@@ -318,13 +318,14 @@ measured finding (§11), not a starting design:
   Bedrock-facing middleware itself uses for biomes (§11 has the evidence).
 - **Block state mapping does NOT live here.** Java block state → Bedrock
   runtime state belongs entirely to each native binding — `ext/`'s PHP
-  layer for PocketMine-MP, and a Java equivalent for any future
-  Nukkit/CloudburstMC binding — one table per connected client's Bedrock
+  layer for PocketMine-MP, and `ext-nukkit/`'s C++ (`resolveNukkitFullId()`)
+  for CloudburstMC/Nukkit — one table per connected client's Bedrock
   protocol version, selected per connection. `lib/`'s own engine emits
   nothing beyond Java block state and carries no Bedrock awareness at all.
   Unmappable states still resolve through an explicit, configurable
   fallback table wherever the translation happens — never a crash, never a
-  silent stone substitution without a log.
+  silent stone substitution without a log. `ext-nukkit/`'s table is
+  unsourced today — see §11's M5-Nukkit entry and `ext-nukkit/README.md`.
 - Mapping happens after conformance diffing (§7), never before, on
   whichever side of the C++/native-binding boundary it lands.
 
@@ -4043,6 +4044,78 @@ Open:
   already does for PMMP's own world loading — and, eventually, an
   equivalent Java-side translation for a Nukkit/CloudburstMC binding.
   `lib/`'s engine gains no Bedrock awareness at all.
+
+- **M5-Nukkit: JNI chosen and a real second binding started, not merely
+  designed.** CloudburstMC/Nukkit is the second target the block-state
+  decision above already anticipated. Its own `build.gradle.kts` pins
+  `JavaLanguageVersion.of(8)` (read directly, not assumed) — Java's Foreign
+  Function & Memory API needs JDK 22+, so it is not available at that
+  floor, leaving JNI as the only real option. This is not a new risk for
+  Nukkit specifically: it already ships `leveldbjni`, a native library, as
+  a production dependency.
+
+  *The `Generator` contract, read from Nukkit's own source rather than
+  guessed.* A `Generator` implementation supplies `init`, `generateChunk`,
+  `populateChunk`, `getSettings`, `getName`, `getSpawn`, `getChunkManager`
+  and `getId`; each async chunk-generation worker gets its own `Generator`
+  instance via a `ThreadLocal`, created once per thread and reused for that
+  thread's lifetime — confirmed by reading the calling code, not inferred
+  from the interface alone.
+
+  *Design consequence: one compiled `Pipeline` per world, shared across
+  every worker thread, not one per thread.* Recompiling the whole density
+  graph, surface rules and biome parameters once per `ThreadLocal`
+  `Generator` would be pure waste — nothing about them is thread-specific.
+  `ext-nukkit/`'s `StratumGenerator.java` holds one native handle per
+  `ChunkManager` (one per world) in a `ConcurrentHashMap`, `computeIfAbsent`
+  compiling it exactly once regardless of how many worker threads ask for
+  it. This mirrors CLAUDE.md's own determinism rule — "Pipeline objects are
+  immutable after compile" — the same invariant `terrain::ChunkFiller`
+  already relies on internally.
+
+  *What is built, not merely specified: `ext-nukkit/`'s C++ half.* Two CMake
+  targets (`stratum_nukkit_pipeline`, plain C++, testable without a JVM;
+  `stratum_nukkit`, the thin JNI shim `find_package(JNI REQUIRED)` needs to
+  build) behind `-DSTRATUM_BUILD_EXT_NUKKIT=ON`, off by default.
+  `stratum_nukkit_pipeline::Pipeline` reuses `terrain::ChunkFiller` and
+  `mapping::bedrockBiomeId()` (already built for the PocketMine-MP path)
+  unchanged, scoped to `minecraft:overworld` only — the same
+  `legacy_random_source` (M4) limit `tools/analysis/generate-world.cpp`
+  already lives under. `jni_bridge.cpp` is marshaling and exception
+  translation only, matching `ext/`'s own "thin; marshaling only" rule for
+  the PHP side. See `ext-nukkit/README.md` for the component's full scope
+  and open gaps.
+
+  *A dangling-pointer bug, found by testing rather than assumed absent.*
+  `terrain::ChunkFiller::compile()` stores raw pointers into whatever
+  surface rules, biome parameters and biome temperatures it is given,
+  documented as requiring them to outlive the `ChunkFiller`. An early
+  version of `Pipeline::compile()` built those three as local variables,
+  passed their addresses to `ChunkFiller::compile()`, then `std::move()`'d
+  the locals into a separately-constructed `Impl` afterward — moving each
+  object's data to a new address while `filler` kept pointing at the old,
+  now-destroyed stack frame. It did not crash consistently: one test case
+  (a caller-sized output span deliberately too small) hit an out-of-bounds
+  read inside `Interpreter::Scope::has`, caught by `_GLIBCXX_ASSERTIONS`
+  rather than by a clean, reproducible failure. Fixed by building every
+  such member in place inside `Impl`'s own constructor, in dependency
+  order, so nothing `ChunkFiller::compile` or `Interpreter`'s constructor
+  takes a pointer into is ever a value about to be moved out from under it
+  — see `ext-nukkit/src/pipeline.cpp`'s `Pipeline::Impl` for the permanent
+  writeup, so the mistake has a name if it is ever tempting to reintroduce.
+
+  *What remains open, by design, not by oversight:* `resolveNukkitFullId()`
+  always throws — no Java-block-state-to-Nukkit-legacy-id table has been
+  sourced yet, matching the block-state-mapping entry above: this is real,
+  unstarted M5 work, not something this slice attempted. `PalettedBlock
+  Storage`'s exact per-section coordinate convention for biome storage
+  (block-local 0-15 vs. quart-local 0-3) is flagged unconfirmed in
+  `StratumGenerator.java`'s own header, since verifying it needs a real
+  Nukkit build dependency this repo does not have. The Java side
+  (`StratumGenerator.java`, `StratumGenerationException.java`) has never
+  been compiled against real Nukkit classes for the same reason — it is
+  written to match Nukkit's confirmed API exactly, but unverified by a
+  real build.
 
 ---
 

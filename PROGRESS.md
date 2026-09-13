@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-13 (M5: block state mapping's layer decided).
+Last swept: 2026-09-13 (M5: ext-nukkit JNI interface built).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-13 (M5: block state mapping's layer decided).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; block state mapping is `ext/`'s to build |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built (block state mapping open on both bindings) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -169,7 +169,10 @@ Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
 project) is still an empty stub, waiting on block state mapping below —
 which now belongs to `ext/` itself, not to `lib/mapping/` (see the
 architecture note under that bullet). Also unstarted: chunkutils2 output,
-the PMMP world-load path, the performance pass.
+the PMMP world-load path, the performance pass. `ext-nukkit/` (a second,
+CloudburstMC/Nukkit binding) is further along than `ext/` itself — a real,
+compiling, tested JNI interface exists — but shares the same block-state
+mapping gap and is untested against a real Nukkit build.
 
 - [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
       (`stratum_mapping`) now, downstream of the conformance boundary by
@@ -235,6 +238,46 @@ the PMMP world-load path, the performance pass.
       pin-and-regenerate model already handles; it is not blocks' per-
       connection, per-protocol problem. `lib/mapping/`'s biome table stays
       exactly as landed above.
+- [x] **Architecture decided and interface built: `ext-nukkit/`, a JNI
+      binding for CloudburstMC/Nukkit.** JNI, not the Foreign Function &
+      Memory API — Nukkit pins Java 8 (`build.gradle.kts`, read directly),
+      and FFM needs JDK 22+. Not a foreign ask: Nukkit already ships
+      `leveldbjni` in production. `ext-nukkit/` builds two CMake targets
+      behind `-DSTRATUM_BUILD_EXT_NUKKIT=ON` (off by default):
+      `stratum_nukkit_pipeline` (plain C++, no JVM needed to build or test
+      it — `ext-nukkit/tests/pipeline_test.cpp` runs as part of
+      `stratum_unit_tests` whenever this target exists) and `stratum_nukkit`
+      (the JNI shim, needs `find_package(JNI REQUIRED)` — set `JAVA_HOME`
+      if CMake can't find a JDK on its own). One `Pipeline` is compiled and
+      shared per world, not per generation thread — Nukkit hands each async
+      worker its own `Generator` via `ThreadLocal`, and `StratumGenerator
+      .java` shares one native handle across them via a `ConcurrentHashMap`
+      keyed by `ChunkManager`, matching CLAUDE.md's "Pipeline objects are
+      immutable after compile" rule. Biome writing is fully functional
+      (reuses `mapping::bedrockBiomeId()` verbatim). Found and fixed a real
+      dangling-pointer bug along the way — `ChunkFiller::compile()` stores
+      pointers into its `surfaceRules`/`biomeParameters`/`biomeTemperatures`
+      arguments, and an early draft let those be locals `std::move()`'d
+      elsewhere afterward; see `ext-nukkit/src/pipeline.cpp`'s
+      `Pipeline::Impl` doc comment and SPEC.md §11's M5-Nukkit entry for the
+      full mechanism. Full verification: compiles clean under
+      `-Wall -Wextra`, zero clang-tidy 18 findings, clang-format clean, and
+      all 376 unit tests (incl. the 4 new Nukkit ones) pass.
+      `ext-nukkit/README.md` has the component's full scope.
+- [ ] **`ext-nukkit`'s block state mapping — not started.** Same open
+      problem as `ext/`'s (above): no Java-state-to-Nukkit-legacy-id table
+      sourced yet. `resolveNukkitFullId()` always throws today, naming the
+      block, rather than guessing (SPEC §8) — real columns cannot fill
+      until this lands. Nukkit's own `BlockID.java` is its own legacy
+      id:meta scheme, independent of PMMP's, so `ext/`'s table cannot be
+      reused as-is even once it exists.
+- [ ] **`ext-nukkit`'s Java side — written, never compiled.** `StratumGenerator
+      .java`/`StratumGenerationException.java` match Nukkit's `Generator`
+      contract as confirmed by reading Nukkit's source, but no Nukkit
+      Gradle/Maven dependency exists in this repo to actually build or run
+      them against. `PalettedBlockStorage`'s exact per-section coordinate
+      convention for biome storage (block-local vs. quart-local) is flagged
+      unconfirmed in the file's own header for the same reason.
 
 ## M6 (v2) — Staged features
 

@@ -22,7 +22,7 @@ cd "${repo_root}"
 
 failures=0
 # Directories holding first-party code and build configuration.
-scan_dirs=(lib cli ext tests cmake tools .github)
+scan_dirs=(lib cli ext ext-nukkit tests cmake tools .github)
 scan_files=(CMakeLists.txt CMakePresets.json)
 
 fail() {

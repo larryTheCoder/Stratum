@@ -2,10 +2,11 @@
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
 # Layer separation is enforced here (SPEC 4):
-#   lib/   pure C++, never links or includes PHP/zend
-#   cli/   standalone tools built on lib/
-#   ext/   thin zend binding (Milestone M5)
-#   tests/ Catch2 v3 unit tests + conformance harness driver
+#   lib/         pure C++, never links or includes PHP/zend
+#   cli/         standalone tools built on lib/
+#   ext/         thin zend binding for PocketMine-MP (Milestone M5)
+#   ext-nukkit/  thin JNI binding for CloudburstMC/Nukkit (Milestone M5)
+#   tests/       Catch2 v3 unit tests + conformance harness driver
 
 cmake_minimum_required(VERSION 3.24)
 
@@ -40,11 +41,19 @@ option(STRATUM_WERROR      "Treat compiler warnings as errors (on in CI)" OFF)
 option(STRATUM_BUILD_CLI   "Build the standalone cli/ tools"             ON)
 option(STRATUM_BUILD_TESTS "Build the Catch2 test suites"                ON)
 option(STRATUM_BUILD_EXT   "Build the PocketMine-MP zend binding (M5)"   OFF)
+option(STRATUM_BUILD_EXT_NUKKIT "Build the CloudburstMC/Nukkit JNI binding (M5)" OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# ext-nukkit/'s stratum_nukkit is a shared library (a JNI target has to be);
+# everything it statically links — stratum_core included, whether or not
+# STRATUM_BUILD_EXT_NUKKIT is even on for this configure — needs -fPIC to
+# be linkable into one. Global rather than per-target: stratum_core is
+# built long before ext-nukkit/ is added, so a property set only there
+# would need every earlier target rebuilt with a different flag anyway.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -77,6 +86,10 @@ if(STRATUM_BUILD_EXT)
     message(FATAL_ERROR
         "STRATUM_BUILD_EXT=ON but ext/ is Milestone M5 (SPEC 10) and is not "
         "implemented. Configure without this option.")
+endif()
+
+if(STRATUM_BUILD_EXT_NUKKIT)
+    add_subdirectory(ext-nukkit)
 endif()
 
 if(STRATUM_BUILD_TESTS)
