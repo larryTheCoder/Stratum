@@ -15,12 +15,15 @@ double similarity(const std::int64_t di, const std::int64_t dj) noexcept {
     return 1.0 - static_cast<double>(dj - di) / static_cast<double>(kSimilarityRange);
 }
 
-/// Q6.4's pressure function Π, same-fluid-type branch. The mixed
-/// water/lava branch (`Π = 2.0`) is not implemented: this build's fluid TYPE
-/// integration is a separate open question (this file's own header), and no
-/// probe has driven `lava` enough to tell the two apart yet.
-double pressure(const std::int32_t levelA, const std::int32_t levelB, const std::int32_t y,
-                const double barrierNoise) noexcept {
+/// Q6.4's pressure function Π, level-difference branch: what two sources
+/// push with when one of them reads fluid at `y` and the other air —
+/// WHATEVER their types. Measured (barrier.hpp's own header): on the one
+/// world with real water/lava junctions, this formula writes no stone the
+/// server does not, on a pair of mixed type exactly as on a pair of one
+/// type, while the constant in its place misses more and writes false
+/// stone.
+double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const std::int32_t y,
+                     const double barrierNoise) noexcept {
     const std::int32_t deltaInt = levelA < levelB ? levelB - levelA : levelA - levelB;
     if (deltaInt == 0) {
         return 0.0;
@@ -47,20 +50,33 @@ double pressure(const std::int32_t levelA, const std::int32_t levelB, const std:
         // until a configuration that exercises it is found.
         u = (threeT > 0) ? (threeT / 3.0) : (threeT / 10.0);
     }
-    const double b = (std::abs(u) <= 2.0) ? barrierNoise : 0.0;
-    return 2.0 * (b + u);
+    const double noiseTerm = (std::abs(u) <= 2.0) ? barrierNoise : 0.0;
+    return 2.0 * (noiseTerm + u);
 }
 
 /// One term of Q6.6: does this pair, weighted by `weight` (either `s12`
-/// alone, or `s12` doubled with `s13`/`s23`), push the block solid? A pair
-/// that agrees at `y` never fires — see barrier.hpp's own doc on
-/// `placesBarrier`.
+/// alone, or `s12` doubled with `s13`/`s23`), push the block solid?
+///
+/// Q6.4's first clause, "one reads lava and the other water", is read as
+/// what each source READS AT `y`, not as its type field — so it is the
+/// case where BOTH read fluid here and the two fluids differ: a lava body
+/// meeting a water body, which the server walls off with the constant
+/// `kMixedTypePressure` and no level arithmetic. That is the one agreeing
+/// pair that fires; both air, or both the same fluid, never does — and a
+/// pair that disagrees at `y` takes the level formula whatever its types.
+/// Each of those three choices is separately measured against the server
+/// (barrier.hpp's own header).
 bool termFires(const double density, const double weight, const BarrierSource& a,
                const BarrierSource& b, const std::int32_t y, const double barrierNoise) noexcept {
-    if ((y < a.level) == (y < b.level)) {
+    const bool aFluid = y < a.level;
+    const bool bFluid = y < b.level;
+    if (aFluid && bFluid && a.type != b.type) {
+        return (density + (weight * kMixedTypePressure)) > 0.0;
+    }
+    if (aFluid == bFluid) {
         return false;
     }
-    return (density + (weight * pressure(a.level, b.level, y, barrierNoise))) > 0.0;
+    return (density + (weight * levelPressure(a.level, b.level, y, barrierNoise))) > 0.0;
 }
 
 } // namespace

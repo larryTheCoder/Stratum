@@ -168,14 +168,12 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // three-source barrier predicate (barrier.hpp) are all measured and
     // called from here now, via `aquifer::computeSubstance`.
     //
-    // The global lava sea (Q2.4) and the water-over-lava exception on its
-    // top row (Q6.3) are in `computeSubstance` too, both measured against
-    // the server (`aquifer/substance.hpp`'s own header). ONE GAP IS STILL
-    // CARRIED RATHER THAN GUESSED: Pi's mixed-fluid-type branch is not
-    // applied, so a junction between a water body and a lava body is
-    // decided as though both were the same type. It is not guessed at, and
-    // every barrier probe this project has run holds `lava` constant
-    // specifically to keep it out of scope.
+    // The global lava sea (Q2.4), the water-over-lava exception on its top
+    // row (Q6.3) and Pi's mixed-fluid-type branch (Q6.4 — every ranked
+    // source is typed, and a water/lava junction pushes with a constant)
+    // are in `computeSubstance` too, all measured against the server
+    // (`aquifer/substance.hpp`'s and `aquifer/barrier.hpp`'s own headers
+    // carry the numbers).
     if (settings.oreVeinsEnabled) {
         throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "
                         "veins (SPEC §10, M3); refusing rather than generating a world missing "
@@ -287,8 +285,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
 
     density::Interpreter::CornerCache cache(interpreter_.cacheSize());
     // A chunk touches dozens of distinct cell centres, not thousands of
-    // blocks' worth of them — see aquifer::LevelCache's own doc.
-    aquifer::LevelCache aquiferLevelCache;
+    // blocks' worth of them — see aquifer::StatusCache's own doc.
+    aquifer::StatusCache aquiferStatusCache;
 
     // Only ever populated when settings_->aquifersEnabled; the five lambdas
     // below capture these by reference and are only ever called from inside
@@ -373,7 +371,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                                                   .density = density,
                                                                   .seaLevel = settings_->seaLevel};
                                 const aquifer::SubstanceAt result = aquifer::computeSubstance(
-                                    *aquiferCentres_, query, aquiferLevelCache, barrierAt,
+                                    *aquiferCentres_, query, aquiferStatusCache, barrierAt,
                                     floodednessAt, spreadAt, lavaAt, pslAt);
                                 switch (result.substance) {
                                     case aquifer::Substance::Solid:

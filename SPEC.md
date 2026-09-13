@@ -536,9 +536,12 @@ Its own component (`lib/mapping/`), its own tests:
 
   Four things stood between MA and closing. Three (1, 2, 3) are now fully
   CLOSED — the barrier's third source (3) including Q6.3's water-over-lava
-  exception, measured on the server and smaller than it read (see (d)).
+  exception, measured on the server and smaller than it read (see (d)),
+  and Q6.4's mixed-type Π, measured on the same worlds and landed (see (e)).
   Fluid TYPE (4) is narrowed to one open piece, the level ceiling's exact
-  value. The one barrier piece still open is the mixed-fluid-type Π branch. **`ChunkFiller` now
+  value. What the barrier measurement left open is not a barrier piece at
+  all but the LEVEL a source carries below lambda — the dry sentinel and
+  the ladder clamp (§11, "The mixed-type Π"). **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
   measured against a real, aquifer-on overworld region, the wiring's own
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
@@ -648,12 +651,22 @@ Its own component (`lib/mapping/`), its own tests:
      Q2.4 itself unimplemented (below the sea the decision read the
      nearest source's type, water on 7682 / 5330 / 5736 of 16384 blocks
      per density, invisible to category-only goldens); it is landed too,
-     16384 / 16384. The mixed-fluid-type Π branch (`Π = 2.0`) is still
-     unmeasured — every barrier probe holds `lava` at a constant
-     specifically to keep that question separate — and the sea -70 arm is
-     the first world to show its size: 27-45% more real barriers than the
-     predicate writes on the rows just above the sea, all in junctions with
-     a lava-typed source.
+     16384 / 16384. (e) **DONE. Q6.4's mixed-type Π, measured on the same
+     worlds and landed** — in `placesBarrier`, with every ranked source
+     now typed (`aquifer::StatusCache`). The sea -70 arm is the first
+     world where lava-typed sources compete with water-typed ones on rows
+     the lattice owns, and it settled which of three readings "`Π = 2.0`
+     if one reads lava and the other water" is: what each source READS at
+     `y`. A lava body meeting a water body — both fluid — takes the
+     constant; a pair that disagrees at `y` keeps the level formula
+     whatever its types. Pooled over three seeds, the server's real
+     barriers missed in mixed junctions fall from 1698 to 590 (1240 to
+     330 on the rows above the sea), with 0 false stone before and after,
+     and every one of the 1108 blocks the constant adds is server stone.
+     The two other readings are refuted on the same blocks (§11). What
+     remains is the level a source carries below lambda — the dry
+     sentinel and the ladder clamp — measured to close the 590 to 0 on
+     the rows above the sea and named as the next slice, not landed.
 
   4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
@@ -704,18 +717,22 @@ Its own component (`lib/mapping/`), its own tests:
      of this recomputed every ranked source's own `preliminary_surface_level`
      scan — up to fourteen `density::Interpreter::evaluate` calls — on every
      block that reached the aquifer, with no caching: measured at over 30
-     seconds a chunk, impractical for anything real. `aquifer::LevelCache`
-     memoizes a cell centre's own fluid level across one `fill()` call — a
-     chunk touches dozens of distinct centres, not thousands of blocks'
-     worth of them — and brought that to about 1 second a chunk, the same
-     shape of fix `ChunkFiller`'s own biome cache already used for surface
-     rules.
+     seconds a chunk, impractical for anything real. `aquifer::StatusCache`
+     (then `LevelCache`; it memoizes the fluid TYPE too since Q6.4 started
+     typing every ranked source) memoizes a cell centre's own status across
+     one `fill()` call — a chunk touches dozens of distinct centres, not
+     thousands of blocks' worth of them — and brought that to about 1
+     second a chunk, the same shape of fix `ChunkFiller`'s own biome cache
+     already used for surface rules.
 
      *Wider, still open.* Over a 64-chunk sweep of the same probe world
      (6291456 blocks), RAW category is 6290723 exact — 99.988%, a 733-block
      residual too small to localise further without a dedicated probe of its
      own, but the wrong direction (mostly missed barriers, `solid->fluid`)
-     is consistent with the mixed-fluid-type Π gap rather than a new one.
+     is consistent with the two lattice-level pieces the sea -70 worlds
+     later separated (§11, "The mixed-type Π") — the constant, since
+     landed, and the level a dry or clamped source carries below lambda,
+     still open — rather than with a new one. Not re-measured here since.
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -2387,11 +2404,12 @@ Open:
   was untested by every angle here, and `placesBarrier` did not implement
   it; it is now measured and landed in `computeSubstance` (see "The lava
   sea's two clauses" below). The mixed-fluid-type branch of Π (`Π = 2.0`
-  when one source reads lava and the other water) remains unmeasured —
-  every barrier probe so far holds `lava` at a constant on purpose, to keep
-  that question separate rather than folding it in unverified. `ChunkFiller`
-  did not yet call `placesBarrier` at all at this point; the wiring came
-  later.
+  when one source reads lava and the other water) was unmeasured here on
+  purpose — every barrier probe held `lava` at a constant to keep that
+  question separate rather than folding it in unverified; it is now
+  measured on the sea -70 worlds and landed (see "The mixed-type Π"
+  below). `ChunkFiller` did not yet call `placesBarrier` at all at this
+  point; the wiring came later.
 
   **The lava sea's two clauses — Q6.3 measured, Q2.4 found (MA).** The
   clean-room spec's Q6.3 says a nearest source reading water directly over
@@ -2448,13 +2466,96 @@ Open:
   mechanics, verified block by block (0 of 223 unexplained), not the
   aquifer.
 
-  *What the low sea also shows, and is not this change's to fix.* The
+  *What the low sea also showed, and the next change took up.* The
   sea -70 arm is the first world where lava-typed sources crowd the rows
-  just above the sea, and there `placesBarrier` misses 27-45% of the
+  just above the sea, and there `placesBarrier` missed 27-45% of the
   server's real barriers on those rows, every miss in a junction with a
-  lava-typed source. That is the mixed-fluid-type Π branch, still held out
-  of scope on purpose, now with a measured size and a world that exercises
-  it.
+  lava-typed source. That was read as the mixed-fluid-type Π branch's
+  size; the next paragraph measures it, and finds it to be two things.
+
+  **The mixed-type Π — measured, and not the reading it looked like (MA).**
+  The clean-room spec's Q6.4 opens with "if one reads lava and the other
+  water, `Π = 2.0`", on two statuses `A = (L_A, T_A)`, `B = (L_B, T_B)`
+  "at height `y`". That sentence has three readings, and they differ on
+  real blocks: (i) compare the two TYPE FIELDS, applied where the pair
+  already disagrees at `y` (one fluid, one air) — the reading the
+  status-tuple notation suggests, and the one a first implementation
+  here took; (ii) compare what each source READS at `y`, so the constant
+  applies where both read fluid and the fluids differ — a lava body
+  meeting a water body; (iii) the types differing regardless of readings.
+  The same three sea -70 worlds (`aquifer-waterlava-probe.sh`, seeds 42 /
+  31337 / 8675309) separate them, because with `lava` a constant 0.0 the
+  only lava-typed sources are those centred below lambda, and those crowd
+  exactly the rows just above the sea. `aquifer-waterlava-analyze.cpp` and
+  the second case of `vanilla_aquifer_waterlava_test.cpp` call the
+  committed `placesBarrier` twice per block on the same three ranked
+  sources — as typed, and with every source retyped water, which is the
+  predicate exactly as it was — and count, for each reading the predicate
+  does NOT take, the blocks where it would have answered differently and
+  what the server holds there.
+
+  *Reading (i) makes every row worse.* Real-barrier misses in mixed
+  junctions RISE under it (seed 42, y = -68: 36 -> 55; seed 8675309, y =
+  -67: 241 -> 313) and it writes stone the level formula never does (31
+  on one row). On the nearest pair, where the constant alone would fire
+  and the formula does not, the server has stone on 0 of 33 blocks above
+  the sea; where the formula fires and the constant would not, on 252 of
+  252. A pair that disagrees at `y` takes the level formula whatever its
+  types, and "old false stone = 0" on every row says the formula is right
+  there.
+
+  *Reading (ii) is the server's.* Where a mixed pair BOTH read fluid at
+  `y` and `D + w·2 > 0`, the server holds stone on every block: 18 / 430 /
+  665 per seed on the rows the lattice owns, 1113 of 1113. Landed:
+  `termFires` takes the constant for such a pair — the one agreeing pair
+  that fires — and the formula for a disagreeing one; both air, or both
+  the same fluid, still fire nothing. Pooled over the three seeds and the
+  rows the lattice owns (the Q6.3 blocks excluded, since the exception
+  pre-empts the predicate there), the retyped predicate misses 1698 of
+  the server's 3341 real barriers in mixed junctions and the committed
+  one 590 — 1240 to 330 on the rows above the sea alone — with 0 false
+  stone under either; the 1108 blocks the constant adds are all server
+  stone; and where no pair is mixed the two are the same function (293 /
+  293 misses, 0 false). `BarrierSource` carries a type, every ranked
+  source is typed whether or not it reads fluid at the block (which one
+  does depends on the block), and `StatusCache` memoizes level and type
+  together per centre — one more router read where the level's scan was
+  already the expensive part.
+
+  *Reading (iii) is refuted by the blocks it would fill.* Stone between
+  two DRAINED cells of different type: the server holds stone on 0-4 of
+  the 424-1145 blocks per row above the sea the constant would carry,
+  0.0-0.5%.
+
+  *Q6.3's precedence holds against the new term.* On the sea's top row
+  the constant now applies to a lava body against the row's water sources,
+  so the bare predicate would write stone on 19 / 176 / 178 of the 278 /
+  1102 / 1940 blocks the exception owns (14 / 50 / 70 before); the server
+  writes 0 of 3320 either way.
+
+  *What is left is a level, not a type.* The 590 (and the 293 "pure"
+  misses, with no mixed pair at all) sit on the rows 0-3 above the sea.
+  This build reports a DRY source as `level = lambda` where the spec's is
+  the sentinel `never = -32512` (Q1.4, Q5.6), and `ladderLevel` clamps a
+  ladder that falls below lambda up to it where Q5.7 has no clamp. Both
+  are invisible to readings — every row below lambda is the sea's (Q2.4)
+  — but Π's arithmetic sees them: with the plane at lambda a block 0-3
+  rows above it sits on the `h <= 0` side of the midpoint (divisors 3 and
+  10, offset 3); with the plane at `never` the same block is on the `h >
+  0` side (1.5 and 2.5) and far from it. The analyzer builds a second
+  `BarrierAt` per block at the spec's own levels — a closed form in this
+  world, whose constant psl leaves Q5.3's short-circuits inert: past the
+  sea gate `Global(Q).level`, past the local gate the unclamped ladder,
+  else `never` — and re-scores: mixed-junction misses 590 -> 0 / 0 / 0
+  and pure misses -> 0 / 0 / 0 on rows lambda+1..+3 on all three seeds,
+  0 false stone; row lambda keeps 18 / 17 / 0. That is `cellFluidLevel`'s
+  contract to change — readings at `y >= lambda` are untouched, but
+  `vanilla_aquifer_selection_test.cpp` reads `y < level` from y = -64 and
+  leans on the clamp below the sea, nine lattice unit assertions pin
+  `lambda`/`kLavaLevel` for floored or dry outcomes, and Q5.8's `L !=
+  never` conjunct (`fluid_type.hpp`) falls out of the same sentinel. One
+  slice, named in PROGRESS.md, with the conformance suite as its guard;
+  not folded into this change.
 
   **A second instrument for the depth path's gate, and a wrong first attempt
   at building one (MA blocker 1, CLOSED).** The near-surface path gates on
@@ -2607,9 +2708,11 @@ Open:
   candidate at the time was Q6.3's water-over-lava exception; that is now
   RULED OUT by its shape rather than by a probe — Q6.3 only ever turns a
   would-be barrier into water on the sea's own top row, it never changes
-  which fluid a block holds, and it cannot reach y -21. The candidate is
-  now the mixed-fluid-type Π branch. It is excluded from the score and
-  counted in the test.
+  which fluid a block holds, and it cannot reach y -21. The next candidate
+  was the mixed-fluid-type Π branch; that is now RULED OUT the same way —
+  landed and measured ("The mixed-type Π" below), what it adds is stone,
+  never the other fluid. No named candidate remains. It stays excluded
+  from the score and counted in the test.
 
   **A surface that varies, and a model comparison that came out a tie for a
   provable reason (MA).** The probe SPEC §10 has demanded since the aquifer

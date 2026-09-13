@@ -16,7 +16,16 @@
 // here are hand-built and independently verified by direct calculation
 // (not read off a probe), to pin the SHAPE of a rescue rather than one
 // specific measured block.
+//
+// The mixed-type cases (Q6.4's first clause, `Π = 2.0` where a lava body
+// meets a water body) are hand-built the same way: each pins a separation
+// where the constant and the level formula DISAGREE, so a case cannot pass
+// by accident of the two coinciding — and the pair that must NOT take the
+// constant (one fluid, one air, of different types) is pinned at exactly
+// those separations too. The server numbers behind each choice are in
+// barrier.hpp's header and `vanilla_aquifer_waterlava_test.cpp`.
 #include <stratum/aquifer/barrier.hpp>
+#include <stratum/aquifer/fluid_type.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -24,6 +33,7 @@
 
 using stratum::aquifer::BarrierAt;
 using stratum::aquifer::BarrierSource;
+using stratum::aquifer::FluidType;
 using stratum::aquifer::placesBarrier;
 
 namespace {
@@ -43,6 +53,30 @@ BarrierAt between(const std::int32_t above, const std::int32_t below, const std:
     at.nearest = BarrierSource{.level = kY - above, .distanceSq = 0};
     at.second = BarrierSource{.level = kY + below, .distanceSq = separation};
     at.third = BarrierSource{.level = kY - above, .distanceSq = kInertDistanceSq};
+    at.barrier = barrier;
+    return at;
+}
+
+// The same block, with the UPPER (fluid) source lava-typed and the lower
+// (air) one water-typed: a pair of mixed TYPE that still disagrees at y.
+BarrierAt betweenMixed(const std::int32_t above, const std::int32_t below,
+                       const std::int32_t separation, const double barrier = 0.0) {
+    BarrierAt at = between(above, below, separation, barrier);
+    at.second.type = FluidType::Lava;
+    return at;
+}
+
+// A block inside BOTH sources' fluid — a water body (nearest) and a lava
+// body (`separation` further out) meeting at y = 0.
+BarrierAt insideBoth(const std::int32_t separation, const double barrier = 0.0,
+                     const std::int32_t lavaLevel = 30) {
+    BarrierAt at;
+    at.y = 0;
+    at.density = -1.0;
+    at.nearest = BarrierSource{.level = 20, .distanceSq = 0, .type = FluidType::Default};
+    at.second =
+        BarrierSource{.level = lavaLevel, .distanceSq = separation, .type = FluidType::Lava};
+    at.third = BarrierSource{.level = -900, .distanceSq = kInertDistanceSq};
     at.barrier = barrier;
     return at;
 }
@@ -119,6 +153,101 @@ TEST_CASE("a tie between the two planes goes to the lower one", "[aquifer]") {
     // (25 - 22) * 19 = 57, no stone; the upper side would give
     // (25 - 22) * 26 = 78, which would.
     CHECK_FALSE(placesBarrier(between(above, below, 22)));
+}
+
+TEST_CASE("a lava body against a water body pushes with a constant, not the level formula",
+          "[aquifer]") {
+    // Q6.4's first clause, read as what each source READS at y: both fluid
+    // here, and the two fluids differ. At D = -1 the constant fires exactly
+    // when the pair's weight exceeds 0.5 — a separation under 12.5 — and it
+    // reads neither the two levels nor the `barrier` noise. The same pair
+    // with both sources water-typed agrees at y, and writes nothing.
+    CHECK(placesBarrier(insideBoth(12)));
+    CHECK_FALSE(placesBarrier(insideBoth(13)));
+    CHECK(placesBarrier(insideBoth(0)));
+    // No `barrier` noise ...
+    CHECK(placesBarrier(insideBoth(12, -4.0)));
+    CHECK(placesBarrier(insideBoth(12, 4.0)));
+    CHECK_FALSE(placesBarrier(insideBoth(13, 4.0)));
+    // ... and no levels: the lava plane 1000 up, or one block up, is the
+    // same answer.
+    CHECK(placesBarrier(insideBoth(12, 0.0, 1000)));
+    CHECK_FALSE(placesBarrier(insideBoth(13, 0.0, 1000)));
+    CHECK(placesBarrier(insideBoth(12, 0.0, 1)));
+    CHECK_FALSE(placesBarrier(insideBoth(13, 0.0, 1)));
+    // Which of the two is the lava is immaterial.
+    BarrierAt swapped = insideBoth(12);
+    swapped.nearest.type = FluidType::Lava;
+    swapped.second.type = FluidType::Default;
+    CHECK(placesBarrier(swapped));
+    // Two bodies of the SAME fluid — water, or lava — agree at y: nothing.
+    BarrierAt bothWater = insideBoth(0);
+    bothWater.second.type = FluidType::Default;
+    CHECK_FALSE(placesBarrier(bothWater));
+    BarrierAt bothLava = insideBoth(0);
+    bothLava.nearest.type = FluidType::Lava;
+    CHECK_FALSE(placesBarrier(bothLava));
+}
+
+TEST_CASE("a pair that disagrees at y takes the level formula whatever its types", "[aquifer]") {
+    // The reading the server REFUTED (barrier.hpp's header): comparing the
+    // two type fields, so that a lava-typed source reading air against a
+    // water-typed one reading fluid would take the constant. It would part
+    // from the formula at exactly these points, so each is pinned.
+    //
+    // A block ON the lower plane (above = 0), 40 under the upper one: the
+    // formula has t = 0.5 on the fluid side of the midpoint, u = 3.5/3,
+    // Π = 2(b + 1.1667). At b = 0 that fires up to a separation of 14 and
+    // stops at 15; the constant would fire at 12 and stop at 13.
+    for (const std::int32_t separation : {11, 12, 13, 14, 15, 16}) {
+        for (const double barrier : {-1.0, 0.0, 1.5000001}) {
+            INFO("separation " << separation << " barrier " << barrier);
+            CHECK(placesBarrier(betweenMixed(0, 40, separation, barrier)) ==
+                  placesBarrier(between(0, 40, separation, barrier)));
+        }
+    }
+    // The two specific points where the constant would have answered
+    // differently: 13 at b = 0 (the formula fires, a constant would not) and
+    // 12 at b = -1 (the formula collapses to Π = 0.333, a constant would fire).
+    CHECK(placesBarrier(betweenMixed(0, 40, 13)));
+    CHECK_FALSE(placesBarrier(betweenMixed(0, 40, 12, -1.0)));
+    // Nor does the lava being the LOWER (air) source change that.
+    BarrierAt lowerIsLava = between(0, 40, 13);
+    lowerIsLava.nearest.type = FluidType::Lava;
+    CHECK(placesBarrier(lowerIsLava));
+}
+
+TEST_CASE("a mixed-type pair that both read air writes nothing", "[aquifer]") {
+    // The other refuted reading — the types differing regardless of what
+    // either reads — would put stone in open air between a drained lava
+    // cell and a drained water cell. Both air, and no term fires.
+    BarrierAt bothAir;
+    bothAir.y = 0;
+    bothAir.density = -1.0;
+    bothAir.nearest = BarrierSource{.level = -10, .distanceSq = 0, .type = FluidType::Default};
+    bothAir.second = BarrierSource{.level = -20, .distanceSq = 0, .type = FluidType::Lava};
+    bothAir.third = BarrierSource{.level = -10, .distanceSq = kInertDistanceSq};
+    CHECK_FALSE(placesBarrier(bothAir));
+}
+
+TEST_CASE("the type reaches the third source's terms too", "[aquifer]") {
+    // The nearest reads air on its own plane (above = 0) with a `barrier`
+    // of -1.1, so its formula against either fluid source collapses to
+    // Π = 2(-1.1 + 1.1667) = 0.133 and neither of those terms fires. The
+    // second and third both read fluid: water against lava, and the A2-A3
+    // term pushes with the constant at weight s12*s23 = 0.8*0.96 = 0.768,
+    // -1 + 1.536 > 0. Retype the third to water and the pair agrees:
+    // nothing fires anywhere.
+    BarrierAt at;
+    at.y = 10;
+    at.density = -1.0;
+    at.nearest = BarrierSource{.level = 10, .distanceSq = 0};
+    at.second = BarrierSource{.level = 100, .distanceSq = 5};
+    at.third = BarrierSource{.level = 100, .distanceSq = 6, .type = FluidType::Lava};
+    at.barrier = -1.1;
+    CHECK(placesBarrier(at));
+    at.third.type = FluidType::Default;
+    CHECK_FALSE(placesBarrier(at));
 }
 
 TEST_CASE("Q6.2's distance gate short-circuits before any third-source term fires", "[aquifer]") {

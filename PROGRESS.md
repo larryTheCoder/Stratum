@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-13 (the aquifer's lava-sea clauses).
+Last swept: 2026-09-13 (the aquifer's mixed-type Π).
 
 ## At a glance
 
@@ -17,7 +17,7 @@ Last swept: 2026-09-13 (the aquifer's lava-sea clauses).
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 narrow piece left, 1 constant unpinned |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Not started |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -28,8 +28,9 @@ Last swept: 2026-09-13 (the aquifer's lava-sea clauses).
 
 Landed and measured: the cell lattice, the centre jitter, the fluid level
 rule (ladder, ocean branch, depth-path gate), source selection (four ranked
-candidates), the three-source barrier predicate, and the fluid type rule.
-`ChunkFiller` now calls all of it directly — the old refusal is gone.
+candidates), the three-source barrier predicate with its mixed-type
+pressure, and the fluid type rule. `ChunkFiller` now calls all of it
+directly — the old refusal is gone.
 
 Open:
 
@@ -53,14 +54,39 @@ Open:
       there: 7682 / 5330 / 5736 of 16384 blocks per density wrong at sea
       63, invisible to every category-only golden (water and lava are both
       "fluid" to them). Now lava before any source is read: 16384 / 16384.
-- [ ] **The mixed-fluid-type Π branch** (`Π = 2.0` when two competing
-      sources are different fluid types). Unmeasured — every barrier probe
-      so far holds `lava` constant specifically to keep this question
-      separate from the barrier shape itself. Its size is now visible for
-      the first time: on the `sea_level` -70 arm above, where lava-typed
-      sources crowd the rows just over the sea, the server writes 27-45%
-      more barriers on those rows than `placesBarrier` does, all in
-      junctions with a lava-typed source.
+- [x] **The mixed-fluid-type Π branch — measured, landed, and not the
+      reading it looked like.** The spec's "`Π = 2.0` if one reads lava
+      and the other water" allows three readings, and the same `sea_level`
+      -70 worlds (three seeds) chose: it is what each source READS at `y` —
+      a lava body meeting a water body, both fluid, takes the constant,
+      while a pair that disagrees at `y` keeps the level formula whatever
+      its types. Every ranked source is now typed (`StatusCache`) and
+      `placesBarrier` reads the types. In mixed junctions the server's
+      real barriers missed fall from 1698 to 590 pooled (1240 to 330 on
+      the rows above the sea), 0 false stone before and after; every one
+      of the 1108 blocks the constant adds is server stone. The reading a
+      first attempt took — comparing the two TYPE FIELDS behind the
+      disagree guard — made every row worse and is refuted 0 of 33 against
+      252 of 252; "types differ regardless of readings" fills open air the
+      server leaves open on 99.5-100% of its blocks. Pinned by
+      `vanilla_aquifer_waterlava_test.cpp`'s second case.
+- [ ] **The level a source carries below lambda — the dry sentinel and the
+      ladder clamp.** What the branch above leaves (590 of 1698) is not a
+      type question: `cellFluidLevel` reports a DRY source as `lambda`
+      where the spec's is `never = -32512` (Q1.4, Q5.6), and clamps a
+      ladder that falls below lambda up to it (Q5.7 has no clamp). On the
+      rows 0-3 above the sea that puts a plane right under the block on
+      Π's `h <= 0` side (divisors 3/10) where the spec has none. Measured
+      by `aquifer-waterlava-analyze.cpp` re-scoring the same blocks at the
+      spec's levels: mixed-junction misses 590 -> 0 and pure misses -> 0 on
+      rows lambda+1..+3 on all three seeds, 0 false stone; row lambda keeps
+      18 / 17 / 0. Not landed here because it is `cellFluidLevel`'s
+      CONTRACT — readings at `y >= lambda` are unchanged, but
+      `vanilla_aquifer_selection_test.cpp` reads `y < level` from y = -64
+      and leans on the clamp there, nine lattice unit assertions pin
+      `lambda`/`kLavaLevel` for floored or dry outcomes, and Q5.8's
+      `L != never` conjunct in `fluid_type.hpp` falls out of the same
+      sentinel — one slice, with the conformance suite as its guard.
 - [ ] **The fluid-type level ceiling.** Narrowed to `{-10, -9}`, not pinned
       to one value; `-10` (the current code) fits every reading measured so
       far. SPEC names a next step: the one other reachable rung that should

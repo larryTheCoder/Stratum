@@ -58,6 +58,15 @@
 //   * Whether a source already reading lava is exempt. Those cells sit below
 //     the global lava sea, where nothing can be observed, so the conjunct is
 //     carried on the spec's word alone.
+//   * Whether a DRY source is exempt (the spec's `L != never` conjunct).
+//     This build cannot even ask: `cellFluidLevel` reports a dry source as
+//     `level = lambda`, the same number a wet source clamped there gets, so
+//     a dry cell under a `|lava| > 0.3` read is typed lava here. It became
+//     reachable when Q6.4 started typing every ranked source (substance.hpp
+//     — `rankedStatusOf`'s own note), and it is unobservable in every world
+//     Π has been measured on, `lava` being a constant 0.0 there. The dry
+//     sentinel is PROGRESS.md's next aquifer slice; this conjunct falls
+//     out of it.
 //   * Any `default_fluid` other than water.
 #pragma once
 

@@ -10,6 +10,13 @@
 // blocks the server really writes on that row, and how many barriers the
 // bare fall-through would have put there) live in
 // `vanilla_aquifer_waterlava_test.cpp` and substance.hpp's own header.
+//
+// The last case is Q6.4's mixed-type branch driven END TO END: the `lava`
+// sampler alone flips a junction inside two fluid bodies from air to stone,
+// at a separation where the constant fires and — with both bodies water —
+// nothing does (barrier.hpp's own unit cases pin the arithmetic). That is
+// the shape that proves every ranked source's TYPE reaches Π, cache and
+// all, not just the nearest wet one's.
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -32,10 +39,10 @@ using stratum::aquifer::FluidType;
 using stratum::aquifer::globalReadsLava;
 using stratum::aquifer::kLavaLevel;
 using stratum::aquifer::lambdaLevel;
-using stratum::aquifer::LevelCache;
 using stratum::aquifer::placesBarrier;
 using stratum::aquifer::Selection;
 using stratum::aquifer::selectSources;
+using stratum::aquifer::StatusCache;
 using stratum::aquifer::Substance;
 using stratum::aquifer::SubstanceAt;
 using stratum::aquifer::waterOverLava;
@@ -103,8 +110,72 @@ constexpr auto kSurface96 = [](std::int32_t, std::int32_t, std::int32_t) { retur
 
 [[nodiscard]] SubstanceAt decide(const CentreSource& centres, const AquiferQuery& query,
                                  const FloodOne& flood) {
-    LevelCache cache;
+    StatusCache cache;
     return computeSubstance(centres, query, cache, kZero, flood, kZero, kZero, kSurface96);
+}
+
+/// A block on the row y = -21 whose nearest source is centred in the
+/// ladder band [-40, -1) — so with floodedness on the local branch and a
+/// spread of 0 its level is exactly -20, and it reads fluid on the row —
+/// and whose second source, once flooded past the sea gate (level 63),
+/// reads water there too; the two separated by exactly `separation` in
+/// squared distance, the third far enough to be inert.
+struct MixedJunction {
+    std::int32_t x = 0;
+    std::int32_t z = 0;
+    CellIndex ladder{}; // level -20 once wet on the local branch
+    CellIndex sea{};    // level 63 once flooded past the sea gate
+};
+
+constexpr std::int32_t kMixedRow = -21;
+
+[[nodiscard]] std::optional<MixedJunction> findMixedJunction(const CentreSource& centres,
+                                                             const std::int32_t separation) {
+    for (std::int32_t z = 0; z < 512; ++z) {
+        for (std::int32_t x = 0; x < 512; ++x) {
+            const Selection sel = selectSources(centres, x, kMixedRow, z);
+            const CellIndex& nearest = sel.ranked[0].centre;
+            const bool ladderBand = nearest.y >= -40 && nearest.y < 0;
+            const bool aboveLambda = sel.ranked[1].centre.y >= lambdaLevel(kSea);
+            const bool thirdFar = sel.ranked[2].distanceSq - sel.ranked[1].distanceSq >= 25;
+            if (ladderBand && aboveLambda && sel.separation() == separation && thirdFar) {
+                return MixedJunction{
+                    .x = x, .z = z, .ladder = nearest, .sea = sel.ranked[1].centre};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+/// Floodedness for exactly two centres: the ladder source on the local
+/// branch (0.6: past 0.4, short of 0.8), the sea source past the sea gate
+/// (0.9), everything else dry.
+struct FloodTwo {
+    MixedJunction junction;
+
+    double operator()(std::int32_t x, std::int32_t y, std::int32_t z) const {
+        const CellIndex at{.x = x, .y = y, .z = z};
+        if (at == junction.ladder) {
+            return 0.6;
+        }
+        if (at == junction.sea) {
+            return 0.9;
+        }
+        return -1.0;
+    }
+};
+
+/// The decision at the junction under one `lava` constant and one `barrier`
+/// constant.
+[[nodiscard]] SubstanceAt decideMixed(const CentreSource& centres, const MixedJunction& junction,
+                                      const double lava, const double barrier) {
+    StatusCache cache;
+    const AquiferQuery query{
+        .x = junction.x, .y = kMixedRow, .z = junction.z, .density = -1.0, .seaLevel = kSea};
+    const auto lavaAt = [lava](std::int32_t, std::int32_t, std::int32_t) { return lava; };
+    const auto barrierAt = [barrier](std::int32_t, std::int32_t, std::int32_t) { return barrier; };
+    return computeSubstance(centres, query, cache, barrierAt, FloodTwo{junction}, kZero, lavaAt,
+                            kSurface96);
 }
 
 } // namespace
@@ -230,4 +301,31 @@ TEST_CASE("the exception's row follows a sea pulled below the lava level", "[aqu
     const SubstanceAt sea = decide(centres, below, nearestFlooded);
     CHECK(sea.substance == Substance::Fluid);
     CHECK(sea.fluidType == FluidType::Lava);
+}
+
+TEST_CASE("the lava sampler alone turns a junction inside two fluid bodies to stone", "[aquifer]") {
+    // Q6.4's mixed-type branch, end to end. The nearest source's level is
+    // -20 (the ladder band's base, spread 0) and the second is flooded to
+    // the sea (63): at y = -21 BOTH read fluid. With `lava` at 0.0 both are
+    // water-typed — one body, no barrier, the block is water. With `lava`
+    // at 1.0 the nearest, at level -20 under the ceiling, turns lava-typed
+    // while the second stays water at 63: a lava body meeting a water one,
+    // and the constant fires at separation 12 (weight 0.52) and not at 13
+    // (0.48), whatever the `barrier` noise says.
+    const CentreSource centres{42};
+    const auto close = findMixedJunction(centres, 12);
+    REQUIRE(close.has_value());
+    for (const double barrier : {-1.0, 0.0, 4.0}) {
+        INFO("barrier " << barrier);
+        const SubstanceAt oneBody = decideMixed(centres, *close, 0.0, barrier);
+        CHECK(oneBody.substance == Substance::Fluid);
+        CHECK(oneBody.fluidType == FluidType::Default);
+        CHECK(decideMixed(centres, *close, 1.0, barrier).substance == Substance::Solid);
+    }
+    const auto apart = findMixedJunction(centres, 13);
+    REQUIRE(apart.has_value());
+    const SubstanceAt lavaWins = decideMixed(centres, *apart, 1.0, 0.0);
+    CHECK(lavaWins.substance == Substance::Fluid);
+    CHECK(lavaWins.fluidType == FluidType::Lava);
+    CHECK(decideMixed(centres, *apart, 0.0, 0.0).substance == Substance::Fluid);
 }

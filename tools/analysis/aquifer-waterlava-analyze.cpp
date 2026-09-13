@@ -3,19 +3,51 @@
 //
 // Walks the rows at and around the global lava sea's top —
 // `lambda = min(-54, sea_level)` — and, for every block on them, computes
-// two answers from the SAME inputs: this build's own `computeSubstance`
-// (substance.hpp, end to end, the function the filler calls), and the BARE
-// fall-through the substance decision used to be — `placesBarrier`, then the
-// nearest source's own reading — with no Q6.3 and no Q2.4 in front of it.
-// Where the two differ is exactly the set of blocks the two spec clauses
-// change, and the server's own block says which one is right.
+// three answers from the SAME inputs: this build's own `computeSubstance`
+// (substance.hpp, end to end, the function the filler calls); the BARE
+// fall-through the substance decision used to be — `placesBarrier`, then
+// the nearest source's own reading — with no Q6.3 and no Q2.4 in front of
+// it; and the bare fall-through with every source typed WATER, which is
+// the predicate as it was before Q6.4's mixed-type branch landed. Where
+// the first two differ is exactly the set of blocks Q6.3 and Q2.4 change;
+// where the last two differ is exactly the set the mixed-type Π changes;
+// and the server's own block says which one is right in each case.
+//
+// THE MIXED-TYPE BRANCH is scored on the rows just above the sea, the one
+// place in this world where lava-typed sources (centred below `lambda`)
+// compete with water-typed ones: per row, the server's real barriers the
+// old same-type Π misses against the ones the committed Π misses, and the
+// stone each writes that the server does not. "One reads lava and the
+// other water" was ambiguous between comparing the two statuses' TYPE
+// fields and comparing what each READS at `y`; the committed predicate
+// takes the second — a pair that BOTH read fluid, of different fluids,
+// takes the constant, and a pair that disagrees at `y` takes the level
+// formula whatever its types. The two refuted readings are still counted
+// so the refutation stays reproducible: where the nearest pair is mixed
+// and disagrees at `y`, a 2x2 of "the constant would fire" against "the
+// formula fires" with the server's stone in each cell (the type-field
+// reading), and where a mixed pair both read AIR with `D + w * 2 > 0`,
+// the server's stone (the types-regardless reading).
+//
+// THE RESIDUAL — real barriers no type reading touches — is tested here
+// against the LEVEL representation rather than left as noise. This build
+// reports a dry source as `level = lambda` (the spec's `never` is -32512)
+// and clamps a ladder that falls below `lambda` up to it; on rows 0-3
+// above `lambda` that puts the lower plane right under the block, which
+// is exactly where Π's `h <= 0` branch parts from its `h > 0` one. A
+// second `BarrierAt` per block carries the spec's own levels for the
+// same sources (this world's constant psl makes them a closed form:
+// floodedness past 0.8 is the sea — or -54 below lambda — past 0.4 the
+// unclamped ladder, else `never`) and is scored the same way.
 //
 // Real `barrier`/`fluid_level_floodedness`/`fluid_level_spread` noise, read
 // through this build's own density::Interpreter as the barrier analyzer
 // does — never a hand-rolled replica. `preliminary_surface_level` is the
 // probe's constant 96 and `lava` its constant 0.0; both, with each
 // dimension's density, sea level and floor, are read off the probe's own
-// spec.json rather than assumed.
+// spec.json rather than assumed. (With `lava` a constant 0.0 the only
+// lava-typed sources are those centred below `lambda` — which is exactly
+// what puts them on the rows just above the sea, and nowhere else.)
 //
 //   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
 //       -I build/dev/_deps/nlohmann_json-src/single_include \
@@ -41,6 +73,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -108,6 +141,90 @@ bool typeMatches(Observed o, aquifer::SubstanceAt s) {
            (o == Observed::Lava && s.fluidType == aquifer::FluidType::Lava);
 }
 
+/// Q6.1's similarity, on squared distances — the same one-liner
+/// `placesBarrier` uses, needed here only to weigh the ALTERNATIVE
+/// mixed-type readings the committed predicate does not implement.
+double similarity(const std::int64_t di, const std::int64_t dj) {
+    return 1.0 -
+           static_cast<double>(dj - di) / static_cast<double>(aquifer::kSimilarityRange);
+}
+
+/// The types-regardless reading of Q6.4's first clause: would a mixed-type
+/// pair that BOTH read air at `y` carry the constant past `D` on its
+/// weight alone? (The committed predicate never consults Π for such a
+/// pair.)
+bool bothAirMixedWouldFire(const aquifer::BarrierAt& at) {
+    const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
+    if (s12 <= 0.0) {
+        return false; // Q6.2: no barrier evaluation at all.
+    }
+    const double s13 = similarity(at.nearest.distanceSq, at.third.distanceSq);
+    const double s23 = similarity(at.second.distanceSq, at.third.distanceSq);
+    const auto fires = [&](const aquifer::BarrierSource& a, const aquifer::BarrierSource& b,
+                           const double weight) {
+        const bool bothAir = !(at.y < a.level) && !(at.y < b.level);
+        return a.type != b.type && weight > 0.0 && bothAir &&
+               at.density + (weight * aquifer::kMixedTypePressure) > 0.0;
+    };
+    return fires(at.nearest, at.second, s12) || fires(at.nearest, at.third, s12 * s13) ||
+           fires(at.second, at.third, s12 * s23);
+}
+
+/// The type-field reading of Q6.4's first clause, on the single-weighted
+/// nearest pair: mixed-type, disagreeing at `y`, competing (`s12 > 0`) —
+/// and, for such a pair, whether the constant alone would carry it.
+struct NearestPairMixedDisagreeing {
+    bool applies = false;
+    bool constantFires = false;
+};
+
+NearestPairMixedDisagreeing nearestPairTypeField(const aquifer::BarrierAt& at) {
+    const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
+    const bool aFluid = at.y < at.nearest.level;
+    const bool bFluid = at.y < at.second.level;
+    if (s12 <= 0.0 || at.nearest.type == at.second.type || aFluid == bFluid) {
+        return {};
+    }
+    return {.applies = true,
+            .constantFires = at.density + (s12 * aquifer::kMixedTypePressure) > 0.0};
+}
+
+/// The clean-room spec's own level for one source in THIS world (constant
+/// psl, so Q5.3's short-circuits never fire and `S_min` is the constant):
+/// past the sea gate `Global(Q).level` — -54 below lambda, the sea at or
+/// above it — past the local gate the ladder with no clamp at lambda, and
+/// otherwise the sentinel `never`.
+constexpr std::int32_t kNever = -32512;
+
+std::int32_t specLevelOf(const aquifer::CellIndex& centre, const double floodedness,
+                         const double spread, const std::int32_t seaLevel,
+                         const std::int32_t psl) {
+    const std::int32_t lambda = aquifer::lambdaLevel(seaLevel);
+    if (floodedness > aquifer::kFloodedSeaThreshold) {
+        return centre.y < lambda ? aquifer::kLavaLevel : seaLevel;
+    }
+    if (floodedness > aquifer::kFloodedLocalThreshold) {
+        const std::int32_t onLattice =
+            (aquifer::kBasePitch * aquifer::levelBand(centre.y)) + aquifer::kBasePhase;
+        return std::min(psl, onLattice + aquifer::spreadOffset(spread));
+    }
+    return kNever;
+}
+
+/// Whether any competing pair (weight > 0) on this block is mixed-type —
+/// the junctions the branch can touch at all.
+bool hasMixedPair(const aquifer::BarrierAt& at) {
+    const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
+    if (s12 <= 0.0) {
+        return false;
+    }
+    const double s13 = similarity(at.nearest.distanceSq, at.third.distanceSq);
+    const double s23 = similarity(at.second.distanceSq, at.third.distanceSq);
+    return at.nearest.type != at.second.type ||
+           (s13 > 0.0 && at.nearest.type != at.third.type) ||
+           (s23 > 0.0 && at.second.type != at.third.type);
+}
+
 struct RowTally {
     long long total = 0;
     long long other = 0;
@@ -116,6 +233,40 @@ struct RowTally {
     long long nowStone = 0;
     long long bareCategoryMatch = 0;
     long long nowCategoryMatch = 0;
+    // Q6.4's mixed-type branch: the server's real barriers against the
+    // predicate with every source typed water (OLD, the same-type formula
+    // alone) and against the committed typed predicate (NEW), on blocks
+    // where at least one competing pair is mixed-type and on the rest;
+    // then both again with the spec's own LEVELS (SPEC-LEVEL) in place of
+    // this build's.
+    long long mixedBlocks = 0;      // some competing pair is mixed-type
+    long long mixedServerStone = 0; // ... and the server wrote stone
+    long long mixedOldMiss = 0;     // server stone, old says no
+    long long mixedNewMiss = 0;     // server stone, new says no
+    long long mixedOldFalse = 0;    // old says stone, server no
+    long long mixedNewFalse = 0;    // new says stone, server no
+    long long mixedSpecOldMiss = 0; // the same four, at the spec's levels
+    long long mixedSpecNewMiss = 0;
+    long long mixedSpecOldFalse = 0;
+    long long mixedSpecNewFalse = 0;
+    long long pureServerStone = 0; // no mixed pair: server stone ...
+    long long pureNewMiss = 0;     // ... the predicate misses (old == new here)
+    long long pureNewFalse = 0;
+    long long pureSpecNewMiss = 0;
+    long long pureSpecNewFalse = 0;
+    // The refuted type-field reading, as a 2x2 on the nearest pair where
+    // it is mixed and disagrees at y: the constant's verdict against the
+    // formula's, with the server's stone in each cell.
+    long long tfBlocks = 0;
+    long long tfConstantOnly = 0; // the constant would fire, the formula does not
+    long long tfConstantOnlyServerStone = 0;
+    long long tfFormulaOnly = 0; // the formula fires, the constant would not
+    long long tfFormulaOnlyServerStone = 0;
+    // The refuted types-regardless reading: a mixed pair both reading AIR
+    // that the constant alone would carry, where the committed predicate
+    // says no stone.
+    long long altBothAir = 0;
+    long long altBothAirServerStone = 0;
     // Fluid TYPE, where the server says fluid and the build agrees.
     long long bareBothFluid = 0;
     long long bareTypeMatch = 0;
@@ -182,6 +333,29 @@ void report(const std::string& dim, std::int32_t y, std::int32_t lambda, const R
                     t.belowSeaWaterUnexplained);
     }
     std::printf("\n");
+    if (t.mixedBlocks > 0 || t.observedStone > 0) {
+        std::printf("      Q6.4 mixed-pair blocks=%lld server-stone=%lld  real-barrier misses: "
+                    "old=%lld (%.1f%%) new=%lld (%.1f%%)  false stone: old=%lld new=%lld"
+                    "  | pure: server-stone=%lld misses=%lld (%.1f%%) false=%lld\n",
+                    t.mixedBlocks, t.mixedServerStone, t.mixedOldMiss,
+                    pct(t.mixedOldMiss, t.mixedServerStone), t.mixedNewMiss,
+                    pct(t.mixedNewMiss, t.mixedServerStone), t.mixedOldFalse, t.mixedNewFalse,
+                    t.pureServerStone, t.pureNewMiss, pct(t.pureNewMiss, t.pureServerStone),
+                    t.pureNewFalse);
+        std::printf("      Q6.4 at the SPEC's levels (never for dry, ladder unclamped): mixed "
+                    "misses old=%lld new=%lld (%.1f%%) false old=%lld new=%lld  | pure "
+                    "misses=%lld (%.1f%%) false=%lld\n",
+                    t.mixedSpecOldMiss, t.mixedSpecNewMiss,
+                    pct(t.mixedSpecNewMiss, t.mixedServerStone), t.mixedSpecOldFalse,
+                    t.mixedSpecNewFalse, t.pureSpecNewMiss,
+                    pct(t.pureSpecNewMiss, t.pureServerStone), t.pureSpecNewFalse);
+        std::printf("      Q6.4 refuted readings: type-field (nearest pair mixed, disagreeing) "
+                    "n=%lld constant-only=%lld server-stone=%lld formula-only=%lld "
+                    "server-stone=%lld  | types-regardless (both air, D + w*2 > 0) n=%lld "
+                    "server-stone=%lld\n",
+                    t.tfBlocks, t.tfConstantOnly, t.tfConstantOnlyServerStone, t.tfFormulaOnly,
+                    t.tfFormulaOnlyServerStone, t.altBothAir, t.altBothAirServerStone);
+    }
 }
 
 std::vector<Dimension> readSpec(const std::filesystem::path& specPath) {
@@ -284,7 +458,7 @@ int main(int argc, char** argv) {
 
         std::printf("=== %s (D=%.2f, sea_level=%d, lambda=%d, min_y=%d) ===\n", dim.name.c_str(),
                     dim.density, dim.seaLevel, lambda, dim.minY);
-        aquifer::LevelCache levelCache;
+        aquifer::StatusCache statusCache;
         int dumped = 0;
         const auto file = region::RegionFile::open(regionPath);
         for (std::int32_t cz = 0; cz < 8; ++cz) {
@@ -317,49 +491,80 @@ int main(int argc, char** argv) {
                                                               .density = dim.density,
                                                               .seaLevel = dim.seaLevel};
                             const aquifer::SubstanceAt now =
-                                aquifer::computeSubstance(centres, query, levelCache, barrierAt,
+                                aquifer::computeSubstance(centres, query, statusCache, barrierAt,
                                                           floodednessAt, spreadAt, lavaAt, pslAt);
 
-                            // THE BARE FALL-THROUGH: rank, level, barrier,
+                            // THE BARE FALL-THROUGH: rank, status, barrier,
                             // nearest reading — the same pieces, no Q6.3 and
                             // no Q2.4 in front of them.
                             const aquifer::Selection selection =
                                 aquifer::selectSources(centres, x, y, z);
                             std::array<std::int32_t, 3> level{};
+                            std::array<std::int32_t, 3> specLevel{};
+                            std::array<aquifer::FluidType, 3> type{};
                             for (std::size_t r = 0; r < 3; ++r) {
                                 const auto& src = selection.ranked[r];
                                 const aquifer::SamplePos fp =
                                     aquifer::floodednessSample(src.centre);
                                 const aquifer::SamplePos sp =
                                     aquifer::spreadSample(src.cell, src.centre);
+                                const double f = floodednessAt(fp.x, fp.y, fp.z);
+                                const double s = spreadAt(sp.x, sp.y, sp.z);
                                 const aquifer::CellFluid cell{.centreY = src.centre.y,
                                                               .surface = surface,
                                                               .seaLevel = dim.seaLevel,
-                                                              .floodedness =
-                                                                  floodednessAt(fp.x, fp.y, fp.z),
-                                                              .spread = spreadAt(sp.x, sp.y, sp.z)};
+                                                              .floodedness = f,
+                                                              .spread = s};
                                 level[r] = aquifer::cellFluidLevel(cell);
+                                specLevel[r] =
+                                    specLevelOf(src.centre, f, s, dim.seaLevel,
+                                                static_cast<std::int32_t>(std::floor(dim.psl)));
+                                const aquifer::SamplePos lp = aquifer::lavaSample(src.centre);
+                                type[r] = aquifer::fluidTypeOf(
+                                    aquifer::FluidTypeAt{.centreY = src.centre.y,
+                                                         .level = level[r],
+                                                         .seaLevel = dim.seaLevel,
+                                                         .lava = lavaAt(lp.x, lp.y, lp.z)});
                             }
                             aquifer::BarrierAt at;
                             at.y = y;
                             at.density = dim.density;
-                            at.nearest = aquifer::BarrierSource{
-                                .level = level[0], .distanceSq = selection.ranked[0].distanceSq};
-                            at.second = aquifer::BarrierSource{
-                                .level = level[1], .distanceSq = selection.ranked[1].distanceSq};
-                            at.third = aquifer::BarrierSource{
-                                .level = level[2], .distanceSq = selection.ranked[2].distanceSq};
+                            at.nearest =
+                                aquifer::BarrierSource{.level = level[0],
+                                                       .distanceSq = selection.ranked[0].distanceSq,
+                                                       .type = type[0]};
+                            at.second =
+                                aquifer::BarrierSource{.level = level[1],
+                                                       .distanceSq = selection.ranked[1].distanceSq,
+                                                       .type = type[1]};
+                            at.third =
+                                aquifer::BarrierSource{.level = level[2],
+                                                       .distanceSq = selection.ranked[2].distanceSq,
+                                                       .type = type[2]};
                             at.barrier = barrierAt(x, y, z);
+                            // The predicate as it was before Q6.4's first
+                            // clause: every source water-typed, so Π is the
+                            // level formula for every pair and no agreeing
+                            // pair ever fires.
+                            const auto allWater = [](aquifer::BarrierAt copy) {
+                                copy.nearest.type = aquifer::FluidType::Default;
+                                copy.second.type = aquifer::FluidType::Default;
+                                copy.third.type = aquifer::FluidType::Default;
+                                return copy;
+                            };
+                            const bool oldStone = aquifer::placesBarrier(allWater(at));
+                            const bool typedStone = aquifer::placesBarrier(at);
+                            // The same two, at the spec's own levels.
+                            aquifer::BarrierAt specAt = at;
+                            specAt.nearest.level = specLevel[0];
+                            specAt.second.level = specLevel[1];
+                            specAt.third.level = specLevel[2];
+                            const bool specOldStone = aquifer::placesBarrier(allWater(specAt));
+                            const bool specNewStone = aquifer::placesBarrier(specAt);
                             const bool nearestFluid = y < level[0];
-                            const aquifer::CellIndex& nc = selection.ranked[0].centre;
-                            const aquifer::SamplePos lp = aquifer::lavaSample(nc);
-                            const aquifer::FluidType nearestType = aquifer::fluidTypeOf(
-                                aquifer::FluidTypeAt{.centreY = nc.y,
-                                                     .level = level[0],
-                                                     .seaLevel = dim.seaLevel,
-                                                     .lava = lavaAt(lp.x, lp.y, lp.z)});
+                            const aquifer::FluidType nearestType = type[0];
                             aquifer::SubstanceAt bare;
-                            if (aquifer::placesBarrier(at)) {
+                            if (typedStone) {
                                 bare = aquifer::SubstanceAt{.substance = aquifer::Substance::Solid};
                             } else if (nearestFluid) {
                                 bare = aquifer::SubstanceAt{.substance = aquifer::Substance::Fluid,
@@ -475,6 +680,50 @@ int main(int argc, char** argv) {
                             if (nearestFluid && nearestType == aquifer::FluidType::Lava) {
                                 ++t.nearestLava;
                                 t.nearestLavaObservedStone += obsStone;
+                            }
+
+                            // Q6.4: scored on the rows the lattice owns
+                            // (Q2.4 answers everything below lambda without
+                            // a barrier), and off the one row Q6.3 pre-empts
+                            // the predicate on — where the predicate's own
+                            // answer is not what the server was asked.
+                            const bool q63Row =
+                                y == lambda && nearestWater; // the exception fires
+                            if (y >= lambda && !q63Row && observed != Observed::Other) {
+                                if (hasMixedPair(at)) {
+                                    ++t.mixedBlocks;
+                                    t.mixedServerStone += obsStone;
+                                    t.mixedOldMiss += (obsStone && !oldStone);
+                                    t.mixedNewMiss += (obsStone && !typedStone);
+                                    t.mixedOldFalse += (!obsStone && oldStone);
+                                    t.mixedNewFalse += (!obsStone && typedStone);
+                                    t.mixedSpecOldMiss += (obsStone && !specOldStone);
+                                    t.mixedSpecNewMiss += (obsStone && !specNewStone);
+                                    t.mixedSpecOldFalse += (!obsStone && specOldStone);
+                                    t.mixedSpecNewFalse += (!obsStone && specNewStone);
+                                } else {
+                                    t.pureServerStone += obsStone;
+                                    t.pureNewMiss += (obsStone && !typedStone);
+                                    t.pureNewFalse += (!obsStone && typedStone);
+                                    t.pureSpecNewMiss += (obsStone && !specNewStone);
+                                    t.pureSpecNewFalse += (!obsStone && specNewStone);
+                                }
+                                const NearestPairMixedDisagreeing tf = nearestPairTypeField(at);
+                                if (tf.applies) {
+                                    ++t.tfBlocks;
+                                    if (tf.constantFires && !oldStone) {
+                                        ++t.tfConstantOnly;
+                                        t.tfConstantOnlyServerStone += obsStone;
+                                    }
+                                    if (!tf.constantFires && oldStone) {
+                                        ++t.tfFormulaOnly;
+                                        t.tfFormulaOnlyServerStone += obsStone;
+                                    }
+                                }
+                                if (!typedStone && bothAirMixedWouldFire(at)) {
+                                    ++t.altBothAir;
+                                    t.altBothAirServerStone += obsStone;
+                                }
                             }
                         }
                     }

@@ -39,21 +39,62 @@
 //      block data, landed 0/1,646,376+1,645,918 mismatches across both
 //      seeds.
 //
+// THE MIXED-TYPE BRANCH (Q6.4's first clause, `Π = 2.0` "if one reads lava
+// and the other water") IS MEASURED, and the measurement chose between
+// three readings of that sentence rather than confirming one. Every
+// barrier probe before `aquifer-waterlava-probe.sh` held `lava` at a
+// constant on purpose; its `sea_level` -70 arm is the first world where
+// lava-typed sources (centred below lambda) compete with water-typed ones
+// on rows the lattice owns, and `vanilla_aquifer_waterlava_test.cpp` scores
+// it on three seeds, calling THIS predicate twice per block — as typed, and
+// with every source retyped water, which is the predicate exactly as it was
+// before the branch:
+//
+//   * "Reads" means what each source READS AT `y`: the constant applies
+//     where BOTH read fluid and the fluids differ — a lava body meeting a
+//     water body — and a pair that disagrees at `y` (one fluid, one air)
+//     takes the level formula WHATEVER its types. Pooled over the rows the
+//     lattice owns, the retyped predicate misses 1698 of the server's real
+//     barriers in mixed junctions and this one 590 (1240 -> 330 on the rows
+//     above the sea alone); every one of the 1108 blocks the constant adds
+//     is server stone; neither predicate writes a block of stone the server
+//     does not (0 / 0). Where no pair is mixed the two are the same
+//     function (293 / 293 misses, 0 false).
+//   * Comparing the two TYPE FIELDS behind the disagree guard — the reading
+//     a first implementation here took — makes every row WORSE: on the
+//     nearest pair, where the constant alone would fire, the server has
+//     stone on 0 of 33 blocks; where the formula fires and the constant
+//     would not, on 252 of 252. Refuted.
+//   * The types differing REGARDLESS of readings — stone between two
+//     DRAINED cells of different type — fills blocks the server leaves
+//     open on 99.5-100% of them (0-4 stone of 424-1145 per row). Refuted.
+//
+// The 590 that remain are not a type question. This build reports a dry
+// source as `level = lambda` where the clean-room spec's is `never`
+// (-32512), and clamps a ladder that falls below lambda up to it; on the
+// rows 0-3 above the sea that puts a plane right under the block that the
+// spec does not have, on the `h <= 0` side of Π where the divisors are
+// 3/10 instead of 1.5/2.5. `aquifer-waterlava-analyze.cpp` re-scores the
+// same blocks at the spec's levels: 0 misses and 0 false stone on rows
+// lambda+1..+3 on all three seeds (row lambda keeps 18 / 17 / 0). That is
+// `cellFluidLevel`'s contract to change, not this predicate's — PROGRESS.md
+// names it as the next slice.
+//
 // STILL UNMEASURED, and marked rather than guessed: the pressure function's
 // fourth divisor (10, for `3 + t <= 0` — the "near-air-far" branch). It is
 // not what the residual above comes from — across both barrier-probe seeds
 // it was never once reached by a real third-source pair, residual or
 // otherwise, so there is no case to measure it against. It is implemented as
 // the clean-room spec states, structurally inert until a configuration that
-// exercises it is found. Also unmeasured: the mixed-fluid-type branch
-// (`Π = 2.0` when one source reads lava and the other water) — this
-// project's own barrier probes hold `lava` at a constant specifically to
-// keep that question separate. Q6.3's water-over-lava exception is NOT this
+// exercises it is found. Q6.3's water-over-lava exception is NOT this
 // predicate's to implement and no longer a gap: it sits in front of it, in
 // substance.hpp's `computeSubstance`, measured on the server (0 of 3320
 // blocks it applies to are stone; the bare predicate alone would have
-// written 134 of them).
+// written 134 of them, and 373 now that the constant is in it — the
+// exception's precedence over Q6.6 holds against the new term too).
 #pragma once
+
+#include <stratum/aquifer/fluid_type.hpp>
 
 #include <cstdint>
 
@@ -73,8 +114,18 @@ inline constexpr std::int32_t kSimilarityRange = 25;
 inline constexpr std::int32_t kBarrierReachAbove = 2; ///< on the air side, u <= 2
 inline constexpr std::int32_t kBarrierReachBelow = 3; ///< on the fluid side, v <= 3
 
+/// Q6.4's pressure where two sources BOTH read fluid at the block and the
+/// two fluids differ — a lava body against a water body: a constant, with
+/// no level arithmetic and no `barrier` noise behind it. At `D = -1` it
+/// fires exactly when the pair's weight exceeds 0.5 — a squared-distance
+/// separation under 12.5 — whatever the two levels are and whatever the
+/// router says.
+inline constexpr double kMixedTypePressure = 2.0;
+
 /// One of the three sources the barrier predicate weighs against a block,
-/// ranked by distance (selection.hpp: `Selection::ranked[0..2]`).
+/// ranked by distance (selection.hpp: `Selection::ranked[0..2]`). The
+/// clean-room spec's status `A = (L, T)`, plus the distance the similarity
+/// weighs it by.
 struct BarrierSource {
     /// The source's fluid level, from `cellFluidLevel`. A source's fluid
     /// occupies `y < level`.
@@ -83,6 +134,13 @@ struct BarrierSource {
     /// The squared euclidean distance from the block's INTEGER position to
     /// this source's jittered centre.
     std::int64_t distanceSq = 0;
+
+    /// The source's fluid TYPE, from `fluidTypeOf`. Read only where the
+    /// source reads fluid at the block's own `y` (Q6.4's first clause is
+    /// about what each source READS there — this file's header has the
+    /// measurement), but carried for every ranked source because which one
+    /// that is depends on the block.
+    FluidType type = FluidType::Default;
 };
 
 /// One block, weighed against its three nearest aquifer sources.
@@ -113,12 +171,12 @@ struct BarrierAt {
 /// (`s23 > 0` and `D + s12*s23*Π(A2,A3) > 0`) — spec/aquifer-spec.md Q6.6,
 /// with `s_ij = 1 - (dj-di)/25` on squared distances and `Π` per Q6.4. `s12
 /// <= 0` short-circuits to false outright (Q6.2: the nearest point wins,
-/// no barrier evaluation at all) before any term is tried. Each term ALSO
-/// requires its own pair to actually disagree at `y` — the only regime this
-/// project has validated `Π` against real data in (this file's own header);
-/// applying it to a pair that agrees at `y` is unvalidated extrapolation this
-/// function deliberately does not make, and such a term simply does not
-/// fire.
+/// no barrier evaluation at all) before any term is tried. What a term
+/// does then depends on what its pair READS at `y`: one fluid and one air
+/// takes the level formula, whatever the two types; both fluid of
+/// DIFFERENT types takes the constant `kMixedTypePressure`; both air, or
+/// both the same fluid, does not fire at all. Each of those is measured
+/// separately against the server (this file's own header).
 [[nodiscard]] bool placesBarrier(const BarrierAt& at) noexcept;
 
 } // namespace stratum::aquifer

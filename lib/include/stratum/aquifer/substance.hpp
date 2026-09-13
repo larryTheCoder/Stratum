@@ -24,27 +24,30 @@
 //     answered — a nearest source reading water is water outright, no
 //     barrier. Measured where the row HAS water sources (sea_level -70):
 //     the bare logic wrote stone on 14 / 50 / 70 of the 278 / 1102 / 1940
-//     blocks it applies to, the server on 0 of 3320; one row up the two
-//     decisions agree on every block; and a nearest source reading AIR on
-//     the same row still gets the server's barriers (93 / 239 / 244), so
-//     the asymmetry is real. On the shipped sea (63) the exception's
+//     blocks it applies to (19 / 176 / 178 once Q6.4's constant is in the
+//     predicate), the server on 0 of 3320; one row up the two decisions
+//     agree on every block; and a nearest source reading AIR on the same
+//     row still gets the server's barriers (93 / 239 / 244), so the
+//     asymmetry is real. On the shipped sea (63) the exception's
 //     population is EMPTY on three seeds — no source reads water at y = -54
 //     at all (its ladder sits at -60 plus a multiple of 3, so it needs a
 //     spread of 0.9 or a sea-gated source within five blocks of the sea),
 //     and both the server and this build write 0 stone on that row. Real,
 //     but in vanilla's own overworld close to unreachable.
+//   * Q6.4's mixed-type branch, measured on the same worlds and landed in
+//     `placesBarrier` (barrier.hpp's own header has the numbers and the
+//     two readings it refuted): every ranked source is TYPED here, whether
+//     or not it reads fluid at the block, and a lava body meeting a water
+//     body is walled off with a constant. In mixed junctions the server's
+//     real barriers missed fall from 1698 to 590 pooled over three seeds,
+//     with 0 false stone before and after.
 //
-// ONE GAP IS STILL CARRIED HERE RATHER THAN GUESSED (barrier.hpp's own
-// header has the numbers): Pi's mixed-fluid-type branch (`= 2.0` when the
-// two competing sources read different fluid types) — `placesBarrier`'s Pi
-// only knows the same-type, level-difference formula, so a junction between
-// a water body and a lava body is decided as though both were the nearest
-// source's own type. Every barrier probe this project has run holds `lava`
-// at a constant specifically to keep that question out of scope; the
-// sea_level -70 arm above, where lava-typed sources crowd the rows just
-// above the sea, is the first world to show its size — the server writes
-// 27-45% more barriers there than this predicate does, all of it in
-// junctions with a lava-typed source.
+// WHAT THE SAME WORLDS LEAVE OPEN is the LEVEL a source carries below
+// lambda, not a barrier question: `cellFluidLevel` reports a dry source as
+// `lambda` (the spec's `never` is -32512) and clamps a ladder below lambda
+// up to it, and re-scoring the same blocks at the spec's levels closes the
+// 590 to 0 on the rows above the sea. Named in PROGRESS.md as the next
+// slice; it is that function's contract to change.
 #pragma once
 
 #include <stratum/aquifer/barrier.hpp>
@@ -88,18 +91,40 @@ struct AquiferQuery {
     std::int32_t seaLevel = 0;
 };
 
+/// One source's status — the clean-room spec's `A = (L, T)`: the level its
+/// fluid tops out at (`cellFluidLevel`) and which fluid that is
+/// (`fluidTypeOf`). Both are functions of the source's own centre alone.
+struct SourceStatus {
+    std::int32_t level = 0;
+    FluidType type = FluidType::Default;
+};
+
 namespace detail {
 
-/// One ranked candidate's own fluid level — its own `preliminary_surface_level`
-/// scan, its own `fluid_level_floodedness` (read at its centre, verbatim,
-/// per `floodednessSample`) and its own `fluid_level_spread` (read at
-/// CONTRACTED lattice indices, per `spreadSample`). Three of these are
-/// computed per block (the fourth-ranked source never reaches the substance
-/// decision — selection.hpp).
-template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler>
-[[nodiscard]] std::int32_t rankedLevelOf(const Source& ranked, const std::int32_t seaLevel,
-                                         PslSampler&& psl, FloodednessSampler&& floodedness,
-                                         SpreadSampler&& spread) {
+/// One ranked candidate's own status. The LEVEL is its own
+/// `preliminary_surface_level` scan, its own `fluid_level_floodedness` (read
+/// at its centre, verbatim, per `floodednessSample`) and its own
+/// `fluid_level_spread` (read at CONTRACTED lattice indices, per
+/// `spreadSample`); the TYPE is that level plus its own `lava` (read at
+/// `lavaSample`'s contracted indices). Three of these are computed per block
+/// (the fourth-ranked source never reaches the substance decision —
+/// selection.hpp), and every one of the three is TYPED whether or not it
+/// reads fluid at the block: Π compares the statuses' types (Q6.4), the same
+/// way `placesBarrier` compares their levels.
+///
+/// ONE PIECE OF Q5.8 IS NOT REPRESENTABLE HERE, and is named rather than
+/// hidden: the spec exempts a DRY source (`L = never`) from the lava
+/// override, but `cellFluidLevel` reports a dry source as `level = lambda`
+/// — indistinguishable from a wet source whose ladder clamped there — so a
+/// dry source under a `|lava| > 0.3` cell is typed lava. Unobservable in
+/// every world this project has measured Π on (`lava` is a constant 0.0 in
+/// all of them); it only ever reaches a decision through Π, and only at a
+/// separation Π is marginal at. Carried as a known gap, not guessed at.
+template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+         typename LavaSampler>
+[[nodiscard]] SourceStatus rankedStatusOf(const Source& ranked, const std::int32_t seaLevel,
+                                          PslSampler&& psl, FloodednessSampler&& floodedness,
+                                          SpreadSampler&& spread, LavaSampler&& lava) {
     const PslRead surface = readPreliminarySurface(psl, ranked.centre, seaLevel);
     const SamplePos floodPos = floodednessSample(ranked.centre);
     const double f = floodedness(floodPos.x, floodPos.y, floodPos.z);
@@ -110,38 +135,47 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
                          .seaLevel = seaLevel,
                          .floodedness = f,
                          .spread = s};
-    return cellFluidLevel(cell);
+    const std::int32_t level = cellFluidLevel(cell);
+    const SamplePos lavaPos = lavaSample(ranked.centre);
+    const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
+    const FluidType type = fluidTypeOf(FluidTypeAt{
+        .centreY = ranked.centre.y, .level = level, .seaLevel = seaLevel, .lava = lavaValue});
+    return SourceStatus{.level = level, .type = type};
 }
 
 } // namespace detail
 
-/// Memoizes a cell centre's own fluid level across one `fill()` call.
-/// `detail::rankedLevelOf`'s expensive part — a `preliminary_surface_level`
+/// Memoizes a cell centre's own status across one `fill()` call.
+/// `detail::rankedStatusOf`'s expensive part — a `preliminary_surface_level`
 /// scan of up to fourteen positions — is the SAME every time the SAME
 /// centre wins a rank, and a chunk touches dozens of distinct centres, not
 /// thousands of blocks' worth of them: measured, caching here is the
 /// difference between minutes and well under a second a chunk (matching the
 /// same shape of fix `ChunkFiller::applySurfaceRules`'s own biome cache
-/// already uses this file's caller for).
-class LevelCache {
+/// already uses this file's caller for). The type rides along for the same
+/// reason in miniature: it is one more router read per centre, and it is
+/// now needed for all three ranked sources on every block rather than for
+/// the nearest wet one alone.
+class StatusCache {
 public:
-    template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler>
-    [[nodiscard]] std::int32_t levelOf(const Source& ranked, const std::int32_t seaLevel,
-                                       PslSampler&& psl, FloodednessSampler&& floodedness,
-                                       SpreadSampler&& spread) {
+    template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+             typename LavaSampler>
+    [[nodiscard]] SourceStatus statusOf(const Source& ranked, const std::int32_t seaLevel,
+                                        PslSampler&& psl, FloodednessSampler&& floodedness,
+                                        SpreadSampler&& spread, LavaSampler&& lava) {
         const auto key = std::make_tuple(ranked.centre.x, ranked.centre.y, ranked.centre.z);
         const auto found = cache_.find(key);
         if (found != cache_.end()) {
             return found->second;
         }
-        const std::int32_t level =
-            detail::rankedLevelOf(ranked, seaLevel, psl, floodedness, spread);
-        cache_.emplace(key, level);
-        return level;
+        const SourceStatus status =
+            detail::rankedStatusOf(ranked, seaLevel, psl, floodedness, spread, lava);
+        cache_.emplace(key, status);
+        return status;
     }
 
 private:
-    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::int32_t> cache_;
+    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, SourceStatus> cache_;
 };
 
 /// Q1.2's global picker, reduced to the one question the substance decision
@@ -180,9 +214,9 @@ private:
 /// clean-room spec/aquifer-spec.md, and SPEC §11's own measurements of each
 /// piece), in the spec's own order: the global lava sea first (Q2.4), then
 /// rank the four nearest sources and read each of the three nearest ones'
-/// own fluid level, then the water-over-lava exception (Q6.3), then the
-/// barrier (Q6.2-Q6.6), and finally the nearest source's own reading — and,
-/// where that reading is fluid, its type.
+/// own status — level AND type — then the water-over-lava exception (Q6.3),
+/// then the barrier (Q6.2-Q6.6, with Π reading the three types), and finally
+/// the nearest source's own reading.
 ///
 /// Each sampler is called as `double(std::int32_t x, std::int32_t y,
 /// std::int32_t z)` at the position its own router entry reads at
@@ -193,11 +227,11 @@ private:
 ///
 /// @p cache belongs to the caller, the same way `CornerCache` does — reused
 /// across an entire `fill()` call (or more), never across a different world
-/// or seed. See `LevelCache`'s own doc for why one is needed at all.
+/// or seed. See `StatusCache`'s own doc for why one is needed at all.
 template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSampler,
          typename LavaSampler, typename PslSampler>
 [[nodiscard]] SubstanceAt computeSubstance(const CentreSource& centres, const AquiferQuery& query,
-                                           LevelCache& cache, BarrierSampler&& barrier,
+                                           StatusCache& cache, BarrierSampler&& barrier,
                                            FloodednessSampler&& floodedness, SpreadSampler&& spread,
                                            LavaSampler&& lava, PslSampler&& psl) {
     // Q2.4: below the global lava sea the lattice is never consulted — the
@@ -209,38 +243,34 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
 
     const Selection selection = selectSources(centres, query.x, query.y, query.z);
 
-    std::array<std::int32_t, 3> level{};
+    // All three statuses, typed unconditionally: Π needs the type of a
+    // source that reads AIR at this block as much as of one that reads fluid
+    // (barrier.hpp).
+    std::array<SourceStatus, 3> status{};
     for (std::size_t r = 0; r < 3; ++r) {
-        level[r] = cache.levelOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread);
+        status[r] =
+            cache.statusOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread, lava);
     }
 
-    // The nearest source's own reading at this height, and — only where
-    // that reading is fluid — its type. Computed ONCE, here, because Q6.3
-    // needs it before the barrier and the fall-through needs it after.
-    const bool nearestReadsFluid = query.y < level[0];
-    FluidType nearestType = FluidType::Default;
-    if (nearestReadsFluid) {
-        const CellIndex& nearestCentre = selection.ranked[0].centre;
-        const SamplePos lavaPos = lavaSample(nearestCentre);
-        const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
-        nearestType = fluidTypeOf(FluidTypeAt{.centreY = nearestCentre.y,
-                                              .level = level[0],
-                                              .seaLevel = query.seaLevel,
-                                              .lava = lavaValue});
-        // Q6.3: water resting on the global lava sea is water, and no
-        // barrier is even considered — the `barrier` noise is not read.
-        if (waterOverLava(query.y, query.seaLevel, level[0], nearestType)) {
-            return SubstanceAt{.substance = Substance::Fluid, .fluidType = nearestType};
-        }
+    // Q6.3: water resting on the global lava sea is water, and no barrier
+    // is even considered — the `barrier` noise is not read.
+    const bool nearestReadsFluid = query.y < status[0].level;
+    if (waterOverLava(query.y, query.seaLevel, status[0].level, status[0].type)) {
+        return SubstanceAt{.substance = Substance::Fluid, .fluidType = status[0].type};
     }
 
     const double barrierNoise = barrier(query.x, query.y, query.z);
+    const auto asBarrierSource = [&](const std::size_t r) {
+        return BarrierSource{.level = status[r].level,
+                             .distanceSq = selection.ranked[r].distanceSq,
+                             .type = status[r].type};
+    };
     const BarrierAt at{
         .y = query.y,
         .density = query.density,
-        .nearest = BarrierSource{.level = level[0], .distanceSq = selection.ranked[0].distanceSq},
-        .second = BarrierSource{.level = level[1], .distanceSq = selection.ranked[1].distanceSq},
-        .third = BarrierSource{.level = level[2], .distanceSq = selection.ranked[2].distanceSq},
+        .nearest = asBarrierSource(0),
+        .second = asBarrierSource(1),
+        .third = asBarrierSource(2),
         .barrier = barrierNoise,
     };
     if (placesBarrier(at)) {
@@ -252,7 +282,7 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
     if (!nearestReadsFluid) {
         return SubstanceAt{.substance = Substance::Air};
     }
-    return SubstanceAt{.substance = Substance::Fluid, .fluidType = nearestType};
+    return SubstanceAt{.substance = Substance::Fluid, .fluidType = status[0].type};
 }
 
 } // namespace stratum::aquifer
