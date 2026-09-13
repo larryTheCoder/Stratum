@@ -84,7 +84,6 @@ template<typename Type, typename Naming>
             return nlohmann::json::array({sampleFor(field.elementKind, field)});
     }
     FAIL("no sample for this field kind");
-    return {};
 }
 
 /// An object of @p typeName carrying every field @p fields declares.
