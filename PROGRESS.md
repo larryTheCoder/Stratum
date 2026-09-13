@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-13 (the aquifer's mixed-type Π).
+Last swept: 2026-09-13 (M5 started: biome mapping).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-13 (the aquifer's mixed-type Π).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Not started |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -165,10 +165,41 @@ Open:
 
 ## M5 — Integration
 
-Not started. `lib/mapping/` (Java → Bedrock block/biome mapping) and `ext/`
-(the PocketMine-MP zend binding — the actual point of this project) are
-both empty stubs by design, waiting on this milestone. Also unstarted:
-chunkutils2 output, the PMMP world-load path, the performance pass.
+Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
+project) is still an empty stub, waiting on block state mapping below.
+Also unstarted: chunkutils2 output, the PMMP world-load path, the
+performance pass.
+
+- [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
+      (`stratum_mapping`) now, downstream of the conformance boundary by
+      construction: `stratum_core` does not link it. `tools/mapping-sync`
+      generates `lib/mapping/src/biome_table.inc` from GeyserMC/mappings
+      (MIT) at a pinned commit; `bedrockBiomeId()` resolves all 65 vanilla
+      biomes at 1.21.11. The version gap (GeyserMC has no branch for
+      exactly 1.21.11; pinned to `feature/1.21.9`) was measured, not
+      assumed away — see SPEC.md's M5 entry for the block-registry and
+      biome-registry diff between the two versions, both identical.
+- [ ] **The "nearest vanilla Bedrock biome" fallback**, for custom/datapack
+      biomes outside the table. `bedrockBiomeId()` returns nothing rather
+      than a placeholder default (see the function's own header for why a
+      fixed fallback was rejected). Needs a similarity search over biome
+      climate parameters this library does not have yet — plausibly built
+      on the same `biome::ParameterList`/climate-distance machinery M4's
+      biome source already uses, unexplored so far.
+- [ ] **Block state mapping — not started; the data source is the open
+      decision, not the mapping shape.** Two candidates were checked
+      directly (SPEC.md's M5 entry has the detail):
+      - GeyserMC/mappings' `blocks.nbt` is a sparse diff keyed by Java block
+        state ordinal, resolved only by logic documented in GeyserMC's
+        `mappings-generator` (MIT, permitted, not yet read for this).
+      - PMMP's own `VanillaBlockMappings.php` is the more direct source —
+        it targets exactly what `ext/` needs to match — but is executable
+        PHP registration code, not data. Extracting it needs either a PHP
+        parse (fragile) or a real PMMP runtime to execute it against
+        (heavier setup, no parsing risk).
+      Whichever is chosen, unmappable states are meant to resolve through
+      an explicit, configurable fallback table (SPEC §9) — never a crash,
+      never a silent stone substitution without a log.
 
 ## M6 (v2) — Staged features
 

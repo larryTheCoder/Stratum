@@ -303,7 +303,8 @@ default stays permissive, and the question stays open.
 
 ## 9. Bedrock mapping layer
 
-Its own component (`lib/mapping/`), its own tests:
+Its own component (`lib/mapping/`), its own tests, its own CMake target —
+`stratum_core` never links it (§11 has the started/open breakdown):
 
 - Java block state → Bedrock runtime state, built from maintained mapping
   data (GeyserMC mappings / pmmp upgrade schemas as reference inputs).
@@ -3891,6 +3892,67 @@ Open:
   is a different matter and is implemented literally: it relocates the
   sample to the corner of the 4x4 column at y = 0, which changes the value
   at every block that is not on a corner.
+
+- **M5 started: biome mapping landed, block state mapping's source is the
+  open question.** `lib/mapping/` was empty by design until this; it is now
+  a real CMake target (`stratum_mapping`) `stratum_core` does not link,
+  matching §9's "downstream of the conformance boundary" rule structurally
+  rather than only by convention.
+
+  *Biome mapping (§9's second bullet), landed.* `tools/mapping-sync` fetches
+  GeyserMC/mappings (MIT) at a pinned commit and generates
+  `lib/mapping/src/biome_table.inc`, a flat Java-id-to-Bedrock-numeric-id
+  table `bedrockBiomeId()` reads. All 65 vanilla biomes at the pinned
+  version resolve, checked two ways: the generator itself refuses to write
+  a table missing one of this build's own fetched `worldgen/biome/*.json`
+  entries, and `vanilla_biome_mapping_test.cpp` makes the same check again
+  independently through the compiled loader.
+
+  *The version gap, measured rather than assumed.* GeyserMC/mappings has no
+  branch for exactly this build's pinned Java version — the closest is
+  `feature/1.21.9`. Before pinning to it, vanilla's own registries were
+  compared directly between 1.21.9 and 1.21.11: `generated/reports/
+  blocks.json` (both versions fetched, both run through `net.minecraft.
+  data.Main --reports`) has an identical block count (1166), identical
+  property definitions, identical default states and identical state
+  counts; `tools/fetch-vanilla`'s own `worldgen/biome/*.json` extraction
+  lists the same 65 biome ids at both versions. Neither registry moved
+  between the two, and this table only needs the biome one.
+
+  *Not landed: the "nearest vanilla Bedrock biome" fallback §9 also wants*,
+  for a custom or datapack biome outside the table. `bedrockBiomeId()`
+  returns nothing rather than a placeholder default — a fixed fallback
+  would look like the real feature from the outside while being a weaker
+  one, and SPEC's own "never a crash, never silent" rule for block mapping
+  applies here in spirit: an unresolved gap named is safer than one hidden
+  behind a plausible-looking answer. The real fallback needs a similarity
+  search over biome climate parameters this library does not yet have.
+
+  *Block state mapping has not started, and why is now a measured finding
+  rather than an assumption of ease.* Two candidate sources were checked
+  directly, not assumed interchangeable:
+
+  - GeyserMC/mappings' own `blocks.nbt` — which biome mapping's source repo
+    also ships — is not self-contained data. Inspected directly (decoded
+    and read through this project's own NBT reader), its `bedrock_mappings`
+    list is a sparse diff keyed by Java block state ordinal: most entries
+    are empty ("no override"), and reconstructing a full Bedrock block
+    state from a non-empty one needs the resolution logic documented only
+    in GeyserMC's `mappings-generator` tool (MIT, permitted to read; not
+    yet read for this specific schema).
+  - PMMP's own `src/data/bedrock/block/convert/VanillaBlockMappings.php` is
+    the more direct source — it is literally what `ext/`'s zend binding
+    needs to match, since PMMP's own `BlockStateData` (`{name, states,
+    version}`) is Bedrock's own blockstate NBT shape, not a PMMP-specific
+    scheme. But it is executable PHP registration code, not declarative
+    data: extracting it needs either parsing PHP source (fragile — depends
+    on reading patterns correctly rather than running real code) or
+    standing up a working PMMP runtime to execute it and dump the result
+    (heavier setup, no parsing risk).
+
+  Neither is a quick fetch-and-generate the way biome mapping was. Which
+  approach to take is an open decision, not a blocker discovered too late
+  to matter — see PROGRESS.md's M5 section for the standing options.
 
 ---
 

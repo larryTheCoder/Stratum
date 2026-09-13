@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Stratum — derive the Bedrock biome-id table from GeyserMC/mappings.
+
+SPEC section 9: biome mapping is maintained mapping data, not a hand-typed
+list. This fetches GeyserMC/mappings (MIT) at a pinned commit, reads its
+biome table, cross-checks it against every biome this build's pinned
+Minecraft version actually has, and writes the generated C++ table.
+
+GeyserMC/mappings is fetched, never vendored: the repository ships this tool
+and the generated table, not somebody else's data file.
+
+THE VERSION GAP, MEASURED RATHER THAN ASSUMED. GeyserMC/mappings has no
+branch for exactly Java 1.21.11 — the closest is `feature/1.21.9`. Before
+pinning to it, vanilla's own registries were compared between the two
+versions directly: `generated/reports/blocks.json` (both fetched, both run
+through `net.minecraft.data.Main --reports`) has an identical block count
+(1166), identical property definitions, identical default states and
+identical state counts; and `tools/fetch-vanilla`'s own
+`worldgen/biome/*.json` extraction lists the exact same 65 biome IDs at
+both versions. Neither registry moved between 1.21.9 and 1.21.11, and this
+mapping only needs the biome one. The gap is real but, for biome IDs
+specifically, has no measured effect at this pin.
+
+Usage:
+    tools/mapping-sync                 # fetch the pinned commit and regenerate
+    tools/mapping-sync --mappings <path>  # use a checkout you already have
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+# Pinned deliberately: a different commit could change the generated table,
+# and the table is what the loader validates against. This is the tip of
+# feature/1.21.9 as of this tool's writing; see this file's own header for
+# why that branch rather than a Java-1.21.11-named one.
+MAPPINGS_REPOSITORY = "https://github.com/GeyserMC/mappings.git"
+MAPPINGS_COMMIT = "7a9bfc5d09cebe08cf1fee24872426b35718c6ca"
+
+# Keep in sync with SPEC section 3 and STRATUM_MINECRAFT_VERSION.
+MINECRAFT_VERSION = "1.21.11"
+
+COMMAND = "tools/mapping-sync"
+
+
+def fetch(destination: pathlib.Path) -> pathlib.Path:
+    print(f"==> fetching GeyserMC/mappings at {MAPPINGS_COMMIT}", file=sys.stderr)
+    checkout = destination / "mappings"
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", MAPPINGS_REPOSITORY],
+                   check=True)
+    subprocess.run(["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", "origin",
+                    MAPPINGS_COMMIT], check=True)
+    subprocess.run(["git", "-C", str(checkout), "checkout", "-q", "FETCH_HEAD"], check=True)
+
+    actual = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    if actual != MAPPINGS_COMMIT:
+        raise SystemExit(f"error: expected GeyserMC/mappings {MAPPINGS_COMMIT} but got {actual}")
+    return checkout
+
+
+def _enumerator(java_id: str) -> str:
+    """`minecraft:frozen_peaks` -> `FrozenPeaks`."""
+    name = java_id.split(":", 1)[-1]
+    return "".join(part.capitalize() for part in name.split("_"))
+
+
+def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
+    source = checkout / "biomes.json"
+    if not source.is_file():
+        raise SystemExit(f"error: {source} is missing; has the mappings repo moved?")
+    biomes = json.loads(source.read_text(encoding="utf-8"))
+
+    vanilla_dir = (repository_root / ".fixtures" / MINECRAFT_VERSION / "worldgen" / "biome")
+    if not vanilla_dir.is_dir():
+        raise SystemExit(
+            f"error: {vanilla_dir} is missing; run tools/fetch-vanilla first so this tool has "
+            "something to check the mapping's coverage against")
+    vanilla_ids = sorted(f"minecraft:{path.stem}" for path in vanilla_dir.glob("*.json"))
+    if not vanilla_ids:
+        raise SystemExit(f"error: {vanilla_dir} has no biome JSON files; has fetch-vanilla run?")
+
+    missing = [java_id for java_id in vanilla_ids if java_id not in biomes]
+    if missing:
+        raise SystemExit(
+            f"error: GeyserMC/mappings at {MAPPINGS_COMMIT} has no entry for {len(missing)} "
+            f"vanilla {MINECRAFT_VERSION} biome(s): {missing}. The mapping is missing coverage "
+            "this build's own vanilla registry has — raising rather than shipping a table that "
+            "silently cannot answer for a real biome.")
+
+    entries = []
+    for java_id in vanilla_ids:
+        entry = biomes[java_id]
+        if "bedrock_id" not in entry:
+            raise SystemExit(f"error: {java_id}'s mapping entry has no \"bedrock_id\": {entry!r}")
+        bedrock_id = entry["bedrock_id"]
+        if not isinstance(bedrock_id, int):
+            raise SystemExit(f"error: {java_id}'s bedrock_id is {bedrock_id!r}, not an integer")
+        entries.append((java_id, bedrock_id))
+
+    print(f"==> {len(entries)} biome mappings at {MINECRAFT_VERSION} "
+          f"(GeyserMC/mappings {MAPPINGS_COMMIT})", file=sys.stderr)
+
+    lines = [
+        "// GENERATED FILE — DO NOT EDIT BY HAND.",
+        "//",
+        "// Derived from GeyserMC/mappings (MIT) at a pinned commit, for the pinned",
+        "// Minecraft version, as SPEC section 9 requires: biome mapping is",
+        "// maintained mapping data, not a hand-typed list.",
+        "//",
+        f"// Regenerate with: {COMMAND}",
+        "",
+        f"// Minecraft version: {MINECRAFT_VERSION}",
+        f"// GeyserMC/mappings commit: {MAPPINGS_COMMIT}",
+        "",
+        "// clang-format off",
+        "",
+        f"constexpr std::array<BiomeMapping, {len(entries)}> kBiomeTable = {{{{",
+    ]
+    for java_id, bedrock_id in entries:
+        lines.append(f'    {{.javaId = "{java_id}", .bedrockId = {bedrock_id}}},  '
+                     f'// {_enumerator(java_id)}')
+    lines.append("}};")
+    lines.append("")
+    lines.append("// clang-format on")
+
+    table_path = repository_root / "lib/mapping/src/biome_table.inc"
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    table_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"==> wrote {table_path.relative_to(repository_root)}", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--mappings", type=pathlib.Path,
+                        help="an existing GeyserMC/mappings checkout to read instead of fetching")
+    arguments = parser.parse_args()
+
+    repository_root = pathlib.Path(__file__).resolve().parent.parent
+
+    if arguments.mappings is not None:
+        generate(arguments.mappings, repository_root)
+        return
+
+    with tempfile.TemporaryDirectory() as directory:
+        generate(fetch(pathlib.Path(directory)), repository_root)
+
+
+if __name__ == "__main__":
+    main()

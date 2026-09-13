@@ -22,6 +22,7 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    mapping_biome_test.cpp
     md5_test.cpp
     nbt_test.cpp
     nbt_writer_test.cpp
@@ -48,6 +49,7 @@ target_include_directories(stratum_unit_tests PRIVATE
 
 target_link_libraries(stratum_unit_tests PRIVATE
     stratum::core
+    stratum::mapping
     Catch2::Catch2WithMain
     ZLIB::ZLIB
 )

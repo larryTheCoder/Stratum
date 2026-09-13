@@ -97,6 +97,7 @@ target_link_libraries(stratum_core
 
 stratum_configure_target(stratum_core)
 
-# lib/mapping/ (Java -> Bedrock state and biome mapping) is Milestone M5 and
-# has no sources yet; it will be added here as its own target with its own
-# tests, deliberately downstream of the conformance boundary (SPEC 9).
+# lib/mapping/ (Java -> Bedrock state and biome mapping) is Milestone M5
+# (SPEC 9), its own target with its own tests, deliberately downstream of the
+# conformance boundary: stratum_core never links it, only the reverse.
+add_subdirectory(mapping)

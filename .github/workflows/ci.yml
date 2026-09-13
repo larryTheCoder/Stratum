@@ -255,6 +255,16 @@ jobs:
           [ "${json_count}" -gt 900 ]
           [ "${nbt_count}" -gt 1000 ]
 
+      - name: Biome mapping table is reproducible
+        # SPEC §9: the Java -> Bedrock biome table is derived from
+        # GeyserMC/mappings at a pinned commit, cross-checked against this
+        # job's own freshly-fetched vanilla biome registry — the one
+        # dependency tools/mapping-sync has that tools/mcdoc-sync (checked in
+        # the lint job, before fixtures exist) does not.
+        run: |
+          tools/mapping-sync
+          git diff --exit-code -- lib/mapping/src/biome_table.inc
+
       - name: Conformance suite
         run: ctest --preset conformance
 

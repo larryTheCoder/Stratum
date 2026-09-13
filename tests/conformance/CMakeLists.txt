@@ -41,6 +41,7 @@ add_executable(stratum_conformance_tests
     vanilla_aquifer_waterlava_test.cpp
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
+    vanilla_biome_mapping_test.cpp
     vanilla_blended_probe_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
@@ -56,6 +57,7 @@ add_executable(stratum_conformance_tests
 
 target_link_libraries(stratum_conformance_tests PRIVATE
     stratum::core
+    stratum::mapping
     Catch2::Catch2WithMain
     ZLIB::ZLIB
 )
