@@ -86,6 +86,16 @@ public:
     /// How many distinct block states this chunk holds.
     [[nodiscard]] std::size_t paletteSize() const noexcept { return palette_.size(); }
 
+    /// The distinct block states, for a caller translating each once rather
+    /// than once per block. Entry 0 is always air: every buffer starts there.
+    [[nodiscard]] const std::vector<settings::BlockState>& palette() const noexcept {
+        return palette_;
+    }
+
+    /// Which `palette()` entry a position holds; `palette()[paletteIndexAt(
+    /// ...)]` is `at(...)`. Throws FillError like `at`.
+    [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const;
+
 private:
     [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const;
     [[nodiscard]] std::uint16_t intern(const settings::BlockState& block);

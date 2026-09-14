@@ -130,7 +130,7 @@ jobs:
 
       - name: clang-tidy
         run: |
-          mapfile -t sources < <(find lib cli -name '*.cpp' -not -path '*/_deps/*')
+          mapfile -t sources < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*')
           if [ ${#sources[@]} -eq 0 ]; then
             echo "no first-party sources to analyse"; exit 0
           fi
@@ -290,3 +290,65 @@ jobs:
           echo "Region-golden suites skip here: generating them runs the vanilla"
           echo "server, which requires accepting Mojang's EULA. Run them locally:"
           echo "  tools/fetch-vanilla --generate-regions --accept-eula"
+
+  ext-pmmp:
+    name: ext-pmmp (linux-x86_64)
+    # SPEC §11's M5-PMMP entry: ext/'s zend module, built with warnings as
+    # errors against a thread-safe PHP matching PocketMine-MP 5's, and tested
+    # through PHP's own PHPT runner with pmmp/ext-chunkutils2 loaded beside
+    # it — so every sub-chunk the module emits goes through the real
+    # PalettedBlockArray::fromData, not a model of it. PocketMine-MP's own PHP
+    # releases ship no headers, so tools/php-dev builds this PHP from source.
+    runs-on: ubuntu-24.04
+    needs: build
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the JDK
+        # fetch-vanilla's data generator, for the biome parameter lists the
+        # frozen pipeline carries.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: PHP build tools
+        run: sudo apt-get update && sudo apt-get install -y bison re2c autoconf
+
+      - name: Cache the PHP build
+        # Keyed on the script, which pins the PHP and chunkutils2 versions.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/stratum-php
+          key: stratum-php-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/php-dev') }}
+
+      - name: Build PHP (ZTS) and chunkutils2
+        run: tools/php-dev
+
+      - name: Cache the vanilla server jar
+        uses: actions/cache@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/server-${{ env.MINECRAFT_VERSION }}.jar
+          key: vanilla-server-jar-${{ env.MINECRAFT_VERSION }}
+
+      - name: Fetch vanilla worldgen data
+        run: tools/fetch-vanilla
+
+      - name: Check the fixtures really arrived
+        # The encode-chunk PHPT skips without them; skipping here would leave
+        # the job green having checked almost nothing.
+        run: |
+          test -d ".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings"
+          test -s ".fixtures/${MINECRAFT_VERSION}/biome_parameters/minecraft/overworld.json"
+
+      - name: Configure
+        run: STRATUM_PHP_CONFIG="$(tools/php-dev --print-config)" cmake --preset ext
+
+      - name: Build
+        run: cmake --build --preset ext --target stratum_php
+
+      - name: PHPT suite
+        run: ctest --preset ext

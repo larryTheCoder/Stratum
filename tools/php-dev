@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Stratum — a PHP to build and test ext/'s zend shim against.
+#
+# PocketMine-MP's own PHP builds (pmmp/PHP-Binaries) delete their headers
+# before release, so no downloadable PocketMine-MP PHP can compile an
+# extension. This builds the closest thing that can: the same PHP version
+# PHP-Binaries pins for PocketMine-MP 5, thread-safe (ZTS) as PocketMine-MP
+# requires, with nothing else compiled in — plus pmmp/ext-chunkutils2 at the
+# version PocketMine-MP 5 accepts, as a loadable extension, so tests can hand
+# the shim's output to the real PalettedBlockArray::fromData.
+#
+# Everything comes from official upstream source at pinned tags; nothing is
+# vendored. No root needed. Idempotent: a finished install is reused.
+#
+# Usage:
+#   tools/php-dev                  # build into ~/.cache/stratum-php (or $STRATUM_PHP_DIR)
+#   tools/php-dev --print-config   # print the php-config path, building first if needed
+set -euo pipefail
+
+# Keep in sync with pmmp/PHP-Binaries' compile.sh (PHP_VERSIONS, 8.2 line,
+# and EXT_CHUNKUTILS2_VERSION) for PocketMine-MP 5 — SPEC §11's M5-PMMP entry.
+readonly PHP_TAG="php-8.2.30"
+readonly CHUNKUTILS2_TAG="0.3.5"
+
+readonly install_dir="${STRATUM_PHP_DIR:-${HOME}/.cache/stratum-php}/${PHP_TAG}-zts"
+readonly work_dir="${install_dir}.build"
+
+log() { printf '==> %s\n' "$*" >&2; }
+
+print_only=0
+if [[ "${1:-}" == "--print-config" ]]; then
+    print_only=1
+elif [[ $# -gt 0 ]]; then
+    echo "usage: tools/php-dev [--print-config]" >&2
+    exit 2
+fi
+
+php_config="${install_dir}/bin/php-config"
+chunkutils2_so="$("${php_config}" --extension-dir 2>/dev/null || true)/chunkutils2.so"
+
+if [[ -x "${php_config}" && -f "${chunkutils2_so}" ]]; then
+    [[ ${print_only} -eq 1 ]] && { echo "${php_config}"; exit 0; }
+    log "already built: ${install_dir}"
+    exit 0
+fi
+
+jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+mkdir -p "${work_dir}"
+
+if [[ ! -x "${php_config}" ]]; then
+    log "building PHP ${PHP_TAG} (ZTS, minimal) into ${install_dir}"
+    rm -rf "${work_dir}/php-src"
+    git -c advice.detachedHead=false clone -q --depth 1 --branch "${PHP_TAG}" https://github.com/php/php-src.git \
+        "${work_dir}/php-src" >&2
+    (
+        cd "${work_dir}/php-src"
+        ./buildconf --force >/dev/null
+        # --enable-zts is the point: PocketMine-MP runs thread-safe PHP, and a
+        # module built against a non-ZTS PHP refuses to load into it.
+        ./configure --prefix="${install_dir}" --enable-zts --disable-all --enable-cli \
+            --disable-cgi --disable-phpdbg --without-pear >/dev/null
+        make -j"${jobs}" >/dev/null
+        make install >/dev/null
+    )
+fi
+
+log "building pmmp/ext-chunkutils2 ${CHUNKUTILS2_TAG} against it"
+rm -rf "${work_dir}/ext-chunkutils2"
+git -c advice.detachedHead=false clone -q --depth 1 --branch "${CHUNKUTILS2_TAG}" https://github.com/pmmp/ext-chunkutils2.git \
+    "${work_dir}/ext-chunkutils2" >&2
+(
+    cd "${work_dir}/ext-chunkutils2"
+    "${install_dir}/bin/phpize" >/dev/null
+    ./configure --with-php-config="${php_config}" >/dev/null
+    make -j"${jobs}" >/dev/null
+    make install >/dev/null
+)
+
+rm -rf "${work_dir}"
+chunkutils2_so="$("${php_config}" --extension-dir)/chunkutils2.so"
+"${install_dir}/bin/php" -n -d "extension=${chunkutils2_so}" \
+    -r 'new pocketmine\world\format\PalettedBlockArray(0); echo PHP_VERSION, " ZTS=", PHP_ZTS, "\n";' >&2
+[[ ${print_only} -eq 1 ]] && echo "${php_config}"
+log "done: ${install_dir}"

@@ -74,3 +74,9 @@ catch_discover_tests(stratum_conformance_tests
     TEST_PREFIX "conformance."
     PROPERTIES LABELS "conformance"
 )
+
+# ext/'s plain C++ half against real vanilla chunks.
+target_sources(stratum_conformance_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/vanilla_chunk_encoder_test.cpp"
+)
+target_link_libraries(stratum_conformance_tests PRIVATE stratum::pmmp_core)

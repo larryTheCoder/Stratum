@@ -64,6 +64,12 @@ if(TARGET stratum_cli)
     add_dependencies(stratum_unit_tests stratum_cli)
 endif()
 
+# ext/'s plain C++ half: the sub-chunk encoding, fixture-free.
+target_sources(stratum_unit_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/chunk_encoder_test.cpp"
+)
+target_link_libraries(stratum_unit_tests PRIVATE stratum::pmmp_core)
+
 if(TARGET stratum_nukkit_pipeline)
     # ext-nukkit/'s own plain-C++ half (no JVM, no JNI, needs no Java
     # toolchain to test) — only present when -DSTRATUM_BUILD_EXT_NUKKIT=ON.

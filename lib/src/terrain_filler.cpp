@@ -135,6 +135,10 @@ const settings::BlockState& ChunkBuffer::at(int localX, std::int32_t y, int loca
     return palette_[blocks_[indexOf(localX, y, localZ)]];
 }
 
+std::uint16_t ChunkBuffer::paletteIndexAt(int localX, std::int32_t y, int localZ) const {
+    return blocks_[indexOf(localX, y, localZ)];
+}
+
 std::uint16_t ChunkBuffer::intern(const settings::BlockState& block) {
     const auto found = std::ranges::find(palette_, block);
     if (found != palette_.end()) {

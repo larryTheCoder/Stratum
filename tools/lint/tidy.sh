@@ -49,7 +49,7 @@ cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=OFF >/dev/null
 sources=()
 while IFS= read -r file; do
     sources+=("${file}")
-done < <(find lib cli -name '*.cpp' -not -path '*/_deps/*' | sort)
+done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort)
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"

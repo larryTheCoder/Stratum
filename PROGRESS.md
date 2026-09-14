@@ -240,11 +240,19 @@ but waits on the same table and is untested against a real Nukkit build.
          straight from the pack (3 chunks × 2 seeds, surface rules on).
          `ext-nukkit/` still resolves its pipeline from a live pack rather
          than a world's blob: it has no world-creation hook to store one.
-      3. [ ] **`stratum_pmmp` sub-chunk encoding** — chunkutils2's word
-         format, smallest allowed width, Java-state palettes; unit tested.
-      4. [ ] **`stratum.so` zend shim** against a minimal ZTS PHP 8.2 built
-         from php/php-src (locally and in a CI job), chunkutils2 0.3.5 via
-         phpize, PHPT tests.
+      3. [x] **`stratum_pmmp_core` sub-chunk encoding** — chunkutils2
+         0.3.x's word format, the smallest width it accepts, Java-state
+         block palettes, Bedrock-id biome palettes, no block layer for
+         all-air sub-chunks. Built on every CI platform; unit tests pin
+         chunkutils2's own byte lengths, and real overworld chunks from a
+         thawed blob decode back to exactly what was generated.
+      4. [x] **`stratum.so` zend module** — `Stratum\freezePipeline`,
+         `Stratum\Dimension::open` (one compiled dimension per process per
+         world, shared across worker threads), `encodeChunk`,
+         `bedrockBlockState`. Built with warnings as errors against PHP
+         8.2.30 ZTS from `tools/php-dev`; PHPT tests hand every sub-chunk of
+         real vanilla chunks to chunkutils2 0.3.5's own
+         `PalettedBlockArray::fromData`, and the `ext-pmmp` CI job runs them.
       5. [ ] **The PMMP plugin** — `StratumGenerator`, per-worker palette
          cache, the fallback table (powder snow first), world creation
          writing the frozen blob.

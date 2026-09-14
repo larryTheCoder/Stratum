@@ -65,6 +65,9 @@ cmake --build --preset dev
 ctest --preset dev            # unit tests
 tools/fetch-vanilla --version 1.21.11   # fixtures (local only, gitignored)
 ctest --preset conformance    # golden diffs vs vanilla output
+tools/php-dev                 # ZTS PHP for ext/ (local only, ~/.cache)
+STRATUM_PHP_CONFIG=$(tools/php-dev --print-config) cmake --preset ext
+cmake --build --preset ext --target stratum_php && ctest --preset ext
 ```
 
 If a preset named here doesn't exist yet, creating it is part of the task —

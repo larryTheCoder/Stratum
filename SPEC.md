@@ -126,13 +126,20 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
 
 ### 4.3 PHP surface (ext/)
 
-- World load: PHP passes the world's stored pipeline blob (see §6) +
-  seed; ext compiles it and registers a generator instance.
-- Per chunk: ext calls `generateChunk(cx, cz)` on the compiled pipeline and
-  receives populated `PalettedBlockArray` sub-chunk storages + biome arrays,
-  holding PMMP's own internal block state ids (resolved once per distinct
-  state through `lib/mapping/` and PMMP's own deserializer, §9) — never
-  anything Bedrock-protocol-specific.
+- World creation: `Stratum\freezePipeline($versionRoot, $blobPath)` writes
+  the resolved pipeline into the world (§6).
+- World load: `Stratum\Dimension::open($blobPath, $noiseSettings,
+  $biomeParameterList, $seed)` compiles it — once per process, shared by
+  every worker thread that opens the same blob, settings, list and seed.
+- Per chunk: `$dimension->encodeChunk($cx, $cz)` returns every sub-chunk,
+  keyed by PocketMine-MP sub-chunk index, as `PalettedBlockArray::fromData`
+  argument lists: block palettes hold Java block state ids, biome palettes
+  Bedrock biome ids, and an all-air sub-chunk has no block layer. PHP
+  translates each sub-chunk's few Java ids to PMMP's own internal state ids
+  through `Stratum\bedrockBlockState()` and PMMP's own deserializer (§9),
+  then builds the `SubChunk`s — never anything Bedrock-protocol-specific,
+  and no per-block PHP.
+- Every failure is a `Stratum\GenerationException` naming what failed.
 - Optional main-thread post-population hooks for plugins (decoration in PHP,
   outside the parity contract).
 

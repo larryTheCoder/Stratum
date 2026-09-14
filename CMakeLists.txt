@@ -75,25 +75,28 @@ stratum_provision_json()
 # --------------------------------------------------------------------------
 # Layers
 # --------------------------------------------------------------------------
+# Before any layer: ext/ registers tests of its own, and add_test() is
+# ignored in a directory processed before testing is enabled.
+if(STRATUM_BUILD_TESTS)
+    include(CTest)
+endif()
+
 add_subdirectory(lib)
 
 if(STRATUM_BUILD_CLI)
     add_subdirectory(cli)
 endif()
 
-if(STRATUM_BUILD_EXT)
-    # Not a silent no-op: the binding is Milestone M5 and does not exist yet.
-    message(FATAL_ERROR
-        "STRATUM_BUILD_EXT=ON but ext/ is Milestone M5 (SPEC 10) and is not "
-        "implemented. Configure without this option.")
-endif()
+# ext/'s plain C++ half has no dependency beyond lib/, so it always builds
+# and every platform tests it; its zend module needs a ZTS PHP and only
+# builds with STRATUM_BUILD_EXT (ext/CMakeLists.txt refuses without one).
+add_subdirectory(ext)
 
 if(STRATUM_BUILD_EXT_NUKKIT)
     add_subdirectory(ext-nukkit)
 endif()
 
 if(STRATUM_BUILD_TESTS)
-    include(CTest)
     add_subdirectory(tests)
 endif()
 

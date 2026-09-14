@@ -56,6 +56,18 @@
         "STRATUM_WERROR": "ON"
       },
       "description": "CI configuration: warnings are errors. No generator is pinned so each platform uses its native default (Make, Ninja or MSBuild)."
+    },
+    {
+      "name": "ext",
+      "displayName": "PocketMine-MP zend module",
+      "description": "Debug, warnings as errors, with ext/'s zend module. Needs STRATUM_PHP_CONFIG in the environment: STRATUM_PHP_CONFIG=$(tools/php-dev --print-config) cmake --preset ext",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "STRATUM_WERROR": "ON",
+        "STRATUM_BUILD_EXT": "ON",
+        "STRATUM_PHP_CONFIG": "$env{STRATUM_PHP_CONFIG}"
+      }
     }
   ],
   "buildPresets": [
@@ -80,6 +92,11 @@
       "configurePreset": "ci-release",
       "configuration": "RelWithDebInfo",
       "jobs": 4
+    },
+    {
+      "name": "ext",
+      "configurePreset": "ext",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -143,6 +160,22 @@
       "filter": {
         "include": {
           "label": "unit|lint"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ext",
+      "configurePreset": "ext",
+      "configuration": "Debug",
+      "filter": {
+        "include": {
+          "label": "ext"
         }
       },
       "output": {
