@@ -26,9 +26,13 @@ Scope when it lands — **marshaling only**, no generation logic:
   - Catch `UnsupportedBlockStateException` here so SPEC §9's explicit
     fallback table applies — PMMP's own loader silently substitutes
     `info_update`.
-  - Refuse, at world load, a `lib/mapping/` table whose blockstate version
-    is newer than the running PMMP's `BlockStateData::CURRENT_VERSION`:
-    PMMP's upgrader only moves states forward.
+  - Log, at world load, any difference between `lib/mapping/`'s blockstate
+    version and the running PMMP's `BlockStateData::CURRENT_VERSION` (equal
+    today: both 1.21.60.33). PMMP's upgrader only moves states forward, so
+    a newer table's changed states surface as per-state misses.
+  - Ship a fallback entry for `minecraft:powder_snow` from the start: PMMP
+    `stable` has no powder snow block, and the overworld's surface rules
+    emit it.
 - Optional main-thread post-population hooks for plugins, outside the parity
   contract.
 

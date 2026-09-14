@@ -42,6 +42,7 @@ add_executable(stratum_conformance_tests
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_biome_mapping_test.cpp
+    vanilla_block_state_mapping_test.cpp
     vanilla_blended_probe_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp

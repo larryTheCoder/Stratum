@@ -7,7 +7,7 @@
 // Regenerate with: tools/mapping-sync
 
 // Minecraft version: 1.21.11
-// GeyserMC/mappings commit: 7a9bfc5d09cebe08cf1fee24872426b35718c6ca
+// GeyserMC/mappings commit: 2f0a8da200084688ec0919b59abf062977f50aef
 
 // clang-format off
 

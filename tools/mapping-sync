@@ -1,68 +1,204 @@
 #!/usr/bin/env python3
-"""Stratum — derive the Bedrock biome-id table from GeyserMC/mappings.
+"""Stratum — derive lib/mapping/'s Java -> Bedrock tables from GeyserMC's data.
 
-SPEC section 9: biome mapping is maintained mapping data, not a hand-typed
-list. This fetches GeyserMC/mappings (MIT) at a pinned commit, reads its
-biome table, cross-checks it against every biome this build's pinned
-Minecraft version actually has, and writes the generated C++ table.
+SPEC section 9: mapping is maintained mapping data, not a hand-typed list.
+This fetches GeyserMC/mappings (MIT) and one Bedrock block palette from
+GeyserMC/Geyser (MIT), both at pinned commits, cross-checks them against
+this build's own fetched vanilla data, and writes two generated C++ tables:
 
-GeyserMC/mappings is fetched, never vendored: the repository ships this tool
-and the generated table, not somebody else's data file.
+  lib/mapping/src/biome_table.inc        Java biome id -> Bedrock numeric id
+  lib/mapping/src/block_state_table.inc  Java block state -> Bedrock
+                                         blockstate {name, states, version}
 
-THE VERSION GAP, MEASURED RATHER THAN ASSUMED. GeyserMC/mappings has no
-branch for exactly Java 1.21.11 — the closest is `feature/1.21.9`. Before
-pinning to it, vanilla's own registries were compared between the two
-versions directly: `generated/reports/blocks.json` (both fetched, both run
-through `net.minecraft.data.Main --reports`) has an identical block count
-(1166), identical property definitions, identical default states and
-identical state counts; and `tools/fetch-vanilla`'s own
-`worldgen/biome/*.json` extraction lists the exact same 65 biome IDs at
-both versions. Neither registry moved between 1.21.9 and 1.21.11, and this
-mapping only needs the biome one. The gap is real but, for biome IDs
-specifically, has no measured effect at this pin.
+Nothing fetched is vendored: the repository ships this tool and the
+generated tables, not anybody else's data files.
+
+THE PIN. MAPPINGS_COMMIT is the mappings submodule commit GeyserMC/Geyser
+itself shipped with its Java 1.21.11 support (Geyser b728af2, the last
+Geyser commit before it started on Java 26.1), so the Java side matches
+this build's pinned version exactly. GEYSER_COMMIT is that same Geyser
+commit; its `block_palette.1_21_130.nbt` is one of the two palettes Geyser
+loaded those mappings against with an identity remapper, so every state
+the mappings name is checked against a palette they were built for.
+
+WHAT blocks.nbt MEANS. Read from GeyserMC/Geyser's own loader
+(core/.../registry/populator/BlockRegistryPopulator.java, buildBedrockState
+and registerJavaBlocks; MIT), not inferred from the data's shape:
+`bedrock_mappings[i]` is Java block state id `i` — vanilla's own registry
+order — and its Bedrock state is
+    name   = "minecraft:" + (bedrock_identifier, else the Java block's path)
+    states = the `state` compound, else an empty compound.
+Nothing is left unresolved: an entry with neither field is a Bedrock block
+of the same name with no states. (An earlier note in SPEC.md called this
+file a sparse diff needing mappings-generator's own logic to resolve; that
+was wrong, and running mappings-generator would only reproduce this file.)
+
+WHAT IS CHECKED BEFORE ANYTHING IS WRITTEN — each a refusal, not a warning:
+  - the vanilla block report's state ids are contiguous from 0, block by
+    block, and there are exactly as many as GeyserMC has entries;
+  - every block's state ids follow one mixed-radix order over its
+    properties, and exactly one property order produces it (the report
+    lists properties in a different order for 12 blocks at 1.21.11);
+  - every resolved Bedrock state exists, tag types included, in the pinned
+    palette, and the palette states one blockstate version for all of them;
+  - every biome this build's fetched worldgen/biome registry has resolves.
 
 Usage:
-    tools/mapping-sync                 # fetch the pinned commit and regenerate
-    tools/mapping-sync --mappings <path>  # use a checkout you already have
+    tools/mapping-sync                     # fetch the pinned commits and regenerate
+    tools/mapping-sync --mappings <path>   # use a GeyserMC/mappings checkout you already have
+                       --palette <file>    # ... and/or a block_palette.1_21_130.nbt you already have
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
+import itertools
 import json
 import pathlib
+import struct
 import subprocess
 import sys
 import tempfile
 
-# Pinned deliberately: a different commit could change the generated table,
-# and the table is what the loader validates against. This is the tip of
-# feature/1.21.9 as of this tool's writing; see this file's own header for
-# why that branch rather than a Java-1.21.11-named one.
+# Pinned deliberately: a different commit could change the generated tables,
+# and the tables are what the loaders validate against. See this file's own
+# header for why these two commits.
 MAPPINGS_REPOSITORY = "https://github.com/GeyserMC/mappings.git"
-MAPPINGS_COMMIT = "7a9bfc5d09cebe08cf1fee24872426b35718c6ca"
+MAPPINGS_COMMIT = "2f0a8da200084688ec0919b59abf062977f50aef"
+GEYSER_REPOSITORY = "https://github.com/GeyserMC/Geyser.git"
+GEYSER_COMMIT = "b728af2e89d77d4d0f55bbc90af10ba612b70a03"
+GEYSER_PALETTE_PATH = "core/src/main/resources/bedrock/block_palette.1_21_130.nbt"
 
 # Keep in sync with SPEC section 3 and STRATUM_MINECRAFT_VERSION.
 MINECRAFT_VERSION = "1.21.11"
 
 COMMAND = "tools/mapping-sync"
 
+# NBT tag ids a Bedrock blockstate's `states` compound may hold. Anything
+# else is refused rather than silently narrowed.
+TAG_BYTE, TAG_INT, TAG_STRING = 1, 3, 8
+TAG_NAMES = {TAG_BYTE: "Byte", TAG_INT: "Int", TAG_STRING: "String"}
 
-def fetch(destination: pathlib.Path) -> pathlib.Path:
-    print(f"==> fetching GeyserMC/mappings at {MAPPINGS_COMMIT}", file=sys.stderr)
-    checkout = destination / "mappings"
-    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", MAPPINGS_REPOSITORY],
-                   check=True)
-    subprocess.run(["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", "origin",
-                    MAPPINGS_COMMIT], check=True)
-    subprocess.run(["git", "-C", str(checkout), "checkout", "-q", "FETCH_HEAD"], check=True)
+UINT16_LIMIT = 1 << 16
 
-    actual = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
-                            check=True, capture_output=True, text=True).stdout.strip()
-    if actual != MAPPINGS_COMMIT:
-        raise SystemExit(f"error: expected GeyserMC/mappings {MAPPINGS_COMMIT} but got {actual}")
+
+def _git(*arguments: str) -> str:
+    return subprocess.run(["git", *arguments], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+def _shallow_checkout(repository: str, commit: str, checkout: pathlib.Path,
+                      sparse_path: str | None = None) -> pathlib.Path:
+    _git("init", "-q", str(checkout))
+    _git("-C", str(checkout), "remote", "add", "origin", repository)
+    fetch = ["-C", str(checkout), "fetch", "-q", "--depth", "1"]
+    if sparse_path is not None:
+        _git("-C", str(checkout), "sparse-checkout", "set", "--no-cone", sparse_path)
+        fetch.append("--filter=blob:none")
+    _git(*fetch, "origin", commit)
+    _git("-C", str(checkout), "checkout", "-q", "FETCH_HEAD")
+    actual = _git("-C", str(checkout), "rev-parse", "HEAD")
+    if actual != commit:
+        raise SystemExit(f"error: expected {repository} {commit} but got {actual}")
     return checkout
+
+
+def fetch_mappings(destination: pathlib.Path) -> pathlib.Path:
+    print(f"==> fetching GeyserMC/mappings at {MAPPINGS_COMMIT}", file=sys.stderr)
+    return _shallow_checkout(MAPPINGS_REPOSITORY, MAPPINGS_COMMIT, destination / "mappings")
+
+
+def fetch_palette(destination: pathlib.Path) -> pathlib.Path:
+    print(f"==> fetching {GEYSER_PALETTE_PATH} from GeyserMC/Geyser at {GEYSER_COMMIT}",
+          file=sys.stderr)
+    checkout = _shallow_checkout(GEYSER_REPOSITORY, GEYSER_COMMIT, destination / "geyser",
+                                 sparse_path=GEYSER_PALETTE_PATH)
+    return checkout / GEYSER_PALETTE_PATH
+
+
+# --- NBT ------------------------------------------------------------------
+#
+# Big-endian, gzipped Java-edition NBT — the encoding both files use. Every
+# value keeps its tag id, because a Bedrock blockstate is typed: byte 0 and
+# int 0 are different states to the platforms that consume this table.
+
+
+class _NbtReader:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._offset = 0
+
+    def _unpack(self, fmt: str) -> int | float:
+        (value,) = struct.unpack_from(">" + fmt, self._data, self._offset)
+        self._offset += struct.calcsize(">" + fmt)
+        return value
+
+    def _string(self) -> str:
+        length = int(self._unpack("H"))
+        value = self._data[self._offset:self._offset + length].decode("utf-8")
+        self._offset += length
+        return value
+
+    def _payload(self, tag: int) -> tuple[int, object]:
+        scalar = {1: "b", 2: "h", 3: "i", 4: "q", 5: "f", 6: "d"}
+        if tag in scalar:
+            return tag, self._unpack(scalar[tag])
+        if tag == 7:
+            length = int(self._unpack("i"))
+            value = self._data[self._offset:self._offset + length]
+            self._offset += length
+            return tag, value
+        if tag == 8:
+            return tag, self._string()
+        if tag == 9:
+            element = int(self._unpack("b"))
+            return tag, [self._payload(element) for _ in range(int(self._unpack("i")))]
+        if tag == 10:
+            compound: dict[str, tuple[int, object]] = {}
+            while (element := int(self._unpack("b"))) != 0:
+                key = self._string()
+                compound[key] = self._payload(element)
+            return tag, compound
+        if tag in (11, 12):
+            fmt = "i" if tag == 11 else "q"
+            return tag, [self._unpack(fmt) for _ in range(int(self._unpack("i")))]
+        raise SystemExit(f"error: unknown NBT tag id {tag} at offset {self._offset}")
+
+    def root(self) -> dict[str, tuple[int, object]]:
+        tag = int(self._unpack("b"))
+        self._string()
+        kind, value = self._payload(tag)
+        if kind != 10 or self._offset != len(self._data):
+            raise SystemExit("error: NBT root is not a single compound")
+        return value  # type: ignore[return-value]
+
+
+def read_nbt(path: pathlib.Path) -> dict[str, tuple[int, object]]:
+    data = path.read_bytes()
+    if data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+    return _NbtReader(data).root()
+
+
+def _list_of_compounds(root: dict, key: str, source: pathlib.Path) -> list[dict]:
+    if key not in root or root[key][0] != 9:
+        raise SystemExit(f"error: {source} has no \"{key}\" list; has the format moved?")
+    return [value for tag, value in root[key][1] if tag == 10]
+
+
+def _frozen_states(compound: dict[str, tuple[int, object]], where: str) -> tuple:
+    frozen = []
+    for key in sorted(compound):
+        tag, value = compound[key]
+        if tag not in TAG_NAMES:
+            raise SystemExit(f"error: {where}: state \"{key}\" has NBT tag {tag}; only Byte, "
+                             "Int and String are expected in a Bedrock blockstate")
+        frozen.append((key, tag, value))
+    return tuple(frozen)
+
+
+# --- biomes ---------------------------------------------------------------
 
 
 def _enumerator(java_id: str) -> str:
@@ -71,7 +207,7 @@ def _enumerator(java_id: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
-def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
+def generate_biomes(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
     source = checkout / "biomes.json"
     if not source.is_file():
         raise SystemExit(f"error: {source} is missing; has the mappings repo moved?")
@@ -130,10 +266,210 @@ def generate(checkout: pathlib.Path, repository_root: pathlib.Path) -> None:
     lines.append("")
     lines.append("// clang-format on")
 
-    table_path = repository_root / "lib/mapping/src/biome_table.inc"
-    table_path.parent.mkdir(parents=True, exist_ok=True)
-    table_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"==> wrote {table_path.relative_to(repository_root)}", file=sys.stderr)
+    _write(repository_root, "lib/mapping/src/biome_table.inc", lines)
+
+
+# --- block states ---------------------------------------------------------
+
+
+def _property_order(name: str, block: dict) -> list[tuple[str, list[str]]]:
+    """The one property order whose mixed-radix numbering gives every one of
+    @p block's report state ids. Tried in the report's own order first."""
+    properties = list(block.get("properties", {}).items())
+    states = block["states"]
+    base = min(state["id"] for state in states)
+
+    def numbers_every_state(order: tuple[tuple[str, list[str]], ...]) -> bool:
+        for state in states:
+            ordinal = 0
+            for key, values in order:
+                ordinal = ordinal * len(values) + values.index(state["properties"][key])
+            if base + ordinal != state["id"]:
+                return False
+        return True
+
+    if numbers_every_state(tuple(properties)):
+        return properties
+    matches = [order for order in itertools.permutations(properties)
+               if numbers_every_state(order)]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"error: {name}'s state ids follow {len(matches)} property orders, not exactly one; "
+            "this table's id arithmetic assumes vanilla numbers states mixed-radix over a "
+            "single property order")
+    return list(matches[0])
+
+
+def generate_block_states(checkout: pathlib.Path, palette_path: pathlib.Path,
+                          repository_root: pathlib.Path) -> None:
+    report_path = repository_root / ".fixtures" / MINECRAFT_VERSION / "reports" / "blocks.json"
+    if not report_path.is_file():
+        raise SystemExit(
+            f"error: {report_path} is missing; run tools/fetch-vanilla first — the block "
+            "mappings are indexed by vanilla's own state ids, which only its report states")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    mappings_path = checkout / "blocks.nbt"
+    if not mappings_path.is_file():
+        raise SystemExit(f"error: {mappings_path} is missing; has the mappings repo moved?")
+    mappings = _list_of_compounds(read_nbt(mappings_path), "bedrock_mappings", mappings_path)
+
+    # Java side: blocks in registry order, each with its property order,
+    # default and the Bedrock state of every one of its states.
+    blocks = sorted(report.items(), key=lambda item: min(s["id"] for s in item[1]["states"]))
+    java_blocks = []
+    next_id = 0
+    for name, block in blocks:
+        ids = sorted(state["id"] for state in block["states"])
+        if ids != list(range(next_id, next_id + len(ids))):
+            raise SystemExit(f"error: {name}'s state ids are not contiguous from {next_id}")
+        order = _property_order(name, block)
+        defaults = [state for state in block["states"] if state.get("default")]
+        if len(defaults) != 1:
+            raise SystemExit(f"error: {name} has {len(defaults)} default states, not one")
+        java_blocks.append((name, order, next_id, defaults[0]["id"] - next_id))
+        next_id += len(ids)
+    if next_id != len(mappings):
+        raise SystemExit(
+            f"error: vanilla {MINECRAFT_VERSION} has {next_id} block states but GeyserMC/mappings "
+            f"{MAPPINGS_COMMIT} maps {len(mappings)}; they are not for the same registry")
+
+    bedrock_of_java = []
+    for name, order, first, _ in java_blocks:
+        state_count = 1
+        for _, values in order:
+            state_count *= len(values)
+        for java_id in range(first, first + state_count):
+            entry = mappings[java_id]
+            identifier = entry.get("bedrock_identifier", (TAG_STRING, name.split(":", 1)[1]))
+            if identifier[0] != TAG_STRING:
+                raise SystemExit(f"error: state {java_id}'s bedrock_identifier is not a string")
+            states = entry.get("state", (10, {}))
+            if states[0] != 10:
+                raise SystemExit(f"error: state {java_id}'s state is not a compound")
+            bedrock_of_java.append(("minecraft:" + str(identifier[1]),
+                                    _frozen_states(states[1], f"Java state {java_id} ({name})")))
+
+    # Bedrock side: every resolved state must be one the pinned palette has.
+    palette = _list_of_compounds(read_nbt(palette_path), "blocks", palette_path)
+    palette_states = set()
+    versions = set()
+    for entry in palette:
+        palette_states.add((str(entry["name"][1]),
+                            _frozen_states(entry["states"][1], f"palette {entry['name'][1]}")))
+        versions.add(int(entry["version"][1]))
+    if len(versions) != 1:
+        raise SystemExit(f"error: {palette_path.name} states {len(versions)} blockstate versions; "
+                         "this table carries one")
+    (version,) = versions
+    unknown = sorted({state for state in bedrock_of_java if state not in palette_states})
+    if unknown:
+        raise SystemExit(
+            f"error: {len(unknown)} Bedrock state(s) GeyserMC/mappings names are not in "
+            f"{palette_path.name}: {unknown[:5]}")
+
+    # Pools. uint16 indices throughout except state ids, which are checked.
+    strings: dict[str, int] = {}
+
+    def intern(text: str) -> int:
+        return strings.setdefault(text, len(strings))
+
+    java_rows, property_rows, property_values = [], [], []
+    for name, order, first, default_ordinal in java_blocks:
+        java_rows.append((intern(name), len(property_rows), len(order), first, default_ordinal))
+        for key, values in order:
+            property_rows.append((intern(key), len(property_values), len(values)))
+            property_values.extend(intern(value) for value in values)
+    by_name = sorted(range(len(java_blocks)), key=lambda index: java_blocks[index][0])
+
+    value_rows: dict[tuple, int] = {}
+    state_index: dict[tuple, int] = {}
+    state_names, state_offsets, state_values = [], [0], []
+    java_to_bedrock = []
+    for state in bedrock_of_java:
+        if state not in state_index:
+            state_index[state] = len(state_names)
+            state_names.append(intern(state[0]))
+            for key, tag, value in state[1]:
+                row = (intern(key), tag,
+                       int(value) if tag != TAG_STRING else 0,  # type: ignore[arg-type]
+                       intern(str(value)) if tag == TAG_STRING else 0)
+                state_values.append(value_rows.setdefault(row, len(value_rows)))
+            state_offsets.append(len(state_values))
+        java_to_bedrock.append(state_index[state])
+
+    for label, size in (("strings", len(strings)), ("Java properties", len(property_rows)),
+                        ("Java property values", len(property_values)),
+                        ("Bedrock values", len(value_rows)), ("Bedrock states", len(state_names)),
+                        ("Bedrock state values", len(state_values))):
+        if size >= UINT16_LIMIT:
+            raise SystemExit(f"error: {size} {label} no longer fit the table's uint16 indices")
+
+    print(f"==> {next_id} Java block states in {len(java_blocks)} blocks -> "
+          f"{len(state_names)} Bedrock states (blockstate version {_version(version)})",
+          file=sys.stderr)
+
+    lines = [
+        "// GENERATED FILE — DO NOT EDIT BY HAND.",
+        "//",
+        "// Derived from GeyserMC/mappings (MIT) and a GeyserMC/Geyser (MIT) Bedrock",
+        "// block palette at pinned commits, keyed by the pinned Minecraft version's",
+        "// own block state registry. SPEC section 9: mapping is maintained mapping",
+        "// data, not a hand-typed list.",
+        "//",
+        f"// Regenerate with: {COMMAND}",
+        "",
+        f"// Minecraft version: {MINECRAFT_VERSION}",
+        f"// GeyserMC/mappings commit: {MAPPINGS_COMMIT}",
+        f"// GeyserMC/Geyser commit: {GEYSER_COMMIT} ({GEYSER_PALETTE_PATH})",
+        "",
+        "// clang-format off",
+        "",
+        f'constexpr std::string_view kMinecraftVersion = "{MINECRAFT_VERSION}";',
+        f"constexpr std::int32_t kBedrockBlockStateVersion = {version};  // {_version(version)}",
+        "",
+    ]
+    lines += _array("std::string_view", "kStrings",
+                    [json.dumps(text, ensure_ascii=False) for text in strings], per_line=4)
+    lines += _array("JavaBlockRow", "kJavaBlocks", [
+        f"{{.name = {n}, .firstProperty = {p}, .propertyCount = {c}, .firstState = {f}, "
+        f".defaultOrdinal = {d}}}" for n, p, c, f, d in java_rows], per_line=1)
+    lines += _array("std::uint16_t", "kJavaBlocksByName", [str(i) for i in by_name])
+    lines += _array("JavaPropertyRow", "kJavaProperties", [
+        f"{{.name = {n}, .firstValue = {v}, .valueCount = {c}}}" for n, v, c in property_rows],
+        per_line=2)
+    lines += _array("std::uint16_t", "kJavaPropertyValues", [str(i) for i in property_values])
+    lines += _array("BedrockValueRow", "kBedrockValues", [
+        f"{{.key = {k}, .type = BedrockTagType::{TAG_NAMES[t]}, .integer = {i}, .string = {s}}}"
+        for (k, t, i, s) in value_rows], per_line=1)
+    lines += _array("std::uint16_t", "kBedrockStateNames", [str(i) for i in state_names])
+    lines += _array("std::uint16_t", "kBedrockStateValueOffsets", [str(i) for i in state_offsets])
+    lines += _array("std::uint16_t", "kBedrockStateValues", [str(i) for i in state_values])
+    lines += _array("std::uint16_t", "kJavaToBedrock", [str(i) for i in java_to_bedrock])
+    lines.append("// clang-format on")
+
+    _write(repository_root, "lib/mapping/src/block_state_table.inc", lines)
+
+
+def _version(version: int) -> str:
+    return (f"{version >> 24}.{(version >> 16) & 0xFF}.{(version >> 8) & 0xFF}."
+            f"{version & 0xFF}")
+
+
+def _array(element: str, name: str, items: list[str], per_line: int = 16) -> list[str]:
+    lines = [f"constexpr std::array<{element}, {len(items)}> {name} = {{{{"]
+    for start in range(0, len(items), per_line):
+        lines.append("    " + ", ".join(items[start:start + per_line]) + ",")
+    lines.append("}};")
+    lines.append("")
+    return lines
+
+
+def _write(repository_root: pathlib.Path, relative: str, lines: list[str]) -> None:
+    path = repository_root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"==> wrote {relative}", file=sys.stderr)
 
 
 def main() -> None:
@@ -141,16 +477,18 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mappings", type=pathlib.Path,
                         help="an existing GeyserMC/mappings checkout to read instead of fetching")
+    parser.add_argument("--palette", type=pathlib.Path,
+                        help="an existing block_palette.1_21_130.nbt to read instead of fetching")
     arguments = parser.parse_args()
 
     repository_root = pathlib.Path(__file__).resolve().parent.parent
 
-    if arguments.mappings is not None:
-        generate(arguments.mappings, repository_root)
-        return
-
     with tempfile.TemporaryDirectory() as directory:
-        generate(fetch(pathlib.Path(directory)), repository_root)
+        scratch = pathlib.Path(directory)
+        checkout = arguments.mappings or fetch_mappings(scratch)
+        palette = arguments.palette or fetch_palette(scratch)
+        generate_biomes(checkout, repository_root)
+        generate_block_states(checkout, palette, repository_root)
 
 
 if __name__ == "__main__":

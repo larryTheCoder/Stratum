@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-14 (M5: block state mapping's split corrected).
+Last swept: 2026-09-14 (M5: block state table landed).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-14 (M5: block state mapping's split corrected).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built; block state mapping's architecture set (shared table in `lib/mapping/`), not started |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built; block state table landed in `lib/mapping/`; binding-side resolution not started |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -180,10 +180,9 @@ but waits on the same table and is untested against a real Nukkit build.
       construction: `stratum_core` does not link it. `tools/mapping-sync`
       generates `lib/mapping/src/biome_table.inc` from GeyserMC/mappings
       (MIT) at a pinned commit; `bedrockBiomeId()` resolves all 65 vanilla
-      biomes at 1.21.11. The version gap (GeyserMC has no branch for
-      exactly 1.21.11; pinned to `feature/1.21.9`) was measured, not
-      assumed away — see SPEC.md's M5 entry for the block-registry and
-      biome-registry diff between the two versions, both identical.
+      biomes at 1.21.11. Now pinned to `2f0a8da`, the mappings Geyser itself
+      shipped for Java 1.21.11 (it was `feature/1.21.9`'s tip; `biomes.json`
+      is byte-identical between the two, so the table did not change).
 - [ ] **The "nearest vanilla Bedrock biome" fallback**, for custom/datapack
       biomes outside the table. `bedrockBiomeId()` returns nothing rather
       than a placeholder default (see the function's own header for why a
@@ -208,24 +207,31 @@ but waits on the same table and is untested against a real Nukkit build.
       `BlockStateMapping`. So: one Java → Bedrock blockstate table in
       `lib/mapping/`, pinned per Minecraft version like biomes, and each
       binding resolves it once per distinct state through its own platform.
-- [ ] **Block state mapping — architecture set, not started.** Slices, in
-      order:
-      1. **`tools/mapping-sync` generates the Java state → Bedrock
-         blockstate table** into `lib/mapping/`, with a fixture-backed test
-         that every Java state this build can emit resolves. Scoping first:
-         where GeyserMC/mappings' sparse `blocks.nbt` gets resolved into full
-         states (running `mappings-generator` as a black-box oracle is the
-         leading option). The open question to measure before anything
-         else is **version coupling**: PMMP `stable`'s blockstate version
-         is 1.21.60.33 and Nukkit's palette is protocol 729 (Bedrock
-         1.21.30). Both upgraders only move forward, and both are older
-         than the Bedrock release matching Java 1.21.11. Which states the
-         terrain generator actually emits differ between those versions?
-      2. **`ext/` resolves the table through PMMP** — upgrader then
+- [x] **Block state table — landed in `lib/mapping/`.**
+      `javaBlockStateId()`/`bedrockBlockState()` resolve all 29,671 Java
+      states at 1.21.11 to Bedrock `{name, states, version}` (10,491
+      distinct, blockstate version 1.21.60.33). `tools/mapping-sync` builds
+      it from GeyserMC/mappings `blocks.nbt`, vanilla's own
+      `reports/blocks.json` (now kept by `tools/fetch-vanilla`) and Geyser's
+      Bedrock 1.21.130 palette, and refuses anything it cannot verify.
+      `vanilla_block_state_mapping_test.cpp` re-checks every state through
+      the compiled loader; CI regenerates the table and diffs it. Measuring
+      it corrected three earlier assumptions (SPEC.md §11 has the evidence):
+      `blocks.nbt` is complete, not a sparse diff, so no
+      `mappings-generator` oracle is needed; the pin moved to the mappings
+      Geyser shipped for Java 1.21.11; and version coupling turned out to
+      be per state, not a version gate. PMMP `stable` is at exactly the
+      table's version, and Nukkit's older 1.21.30.7 palette still holds all
+      35 states vanilla's noise settings emit.
+- [ ] **Block state resolution in the bindings — not started.**
+      1. **`ext/` resolves the table through PMMP** — upgrader then
          deserializer, once per distinct state at generator start, catching
          `UnsupportedBlockStateException` itself so SPEC §9's explicit
          fallback table applies rather than PMMP's silent `info_update`.
-      3. **`ext-nukkit/` resolves it through `BlockStateMapping`** — see
+         Needs a fallback entry for `minecraft:powder_snow` from day one:
+         PMMP `stable` has no powder snow block, and the overworld's
+         surface rules emit it (measured, not hypothetical).
+      2. **`ext-nukkit/` resolves it through `BlockStateMapping`** — see
          that binding's own bullet below.
 - [x] **Biome mapping's placement re-checked against the same three
       codebases — confirmed correct, not merely assumed by analogy to
@@ -279,6 +285,9 @@ but waits on the same table and is untested against a real Nukkit build.
       though, so the JNI boundary likely changes: Java builds the id lookup
       once, native `fill()` only indexes it. Detect misses with
       `getStateUnsafe()` (null), not `getState()` (silently `info_update`).
+      Nukkit keys its palette by the full `NbtMap`, `version` included, and
+      is at 1.21.30.7, so match on name and states with Nukkit's own version
+      stamped; every terrain state measured present that way.
 - [ ] **`ext-nukkit`'s Java side — written, never compiled.** `StratumGenerator
       .java`/`StratumGenerationException.java` match Nukkit's `Generator`
       contract as confirmed by reading Nukkit's source, but no Nukkit

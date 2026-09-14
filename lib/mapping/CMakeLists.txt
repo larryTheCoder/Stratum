@@ -6,6 +6,7 @@
 
 add_library(stratum_mapping STATIC
     src/biome_mapping.cpp
+    src/block_state_mapping.cpp
 )
 
 add_library(stratum::mapping ALIAS stratum_mapping)

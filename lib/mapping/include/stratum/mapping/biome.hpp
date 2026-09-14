@@ -8,10 +8,8 @@
 // before anything reaches this library, and generation never calls into it.
 //
 // The table is generated from GeyserMC/mappings (MIT) at a pinned commit;
-// see tools/mapping-sync for how, and for the measured version-gap note
-// (GeyserMC/mappings has no branch for exactly this build's pinned Java
-// version — the gap was checked against vanilla's own registries, not
-// assumed away).
+// see tools/mapping-sync for how, and for why that commit (the one
+// GeyserMC/Geyser itself shipped for this build's pinned Java version).
 //
 // WHAT IS NOT HERE YET. SPEC section 9 also wants a fallback for biomes this
 // table has no entry for — "custom/datapack biomes fall back to the nearest

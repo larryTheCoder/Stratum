@@ -75,6 +75,10 @@ worth knowing if you are diffing build flags.
   will likely change: Java builds the id lookup once at `init`, and native
   `fill()` only indexes it. Misses must be detected via `getStateUnsafe()`
   returning null — `getState()` silently substitutes `info_update`.
+  Nukkit's palette is keyed by the full `NbtMap` including `version` and is
+  at 1.21.30.7, older than the table's 1.21.60.33, so the lookup must match
+  on name and states with Nukkit's own version stamped. Measured that way,
+  every state vanilla's noise settings emit is present (SPEC §11).
 - **The "nearest vanilla Bedrock biome" fallback** for custom/datapack
   biomes outside the generated table (same gap `lib/mapping/`'s own README
   names for the PocketMine-MP path — this binding inherits it rather than
