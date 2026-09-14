@@ -129,17 +129,11 @@ private:
 /// Nukkit's own "full id" for one Java block state — `id << DATA_BITS |
 /// meta`, `BlockID.java`'s int constants for `id` — or a refusal.
 ///
-/// STILL OPEN (PROGRESS.md's M5 section): no Java-state-to-Nukkit-legacy-id
-/// table has been sourced yet. Unlike PocketMine-MP's own path (SPEC §9),
-/// this one cannot reuse the target platform's own deserializer — Nukkit's
-/// `BlockID.java` is a bare list of int constants with nothing to parse a
-/// Java identifier against — so the table has to be built here regardless
-/// of which side of the JNI boundary it lives on, and it lives here (this
-/// binding's own C++, not shared `lib/`) rather than in `StratumGenerator
-/// .java` for the same reason `ext/`'s translation lives in PHP: it is
-/// specific to what THIS platform's block registry looks like, and sharing
-/// it across bindings would mean every binding carries every other
-/// binding's mapping data. Always throws `NukkitError` today, naming
+/// STILL OPEN (PROGRESS.md's M5 section). The planned resolution (SPEC §9)
+/// is `lib/mapping/`'s shared Java → Bedrock blockstate table, fed through
+/// Nukkit's own `BlockStateMapping` — which lives on the Java side, so this
+/// C++ function is expected to be replaced by a Java-built lookup that
+/// `fill()` only indexes. Always throws `NukkitError` today, naming
 /// @p block's own identifier — a refusal rather than a guess (SPEC §8).
 [[nodiscard]] std::int32_t resolveNukkitFullId(const settings::BlockState& block);
 

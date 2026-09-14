@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-13 (M5: ext-nukkit JNI interface built).
+Last swept: 2026-09-14 (M5: block state mapping's split corrected).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-13 (M5: ext-nukkit JNI interface built).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built (block state mapping open on both bindings) |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built; block state mapping's architecture set (shared table in `lib/mapping/`), not started |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -167,12 +167,13 @@ Open:
 
 Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
 project) is still an empty stub, waiting on block state mapping below —
-which now belongs to `ext/` itself, not to `lib/mapping/` (see the
-architecture note under that bullet). Also unstarted: chunkutils2 output,
-the PMMP world-load path, the performance pass. `ext-nukkit/` (a second,
-CloudburstMC/Nukkit binding) is further along than `ext/` itself — a real,
-compiling, tested JNI interface exists — but shares the same block-state
-mapping gap and is untested against a real Nukkit build.
+which is back in `lib/mapping/` as a platform-neutral Java → Bedrock
+blockstate table, with each binding doing only the last step through its
+platform's own resolver (see the corrected architecture bullet). Also
+unstarted: chunkutils2 output, the PMMP world-load path, the performance
+pass. `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) is further
+along than `ext/` itself — a real, compiling, tested JNI interface exists —
+but waits on the same table and is untested against a real Nukkit build.
 
 - [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
       (`stratum_mapping`) now, downstream of the conformance boundary by
@@ -190,38 +191,42 @@ mapping gap and is untested against a real Nukkit build.
       climate parameters this library does not have yet — plausibly built
       on the same `biome::ParameterList`/climate-distance machinery M4's
       biome source already uses, unexplored so far.
-- [x] **Architecture decided: block state mapping does not belong in
-      `lib/mapping/` at all — it lives in each native binding.** Not a
-      preference; measured against three independent, publicly inspectable
-      codebases (SPEC.md's M5 entry has the full evidence trail). Bedrock's
-      block network runtime id has been a hash-sorted INDEX over the
-      client's whole block list since 1.16.100, so any registry change
-      anywhere shifts unrelated blocks' ids — confirmed by diffing
-      GeyserMC/mappings' `feature/1.20.70`/`1.20.80` branches, where
-      `minecraft:sapling` splitting into per-species ids reshuffles the
-      sorted list under every other entry. A table compiled into a shared
-      C++ core cannot serve more than one connected Bedrock version at
-      once; it has to be per-connection, per-protocol-version data owned
-      by the binding that terminates that connection. NetherGamesMC's
-      public `PocketMine-MP` fork and GeyserMC/Geyser both independently
-      build exactly that (a table per protocol version, selected once the
-      client's version is known) — upstream `pmmp/PocketMine-MP`'s own
-      `BlockTranslator.php` even names the gap without filling it ("...in
-      case someone wants to implement multi version"). CloudburstMC/Nukkit
-      needs its own separate translation regardless, for the same reason
-      generalized: its `BlockID.java` is its own legacy scheme, entirely
-      independent of PMMP's.
-- [ ] **Block state mapping — not started; `ext/`'s to build, not
-      `lib/mapping/`'s.** PMMP's own `BlockStateDeserializer` already turns
-      a Bedrock blockstate NBT compound (`{name, states, version}`) into a
-      real `Block` object — `ext/` needs only produce that NBT shape from
-      this engine's own Java block state, per connected protocol version,
-      mirroring `BlockTranslator.php`'s own per-protocol table selection.
-      A future Nukkit/CloudburstMC binding needs the Java-side equivalent,
-      targeting its own legacy id:meta scheme instead. Unmappable states
-      are meant to resolve through an explicit, configurable fallback
-      table wherever this lands (SPEC §9) — never a crash, never a silent
-      stone substitution without a log.
+- [x] **Architecture corrected: block state mapping splits at a
+      platform-neutral midpoint, and the shared half is back in
+      `lib/mapping/`.** Supersedes the earlier "lives entirely in each native
+      binding" call. Its evidence still holds (Bedrock's network runtime id
+      is a hash-sorted index; multi-version servers keep one table per
+      protocol), but that translation runs at network send, never at
+      generation. Read directly from PMMP and Nukkit source (SPEC.md §11's
+      "returns to `lib/mapping/`" entry has the citations): generators write
+      the platform's own protocol-independent block id, storage is
+      versioned by the platform's own data version, and every
+      protocol-specific translation call is in the networking layer. Both
+      platforms already resolve a named `{name, states, version}` Bedrock
+      blockstate into their own id — PMMP through `BlockStateUpgrader` +
+      `BlockStateToObjectDeserializer::deserialize()`, Nukkit through
+      `BlockStateMapping`. So: one Java → Bedrock blockstate table in
+      `lib/mapping/`, pinned per Minecraft version like biomes, and each
+      binding resolves it once per distinct state through its own platform.
+- [ ] **Block state mapping — architecture set, not started.** Slices, in
+      order:
+      1. **`tools/mapping-sync` generates the Java state → Bedrock
+         blockstate table** into `lib/mapping/`, with a fixture-backed test
+         that every Java state this build can emit resolves. Scoping first:
+         where GeyserMC/mappings' sparse `blocks.nbt` gets resolved into full
+         states (running `mappings-generator` as a black-box oracle is the
+         leading option). The open question to measure before anything
+         else is **version coupling**: PMMP `stable`'s blockstate version
+         is 1.21.60.33 and Nukkit's palette is protocol 729 (Bedrock
+         1.21.30). Both upgraders only move forward, and both are older
+         than the Bedrock release matching Java 1.21.11. Which states the
+         terrain generator actually emits differ between those versions?
+      2. **`ext/` resolves the table through PMMP** — upgrader then
+         deserializer, once per distinct state at generator start, catching
+         `UnsupportedBlockStateException` itself so SPEC §9's explicit
+         fallback table applies rather than PMMP's silent `info_update`.
+      3. **`ext-nukkit/` resolves it through `BlockStateMapping`** — see
+         that binding's own bullet below.
 - [x] **Biome mapping's placement re-checked against the same three
       codebases — confirmed correct, not merely assumed by analogy to
       blocks.** A real biome id reassignment exists (GeyserMC/mappings:
@@ -264,13 +269,16 @@ mapping gap and is untested against a real Nukkit build.
       `-Wall -Wextra`, zero clang-tidy 18 findings, clang-format clean, and
       all 376 unit tests (incl. the 4 new Nukkit ones) pass.
       `ext-nukkit/README.md` has the component's full scope.
-- [ ] **`ext-nukkit`'s block state mapping — not started.** Same open
-      problem as `ext/`'s (above): no Java-state-to-Nukkit-legacy-id table
-      sourced yet. `resolveNukkitFullId()` always throws today, naming the
-      block, rather than guessing (SPEC §8) — real columns cannot fill
-      until this lands. Nukkit's own `BlockID.java` is its own legacy
-      id:meta scheme, independent of PMMP's, so `ext/`'s table cannot be
-      reused as-is even once it exists.
+- [ ] **`ext-nukkit`'s block state mapping — not started, waits on the
+      shared table above.** `resolveNukkitFullId()` always throws today,
+      naming the block, rather than guessing (SPEC §8) — real columns cannot
+      fill until this lands. Nukkit resolves the same `{name, states,
+      version}` triple `ext/` uses, through `BlockStateMapping.updateState()`
+      → `BlockStateSnapshot.getLegacyId()/getLegacyData()`, so no
+      Nukkit-specific table is needed. The resolver lives on the Java side,
+      though, so the JNI boundary likely changes: Java builds the id lookup
+      once, native `fill()` only indexes it. Detect misses with
+      `getStateUnsafe()` (null), not `getState()` (silently `info_update`).
 - [ ] **`ext-nukkit`'s Java side — written, never compiled.** `StratumGenerator
       .java`/`StratumGenerationException.java` match Nukkit's `Generator`
       contract as confirmed by reading Nukkit's source, but no Nukkit

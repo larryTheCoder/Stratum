@@ -129,7 +129,10 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
 - World load: PHP passes the world's stored pipeline blob (see §6) +
   seed; ext compiles it and registers a generator instance.
 - Per chunk: ext calls `generateChunk(cx, cz)` on the compiled pipeline and
-  receives populated `PalettedBlockArray` sub-chunk storages + biome arrays.
+  receives populated `PalettedBlockArray` sub-chunk storages + biome arrays,
+  holding PMMP's own internal block state ids (resolved once per distinct
+  state through `lib/mapping/` and PMMP's own deserializer, §9) — never
+  anything Bedrock-protocol-specific.
 - Optional main-thread post-population hooks for plugins (decoration in PHP,
   outside the parity contract).
 
@@ -303,31 +306,47 @@ default stays permissive, and the question stays open.
 
 ## 9. Bedrock mapping layer
 
-Two different problems, and they do not share a layer — the split is a
-measured finding (§11), not a starting design:
+Generation never needs to know which Bedrock protocol version a client
+will connect with. Every target platform stores and generates chunks in its
+own protocol-independent block representation and translates to a
+connecting client's protocol downstream, in its own networking layer (§11's
+"returns to `lib/mapping/`" entry has the source citations). So each
+mapping has two halves, split at a platform-neutral midpoint:
 
-- **Biome mapping lives in `lib/mapping/`** (its own CMake target,
-  `stratum_mapping`, downstream of the conformance boundary —
-  `stratum_core` never links it): a Java biome id resolves to Bedrock's
-  numeric id from maintained mapping data (GeyserMC mappings as reference
-  input), with custom/datapack biomes falling back to the nearest vanilla
-  Bedrock biome (configurable) for client-side fog/color/music; the
-  engine's internal biome identity is preserved for generation purposes
-  either way. One compiled-in table per Minecraft version this build is
-  pinned to, regenerated when the pin moves — the same maintenance model
-  Bedrock-facing middleware itself uses for biomes (§11 has the evidence).
-- **Block state mapping does NOT live here.** Java block state → Bedrock
-  runtime state belongs entirely to each native binding — `ext/`'s PHP
-  layer for PocketMine-MP, and `ext-nukkit/`'s C++ (`resolveNukkitFullId()`)
-  for CloudburstMC/Nukkit — one table per connected client's Bedrock
-  protocol version, selected per connection. `lib/`'s own engine emits
-  nothing beyond Java block state and carries no Bedrock awareness at all.
-  Unmappable states still resolve through an explicit, configurable
-  fallback table wherever the translation happens — never a crash, never a
-  silent stone substitution without a log. `ext-nukkit/`'s table is
-  unsourced today — see §11's M5-Nukkit entry and `ext-nukkit/README.md`.
-- Mapping happens after conformance diffing (§7), never before, on
-  whichever side of the C++/native-binding boundary it lands.
+- **`lib/mapping/` owns Java → Bedrock blockstate data** (its own CMake
+  target, `stratum_mapping`, downstream of the conformance boundary —
+  `stratum_core` never links it). One compiled-in table per Minecraft
+  version this build is pinned to, regenerated when the pin moves:
+  - *Biomes:* a Java biome id resolves to Bedrock's numeric id (GeyserMC
+    mappings as reference input), with custom/datapack biomes falling back
+    to the nearest vanilla Bedrock biome (configurable) for client-side
+    fog/color/music; the engine's internal biome identity is preserved for
+    generation either way.
+  - *Block states:* a Java block state resolves to a Bedrock blockstate
+    triple — `{name, states, version}`, the named, string-keyed shape both
+    PocketMine-MP (`BlockStateData`) and Nukkit (`BlockStateMapping`'s
+    `NbtMap` key) already consume. It never resolves to a numeric network
+    runtime id. That id is a hash-sorted index that shifts between Bedrock
+    protocol versions, and it is derived later, per connection, inside each
+    platform's own networking code.
+- **Each native binding owns the last step:** Bedrock blockstate → the
+  platform's own internal block id, using the platform's own resolver
+  rather than a second table. `ext/` feeds the triple through PMMP's
+  `BlockStateUpgrader` then `BlockStateToObjectDeserializer::deserialize()`,
+  which returns the internal state id `Chunk::setBlockStateId()` takes.
+  `ext-nukkit/` feeds it through Nukkit's `BlockStateMapping` for a legacy
+  id:meta. Both resolve once per distinct state, when the generator starts
+  up, not once per block.
+- **Version coupling.** Both platforms' upgraders only move blockstates
+  forward, so the table's Bedrock blockstate version must be no newer than
+  the oldest platform build it serves. A binding refuses a table newer than
+  its platform at world load, naming both versions.
+- Unmappable states resolve through an explicit, configurable fallback
+  table — never a crash, never a silent stone substitution without a log.
+  Both platforms have their own silent fallback to `info_update`; bindings
+  must detect the miss themselves rather than inherit it.
+- Mapping happens after conformance diffing (§7), never before. `lib/`'s
+  generation engine itself emits nothing beyond Java block state.
 
 ---
 
@@ -4116,6 +4135,78 @@ Open:
   been compiled against real Nukkit classes for the same reason — it is
   written to match Nukkit's confirmed API exactly, but unverified by a
   real build.
+
+- **M5's block state mapping returns to `lib/mapping/` — a measured
+  correction to the "moves out of `lib/mapping/` entirely" entry above.**
+  That entry's evidence holds: Bedrock's network runtime id is a hash-sorted
+  index, and multi-version servers keep one table per protocol. But it never
+  checked where in the pipeline that translation runs. It runs at network
+  send, never at generation. Read directly from `pmmp/PocketMine-MP`
+  (`stable` @ `6a7cc02`) and `CloudburstMC/Nukkit` (`master` @ `058e213`):
+
+  *Generators never see a protocol version.* `Generator::generateChunk(
+  ChunkManager, int, int)` has no client or protocol parameter. PMMP's own
+  `Normal` and `Flat` generators write `VanillaBlocks::X()->getStateId()`
+  through `Chunk::setBlockStateId(int, int, int, int)`. That id comes from
+  `RuntimeBlockStateRegistry`, PMMP's own process-local numbering, which is
+  the same whichever client later connects.
+
+  *Storage never sees one either.* `LevelDB::saveChunk()` serializes through
+  `GlobalBlockStateHandlers::getSerializer()` — a different object from the
+  network `TypeConverter`. It is versioned by PMMP's own world-data version,
+  not by protocol.
+
+  *Protocol-specific translation lives only in the network layer.* Every
+  `TypeConverter`/`getBlockTranslator()` call site is under
+  `src/network/mcpe/` (`ChunkRequestTask`, chunk send) or in `World::
+  createBlockUpdatePackets` (live block-change broadcast). There are zero
+  under `src/world/generator/`. NetherGamesMC's multi-version fork keeps the
+  same boundary: its per-protocol `TypeConverter` is picked in `NetworkSession
+  ::setProtocolId()`, at session negotiation.
+
+  *Both platforms already resolve a named Bedrock blockstate into their own
+  id.* PMMP's world loader does exactly this for every palette entry on
+  disk: `BlockDataUpgrader::upgradeBlockStateNbt()`, then
+  `BlockStateToObjectDeserializer::deserialize(BlockStateData): int`, which
+  returns the internal state id. Nukkit's `BlockStateMapping` keys its
+  palette by the same `{name, states, version}` `NbtMap`. `updateState()`
+  upgrades an older state forward, and the resulting `BlockStateSnapshot`
+  carries `getLegacyId()`/`getLegacyData()`. The M5-Nukkit entry's
+  assumption that Nukkit has nothing to resolve an identifier against was
+  wrong: `BlockID.java` alone doesn't, but `BlockStateMapping` does.
+
+  *So only one table is needed, and it is platform-neutral.* Java block
+  state → Bedrock blockstate triple depends only on the pinned Minecraft
+  version, the same granularity as biome mapping, and both platforms take
+  that shape as input. It belongs in `lib/mapping/` beside the biome table.
+  Only the final triple → internal id step is platform-specific, and each
+  platform already ships the code for it. §9 is rewritten to match.
+
+  *Two hazards this exposes, each measured rather than assumed away:*
+  - **Version coupling.** PMMP's `BlockStateUpgrader::upgrade()` skips any
+    schema older than the input's version and never downgrades. Nukkit's
+    updater is also forward-only. PMMP `stable`'s `BlockStateData::
+    CURRENT_VERSION` is 1.21.60.33 (`WorldDataVersions::BLOCK_STATES`), and
+    Nukkit's leveldb palette is `block_palette_729.nbt` (protocol 729,
+    Bedrock 1.21.30). Both are older than the Bedrock release matching this
+    build's Java 1.21.11 pin. A table generated straight from GeyserMC's
+    1.21.9 branch may therefore name states neither platform understands.
+    Whether that matters for the blocks terrain generation actually emits
+    has not been measured yet. It is the first question `tools/mapping-sync`
+    must answer.
+  - **Silent platform fallbacks.** PMMP's loader swaps any unresolvable
+    state for `info_update`, and Nukkit's `getState(NbtMap)` does the same
+    with only a `log.warn`. Bindings must catch the miss themselves (PMMP's
+    `UnsupportedBlockStateException`, Nukkit's `getStateUnsafe()` returning
+    null) so §9's explicit fallback table applies, not the platform's.
+
+  *What this changes downstream.* `ext/` no longer needs any per-protocol
+  table; it resolves `lib/mapping/`'s triples once per distinct state when
+  the generator starts. `ext-nukkit/`'s `resolveNukkitFullId()` stub
+  resolves in C++ today, but the resolver it needs (`BlockStateMapping`) is
+  on the Java side. The JNI boundary will likely change so the Java side
+  builds the id lookup once and native code only indexes it. Not
+  implemented in this change.
 
 ---
 

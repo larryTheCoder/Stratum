@@ -11,18 +11,24 @@ Scope when it lands — **marshaling only**, no generation logic:
 - Per chunk: `generateChunk(cx, cz)` on the compiled pipeline, returning this
   engine's own Java block state per position — the zend side does not do
   Bedrock translation itself.
-- **Block state mapping lives here, in PHP, not in the zend binding's C++**
-  (SPEC §9's M5 entry has the full measured reasoning): Java block state →
-  Bedrock blockstate NBT (`{name, states, version}`), one table per
-  connected client's Bedrock protocol version — Bedrock's own block network
-  runtime id has been a hash-sorted index over the whole registry since
-  1.16.100, so a single table cannot serve more than one protocol version at
-  once. PMMP's own `BlockStateDeserializer` already turns that NBT shape
-  into a real `Block` object; this binding needs only produce the NBT, the
-  way NetherGamesMC's `BlockTranslator.php` already does per-protocol
-  selection for PMMP's own world loading. Populated `PalettedBlockArray`
-  sub-chunk storages and biome arrays are the result of that step, not
-  something the zend layer hands over pre-translated.
+- **Block state resolution — the last step only** (SPEC §9; §11's "returns
+  to `lib/mapping/`" entry has the measured reasoning). `lib/mapping/`
+  supplies Java block state → Bedrock blockstate `{name, states, version}`.
+  This binding turns each distinct one into PMMP's own internal state id
+  through PMMP's own code — `GlobalBlockStateHandlers::getUpgrader()`'s
+  `BlockStateUpgrader`, then `getDeserializer()->deserialize()`, the same
+  path PMMP's LevelDB loader takes for every palette entry on disk. It does
+  this once per distinct state when the generator starts, not per block,
+  and writes the resulting ids through `Chunk::setBlockStateId()` like
+  PMMP's own `Normal`/`Flat` generators do. No per-protocol table: a
+  generator never sees which Bedrock version will connect. That translation
+  is PMMP's networking layer's job (`TypeConverter`, at chunk send).
+  - Catch `UnsupportedBlockStateException` here so SPEC §9's explicit
+    fallback table applies — PMMP's own loader silently substitutes
+    `info_update`.
+  - Refuse, at world load, a `lib/mapping/` table whose blockstate version
+    is newer than the running PMMP's `BlockStateData::CURRENT_VERSION`:
+    PMMP's upgrader only moves states forward.
 - Optional main-thread post-population hooks for plugins, outside the parity
   contract.
 

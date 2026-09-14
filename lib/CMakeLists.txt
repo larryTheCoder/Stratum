@@ -97,8 +97,8 @@ target_link_libraries(stratum_core
 
 stratum_configure_target(stratum_core)
 
-# lib/mapping/ (Java -> Bedrock biome mapping — block state mapping lives in
-# ext/'s PHP layer instead, per protocol version; see lib/mapping/README.md)
+# lib/mapping/ (platform-neutral Java -> Bedrock biome and blockstate data;
+# see lib/mapping/README.md)
 # is Milestone M5 (SPEC 9), its own target with its own tests, deliberately
 # downstream of the conformance boundary: stratum_core never links it, only
 # the reverse.

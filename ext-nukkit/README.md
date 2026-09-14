@@ -66,10 +66,15 @@ worth knowing if you are diffing build flags.
 ## What is not here yet
 
 - **Block state mapping.** `resolveNukkitFullId()` always throws
-  `NukkitError` — no Java-state-to-Nukkit-legacy-id table has been sourced
-  (PROGRESS.md's M5 section has the standing options). `fill()` therefore
-  cannot successfully fill a real chunk yet; what it CAN do today is refuse
-  correctly, which is what `tests/pipeline_test.cpp` pins.
+  `NukkitError`, so `fill()` cannot fill a real chunk yet; what it CAN do
+  today is refuse correctly, which is what `tests/pipeline_test.cpp` pins.
+  The planned shape (SPEC §9): `lib/mapping/`'s shared Java → Bedrock
+  blockstate table, resolved through Nukkit's own `BlockStateMapping`
+  (`updateState()` → `BlockStateSnapshot.getLegacyId()/getLegacyData()`) —
+  no Nukkit-specific table. That resolver is Java-side, so the JNI boundary
+  will likely change: Java builds the id lookup once at `init`, and native
+  `fill()` only indexes it. Misses must be detected via `getStateUnsafe()`
+  returning null — `getState()` silently substitutes `info_update`.
 - **The "nearest vanilla Bedrock biome" fallback** for custom/datapack
   biomes outside the generated table (same gap `lib/mapping/`'s own README
   names for the PocketMine-MP path — this binding inherits it rather than
