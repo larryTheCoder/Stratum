@@ -233,9 +233,13 @@ but waits on the same table and is untested against a real Nukkit build.
          lists, biome temperatures and every pack noise, so a world
          generates from its blob alone (SPEC §6). `freeze::resolve` is the
          one builder; `NoiseRegistry::create` builds from stored parameters.
-      2. [ ] **One shared compile-and-fill core** used by `ext/` and
-         `ext-nukkit/`, compiled from a frozen pipeline, with a conformance
-         check that a thawed pipeline fills the same chunk as the live pack.
+      2. [x] **One shared compile-and-fill core** —
+         `world::CompiledDimension`, compiled from a frozen pipeline, now
+         what `ext-nukkit/` generates through. A thawed vanilla blob fills
+         every block and every quart biome identically to a reference built
+         straight from the pack (3 chunks × 2 seeds, surface rules on).
+         `ext-nukkit/` still resolves its pipeline from a live pack rather
+         than a world's blob: it has no world-creation hook to store one.
       3. [ ] **`stratum_pmmp` sub-chunk encoding** — chunkutils2's word
          format, smallest allowed width, Java-state palettes; unit tested.
       4. [ ] **`stratum.so` zend shim** against a minimal ZTS PHP 8.2 built
@@ -291,7 +295,8 @@ but waits on the same table and is untested against a real Nukkit build.
       pointers into its `surfaceRules`/`biomeParameters`/`biomeTemperatures`
       arguments, and an early draft let those be locals `std::move()`'d
       elsewhere afterward; see `ext-nukkit/src/pipeline.cpp`'s
-      `Pipeline::Impl` doc comment and SPEC.md §11's M5-Nukkit entry for the
+      `Pipeline::Impl` doc comment (now `world::CompiledDimension`'s, the
+      shared core) and SPEC.md §11's M5-Nukkit entry for the
       full mechanism. Full verification: compiles clean under
       `-Wall -Wextra`, zero clang-tidy 18 findings, clang-format clean, and
       all 376 unit tests (incl. the 4 new Nukkit ones) pass.

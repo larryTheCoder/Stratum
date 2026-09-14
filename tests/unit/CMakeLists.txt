@@ -38,6 +38,7 @@ add_executable(stratum_unit_tests
     region_file_writer_test.cpp
     validate_test.cpp
     version_test.cpp
+    world_dimension_test.cpp
     xoroshiro_test.cpp
 )
 

@@ -5,9 +5,8 @@
 // JNI surface itself — plain C++, buildable and testable without a JVM.
 // Splitting it this way is the same shape `ext/`'s own "marshaling only, no
 // generation logic" rule takes for PocketMine-MP: this file calls straight
-// into `lib/`'s existing compile-then-fill pipeline
-// (`terrain::ChunkFiller`), the same one `tools/analysis/generate-world.cpp`
-// already exercises end to end, and adds exactly two things a Java caller
+// into `world::CompiledDimension`, the compile-and-fill core every native
+// binding shares, and adds exactly two things a Java caller
 // needs that `lib/` does not provide on its own — a Bedrock biome id per
 // cell (via `stratum::mapping`, already built and reused verbatim rather
 // than re-derived) and Nukkit's own block id (see `resolveNukkitFullId`'s

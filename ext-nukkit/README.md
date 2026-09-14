@@ -60,8 +60,9 @@ worth knowing if you are diffing build flags.
   `Interpreter::Scope::has`, not as a clean thrown exception. `pipeline.cpp`
   now builds every such member in place, in declaration order, so nothing
   `ChunkFiller::compile` takes a pointer to is ever a value about to be
-  moved out from under it — see `Pipeline::Impl`'s own header comment for
-  the full account.
+  moved out from under it. That construction now lives in one place for
+  both bindings, `lib/include/stratum/world/dimension.hpp`, whose header
+  keeps the full account.
 
 ## What is not here yet
 

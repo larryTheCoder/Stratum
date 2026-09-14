@@ -14,6 +14,7 @@ configure_file(
 add_library(stratum_core STATIC
     src/biome_parameter_list.cpp
     src/biome_temperature_table.cpp
+    src/world_dimension.cpp
     src/aquifer_barrier.cpp
     src/aquifer_lattice.cpp
     src/aquifer_sampling.cpp
@@ -72,6 +73,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/freeze/pipeline.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/world/dimension.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/hash/md5.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/image/png.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/math/fdlibm.hpp"
