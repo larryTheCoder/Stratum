@@ -217,6 +217,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pin the JDK
+        # fetch-vanilla runs the server's own data generator for the biome
+        # parameters and the block report, and 1.21.11 needs Java 21+. The
+        # runner's default JDK could not run it, which fetch-vanilla only
+        # reported as a warning — so both reports were silently absent here
+        # until reports/blocks.json became a checked fixture.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
       - name: Configure
         run: cmake --preset dev
 

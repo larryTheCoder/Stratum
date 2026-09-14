@@ -333,9 +333,10 @@ log "asking the server to dump its biome parameters"
 reports_staging="${output_dir}/.extract-reports"
 rm -rf "${reports_staging}"
 mkdir -p "${reports_staging}"
+generator_log="${output_dir}/.data-generator.log"
 if (cd "${reports_staging}" && java \
         -DbundlerMainClass=net.minecraft.data.Main \
-        -jar "${jar_file}" --reports >/dev/null 2>&1); then
+        -jar "${jar_file}" --reports >"${generator_log}" 2>&1); then
     dumped="${reports_staging}/generated/reports/biome_parameters"
     if [[ -d "${dumped}" ]]; then
         rm -rf "${biome_parameters_dir}"
@@ -360,9 +361,13 @@ if (cd "${reports_staging}" && java \
         log "warning: the server produced no blocks.json; tools/mapping-sync will refuse to run"
     fi
 else
-    log "warning: could not run the data generator; M4's biome source will skip"
+    # Say why, not just that: a wrong JDK looks exactly like this, and a
+    # warning with no cause is how CI went without these reports unnoticed.
+    log "warning: could not run the data generator (java: $(java -version 2>&1 | head -1));"
+    log "         M4's biome source and tools/mapping-sync will skip or refuse. Its last output:"
+    tail -n 15 "${generator_log}" >&2 || true
 fi
-rm -rf "${reports_staging}"
+rm -rf "${reports_staging}" "${generator_log}"
 
 # --- 5. provenance record ------------------------------------------------
 jq -n \
