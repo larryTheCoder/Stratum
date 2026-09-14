@@ -8,7 +8,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <string>
+#include <utility>
 
 namespace stratum::biome {
 
@@ -23,6 +25,12 @@ TemperatureTable TemperatureTable::fromPack(const data::Pack& pack) {
         table.temperatures_.emplace(entry->id, json.at("temperature").get<float>());
     }
     return table;
+}
+
+TemperatureTable TemperatureTable::fromMap(std::map<data::ResourceLocation, float> table) {
+    TemperatureTable result;
+    result.temperatures_ = std::move(table);
+    return result;
 }
 
 float TemperatureTable::at(const data::ResourceLocation& id) const {

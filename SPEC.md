@@ -217,6 +217,22 @@ existing container-format check, which is the intended behaviour rather than
 a regression — a world frozen by a build that could not represent an inline
 noise is not one this build can be sure it reproduces.
 
+The container format is **3** since M5. A format-2 blob could not actually
+generate a world on its own: M4's biome source and surface rules read the
+multi-noise biome parameter lists (which vanilla compiles in; only its data
+generator dumps them) and every biome's declared temperature, and surface
+rules sample noises the density graph never names (`minecraft:surface`,
+`surface_secondary`, `clay_bands_offset`, and the rule trees' own). Format 3
+appends the parameter lists — entry order preserved, because ties in the
+search go to the later entry — and the temperature table as float32 bit
+patterns, and `freeze::resolve(pack, biomeParametersDir)` is now the single
+place a pipeline is assembled: it freezes every noise the pack defines, not
+only the graph's. `NoiseRegistry::create` builds from the stored parameters
+through the same derivation the pack path uses, and a unit test checks the
+two sample bit-identically. The pipeline engine version does not change:
+nothing about the terrain a given pipeline generates moved, only what the
+blob carries.
+
 ---
 
 ## 7. Parity tiers & conformance
@@ -4287,11 +4303,66 @@ Open:
   refused Nukkit outright over states that are identical. It is replaced by
   per-state resolution with misses routed to the fallback table.
 
-  *Provenance.* The committed table carries Java block, property and value
-  identifiers and each block's default. These are the same kind of
+  *Provenance.* The owner approved committing this table (2026-09-15),
+  scoped to block state identifiers and defaults only. The committed table
+  carries Java block, property and value identifiers and each block's
+  default. These are the same kind of
   identifier data `biome_table.inc` already commits, and nothing from the
   jar's own files is copied: the report is read at generation time and
   never vendored.
+
+- **M5-PMMP: the zend binding's boundary, read from source, and the plan the
+  owner approved.** Read from `pmmp/PocketMine-MP` `stable` @ `6a7cc02`,
+  `pmmp/ext-chunkutils2` 0.3.5 @ `036b4af` (the only line PMMP 5 accepts —
+  `PocketMine.php` refuses anything outside 0.3.x), `pmmp/PHP-Binaries`
+  `stable` @ `3296ff3` and `pmmp/ext-pmmpthread` 6.3.0 @ `b453d10`:
+
+  *How PMMP runs a generator.* `AsyncGeneratorRegisterTask` constructs one
+  `Generator($seed, $generatorSettings)` per worker thread and parks it in a
+  per-thread static (`ThreadLocalGeneratorContext`) until
+  `AsyncGeneratorUnregisterTask` drops it at world unload. The generator is
+  handed an options string and never the world's folder. A `Chunk` is
+  exactly 24 sub-chunks (indices -4 to 19, so y -64 to 319), vanilla's
+  overworld extent with no remapping, and PMMP's own `Normal` generator
+  already builds whole ones: `setSubChunk($y, new SubChunk(
+  Block::EMPTY_STATE_ID, [$blockArray], $biomeArray))`. PMMP's `BiomeIds`
+  are the Bedrock ids `lib/mapping/` produces.
+
+  *How native data gets into a sub-chunk.* `PalettedBlockArray::fromData(
+  int $bitsPerBlock, string $wordArray, array $palette)`. The words are
+  host-endian `uint32` in XZY index order, packed from the low bit, with
+  exact lengths per width; widths are {0,1,2,3,4,5,6,8,16} (7 is refused);
+  the palette is at most 2^width entries and is not type-checked, so
+  entries must be real PHP ints. chunkutils2 installs no header, and its
+  object layout changed between 0.3.5 and master, so building its objects
+  directly from another extension is unsupported; calling `fromData` is the
+  boundary.
+
+  *What PMMP's PHP builds are.* PHP 8.2 by default, ZTS
+  (`--enable-zts`), extensions compiled in statically on Linux and macOS.
+  Release tarballs delete `include/`, so no release can build an extension,
+  and there is no Linux aarch64 release. pmmpthread starts every thread with
+  its own request, so an extension keeps per-thread state in module globals
+  and shares nothing mutable across threads without a lock.
+
+  *The binding, as approved.* (1) `stratum_pmmp` core, plain C++: fills a
+  chunk into 24 ready-to-load `{bitsPerBlock, wordArray, palette}` block
+  and biome layers — block palettes hold Java state ids, deduplicated, at
+  the smallest allowed width; all-air sections get no block layer. (2) A
+  thin zend shim (`stratum.so`) sharing one immutable compiled pipeline per
+  world across worker threads, locked only while compiling. (3) A PMMP
+  plugin whose `Generator` translates each sub-chunk's few-entry palette to
+  PMMP state ids through a per-worker cache (misses resolved via PMMP's
+  upgrader and deserializer, `UnsupportedBlockStateException` routed to §9's
+  fallback table), then calls `fromData` and `setSubChunk` — no per-block
+  PHP. Three decisions, each the recommended option: **worlds load from
+  their frozen blob from day one** (format 3, §6, landed first), **the
+  compile-and-fill construction becomes one shared core** used by both
+  `ext/` and `ext-nukkit/` (it holds the dangling-pointer ordering hazard
+  §11's M5-Nukkit entry describes, which should live in one place), and
+  **the extension is built against a minimal ZTS PHP 8.2 compiled from
+  php/php-src**, locally and in a CI job, with chunkutils2 0.3.5 built by
+  phpize for tests — no full PMMP server yet.
 
 ---
 

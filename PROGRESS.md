@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-14 (M5: block state table landed).
+Last swept: 2026-09-15 (M5: PMMP binding planned; freeze format 3).
 
 ## At a glance
 
@@ -223,6 +223,27 @@ but waits on the same table and is untested against a real Nukkit build.
       be per state, not a version gate. PMMP `stable` is at exactly the
       table's version, and Nukkit's older 1.21.30.7 palette still holds all
       35 states vanilla's noise settings emit.
+- [ ] **The PocketMine-MP binding (`ext/`) — plan approved, started.**
+      Boundary read from PMMP, chunkutils2 0.3.5, PHP-Binaries and
+      pmmpthread source (SPEC.md §11's M5-PMMP entry): native code builds
+      each sub-chunk's `{bitsPerBlock, wordArray, palette}` and PHP only
+      calls `PalettedBlockArray::fromData` + `setSubChunk`, translating a
+      few palette entries per sub-chunk. Slices, in order:
+      1. [x] **Freeze format 3** — the blob now carries the biome parameter
+         lists, biome temperatures and every pack noise, so a world
+         generates from its blob alone (SPEC §6). `freeze::resolve` is the
+         one builder; `NoiseRegistry::create` builds from stored parameters.
+      2. [ ] **One shared compile-and-fill core** used by `ext/` and
+         `ext-nukkit/`, compiled from a frozen pipeline, with a conformance
+         check that a thawed pipeline fills the same chunk as the live pack.
+      3. [ ] **`stratum_pmmp` sub-chunk encoding** — chunkutils2's word
+         format, smallest allowed width, Java-state palettes; unit tested.
+      4. [ ] **`stratum.so` zend shim** against a minimal ZTS PHP 8.2 built
+         from php/php-src (locally and in a CI job), chunkutils2 0.3.5 via
+         phpize, PHPT tests.
+      5. [ ] **The PMMP plugin** — `StratumGenerator`, per-worker palette
+         cache, the fallback table (powder snow first), world creation
+         writing the frozen blob.
 - [ ] **Block state resolution in the bindings — not started.**
       1. **`ext/` resolves the table through PMMP** — upgrader then
          deserializer, once per distinct state at generator start, catching

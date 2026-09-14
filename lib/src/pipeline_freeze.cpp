@@ -1,6 +1,10 @@
 // Stratum — the per-world pipeline freeze.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/temperature_table.hpp>
+#include <stratum/data/pack.hpp>
+#include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/noise_registry.hpp>
@@ -17,6 +21,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <map>
 #include <span>
 #include <string>
 #include <utility>
@@ -64,6 +71,8 @@ public:
     }
 
     void i32(std::int32_t value) { u32(static_cast<std::uint32_t>(value)); }
+
+    void f32(float value) { u32(std::bit_cast<std::uint32_t>(value)); }
 
     /// The bit pattern, not a rendering. A double printed and reparsed is a
     /// platform's opinion about formatting; parity needs the bits.
@@ -116,6 +125,8 @@ public:
     }
 
     [[nodiscard]] std::int32_t i32() { return static_cast<std::int32_t>(u32()); }
+
+    [[nodiscard]] float f32() { return std::bit_cast<float>(u32()); }
 
     [[nodiscard]] double f64() { return std::bit_cast<double>(u64()); }
 
@@ -477,6 +488,78 @@ void writeSettings(Writer& out,
     return all;
 }
 
+void writeParameter(Writer& out, const biome::Parameter& parameter) {
+    out.f64(parameter.min);
+    out.f64(parameter.max);
+}
+
+void writeBiomes(Writer& out, const Pipeline& pipeline) {
+    out.u32(static_cast<std::uint32_t>(pipeline.biomeParameters.size()));
+    for (const auto& [id, list] : pipeline.biomeParameters) {
+        out.id(id);
+        out.u32(static_cast<std::uint32_t>(list.size()));
+        // In the list's own order: ties in the search go to the later entry,
+        // so the order is part of what the list means.
+        for (const biome::Entry& entry : list.entries()) {
+            out.id(entry.biome);
+            const biome::ParameterPoint& point = entry.parameters;
+            writeParameter(out, point.temperature);
+            writeParameter(out, point.humidity);
+            writeParameter(out, point.continentalness);
+            writeParameter(out, point.erosion);
+            writeParameter(out, point.depth);
+            writeParameter(out, point.weirdness);
+            out.f64(point.offset);
+        }
+    }
+    const auto& temperatures = pipeline.biomeTemperatures.entries();
+    out.u32(static_cast<std::uint32_t>(temperatures.size()));
+    for (const auto& [id, temperature] : temperatures) {
+        out.id(id);
+        out.f32(temperature);
+    }
+}
+
+[[nodiscard]] biome::Parameter readParameter(Reader& in) {
+    const double min = in.f64();
+    return biome::Parameter{.min = min, .max = in.f64()};
+}
+
+void readBiomes(Reader& in, Pipeline& pipeline) {
+    const std::uint32_t lists = in.count("the biome parameter lists");
+    for (std::uint32_t i = 0; i < lists; ++i) {
+        const data::ResourceLocation id = in.id();
+        const std::uint32_t size = in.count("a biome parameter list's entries");
+        std::vector<biome::Entry> entries;
+        entries.reserve(size);
+        for (std::uint32_t k = 0; k < size; ++k) {
+            biome::Entry entry;
+            entry.biome = in.id();
+            entry.parameters.temperature = readParameter(in);
+            entry.parameters.humidity = readParameter(in);
+            entry.parameters.continentalness = readParameter(in);
+            entry.parameters.erosion = readParameter(in);
+            entry.parameters.depth = readParameter(in);
+            entry.parameters.weirdness = readParameter(in);
+            entry.parameters.offset = in.f64();
+            entries.push_back(std::move(entry));
+        }
+        try {
+            pipeline.biomeParameters.emplace(
+                id, biome::ParameterList::fromEntries(std::move(entries), id));
+        } catch (const biome::ParameterError& error) {
+            in.fail(std::string("a stored biome parameter list is not valid: ") + error.what());
+        }
+    }
+    std::map<data::ResourceLocation, float> temperatures;
+    const std::uint32_t biomes = in.count("the biome temperature table");
+    for (std::uint32_t i = 0; i < biomes; ++i) {
+        const data::ResourceLocation id = in.id();
+        temperatures.emplace(id, in.f32());
+    }
+    pipeline.biomeTemperatures = biome::TemperatureTable::fromMap(std::move(temperatures));
+}
+
 /// The payload, without the header. Split out because the hash is over
 /// exactly this and nothing else.
 [[nodiscard]] std::vector<std::byte> writePayload(const Pipeline& pipeline) {
@@ -484,6 +567,7 @@ void writeSettings(Writer& out,
     writeNoises(out, pipeline.noises);
     writeGraph(out, pipeline.graph);
     writeSettings(out, pipeline.settings);
+    writeBiomes(out, pipeline);
     return out.take();
 }
 
@@ -602,10 +686,62 @@ Pipeline read(std::span<const std::byte> blob) {
     pipeline.noises = readNoises(payloadReader);
     pipeline.graph = readGraph(payloadReader);
     pipeline.settings = readSettings(payloadReader);
+    readBiomes(payloadReader, pipeline);
     if (!payloadReader.exhausted()) {
-        throw FreezeError("this world's pipeline has trailing bytes after the settings, so it "
-                          "is not the shape this build writes");
+        throw FreezeError("this world's pipeline has trailing bytes after the biome tables, so "
+                          "it is not the shape this build writes");
     }
+    return pipeline;
+}
+
+Pipeline resolve(const data::Pack& pack, const std::filesystem::path& biomeParametersDir) {
+    settings::LoadedSettings loaded = settings::loadAll(pack);
+    Pipeline pipeline;
+    pipeline.settings = std::move(loaded.settings);
+    pipeline.graph = std::move(loaded.graph);
+
+    // Every noise the pack defines, not only the graph's: surface rules name
+    // noises of their own, and the surface system samples three more that
+    // nothing in the pack references by name.
+    for (const data::PackEntry* entry : pack.entriesOf(data::Registry::Noise)) {
+        pipeline.noises.emplace(entry->id,
+                                density::NoiseParameters::fromJson(entry->json, entry->id));
+    }
+    for (const data::ResourceLocation& id : pipeline.graph.referencedNoises()) {
+        if (!pipeline.noises.contains(id)) {
+            throw FreezeError("the pack defines no noise '" + id.toString() +
+                              "', which a density function references");
+        }
+    }
+
+    if (!std::filesystem::is_directory(biomeParametersDir)) {
+        throw FreezeError("no biome parameter lists under " + biomeParametersDir.string() +
+                          "; tools/fetch-vanilla dumps them from the server's data generator");
+    }
+    for (const auto& file : std::filesystem::recursive_directory_iterator(biomeParametersDir)) {
+        if (!file.is_regular_file() || file.path().extension() != ".json") {
+            continue;
+        }
+        const std::filesystem::path relative =
+            std::filesystem::relative(file.path(), biomeParametersDir);
+        const std::string namespaceName = relative.begin()->string();
+        const std::filesystem::path idPath =
+            std::filesystem::relative(relative, namespaceName).replace_extension();
+        const data::ResourceLocation id(namespaceName, idPath.generic_string());
+        std::ifstream stream(file.path());
+        nlohmann::json json;
+        try {
+            json = nlohmann::json::parse(stream);
+        } catch (const nlohmann::json::exception& error) {
+            throw FreezeError("biome parameter list " + file.path().string() +
+                              " is not JSON: " + error.what());
+        }
+        pipeline.biomeParameters.emplace(id, biome::ParameterList::fromJson(json, id));
+    }
+    if (pipeline.biomeParameters.empty()) {
+        throw FreezeError("no biome parameter lists under " + biomeParametersDir.string());
+    }
+    pipeline.biomeTemperatures = biome::TemperatureTable::fromPack(pack);
     return pipeline;
 }
 

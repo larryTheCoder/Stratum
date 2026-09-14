@@ -38,6 +38,10 @@ public:
     /// documented absence.
     [[nodiscard]] static TemperatureTable fromPack(const data::Pack& pack);
 
+    /// A table from temperatures already read — a frozen pipeline's
+    /// (SPEC §6).
+    [[nodiscard]] static TemperatureTable fromMap(std::map<data::ResourceLocation, float> table);
+
     /// @p id's declared temperature. Float32 on purpose, matching how
     /// vanilla stores and compares it (surface::Executor::freezing's own
     /// doc) — widening it here would change the answer there.
@@ -49,6 +53,10 @@ public:
     [[nodiscard]] float at(const data::ResourceLocation& id) const;
 
     [[nodiscard]] std::size_t size() const noexcept { return temperatures_.size(); }
+
+    [[nodiscard]] const std::map<data::ResourceLocation, float>& entries() const noexcept {
+        return temperatures_;
+    }
 
 private:
     std::map<data::ResourceLocation, float> temperatures_;

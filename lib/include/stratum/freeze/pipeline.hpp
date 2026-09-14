@@ -29,6 +29,9 @@
 
 #pragma once
 
+#include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/temperature_table.hpp>
+#include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/noise_registry.hpp>
@@ -37,6 +40,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <span>
 #include <stdexcept>
@@ -57,12 +61,27 @@ public:
 /// the pack it came from. This is the thing that gets frozen.
 struct Pipeline {
     density::Graph graph;
-    /// The `worldgen/noise` entries the graph names, as parameters rather
-    /// than as built noises: a built noise is a function of the seed, and
-    /// the seed is not part of the pipeline.
+    /// `worldgen/noise` entries, as parameters rather than as built noises: a
+    /// built noise is a function of the seed, and the seed is not part of the
+    /// pipeline. `resolve` freezes every noise the pack defines, not only
+    /// the ones the graph names — surface rules sample noises of their own.
     std::map<data::ResourceLocation, density::NoiseParameters> noises;
     std::map<data::ResourceLocation, settings::NoiseSettings> settings;
+    /// Multi-noise biome parameter lists, by list id (`minecraft:overworld`).
+    /// Not in a data pack as data — vanilla compiles them in and only its
+    /// data generator dumps them — so they have to travel with the world.
+    std::map<data::ResourceLocation, biome::ParameterList> biomeParameters;
+    /// Every biome's declared temperature, which surface rules read.
+    biome::TemperatureTable biomeTemperatures;
 };
+
+/// Everything a world generates from, resolved out of @p pack (a `worldgen/`
+/// tree) and the biome parameter lists under @p biomeParametersDir
+/// (`<namespace>/<id>.json`, as `tools/fetch-vanilla` dumps them). The one
+/// place a frozen pipeline is assembled, so every caller freezes the same
+/// things. Throws whatever the loaders throw, naming the entry.
+[[nodiscard]] Pipeline resolve(const data::Pack& pack,
+                               const std::filesystem::path& biomeParametersDir);
 
 /// What a blob says about itself, readable without decoding the rest of it.
 struct Provenance {
@@ -84,11 +103,13 @@ struct Provenance {
 ///
 /// 2 since a node's noise field became a union: it is written as a tag byte
 /// naming which of the two spellings was used, where format 1 wrote a
-/// present/absent flag. The two are byte-compatible for a blob with no
-/// inline noise in it, which is exactly why the number has to change — a
-/// format-1 reader would take the new tag for the old flag and read the
-/// parameters as an identifier.
-inline constexpr std::uint32_t kBlobFormat = 2;
+/// present/absent flag.
+///
+/// 3 since the blob carries the biome parameter lists and biome temperatures
+/// generation has needed since M4, appended after the settings. A format-2
+/// blob has neither, so generating from one would mean reading them from a
+/// live pack — exactly what SPEC §6 forbids — and it is refused instead.
+inline constexpr std::uint32_t kBlobFormat = 3;
 
 /// Serialises @p pipeline. Deterministic: the same pipeline gives the same
 /// bytes, here and on any other platform.

@@ -9,6 +9,7 @@
 // Mojang-derived fixtures are never committed (SPEC §12); without them this
 // SKIPs, naming the command that produces them.
 
+#include <stratum/biome/parameter_list.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -45,16 +46,10 @@ using stratum::freeze::Pipeline;
     return {};
 }
 
-[[nodiscard]] Pipeline pipelineFrom(const Pack& pack) {
-    stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
-    Pipeline pipeline;
-    pipeline.settings = std::move(loaded.settings);
-    pipeline.graph = std::move(loaded.graph);
-    for (const ResourceLocation& id : pipeline.graph.referencedNoises()) {
-        pipeline.noises.emplace(id, stratum::density::NoiseParameters::fromJson(
-                                        pack.find(stratum::data::Registry::Noise, id)->json, id));
-    }
-    return pipeline;
+[[nodiscard]] Pipeline pipelineFrom(const Pack& pack, const std::filesystem::path& tree) {
+    // biome_parameters/ sits beside worldgen/ in what tools/fetch-vanilla
+    // leaves, dumped by the server's data generator.
+    return stratum::freeze::resolve(pack, tree.parent_path() / "biome_parameters");
 }
 
 } // namespace
@@ -68,11 +63,25 @@ TEST_CASE("vanilla's whole pipeline freezes and thaws unchanged", "[conformance]
                 "tools/fetch-vanilla");
     }
 
+    if (!std::filesystem::is_directory(tree.parent_path() / "biome_parameters")) {
+        SKIP("no biome_parameters dump beside " << tree.string()
+                                                << "; tools/fetch-vanilla produces it");
+    }
+
     const Pack pack = Pack::open(tree);
-    const Pipeline before = pipelineFrom(pack);
+    const Pipeline before = pipelineFrom(pack, tree);
     REQUIRE(before.graph.nodeCount() == 730U);
     REQUIRE(before.settings.size() == 7U);
-    REQUIRE(before.noises.size() == 39U);
+    // Every noise vanilla defines, which is more than the 39 the graph names:
+    // surface rules and the surface system sample the rest.
+    REQUIRE(before.noises.size() == pack.entriesOf(stratum::data::Registry::Noise).size());
+    CHECK(before.graph.referencedNoises().size() == 39U);
+    for (const char* surfaceNoise :
+         {"minecraft:surface", "minecraft:surface_secondary", "minecraft:clay_bands_offset"}) {
+        CHECK(before.noises.contains(ResourceLocation::parse(surfaceNoise)));
+    }
+    REQUIRE(before.biomeParameters.size() == 2U); // overworld and nether
+    REQUIRE(before.biomeTemperatures.size() == 65U);
 
     const std::vector<std::byte> blob = stratum::freeze::write(before);
     const Pipeline after = stratum::freeze::read(blob);
@@ -141,6 +150,39 @@ TEST_CASE("vanilla's whole pipeline freezes and thaws unchanged", "[conformance]
         CHECK(other.defaultFluid == one.defaultFluid);
         CHECK(other.legacyRandomSource == one.legacyRandomSource);
     }
+
+    // The biome tables format 3 added, bit for bit and in order: ties in the
+    // biome search go to the later entry, so order is meaning here.
+    REQUIRE(after.biomeParameters.size() == before.biomeParameters.size());
+    for (const auto& [id, list] : before.biomeParameters) {
+        CAPTURE(id.toString());
+        const auto& other = after.biomeParameters.at(id);
+        REQUIRE(other.size() == list.size());
+        for (std::size_t k = 0; k < list.size(); ++k) {
+            const auto& a = list.entries()[k];
+            const auto& b = other.entries()[k];
+            CAPTURE(k);
+            CHECK(a.biome == b.biome);
+            const auto same = [](const stratum::biome::Parameter& x,
+                                 const stratum::biome::Parameter& y) {
+                return std::bit_cast<std::uint64_t>(x.min) == std::bit_cast<std::uint64_t>(y.min) &&
+                       std::bit_cast<std::uint64_t>(x.max) == std::bit_cast<std::uint64_t>(y.max);
+            };
+            CHECK(same(a.parameters.temperature, b.parameters.temperature));
+            CHECK(same(a.parameters.humidity, b.parameters.humidity));
+            CHECK(same(a.parameters.continentalness, b.parameters.continentalness));
+            CHECK(same(a.parameters.erosion, b.parameters.erosion));
+            CHECK(same(a.parameters.depth, b.parameters.depth));
+            CHECK(same(a.parameters.weirdness, b.parameters.weirdness));
+            CHECK(std::bit_cast<std::uint64_t>(a.parameters.offset) ==
+                  std::bit_cast<std::uint64_t>(b.parameters.offset));
+        }
+    }
+    for (const auto& [id, temperature] : before.biomeTemperatures.entries()) {
+        CAPTURE(id.toString());
+        CHECK(std::bit_cast<std::uint32_t>(after.biomeTemperatures.at(id)) ==
+              std::bit_cast<std::uint32_t>(temperature));
+    }
 }
 
 TEST_CASE("vanilla's pipeline freezes to the same bytes every time", "[conformance][freeze]") {
@@ -149,14 +191,17 @@ TEST_CASE("vanilla's pipeline freezes to the same bytes every time", "[conforman
         SKIP("no extracted vanilla worldgen under " << STRATUM_FIXTURES_DIR);
     }
 
+    if (!std::filesystem::is_directory(tree.parent_path() / "biome_parameters")) {
+        SKIP("no biome_parameters dump beside " << tree.string());
+    }
     const Pack pack = Pack::open(tree);
 
     // Resolved twice from the same pack rather than written twice from one
     // in-memory pipeline: SPEC §5.6 is about a *stored* pipeline being
     // reproducible, and that only means something if loading is
     // deterministic too.
-    const std::vector<std::byte> first = stratum::freeze::write(pipelineFrom(pack));
-    const std::vector<std::byte> second = stratum::freeze::write(pipelineFrom(pack));
+    const std::vector<std::byte> first = stratum::freeze::write(pipelineFrom(pack, tree));
+    const std::vector<std::byte> second = stratum::freeze::write(pipelineFrom(pack, tree));
     CHECK(first == second);
 
     // And reading then rewriting is a fixed point, which is what lets two

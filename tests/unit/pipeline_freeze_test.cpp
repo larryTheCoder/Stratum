@@ -13,6 +13,7 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/hash/md5.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -47,11 +48,12 @@ using stratum::freeze::Pipeline;
 
 class TempTree {
 public:
-    TempTree() : path_(std::filesystem::temp_directory_path() / uniqueName()) {
-        std::filesystem::remove_all(path_);
-        std::filesystem::create_directories(path_ / "density_function");
-        std::filesystem::create_directories(path_ / "noise");
-        std::filesystem::create_directories(path_ / "noise_settings");
+    TempTree() : root_(std::filesystem::temp_directory_path() / uniqueName()) {
+        std::filesystem::remove_all(root_);
+        for (const char* registry : {"density_function", "noise", "noise_settings", "biome"}) {
+            std::filesystem::create_directories(root_ / "worldgen" / registry);
+        }
+        std::filesystem::create_directories(root_ / "biome_parameters" / "minecraft");
     }
 
     TempTree(const TempTree&) = delete;
@@ -59,15 +61,24 @@ public:
 
     ~TempTree() {
         std::error_code ignored;
-        std::filesystem::remove_all(path_, ignored);
+        std::filesystem::remove_all(root_, ignored);
     }
 
     void write(const char* registry, std::string_view name, std::string_view json) const {
-        std::ofstream out(path_ / registry / (std::string(name) + ".json"));
+        std::ofstream out(root_ / "worldgen" / registry / (std::string(name) + ".json"));
         out << json;
     }
 
-    [[nodiscard]] Pack pack() const { return Pack::open(path_); }
+    void writeBiomeParameters(std::string_view name, std::string_view json) const {
+        std::ofstream out(root_ / "biome_parameters" / "minecraft" / (std::string(name) + ".json"));
+        out << json;
+    }
+
+    [[nodiscard]] Pack pack() const { return Pack::open(root_ / "worldgen"); }
+
+    [[nodiscard]] std::filesystem::path biomeParametersDir() const {
+        return root_ / "biome_parameters";
+    }
 
 private:
     [[nodiscard]] static std::string uniqueName() {
@@ -75,7 +86,7 @@ private:
         return "stratum-freeze-test-" + std::to_string(++counter);
     }
 
-    std::filesystem::path path_;
+    std::filesystem::path root_;
 };
 
 /// A pipeline with one of everything the format has to carry: a spline, a
@@ -120,17 +131,24 @@ private:
     };
     tree.write("noise_settings", "overworld", settingsJson.dump());
 
-    const Pack pack = tree.pack();
-    stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
+    // A noise nothing in the graph names, as surface rules' noises are: the
+    // freeze has to carry it anyway.
+    tree.write("noise", "surface_only", R"({"firstOctave":-2,"amplitudes":[1.0]})");
 
-    Pipeline pipeline;
-    pipeline.settings = std::move(loaded.settings);
-    pipeline.graph = std::move(loaded.graph);
-    for (const ResourceLocation& id : pipeline.graph.referencedNoises()) {
-        pipeline.noises.emplace(id, stratum::density::NoiseParameters::fromJson(
-                                        pack.find(stratum::data::Registry::Noise, id)->json, id));
-    }
-    return pipeline;
+    // Temperatures chosen to have bit patterns a float32 round trip through
+    // text would disturb.
+    tree.write("biome", "plains", R"({"temperature":0.8})");
+    tree.write("biome", "snowy_plains", R"({"temperature":-0.1})");
+    // Both spellings of an axis, a nonzero offset, and a tie-sensitive order.
+    tree.writeBiomeParameters("overworld", R"({"biomes":[
+        {"biome":"minecraft:plains","parameters":{"temperature":[-0.15,0.2],"humidity":0.1,
+         "continentalness":[-0.11,0.55],"erosion":[-1.0,1.0],"depth":0.0,"weirdness":[-1.0,1.0],
+         "offset":0.0}},
+        {"biome":"minecraft:snowy_plains","parameters":{"temperature":[-1.0,-0.45],
+         "humidity":[-1.0,-0.35],"continentalness":[-0.11,0.3],"erosion":[0.45,0.55],
+         "depth":1.0,"weirdness":[0.0,0.0],"offset":0.375}}]})");
+
+    return stratum::freeze::resolve(tree.pack(), tree.biomeParametersDir());
 }
 
 void expectSame(const Pipeline& before, const Pipeline& after) {
@@ -207,6 +225,34 @@ void expectSame(const Pipeline& before, const Pipeline& after) {
         CHECK(other.surfaceRule == one.surfaceRule);
         CHECK(other.spawnTarget == one.spawnTarget);
     }
+
+    REQUIRE(after.biomeParameters.size() == before.biomeParameters.size());
+    for (const auto& [id, list] : before.biomeParameters) {
+        REQUIRE(after.biomeParameters.contains(id));
+        const auto& other = after.biomeParameters.at(id);
+        CAPTURE(id.toString());
+        REQUIRE(other.size() == list.size());
+        for (std::size_t k = 0; k < list.size(); ++k) {
+            const auto& a = list.entries()[k].parameters;
+            const auto& b = other.entries()[k].parameters;
+            CAPTURE(k);
+            CHECK(other.entries()[k].biome == list.entries()[k].biome);
+            for (const auto& [x, y] :
+                 {std::pair{a.temperature, b.temperature}, std::pair{a.humidity, b.humidity},
+                  std::pair{a.continentalness, b.continentalness}, std::pair{a.erosion, b.erosion},
+                  std::pair{a.depth, b.depth}, std::pair{a.weirdness, b.weirdness}}) {
+                CHECK(bits(x.min) == bits(y.min));
+                CHECK(bits(x.max) == bits(y.max));
+            }
+            CHECK(bits(a.offset) == bits(b.offset));
+        }
+    }
+    REQUIRE(after.biomeTemperatures.size() == before.biomeTemperatures.size());
+    for (const auto& [id, temperature] : before.biomeTemperatures.entries()) {
+        CAPTURE(id.toString());
+        CHECK(std::bit_cast<std::uint32_t>(after.biomeTemperatures.at(id)) ==
+              std::bit_cast<std::uint32_t>(temperature));
+    }
 }
 
 } // namespace
@@ -214,6 +260,10 @@ void expectSame(const Pipeline& before, const Pipeline& after) {
 TEST_CASE("a frozen pipeline comes back exactly as it went in", "[freeze]") {
     const TempTree tree;
     const Pipeline before = buildPipeline(tree);
+    // What resolve() is for: everything generation reads, not just the graph.
+    CHECK(before.noises.contains(ResourceLocation::parse("minecraft:surface_only")));
+    CHECK(before.biomeParameters.size() == 1U);
+    CHECK(before.biomeTemperatures.size() == 2U);
     const std::vector<std::byte> blob = stratum::freeze::write(before);
     CHECK(blob.size() > 100U);
 
@@ -360,6 +410,12 @@ TEST_CASE("the checks behind the hash catch what the hash would have caught", "[
         CHECK(refusalsMentioning(good, payload, "does not know") > 0U);
     }
 
+    SECTION("a stored biome parameter list that is not one") {
+        // Counts, identifiers and ranges in the section format 3 added are
+        // read with the same suspicion as everything before them.
+        CHECK(refusalsMentioning(good, payload, "biome parameter list") > 0U);
+    }
+
     SECTION("a noise field tagged as neither spelling") {
         // The field is a union, so the tag has three legal values and 253
         // illegal ones. A reader that treated anything non-zero as "an
@@ -405,4 +461,36 @@ TEST_CASE("the checks behind the hash catch what the hash would have caught", "[
         }
         CHECK(caught > 0U);
     }
+}
+
+TEST_CASE("a thawed pipeline builds the same noises its pack would", "[freeze]") {
+    // SPEC §6 is only honoured if generation can run from the blob alone, and
+    // that starts with the noises: built from stored parameters they have to
+    // be the very same noises the pack builds, seeded the same way.
+    const TempTree tree;
+    const Pipeline thawed = stratum::freeze::read(stratum::freeze::write(buildPipeline(tree)));
+    const Pack pack = tree.pack(); // after buildPipeline has written the tree
+
+    const std::vector<ResourceLocation> wanted = {
+        ResourceLocation::parse("minecraft:test"),
+        ResourceLocation::parse("minecraft:surface_only")};
+    const auto fromPack = stratum::density::NoiseRegistry::create(
+        pack, wanted, 1234567, stratum::density::RandomSource::Xoroshiro);
+    const auto fromBlob = stratum::density::NoiseRegistry::create(
+        thawed.noises, wanted, 1234567, stratum::density::RandomSource::Xoroshiro);
+    for (const ResourceLocation& id : wanted) {
+        CAPTURE(id.toString());
+        for (const double at : {-1000.25, 0.0, 17.5, 30000.125}) {
+            CHECK(bits(fromPack.get(id).sample(at, at * 0.5, -at)) ==
+                  bits(fromBlob.get(id).sample(at, at * 0.5, -at)));
+        }
+    }
+
+    CHECK_THROWS_WITH(stratum::density::NoiseRegistry::create(
+                          thawed.noises, std::vector{ResourceLocation::parse("minecraft:absent")},
+                          1, stratum::density::RandomSource::Xoroshiro),
+                      ContainsSubstring("minecraft:absent"));
+    CHECK_THROWS_WITH(stratum::density::NoiseRegistry::create(
+                          thawed.noises, wanted, 1, stratum::density::RandomSource::Legacy),
+                      ContainsSubstring("legacy_random_source"));
 }

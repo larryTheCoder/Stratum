@@ -80,6 +80,15 @@ public:
                                               std::span<const data::ResourceLocation> wanted,
                                               std::int64_t worldSeed, RandomSource source);
 
+    /// The same, from parameters already read out of a pack — a frozen
+    /// pipeline's (SPEC §6), which must generate without the pack it came
+    /// from. The pack overload resolves its parameters and then calls this,
+    /// so the two cannot derive a noise differently.
+    [[nodiscard]] static NoiseRegistry
+    create(const std::map<data::ResourceLocation, NoiseParameters>& parameters,
+           std::span<const data::ResourceLocation> wanted, std::int64_t worldSeed,
+           RandomSource source);
+
     [[nodiscard]] const noise::NormalNoise* find(const data::ResourceLocation& id) const noexcept;
 
     /// The noise with this identifier. Throws NoiseError naming it if absent.

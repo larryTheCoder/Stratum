@@ -148,6 +148,13 @@ public:
     [[nodiscard]] static ParameterList fromJson(const nlohmann::json& json,
                                                 const data::ResourceLocation& id);
 
+    /// A list from entries already read — a frozen pipeline's (SPEC §6).
+    /// Checks what `fromJson` checks of the numbers themselves: no more than
+    /// a dimension's worth of entries, and no axis with its minimum above its
+    /// maximum. `fromJson` ends here too, so the two build the same list.
+    [[nodiscard]] static ParameterList fromEntries(std::vector<Entry> entries,
+                                                   const data::ResourceLocation& id);
+
     [[nodiscard]] const std::vector<Entry>& entries() const noexcept { return entries_; }
 
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }

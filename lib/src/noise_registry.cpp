@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -32,6 +33,29 @@ std::string_view randomSourceName(RandomSource source) noexcept {
 NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
                                     std::span<const data::ResourceLocation> wanted,
                                     std::int64_t worldSeed, RandomSource source) {
+    std::map<data::ResourceLocation, NoiseParameters> parameters;
+    if (source == RandomSource::Legacy) {
+        // The refusal comes before any lookup, as it always has.
+        return create(parameters, wanted, worldSeed, source);
+    }
+    for (const data::ResourceLocation& id : wanted) {
+        if (parameters.contains(id)) {
+            continue;
+        }
+        const data::PackEntry* entry = pack.find(data::Registry::Noise, id);
+        if (entry == nullptr) {
+            throw NoiseError("the pack defines no noise '" + id.toString() +
+                             "', which a density function references");
+        }
+        parameters.emplace(id, NoiseParameters::fromJson(entry->json, id));
+    }
+    return create(parameters, wanted, worldSeed, source);
+}
+
+NoiseRegistry
+NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& parameters,
+                      std::span<const data::ResourceLocation> wanted, std::int64_t worldSeed,
+                      RandomSource source) {
     if (source == RandomSource::Legacy) {
         // Refused rather than approximated. The modern derivation is not a
         // near-enough stand-in: it would seed every noise differently and
@@ -58,18 +82,15 @@ NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
             continue;
         }
 
-        const data::PackEntry* entry = pack.find(data::Registry::Noise, id);
-        if (entry == nullptr) {
-            throw NoiseError("the pack defines no noise '" + id.toString() +
+        const auto found = parameters.find(id);
+        if (found == parameters.end()) {
+            throw NoiseError("no parameters for noise '" + id.toString() +
                              "', which a density function references");
         }
-
-        const NoiseParameters parameters = NoiseParameters::fromJson(entry->json, id);
         rng::Xoroshiro128PlusPlus random = factory.fromHashOf(id.toString());
-        registry.noises_.emplace(
-            id, noise::NormalNoise::create(random, parameters.firstOctave, parameters.amplitudes));
+        registry.noises_.emplace(id, noise::NormalNoise::create(random, found->second.firstOctave,
+                                                                found->second.amplitudes));
     }
-
     return registry;
 }
 

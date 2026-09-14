@@ -107,9 +107,8 @@ ParameterList ParameterList::fromJson(const nlohmann::json& json,
         fail(id, "has " + std::to_string(biomes.size()) + " entries, which is not a dimension");
     }
 
-    ParameterList list;
-    list.entries_.reserve(biomes.size());
-    list.quantized_.reserve(biomes.size());
+    std::vector<Entry> entries;
+    entries.reserve(biomes.size());
     for (std::size_t row = 0; row < biomes.size(); ++row) {
         const nlohmann::json& entry = biomes[row];
         if (!entry.is_object() || !entry.contains("biome") || !entry.contains("parameters")) {
@@ -154,9 +153,33 @@ ParameterList ParameterList::fromJson(const nlohmann::json& json,
         }
         read.parameters.offset = offset.get<double>();
 
-        list.quantized_.push_back(QuantizedPoint::of(read.parameters));
-        list.entries_.push_back(std::move(read));
+        entries.push_back(std::move(read));
     }
+    return fromEntries(std::move(entries), id);
+}
+
+ParameterList ParameterList::fromEntries(std::vector<Entry> entries,
+                                         const data::ResourceLocation& id) {
+    if (entries.size() > kMaxEntries) {
+        fail(id, "has " + std::to_string(entries.size()) + " entries, which is not a dimension");
+    }
+    ParameterList list;
+    list.quantized_.reserve(entries.size());
+    for (std::size_t row = 0; row < entries.size(); ++row) {
+        const ParameterPoint& point = entries[row].parameters;
+        for (const auto& [axis, parameter] :
+             {std::pair{"temperature", point.temperature}, std::pair{"humidity", point.humidity},
+              std::pair{"continentalness", point.continentalness},
+              std::pair{"erosion", point.erosion}, std::pair{"depth", point.depth},
+              std::pair{"weirdness", point.weirdness}}) {
+            if (parameter.min > parameter.max) {
+                fail(id, std::string(axis) + " of entry " + std::to_string(row) +
+                             " has its minimum above its maximum");
+            }
+        }
+        list.quantized_.push_back(QuantizedPoint::of(point));
+    }
+    list.entries_ = std::move(entries);
     return list;
 }
 
