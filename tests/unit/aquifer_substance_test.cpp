@@ -317,11 +317,28 @@ TEST_CASE("the lava sampler alone turns a junction inside two fluid bodies to st
     REQUIRE(close.has_value());
     for (const double barrier : {-1.0, 0.0, 4.0}) {
         INFO("barrier " << barrier);
+        CHECK(decideMixed(centres, *close, 1.0, barrier).substance == Substance::Solid);
+    }
+    // The one-body control holds across the `barrier` router's REAL range,
+    // which this project measures at about [-1.33, +1.30]. It does NOT hold
+    // at the synthetic 4.0 this case used to carry, and that is a
+    // measurement rather than a concession: the two levels here are -20 and
+    // 63, so at y = -21 the pair reads the same fluid ONE block under the
+    // lower level — inside the three-block band the `/3` arm owns, not the
+    // `/10` floor below it — and takes that arm with `u = 5/6`. A `barrier`
+    // of 4 then pushes Π to 2*(4 + 5/6) and the junction turns to stone.
+    // Until that arm was reached at all — `termFires` used to refuse any
+    // pair that agreed — this read as "one body, no barrier"; the server
+    // says otherwise, on 110 097 250 blocks with no false stone anywhere
+    // (barrier.hpp's header). The row below pins the new answer rather than
+    // dropping the case.
+    for (const double barrier : {-1.0, 0.0}) {
+        INFO("barrier " << barrier);
         const SubstanceAt oneBody = decideMixed(centres, *close, 0.0, barrier);
         CHECK(oneBody.substance == Substance::Fluid);
         CHECK(oneBody.fluidType == FluidType::Default);
-        CHECK(decideMixed(centres, *close, 1.0, barrier).substance == Substance::Solid);
     }
+    CHECK(decideMixed(centres, *close, 0.0, 4.0).substance == Substance::Solid);
     const auto apart = findMixedJunction(centres, 13);
     REQUIRE(apart.has_value());
     const SubstanceAt lavaWins = decideMixed(centres, *apart, 1.0, 0.0);

@@ -55,7 +55,22 @@
 // work and says on its face it was not re-measured since.) The change is
 // real and large elsewhere — barrier3way's three-source misses fall 121 ->
 // 6 — so what this says is that this world's residual lies somewhere else
-// entirely, and the next pass at it should not start here.
+// entirely.
+//
+// MOST OF IT IS NOW ATTRIBUTED, and it was the barrier after all — just not
+// the part that was being looked at. `termFires` used to refuse any pair of
+// sources that READ THE SAME THING at the block, a guard with no counterpart
+// in spec/aquifer-spec.md that the server refutes outright
+// (barrier.hpp's header, and `vanilla_aquifer_deepfloor_test.cpp`). Re-run
+// over the same 64 chunks with that guard gone, same binary otherwise, the
+// RAW sweep goes 6290839 -> 6291264 of 6291456. The new residual is a
+// strict SUBSET of the old — 425 fixed, 0 introduced — and the 425 are all
+// barriers the guard had suppressed: 289 water -> stone, 113 water ->
+// deepslate, 17 water -> dirt, 6 air -> deepslate.
+//
+// The 192 that remain are ALL of one kind: this build says air where the
+// server has water. That is a fluid EXTENT question, not a barrier one, and
+// it is where the next pass should start.
 //
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>

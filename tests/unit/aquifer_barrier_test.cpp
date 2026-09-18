@@ -95,21 +95,90 @@ TEST_CASE("the comparison is strict where the server's own cases land on it", "[
     CHECK(placesBarrier(between(40, 2, 20, 1.5000001)));
 }
 
-TEST_CASE("a pair that agrees writes nothing", "[aquifer]") {
-    // Both sources put fluid here.
-    BarrierAt bothFluid;
-    bothFluid.y = 0;
-    bothFluid.density = -1.0;
-    bothFluid.nearest = BarrierSource{.level = 10, .distanceSq = 0};
-    bothFluid.second = BarrierSource{.level = 20, .distanceSq = 0};
-    bothFluid.third = BarrierSource{.level = 10, .distanceSq = kInertDistanceSq};
-    CHECK_FALSE(placesBarrier(bothFluid));
-    // Both put air.
-    BarrierAt bothAir = bothFluid;
-    bothAir.nearest.level = -10;
-    bothAir.second.level = -20;
-    bothAir.third.level = -10;
-    CHECK_FALSE(placesBarrier(bothAir));
+TEST_CASE("a pair of EQUAL level writes nothing, whatever it reads", "[aquifer]") {
+    // Q6.4's `Δ = 0 -> Π = 0` is the whole of what keeps an agreeing pair
+    // inert. There is no guard in front of it — `termFires` used to carry
+    // one (`aFluid == bFluid -> false`) and the server refutes it, on
+    // 110 097 250 blocks (barrier.hpp's header) — so this is the case that
+    // has to hold on its own, and it holds however hard `barrier` pushes.
+    for (const double barrier : {-1.0, 0.0, 4.0}) {
+        INFO("barrier " << barrier);
+        BarrierAt bothFluid;
+        bothFluid.y = 0;
+        bothFluid.density = -1.0;
+        bothFluid.barrier = barrier;
+        bothFluid.nearest = BarrierSource{.level = 20, .distanceSq = 0};
+        bothFluid.second = BarrierSource{.level = 20, .distanceSq = 0};
+        bothFluid.third = BarrierSource{.level = 20, .distanceSq = kInertDistanceSq};
+        CHECK_FALSE(placesBarrier(bothFluid));
+        BarrierAt bothAir = bothFluid;
+        bothAir.nearest.level = -20;
+        bothAir.second.level = -20;
+        bothAir.third.level = -20;
+        CHECK_FALSE(placesBarrier(bothAir));
+    }
+}
+
+TEST_CASE("the barrier's LID is the /2.5 arm, and only a both-air pair reaches it", "[aquifer]") {
+    // `h > 0` with `t <= 0` is reachable ONLY where both sources read air:
+    // a pair that disagrees at `y` has `t >= 0.5` for every integer triple
+    // (barrier.hpp's header proves it), which is why this arm sat at zero
+    // uses until the agree-guard came out. Here `t = max(L) - y - 0.5`
+    // exactly, so the arm owns the blocks just ABOVE the higher level.
+    //
+    // Levels -1 and -6, block at y = 0: both read air, m = -3.5, h = 4,
+    // r = 2.5, t = -1.5 — so `u = -1.5/2.5 = -0.6`, inside the router's
+    // reach, and Π = 2·(b − 0.6). At weight 1 and D = -1 that fires for
+    // b > 1.1. The SAME block on the `/1.5` divisor would need b > 1.5, so
+    // 1.2 separates the two arms rather than merely exercising one.
+    BarrierAt lid;
+    lid.y = 0;
+    lid.density = -1.0;
+    lid.nearest = BarrierSource{.level = -1, .distanceSq = 0};
+    lid.second = BarrierSource{.level = -6, .distanceSq = 0};
+    lid.third = BarrierSource{.level = -1, .distanceSq = kInertDistanceSq};
+    lid.barrier = 1.0;
+    CHECK_FALSE(placesBarrier(lid));
+    lid.barrier = 1.2;
+    CHECK(placesBarrier(lid));
+}
+
+TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reaches it",
+          "[aquifer]") {
+    // `h <= 0` with `3 + t <= 0` is reachable ONLY where both sources read
+    // the same fluid, where `t = y + 0.5 - min(L)` — so the arm owns
+    // everything four or more blocks BELOW the lower level, and nothing
+    // else can enter it.
+    //
+    // Levels 10 and 20, block at y = 0: both read fluid, m = 15, h = -14.5,
+    // t = -9.5, `3 + t = -6.5`, so `u = -6.5/10 = -0.65` and Π = 2·(b −
+    // 0.65), firing at weight 1 and D = -1 for b > 1.15. The divisor is
+    // what the case pins: on `/3` the same block gives u = -2.1667, which
+    // is outside `kBarrierReachAbove` so the router value is zeroed
+    // entirely and NO value of `barrier` can fire it. 10 is the measured
+    // one — it beats 3 on 65 231 of 65 231 server blocks where they differ.
+    BarrierAt floor;
+    floor.y = 0;
+    floor.density = -1.0;
+    floor.nearest = BarrierSource{.level = 10, .distanceSq = 0};
+    floor.second = BarrierSource{.level = 20, .distanceSq = 0};
+    floor.third = BarrierSource{.level = 10, .distanceSq = kInertDistanceSq};
+    floor.barrier = 1.1;
+    CHECK_FALSE(placesBarrier(floor));
+    floor.barrier = 1.2;
+    CHECK(placesBarrier(floor));
+
+    // And the arm's own boundary, four blocks under the lower level. At
+    // y = 6 the pair is on `/10` (`3 + t = -0.5`, fires for b > 0.55); at
+    // y = 7 it is on `/3` (`3 + t = +0.5`, fires for b > 0.3333). A
+    // `barrier` of 0.45 sits between them, so the row that fires and the
+    // row that does not are decided by which arm each one takes.
+    BarrierAt boundary = floor;
+    boundary.barrier = 0.45;
+    boundary.y = 7;
+    CHECK(placesBarrier(boundary));
+    boundary.y = 6;
+    CHECK_FALSE(placesBarrier(boundary));
 }
 
 TEST_CASE("the similarity is clamped at zero rather than going negative", "[aquifer]") {

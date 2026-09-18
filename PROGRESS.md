@@ -108,7 +108,9 @@ Open:
       golden-fill residual to this very defect. Re-measured under both level
       models in the same binary, the mismatching blocks are IDENTICAL
       coordinate for coordinate — 6290839 of 6291456 either way. That
-      residual is unattributed again and wants a probe of its own.
+      residual was unattributed again; 425 of its 617 blocks are now
+      attributed to the barrier's agree-guard instead (see the "/10" entry
+      below), leaving 192.
 - [x] **The fluid-type level ceiling.** PINNED at `-10`, inclusive — the
       value the code already carried, now measured rather than assumed, and
       no source change. `aquifer-fluidtype-probe.sh --group d` reaches level
@@ -128,9 +130,40 @@ Open:
       `aquifer_fluid_type_test.cpp` by a literal `-9` assertion, the one the
       old suite lacked: every other assertion there is phrased relative to
       `kLavaLevelCeiling` and so survived either value.
-- [ ] Q6.4's fourth divisor (the "/10" branch) — implemented per the
-      clean-room spec, but never yet exercised by real data (0 uses across
-      two probe seeds' worth of real barriers).
+- [x] **Q6.4's fourth divisor (the "/10" branch).** CONFIRMED at 10 on real
+      server data, bracketed to within 1%. The "0 uses" was never a
+      world-shape problem, which is why any number of further probe seeds
+      would have kept returning the same null: `termFires` carried an agree-guard
+      (`aFluid == bFluid -> no barrier`) of this build's own invention, and
+      on the domain that guard admits `t >= 0.5` for EVERY integer
+      `(L_A, L_B, y)` — so `3 + t >= 3.5 > 0` and the `/10` arm could not
+      fire for any input at all. The `/2.5` arm was dead the same way. That
+      is a proof rather than another null count: 0 of 3135020 disagreeing
+      combinations reach either arm.
+      *The guard is REFUTED by the server.* `aquifer-deepfloor-probe.sh`
+      pins `fluid_level_floodedness` to a constant 0.6, between the two
+      gates `lattice.hpp` measures, so every cell takes the LADDER rather
+      than `sea_level` and neighbouring sources hold DIFFERENT levels —
+      the one thing the older barrier worlds could not produce. Over three
+      seeds x seven dimensions, 110097250 blocks against 4982316 server
+      stone: guarded 480354 misses, both-air lifted 457970, both-fluid
+      lifted 22384, un-gated **0 misses and 0 false stone**. The four older
+      worlds order the same way (161/46/154/39 of 243887). The control arm,
+      real floodedness with nothing rescaled, reproduces `barrier3way`
+      exactly.
+      *The divisor.* The arm decides 96292 blocks; on the 65231 where 10 and
+      3 disagree the server has stone on 65231 of 65231. The bracket is
+      two-sided and monotone — 9.9 leaves 937 barriers unwritten, 10 is
+      exact, 10.1 writes 872 blocks of false stone — and `/2.5` brackets the
+      same way (2.4 misses 1104, 2.5 exact, 2.6 writes 1111). Both arms can
+      now be named: `/2.5` is the barrier's LID above the higher of two
+      levels, `/10` its FLOOR four or more below the lower.
+      *Bonus:* 425 of the 617-block golden-fill residual, unattributed since
+      the level defects were refuted as its cause, ARE the guard. The new
+      residual is a strict subset (192, 0 introduced) and is all "we say air,
+      the server says water" — a fluid-extent question, not a barrier one.
+      Pinned by `vanilla_aquifer_deepfloor_test.cpp`, which fails loudly if
+      the arm ever stops deciding blocks.
 
 ## Ore veins (SPEC's M3 section)
 

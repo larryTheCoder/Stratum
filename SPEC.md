@@ -625,24 +625,26 @@ mapping has two halves, split at a platform-neutral midpoint:
   conjuncts — a source already reading lava being exempt, and `L != never` —
   which are carried on the specification's word: both are provably
   unobservable in every world measured here, so "the rule is implemented as
-  written" is the claim, not "the rule is measured". And the 64-chunk
-  golden-fill residual below is now unattributed.
+  written" is the claim, not "the rule is measured". The 64-chunk
+  golden-fill residual below, briefly unattributed, is now attributed for
+  425 of its 617 blocks (§11, item 7); the 192 left are a fluid-extent
+  question rather than a barrier one.
 
   **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
   measured against a real, aquifer-on overworld region, the wiring's own
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
-  `golden_fill_aquifer_test.cpp` pins, and 6290839 of 6291456 (99.990%) over
+  `golden_fill_aquifer_test.cpp` pins, and 6291264 of 6291456 (99.997%) over
   a wider 64-chunk sweep. That residual was previously explained away as the
   level pieces above; it is not — the sentinel and clamp change leaves it
-  block-for-block IDENTICAL, the same coordinates either way, so it is
-  unattributed again and wants a probe of its own. WITH the real 287-rule
-  surface tree also running, `golden_fill_aquifer_test.cpp` is now
-  393216 of 393216 too (§11: the deepslate surface-rule gap
-  `golden_fill_test.cpp` named is CLOSED, not carried). What remains is that
-  unattributed residual, Q5.8's two unobservable conjuncts, and ore veins
-  (M3, untouched) — none of which is unique to aquifers, which is why this
-  still reads as a track.
+  block-for-block IDENTICAL at 6290839 — and the real cause was the
+  barrier's own agree-guard (§11, item 7), whose removal fixes 425 of the
+  617 and introduces none. WITH the real 287-rule surface tree also running,
+  `golden_fill_aquifer_test.cpp` is now 393216 of 393216 too (§11: the
+  deepslate surface-rule gap `golden_fill_test.cpp` named is CLOSED, not
+  carried). What remains is that 192-block fluid-extent residual, Q5.8's two
+  unobservable conjuncts, and ore veins (M3, untouched) — none of which is
+  unique to aquifers, which is why this still reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -840,6 +842,17 @@ mapping has two halves, split at a platform-neutral midpoint:
      lies somewhere else, and the dedicated probe it still wants should not
      start from the level rule.
 
+     *Now mostly ATTRIBUTED (item 7).* It was the barrier after all, though
+     not the part anyone was looking at: `termFires` carried an agree-guard
+     (`aFluid == bFluid` -> no barrier) that the spec does not have and the
+     server refutes. With it gone the same 64-chunk RAW sweep goes to
+     **6291264 of 6291456**, a 192-block residual which is a strict SUBSET
+     of the 617 — 425 fixed, 0 introduced. The 425 are barriers the guard
+     suppressed (289 water -> stone, 113 water -> deepslate, 17 water ->
+     dirt, 6 air -> deepslate). The 192 that remain are all one shape, this
+     build placing air where the server has water, which makes what is left
+     a fluid-EXTENT question rather than a barrier one.
+
   6. **CLOSED. The level a source carries below lambda: the dry sentinel and
      the ladder clamp.** `cellFluidLevel` reported a DRY source as `lambda`
      where Q5.6's value is the sentinel `never`, and `ladderLevel` clamped a
@@ -909,7 +922,70 @@ mapping has two halves, split at a platform-neutral midpoint:
      *The residual, recorded rather than tuned away.* 7 mixed + 54 pure over
      the 42-row water/lava band, of which 4 + 35 sit on row lambda itself
      where Q6.3, Q2.4 and the trailing guard all interact, plus 6 of 11923
-     real barriers on `barrier3way`. Nothing was fitted to close them.
+     real barriers on `barrier3way`. Nothing was fitted to close them. (The
+     6 on `barrier3way` are CLOSED by item 7 below; the water/lava band's
+     own residual falls with it too, but not to zero.)
+
+  7. **CLOSED. Q6.4's fourth divisor is 10 — and the agree-guard that hid it
+     is REFUTED.** The `/10` arm (`u = (3 + t)/10` when `3 + t <= 0`) was
+     carried on the clean-room spec's word through four campaigns, each of
+     which recorded "0 uses" and read it as a world-shape problem. It was
+     not one.
+
+     *Why no world could ever have reached it.* `termFires` carried a guard
+     of this build's own invention — `aFluid == bFluid -> return false` — so
+     `levelPressure` was only entered by a pair that DISAGREED at the block.
+     On that domain `t >= 0.5` for every integer `(L_A, L_B, y)`: a
+     disagreement means `min(L) <= y < max(L)`, hence `|h| <= r - 0.5`.
+     So `3 + t >= 3.5 > 0` always, and both the `/10` arm and the `/2.5`
+     arm were unreachable by ARITHMETIC, not by accident of the corpus. An
+     exhaustive sweep agrees: of 3135020 disagreeing combinations, `/1.5`
+     takes 1580530 and `/3` takes 1554490, `/2.5` and `/10` take 0 each.
+     Nothing in Q6.4 or Q6.6 gates Π on the pair agreeing; `Δ = 0 -> Π = 0`
+     is the whole of what keeps an equal-level pair inert.
+
+     *The world that can see it.* `tools/analysis/aquifer-deepfloor-probe.sh`
+     pins `fluid_level_floodedness` to a constant 0.6 — strictly between
+     `kFloodedLocalThreshold` (0.4) and `kFloodedSeaThreshold` (0.8) — so
+     every cell takes the LADDER instead of `sea_level` and neighbouring
+     cells hold DIFFERENT levels. That is the whole trick: the older barrier
+     worlds hand nearly every flooded cell the sea, `Δ = 0`, and no arm is
+     entered. On `barrier3way` the `/10` arm is entered a few hundred times
+     and DECIDES nothing — substituting `/3` for `/10` there flips exactly 0
+     blocks, which is why that world cannot measure the divisor however many
+     blocks it holds.
+
+     *The guard, scored against the server.* Three seeds x seven dimensions,
+     110097250 blocks against 4982316 blocks of server stone: guarded
+     480354 misses; both-air lifted 457970; both-fluid lifted 22384; no
+     guard **0 misses and 0 false stone**, exact on every arm. The four
+     older worlds (`barrier3way` plus three water/lava seeds, 90027838
+     blocks, 243887 server stone) order the same way at 161 / 46 / 154 / 39.
+     The abort condition set before the run — "the un-gated reading writes
+     stone the guarded one does not" — never fired anywhere. The control
+     dimension, real floodedness with nothing rescaled, reproduces
+     `barrier3way` exactly, so the recipe distorts only the level diversity
+     it was built for.
+
+     *The divisor itself, bracketed from both sides.* The `/10` arm decides
+     96292 blocks; on the 65231 where divisor 10 and divisor 3 disagree the
+     server has stone on 65231 of 65231 — 10 right on all, 3 on none.
+     Perturbing only that divisor (pooled misses / false stone): 1.5
+     81856/0, 2.5 70317/0, 3 65231/0, 5 45584/0, 8 17787/0, 9 8868/0, 9.5
+     4497/0, 9.9 937/0, **10 0/0**, 10.1 0/872, 10.5 0/4410, 11 0/8627, 12
+     0/17177, 20 0/79432. Monotone, one-sided on each side, so 10 is pinned
+     to within 1%. The `/2.5` arm, dead under the same guard, brackets the
+     same way: 2.4 leaves 1104 misses, 2.5 is exact, 2.6 writes 1111 false
+     stone. Both arms can now be named — `/2.5` is the barrier's LID a few
+     blocks above the higher of two levels, `/10` its FLOOR four or more
+     below the lower.
+
+     *What it cost elsewhere.* 425 of the 64-chunk golden-fill residual
+     (item 5), which had become unattributed. Pinned by
+     `vanilla_aquifer_deepfloor_test.cpp`, which asserts exactness, that the
+     arm still decides blocks, and that divisor 3 loses the head-to-head —
+     the first of those is what the guard failed, and the second is what
+     would go red if the arm ever fell out of reach again.
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -2657,12 +2733,18 @@ Open:
   mismatches. That rule's own 251,658,240-block, 40-dimension, six-seed
   server validation transitively confirms those two divisors — no new query
   needed. The fourth divisor (10, for the near-air branch's `3 + t <= 0` sub
-  case) stays unmeasured: it never arises for an ADJACENT pair at all — `t`
-  is provably `above + 0.5 >= 0.5` there — so only a genuine third source can
-  reach it, and across every third-source pair either barrier-probe seed
-  produced, it never once did (0 uses, 0 of the 866 total real-block
-  mismatches). Implemented as the clean-room spec states; structurally inert
-  until a configuration that exercises it is found.
+  case) was recorded here as unmeasured, on the reading that it "never
+  arises for an ADJACENT pair at all — `t` is provably `above + 0.5 >= 0.5`
+  there — so only a genuine third source can reach it", and that a third
+  source never once did (0 uses, 0 of the 866 total real-block mismatches).
+  **The first half of that was right about the arithmetic and wrong about
+  the cause, and it is now CLOSED (§11, item 7).** `t >= 0.5` held not for
+  adjacent pairs specifically but for EVERY pair `termFires` would consider,
+  because it refused any pair that read the same thing at the block — a
+  guard of this build's own, absent from Q6.4, which no third source and no
+  world could reach past. With it gone the arm is reached, measured, and
+  bracketed to within 1% at 10; the guard itself is refuted by 480354
+  missed server barriers against the un-gated reading's 0.
 
   *The third source itself, confirmed on real barriers.*
   `tools/analysis/aquifer-barrier-probe.sh` drives `barrier`,

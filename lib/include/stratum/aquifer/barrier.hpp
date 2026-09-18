@@ -99,13 +99,76 @@
 // sit on row lambda itself where Q6.3, Q2.4 and the trailing guard all
 // interact, plus the 6 on `barrier3way`. Recorded, not tuned away.
 //
-// STILL UNMEASURED, and marked rather than guessed: the pressure function's
-// fourth divisor (10, for `3 + t <= 0` — the "near-air-far" branch). It is
-// not what the residual above comes from — across both barrier-probe seeds
-// it was never once reached by a real third-source pair, residual or
-// otherwise, so there is no case to measure it against. It is implemented as
-// the clean-room spec states, structurally inert until a configuration that
-// exercises it is found. Q6.3's water-over-lava exception is NOT this
+// (Those 6 are now CLOSED — they were the agree-guard below, and every one
+// of them is decided by the `/2.5` arm it made unreachable. Scored over
+// whole worlds rather than that 42-row band, the four pre-existing worlds
+// go from 161 real-barrier misses of 243 887 to 39, with no block of false
+// stone added anywhere. `barrier3way` itself goes 6 -> 0.)
+//
+// THE FOURTH DIVISOR (10, for `3 + t <= 0`) IS NOW MEASURED, and the thing
+// that had kept it at zero uses was never the worlds — it was a guard in
+// THIS build's own `termFires`, `aFluid == bFluid -> return false`, which
+// has no counterpart in Q6.4 or Q6.6 and which no probe could ever reach
+// past. On the domain that guard admits, `t >= 0.5` for every integer
+// `(L_A, L_B, y)` — a pair that disagrees at `y` has `min(L) <= y < max(L)`,
+// hence `|h| <= r - 0.5` — so `3 + t >= 3.5 > 0` always and the `/10` arm
+// could not fire for ANY input. An exhaustive sweep says the same: of
+// 3 135 020 disagreeing combinations (levels -80..129 plus the `never`
+// sentinel, y -90..139), `/1.5` takes 1 580 530 and `/3` takes 1 554 490,
+// while `/2.5` and `/10` take 0 each. Both were dead code, by arithmetic
+// rather than by accident of the corpus.
+//
+// THE SERVER REFUTES THE GUARD. `tools/analysis/aquifer-deepfloor-probe.sh`
+// pins `fluid_level_floodedness` to a constant 0.6 — strictly between
+// `kFloodedLocalThreshold` and `kFloodedSeaThreshold`, so every cell takes
+// the LADDER instead of `sea_level` and neighbouring cells hold DIFFERENT
+// levels, which is the one thing the older worlds could not produce (there
+// nearly every flooded cell takes the sea, `Δ = 0`, and no arm is entered
+// at all). Over three seeds and seven dimensions, 110 097 250 blocks
+// against 4 982 316 blocks of server stone:
+//
+//     guarded, as shipped before this      480 354 misses   0 false stone
+//     guard lifted for both-air only       457 970 misses   0 false stone
+//     guard lifted for both-fluid only      22 384 misses   0 false stone
+//     no guard at all (Q6.4 as written)          0 misses   0 false stone
+//
+// Exact, on every block of every arm. The control dimension — real
+// floodedness, nothing rescaled — reproduces `barrier3way` exactly (6
+// guarded misses, 0 un-gated, 0 false stone either way), so the recipe
+// distorts nothing but the level diversity it was built to create.
+//
+// AND THE DIVISOR ITSELF IS 10, bracketed two-sided. The `/10` arm decides
+// 96 292 blocks across the three seeds; on the 65 231 where divisor 10 and
+// divisor 3 give different output the server has stone on 65 231 of 65 231,
+// so 10 is right on all of them and 3 on none. Perturbing only that divisor,
+// pooled misses / false stone against the same 4 982 316:
+//
+//     1.5  81856/0   2.5  70317/0   3  65231/0   5  45584/0   8  17787/0
+//     9  8868/0   9.5  4497/0   9.9  937/0   [10  0/0]   10.1  0/872
+//     10.5  0/4410   11  0/8627   12  0/17177   20  0/79432
+//
+// monotone and one-sided on each side of 10, which pins it to within 1%.
+// The `/2.5` arm, dead under the same guard, brackets the same way and
+// confirms 2.5: 2.4 leaves 1104 misses, 2.5 is exact, 2.6 writes 1111
+// blocks of false stone. That bracket is corroborated on a world NOT built
+// for it — on `barrier3way`, 1.5 and 2.0 leave 5 and 1 misses, 2.4/2.5/2.6
+// are all exact, 3.0 writes 3 blocks of false stone and 10 writes 37 — so
+// `/2.5` is not an artefact of the deepfloor recipe. Both arms mean
+// something now that they can be stated: `/2.5` is the barrier's LID a few
+// blocks above the higher of two levels, `/10` its FLOOR four or more
+// blocks below the lower.
+//
+// WHAT THE GUARD COST ELSEWHERE: 425 of the 617-block golden-fill residual
+// (`golden_fill_aquifer_test.cpp`), which SPEC §11 carried as unattributed
+// after the level defects were refuted as its cause. The un-gated residual
+// is a strict SUBSET — 6291264 of 6291456 against 6290839, 425 fixed and 0
+// introduced — and the 425 are barriers the guard suppressed (289 water ->
+// stone, 113 water -> deepslate, 17 water -> dirt, 6 air -> deepslate). The
+// 192 that remain are all "we say air, the server says water": a fluid
+// EXTENT question, not a barrier one, and the next pass at that residual
+// should start there rather than here.
+//
+// Q6.3's water-over-lava exception is NOT this
 // predicate's to implement and no longer a gap: it sits in front of it, in
 // substance.hpp's `computeSubstance`, measured on the server (0 of 3320
 // blocks it applies to are stone; the bare predicate alone would have
