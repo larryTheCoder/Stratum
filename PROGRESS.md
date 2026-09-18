@@ -87,12 +87,23 @@ Open:
       `lambda`/`kLavaLevel` for floored or dry outcomes, and Q5.8's
       `L != never` conjunct in `fluid_type.hpp` falls out of the same
       sentinel — one slice, with the conformance suite as its guard.
-- [ ] **The fluid-type level ceiling.** Narrowed to `{-10, -9}`, not pinned
-      to one value; `-10` (the current code) fits every reading measured so
-      far. SPEC names a next step: the one other reachable rung that should
-      hit `-9` directly collapsed to the lava-sea floor instead, for a
-      reason not yet understood — worth chasing before assuming `-10`
-      without it.
+- [x] **The fluid-type level ceiling.** PINNED at `-10`, inclusive — the
+      value the code already carried, now measured rather than assumed, and
+      no source change. `aquifer-fluidtype-probe.sh --group d` reaches level
+      `-9` by the two routes the ladder's mod-3 lattice does not constrain
+      (the sea branch; the psl cap at two different sea levels) and reads
+      `-12/-11/-10` lava and `-9/-8/-7` water on every one, 16384 of 16384
+      columns per dimension with 0 of the other fluid, identical on seeds
+      42, 7 and 999. Beyond the question asked, the same run shows the
+      ceiling is ABSOLUTE: three sea levels (63, -16, -70) put the
+      transition at the same absolute pair, refuting a sea-relative rule
+      (`L <= sea_level - 73`, indistinguishable at the shipped sea) and a
+      lambda-relative one. The earlier collapse is explained too — that rung
+      sat a whole band above the observable one, so its `-9` sources placed
+      nothing and only the global lava sea was left (SPEC §11). Pinned in
+      `aquifer_fluid_type_test.cpp` by a literal `-9` assertion, the one the
+      old suite lacked: every other assertion there is phrased relative to
+      `kLavaLevelCeiling` and so survived either value.
 - [ ] Q6.4's fourth divisor (the "/10" branch) — implemented per the
       clean-room spec, but never yet exercised by real data (0 uses across
       two probe seeds' worth of real barriers).

@@ -57,6 +57,60 @@
 # actually carries (a void column spans many cell-y bands at once, so one
 # dimension samples several ladder rungs for free).
 #
+# GROUP D — the level ceiling, PINNED rather than bracketed. Selected with
+# `--group d`, and it writes to a DIFFERENT output directory
+# (probes/fluidceiling_s<seed>) because density-probe.sh names that directory
+# after this spec's basename: running group D under the old name would
+# overwrite probes/fluidtype, which still holds the group A/B evidence behind
+# the 0.3-strictness result.
+#
+# WHY GROUPS B AND C COULD NOT REACH -10 OR -9, now arithmetic rather than a
+# mystery. The ladder level is `40*floorDiv(centreY,40) + 20 + 3*floorDiv(
+# floor(10*spread), 3)`, so for a constant `fluid_level_spread` the offset K
+# is uniform world-wide and the reachable levels are a mod-3 lattice pinned to
+# the rung: `L = base + K`. Reaching -9 needs `K = -29 - 40*yi` divisible by
+# three, i.e. `yi = 1 (mod 3)`. Group C's `c_neg9` picked `yi = 1` — base 60 —
+# whose cells are centred in y in [40,80), an entire rung ABOVE the observable
+# band. Its -9 sources therefore own no block below their own level and place
+# nothing; every cell that DOES own a block in -53..0 lands on base -20 or -60
+# (levels -89 / -129), below lambda, hence dry. What is left in the world is
+# the global lava sea alone — the "collapse to the lava-sea floor" this probe's
+# first pass recorded without explaining. `c_neg10` (base 20, `yi = 0`) is the
+# mirror image and works, which is why it produced 68 cells rather than none.
+#
+# The same arithmetic says the gap is structural: with a real
+# `fluid_level_spread` noise (|s| <= 1) the offset is confined to [-12, +9], so
+# the reachable uncapped levels are {-72..-51} u {-32..-11} u {8..29} u ... and
+# -10/-9 fall in the hole between -11 and +8. No golden and no real-noise world
+# can decide this; only a configuration that leaves the ladder does.
+#
+# So group D reaches -9 by the two routes that are NOT mod-3 constrained:
+#
+#   arm Q (PRIMARY, the sea branch): `fluid_level_floodedness` 0.9, past the
+#     0.8 sea gate, so every cell's level IS `sea_level` exactly. Sweeping
+#     `sea_level` -12..-7 walks the level one block at a time straight through
+#     the open bracket. psl 96 keeps the ocean branch and the near-surface
+#     path out of it, exactly as groups A and B do.
+#   arm P (CONTROL, the psl cap): floodedness 0.5 so the cell takes the
+#     ladder, `fluid_level_spread` 6.0 so every rung lands far above the cap,
+#     and the level is then `floor(psl)` on every cell. `sea_level` -16 puts
+#     the ocean gate at -24, below every psl this arm uses, so the ocean
+#     branch stays out of it just as psl 96 does at the shipped sea.
+#     Arm P exists to catch a ceiling that is really sea-RELATIVE: at the
+#     shipped sea 63 a rule `L <= sea_level - 73` is indistinguishable from
+#     `L <= -10`, and only a run at a different sea can tell them apart.
+#   arm P' (CONTROL, lambda-relative): arm P at `sea_level` -70, which moves
+#     lambda to -70 while leaving the absolute level where it was.
+#   arm S (CROSS-CHECK): the shipped sea 63 and the LADDER, on the rung the
+#     first attempt should have used — base -60 (`yi = -2`, K = +51 from
+#     spread 5.2) gives level -9 on cells centred in [-80,-40), which do own
+#     blocks in the observable band. Read as a lava/obsidian count above
+#     lambda rather than as a body top, because such a source floods its whole
+#     territory and leaves no body top at its level.
+#   arm R (REPRODUCTION, in-run): spread 0.9, 1.2 and -2.9 reproduce the three
+#     readings already on record (-11 LAVA, -8 water, -10 LAVA) inside the
+#     same world and the same seed as the new arms.
+#
 # Nothing this writes is committed: worlds are Mojang-derived (SPEC §12).
 set -euo pipefail
 
@@ -64,20 +118,33 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
 accept_eula=0
+group=abc
 args=()
-for arg in "$@"; do
-    case "${arg}" in
-        --accept-eula) accept_eula=1 ;;
-        *) args+=("${arg}") ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --accept-eula) accept_eula=1; shift ;;
+        --group) group="${2:?--group needs abc or d}"; shift 2 ;;
+        *) args+=("$1"); shift ;;
     esac
 done
 seed="${args[0]:-42}"
+case "${group}" in
+    abc|d) ;;
+    *) echo "--group must be abc (strictness + the ceiling sweep) or d (the ceiling, pinned)" >&2; exit 2 ;;
+esac
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-spec="${work}/fluidtype.json"
+# density-probe.sh names its output directory after this basename, so the
+# group D run MUST NOT be called fluidtype: that would overwrite the group
+# A/B dump the 0.3-strictness result rests on.
+if [[ "${group}" == "d" ]]; then
+    spec="${work}/fluidceiling_s${seed}.json"
+else
+    spec="${work}/fluidtype.json"
+fi
 
-python3 - "${spec}" <<'PY'
+python3 - "${spec}" "${group}" <<'PY'
 import json, math, sys
 
 SEA = 63
@@ -93,18 +160,53 @@ NO_SURFACE = {"type": "minecraft:condition",
               "then_run": {"type": "minecraft:block",
                            "result_state": {"Name": "minecraft:stone"}}}
 
-def dim(name, spread, lava):
-    return {"name": name, "min_y": MIN_Y, "height": HEIGHT,
+def dim(name, spread, lava, sea=SEA, psl=PSL, flood=0.5, min_y=MIN_Y, height=HEIGHT):
+    return {"name": name, "min_y": min_y, "height": height,
             "raw_final_density": {"type": "minecraft:constant", "argument": -1.0},
-            "aquifers_enabled": True, "sea_level": SEA,
+            "aquifers_enabled": True, "sea_level": sea,
             "default_fluid": {"Name": "minecraft:water", "Properties": {"level": "0"}},
             "size_vertical": 2, "surface_rule": NO_SURFACE,
             "router": {"barrier": -2.0, "lava": lava,
-                       "preliminary_surface_level": PSL,
-                       "fluid_level_floodedness": 0.5,
+                       "preliminary_surface_level": psl,
+                       "fluid_level_floodedness": flood,
                        "fluid_level_spread": spread}}
 
+group = sys.argv[2] if len(sys.argv) > 2 else "abc"
 spec = []
+
+if group == "d":
+    # Arm Q — the sea branch. floodedness 0.9 clears the 0.8 gate, so the
+    # level IS sea_level and the sweep walks it one block at a time through
+    # the whole open bracket. Levels: exactly `sea_level` on every cell
+    # centred at or above lambda (-54).
+    for sea in range(-12, -6):
+        spec.append(dim("q_sea_m%d" % -sea, 0.0, 0.5, sea=sea, psl=96.0, flood=0.9))
+
+    # Arm P — the psl cap, at a sea that is not the shipped one. spread 6.0
+    # puts every rung 60 above its base, so `min(ladder, cap)` is the cap on
+    # every cell and the level is floor(psl) world-wide.
+    for psl in range(-12, -6):
+        spec.append(dim("p_psl_m%d" % -psl, 6.0, 0.5, sea=-16, psl=float(psl)))
+
+    # Arm P' — the same, at sea_level -70, which moves lambda to -70 and
+    # leaves the absolute level alone. min_y follows aquifer-lowsea-probe.sh:
+    # a sea below the world floor would make lambda unreachable.
+    for psl in (-12, -10, -9, -8):
+        spec.append(dim("p70_psl_m%d" % -psl, 6.0, 0.5, sea=-70, psl=float(psl),
+                        min_y=-192, height=384))
+
+    # Arm S — the shipped sea and the LADDER, on the rung that actually owns
+    # blocks in the observable band (base -60, centres in [-80,-40)).
+    for tag, spread in (("s63_m12", 4.9), ("s63_m9", 5.2), ("s63_m6", 5.5)):
+        spec.append(dim(tag, spread, 0.5, psl=96.0))
+
+    # Arm R — the three readings already on record, reproduced in this run.
+    for tag, spread in (("r_b09", 0.9), ("r_b12", 1.2), ("r_c10", -2.9)):
+        spec.append(dim(tag, spread, 0.5, psl=96.0))
+
+    json.dump(spec, open(sys.argv[1], "w"))
+    print(len(spec), "dimensions (group D)", file=sys.stderr)
+    raise SystemExit(0)
 
 # Group A: strictness at 0.3, level forced deep via spread (-1.0 -> -32 at
 # the -20 rung), not via an out-of-range psl.
