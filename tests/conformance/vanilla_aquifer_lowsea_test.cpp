@@ -56,11 +56,15 @@ using stratum::aquifer::PslRead;
 
 constexpr std::int32_t kSeaLevel = -70;
 constexpr std::int32_t kChunks = 8;
-// Blocks above sea_level worth reading. `lambda` is a hard floor on `level`
-// in every branch this file exercises (the `max(lambda, ...)` in
-// `ladderLevel`, and the two early returns that give `sea_level` or
-// `lambda` directly), so nothing here can read below sea_level itself; the
-// observed range never exceeded sixteen blocks above it. 120 matches the
+// Blocks above sea_level worth reading. This used to say `lambda` was a hard
+// floor on `level` in every branch the file exercises, citing the
+// `max(lambda, ...)` in `ladderLevel`. That premise is FALSE now: the clamp
+// is gone and a dry source reports `kNeverLevel`, so `level` can sit far
+// below sea_level. The assertions are unaffected, and not by luck — they all
+// read `y >= sea_level`, which here IS lambda (`sea_level` -70 < -54), and
+// above lambda a floor at lambda and no floor at all give the identical
+// `y < level`. So the window stands; only the reason does. The observed
+// range never exceeded sixteen blocks above sea_level, and 120 matches the
 // upper bound (absolute y 50) the probe was originally measured against.
 constexpr std::int32_t kTopMargin = 120;
 

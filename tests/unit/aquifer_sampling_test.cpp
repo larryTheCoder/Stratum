@@ -119,13 +119,13 @@ TEST_CASE("the ladder is built from the band the spread is addressed by", "[aqui
     const CellIndex cell{2, 16, 5};
     const CellIndex centre = source.centreOf(cell.x, cell.y, cell.z);
     const std::int32_t band = spreadSample(cell, centre).y;
-    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, 0.0, 63) ==
+    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, 0.0) ==
           (stratum::aquifer::kBasePitch * band) + stratum::aquifer::kBasePhase);
 
     // With the spread on, the offset lands on the same ladder. -1.45 floors to
     // -15 and +1.65 to +15, both through a division that must round down.
-    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, -1.45, 63) == 205);
-    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, 1.65, 63) == 235);
+    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, -1.45) == 205);
+    CHECK(stratum::aquifer::ladderLevel(centre.y, 1000, 1.65) == 235);
     // The spread's own negative case: -0.05 scales to -0.5, floors to -1, and
     // a truncating `/ 3` would give 0 rather than -3.
     CHECK(stratum::aquifer::spreadOffset(-0.05) == -3);
@@ -359,12 +359,17 @@ TEST_CASE("one scan feeds the gate and the cap different values", "[aquifer]") {
     cell.seaLevel = 40;
     cell.floodedness = 0.6;
     // The gate keeps this cell off the ocean branch, and the cap then sinks
-    // the ladder below the lava sea, where it clamps.
-    CHECK(stratum::aquifer::ladderLevel(cell.centreY, read.cap, cell.spread, cell.seaLevel) ==
+    // the ladder below the lava sea — to -70 outright. This line used to read
+    // `kLavaLevel`, the old lower clamp having lifted it to lambda; the
+    // server's own observation ("dry at the lava level, 858 of 858") is
+    // satisfied by both, Q2.4 owning every row below lambda whatever the
+    // level is. What the case proves — that the cap and the gate are
+    // different numbers with different consumers — is untouched.
+    CHECK(stratum::aquifer::ladderLevel(cell.centreY, read.cap, cell.spread) == -70);
+    CHECK(stratum::aquifer::ladderLevel(cell.centreY, read.cap, cell.spread) <
           stratum::aquifer::kLavaLevel);
     // A single-valued implementation would put the ladder at -20 and flood it.
-    CHECK(stratum::aquifer::ladderLevel(cell.centreY, read.gate, cell.spread, cell.seaLevel) ==
-          -20);
+    CHECK(stratum::aquifer::ladderLevel(cell.centreY, read.gate, cell.spread) == -20);
 
     // V9. Nothing aborts, so the two coincide and the cell is on the ocean
     // branch after all.

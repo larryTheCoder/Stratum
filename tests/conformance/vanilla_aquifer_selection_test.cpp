@@ -173,6 +173,27 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
                                 // this test's to predict.
                                 continue;
                             }
+                            // Readout two runs from lambda UP, not from the
+                            // world floor. Below `min(-54, sea_level)` its
+                            // premise is simply false: Q2.4 hands every such
+                            // row to the global lava sea before the lattice is
+                            // consulted, so the block there is the SEA's, not
+                            // the nearest source's own reading, and scoring it
+                            // against a source's level measures nothing.
+                            //
+                            // This was invisible until `cellFluidLevel` began
+                            // reporting the spec's sentinel for a dry source:
+                            // the old build's floor at lambda made `y < level`
+                            // accidentally true on exactly those rows and the
+                            // readout scored them as agreements it had not
+                            // earned. At y >= lambda the two level models give
+                            // the IDENTICAL predicate — a level that moved
+                            // from lambda to anything lower still leaves
+                            // `y < level` false there — so this gate costs the
+                            // readout nothing it was entitled to.
+                            if (y < stratum::aquifer::lambdaLevel(kSeaLevel)) {
+                                continue;
+                            }
                             ++total.fluidOrAir;
                             total.agree += static_cast<int>(
                                 (y < levelOf(centres, selection.nearest().cell)) == fluid);
@@ -202,7 +223,9 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
     // The control has to fail, or the case above is measuring nothing.
     CHECK(total.unshifted > 10000);
 
-    // Readout two. 0.99993-0.99996 per seed when this was written; the bound
-    // is set well below that so it flags a real regression rather than drift.
+    // Readout two, over y >= lambda only (see the loop). 0.99993-0.99996 per
+    // seed when this was written and unchanged to the digit by the dry
+    // sentinel; the bound is set well below that so it flags a real
+    // regression rather than drift.
     CHECK(total.agree * 10000 > total.fluidOrAir * 9999);
 }

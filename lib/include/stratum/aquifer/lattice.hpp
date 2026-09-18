@@ -67,6 +67,28 @@ inline constexpr bool kVerticalLatticeIsAbsolute = true;
 /// being above it.
 inline constexpr std::int32_t kLavaLevel = -54;
 
+/// The level a source carries when nothing floods it at all: the clean-room
+/// spec's sentinel `never` (Q5.6), spelled as Q1.4's ARITHMETIC rather than as
+/// the bare literal, because Q1.4's own confidence note and the spec's open
+/// question 4 both say the number is a composition of four separately-read
+/// definitions and is not a literal in-tree. `min_y_limit` is -2032 and the
+/// sentinel is sixteen times it.
+///
+/// NOT the value a block readout can see, and the distinction matters. Q2.4
+/// hands every `y < lambda` to the global lava sea before the lattice is
+/// consulted, so no world can separate one sub-lambda level from another by
+/// reading blocks — which is why four campaigns recorded this outcome as
+/// `lambda` and were not wrong, only under-determined ("at or below lambda"
+/// is all a readout establishes). It IS visible through the barrier's
+/// pressure Π, which weighs the two levels against each other whether or not
+/// either is readable at the block. Sweeping the dry level as `lambda - K`
+/// over the three water/lava probe worlds, the score is monotone in K and
+/// saturates at K = 32: K = 32 through K = 256 and this sentinel are
+/// byte-identical, K = 16 is not. So the corpus MEASURES "at least 32 below
+/// lambda"; the specific -32512 is Q1.4's arithmetic and is carried as such.
+inline constexpr std::int32_t kMinYLimit = -2032;
+inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
+
 /// `fluid_level_floodedness` gates which level a cell takes, against two
 /// constants that are exact to a ten-thousandth: at psl 96 a floodedness of
 /// 0.4000 yields only the lava floor and 0.4001 yields the full ladder, while
@@ -254,7 +276,8 @@ inline constexpr std::int32_t kBasePhase = 20;
 
 /// The complete ladder level a cell takes when the floodedness gate sends it
 /// there: the lattice point below the cell's own centre, moved by the spread,
-/// capped by the preliminary surface, and floored at the lava sea.
+/// capped by the preliminary surface. NOT floored anywhere — Q5.7 is a `min`
+/// with the surface and nothing else.
 ///
 /// The order is measured, not assumed. The cap is applied AFTER the spread
 /// offset: at psl 67 a cell whose lattice point plus offset came to 69 was
@@ -262,12 +285,24 @@ inline constexpr std::int32_t kBasePhase = 20;
 ///
 /// The cap reads the scan's `cap`, not its `gate` — the two other candidates
 /// score 0.9039 and 0.8719, and on the 6473 cells where they differ the server
-/// backs `cap` on 3152 that `gate` gets wrong. And the lower clamp is
-/// `lambdaLevel(seaLevel)` rather than a bare -54: at `sea_level` -100 with a
-/// surface of -70, 79 cells read exactly -70 through a fluid band where -54
-/// would have cut them off, and two campaigns found this from opposite sides.
-[[nodiscard]] std::int32_t ladderLevel(std::int32_t centreY, std::int32_t cap, double spread,
-                                       std::int32_t seaLevel) noexcept;
+/// backs `cap` on 3152 that `gate` gets wrong.
+///
+/// THE LOWER CLAMP THIS USED TO CARRY IS GONE, and what the earlier campaigns
+/// measured is not overturned by that. They compared a clamp at
+/// `lambdaLevel(seaLevel)` against a clamp at a bare -54 and settled the
+/// VALUE: at `sea_level` -100 with a surface of -70, 79 cells read exactly
+/// -70 through a fluid band where -54 would have cut them off, and two
+/// campaigns found it from opposite sides. That result stands — it separated
+/// -54 from lambda. What no block readout can separate is a clamp at lambda
+/// from NO clamp, because Q2.4 owns every row below lambda (see
+/// `kNeverLevel`). Π can: on the water/lava probe worlds, unclamping the
+/// ladder cuts the barrier residual over rows lambda-1..+40 from 704 mixed /
+/// 1790 pure misses to 33 / 758 once the dry sentinel is in place too, and on
+/// the independent `barrier3way` world the two changes together take the
+/// three-source miss count from 121 of 11 923 real barriers to 6, with zero
+/// blocks made worse in 15 728 640.
+[[nodiscard]] std::int32_t ladderLevel(std::int32_t centreY, std::int32_t cap,
+                                       double spread) noexcept;
 
 // ---------------------------------------------------------------------------
 // The fluid-level decision, including the ocean branch.
@@ -463,6 +498,15 @@ struct CellFluid {
 
 /// The level a cell's fluid body tops out at: fluid occupies `y < level`, so
 /// `level` is the first air block above the body.
+///
+/// A cell that neither gate floods reports `kNeverLevel`, not `lambda`. That
+/// is a CONTRACT, and the difference is invisible to every block readout —
+/// see `kNeverLevel` for why, and for the sweep that measured it through the
+/// barrier instead. Two consequences worth stating rather than discovering:
+/// a caller may not assume `level >= lambdaLevel(seaLevel)` anywhere (the
+/// ladder is unclamped too, so even a WET cell can report below lambda), and
+/// a caller that wants "is this source dry" must compare against
+/// `kNeverLevel` rather than against lambda.
 ///
 /// Both floodedness comparisons are STRICT, and that is measured rather than
 /// assumed — at each of about forty integer depths the gate is dry at the

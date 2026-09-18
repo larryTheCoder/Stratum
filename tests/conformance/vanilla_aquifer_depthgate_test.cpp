@@ -109,9 +109,8 @@ private:
 /// reusing the library's own constants and helpers throughout so a mismatch
 /// here would be a bug in this test, not a re-derivation risk.
 [[nodiscard]] std::int32_t predictLevel(const CellFluid& cell, const bool gateGated) {
-    const std::int32_t lambda = stratum::aquifer::lambdaLevel(cell.seaLevel);
     const std::int32_t ladder =
-        stratum::aquifer::ladderLevel(cell.centreY, cell.surface.cap, cell.spread, cell.seaLevel);
+        stratum::aquifer::ladderLevel(cell.centreY, cell.surface.cap, cell.spread);
     const std::int32_t oceanGate = cell.seaLevel - stratum::aquifer::kOceanGateOffset;
     const bool onDepthPath =
         gateGated ? (cell.surface.gate < oceanGate) : (cell.surface.anchor < oceanGate);
@@ -130,7 +129,11 @@ private:
             stratum::aquifer::kFloodedLocalThreshold) {
             return ladder;
         }
-        return lambda;
+        // The DRY outcome is the spec's sentinel, tracking `cellFluidLevel`'s
+        // own contract (lattice.hpp's `kNeverLevel`). This duplicated copy of
+        // the level rule must move with the library or the test scores the
+        // wrong function.
+        return stratum::aquifer::kNeverLevel;
     }
     if (!cell.surface.aborted && cell.floodedness > stratum::aquifer::kFloodedSeaThreshold) {
         return cell.seaLevel;
@@ -138,7 +141,7 @@ private:
     if (cell.floodedness > stratum::aquifer::kFloodedLocalThreshold) {
         return ladder;
     }
-    return lambda;
+    return stratum::aquifer::kNeverLevel;
 }
 
 constexpr std::array<double, 9> kFloodednessComb{
