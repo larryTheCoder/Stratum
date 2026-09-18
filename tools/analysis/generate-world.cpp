@@ -8,15 +8,13 @@
 // compiles this against the built library the same way the other analysis
 // tools do.
 //
-// WHAT THIS PRODUCES. The real overworld as this build currently generates
-// it: `aquifers_enabled` on (MA is landed — ChunkFiller calls it directly),
-// `ore_veins_enabled` off (M3's ore-vein RNG derivation is still open, and
-// ChunkFiller refuses a dimension that asks for it), the real multi-noise
-// biome search on (not a fixed biome), and the full 287-rule surface-rule
-// tree running end to end — the same configuration golden_fill_test.cpp
-// measures at 99.879% exact against a real probe world without aquifers,
-// and golden_fill_aquifer_test.cpp at EXACT on 393216/393216 blocks with
-// them on.
+// WHAT THIS PRODUCES. The aquifer-free, ore-vein-free approximation of the
+// real overworld: `aquifers_enabled`/`ore_veins_enabled` forced off to match
+// the golden regions this renders against, which were generated with both
+// off — not because either is unimplemented (both have landed: MA and M3), the
+// real multi-noise biome search on (not a fixed biome), and the full
+// 287-rule surface-rule tree running end to end — the same configuration
+// golden_fill_test.cpp measures at 99.879% exact against a real probe world.
 // Every chunk is written at Status "minecraft:full" with `isLightOn: 0`
 // (chunk::encode's own doc): the server relights on load rather than this
 // build guessing at vanilla's light-storage convention.
@@ -258,10 +256,10 @@ int main(int argc, char** argv) {
     const auto pack = data::Pack::open(fixtures / "worldgen");
     const auto loaded = settings::loadAll(pack);
     auto overworld = loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
-    // Aquifers are MA-landed (ChunkFiller calls them directly now); ore veins
-    // stay off because the RNG behind their three random draws is still an
-    // open derivation (SPEC's M3 section) and ChunkFiller refuses the flag.
-    overworld.aquifersEnabled = true;
+    overworld.aquifersEnabled = false;
+    // Off here because the golden regions this renders against were
+    // generated with it off, not because it is unimplemented: ore veins
+    // landed in M3 (SPEC §11).
     overworld.oreVeinsEnabled = false;
 
     std::ifstream parametersFile(fixtures / "biome_parameters" / "minecraft" / "overworld.json");

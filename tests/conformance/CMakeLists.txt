@@ -32,6 +32,8 @@ add_executable(stratum_conformance_tests
     nbt_structures_test.cpp
     nbt_writer_test.cpp
     vanilla_above_preliminary_surface_test.cpp
+    vanilla_ore_vein_test.cpp
+    vanilla_ore_vein_placement_test.cpp
     vanilla_aquifer_fluid_type_test.cpp
     vanilla_aquifer_depthgate_test.cpp
     vanilla_aquifer_jitter_test.cpp

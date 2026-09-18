@@ -3,12 +3,30 @@
 // veins... the RNG still open").
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The hypothesis: the membership roll is
-// `rng::positionalSourceFor(seed, SALT).at(x, y, z).nextFloat()`, compared
-// against 0.3 one way or the other — the exact shape
-// `surface::rule_graph.hpp`'s own `verticalGradientFires` already uses and
-// has confirmed against 27 million real blocks. What is NOT known is SALT,
-// or which side of 0.3 means "touched".
+// SETTLED, and this file is kept as the instrument that settles it — and as
+// the record of how it was wrong. The membership roll is
+// `rng::positionalSourceFor(seed, "minecraft:ore").at(x, y, z).nextFloat()
+// < 0.7`: 100.000% on 79790 candidates across both probe sets (SPEC's M3
+// section).
+//
+// WHAT THIS FILE USED TO ASSUME, because it cost a long search. Every public
+// description calls this a "30% membership roll", so this test hard-coded a
+// threshold of 0.3 and swept salts against it — while the measured marginal
+// touch rate, recorded in SPEC the whole time, was 69.729%. At the CORRECT
+// salt a 0.3 threshold reads 60.294%: an unremarkable near-miss, well under
+// the 85% per-seed bar below, and indistinguishable by eye from the ~58%
+// uncorrelated baseline. So roughly 1226 candidates were swept and refuted
+// against a threshold none of them could have passed, `"minecraft:ore"`
+// among them. An instrument that can only be wrong in one direction refutes
+// the right answer as confidently as the wrong ones.
+//
+// The threshold is a SWEEP now, not a constant, and both senses are reported
+// at each one — so the 60.3% near-miss and the 100.0% answer print side by
+// side for the same salt. This file still only scores the FIRST of the three
+// draws, which is what it is for; scoring all three jointly against the block
+// the server actually wrote is
+// `tests/conformance/vanilla_ore_vein_test.cpp`'s job, and that is the test
+// that can tell a right answer from a near-miss.
 //
 // Reports the aggregate agreement AND two ways of slicing it that catch
 // artifacts an aggregate-only number hides:
@@ -16,13 +34,14 @@
 //     seed is almost always an artifact of unequal per-seed sample counts,
 //     not a real derivation. Caught exactly this on "minecraft:vein_gap":
 //     71.6% aggregate, but 45%/74%/80%/60% per-seed — refuted once seen
-//     per-seed.
+//     per-seed. Per-seed n is printed alongside, because the probe seeds
+//     contribute wildly unequal row counts (one contributes none at all).
 //   - copper vs iron: tests whether the two vein types might use different
 //     salts (a single combined test would dilute either type's real 100%
 //     match down to a confusing ~65-80%, not obviously distinguishable
 //     from noise, if the other type's salt were wrong).
-// A genuine salt should read close to 100% (or close to 0%, i.e. 100% on
-// the other direction) in EVERY seed and EVERY type, not just on average.
+// A genuine salt should read close to 100% in EVERY seed and EVERY type, not
+// just on average.
 //
 //   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
 //       tools/analysis/ore-vein-rng-test.cpp -L build/dev/lib -lstratum_core -lz \
@@ -45,6 +64,11 @@
 using namespace stratum;
 
 namespace {
+/// Swept for every salt. 0.7 is the confirmed membership threshold; 0.3 is
+/// the one this file used to hard-code, kept so the near-miss it produces at
+/// the correct salt stays visible next to the real answer.
+constexpr float kThresholds[] = {0.3F, 0.7F};
+
 struct Row {
     std::int64_t seed;
     std::int32_t x, y, z;
@@ -133,6 +157,10 @@ int main(int argc, char** argv) {
     long long hits = 0;
     for (const std::string& salt : salts) {
         ++checked;
+        // Both senses at every threshold in the sweep. 0.7 is the confirmed
+        // one; 0.3 is kept because it is what this file used to test, and
+        // seeing 60.3% next to 100.0% is the whole lesson in one line.
+        for (const float threshold : kThresholds) {
         Agreement less, geq, lessCu, geqCu, lessFe, geqFe;
         std::int64_t cachedSeed = 0;
         bool haveCached = false;
@@ -145,8 +173,8 @@ int main(int argc, char** argv) {
             }
             auto gen = cachedSource.at(row.x, row.y, row.z);
             const float draw = gen.nextFloat();
-            const bool okLess = (draw < 0.3F) == row.touched;
-            const bool okGeq = (draw >= 0.3F) == row.touched;
+            const bool okLess = (draw < threshold) == row.touched;
+            const bool okGeq = (draw >= threshold) == row.touched;
             less.record(row.seed, okLess);
             geq.record(row.seed, okGeq);
             if (row.y >= 0) { // copper range; iron never reaches y>=0 (upper bound -8)
@@ -167,11 +195,11 @@ int main(int argc, char** argv) {
             ++hits;
         }
         if (isHit || !quietMode) {
-            std::printf("salt=%-30s all: <0.3=%.1f%%[%.0f-%.0f] >=0.3=%.1f%%[%.0f-%.0f]"
-                        "   Cu: <0.3=%.1f%% >=0.3=%.1f%%   Fe: <0.3=%.1f%% >=0.3=%.1f%%%s\n",
-                        salt.c_str(), less.rate(), lessLo, lessHi, geq.rate(), geqLo, geqHi,
-                        lessCu.rate(), geqCu.rate(), lessFe.rate(), geqFe.rate(),
-                        isHit ? "   <-- HIT" : "");
+            std::printf("salt=%-24s t=%.2f  all: <t=%.3f%%[%.0f-%.0f] >=t=%.3f%%[%.0f-%.0f]"
+                        "   Cu: <t=%.3f%%   Fe: <t=%.3f%%%s\n",
+                        salt.c_str(), double(threshold), less.rate(), lessLo, lessHi, geq.rate(),
+                        geqLo, geqHi, lessCu.rate(), lessFe.rate(), isHit ? "   <-- HIT" : "");
+        }
         }
     }
     if (quietMode) {

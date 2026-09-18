@@ -5,9 +5,17 @@
 // (the roll failed).
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The 30% membership roll is the first of ore veins' three random draws
-// (SPEC's M3 section, "ore veins... the RNG still open") and the most
-// tractable to isolate: `vein_ridged < 0` is a confirmed NECESSARY
+// SETTLED (SPEC's M3 section): the membership roll is
+// `positionalSourceFor(seed, "minecraft:ore").at(x, y, z).nextFloat() < 0.7`.
+// Note the SENSE — 0.7 is the chance of being TOUCHED. This file's own output
+// said so from the first run and it was misread for a long time: the touched
+// rate it reports is ~69.7%, and the roll was nonetheless described as a "30%
+// membership roll" and searched for at a threshold of 0.3. If a future reader
+// takes one thing from this file, take the rate it prints at the end
+// seriously before choosing what to compare against.
+//
+// The membership roll is the first of ore veins' three random draws and the
+// most tractable to isolate: `vein_ridged < 0` is a confirmed NECESSARY
 // condition (0 exceptions across 25608 real blocks) — but NOT a sufficient
 // one to filter candidates by on its own. `vein_ridged`'s own formula is
 // `-0.08 + max(|a|, |b|)`, and OUTSIDE the vein y-ranges both `a` and `b`

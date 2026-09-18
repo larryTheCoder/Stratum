@@ -28,6 +28,7 @@ add_executable(stratum_unit_tests
     nbt_test.cpp
     nbt_writer_test.cpp
     noise_settings_test.cpp
+    ore_vein_test.cpp
     noise_test.cpp
     pack_test.cpp
     pipeline_freeze_test.cpp

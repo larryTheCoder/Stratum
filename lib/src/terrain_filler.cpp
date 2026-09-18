@@ -3,6 +3,7 @@
 
 #include <stratum/aquifer/substance.hpp>
 #include <stratum/javamath.hpp>
+#include <stratum/ore/vein.hpp>
 #include <stratum/terrain/filler.hpp>
 
 #include <algorithm>
@@ -38,6 +39,59 @@ constexpr int kChunkWidth = 16;
     static const settings::BlockState kLava{.name = data::ResourceLocation{"minecraft", "lava"},
                                             .properties = {{"level", "0"}}};
     return kLava;
+}
+
+/// The six blocks the vein system places. Block identifiers only — the one
+/// class of Mojang-derived table this repo commits — and confirmed against
+/// the server rather than transcribed: iron's whole range sits below y = 0,
+/// so its ore is never anything but the deepslate variant.
+[[nodiscard]] const std::array<settings::BlockState, 6>& veinBlocks() {
+    const auto named = [](const char* name) {
+        return settings::BlockState{.name = data::ResourceLocation::parse(name), .properties = {}};
+    };
+    // Order is load-bearing: `veinBlock` indexes into this by metal (copper's
+    // three, then iron's) and then by filler/ore/raw within the metal.
+    static const std::array<settings::BlockState, 6> kBlocks{named("minecraft:granite"),
+                                                             named("minecraft:copper_ore"),
+                                                             named("minecraft:raw_copper_block"),
+                                                             named("minecraft:tuff"),
+                                                             named("minecraft:deepslate_iron_ore"),
+                                                             named("minecraft:raw_iron_block")};
+    return kBlocks;
+}
+
+[[nodiscard]] const settings::BlockState& veinBlock(const ore::Vein& vein) {
+    const std::size_t base = vein.type == ore::VeinType::Copper ? 0U : 3U;
+    switch (vein.block) {
+        case ore::VeinBlock::Filler:
+            return veinBlocks()[base];
+        case ore::VeinBlock::Ore:
+            return veinBlocks()[base + 1U];
+        case ore::VeinBlock::RawBlock:
+            return veinBlocks()[base + 2U];
+        case ore::VeinBlock::None:
+            break;
+    }
+    // Unreachable: fill() only asks once `placed()` is true. Throwing rather
+    // than returning stone keeps a future caller that forgets that from
+    // silently painting the world with the default block.
+    throw FillError("veinBlock asked for a block for a position the vein system did not place");
+}
+
+/// Whether the first pass put this block here as part of an ore vein.
+///
+/// Asked by the surface pass, which must not repaint one. Identified by the
+/// block itself rather than by remembering the positions: a chunk holds at
+/// most six of these and the comparison is against a six-entry table, which
+/// is cheaper than a parallel 98304-entry mask and cannot fall out of step
+/// with what `fill()` actually wrote.
+///
+/// A dimension whose own `default_block` is one of the six would make this
+/// ambiguous — it would shield that dimension's plain terrain from its own
+/// surface rules. Vanilla's is `minecraft:stone`, which is not in the table,
+/// and the caller checks `default_block` first regardless.
+[[nodiscard]] bool isVeinBlock(const settings::BlockState& block) {
+    return std::ranges::find(veinBlocks(), block) != veinBlocks().end();
 }
 
 /// Solid, fluid or air — what the FIRST pass decided, read back for the
@@ -179,16 +233,24 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // are in `computeSubstance` too, all measured against the server
     // (`aquifer/substance.hpp`'s and `aquifer/barrier.hpp`'s own headers
     // carry the numbers).
-    if (settings.oreVeinsEnabled) {
-        throw FillError("this dimension sets ore_veins_enabled, and this build does not place ore "
-                        "veins (SPEC §10, M3); refusing rather than generating a world missing "
-                        "them silently");
-    }
-
     ChunkFiller filler(graph, noises, settings);
     // Raised here, at compile, rather than on the first block of the first
     // chunk: a caller that cannot generate should learn so before it starts.
     filler.interpreter_.requireEvaluable(filler.finalDensity_);
+
+    // Ore veins, wired (SPEC §10, M3; SPEC §11). Both flags, not just
+    // `ore_veins_enabled`: the coupling is measured, and a dimension with
+    // veins on and aquifers off really does come back as unbroken stone, so
+    // leaving the source unbuilt here reproduces the server exactly rather
+    // than approximating it.
+    if (ore::veinsPlaceBlocks(settings.oreVeinsEnabled, settings.aquifersEnabled)) {
+        filler.oreVeins_.emplace(noises.worldSeed());
+        for (const settings::RouterEntry entry :
+             {settings::RouterEntry::VeinToggle, settings::RouterEntry::VeinRidged,
+              settings::RouterEntry::VeinGap}) {
+            filler.interpreter_.requireEvaluable(settings.router.at(entry));
+        }
+    }
 
     if (settings.aquifersEnabled) {
         // The salted positional source (SPEC §4) is per-world, not per-block
@@ -345,6 +407,18 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
         return interpreter_.evaluate(pslNode, density::Point{.x = x, .y = y, .z = z}, cache);
     };
 
+    // Only ever read when oreVeins_ holds a source, same as the aquifer's
+    // five above, and looked up once per fill() rather than per block.
+    const density::NodeIndex veinToggleNode =
+        oreVeins_.has_value() ? settings_->router.at(settings::RouterEntry::VeinToggle)
+                              : density::NodeIndex{};
+    const density::NodeIndex veinRidgedNode =
+        oreVeins_.has_value() ? settings_->router.at(settings::RouterEntry::VeinRidged)
+                              : density::NodeIndex{};
+    const density::NodeIndex veinGapNode =
+        oreVeins_.has_value() ? settings_->router.at(settings::RouterEntry::VeinGap)
+                              : density::NodeIndex{};
+
     // Cell by cell, then block by block within the cell. The order is the
     // whole point: every block of a cell shares the eight corner values
     // `interpolated` needs, and visiting them together is what lets the cache
@@ -405,6 +479,42 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 }
                             } else if (y < settings_->seaLevel) {
                                 block = &settings_->defaultFluid;
+                            }
+
+                            // Ore veins, last and only over solid ground.
+                            // Measured: on a probe whose density crosses zero
+                            // INSIDE both vein ranges, the server placed zero
+                            // vein blocks on 25509 positions it left as air,
+                            // though the chain would have claimed 17813 of
+                            // them — while every position it left solid,
+                            // including the ones the aquifer's own barrier
+                            // turned solid against a negative density, came
+                            // back exact on 11455 of 11455.
+                            if (oreVeins_.has_value() && block == &settings_->defaultBlock &&
+                                ore::inAnyVeinRange(y)) {
+                                // One router entry at a time, each behind the
+                                // gate the last one opened: `vein_toggle`
+                                // rejects the overwhelming majority of
+                                // positions on its own, and every one of the
+                                // three costs a full density evaluation.
+                                const density::Point here{.x = blockX, .y = y, .z = blockZ};
+                                const double toggle =
+                                    interpreter_.evaluate(veinToggleNode, here, cache);
+                                if (ore::clearsRichness(y, toggle)) {
+                                    const double ridged =
+                                        interpreter_.evaluate(veinRidgedNode, here, cache);
+                                    if (ridged < 0.0) {
+                                        const ore::Vein vein = oreVeins_->at(
+                                            blockX, y, blockZ,
+                                            ore::VeinInputs{.toggle = toggle,
+                                                            .ridged = ridged,
+                                                            .gap = interpreter_.evaluate(
+                                                                veinGapNode, here, cache)});
+                                        if (vein.placed()) {
+                                            block = &veinBlock(vein);
+                                        }
+                                    }
+                                }
                             }
                             into.set(static_cast<int>(localX), y, static_cast<int>(localZ), *block);
                         }
@@ -595,6 +705,25 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     }
                 } else {
                     crossedSolid = true;
+                    // A block the VEIN system placed is solid but is not the
+                    // default block, and the surface system does not repaint
+                    // it. Measured, because it had to be: a probe with ore
+                    // veins on and an unconditional surface rule painting
+                    // every repaintable block left all 12934 vein blocks
+                    // untouched while repainting all 5548 non-vein candidate
+                    // positions. Without this the overworld's own `deepslate`
+                    // rule — unconditionally true below y = -8 — would erase
+                    // every iron vein in the world, iron's whole range being
+                    // [-60, -8].
+                    //
+                    // Keyed on the vein blocks themselves, not on "anything
+                    // that is not the default block": `categorize` counts
+                    // lava as solid too, and shielding THAT from the surface
+                    // rules would quietly move the aquifer results this file
+                    // already has exact.
+                    if (oreVeins_.has_value() && isVeinBlock(into.at(localX, y, localZ))) {
+                        continue;
+                    }
                 }
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);

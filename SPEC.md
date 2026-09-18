@@ -473,8 +473,8 @@ mapping has two halves, split at a platform-neutral midpoint:
      the other three named functions is End-dimension-specific and does not
      block overworld generation; it has not been re-surveyed since.
 
-  **Ore veins, started — the deterministic shape confirmed, the RNG still
-  open.** Unlike the aquifer, no clean-room spec covers this: there is no
+  **Ore veins, SETTLED — the derivation confirmed per block and wired.**
+  Unlike the aquifer, no clean-room spec covers this: there is no
   `spec/ore-vein-spec.md`, so the starting hypothesis came from the
   permitted public references (minecraft.wiki's "Ore vein" and "Noise
   router" pages) rather than a researched brief, and every number those
@@ -495,103 +495,114 @@ mapping has two halves, split at a platform-neutral midpoint:
   — immediately produced real vein output. The two flags are not
   independent in the real server: ore veins are gated on the same enable
   path aquifers use, even where the fluid logic itself never fires.
+  `ore::veinsPlaceBlocks` is that observation and nothing more; it is a
+  measured coupling, not a claim about why.
 
-  *Confirmed, across five seeds and 25608 real non-stone blocks, with ZERO
-  exceptions on every deterministic gate:* the y-range (`y` in `[-60, -8]`
-  for iron, `[0, 50]` for copper — the dead zone `[-8, 0)` between them
-  produces neither), the type/sign correspondence (`vein_toggle > 0` for
-  copper, `<= 0` for iron), the richness threshold (`|vein_toggle|` must
-  clear 0.6 at either y limit, falling linearly to 0.4 at 20 blocks
-  inside), `vein_ridged < 0` as necessary for any vein block at all, and
-  `vein_gap > -0.3` as necessary for ore over filler. The mapped-probability
-  formula (ore chance = `|vein_toggle|` mapped from `[0.4, 0.6]` to
-  `[0.1, 0.3]`) tracks closely: the largest bin (10584 blocks,
-  `|vein_toggle|` in `[0.59, 0.60)`) reads 29.44% against a predicted 29%.
-  The raw-ore rate reads 1.87% (98/5235), close to the documented 2% but
-  not yet pinned to it. Filler and ore block identities are confirmed too:
-  granite/copper_ore/raw_copper_block for copper, tuff/deepslate_iron_ore/
-  raw_iron_block for iron — iron's whole range sits below y=0, so it is
-  never anything but the deepslate variant.
+  *The deterministic gate, confirmed with ZERO exceptions.* The y-range
+  (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
+  `[-8, 0)` between them produces neither), the type/sign correspondence
+  (`vein_toggle > 0` for copper, `<= 0` for iron), the richness threshold
+  (`|vein_toggle|` must clear 0.6 at either y limit, falling linearly to
+  0.4 at 20 blocks inside), and `vein_ridged < 0` as necessary for any vein
+  block at all. Block identities likewise: granite/copper_ore/
+  raw_copper_block for copper, tuff/deepslate_iron_ore/raw_iron_block for
+  iron — iron's whole range sits below y=0, so it is never anything but the
+  deepslate variant.
 
-  *Still open, and the reason this is not yet code.* The three random
-  draws above (the 30% membership roll, the mapped-probability ore/filler
-  roll, the 2% raw roll) are confirmed only in aggregate rate and shape —
-  not in the per-block algorithm a bit-exact reimplementation needs to
-  match the same seed's exact blocks rather than merely its statistics.
-  `ore_veins_enabled` stays refused by name until it has.
+  *The RNG, confirmed per block.* All three draws come from ONE generator,
+  `rng::positionalSourceFor(worldSeed, "minecraft:ore").at(x, y, z)`, in
+  this order:
 
-  *The membership roll's salt search, run and refuted.* `rng::
-  positionalSourceFor` (MD5-hashed salt → Xoroshiro128++, `.at(x,y,z).
-  nextFloat()`) is the leading hypothesis — it is the same mechanism
-  already confirmed bit-exact for `vertical_gradient`'s `random_name`
-  condition on 27 million real blocks, and `aquifer_lattice.cpp` already
-  uses the same construction under the literal salt `"minecraft:aquifer"`.
-  `tools/analysis/ore-vein-rng-dump.cpp` isolates the roll: it scans probe
-  worlds for every position clearing the confirmed deterministic gate
-  above (y-range, sign/type, richness, `vein_ridged < 0`) and records
-  whether the server actually touched it — 36725 candidate rows across
-  4 seeds (69.729% touched, notably close to `1 - 0.3`). Two structural
-  checks first ruled out a non-RNG explanation: touch rate is flat
-  (~69-70%, no trend) when binned against `vein_ridged`'s own magnitude,
-  against `vein_gap`'s value, and against `|vein_toggle|`'s value — the
-  roll genuinely does not correlate with any density value already in
-  hand, consistent with an independent per-block coin flip rather than a
-  hidden deterministic threshold.
+  1. `nextFloat() < 0.7` — the block becomes a vein block, or is left alone.
+  2. `nextFloat() < clampedMap(|vein_toggle|, 0.4, 0.6 -> 0.1, 0.3)` AND
+     `vein_gap > -0.3` gives ore; anything else gives filler.
+  3. only after an ore: `nextFloat() < 0.02` upgrades it to the raw-metal
+     block.
 
-  `tools/analysis/ore-vein-rng-test.cpp` then tests salt candidates
-  against the dataset, checking both threshold directions (`draw < 0.3`
-  and `draw >= 0.3`) and reporting three views that catch different false
-  positives: the aggregate rate, the per-seed min/max (an aggregate hit
-  that is not ~uniform across every seed is an artifact of unequal
-  per-seed sample counts, not a real derivation — caught exactly this on
-  `"minecraft:vein_gap"`: 71.6% aggregate, but 45%/74%/80%/60% per-seed),
-  and a copper-vs-iron split (in case the two vein types use different
-  salts, which would dilute either type's real match into a confusing
-  ~65-80% on a combined test). Every candidate tried so far — all four
-  noise names the real density functions themselves reference
-  (`minecraft:ore_veininess`, `minecraft:ore_vein_a`, `minecraft:ore_vein_b`,
-  `minecraft:ore_gap`), the three router field names
-  (`minecraft:vein_toggle`, `minecraft:vein_ridged`, `minecraft:vein_gap`),
-  the confirmed `"minecraft:aquifer"` salt itself, and ~25 natural-language
-  guesses (`ore`, `ore_vein`, `ore_veins`, `vein`, `veins`, `mineral_vein`,
-  `mineral_veins`, `copper`, `iron`, `copper_ore`, `iron_ore`,
-  `raw_ore`, `vein_type`, `ore_type`, `vein_membership`,
-  `ore_membership`, `richness`, and others, each with and without the
-  `minecraft:` namespace) — is refuted: none reads anywhere near a
-  uniform ~100% in every seed and every type. Best so far is
-  `"minecraft:copper"` on copper-type positions only, at 80.4% aggregate
-  with a 58-81% per-seed spread — well short of the bar, not a hit.
-  cubiomes (MIT, permitted) was also checked and does not implement
-  block-level ore vein placement at all (its only "vein" grep hits are a
-  false positive substring inside `octaveInit`), so it offers no lead
-  here.
+  **91245 of 91245 candidate positions, 100.000%, across 12 seeds**, on
+  every seed alone and on copper and iron alone. That is 36725 on the
+  discovery worlds (`probes/orevein-multi`), 43065 on nine worlds generated
+  afterwards and never used to fit anything (`probes/orevein-heldout`), and
+  11455 more on the sign-varying probe below. `tests/conformance/
+  vanilla_ore_vein_test.cpp` holds the discovery/held-out split; the
+  held-out half is what makes this a law rather than a fit.
 
-  *Broadened, still refuted.* Two follow-up angles were checked before
-  concluding this is a real wall rather than a shallow gap. First,
-  Cuberite (Apache-2.0, permitted) was checked directly rather than
-  assumed unhelpful: its own README states it supports protocol versions
-  1.8-1.12.2 only — it predates the entire 1.18 terrain rewrite that
-  introduced ore veins by several years, and a source search confirms
-  zero hits for `NoiseRouter`, `DensityFunction`, or `ore_veininess`
-  anywhere in its codebase. It has nothing to offer here. Second, the
-  hypothesis that the vein roll might draw sequentially from the SAME
-  generator instance as an already-confirmed salt (motivated by the real
-  `aquifers_enabled` coupling above) was tested directly: for
-  `"minecraft:aquifer"` and every real noise/router name, draws 2 through
-  5 taken from one `.at(x,y,z)` call were checked against `touched`, not
-  just the first draw — all converge tightly to the ~58% uncorrelated
-  baseline, refuted at every position in the sequence. A systematic
-  1196-candidate word list (geology/mining vocabulary crossed with the
-  short-salt convention `"minecraft:aquifer"`/`"minecraft:bedrock_floor"`/
-  `"minecraft:deepslate"` establish as real precedent for this exact RNG
-  mechanism) also produced zero hits.
+  Each threshold is bracketed rather than rounded to. Over the combined
+  set the largest draw on a touched block and the smallest on an untouched
+  one pin membership into `(0.6999681, 0.7000110]`; 0.6973 reads 99.752%
+  and 0.71 reads 99.022%, so only 0.7 is exact. The raw roll brackets to
+  `(0.0199925, 0.0200130]` the same way.
 
-  This is a genuine open research gap, not a queued mechanical step: the
-  mechanism (positional-source-plus-salt) is a strong hypothesis on
-  precedent — proven bit-exact for two unrelated subsystems already — but
-  the salt string itself has resisted an unusually thorough search of the
-  candidate space, including both of CLAUDE.md's permitted external
-  reference codebases.
+  *Why the earlier search missed it, which is the part worth keeping.* The
+  membership roll was described throughout as a "30% membership roll", and
+  `ore-vein-rng-test.cpp` hard-coded a threshold of 0.3 — while the
+  measured marginal touch rate, recorded in this very section, was 69.729%.
+  At the CORRECT salt a 0.3 threshold still reads 60.294%: an unremarkable
+  near-miss, indistinguishable from the ~58% uncorrelated baseline by eye
+  and nowhere near the 85% per-seed bar the instrument used to flag a hit.
+  So roughly 1226 salt candidates — four noise names, three router field
+  names, the confirmed `"minecraft:aquifer"` salt, ~25 natural-language
+  guesses, a systematic 1196-entry word list, and draws 2 through 5 of each
+  — were swept and refuted against a threshold that could not have passed
+  for any of them. `"minecraft:ore"` was among the names tried. The lesson
+  is not about salts: an instrument that can only be wrong in one direction
+  will refute the right answer as confidently as the wrong ones, and the
+  number that would have caught it (a 69.7% rate against a 30% hypothesis)
+  was in the record the whole time.
+
+  *Placement: solid ground only, measured separately.* The solid probe is
+  solid everywhere by design, which is what makes it a clean read on the
+  RNG and what makes it blind to whether a vein would replace air.
+  `tools/analysis/ore-vein-placement-probe.sh` answers it: the same dimension
+  with `raw_final_density` a `y_clamped_gradient` crossing zero INSIDE a
+  vein range, so the identical candidate set (the vein router does not read
+  the density) appears both over solid ground and over air. At seed 100,
+  of the candidates the server left as air the confirmed chain would have
+  placed **17813 vein blocks and the server placed zero**, over 25509 air
+  positions; of the candidates it left solid, all **11455 came back exact**
+  — including the ones the aquifer's own barrier turned solid against a
+  negative density, which the fully solid probe cannot produce at all. So
+  veins replace solid ground only, and "solid" means whatever the filler
+  ended up placing, not merely `final_density > 0`.
+
+  *And nothing repaints them afterwards.* The same script's third dimension
+  is solid throughout but runs an UNCONDITIONAL surface rule painting
+  `minecraft:diamond_block`, so every candidate answers plainly. All **12934
+  positions the chain calls a vein block came back as that vein block, and
+  all 5548 it calls stone came back as diamond_block**: surface rules repaint
+  the default block and not a vein block. This one is load-bearing rather
+  than academic. The overworld's own `deepslate` rule is unconditionally true
+  below y = -8 and iron's whole range is `[-60, -8]`, so a filler that let
+  surface rules win would erase every iron vein in the world — and every
+  existing golden test, all of which run with ore veins off, would have
+  stayed green while it happened. `ChunkFiller::applySurfaceRules` skips a
+  position holding a vein block; it is keyed on the six vein blocks rather
+  than on "anything that is not the default block", because `categorize`
+  counts lava as solid too and shielding that would have moved the aquifer
+  results §11 already has exact.
+
+  *Two ambiguities carried rather than guessed.* Neither is observable on
+  any probe run so far, and both are recorded in `ore/vein.hpp` beside the
+  code:
+
+  * `nextFloat()` vs `nextDouble()`. One `nextLong()` backs both, and no
+    row of the 91245 lands between the two precisions, so both read
+    100.000%. Separating them needs a probe that takes a FOURTH draw.
+  * whether draw 2 is consumed when `vein_gap <= -0.3`. Nothing downstream
+    reads this position's stream — every position gets its own
+    `.at(x, y, z)` generator, so there is no ordering between blocks at all
+    — and both variants read 100.000%. The implementation takes the draw
+    unconditionally, as the simpler reading.
+
+  *A spatial fingerprint, measured and deliberately NOT used as evidence.*
+  The membership outcome is vertically clustered: agreement with the
+  neighbour at `dy=1` is 67.2% against a 57.8% per-block baseline, decaying
+  with the trailing 1-bits of `y`, with no horizontal structure at all
+  (`+x` 57.0%). That looks like grounds to reject the whole per-block
+  `.at(x, y, z)` family — and it is not: the same dyadic fingerprint
+  appears for EVERY salt, including junk ones, because it is a property of
+  the positional source itself rather than of the derivation. Recorded here
+  because reasoning from it would have retired the correct hypothesis class.
 
 - **M4** — Biomes + surface: multi-noise biome source, surface rules,
   Tier-A goldens passing end-to-end in Java block space.
@@ -1241,14 +1252,15 @@ Open:
   once `ChunkFiller`'s own second pass, not the rule tree, turned out to be
   where vanilla actually gates it (§11).
 
-  **What it refuses.** A dimension with `ore_veins_enabled` is refused by
-  name at compile, not filled approximately — not implemented at all, and
-  §8 puts a world that generates and is quietly wrong in the most severe
-  class there is. `aquifers_enabled` is no longer refused (MA, below):
-  `aquifer::computeSubstance` decides the block wherever the density alone
-  would not, called from `fill()` itself. Vanilla's overworld sets both
-  flags, so this filler still cannot generate it exactly today — ore veins
-  are the reason now, not aquifers.
+  **What it refuses.** Neither of the two flags any more. `aquifers_enabled`
+  stopped being refused at MA (below): `aquifer::computeSubstance` decides
+  the block wherever the density alone would not, called from `fill()`
+  itself. `ore_veins_enabled` stopped being refused at M3 (above):
+  `ore::VeinSource` replaces a solid block wherever the vein system says so,
+  confirmed per block on 91245 candidates across 12 seeds. Vanilla's
+  overworld sets both flags, and this filler now runs both — what remains
+  between it and an exact overworld is the two narrow aquifer pieces §11
+  names, not a whole subsystem.
 
   Surface rules are NOT refused, because they only ever replace blocks the
   filler already placed. A column without them is bare stone where grass and

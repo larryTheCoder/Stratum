@@ -10,12 +10,35 @@
 // set, the aquifer's own decision (`aquifer::computeSubstance` — the cell
 // lattice, the fluid level rule, source selection and the three-source
 // barrier, SPEC §10 milestone MA); otherwise the old shortcut, `default_fluid`
-// at or below `sea_level` and air above it.
+// at or below `sea_level` and air above it. Then, over solid ground only and
+// where `ore_veins_enabled` and `aquifers_enabled` are BOTH set, the vein
+// system's own replacement (`ore::VeinSource` — SPEC §10 milestone M3).
+//
+// ORE VEINS, wired (SPEC §11). Confirmed per block against the vanilla server
+// on 91245 candidate positions across 12 seeds — 79790 on the fully solid
+// probes, of which 43065 are held-out worlds generated after the derivation
+// was fixed, plus 11455 on a probe whose density crosses zero inside both vein
+// ranges. 100.000%, on every seed alone and on copper and iron alone.
+// `ore/vein.hpp` carries the derivation, the brackets around each threshold,
+// and the two ambiguities the probes cannot separate.
+//
+// The guard here is its own measured fact rather than a reading of the
+// derivation: veins replace only a block this filler has ALREADY made solid.
+// On the sign-varying probe the confirmed chain would have placed 17813 vein
+// blocks at positions the server left as air, and the server placed none of
+// them — while every position it left solid came back exact, including the
+// ones the aquifer's own barrier turned solid against a negative density.
+//
+// The SECOND pass then has to leave those blocks alone, which is its own
+// measured fact: on a probe running an unconditional surface rule, all 12934
+// vein blocks survived and all 5548 non-vein candidate positions were
+// repainted. Without that guard the overworld's own `deepslate` rule —
+// unconditionally true below y = -8 — would erase every iron vein in the
+// world, iron's whole range being [-60, -8], and every golden test here would
+// have stayed green while it happened, since they all run with veins off.
 //
 // WHAT THIS DOES NOT DO, and refuses rather than approximating (SPEC §8):
 //
-//   * **Ore veins.** Not implemented at all; `compile` refuses a dimension
-//     with `ore_veins_enabled` by name.
 //   * **Two narrow pieces of the aquifer**, carried rather than guessed
 //     (`aquifer/substance.hpp`'s own header has the numbers): Q6.3's
 //     water-over-lava exception, and Pi's mixed-fluid-type branch. Measured
@@ -46,6 +69,7 @@
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
+#include <stratum/ore/vein.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -113,8 +137,9 @@ private:
 /// belong to the calling task (SPEC §4.1).
 class ChunkFiller {
 public:
-    /// Throws FillError, naming the flag, for a dimension whose blocks are
-    /// not a function of the density alone.
+    /// Throws FillError, naming what is missing, for a dimension this build
+    /// cannot fill — including a router entry the wiring needs but that this
+    /// dimension's graph cannot evaluate.
     ///
     /// @p surfaceRules, @p biomeParameters and @p biomeTemperatures are all
     /// optional and all external: like @p graph and @p noises, whatever they
@@ -189,6 +214,12 @@ private:
     bool surfaceNeedsSteep_ = false;
     std::optional<surface::Executor> surfaceExecutor_;
     std::vector<std::string> surfaceRulesBlockedBy_;
+
+    // Present only when BOTH ore_veins_enabled and aquifers_enabled are
+    // set (ore::veinsPlaceBlocks): the coupling is measured, not assumed.
+    // Built at compile() from the registry's own worldSeed, same as the
+    // aquifer's centres below and for the same reason.
+    std::optional<ore::VeinSource> oreVeins_;
 
     // Present only when settings_->aquifersEnabled — its own RNG derivation
     // is per-world (the salted positional source, SPEC §4), so it is built

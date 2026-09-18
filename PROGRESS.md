@@ -15,8 +15,8 @@ Last swept: 2026-09-18 (M5: the PocketMine-MP binding is built end to end, never
 | M0 — repo scaffolding | Closed |
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
-| M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
-| M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
+| M3 — 3D density | Closed for the overworld²; ore veins closed too (below) |
+| M4 — biomes + surface | Open — blocked on legacy RNG |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 constant unpinned, 1 golden residual unattributed |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
@@ -167,48 +167,50 @@ Open:
 
 ## Ore veins (SPEC's M3 section)
 
-Started. No clean-room spec exists for this (unlike the aquifer) — the
-starting hypothesis came from minecraft.wiki's public documentation,
-treated throughout as something to confirm, not transcribe.
+**Closed.** No clean-room spec exists for this (unlike the aquifer) — the
+starting hypothesis came from minecraft.wiki's public documentation, treated
+throughout as something to confirm, not transcribe.
 
-Confirmed, across five seeds and 25608 real non-stone blocks, with zero
-exceptions on every deterministic gate: the y-range (iron `[-60,-8]`,
-copper `[0,50]`), the type/sign correspondence, the richness threshold, the
-`vein_ridged`/`vein_gap` membership gates, and the mapped-probability
-formula (tracks the documented curve closely — 29.44% observed vs. 29%
-predicted on the largest bin). A real, non-obvious coupling was found along
-the way: ore veins only activate when `aquifers_enabled` is ALSO true, even
-though the aquifer's own fluid logic never runs in this probe's fully solid
-column.
+The derivation is confirmed per block against the vanilla server on **91245
+of 91245 candidate positions across 12 seeds, 100.000%** — on every seed
+alone and on copper and iron alone. All three draws come from one generator,
+`rng::positionalSourceFor(worldSeed, "minecraft:ore").at(x, y, z)`:
+`nextFloat() < 0.7` for membership, then the mapped-probability ore/filler
+roll against `vein_gap > -0.3`, then `nextFloat() < 0.02` for raw metal.
+`ore_veins_enabled` is no longer refused; `lib/src/ore_vein.cpp` implements
+it and `ChunkFiller` calls it. Coverage: `tests/unit/ore_vein_test.cpp` and
+`tests/conformance/vanilla_ore_vein{,_solid}_test.cpp`.
+
+Placement was measured separately from the derivation, because the solid
+probe is solid everywhere and so cannot see it: veins replace **solid ground
+only**. On `tools/analysis/ore-vein-placement-probe.sh`'s sign-varying world the
+confirmed chain would have placed 17813 vein blocks at positions the server
+left as air and the server placed zero, over 25509 air positions, while all
+11455 solid positions came back exact. The same probe's third dimension
+settles what happens afterwards: surface rules repaint the default block and
+never a vein block (12934 vein blocks kept, 5548 stone positions repainted),
+which the filler's surface pass now honours — without it the overworld's own
+`deepslate` rule, unconditionally true below y = -8, would erase every iron
+vein in the world.
+
+The earlier salt search's ~1226 refuted candidates were swept against a
+hard-coded threshold of 0.3, while the measured marginal touch rate — 69.729%
+— was recorded in the same document. At the correct salt a 0.3 threshold
+reads 60.294%, a near-miss well under the instrument's 85% bar, so
+`"minecraft:ore"` was tried and refuted along with everything else. SPEC's M3
+section keeps the full account; the transferable part is that an instrument
+which can only be wrong in one direction refutes the right answer as
+confidently as the wrong ones.
 
 Open:
 
-- [ ] **The RNG derivation behind the three random draws** (the 30%
-      membership roll, the mapped-probability ore/filler roll, the 2% raw
-      roll). Confirmed only in aggregate rate and shape so far — not the
-      per-block algorithm a bit-exact reimplementation needs. This is the
-      reason `ore_veins_enabled` is still refused by name.
-
-      A systematic salt search for the membership roll (the
-      `rng::positionalSourceFor` mechanism already confirmed for
-      `vertical_gradient` and for the aquifer's own `"minecraft:aquifer"`
-      salt) is a genuine research wall, not a queued step: ~30 hand-picked
-      candidates plus a 1196-entry systematic word list, sequential draws
-      2-5 from every real noise/router salt (not just the first), and a
-      per-seed/per-type validated test harness — all refuted (see SPEC.md's
-      M3 section for the full list and the structural checks that ruled
-      out a non-RNG explanation first). Both of CLAUDE.md's permitted
-      external reference codebases were checked directly: cubiomes doesn't
-      implement ore veins at all (false-positive grep hit only), and
-      Cuberite's own README confirms it supports protocol 1.8-1.12.2 only
-      — it predates the 1.18 terrain rewrite that introduced this feature
-      by years, confirmed via zero hits for `NoiseRouter`/`DensityFunction`/
-      `ore_veininess` in its source. Neither offers a lead. Reconsidering
-      whether the mechanism differs from `positionalSourceFor` altogether
-      remains the main open avenue.
-- [ ] Pinning "30%"/"2%"/"20 blocks" to more precision than a ~25000-block
-      sample gives, once the RNG derivation makes single-block prediction
-      possible at all.
+- [ ] `nextFloat()` vs `nextDouble()` for the three thresholds, and whether
+      draw 2 is consumed when `vein_gap <= -0.3`. Both pairs read 100.000%
+      on all 91245 rows — one `nextLong()` backs both precisions and no row
+      lands between them, and nothing downstream reads a position's stream.
+      Separating either needs a probe that takes a FOURTH draw from the same
+      generator. Recorded in `lib/include/stratum/ore/vein.hpp` beside the
+      code; neither can change a block this build places.
 
 ## M4 — Biomes + surface
 

@@ -4,6 +4,7 @@
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
+#include <stratum/ore/vein.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -134,6 +135,22 @@ private:
         {"spawn_target", nlohmann::json::array()},
         {"surface_rule", {{"type", "minecraft:bandlands"}}},
     };
+}
+
+/// `flatSettings` with the three vein router entries pinned to constants that
+/// clear every deterministic gate, so only the RNG is left to decide.
+///
+/// A toggle of -1 makes every candidate IRON, whose range [-60, -8] overlaps
+/// this dimension's own [-16, 32) exactly where the flat plane is still solid
+/// — the only place a vein can land. A toggle of +1 makes them COPPER, whose
+/// range [0, 50] lies entirely in the open air above the plane, which is how
+/// the "never replaces air" case gets candidates that must all be refused.
+[[nodiscard]] nlohmann::json veinSettings(bool aquifers, double toggle = -1.0) {
+    nlohmann::json settings = flatSettings(aquifers, /*oreVeins=*/true);
+    settings["noise_router"]["vein_toggle"] = toggle;
+    settings["noise_router"]["vein_ridged"] = -1.0;
+    settings["noise_router"]["vein_gap"] = 0.0;
+    return settings;
 }
 
 /// Solid everywhere below y = 1 (open water/air above it, as in
@@ -322,11 +339,100 @@ TEST_CASE("an aquifer above its own floodedness gate reproduces the plain sea, t
     CHECK(buffer.paletteSize() == 3U);
 }
 
-TEST_CASE("a dimension with ore veins is refused, by name", "[terrain][filler]") {
+TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
+    // Measured coupling, not a refusal: a probe with veins on and aquifers
+    // off came back 6291456 of 6291456 plain stone (SPEC §11). Reproducing
+    // that means compiling happily and placing nothing, which is what the
+    // server does — an exception here would be this build inventing a
+    // failure vanilla does not have.
     const TempTree tree;
-    tree.defineSettings("test", flatSettings(/*aquifers=*/false, /*oreVeins=*/true));
+    tree.defineSettings("test", veinSettings(/*aquifers=*/false));
     const LoadedSettings loaded = tree.load();
-    CHECK_THROWS_WITH(compileFrom(tree, loaded), ContainsSubstring("ore_veins_enabled"));
+    const ChunkFiller filler = compileFrom(tree, loaded);
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    for (std::int32_t y = -16; y < 0; ++y) {
+        for (int localX = 0; localX < 16; ++localX) {
+            CHECK(buffer.at(localX, y, 0).name.toString() == "minecraft:stone");
+        }
+    }
+}
+
+TEST_CASE("ore veins replace solid blocks inside the iron range", "[terrain][filler][ore]") {
+    const TempTree tree;
+    tree.defineSettings("test", veinSettings(/*aquifers=*/true));
+    const LoadedSettings loaded = tree.load();
+    const ChunkFiller filler = compileFrom(tree, loaded);
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    // `veinSettings` pins vein_toggle to -1 (iron), vein_ridged to -1 and
+    // vein_gap to 0, so every solid block in [-16, -8] is a candidate and
+    // only the RNG decides. The filler's answer is checked against the ore
+    // module directly rather than against a hard-coded block list: what this
+    // case exists to catch is the WIRING — a filler reading the wrong router
+    // entry, passing x/z in the wrong order, or replacing the wrong block.
+    const stratum::ore::VeinSource veins(0);
+    int placed = 0;
+    for (std::int32_t y = -16; y <= -8; ++y) {
+        for (int localX = 0; localX < 16; ++localX) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                const stratum::ore::Vein vein =
+                    veins.at(localX, y, localZ,
+                             stratum::ore::VeinInputs{.toggle = -1.0, .ridged = -1.0, .gap = 0.0});
+                const std::string actual = buffer.at(localX, y, localZ).name.toString();
+                if (vein.placed()) {
+                    ++placed;
+                    CHECK(vein.type == stratum::ore::VeinType::Iron);
+                    CHECK(actual != "minecraft:stone");
+                } else {
+                    CHECK(actual == "minecraft:stone");
+                }
+            }
+        }
+    }
+    // Roughly 70% of 9 * 256 candidates; asserted loosely because the exact
+    // count is the RNG's business, and asserted at all so the loop above
+    // cannot pass by never placing anything.
+    CHECK(placed > 1000);
+}
+
+TEST_CASE("ore veins never replace air", "[terrain][filler][ore]") {
+    // Confirmed against the server on 25509 air candidates, where the chain
+    // would have placed 17813 vein blocks and the server placed none
+    // (tools/analysis/ore-vein-placement-probe.sh, SPEC §11). `veinSettings`
+    // puts copper's whole range above the flat plane, so every copper
+    // candidate here sits in open air.
+    const TempTree tree;
+    tree.defineSettings("test", veinSettings(/*aquifers=*/true, /*toggle=*/1.0));
+    const LoadedSettings loaded = tree.load();
+    const ChunkFiller filler = compileFrom(tree, loaded);
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+
+    const stratum::ore::VeinSource veins(0);
+    int wouldHavePlaced = 0;
+    for (std::int32_t y = 8; y < 32; ++y) { // above sea level, so air not water
+        for (int localX = 0; localX < 16; ++localX) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                wouldHavePlaced +=
+                    veins.at(localX, y, localZ,
+                             stratum::ore::VeinInputs{.toggle = 1.0, .ridged = -1.0, .gap = 0.0})
+                            .placed()
+                        ? 1
+                        : 0;
+                CHECK(buffer.at(localX, y, localZ).name.toString() == "minecraft:air");
+            }
+        }
+    }
+    CHECK(wouldHavePlaced > 1000);
 }
 
 TEST_CASE("the fill rule is density, then sea level, then air", "[terrain][filler]") {

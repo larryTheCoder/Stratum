@@ -78,8 +78,11 @@ TEST_CASE("a dimension compiled from a thawed blob fills what its pack fills",
         // The reference: straight from the pack, every object a local here.
         const Pack pack = Pack::open(versionDir() / "worldgen");
         const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
-        stratum::settings::NoiseSettings settings = loaded.settings.at(overworld);
-        settings.oreVeinsEnabled = false;
+        // Vanilla's overworld verbatim — ore veins included. CompiledDimension
+        // used to force the flag off and this reference had to match; now
+        // both run the vein system, so the two paths are compared on the
+        // real settings rather than on a shared approximation of them.
+        const stratum::settings::NoiseSettings settings = loaded.settings.at(overworld);
         std::ifstream parametersFile(versionDir() / "biome_parameters" / "minecraft" /
                                      "overworld.json");
         const auto parameters = stratum::biome::ParameterList::fromJson(

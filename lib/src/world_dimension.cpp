@@ -38,11 +38,6 @@ constexpr std::int32_t kQuartsPerChunkEdge = 4;
     return found->second;
 }
 
-[[nodiscard]] settings::NoiseSettings withoutOreVeins(settings::NoiseSettings settings) {
-    settings.oreVeinsEnabled = false;
-    return settings;
-}
-
 [[nodiscard]] std::vector<data::ResourceLocation> everyNoise(const freeze::Pipeline& pipeline) {
     std::vector<data::ResourceLocation> ids;
     ids.reserve(pipeline.noises.size());
@@ -68,8 +63,7 @@ struct CompiledDimension::Impl {
 
     Impl(freeze::Pipeline frozen, const data::ResourceLocation& noiseSettings,
          const data::ResourceLocation& biomeParameterList, const std::int64_t worldSeed)
-        : pipeline(std::move(frozen)),
-          settings(withoutOreVeins(settingsNamed(pipeline, noiseSettings))),
+        : pipeline(std::move(frozen)), settings(settingsNamed(pipeline, noiseSettings)),
           biomeParameters(listNamed(pipeline, biomeParameterList)),
           surfaceRules(surface::RuleGraph::resolve(settings.surfaceRule, noiseSettings)),
           noises(density::NoiseRegistry::create(pipeline.noises, everyNoise(pipeline), worldSeed,

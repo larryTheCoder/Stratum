@@ -11,6 +11,14 @@
 # rather than a researched brief, and treats every number those pages give
 # as a HYPOTHESIS to confirm against the real server, not a fact to encode.
 #
+# SETTLED — this probe's worlds are what confirmed the derivation, per block,
+# on 79790 candidates across both probe sets (SPEC's M3 section). The
+# hypothesis below is kept verbatim as what was believed going in, with one
+# correction worth carrying: `vein_ridged < 0` does NOT give "a 30% chance" of
+# becoming filler or ore. It gives a 70% chance — the roll is
+# `nextFloat() < 0.7`, and reading that number backwards cost a long search.
+# See tools/analysis/ore-vein-rng-test.cpp's header for how.
+#
 # THE HYPOTHESIS, as documented publicly:
 #   * `vein_toggle` decides TYPE and existence: `y` in [0, 50] and
 #     `vein_toggle > 0` is a candidate COPPER vein; `y` in [-60, -8] and

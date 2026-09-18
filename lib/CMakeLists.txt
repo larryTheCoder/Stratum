@@ -34,6 +34,7 @@ add_library(stratum_core STATIC
     src/nbt_reader.cpp
     src/nbt_writer.cpp
     src/noise_settings.cpp
+    src/ore_vein.cpp
     src/noise_parameters.cpp
     src/noise_registry.cpp
     src/positional_random.cpp

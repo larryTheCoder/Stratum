@@ -5,8 +5,8 @@
 // validates the wiring SPEC §10's MA milestone landed (`ChunkFiller` calling
 // `aquifer::computeSubstance`): the reference is
 // `tools/analysis/aquifer-on-probe.sh`'s world — vanilla's real overworld
-// settings, aquifers and all, with only `ore_veins_enabled` forced off (not
-// implemented) and the same empty-biome swap the aquifer-free sibling uses,
+// settings, aquifers and all, with only `ore_veins_enabled` forced off in the
+// PROBE WORLD itself, and the same empty-biome swap the aquifer-free sibling uses,
 // so a carver or a feature is never what a mismatch is blamed on.
 //
 // TWO FILLERS, on the SAME region, because they isolate different layers.
@@ -129,7 +129,10 @@ TEST_CASE("the aquifer wiring places the blocks the server placed, before any su
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:overworld"));
     // The probe world is vanilla's overworld with aquifers left ON — the
     // one field the aquifer-free sibling flips is exactly the one this test
-    // exists to NOT flip. Ore veins stay off; they are not implemented.
+    // exists to NOT flip. Ore veins are off because the PROBE WORLD has them
+    // off (`aquifer-on-probe.sh` sets `ore_veins_enabled: false` server-side);
+    // they are implemented now, and leaving them on here would place veins
+    // the reference never generated. `vanilla_ore_vein_test.cpp` covers them.
     overworld.oreVeinsEnabled = false;
 
     const auto surfaceRules = stratum::surface::RuleGraph::resolve(

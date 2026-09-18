@@ -52,10 +52,10 @@ public:
     /// does not yet record which list a dimension uses (vanilla's world
     /// presets say; the freeze does not carry them).
     ///
-    /// Ore veins are compiled OFF whatever the settings say: their random
-    /// draws are not derived yet (SPEC's M3 section), and `ChunkFiller`
-    /// refuses the flag. Everything else is taken from the settings as they
-    /// were frozen. Throws DimensionError for a name the pipeline does not
+    /// Everything is taken from the settings as they were frozen, ore veins
+    /// included: their three draws are derived and confirmed per block
+    /// against the server (SPEC's M3 section), so this no longer forces the
+    /// flag off. Throws DimensionError for a name the pipeline does not
     /// carry; a legacy-random-source dimension is refused by the noise
     /// registry, naming it.
     [[nodiscard]] static std::unique_ptr<CompiledDimension>
