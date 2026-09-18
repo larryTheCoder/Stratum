@@ -14,7 +14,6 @@
 
 #include <array>
 #include <cstdint>
-#include <map>
 
 using Catch::Matchers::ContainsSubstring;
 using stratum::pmmp::encodeLayer;
@@ -55,12 +54,25 @@ namespace {
 } // namespace
 
 TEST_CASE("word counts are exactly the byte lengths chunkutils2 requires", "[pmmp]") {
-    const std::map<std::uint8_t, std::size_t> expectedBytes = {{0, 0},    {1, 512},  {2, 1024},
-                                                               {3, 1640}, {4, 2048}, {5, 2732},
-                                                               {6, 3280}, {8, 4096}, {16, 8192}};
-    for (const auto& [width, bytes] : expectedBytes) {
-        CAPTURE(static_cast<int>(width));
-        CHECK(wordCount(width) * 4U == bytes);
+    // int rather than uint8_t members: MSVC warns (C4242, an error here) on
+    // brace-initialising a narrower member from an int literal.
+    struct WidthCase {
+        int width;
+        std::size_t bytes;
+    };
+
+    constexpr std::array<WidthCase, 9> kExpectedBytes = {{{0, 0},
+                                                          {1, 512},
+                                                          {2, 1024},
+                                                          {3, 1640},
+                                                          {4, 2048},
+                                                          {5, 2732},
+                                                          {6, 3280},
+                                                          {8, 4096},
+                                                          {16, 8192}}};
+    for (const auto& [width, bytes] : kExpectedBytes) {
+        CAPTURE(width);
+        CHECK(wordCount(static_cast<std::uint8_t>(width)) * 4U == bytes);
     }
     // chunkutils2 refuses these widths; so does the encoder.
     CHECK_THROWS_WITH(wordCount(7), ContainsSubstring("7 bits per block"));
@@ -79,15 +91,20 @@ TEST_CASE("a uniform sub-chunk packs to width zero with no words", "[pmmp]") {
 
 TEST_CASE("each palette size gets the smallest width chunkutils2 accepts", "[pmmp]") {
     // 65 distinct values need 7 bits, which chunkutils2 does not accept: 8.
-    const std::array<std::pair<std::uint32_t, std::uint8_t>, 9> cases = {
+    struct PaletteCase {
+        std::uint32_t count;
+        int width;
+    };
+
+    constexpr std::array<PaletteCase, 9> kCases = {
         {{2, 1}, {3, 2}, {4, 2}, {5, 3}, {9, 4}, {17, 5}, {33, 6}, {65, 8}, {257, 16}}};
-    for (const auto& [count, width] : cases) {
+    for (const auto& [count, width] : kCases) {
         CAPTURE(count);
         const auto values = distinctValues(count);
         const PalettedLayer layer = encodeLayer(values);
         CHECK(layer.bitsPerBlock == width);
         CHECK(layer.palette.size() == count);
-        CHECK(layer.words.size() == wordCount(width));
+        CHECK(layer.words.size() == wordCount(static_cast<std::uint8_t>(width)));
         CHECK(layer.palette.size() <= (std::size_t{1} << layer.bitsPerBlock));
         CHECK(decode(layer) == values);
     }
