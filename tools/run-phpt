@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Stratum — PHPT tests, with a skip treated as a failure.
+#
+# PHP's own run-tests.php exits 0 when every test SKIPs, so a suite whose
+# fixtures went missing reports success having checked nothing. That is the
+# failure mode this repo has already been bitten by once in CI (a green
+# conformance job where every suite skipped), so the count is asserted here
+# rather than trusted.
+#
+# Usage: tools/run-phpt <php> <run-tests.php> [php args...] -- <test-dir>...
+set -euo pipefail
+
+if [[ $# -lt 3 ]]; then
+    echo "usage: tools/run-phpt <php> <run-tests.php> [php args...] -- <test-dir>..." >&2
+    exit 2
+fi
+
+php="$1"
+runner="$2"
+shift 2
+
+php_args=()
+while [[ $# -gt 0 && "$1" != "--" ]]; do
+    php_args+=("$1")
+    shift
+done
+[[ "${1:-}" == "--" ]] && shift
+if [[ $# -eq 0 ]]; then
+    echo "run-phpt: no test directories given" >&2
+    exit 2
+fi
+tests=("$@")
+
+output="$("${php}" -n "${runner}" -q -p "${php}" "${php_args[@]}" "${tests[@]}" 2>&1)" || {
+    echo "${output}"
+    echo "run-phpt: run-tests.php reported failures" >&2
+    exit 1
+}
+echo "${output}"
+
+summary() { sed -n "s/^Tests $1 *: *\([0-9]*\).*/\1/p" <<<"${output}" | head -1; }
+passed="$(summary passed)"
+skipped="$(summary skipped)"
+failed="$(summary failed)"
+
+if [[ -z "${passed}" ]]; then
+    echo "run-phpt: could not read a test summary — did run-tests.php run at all?" >&2
+    exit 1
+fi
+if [[ "${failed:-0}" != "0" || "${skipped:-0}" != "0" ]]; then
+    echo "run-phpt: ${passed} passed, ${skipped} skipped, ${failed} failed — a skipped test is a test that did not check anything" >&2
+    exit 1
+fi
+if [[ "${passed}" -eq 0 ]]; then
+    echo "run-phpt: no tests ran" >&2
+    exit 1
+fi
+echo "run-phpt: ${passed} passed, none skipped"

@@ -72,12 +72,18 @@ if(STRATUM_BUILD_EXT)
     if(STRATUM_BUILD_TESTS)
         # PHPT, through PHP's own runner, with the real chunkutils2 loaded so
         # the shim's output goes through the actual PalettedBlockArray::fromData.
+        # Through tools/run-phpt, which fails on a SKIP: run-tests.php exits 0
+        # when every test skips, and a suite that checked nothing must not
+        # read as a pass.
         add_test(NAME ext.phpt
-            COMMAND "${php_php_binary}" -n "${php_prefix}/lib/php/build/run-tests.php"
-                -q --show-diff -p "${php_php_binary}" -n
+            COMMAND "${CMAKE_SOURCE_DIR}/tools/run-phpt"
+                "${php_php_binary}" "${php_prefix}/lib/php/build/run-tests.php"
+                --show-diff -n
                 -d "extension=${php_extension_dir}/chunkutils2.so"
                 -d "extension=$<TARGET_FILE:stratum_php>"
+                --
                 "${CMAKE_CURRENT_SOURCE_DIR}/zend/tests"
+                "${CMAKE_CURRENT_SOURCE_DIR}/plugin/tests"
         )
         set_tests_properties(ext.phpt PROPERTIES
             LABELS "ext"

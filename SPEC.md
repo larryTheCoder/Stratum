@@ -34,9 +34,12 @@ datapacks work as content for this engine.
 - Features, structures, carvers (v2 — staged generation with declared
   read/write radii; see §10 milestone M6).
 - Embedded scripting (Lua/Wasm custom nodes) — v2 candidate.
-- PHP callbacks inside the pipeline. PHP constructs pipelines at world load
-  and may hook post-population on the main thread; it never executes inside
-  chunk generation (PMMP worker threads do not have plugin code loaded).
+- PHP callbacks inside the pipeline, and per-block PHP anywhere. A
+  `Generator` IS plugin PHP running on a PocketMine-MP worker thread (its
+  classes are autoloadable there, and it is constructed with only a seed and
+  an options string), but its whole per-chunk job is handing over
+  already-packed sub-chunks and translating a handful of palette entries.
+  Nothing in the pipeline itself calls into PHP.
 - Bit-exact feature placement parity (requires matching vanilla RNG call
   order; explicitly out of scope).
 - Serving Java Edition. Target platform is Bedrock via PocketMine-MP.
@@ -4370,6 +4373,62 @@ Open:
   **the extension is built against a minimal ZTS PHP 8.2 compiled from
   php/php-src**, locally and in a CI job, with chunkutils2 0.3.5 built by
   phpize for tests — no full PMMP server yet.
+
+- **M5's PocketMine-MP binding is built end to end — and everything it
+  touches on PocketMine-MP's side was read twice.** `ext/` now holds three
+  layers: `stratum_pmmp_core` (packs a chunk into chunkutils2 0.3.x's own
+  `PalettedBlockArray::fromData` arguments), the `stratum` zend module
+  (§4.3's PHP surface), and `ext/plugin/` (registers the generator, builds
+  `Chunk`s, translates palettes). Each layer's boundary was read from
+  PocketMine-MP 5.44.4 / chunkutils2 0.3.5 source and then independently
+  re-checked by a second reader against the same files; five claims were
+  corrected that way, and the corrections are the reason several of these
+  decisions are what they are:
+
+  *The failure modes that do not announce themselves.* A sub-chunk key
+  `Chunk::__construct` does not find becomes air AND an all-ocean biome
+  array (`Chunk.php:76`), so the plugin always supplies every index the
+  dimension covers, keyed signed (-4..19) exactly as that constructor
+  indexes. An unmapped biome id is silently swapped for `OCEAN` on the wire
+  (`ChunkSerializer.php:166`) — no exception, no log — which is why biome
+  coverage is asserted in `lib/mapping/`'s own tests rather than trusted to
+  fail loudly at runtime. And a world naming an unregistered generator does
+  not merely fail to load: `startupPrepareWorlds()` returning false takes
+  the whole server down (`Server.php:1072-1075`), so registration happens in
+  `onLoad()`, before worlds are loaded.
+
+  *What a generator may assume.* It is constructed per worker thread with a
+  seed and an options string and nothing else — no server, no plugin, no
+  config (`GeneratorExecutorSetupParameters::createGenerator`) — so the path
+  to the world's frozen pipeline travels in the options string, and
+  `WorldFactory` writes the blob into the world's folder BEFORE calling
+  `generateWorld()`, which constructs the world (and therefore opens the
+  blob on a worker) immediately. `generateChunk` is also called for
+  neighbouring chunks, up to nine per population task, so it must be
+  correct at arbitrary coordinates rather than only the requested one.
+
+  *Blocks PocketMine-MP does not have.* `minecraft:powder_snow` is a real,
+  measured example — PocketMine-MP 5.44.4 has no powder snow block, and the
+  overworld's surface rules place it. The plugin resolves it through an
+  explicit fallback (snow block), logged once per state; anything else
+  unimplemented falls back to `info_update`, also logged. Never a crash,
+  never a silent stone (SPEC §9).
+
+  *What is NOT verified, and cannot be here.* The plugin has never run:
+  PocketMine-MP cannot be installed on this machine (its PHP releases ship
+  no headers, and it needs pmmpthread, leveldb, igbinary, morton and more
+  that `tools/php-dev` does not build). CI checks that every plugin file
+  parses and runs the one class that is pure PHP against a faithful stub.
+  Running it against a real server is the binding's next real step, and is
+  the same shape of gap `ext-nukkit/`'s Java side has.
+
+  *Speed, measured rather than assumed.* An optimised build generates the
+  overworld at **237 ms/chunk** on the development machine (freezing a
+  pipeline 0.06 s, compiling a dimension 0.01 s, 2 MB peak). That is
+  comfortable for background generation and slow beside PocketMine-MP's own
+  generators; the density evaluation and the per-quart biome search dominate
+  it, not the packing. M5's performance pass now has a number to work
+  against.
 
 ---
 

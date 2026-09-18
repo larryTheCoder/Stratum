@@ -344,6 +344,17 @@ jobs:
           test -d ".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings"
           test -s ".fixtures/${MINECRAFT_VERSION}/biome_parameters/minecraft/overworld.json"
 
+      - name: Plugin syntax
+        # The plugin's PHP needs a running PocketMine-MP to execute, which no
+        # CI job here has (PROGRESS.md says so plainly). What can be checked
+        # is that every file parses — a typo in a plugin only surfaces when a
+        # server tries to load it, which is far too late.
+        run: |
+          php="$("$(tools/php-dev --print-config)" --php-binary)"
+          for file in ext/plugin/src/*.php; do
+            "${php}" -l "${file}"
+          done
+
       - name: Configure
         run: STRATUM_PHP_CONFIG="$(tools/php-dev --print-config)" cmake --preset ext
 

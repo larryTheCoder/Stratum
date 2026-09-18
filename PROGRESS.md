@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-15 (M5: PMMP binding planned; freeze format 3).
+Last swept: 2026-09-18 (M5: the PocketMine-MP binding is built end to end, never run).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-09-15 (M5: PMMP binding planned; freeze format 3).
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — biome mapping landed; `ext-nukkit/` JNI interface built; block state table landed in `lib/mapping/`; binding-side resolution not started |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -253,9 +253,28 @@ but waits on the same table and is untested against a real Nukkit build.
          8.2.30 ZTS from `tools/php-dev`; PHPT tests hand every sub-chunk of
          real vanilla chunks to chunkutils2 0.3.5's own
          `PalettedBlockArray::fromData`, and the `ext-pmmp` CI job runs them.
-      5. [ ] **The PMMP plugin** — `StratumGenerator`, per-worker palette
-         cache, the fallback table (powder snow first), world creation
-         writing the frozen blob.
+      5. [x] **The PocketMine-MP plugin** (`ext/plugin/`) — registers the
+         generator in `onLoad()`, builds `Chunk`s from the engine's packed
+         sub-chunks, translates palettes through PocketMine-MP's own
+         upgrader + deserializer per worker, falls back (powder snow ->
+         snow block) with a log rather than a crash or a silent swap, and
+         `WorldFactory` freezes the pipeline into a new world's folder
+         before creating it. Written against PMMP 5.44.4 source, read and
+         independently re-verified (SPEC §11); **never run** — PocketMine-MP
+         cannot be installed here. CI checks every file parses and runs the
+         options test.
+- [ ] **Run the plugin against a real PocketMine-MP server.** The one thing
+      no check here can stand in for: registration, chunk assembly and block
+      translation have never executed. Needs a PMMP install (its PHP build
+      needs pmmpthread, leveldb, igbinary, morton and more, which
+      `tools/php-dev` does not build) — the same shape of gap
+      `ext-nukkit/`'s Java side has.
+- [ ] **Generation speed.** Measured at **237 ms/chunk** for the overworld
+      in an optimised build on this box (freeze 0.06 s, compiling a
+      dimension 0.01 s, peak 2 MB). Fine for background generation, slow
+      next to PocketMine-MP's own generators; M5's performance pass has a
+      real number to work against now. Most of it is the density evaluation
+      and the per-quart biome search, not the packing.
 - [ ] **Block state resolution in the bindings — not started.**
       1. **`ext/` resolves the table through PMMP** — upgrader then
          deserializer, once per distinct state at generator start, catching
