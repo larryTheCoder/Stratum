@@ -3965,6 +3965,142 @@ Open:
   subset. That matches a single RandomState being constructed once, but
   nothing here checks it, and if it is wrong this refusal is too broad.
 
+- **A legacy dimension's `old_blended_noise` is settled; its named noises are
+  not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is
+  the one noise a `legacy_random_source` dimension can seed without first
+  answering how a *name* becomes an LCG seed. It is now measured off the
+  server, implemented as `BlendedNoise::legacyFromWorldSeed`, and guarded by
+  `tests/conformance/vanilla_legacy_blended_test.cpp`.
+
+  *The rule.* `new java.util.Random(worldSeed)` handed straight in — no
+  positional fork, no name salt, nothing derived — with the three octave
+  stacks drawn in the order `BlendedNoise::legacy` already draws them, and
+  the value read the **modern** way rather than the pre-1.18 way. The two
+  readings differ by exactly 128x at y = 0.
+
+  *The measurement.* `tools/analysis/legacy-blended-probe.sh` puts the same
+  `old_blended_noise` (vanilla's own overworld parameters) into four
+  dimensions of one world — a legacy and a modern dimension at each of two
+  output scales — and `density-probe.sh`'s `flat_cache` + gradient inversion
+  turns every cell-corner column's terrain height into a reading of the noise
+  at (x, 0, z). `tools/analysis/legacy-blended-analyze.cpp` scores it. Across
+  three world seeds (42, 0, -4172144997902289642), **13824 of 13824 columns**
+  in the legacy dimensions, every one to within half a block, which is the
+  floor of what the readback resolves. The denominator is generated columns:
+  2304 of each dimension's 7056 cell corners, the other 4752 being chunks the
+  server never built around the forceloaded square. The exclusion is geometric
+  and carries no value-dependent bias — the analyzer reports it as `sat 0,
+  empty 4752`, so no column is dropped for what it read. The mirror runs the other way in the
+  same worlds: the modern derivation scores 2304/2304 in the flag-off
+  dimensions and 33-36/2304 (fine) or 112-135/2304 (coarse) in the legacy
+  ones, and `BlendedNoise::legacyFromWorldSeed` scores exactly those numbers
+  in the flag-off ones — so neither is an artefact of the readback. The
+  pre-1.18 reading, which shares every draw with the winner, scores 0-6 of
+  2304 everywhere.
+
+  *State the loser's score with its band or do not state it.* Those two
+  rival numbers are the same rival in the same worlds; the only difference is
+  the output scale, which sets the width of the agreement band — 0.00372 at
+  scale 2.0 and 0.01488 at 0.5. A count with no band attached is not a
+  quantity. An earlier write-up of this work gave the modern derivation's
+  range on legacy dimensions as "8-65/1024" as though it were one number; it
+  is a function of the readback, and a later run of the same comparison
+  measured it below the bottom of that range.
+
+  It is left reachable but unreached. `Interpreter` selects it on a Legacy
+  registry, and `NoiseRegistry::create` refuses a Legacy source before any
+  graph is compiled, so nothing calls it for a real world yet. That is
+  deliberate: the settled half is written where it belongs so that lifting
+  the refusal does not have to rediscover it.
+
+- **The named-noise derivation: searched, still open, and now reproducible
+  (M4).** How a noise's identifier becomes a Java LCG seed is unanswered.
+  What changed is that the search is in the repository rather than in a
+  memory of it — `tools/analysis/legacy-seed-probe.sh` generates the worlds,
+  `tools/analysis/legacy-seed-analyze.cpp` scores candidates against them,
+  and `density-probe.sh`'s `legacy_random_source` is a per-entry field of a
+  spec (it was hardcoded `False`, which meant not one measurement of this
+  kind could be regenerated from the repository), with a `<spec>.noises.json`
+  sidecar so a spec ships the noises it names.
+
+  *What was scanned, exactly.* 900 seed rules — 5 bases {world seed;
+  `JavaRandom(worldSeed).nextLong()`; the first Xoroshiro draw off the world
+  seed; the LCG's own scramble of it; zero} x 10 salt spellings {MD5 of
+  "ns:path" as first-eight big-endian, first-eight little-endian, last-eight
+  big-endian, last-eight little-endian, lo^hi, lo+hi; MD5 of the bare path,
+  first-eight big-endian; `String.hashCode` of the id and of the path; none}
+  x 3 combining operators {xor, add, sub} x {0, 1, 2} further LCG forks x 2
+  generators {LCG, Xoroshiro} — times 300 block offsets = **270,000
+  candidates per dimension**, over 9 probe dimensions and 2 world seeds.
+  Nothing reached half agreement on the probe subset in any of them.
+
+  *What it does not cover*, because a refutation is only as wide as its
+  space: one stack rule only (every octave's Perlin block drawn in order from
+  the single generator — the rule confirmed above for `old_blended_noise`),
+  and no frequency variation whatever. An earlier write-up described the
+  sweep as covering "frequency 2^(firstOctave +/- 1..3)"; no version of this
+  code has swept frequency at all.
+
+  *deepslate's derivation is inside the space and scores at the null.* base =
+  `JavaRandom(worldSeed).nextLong()`, XOR the first eight bytes of
+  MD5("ns:path"), one further LCG fork — rule 182, block 0, which
+  `--candidate 182 0` scores by name rather than leaving it to be inferred
+  from a survivor list it is absent from. On the legacy dimensions at band
+  0.00372 it gets 10-25 of 2304 (0.43-1.09%) at seed 42 and 10-23 (0.43-1.00%)
+  at seed 31337, against a null mean of 0.64-0.72% — that is the null, not a
+  near miss. This is a second, independent refutation of it against the
+  server, in an apparatus that can be re-run from the repository.
+
+- **"The empirical null" was one number and should have been a function
+  (M4).** The correction matters more than the search it came from. A
+  candidate "agrees" with a column when its value lands within half a
+  quantum of the reading, and the quantum is `2 / height / (K * scale)` — so
+  the null is set by the *readback*, not by the candidate. The probe carries
+  one noise at three output scales with nothing about the seeding changed:
+
+  | dimension      | band    | null mean (of 128)   | null max over 270,000 |
+  |----------------|---------|----------------------|-----------------------|
+  | the seven at 2.0 | 0.00372 | 0.78-1.07 (0.6-0.8%) | 7-9 (5.5-7.0%)      |
+  | `leg_skip_q4`  | 0.01488 | 3.26-3.61 (2.6-2.8%) | 18-19 (14.1-14.8%)    |
+  | `leg_skip_q16` | 0.05952 | 12.99-14.40 (10-11%) | 47-52 (36.7-40.6%)    |
+
+  (Both seeds; the same noise, the same seeding, only the output scale
+  moving.) The sharpest single demonstration is one fixed wrong candidate
+  rather than a distribution: deepslate's derivation scores **16/2304 (0.69%)
+  on `leg_skip` and 318/2304 (13.80%) on `leg_skip_q16`** — the same rule,
+  the same noise, the same world, differing in nothing but the band.
+
+  Two ways a null becomes an apparent signal, both visible above: the band,
+  which scales the mean linearly, and taking a *maximum* over a large
+  candidate population, which sits 8-11x above its own mean. An earlier
+  write-up reported every scanned candidate as landing "at the empirical
+  null", singular, and a reproduced run of it then found one row at 168/1024
+  (16.4%) against siblings at 0-48/1024. 16.4% lies inside the range of nulls
+  measured across the readback bands above — but WHICH band that row sat at
+  cannot be determined, because its probe world, its noise definition and its
+  analyzer were never committed and the script that made it was a local edit.
+  At the fine band 16.4% would be 2.3x the null maximum there and would not be
+  explained by the band at all; and its siblings shared its band, so band
+  variation alone cannot explain a 3.5x separation from them either. The row
+  is unexplained and unre-checkable, and is recorded here as such. What is
+  settled is narrower, and is only what these numbers support: a single global
+  empirical null was the wrong premise to judge it against, because the null
+  is a function of the readback rather than a constant.
+
+  *And the search is calibrated — as rank-1 recovery by the scan itself, in
+  the count statistic it actually reports. An earlier write-up did plant a
+  candidate, but scored it against a null rather than recovering it.* A
+  candidate planted inside the scanned space, put through the same
+  quantisation the server's terrain imposes, is returned at **rank 1 as the
+  sole survivor, 2304/2304 columns, in all six legacy configurations**
+  against 270,000 rivals — twice, at an LCG rule (180, block 7, seed 42) and
+  at a Xoroshiro one (421, block 3, seed 31337). Without that, "N candidates
+  refuted" is a number with no power behind it. It also caught a bug in the
+  tool that would otherwise have passed for a result: the plant first scored
+  51%, because the inverse of the readback was written as `floor(t - 0.5)`
+  rather than `ceil(t) - 1`, and the search then failed to find its own plant
+  on one dimension.
+
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares
   `type NoiseParametersRef = (#[id="worldgen/noise"] string | NoiseParameters)`,

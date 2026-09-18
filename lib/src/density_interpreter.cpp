@@ -174,14 +174,27 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         if (node.type != NodeType::OldBlendedNoise) {
             continue;
         }
-        blendedOf_[i] = noise::BlendedNoise::modern(noises.worldSeed(),
-                                                    noise::BlendedNoise::Parameters{
-                                                        .xzScale = node.parameters[0],
-                                                        .yScale = node.parameters[1],
-                                                        .xzFactor = node.parameters[2],
-                                                        .yFactor = node.parameters[3],
-                                                        .smearScaleMultiplier = node.parameters[4],
-                                                    });
+        const noise::BlendedNoise::Parameters parameters{
+            .xzScale = node.parameters[0],
+            .yScale = node.parameters[1],
+            .xzFactor = node.parameters[2],
+            .yFactor = node.parameters[3],
+            .smearScaleMultiplier = node.parameters[4],
+        };
+        // The dimension's declared random source picks the seeding, because
+        // the two are genuinely different worlds and not a near miss: the
+        // modern derivation scores at the empirical null in a legacy
+        // dimension and vice versa (SPEC §11, measured on the server).
+        //
+        // The Legacy arm is presently unreachable — `NoiseRegistry::create`
+        // refuses a Legacy source before any graph is compiled, because a
+        // legacy dimension's NAMED noises are still underived. It is written
+        // here anyway: this half is settled, and a settled answer belongs at
+        // the site that will use it rather than in a note about the site.
+        blendedOf_[i] =
+            noises.source() == RandomSource::Legacy
+                ? noise::BlendedNoise::legacyFromWorldSeed(noises.worldSeed(), parameters)
+                : noise::BlendedNoise::modern(noises.worldSeed(), parameters);
     }
 
     // Column invariance, in one forward pass. Node indices are assigned as

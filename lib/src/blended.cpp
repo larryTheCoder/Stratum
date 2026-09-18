@@ -79,6 +79,15 @@ BlendedNoise BlendedNoise::withModernReading(rng::JavaRandom& random, Parameters
     return build(random, parameters, Reading::Modern);
 }
 
+BlendedNoise BlendedNoise::legacyFromWorldSeed(std::int64_t worldSeed, Parameters parameters) {
+    // The world seed straight into the LCG. Written out rather than folded
+    // into `build` because the absence of a fork and of a name salt is the
+    // measured claim — every rival that lost to this one differed here and
+    // nowhere else.
+    rng::JavaRandom random{worldSeed};
+    return build(random, parameters, Reading::Modern);
+}
+
 BlendedNoise BlendedNoise::modern(std::int64_t worldSeed, Parameters parameters) {
     // One generator for all three stacks, named. The name is not decoration:
     // it is MD5-salted into the seed, so `terrain` or `old_blended_noise`

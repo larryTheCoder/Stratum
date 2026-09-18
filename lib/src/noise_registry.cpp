@@ -61,6 +61,43 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         // near-enough stand-in: it would seed every noise differently and
         // produce a Nether that generates and is not vanilla's, with nothing
         // to indicate it (SPEC §8, §11).
+        //
+        // SEARCHED, not merely unattempted — and the searching is in the
+        // repository rather than in a memory of it:
+        // tools/analysis/legacy-seed-probe.sh generates the worlds and
+        // tools/analysis/legacy-seed-analyze.cpp scores candidates against
+        // them. What a later attempt should not repeat:
+        //
+        //   * 270,000 candidates per dimension — 900 seed rules (5 bases x 10
+        //     salt spellings x 3 combining operators x 0-2 extra LCG forks x
+        //     2 generators) x 300 block offsets — over 9 probe dimensions and
+        //     2 world seeds. Not one reached half agreement on the probe
+        //     subset. The scan's own header lists the space exactly; the
+        //     tool prints the count on every run.
+        //   * Among them, at rule 182 block 0, the derivation deepslate uses:
+        //     base = JavaRandom(worldSeed).nextLong(), XOR the first eight
+        //     bytes of MD5("ns:path"), one further LCG fork. It scores at the
+        //     dimension's null.
+        //
+        // The search is calibrated rather than merely large: a candidate
+        // planted inside the space and put through the same quantisation the
+        // server's terrain imposes is returned at rank 1, as the sole
+        // survivor, at 2304/2304 columns, in every legacy configuration. So
+        // the null result is a null result and not a blind spot.
+        //
+        // What IS settled, and lives next door: this dimension's
+        // `old_blended_noise` is seeded by the world seed handed straight to
+        // the LCG, no fork and no name — `BlendedNoise::legacyFromWorldSeed`,
+        // 13824 of 13824 columns over three seeds. That is why the Nether's
+        // and the End's terrain SHAPE is nearly in reach while this stays
+        // refused: their final densities are old_blended_noise, and it is
+        // their named noises this function cannot build.
+        //
+        // Whether the refusal should be this broad is still open. It fires
+        // before `wanted` is even consulted, so a legacy dimension that named
+        // no noises at all would be refused too — and nothing here has
+        // measured whether that case exists or matters. Narrowing it is a
+        // separate question from the derivation, and neither is answered.
         throw NoiseError(
             "this dimension declares legacy_random_source, and how a noise's name becomes a "
             "seed under the Java LCG is not settled here — so its noises cannot be built. This "

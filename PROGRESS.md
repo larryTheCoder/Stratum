@@ -179,11 +179,52 @@ Open:
 
 ## M4 — Biomes + surface
 
-- [ ] **`legacy_random_source` (the Java LCG derivation).** Not implemented
-      at all. Blocks 4 of vanilla's 7 dimensions (Nether, End, caves,
-      floating islands) from building their density chain in the first
-      place. No oracle exists yet for how a noise's name becomes an LCG
-      seed — a genuine open research gap, not a queued experiment.
+- [ ] **`legacy_random_source` for NAMED noises (the Java LCG derivation).**
+      Still open, still blocks 4 of vanilla's 7 dimensions (Nether, End,
+      caves, floating islands) from building their density chain — but it is
+      now a searched wall with a reproducible apparatus rather than an
+      untried gap, and the old wording here ("no oracle exists yet") was
+      wrong twice over.
+
+      An oracle exists and it disagrees with vanilla. deepslate's
+      derivation — base = `JavaRandom(worldSeed).nextLong()`, XOR
+      `md5_first8("ns:path")`, one further LCG fork — is a member of this
+      project's own scanned candidate space (rule 182, block 0) and scores
+      10-25 of 2304 columns, 0.43-1.09%, on the legacy probe dimensions at
+      two world seeds, against a measured null mean of 0.64-0.72%. That is
+      the null.
+
+      The scan around it: 900 seed rules x 300 block offsets = 270,000
+      candidates per dimension, over 9 probe dimensions and 2 seeds, no
+      survivors. `tools/analysis/legacy-seed-analyze.cpp`'s header states the
+      space exactly, and states what it does NOT cover (one stack rule; no
+      frequency sweep at all). The search is calibrated: a planted candidate
+      comes back at rank 1, sole survivor, 2304/2304, in every legacy
+      configuration.
+
+      And `tools/analysis/density-probe.sh` can now generate the worlds any
+      of this rests on — `legacy_random_source` is a per-entry spec field
+      instead of a hardcoded `False`, and a spec ships the noises it names in
+      a `<spec>.noises.json` sidecar. Before that, none of this kind of
+      measurement could be reproduced from the repository at all. SPEC §11
+      carries the numbers.
+- [x] **The half of it that is settled: legacy `old_blended_noise`.** A
+      dimension declaring the flag seeds it with
+      `new java.util.Random(worldSeed)` — no fork, no name salt — read the
+      **modern** way, not the pre-1.18 way (they differ by exactly 128x at
+      y = 0). Implemented as `BlendedNoise::legacyFromWorldSeed`, selected by
+      `Interpreter` on a Legacy registry, and guarded by
+      `tests/conformance/vanilla_legacy_blended_test.cpp`: 13824 of 13824
+      cell-corner columns over three world seeds and two output scales — the
+      denominator being generated columns, 2304 of each dimension's 7056
+      corners, the rest chunks the server never built (a geometric exclusion,
+      not a value-dependent one) — with the mirror control holding in the
+      flag-off dimensions of the same worlds. Reachable but unreached — `NoiseRegistry::create` refuses a
+      Legacy source first, and whether that refusal should be narrowed is a
+      separate open question this did not touch. Worth more than its size:
+      the End's router references zero named noises and the Nether's
+      `final_density` is pure `old_blended_noise`, so `minecraft:end_islands`'
+      own seeding is the obvious next probe.
 - [x] **`above_preliminary_surface` — measured, and the question was wrong.**
       It was carried for two milestones as "strictness (`>=` vs `>`),
       unmeasured". The strictness was never the unknown; the COMPARAND was.

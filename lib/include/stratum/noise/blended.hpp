@@ -112,15 +112,26 @@ public:
     static constexpr std::size_t kLimitOctaves = 16;
     static constexpr std::size_t kBlendOctaves = 8;
 
-    /// Seeded from a Java LCG, which is what a dimension declaring
-    /// `legacy_random_source` uses: the two limit stacks then the blend
-    /// stack, drawn in that order from one generator, so that reordering
-    /// them changes all three.
+    /// The legacy *seeding*: the two limit stacks then the blend stack,
+    /// drawn in that order from one Java LCG, so that reordering them
+    /// changes all three.
+    ///
+    /// Note which reading this pairs it with. It uses PreModern — the
+    /// pre-1.18 function, which cubiomes models and the vectors pin
+    /// bit-for-bit — and that is **not** what a 1.21.11 dimension declaring
+    /// `legacy_random_source` produces. That is this same seeding under the
+    /// *modern* reading; see `legacyFromWorldSeed` below. The two differ by
+    /// exactly 128x at y = 0, so the choice between them is not a rounding
+    /// question. Kept as it is because the vectors are what pin the octave
+    /// loop itself.
     [[nodiscard]] static BlendedNoise legacy(rng::JavaRandom& random, Parameters parameters);
 
     /// Vanilla 1.21.11's, for a dimension that does not declare
-    /// `legacy_random_source` — which the overworld, the Nether and the End
-    /// all are.
+    /// `legacy_random_source` — which is the overworld and its two variants,
+    /// `amplified` and `large_biomes`, and those only. `nether`, `end`,
+    /// `caves` and `floating_islands` all declare it true (read out of the
+    /// 1.21.11 fixtures, not assumed; an earlier version of this comment
+    /// claimed the opposite for the Nether and the End and was wrong).
     ///
     /// The seeding: one generator, taken from the world seed's positional
     /// factory under the name `minecraft:terrain`, and the three stacks drawn
@@ -131,12 +142,37 @@ public:
     /// (SPEC §11).
     [[nodiscard]] static BlendedNoise modern(std::int64_t worldSeed, Parameters parameters);
 
-    /// The modern *reading* on the legacy *seeding*. Not something a world
-    /// uses: it exists so the tests can hold the seeding constant while
-    /// comparing the two readings, which is the only way that comparison
-    /// means anything.
+    /// The modern *reading* on the legacy *seeding*, taking the generator
+    /// rather than a world seed. It was introduced as a test-only lever for
+    /// holding the seeding constant while comparing the two readings; that
+    /// combination then turned out to be vanilla's own, so the rule a world
+    /// actually uses has its own name below and this stays the lever.
     [[nodiscard]] static BlendedNoise withModernReading(rng::JavaRandom& random,
                                                         Parameters parameters);
+
+    /// What a dimension declaring `legacy_random_source` uses for its
+    /// `old_blended_noise`: the world seed handed straight to a Java LCG —
+    /// no positional fork, no name salt, nothing derived — with the three
+    /// stacks drawn in `legacy`'s order and the value read the **modern**
+    /// way.
+    ///
+    /// MEASURED, NOT DERIVED, off the vanilla server through
+    /// `tools/analysis/legacy-blended-probe.sh`; scored by
+    /// `tools/analysis/legacy-blended-analyze.cpp` and pinned by
+    /// `tests/conformance/vanilla_legacy_blended_test.cpp`. The counts and
+    /// the rivals it beat are in SPEC §11 rather than here, so that one copy
+    /// of them can be kept current.
+    ///
+    /// Nothing reaches this for a real world yet. `NoiseRegistry::create`
+    /// still refuses `RandomSource::Legacy` outright, because a legacy
+    /// dimension's *named* noises remain underived (see its comment, and
+    /// SPEC §11) — and that refusal comes first, before any density function
+    /// is built. So `Interpreter` selecting this on a Legacy registry is
+    /// correct-and-unreachable: it is the half of the answer that is
+    /// settled, written where it belongs, so that lifting the refusal does
+    /// not also have to rediscover this.
+    [[nodiscard]] static BlendedNoise legacyFromWorldSeed(std::int64_t worldSeed,
+                                                          Parameters parameters);
 
     [[nodiscard]] Reading reading() const noexcept { return reading_; }
 

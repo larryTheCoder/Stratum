@@ -314,3 +314,32 @@ TEST_CASE("the fold's epsilon matches the server, at the corners it moved", "[no
     // boundary, and this point was never near one.
     CHECK(bits(noise.sample(8, 40, 124)) == 0xbf7799dac3ba1e00ULL);
 }
+
+TEST_CASE("legacyFromWorldSeed is the world seed straight into the LCG, and nothing else",
+          "[noise][blended][legacy]") {
+    // The conformance test pins this against the vanilla server, 13824 of
+    // 13824 columns (SPEC §11). What this pins is the WIRING, in
+    // microseconds and with no fixture: that the named constructor really is
+    // `JavaRandom{worldSeed}` under the modern reading, with no positional
+    // fork and no name salt in between. Every rival the server refuted
+    // differed from this in exactly that step, so a later refactor that
+    // quietly introduced one would be a parity bug of the kind that survives
+    // until someone regenerates a world.
+    for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{0}, std::int64_t{-1},
+                                    std::int64_t{-4172144997902289642}}) {
+        JavaRandom plain(seed);
+        const BlendedNoise reference = BlendedNoise::withModernReading(plain, overworldShape(8.0));
+        const BlendedNoise named = BlendedNoise::legacyFromWorldSeed(seed, overworldShape(8.0));
+        for (const int y : {-32, 0, 48, 200}) {
+            for (const int x : {0, 13, -71}) {
+                for (const int z : {0, 97, -5}) {
+                    CHECK(bits(named.sample(x, y, z)) == bits(reference.sample(x, y, z)));
+                }
+            }
+        }
+        // And it is NOT the modern derivation, at the same parameters and the
+        // same seed — the two differ by order one, not by a rounding.
+        CHECK(bits(named.sample(13, 0, 97)) !=
+              bits(BlendedNoise::modern(seed, overworldShape(8.0)).sample(13, 0, 97)));
+    }
+}
