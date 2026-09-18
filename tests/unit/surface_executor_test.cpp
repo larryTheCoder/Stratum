@@ -259,7 +259,7 @@ TEST_CASE("above_preliminary_surface opens below the preliminary surface, not at
     // SHAPE, and the numbers are pinned against the server in
     // tests/conformance/vanilla_above_preliminary_surface_test.cpp.
     for (const std::int32_t level : {-64, -7, 0, 1, 64, 200}) {
-        for (const auto [x, z] : {std::pair{0, 0}, std::pair{37, -91}, std::pair{-512, 4096}}) {
+        for (const auto& [x, z] : {std::pair{0, 0}, std::pair{37, -91}, std::pair{-512, 4096}}) {
             const std::int32_t boundary = level + executor.surfaceDepth(x, z) - 8;
             INFO("level " << level << " at (" << x << ", " << z << "), boundary " << boundary);
             CHECK(executor.apply(at(x, boundary, z, level)) != nullptr);

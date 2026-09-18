@@ -779,7 +779,7 @@ TEST_CASE("above_preliminary_surface reads the column's own level, not a per-blo
     // it rather than hard-coding a number the noise parameters would move.
     const auto executor = stratum::surface::Executor::compile(
         surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
-    for (const auto [x, z] : {std::pair{0, 0}, std::pair{7, 3}, std::pair{15, 15}}) {
+    for (const auto& [x, z] : {std::pair{0, 0}, std::pair{7, 3}, std::pair{15, 15}}) {
         const std::int32_t boundary = executor.surfaceDepth(x, z) - 8;
         INFO("column (" << x << ", " << z << "), boundary " << boundary);
         CHECK(buffer.at(x, boundary - 1, z).name.toString() == "minecraft:stone");
