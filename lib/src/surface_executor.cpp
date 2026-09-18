@@ -21,14 +21,18 @@ namespace {
 constexpr std::string_view kSurfaceNoise = "minecraft:surface";
 constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary";
 
-/// Does this tree read a surface depth anywhere? Only then are the two noises
-/// above required, so a tree that never asks for one still compiles without
-/// them.
-[[nodiscard]] bool readsSurfaceDepth(const RuleGraph& graph) {
+} // namespace
+
+bool readsSurfaceDepth(const RuleGraph& graph) {
     for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
         const Condition& condition = graph.condition(index);
         switch (condition.type) {
             case ConditionType::Hole:
+            // Measured, not documented anywhere: this condition's boundary
+            // carries the column's surface depth (see its own case in
+            // `test`), so a tree naming it needs the two noises even when
+            // nothing in it mentions a depth.
+            case ConditionType::AbovePreliminarySurface:
                 return true;
             case ConditionType::StoneDepth:
                 if (condition.addSurfaceDepth || condition.secondaryDepthRange != 0) {
@@ -47,6 +51,8 @@ constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary
     }
     return false;
 }
+
+namespace {
 
 /// Does this tree place `bandlands` anywhere? Only then is its table built
 /// and its noise required.
@@ -439,11 +445,18 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
         }
 
         case ConditionType::AbovePreliminarySurface:
-            // The DOCUMENTED reading. Its strictness has never been separated
-            // by measurement: the one probe that reached it found the
-            // condition true everywhere, which cannot distinguish >= from >
-            // (SPEC §11). Flagged rather than presented as settled.
-            return at.y >= at.preliminarySurface;
+            // MEASURED, and not what the name says. The boundary is not the
+            // preliminary surface: the condition opens `8 - surfaceDepth`
+            // blocks BELOW it — two to eight blocks on ordinary terrain —
+            // and the 8 is a literal, invariant under cell height, cell
+            // width, min_y, height and sea level (SPEC §11).
+            //
+            // The strictness this project called unmeasured for two
+            // milestones was never the open question. The boundary is true at
+            // exactly this y and false one block under it on every column
+            // measured, so `>= C` and `> C - 1` are the same predicate; what
+            // was unknown was C, and C is not `preliminarySurface`.
+            return at.y >= at.preliminarySurface + surfaceDepth(at.x, at.z) - 8;
 
         case ConditionType::Biome: {
             // The caller supplies the biome; compile() has already refused any

@@ -67,6 +67,21 @@ public:
         return *this;
     }
 
+    /// Writes the two noises every surface DEPTH reads, so a filler whose
+    /// rules ask for one — `hole`, a depth-adding `stone_depth`, or
+    /// `above_preliminary_surface`, whose boundary carries a depth (SPEC §11)
+    /// — has something to build a NoiseRegistry from. The parameters are
+    /// vanilla's own shape; the numbers they produce are pinned against the
+    /// server in tests/conformance, not here.
+    const TempTree& defineSurfaceNoises() const {
+        std::filesystem::create_directories(path_ / "noise");
+        std::ofstream surface(path_ / "noise" / "surface.json");
+        surface << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
+        std::ofstream secondary(path_ / "noise" / "surface_secondary.json");
+        secondary << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
+        return *this;
+    }
+
     /// Writes `worldgen/biome/<name>.json` declaring only `temperature`, so
     /// a `biome::TemperatureTable` built from this tree's own Pack has
     /// something to read back for `minecraft:temperature`.
@@ -731,23 +746,68 @@ TEST_CASE("temperature reads the biome's own declared value, not a made-up one",
 
 TEST_CASE("above_preliminary_surface reads the column's own level, not a per-block guess",
           "[terrain][filler][surface]") {
+    // Built directly rather than through compileFrom()'s shared registry for
+    // the same reason the bandlands case above is: this condition reads a
+    // surface DEPTH (SPEC §11, measured — the boundary is
+    // `preliminary_surface_level + surfaceDepth - 8`), so the two surface
+    // noises have to be in the registry.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    tree.defineSurfaceNoises();
+    const LoadedSettings loaded = tree.load();
+    const auto& settings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    auto wanted = loaded.graph.referencedNoises();
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface"));
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface_secondary"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+                                 block("minecraft:glowstone")));
+    const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings, &surface);
+    REQUIRE(filler.surfaceRulesBlockedBy().empty());
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(settings.geometry);
+    filler.fill(0, 0, buffer);
+
+    // `preliminary_surface_level` is the flat dimension's constant zero, so
+    // the boundary is `surfaceDepth(x, z) - 8` — below the level the
+    // condition is named after, and different from column to column. The
+    // Executor computes the same depth the filler's own does, so this asks
+    // it rather than hard-coding a number the noise parameters would move.
+    const auto executor = stratum::surface::Executor::compile(
+        surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
+    for (const auto [x, z] : {std::pair{0, 0}, std::pair{7, 3}, std::pair{15, 15}}) {
+        const std::int32_t boundary = executor.surfaceDepth(x, z) - 8;
+        INFO("column (" << x << ", " << z << "), boundary " << boundary);
+        CHECK(buffer.at(x, boundary - 1, z).name.toString() == "minecraft:stone");
+        CHECK(buffer.at(x, boundary, z).name.toString() == "minecraft:glowstone");
+        // And well above it, where the old reading and this one agree.
+        CHECK(buffer.at(x, -1, z).name.toString() == "minecraft:glowstone");
+    }
+}
+
+TEST_CASE("a tree reading a surface depth without minecraft:surface built is blocked, not crashed",
+          "[terrain][filler][surface]") {
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));
     const LoadedSettings loaded = tree.load();
     const RuleGraph surface =
         resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
                                  block("minecraft:glowstone")));
+    // compileFrom()'s shared registry never asked for the surface noises.
     const ChunkFiller filler = compileFrom(tree, loaded, &surface);
-    REQUIRE(filler.runsSurfaceRules());
+
+    CHECK_FALSE(filler.runsSurfaceRules());
+    REQUIRE(filler.surfaceRulesBlockedBy().size() == 1U);
+    CHECK_THAT(filler.surfaceRulesBlockedBy().front(), ContainsSubstring("minecraft:surface"));
 
     ChunkBuffer buffer(
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
     filler.fill(0, 0, buffer);
-
-    // preliminary_surface_level is the flat dimension's constant zero: below
-    // it the filler's own solid stone stands, and at y = 0 the rule fires.
-    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
-    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:glowstone");
+    CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:stone");
 }
 
 TEST_CASE("steep reads neighbours clamped to this chunk, never a block outside it",

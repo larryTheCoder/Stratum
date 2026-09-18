@@ -59,7 +59,16 @@ struct Context {
     std::int32_t y = 0;
     std::int32_t z = 0;
 
-    /// The column's preliminary surface level, for `above_preliminary_surface`.
+    /// The column's preliminary surface level, for `above_preliminary_surface`
+    /// — the router's `preliminary_surface_level` at (x, 0, z), FLOORED.
+    ///
+    /// Flooring is measured rather than tidy: a router handing this entry
+    /// -0.5 is -1 here, where a `static_cast` would have said 0. It only
+    /// separates on a datapack, since vanilla's own `find_top_surface`
+    /// returns whole multiples of its `cell_height`.
+    ///
+    /// The condition does NOT compare y against this directly — see its case
+    /// in `Executor::test`, which reaches `8 - surfaceDepth` blocks below it.
     std::int32_t preliminarySurface = 0;
 
     /// The biome at this position, for `biome`. Absent means the caller does
@@ -95,6 +104,19 @@ struct Context {
     std::int32_t heightNorth = 0;
     std::int32_t heightSouth = 0;
 };
+
+/// Does @p graph read a column's SURFACE DEPTH anywhere, and so need
+/// `minecraft:surface` and `minecraft:surface_secondary` built into the
+/// registry it is compiled against?
+///
+/// Public because a caller has to know BEFORE compiling: `Executor::compile`
+/// throws for a registry that cannot answer, and a caller like
+/// `terrain::ChunkFiller` would rather report the tree as blocked, by name,
+/// than surface that as a crash. It is deliberately not a list of condition
+/// types a caller could re-derive: `above_preliminary_surface` reads a depth
+/// even though nothing about its name or its schema says so (SPEC §11), and
+/// a second copy of that knowledge is exactly what would drift.
+[[nodiscard]] bool readsSurfaceDepth(const RuleGraph& graph);
 
 /// The four clamped neighbour heights `steep` compares, given a way to read a
 /// column's surface height. Chunk-local and clamped, so no neighbouring chunk

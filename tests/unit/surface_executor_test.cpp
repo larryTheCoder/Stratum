@@ -10,11 +10,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -95,6 +97,54 @@ private:
 
     std::filesystem::path path_;
 };
+
+/// A worldgen tree holding the two noises every surface DEPTH reads —
+/// `minecraft:surface` and `minecraft:surface_secondary`. The parameters are
+/// this test's own, not vanilla's: a unit case pins the SHAPE of the depth's
+/// use, and the numbers vanilla's own parameters produce are pinned against
+/// the server in tests/conformance instead.
+class SurfaceNoiseTree {
+public:
+    SurfaceNoiseTree() : path_(std::filesystem::temp_directory_path() / uniqueName()) {
+        const std::filesystem::path noiseDir = path_ / "noise";
+        std::filesystem::create_directories(noiseDir);
+        std::ofstream surface(noiseDir / "surface.json");
+        surface << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
+        std::ofstream secondary(noiseDir / "surface_secondary.json");
+        secondary << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
+    }
+
+    SurfaceNoiseTree(const SurfaceNoiseTree&) = delete;
+    SurfaceNoiseTree& operator=(const SurfaceNoiseTree&) = delete;
+    SurfaceNoiseTree(SurfaceNoiseTree&&) = delete;
+    SurfaceNoiseTree& operator=(SurfaceNoiseTree&&) = delete;
+
+    ~SurfaceNoiseTree() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    [[nodiscard]] stratum::data::Pack pack() const {
+        return stratum::data::Pack::openWorldgenTree(path_);
+    }
+
+private:
+    [[nodiscard]] static std::string uniqueName() {
+        static int counter = 0;
+        return "stratum-surface-noise-test-" + std::to_string(++counter);
+    }
+
+    std::filesystem::path path_;
+};
+
+[[nodiscard]] stratum::density::NoiseRegistry surfaceNoises(const SurfaceNoiseTree& tree,
+                                                            std::int64_t seed) {
+    const std::vector<stratum::data::ResourceLocation> wanted{
+        stratum::data::ResourceLocation::parse("minecraft:surface"),
+        stratum::data::ResourceLocation::parse("minecraft:surface_secondary")};
+    return stratum::density::NoiseRegistry::create(tree.pack(), wanted, seed,
+                                                   stratum::density::RandomSource::Xoroshiro);
+}
 
 [[nodiscard]] stratum::density::NoiseRegistry clayBandsOffsetNoise(const ClayBandsTree& tree,
                                                                    std::int64_t seed) {
@@ -192,22 +242,61 @@ TEST_CASE("a condition that does not hold places nothing at all", "[surface]") {
     CHECK(executor.apply(at(0, 32, 0)) != nullptr);
 }
 
-TEST_CASE("above_preliminary_surface reads the column's own level", "[surface]") {
+TEST_CASE("above_preliminary_surface opens below the preliminary surface, not at it", "[surface]") {
     const auto geometry = overworldGeometry();
+    const SurfaceNoiseTree tree;
+    const auto noises = surfaceNoises(tree, kSeed);
     const RuleGraph graph =
         resolve(nlohmann::json{{"type", "minecraft:condition"},
                                {"if_true", {{"type", "minecraft:above_preliminary_surface"}}},
                                {"then_run", block("minecraft:stone")}});
-    const Executor executor = Executor::compile(graph, kSeed, geometry);
+    const Executor executor = Executor::compile(graph, kSeed, geometry, &noises);
 
-    CHECK(executor.apply(at(0, 70, 0, 64)) != nullptr);
-    CHECK(executor.apply(at(0, 60, 0, 64)) == nullptr);
+    // MEASURED (SPEC §11, tools/analysis/aps-boundary-probe.sh): the boundary
+    // is `preliminarySurface + surfaceDepth - 8`, so the condition reaches
+    // `8 - surfaceDepth` blocks BELOW the level it is named after. The depth
+    // is whatever this tree's own noises give — the point of the case is the
+    // SHAPE, and the numbers are pinned against the server in
+    // tests/conformance/vanilla_above_preliminary_surface_test.cpp.
+    for (const std::int32_t level : {-64, -7, 0, 1, 64, 200}) {
+        for (const auto [x, z] : {std::pair{0, 0}, std::pair{37, -91}, std::pair{-512, 4096}}) {
+            const std::int32_t boundary = level + executor.surfaceDepth(x, z) - 8;
+            INFO("level " << level << " at (" << x << ", " << z << "), boundary " << boundary);
+            CHECK(executor.apply(at(x, boundary, z, level)) != nullptr);
+            CHECK(executor.apply(at(x, boundary - 1, z, level)) == nullptr);
+            CHECK(executor.apply(at(x, boundary + 40, z, level)) != nullptr);
+            CHECK(executor.apply(at(x, boundary - 40, z, level)) == nullptr);
+        }
+    }
 
-    // The boundary itself is the DOCUMENTED reading and not a measured one:
-    // the only probe that reached this condition found it true everywhere,
-    // which cannot separate >= from > (SPEC §11). If that is ever settled the
-    // other way, this is the assertion that has to change.
-    CHECK(executor.apply(at(0, 64, 0, 64)) != nullptr);
+    // The boundary genuinely moves with the column rather than sitting at a
+    // fixed offset — otherwise the case above would pass on a constant.
+    std::set<std::int32_t> depths;
+    for (std::int32_t x = 0; x < 64; ++x) {
+        depths.insert(executor.surfaceDepth(x, 0));
+    }
+    CHECK(depths.size() > 1);
+
+    // `>=` against `>` — the strictness this project called unmeasured for
+    // two milestones. It was never the open question: the condition is true
+    // at the boundary and false one block under it on every column measured,
+    // so `y >= C` and `y > C - 1` are the same predicate, and the pair of
+    // CHECKs at `boundary` and `boundary - 1` above is the whole of it. What
+    // was unknown was C, and C is not the preliminary surface.
+}
+
+TEST_CASE("a tree naming above_preliminary_surface is refused without the surface noises",
+          "[surface]") {
+    // The condition reads a surface depth, so it needs `minecraft:surface`
+    // and `minecraft:surface_secondary` even though nothing in the tree
+    // mentions a depth. Before the boundary was measured this compiled, and
+    // then threw at the first block.
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:condition"},
+                               {"if_true", {{"type", "minecraft:above_preliminary_surface"}}},
+                               {"then_run", block("minecraft:stone")}});
+    CHECK_THROWS_MATCHES(Executor::compile(graph, kSeed, overworldGeometry()), ExecutionError,
+                         Catch::Matchers::MessageMatches(ContainsSubstring("noise")));
 }
 
 TEST_CASE("stone_depth counts from a run's own edge, not from the world's", "[surface]") {
