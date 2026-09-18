@@ -149,7 +149,83 @@ Open:
       floating islands) from building their density chain in the first
       place. No oracle exists yet for how a noise's name becomes an LCG
       seed — a genuine open research gap, not a queued experiment.
-- [ ] `above_preliminary_surface` strictness (`>=` vs `>`) — unmeasured.
+- [x] **`above_preliminary_surface` — measured, and the question was wrong.**
+      It was carried for two milestones as "strictness (`>=` vs `>`),
+      unmeasured". The strictness was never the unknown; the COMPARAND was.
+      Measured:
+
+          above_preliminary_surface  ==  y >= psl + surfaceDepth(x, z) - 8
+
+      with `psl` floored. The condition opens 2 to 8 blocks BELOW the level it
+      is named after, and the 8 is a literal — invariant across cell heights
+      4/8/16, cell widths 4/8/16, three floors, three heights and three sea
+      levels (12 geometry dimensions, 442368 of 442368 columns). Since the
+      boundary is true at that y and false one block under it on every column,
+      `y >= C` and `y > C - 1` are the same predicate: the strictness could
+      never have been the answer.
+
+      What made it measurable was not more chunks. The probe that "found the
+      condition true everywhere" is still on disk (`probes/surf`, entry `aps`)
+      and was never true everywhere: the earlier analysis read the terrain's
+      TOP block, where a condition of this shape is true by construction,
+      instead of the bottom edge of the band the rule paints. That edge is a
+      clean single-block step in all 36864 columns. The second half was a
+      lever the old probe did not have — `density-probe.sh` pins
+      `preliminary_surface_level` to the constant 0 unless an entry overrides
+      it, so the old run measured one psl and could not have told a psl
+      dependence from a fixed offset.
+
+      Scale: 3 probe specs, 52 dimensions, 2 seeds (42 and 31337), 36864
+      scored columns each. Candidates refuted, each on every column rather
+      than by a margin: `psl` itself (the implemented reading, 0 of 36864);
+      `psl - (surfaceDepth + 3)`, the leading hypothesis going in, which had
+      the depth's sign backwards (0 of 36864); a flat `psl - 6`, i.e. the
+      modal column (16509 of 36864); the depth's dependence with the sign
+      flipped, `psl + 8 + depth` (0 of 36864); with the magnitude doubled,
+      `psl + 2*depth - 8` (516 of 36864, the depth-0 columns only); the depth
+      without its `0.25 * nextDouble` jitter, which is the near miss worth
+      naming (31991 of 36864 — it agrees on seven columns in eight, so a
+      harness that sampled rather than scored every column would have
+      accepted it); the 8 as `2 * cellHeight`
+      or as any function of cell width, floor, height or sea level (refuted by
+      the 12 geometry dimensions). NOT separated, and said plainly:
+      `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`, since the depth
+      never went negative anywhere measured. Separating them needs a datapack
+      overriding `minecraft:surface`'s own amplitudes.
+
+      On real worlds: across 8 golden overworld regions, 14008 `grass_block`s
+      the server placed sit BELOW `preliminary_surface_level` — blocks the old
+      reading cannot place at all, since it switches the whole gated
+      surface-materials subtree off there. 11579 of them fall inside the
+      measured band. Nothing goes the other way, structurally: the new
+      boundary is never above the old one.
+
+      Landed: `lib/src/surface_executor.cpp`, plus a FLOOR in place of
+      `static_cast` in `lib/src/terrain_filler.cpp` (measured: psl -0.5
+      reaches the condition as -1, not 0 — datapack-only, since vanilla's
+      `find_top_surface` returns integers), and the tree now requires the two
+      surface noises. `tools/analysis/aps-boundary-probe.sh` +
+      `aps-boundary-analyze.cpp` regenerate and re-score it;
+      `tests/conformance/vanilla_above_preliminary_surface_test.cpp` scores it.
+- [ ] **Where a spatially varying `preliminary_surface_level` is sampled —
+      open, and found by the sweep above.** `terrain::ChunkFiller` evaluates
+      the entry per column. The server does not: driven by a three-valued
+      `range_choice` (-40 / 0 / 60), the value that reaches the condition
+      comes back as 101 distinct integer values spanning the whole range, so
+      it is sampled on a horizontal lattice and INTERPOLATED before the floor.
+      It is not the cell lattice — cell widths 4, 8 and 16 give identical
+      output, as does wrapping the entry in `flat_cache`. A constant psl makes
+      the interpolation a no-op, which is why the boundary entry above stands
+      without it.
+
+      Its size: the residual in the golden re-scoring above — 2429 of the
+      14008 blocks land just below the band, concentrated on the seeds with
+      the steepest terrain, which is where a per-column read and an
+      interpolated one part company. Not implemented here: it needs its own
+      probe family (the lattice's pitch and anchor separated by moving the
+      world origin, as `probes/cellsize` does for the cell lattice) and its
+      own conformance case before it touches the filler. The aquifer reads the
+      same router entry and would be affected too.
 - [x] **Surface-rule mcdoc schema generation debt — closed.** All 10 of the
       types mcdoc declares are now generated (`tools/mcdoc/surface.py`,
       `lib/src/surface_schema.inc`), and the loader reads them through the

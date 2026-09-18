@@ -1254,12 +1254,52 @@ Open:
   `random_name` at compile, a gradient fired millions of times pays for no MD5
   and no forking.
 
-  `above_preliminary_surface` is implemented from the DOCUMENTED reading,
-  `y >= preliminary_surface_level`, and its strictness has never been
-  separated by measurement — the one probe that reached it found the condition
-  true everywhere, which cannot distinguish `>=` from `>`. Both the executor
-  and its test say so in place, since it is exactly the kind of thing a later
-  reader would otherwise quietly "fix" in the wrong direction.
+  `above_preliminary_surface` is MEASURED, and it is not what its name says:
+
+      above_preliminary_surface(x, y, z)  ==  y >= psl + surfaceDepth(x, z) - 8
+
+  where `psl` is the router's `preliminary_surface_level` at `(x, 0, z)`,
+  FLOORED. The condition opens `8 - surfaceDepth` blocks BELOW the level it is
+  named after — two to eight on ordinary terrain — and the 8 is a literal,
+  invariant under cell height (4/8/16), cell width (4/8/16), `min_y`, `height`
+  and `sea_level`. `surfaceDepth` is the same quantity the table above
+  defines; no new noise and no new RNG derivation enter here, which is part of
+  why the fit is believable.
+
+  The strictness this project called unmeasured for two milestones was never
+  the open question. The condition is true at exactly that y and false one
+  block under it on every column measured, so `y >= C` and `y > C - 1` are the
+  same predicate; what was unknown was `C`, and `C` is not the preliminary
+  surface. The earlier "true everywhere" reading was an artefact of the
+  analysis, not of the probe: it read the terrain's top block, where a
+  condition of this shape is true by construction, instead of the bottom edge
+  of the band the rule paints. That probe is still on disk and shows a clean
+  stone/marker step in all 36864 of its columns.
+
+  Measured by `tools/analysis/aps-boundary-probe.sh` (58 probe dimensions
+  across three specs and two seeds, read back by `aps-boundary-analyze.cpp`)
+  and scored in `tests/conformance/vanilla_above_preliminary_surface_test.cpp`.
+  Two consequences beyond the boundary itself:
+
+  * `preliminary_surface_level` reaches the condition through a FLOOR, not a
+    `static_cast`. Only a negative fraction separates the two, and vanilla's
+    own `find_top_surface` returns whole multiples of its `cell_height`, so it
+    is a datapack-only difference — measured rather than assumed, and fixed in
+    `terrain::ChunkFiller`.
+  * a tree naming this condition now needs `minecraft:surface` and
+    `minecraft:surface_secondary` in its registry, since the boundary reads a
+    surface depth. `surface::readsSurfaceDepth` is public for exactly that
+    reason, and `ChunkFiller` reports a tree it cannot supply as blocked by
+    name rather than throwing at the first block.
+
+  What is NOT settled, and is deliberately not implemented: where a
+  spatially varying `preliminary_surface_level` is SAMPLED. Driven by a
+  three-valued `range_choice`, the value that reaches the condition takes 101
+  distinct integer values across the field's range rather than three, and is
+  unchanged by cell width — so it is sampled on a fixed horizontal lattice and
+  interpolated, not read per column as `ChunkFiller` reads it. A constant
+  `psl` makes that a no-op, which is why the boundary above is unaffected by
+  it. See PROGRESS.md's M4 entry.
 
 - **Surface rules load whole, and refuse by name (M4).**
   `stratum::surface::RuleGraph` resolves the tree for every one of vanilla's
@@ -1670,9 +1710,17 @@ Open:
   * **`hole` fires on 0.04%**, six columns in sixteen thousand. Too rare on
     ordinary terrain to derive from; it needs terrain built so that the
     surface depth is zero over a known area.
-  * **`above_preliminary_surface` was true everywhere** on the probe's
-    terrain and so said nothing. It needs terrain where the preliminary
-    surface and the real one differ, which the probe did not arrange.
+  * **`above_preliminary_surface` was recorded as true everywhere** on the
+    probe's terrain, and that was WRONG about the probe's own region file.
+    The analysis read the terrain's top block, where a condition of this
+    shape is true by construction; the band the rule paints has a clean lower
+    edge in all 36864 columns, 2 to 8 blocks below the level the condition is
+    named after. Re-read from that edge, and with `preliminary_surface_level`
+    swept instead of left at the probe harness's default constant, the same
+    fixture settles the condition outright — see the surface-condition entry
+    above and `tools/analysis/aps-boundary-probe.sh`. Recorded here as it
+    happened: the measurement was available for two milestones and the
+    readout was pointed at the wrong blocks.
 
   **The aquifer fill decision: what it is, and what it will cost (MA).**
   Scoped, not started. Three things are now known about it.

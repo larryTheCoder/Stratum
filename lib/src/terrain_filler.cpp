@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <map>
 #include <optional>
@@ -231,6 +232,19 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
             filler.surfaceRulesBlockedBy_.emplace_back(
                 "minecraft:temperature (this dimension's rules read a biome's declared "
                 "temperature, and no biome::TemperatureTable was supplied to "
+                "ChunkFiller::compile)");
+        }
+        if (surface::readsSurfaceDepth(*surfaceRules) &&
+            noises.find(data::ResourceLocation::parse("minecraft:surface")) == nullptr) {
+            // Same shape as the bandlands case below, and reached by more
+            // trees than it looks: `above_preliminary_surface` reads a
+            // surface depth (SPEC §11) though neither its name nor its
+            // schema says so, and `hole` and a depth-adding `stone_depth`
+            // always did. Without this the tree compiled and then threw at
+            // the first block.
+            filler.surfaceRulesBlockedBy_.emplace_back(
+                "minecraft:surface (this dimension's rules read a column's surface depth, and no "
+                "minecraft:surface noise was built into the registry supplied to "
                 "ChunkFiller::compile)");
         }
         if (needs.bandlands &&
@@ -483,9 +497,16 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 surface::fillSteepNeighbours(context, heightAt);
             }
             if (surfaceNeedsPreliminarySurface_) {
-                context.preliminarySurface = static_cast<std::int32_t>(interpreter_.evaluate(
-                    settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
-                    density::Point{.x = x, .y = 0, .z = z}, surfaceCache));
+                // FLOOR, not a `static_cast` — measured, and the two are only
+                // separable on a router that hands this entry a negative
+                // fraction. Vanilla's own `find_top_surface` never does, so
+                // this never bites in a vanilla world; a datapack whose
+                // `preliminary_surface_level` is -0.5 gets -1 from the server
+                // and used to get 0 from here (SPEC §11).
+                context.preliminarySurface =
+                    static_cast<std::int32_t>(std::floor(interpreter_.evaluate(
+                        settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
+                        density::Point{.x = x, .y = 0, .z = z}, surfaceCache)));
             }
 
             // Top-down: the stone-depth run counting from the world's top,
