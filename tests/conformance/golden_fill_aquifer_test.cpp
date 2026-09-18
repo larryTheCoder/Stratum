@@ -42,6 +42,21 @@
 //     categories was already exact, so nothing past the first pass was
 //     ever the aquifer's to answer for.
 //
+// THE WIDER 64-CHUNK SWEEP, and a stale attribution corrected. SPEC §11
+// recorded 6290723 of 6291456 RAW-exact over a 64-chunk sweep of this same
+// world, a 733-block residual, and guessed it was "the level a dry or
+// clamped source carries below lambda". That guess is REFUTED. Re-measured
+// with the same loop widened to chunks 0..7, twice — once with the level
+// model this build ships and once with the old one linked in its place,
+// same binary otherwise — the two produce the IDENTICAL set of mismatching
+// blocks, coordinate for coordinate: 6290839 of 6291456 either way, a
+// 617-block residual that the dry sentinel and the unclamped ladder move by
+// exactly zero. (617 rather than 733 because SPEC's figure predates other
+// work and says on its face it was not re-measured since.) The change is
+// real and large elsewhere — barrier3way's three-source misses fall 121 ->
+// 6 — so what this says is that this world's residual lies somewhere else
+// entirely, and the next pass at it should not start here.
+//
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>

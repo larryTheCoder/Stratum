@@ -216,8 +216,18 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
     // not the finding.
     CHECK(total.twoSourceMisses * 100 > total.realBarriers * 8);
 
-    // The three-source rule: SPEC §11 measured 0.4-2.4% per dimension,
-    // 1.01-1.02% overall across two seeds. The bound is set well above that
-    // so it flags a real regression rather than seed-to-seed drift.
-    CHECK(total.threeSourceMisses * 100 < total.realBarriers * 5);
+    // The three-source rule, re-anchored after the dry sentinel and the
+    // unclamped ladder landed in `cellFluidLevel`: 6 misses of 11 923 real
+    // barriers here (0.050%), down from 121 (1.015%), and 0 of 4110 and 0 of
+    // 3147 on the other two densities — the 6 all on `d_neg0_3`. The old
+    // build's 121 mismatching blocks and the new 6 were compared as SETS of
+    // coordinates over all 15 728 640 blocks: the 6 are a strict subset, 115
+    // fixed and none introduced.
+    //
+    // The bound was 5% against a measured 1.01-1.02%; at 0.050% that is 100x
+    // slack and would no longer flag anything. Tightened to 0.5%, still an
+    // order of magnitude above the reading so seed-to-seed drift does not
+    // trip it, but tight enough that a regression to the old contract fails
+    // here.
+    CHECK(total.threeSourceMisses * 1000 < total.realBarriers * 5);
 }

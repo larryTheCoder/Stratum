@@ -17,7 +17,7 @@ Last swept: 2026-09-18 (M5: the PocketMine-MP binding is built end to end, never
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins tracked separately, below |
 | M4 — biomes + surface | Open — blocked on legacy RNG and ore veins |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 level-representation slice left, 1 constant unpinned |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 constant unpinned, 1 golden residual unattributed |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -62,37 +62,61 @@ Open:
       while a pair that disagrees at `y` keeps the level formula whatever
       its types. Every ranked source is now typed (`StatusCache`) and
       `placesBarrier` reads the types. In mixed junctions the server's
-      real barriers missed fall from 1698 to 590 pooled (1240 to 330 on
+      real barriers missed fell from 1698 to 590 pooled (1240 to 330 on
       the rows above the sea), 0 false stone before and after; every one
-      of the 1108 blocks the constant adds is server stone. The reading a
+      of the blocks the constant adds is server stone. (Re-anchored by the
+      slice below: the same pooled reading is now 1100 to 4.) The reading a
       first attempt took — comparing the two TYPE FIELDS behind the
       disagree guard — made every row worse and is refuted 0 of 33 against
       252 of 252; "types differ regardless of readings" fills open air the
       server leaves open on 99.5-100% of its blocks. Pinned by
       `vanilla_aquifer_waterlava_test.cpp`'s second case.
-- [ ] **The level a source carries below lambda — the dry sentinel and the
-      ladder clamp.** What the branch above leaves (590 of 1698) is not a
-      type question: `cellFluidLevel` reports a DRY source as `lambda`
-      where the spec's is `never = -32512` (Q1.4, Q5.6), and clamps a
-      ladder that falls below lambda up to it (Q5.7 has no clamp). On the
-      rows 0-3 above the sea that puts a plane right under the block on
-      Π's `h <= 0` side (divisors 3/10) where the spec has none. Measured
-      by `aquifer-waterlava-analyze.cpp` re-scoring the same blocks at the
-      spec's levels: mixed-junction misses 590 -> 0 and pure misses -> 0 on
-      rows lambda+1..+3 on all three seeds, 0 false stone; row lambda keeps
-      18 / 17 / 0. Not landed here because it is `cellFluidLevel`'s
-      CONTRACT — readings at `y >= lambda` are unchanged, but
-      `vanilla_aquifer_selection_test.cpp` reads `y < level` from y = -64
-      and leans on the clamp there, nine lattice unit assertions pin
-      `lambda`/`kLavaLevel` for floored or dry outcomes, and Q5.8's
-      `L != never` conjunct in `fluid_type.hpp` falls out of the same
-      sentinel — one slice, with the conformance suite as its guard.
+- [x] **The level a source carries below lambda — the dry sentinel and the
+      ladder clamp.** LANDED. `cellFluidLevel` reported a DRY source as
+      `lambda` where the spec's is the sentinel `never` (Q1.4, Q5.6), and
+      `ladderLevel` clamped a ladder that fell below lambda back up to it
+      (Q5.7 has no clamp). Neither is visible in a block readout — Q2.4
+      hands every row below lambda to the global lava sea, so every
+      candidate level at or below it paints identical chunks — which is why
+      four campaigns recorded the dry outcome as "Λ" and were not wrong,
+      only under-determined. Π sees it: on rows lambda-1..+40 of the three
+      water/lava worlds, against 88949 server stone blocks, mixed/pure
+      real-barrier misses run 704/1790 for the old contract, 33/758 for the
+      sentinel alone, 677/1063 for the unclamped ladder alone and 7/54 for
+      both, with **0 false stone under every model**. On the independent
+      `barrier3way` world the three-source miss count falls 121 of 11923
+      real barriers (1.015%) to 6 (0.050%), the 6 a strict SUBSET of the
+      121 — 115 fixed, none introduced, over 15728640 blocks. The exact
+      sentinel VALUE is not observable: the sweep saturates at 32 below
+      lambda (K=32, 64, 256 and -32512 byte-identical), so `-32512` lands
+      as Q1.4's arithmetic `16 * min_y_limit`, not as a reading. Q5.8's
+      `L != never` conjunct became representable and is carried in
+      `fluid_type.hpp` as spec hygiene — provably inert, since a source at
+      the sentinel reads fluid at no real `y` and every consumer of a type
+      is guarded by a reading. Pinned by the whole conformance suite;
+      `vanilla_aquifer_selection_test.cpp`'s readout two now runs from
+      lambda up (below it the readout's premise is Q2.4's, not a source's)
+      with the 999 misses identical to the digit but the population 655360
+      blocks smaller — every one of them a prior unearned agreement, since
+      under the old clamp `y < level` was trivially true below lambda. That
+      gate is load-bearing, not cosmetic: without it the new model predicts
+      air where the server has fluid on all 655360 and the case scores
+      0.96060 against its own 0.9999 bound. And
+      `vanilla_aquifer_barrier3source_test.cpp`'s bound is tightened from
+      5% to 0.5%.
+      *One guess refuted in passing:* SPEC attributed the 64-chunk
+      golden-fill residual to this very defect. Re-measured under both level
+      models in the same binary, the mismatching blocks are IDENTICAL
+      coordinate for coordinate — 6290839 of 6291456 either way. That
+      residual is unattributed again and wants a probe of its own.
 - [x] **The fluid-type level ceiling.** PINNED at `-10`, inclusive — the
       value the code already carried, now measured rather than assumed, and
       no source change. `aquifer-fluidtype-probe.sh --group d` reaches level
       `-9` by the two routes the ladder's mod-3 lattice does not constrain
       (the sea branch; the psl cap at two different sea levels) and reads
-      `-12/-11/-10` lava and `-9/-8/-7` water on every one, 16384 of 16384
+      `-12/-11/-10` lava and `-9/-8/-7` water on the two six-dimension arms
+      (the third, at `sea_level` -70, runs four: -12/-10 lava, -9/-8 water),
+      the level entry 16384 of 16384
       columns per dimension with 0 of the other fluid, identical on seeds
       42, 7 and 999. Beyond the question asked, the same run shows the
       ceiling is ABSOLUTE: three sea levels (63, -16, -70) put the

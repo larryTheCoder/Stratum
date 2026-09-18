@@ -69,16 +69,35 @@
 //     DRAINED cells of different type — fills blocks the server leaves
 //     open on 99.5-100% of them (0-4 stone of 424-1145 per row). Refuted.
 //
-// The 590 that remain are not a type question. This build reports a dry
-// source as `level = lambda` where the clean-room spec's is `never`
-// (-32512), and clamps a ladder that falls below lambda up to it; on the
-// rows 0-3 above the sea that puts a plane right under the block that the
-// spec does not have, on the `h <= 0` side of Π where the divisors are
-// 3/10 instead of 1.5/2.5. `aquifer-waterlava-analyze.cpp` re-scores the
-// same blocks at the spec's levels: 0 misses and 0 false stone on rows
-// lambda+1..+3 on all three seeds (row lambda keeps 18 / 17 / 0). That is
-// `cellFluidLevel`'s contract to change, not this predicate's — PROGRESS.md
-// names it as the next slice.
+// The 590 that remained were never a type question, and they are now
+// SPENT: they were `cellFluidLevel`'s contract, not this predicate's. That
+// build reported a dry source as `level = lambda` where the clean-room
+// spec's is the sentinel `never`, and clamped a ladder that fell below
+// lambda back up to it; on the rows just above the sea that puts a plane
+// right under the block which the spec does not have, on the `h <= 0` side
+// of Π where the divisors are 3/10 instead of 1.5/2.5. Both halves landed
+// together (lattice.hpp's `kNeverLevel`), and the sweep that settled them
+// is Π's, because no block readout can see a level below lambda at all.
+//
+// Re-scored over rows lambda-1..+40 on all three water/lava seeds, against
+// 88 949 server stone blocks, mixed/pure real-barrier misses run:
+//
+//     dry=lambda, ladder clamped (the old build)   704 / 1790
+//     dry=never only                                33 /  758
+//     ladder unclamped only                        677 / 1063
+//     both                                           7 /   54
+//
+// so both halves are load-bearing and neither alone reaches the pair. No
+// model in the sweep writes a single block of stone the server does not (0
+// false stone throughout), and the same change on the independent
+// `barrier3way` world takes the three-source miss count from 121 of 11 923
+// real barriers (1.015%) to 6 (0.050%), its mismatching blocks a strict
+// SUBSET of the old build's — 115 fixed, none introduced, over 15 728 640
+// blocks.
+//
+// The residual is 7 mixed + 54 pure over that 42-row band, of which 4 + 35
+// sit on row lambda itself where Q6.3, Q2.4 and the trailing guard all
+// interact, plus the 6 on `barrier3way`. Recorded, not tuned away.
 //
 // STILL UNMEASURED, and marked rather than guessed: the pressure function's
 // fourth divisor (10, for `3 + t <= 0` — the "near-air-far" branch). It is

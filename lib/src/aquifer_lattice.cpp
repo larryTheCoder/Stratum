@@ -42,18 +42,35 @@ std::int32_t baseLevel(const std::int32_t y, const std::int32_t preliminarySurfa
     return std::min(onLattice, preliminarySurface);
 }
 
-std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap, const double spread,
-                         const std::int32_t seaLevel) noexcept {
+std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
+                         const double spread) noexcept {
     const std::int32_t onLattice = (kBasePitch * levelBand(centreY)) + kBasePhase;
     // The cap goes on AFTER the offset — measured, and the two orders differ
     // wherever a positive spread would lift the ladder through the surface.
-    return std::max(lambdaLevel(seaLevel), std::min(onLattice + spreadOffset(spread), cap));
+    //
+    // NO LOWER CLAMP. Q5.7 is a `min` with the surface and nothing else, and
+    // this line used to carry a `max(lambdaLevel(seaLevel), ...)` in front of
+    // it. What the earlier campaigns measured there was the clamp's VALUE
+    // (lambda against a bare -54), which no readout can distinguish from its
+    // ABSENCE — see `kNeverLevel` and lattice.hpp's note on this function. Π
+    // can, and does: unclamping cuts 704/1790 mixed/pure barrier misses to
+    // 677/1063 on its own and to 7/54 with the dry sentinel, on 88 949 server
+    // stone blocks over rows lambda-1..+40 of three probe worlds.
+    //
+    // The result can now sit arbitrarily far below `lambda`, which is the
+    // point. `levelPressure` casts both levels to double before any
+    // arithmetic and the int32 difference tops out around 32 900 even against
+    // `kNeverLevel`, so nothing here can wrap.
+    //
+    // The `seaLevel` parameter went with the clamp: nothing else in Q5.7
+    // reads it, and leaving it would suggest the sea still enters a ladder
+    // level, which it does not.
+    return std::min(onLattice + spreadOffset(spread), cap);
 }
 
 std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     const std::int32_t lambda = lambdaLevel(cell.seaLevel);
-    const std::int32_t ladder =
-        ladderLevel(cell.centreY, cell.surface.cap, cell.spread, cell.seaLevel);
+    const std::int32_t ladder = ladderLevel(cell.centreY, cell.surface.cap, cell.spread);
     const std::int32_t oceanGate = cell.seaLevel - kOceanGateOffset;
 
     // The near-surface path, gated and measured on the scan's PREFIX minimum.
@@ -92,12 +109,33 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // `lambda` in both places is adopted because it is a no-op at every
         // `sea_level` this project had already verified (lambda equals
         // `kLavaLevel` there), not because the comparand itself was isolated.
+        //
+        // AND THIS FLOOR IS DELIBERATELY NOT `kNeverLevel`, unlike the two
+        // dry outcomes further down. The sweep that moved those is blind to
+        // this branch: every world in it holds `preliminary_surface_level`
+        // constant at 96, far above the near-surface gate, so this early
+        // return never runs there, and the one conformance world that does
+        // reach it reads only `y >= lambda`, where a floor at lambda and a
+        // sentinel are again indistinguishable. Leaving it alone is a choice,
+        // not an oversight — `aquifer-nearsurface-probe.sh`'s varying psl is
+        // where a future pass would separate them.
         return (cell.centreY >= lambda && cell.centreY > cell.surface.cap + kNearSurfaceFloorOffset)
                    ? cell.seaLevel
                    : lambda;
     }
 
-    std::int32_t level = lambda;
+    // The DRY level is the spec's sentinel, not `lambda`. Q2.4 hands every
+    // row below `lambda` to the global lava sea before the lattice is
+    // consulted, so the two are indistinguishable in any block readout — the
+    // four campaigns that recorded this outcome as `lambda` were not wrong,
+    // only under-determined. They part company in the barrier's Π, which
+    // weighs both levels whether or not either is readable: dropping the dry
+    // level to the sentinel cuts 704/1790 mixed/pure misses to 33/758 on its
+    // own, and to 7/54 with the unclamped ladder, over 88 949 server stone
+    // blocks on rows lambda-1..+40 of three probe worlds — and to 6 of 11 923
+    // real barriers, from 121, on the independent `barrier3way` world. No
+    // model in that sweep writes one block of stone the server does not.
+    std::int32_t level = kNeverLevel;
     bool tookSea = false;
     // The DEPTH path gates on the ANCHOR while everything above gates on the
     // minimum. Since the minimum never exceeds the anchor this is the harder
@@ -132,7 +170,7 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
                    kFloodedLocalThreshold) {
             level = ladder;
         } else {
-            level = lambda;
+            level = kNeverLevel;
         }
     } else if (!cell.surface.aborted && cell.floodedness > kFloodedSeaThreshold) {
         // No depth term and no near-surface rule at all off the ocean branch.

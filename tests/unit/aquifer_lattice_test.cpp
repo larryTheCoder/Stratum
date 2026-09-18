@@ -246,6 +246,7 @@ namespace {
 using stratum::aquifer::CellFluid;
 using stratum::aquifer::cellFluidLevel;
 using stratum::aquifer::kLavaLevel;
+using stratum::aquifer::kNeverLevel;
 
 constexpr std::int32_t kSea = 63;
 
@@ -296,24 +297,32 @@ TEST_CASE("the ocean branch's ladder gate crosses on a different slope", "[aquif
     // the line above. Depth 12 is the negative-operand case: at a preliminary
     // surface of -24 the surface, the centre, the depth's operands and the
     // floorDiv inside the ladder are all negative at once.
+    // The dry side reads `kNeverLevel`, not `kLavaLevel`. These lines used to
+    // pin lambda, which at `sea_level` 63 IS the lava level — and no block
+    // readout could ever have told the two apart, Q2.4 handing every row
+    // below lambda to the global lava sea (lattice.hpp's `kNeverLevel`). What
+    // the gate's CROSSING is remains exactly as measured; only the level on
+    // the dry side of it moves.
     for (const std::int32_t depth : {6, 8, 12, 16, 20, 24, 28, 32, 37, 48, 56}) {
         const double crossing = localCrossing(depth);
         INFO("ladder gate at depth " << depth);
-        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, 40)) == kLavaLevel);
-        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, 40)) != kLavaLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, 40)) == kNeverLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, 40)) != kNeverLevel);
     }
 
     // The negative-operand cases, per §5. At a preliminary surface of -24 the
     // surface, the centre, both operands of the depth and the floorDiv inside
     // the ladder are all negative at once — the shape a truncating division
-    // gets wrong. The depths stop at 16 because past that the centre drops
-    // onto the lattice step below, whose ladder clamps to the lava sea and so
-    // stops distinguishing the two outcomes.
-    for (const std::int32_t depth : {6, 8, 12, 16}) {
+    // gets wrong. These depths used to stop at 16: past that the centre drops
+    // onto the lattice step below, whose ladder the old lower clamp pulled up
+    // to the lava sea, which is where the dry outcome also sat, so the two
+    // stopped being distinguishable. With the clamp gone the ladder stays at
+    // -60 there and the whole range discriminates again.
+    for (const std::int32_t depth : {6, 8, 12, 16, 20, 24, 28, 32, 37, 48, 56}) {
         const double crossing = localCrossing(depth);
         INFO("ladder gate at depth " << depth << ", everything negative");
-        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, -24)) == kLavaLevel);
-        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, -24)) != kLavaLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing, -24)) == kNeverLevel);
+        CHECK(cellFluidLevel(oceanCellAt(depth, crossing + 1e-4, -24)) != kNeverLevel);
     }
 }
 
@@ -371,7 +380,7 @@ TEST_CASE("the ocean branch's bonus is clamped at zero, not extrapolated", "[aqu
 
     // And past the clamp the branch reduces exactly to the plain gates.
     CHECK(cellFluidLevel(oceanCellAt(56, 0.85, 40)) == kSea);
-    CHECK(cellFluidLevel(oceanCellAt(56, 0.4, 40)) == kLavaLevel);
+    CHECK(cellFluidLevel(oceanCellAt(56, 0.4, 40)) == kNeverLevel);
 }
 
 TEST_CASE("the ocean branch runs strictly below sea_level minus eight", "[aquifer]") {
@@ -434,15 +443,25 @@ TEST_CASE("a cell below the lava sea reaches the sea only near the surface", "[a
 TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "[aquifer]") {
     // Measured: a cell whose lattice point plus offset came to 69 under a
     // surface of 67 was observed at 67, so the cap is applied last.
-    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9, kSea) == 67);
-    CHECK(stratum::aquifer::ladderLevel(50, 200, 0.9, kSea) == 69);
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) == 67);
+    CHECK(stratum::aquifer::ladderLevel(50, 200, 0.9) == 69);
     // Capping first and then adding the offset gives 69 for the first of
     // those, which is two blocks above the surface the server was given and
     // two above where the server put it.
     CHECK(stratum::aquifer::baseLevel(50, 67) + stratum::aquifer::spreadOffset(0.9) == 69);
-    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9, kSea) != 69);
-    // And the ladder never sinks below the lava sea.
-    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0, kSea) == kLavaLevel);
+    CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) != 69);
+    // And the ladder DOES sink below the lava sea — this line used to assert
+    // the opposite, pinning a `max(lambda, ...)` that Q5.7 does not have.
+    // What the campaigns behind that clamp measured was its VALUE (lambda
+    // against a bare -54); its EXISTENCE was never measurable from a block,
+    // Q2.4 owning every row below lambda. Π separates them: unclamping cuts
+    // the pooled mixed/pure barrier misses over rows lambda-1..+40 from
+    // 704/1790 to 677/1063 on its own, and the `barrier3way` world's
+    // three-source misses from 121 of 11 923 real barriers to 6 once the dry
+    // sentinel lands with it. 40 * floorDiv(-200, 40) + 20 = -180, under the
+    // cap of -100, so -180 is the answer with no floor in the way.
+    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0) == -180);
+    CHECK(stratum::aquifer::ladderLevel(-200, -100, 0.0) < kLavaLevel);
 }
 
 // ---------------------------------------------------------------------------
@@ -519,23 +538,51 @@ TEST_CASE("every level below the lava sea moves with sea_level", "[aquifer]") {
     CHECK(lambdaLevel(-56) == -56);
     CHECK(lambdaLevel(-100) == -100);
 
-    // The third outcome is Λ, measured at sea_level -56 where -54 sits two
-    // blocks ABOVE the floor and the distinction becomes visible at last.
-    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3)) == -56);
-    // The ladder's lower clamp is Λ too: at sea -100 with a surface of -70,
-    // cells read -70 through a band where a bare -54 would have cut them off.
+    // The sentinel a DRY source reports, and its DERIVATION rather than its
+    // literal: Q1.4 composes it from four separately-read definitions, and
+    // the spec's own open question 4 says to recompute rather than trust the
+    // transcribed number. What the corpus measures is only that the dry
+    // level sits at least 32 below lambda — sweeping it as `lambda - K` over
+    // the three water/lava worlds, K = 32, 64, 256 and this sentinel score
+    // byte-identically while K = 16 does not — so the value itself is
+    // arithmetic, and is asserted as arithmetic.
+    CHECK(stratum::aquifer::kMinYLimit == -2032);
+    CHECK(kNeverLevel == 16 * stratum::aquifer::kMinYLimit);
+    CHECK(kNeverLevel == -32512);
+    CHECK(kNeverLevel < lambdaLevel(-100) - 32);
+
+    // The third outcome is AT OR BELOW Λ, and that bound is what the
+    // `sea_level` -56 campaign actually established — on 9740 discriminating
+    // cells, where a bare -54 is right on 8729 of them. It separated -54 from
+    // Λ; it could not separate Λ from anything lower, because the rows below
+    // Λ are Q2.4's and paint identically whatever level sits there. The
+    // sentinel is consistent with every block that campaign measured, and it
+    // is Π, not a readout, that picked it out (lattice.hpp's `kNeverLevel`).
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3)) == kNeverLevel);
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3)) <= lambdaLevel(-56));
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3)) != -54);
+    // The ladder's LEVEL below the lava sea is still what that campaign
+    // measured — at sea -100 with a surface of -70, cells read -70 through a
+    // band where a bare -54 would have cut them off. Only the clamp that used
+    // to sit under it is gone, and it never bound here.
     CHECK(cellFluidLevel(cellWith(constantSurface(-70), -100, -60, 0.6)) == -70);
-    CHECK(stratum::aquifer::ladderLevel(-60, -70, 0.0, -100) == -70);
+    CHECK(stratum::aquifer::ladderLevel(-60, -70, 0.0) == -70);
 }
 
 TEST_CASE("the trailing guard tests the branch, not the number", "[aquifer]") {
     // The one place those two readings part, and it is the configuration the
-    // guard was measured in. At sea_level -56 the third outcome is ALSO -56,
-    // so a numeric `level == sea_level` test would floor it to -54 — and the
+    // guard was measured in. At sea_level -56 the SEA outcome is also -56, so
+    // a numeric `level == sea_level` test would floor it to -54 — and the
     // server does not. Same world, same cells, same surface: floodedness 1.0
-    // reads -54 and 0.3 reads -56.
+    // reads -54 and 0.3 does not.
+    //
+    // It is the FIRST of these two lines that pins the guard, and it is
+    // unchanged. The second used to read -56 because the dry outcome was
+    // lambda; it now reads the sentinel, which is equally "not -54" and makes
+    // the same point — the guard did not fire on the dry cell then either,
+    // its `tookSea` being false.
     CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 1.0, 1.0)) == -54);
-    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3, 1.0)) == -56);
+    CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -58, 0.3, 1.0)) == kNeverLevel);
     // The threshold is Λ rather than -54: a cell centred AT Λ is not below it.
     CHECK(cellFluidLevel(cellWith(constantSurface(-30), -56, -56, 1.0, 1.0)) == -56);
     // And the replacement is the literal lava level, which here is ABOVE Λ.
@@ -613,7 +660,11 @@ TEST_CASE("the near-surface path is an early return that the guard cannot reach"
     CHECK(cellFluidLevel(cellWith(constantSurface(-60), 200, -58, 1.0)) == 200);
     // Depth 3 takes the sea whatever the floodedness says; depth 4 does not.
     CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 147, -2.0)) == 200);
-    CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 146, -2.0)) == lambdaLevel(200));
+    // Depth 4 is off the near-surface path and this floodedness floods
+    // nothing, so the dry outcome is the sentinel. It used to read
+    // `lambdaLevel(200)`; what the case tests is the depth-3/depth-4
+    // boundary, which is untouched.
+    CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 146, -2.0)) == kNeverLevel);
 }
 
 TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
@@ -632,7 +683,12 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // branch's own copy of the same guard, on 469575-913229 discriminating
     // blocks across two seeds.
     const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
-    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -54);
+    // The cell is refused the sea and falls to its LADDER, which a cap of -70
+    // pulls to -70. This line used to read -54: the old lower clamp lifted it
+    // to lambda, incidental to what the case is testing (that the abort
+    // refuses the sea at all, which the contrast with `quiet` below is what
+    // actually establishes).
+    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -70);
     // Without the abort the same cell floods.
     const PslRead quiet{.gate = 100, .cap = 100, .anchor = 100, .aborted = false};
     CHECK(cellFluidLevel(cellWith(quiet, 200, 0, 0.9)) == 200);
@@ -690,8 +746,8 @@ TEST_CASE("the ladder's cap reads the scan's own minimum", "[aquifer]") {
     // The cap reads `cap`, not `gate`: the two other candidates score 0.90 and
     // 0.87, and the server backs `cap` on half the cells where they differ.
     const PslRead split{.gate = 150, .cap = 60, .anchor = 150, .aborted = false};
-    CHECK(stratum::aquifer::ladderLevel(90, split.cap, 0.0, 240) == 60);
-    CHECK(stratum::aquifer::ladderLevel(90, split.gate, 0.0, 240) == 100);
+    CHECK(stratum::aquifer::ladderLevel(90, split.cap, 0.0) == 60);
+    CHECK(stratum::aquifer::ladderLevel(90, split.gate, 0.0) == 100);
 
     // The reach clamps at zero, so a cell far below the surface still takes
     // the ladder rather than turning to lava. Spread 3.0 offsets it by 30.

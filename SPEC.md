@@ -613,25 +613,36 @@ mapping has two halves, split at a platform-neutral midpoint:
   Four things stood between MA and closing, and all four are now CLOSED —
   the barrier's third source (3) including Q6.3's water-over-lava
   exception, measured on the server and smaller than it read (see (d)),
-  Q6.4's mixed-type Π, measured on the same worlds and landed (see (e)), and
-  fluid TYPE (4), whose last open piece — the level ceiling — is pinned at
-  -10 and shown to be an absolute constant rather than a sea-relative one
-  (§11). What the barrier measurement left open is not a barrier piece at
-  all but the LEVEL a source carries below lambda — the dry sentinel and
-  the ladder clamp (§11, "The mixed-type Π"), which is now the one narrow
-  piece still open here. **`ChunkFiller` now
+  Q6.4's mixed-type Π, measured on the same worlds and landed (see (e)),
+  fluid TYPE (4), whose level ceiling is pinned at -10 and shown to be an
+  ABSOLUTE constant rather than a sea-relative one (§11), and — found by the
+  barrier measurement rather than listed at the outset — the LEVEL a source
+  carries below lambda, the dry sentinel and the ladder clamp, now measured
+  through the barrier's Π rather than through a block readout, which cannot
+  see below lambda at all (§11, item 6).
+
+  Two things are deliberately NOT claimed by that. Q5.8 has two further
+  conjuncts — a source already reading lava being exempt, and `L != never` —
+  which are carried on the specification's word: both are provably
+  unobservable in every world measured here, so "the rule is implemented as
+  written" is the claim, not "the rule is measured". And the 64-chunk
+  golden-fill residual below is now unattributed.
+
+  **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
   measured against a real, aquifer-on overworld region, the wiring's own
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
-  `golden_fill_aquifer_test.cpp` pins, and 6290723 of 6291456 (99.988%) over
-  a wider 64-chunk sweep — a residual small enough that the narrow piece
-  still open above plausibly explains the whole of it. WITH the real
-  287-rule surface tree also running, `golden_fill_aquifer_test.cpp` is now
+  `golden_fill_aquifer_test.cpp` pins, and 6290839 of 6291456 (99.990%) over
+  a wider 64-chunk sweep. That residual was previously explained away as the
+  level pieces above; it is not — the sentinel and clamp change leaves it
+  block-for-block IDENTICAL, the same coordinates either way, so it is
+  unattributed again and wants a probe of its own. WITH the real 287-rule
+  surface tree also running, `golden_fill_aquifer_test.cpp` is now
   393216 of 393216 too (§11: the deepslate surface-rule gap
   `golden_fill_test.cpp` named is CLOSED, not carried). What remains is that
-  one still-open level piece itself, plus ore veins (M3,
-  untouched) — neither of which is unique to aquifers, which is why this still
-  reads as a track.
+  unattributed residual, Q5.8's two unobservable conjuncts, and ore veins
+  (M3, untouched) — none of which is unique to aquifers, which is why this
+  still reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -742,9 +753,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      330 on the rows above the sea), with 0 false stone before and after,
      and every one of the 1108 blocks the constant adds is server stone.
      The two other readings are refuted on the same blocks (§11). What
-     remains is the level a source carries below lambda — the dry
-     sentinel and the ladder clamp — measured to close the 590 to 0 on
-     the rows above the sea and named as the next slice, not landed.
+     remained was the level a source carries below lambda — the dry
+     sentinel and the ladder clamp — and it is now **LANDED**, which
+     re-anchors the figures above: the same pooled reading is 1100 to 4,
+     and the pure-junction misses 35 where they were 293, still 0 false
+     stone. All 4 and all 35 sit on row lambda itself. See item 6.
 
   4. **Fluid TYPE — measured; the ceiling is now CLOSED too.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
@@ -757,8 +770,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      **level ceiling is now PINNED at -10**, inclusive: group D of the same
      tool reaches level -9 by the two routes the ladder's mod-3 lattice does
      not constrain — the sea branch, and the psl cap at two different sea
-     levels — and reads -12/-11/-10 lava and -9/-8/-7 water on all of them,
-     16384 of 16384 columns per dimension with 0 of the other fluid, on
+     levels — and reads -12/-11/-10 lava and -9/-8/-7 water on the two
+     six-dimension arms, with the `sea_level` -70 arm running four of them
+     (-12/-10 lava, -9/-8 water). The LEVEL ENTRY is 16384 of 16384 columns
+     with 0 of the other fluid (a dimension's own total is larger: it also
+     carries deep bodies and fluid-tick contact artefacts), on
      seeds 42, 7 and 999. The same run shows the ceiling is ABSOLUTE rather
      than sea- or lambda-relative (§11). A third piece is carried on the
      spec's word — whether a source already reading lava is exempt — and
@@ -805,14 +821,95 @@ mapping has two halves, split at a platform-neutral midpoint:
      second a chunk, the same shape of fix `ChunkFiller`'s own biome cache
      already used for surface rules.
 
-     *Wider, still open.* Over a 64-chunk sweep of the same probe world
-     (6291456 blocks), RAW category is 6290723 exact — 99.988%, a 733-block
-     residual too small to localise further without a dedicated probe of its
-     own, but the wrong direction (mostly missed barriers, `solid->fluid`)
-     is consistent with the two lattice-level pieces the sea -70 worlds
-     later separated (§11, "The mixed-type Π") — the constant, since
-     landed, and the level a dry or clamped source carries below lambda,
-     still open — rather than with a new one. Not re-measured here since.
+     *Wider, still open — and one guess about it now REFUTED.* Over a
+     64-chunk sweep of the same probe world (6291456 blocks), RAW category
+     was recorded here as 6290723 exact, a 733-block residual, and this
+     entry guessed the wrong direction (mostly missed barriers,
+     `solid->fluid`) made it "consistent with" the two lattice-level pieces
+     the sea -70 worlds separated — the mixed-type constant, since landed,
+     and the level a dry or clamped source carries below lambda. The second
+     half of that guess is wrong. Re-measured with the same loop widened to
+     chunks 0..7, twice over — once with the level model item 6 landed and
+     once with the old one linked into the same binary in its place — the
+     two produce the IDENTICAL set of mismatching blocks, coordinate for
+     coordinate: 6290839 of 6291456 either way, a 617-block residual the
+     change moves by exactly zero. (617 rather than 733 because this figure
+     predates other work and was, as the entry said, not re-measured since.)
+     Item 6's change is large elsewhere — 121 three-source misses to 6 on
+     `barrier3way` — so what this establishes is that this world's residual
+     lies somewhere else, and the dedicated probe it still wants should not
+     start from the level rule.
+
+  6. **CLOSED. The level a source carries below lambda: the dry sentinel and
+     the ladder clamp.** `cellFluidLevel` reported a DRY source as `lambda`
+     where Q5.6's value is the sentinel `never`, and `ladderLevel` clamped a
+     ladder that fell below `lambda` back up to it where Q5.7 has no clamp.
+     Both are now as the spec states: `lattice.hpp`'s `kNeverLevel`, spelled
+     as Q1.4's arithmetic `16 * min_y_limit` rather than the literal, per the
+     spec's own open question 4.
+
+     *Why it went unseen for four campaigns.* Neither is visible in a block
+     readout at all. Q2.4 hands every `y < lambda` to the global lava sea
+     before the lattice is consulted, so every candidate level at or below
+     lambda paints identical chunks; the campaigns that recorded the dry
+     outcome as "Λ" were not wrong, only under-determined — "at or below Λ"
+     is the most a readout can establish, and the `sea_level` -56 world that
+     separated -54 from Λ could not have separated Λ from anything lower.
+     What CAN see it is the barrier's pressure Π, which weighs both levels
+     whether or not either is readable at the block: with one level far
+     below, `levelPressure`'s `t = r - |h|` reduces to a term independent of
+     it on the `h > 0` side, while at `lambda` the same pair lands on the
+     `h <= 0` side, whose divisors are 3/10 rather than 1.5/2.5, with a
+     fluid plane sitting right under the block.
+
+     *Measured, on rows lambda-1..+40 of the three water/lava probe worlds,
+     against 88949 server stone blocks.* Mixed/pure real-barrier misses by
+     level model: the old contract 704/1790; the sentinel alone 33/758; the
+     unclamped ladder alone 677/1063; both 7/54. Both halves are
+     load-bearing and neither alone reaches the pair. **No model in the
+     sweep writes a single block of stone the server does not** — 0 false
+     stone throughout, which is the reading that would have refuted the
+     change outright. On the independent `barrier3way` world (15728640
+     blocks, 11923 real barriers, three densities, real noise) the
+     three-source miss count falls 121 (1.015%) to 6 (0.050%), and the two
+     mismatch sets were compared coordinate by coordinate: the 6 are a
+     strict SUBSET of the 121, 115 fixed and none introduced. The
+     conformance suite's own figures moved with it — the water/lava case
+     reads 1100 -> 4 mixed misses where it read 1698 -> 590, and 35 pure
+     where it read 293.
+
+     *What is measured and what is derived, kept apart.* The exact sentinel
+     VALUE is NOT observable. Sweeping the dry level as `lambda - K`, the
+     score is monotone in K and saturates at K = 32: K = 32, 64, 256 and
+     -32512 are byte-identical, K = 16 is not (91 pure misses against 54).
+     So the corpus measures "at least 32 below lambda"; -32512 itself is
+     Q1.4's arithmetic and is carried as such, not as a reading.
+
+     *Two things deliberately NOT changed, and said so rather than left to
+     be assumed.* The near-surface aborting floor still returns `lambda`:
+     every world in this sweep holds `preliminary_surface_level` constant at
+     96, so that early return never runs in any of them, and the one
+     conformance world that does reach it reads only `y >= lambda`, where
+     the candidates are again indistinguishable. And the trailing guard's
+     replacement stays the literal `kLavaLevel`, which the `sea_level` -56
+     campaign pinned directly.
+
+     *Q5.8's `L != never` conjunct is now representable, and lands as spec
+     hygiene — never as a measurement.* It is also provably INERT: a source
+     at `kNeverLevel` reads fluid at no real `y`, and every consumer of a
+     source's type is guarded by a reading (`waterOverLava` needs
+     `y < nearestLevel`, Π's mixed-type constant needs both sources reading
+     fluid, the final `Fluid` return needs `nearestReadsFluid`). The corpus
+     is blind to it for a specific reason worth recording: both Π worlds
+     declare `lava` a constant 0.0, which short-circuits `fluidTypeOf`
+     before the level term, and the `comb_*` worlds pin floodedness at 0.5,
+     so no source is ever dry there. Calling it "measured" would repeat the
+     error item 4's own history records.
+
+     *The residual, recorded rather than tuned away.* 7 mixed + 54 pure over
+     the 42-row water/lava band, of which 4 + 35 sit on row lambda itself
+     where Q6.3, Q2.4 and the trailing guard all interact, plus 6 of 11923
+     real barriers on `barrier3way`. Nothing was fitted to close them.
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -2824,7 +2921,8 @@ Open:
   the measured 0.8 gate, so the level IS `sea_level`) and reads
   -12/-11/-10 lava and -9/-8/-7 water. Arm P binds the psl cap instead
   (`sea_level` -16, spread 6.0 so every rung lands above the cap) and reads
-  the same six. Arm P′ repeats arm P at `sea_level` -70. Every dimension is
+  the same six. Arm P′ repeats arm P at `sea_level` -70 over four of those
+  levels (-12, -10, -9, -8). Every dimension is
   16384 of 16384 columns with 0 of the other fluid, identical on seeds 42, 7
   and 999. **The ceiling is -10, inclusive.**
 

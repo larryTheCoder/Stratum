@@ -63,11 +63,13 @@
 //   * Comparing what each source READS at y (the committed reading): a
 //     lava body meeting a water body — both fluid — takes the constant, a
 //     pair that disagrees at y takes the level formula whatever its types.
-//     On the rows above the sea, pooled over three seeds, the retyped
-//     predicate misses 1240 of the server's real barriers in mixed
-//     junctions and the committed one 330; neither writes a single block
-//     of stone the server does not (0 / 0). Every block the constant adds
-//     is a real barrier.
+//     Pooled over three seeds and every row the lattice owns, the retyped
+//     predicate misses 1100 of the server's real barriers in mixed
+//     junctions and the committed one 4; neither writes a single block of
+//     stone the server does not (0 / 0). Every block the constant adds is a
+//     real barrier. (Those read 1698 and 590 before `cellFluidLevel` took
+//     the spec's sentinel for a dry source and dropped the ladder's lower
+//     clamp; the remaining 4 all sit on row lambda itself.)
 //   * Comparing the two TYPE FIELDS behind the disagree guard — so that a
 //     lava-typed source reading AIR against a water-typed one reading
 //     fluid would take the constant: on the nearest pair, where the
@@ -79,14 +81,17 @@
 //     of the blocks the constant would fill (0-4 of 424-1145 per row above
 //     the sea). Refuted.
 //
-// What the branch leaves — 330 of 1240 — is not a type question: this
-// build reports a dry source as `level = lambda` (the spec's `never` is
-// -32512) and clamps a ladder below lambda up to it, which on the rows 0-3
-// above the sea puts a plane right under the block that the spec does not
-// have. `aquifer-waterlava-analyze.cpp` re-scores the same blocks at the
-// spec's own levels: 0 misses and 0 false stone on rows lambda+1..+3 on
-// all three seeds. That is the next slice, named in PROGRESS.md; it is a
-// contract change to `cellFluidLevel`, not a barrier change.
+// What the branch used to leave — 330 of 1240 on the rows above the sea —
+// was never a type question, and it is now spent. It was `cellFluidLevel`'s
+// contract: that build reported a dry source as `level = lambda` where the
+// spec's is the sentinel `never`, and clamped a ladder below lambda up to
+// it, which on the rows just above the sea puts a plane right under the
+// block that the spec does not have. Both halves landed together
+// (lattice.hpp's `kNeverLevel`) and this case's own figures moved with
+// them: pooled over three seeds, mixed-junction misses now read old 1100 ->
+// new 4 where they read 1698 -> 590, and pure misses 35 where they read
+// 293, with 0 false stone throughout, before and after. Every one of the 4
+// and the 35 sits on row lambda itself.
 //
 // ONE SEED PER PROBE DIRECTORY, read from its manifest; every
 // `waterlava_s*` directory present is scored, and the case SKIPs when there
@@ -559,8 +564,9 @@ TEST_CASE("water resting on the global lava sea is water, not a barrier",
     // The exception's population, and the control that the case can tell
     // the two decisions apart at all: the bare fall-through must be writing
     // stone on some of it (measured 14 / 50 / 70 per seed at sea -70 with
-    // the level formula alone; 19 / 176 / 178 now that a lava body against
-    // the row's water takes Q6.4's constant — and the server still 0). At
+    // the level formula alone; 452 pooled over the three seeds now that a
+    // lava body against the row's water takes Q6.4's constant and a dry
+    // source carries the sentinel — and the server still 0). At
     // the shipped sea the population is empty (measured 0 on three seeds),
     // so a single low-sea arm is what makes this non-vacuous.
     REQUIRE(total.fires >= 200);
@@ -629,8 +635,9 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
     CHECK(total.mixedNewFalse == 0);
     CHECK(total.pureFalse == 0);
     // The branch cuts the real barriers missed in mixed junctions by more
-    // than half (measured 1698 -> 590 pooled over all rows and seeds; 1240
-    // -> 330 on the rows above the sea alone) ...
+    // than half. Measured 1698 -> 590 pooled when this case landed; with the
+    // dry sentinel and the unclamped ladder now in `cellFluidLevel`, the same
+    // pooled reading is 1100 -> 4, all four of them on row lambda itself.
     CHECK(total.mixedNewMiss * 2 < total.mixedOldMiss);
     // ... and touches nothing where no pair is mixed.
     CHECK(total.pureNewMiss == total.pureOldMiss);

@@ -48,9 +48,14 @@
 //     three terms can fire. The bound is TIGHT — about two thousand blocks sit
 //     at exactly 24 — and the same rule with the shift of Q3.2 removed puts
 //     3.16% of the server's own stone where it says no barrier can exist.
-//   * 16663703 non-solid blocks, where the barrier has fallen through and the
-//     substance is the nearest source's own reading. `y < cellFluidLevel(rank
-//     1)` predicts 0.99993 to 0.99996 of them per seed. The residual is not
+//   * 16008343 non-solid blocks AT OR ABOVE lambda, where the barrier has
+//     fallen through and the substance is the nearest source's own reading.
+//     `y < cellFluidLevel(rank 1)` predicts 0.99993 to 0.99996 of them per
+//     seed. The readout starts at lambda deliberately: below it Q2.4 hands
+//     every block to the global lava sea before the lattice is consulted, so
+//     while a dry source still reported lambda the 655360 blocks under it
+//     were scored as wins with the selection never consulted (the population
+//     read 16663703 then). The residual is not
 //     the selection: a brute-force search over a 5x7x5 neighbourhood of cells
 //     fixes 0 of it.
 #pragma once

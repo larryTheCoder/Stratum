@@ -111,6 +111,26 @@ TEST_CASE("a source below the global lava sea is lava whatever its noise says", 
           FluidType::Lava);
 }
 
+TEST_CASE("a DRY source is exempt from the lava override", "[aquifer]") {
+    // Q5.8's `L != never` conjunct. NOT MEASURED, and it must not be
+    // described as though it were: no world this project has measured Π on
+    // can even ask (fluid_type.hpp's header says exactly why — both declare
+    // `lava` a constant 0.0, short-circuiting the level term, and the
+    // selection worlds pin floodedness at 0.5 so no source is ever dry). It
+    // is carried on the spec's word, and it became REPRESENTABLE only when
+    // `cellFluidLevel` began reporting `kNeverLevel` rather than `lambda`
+    // for a dry source — before that this case could not have been written.
+    CHECK(fluidTypeOf(deep(0.9, stratum::aquifer::kNeverLevel)) == FluidType::Default);
+    // And it is the SENTINEL that exempts it, not merely being far down: a
+    // level one above the sentinel is still deep enough to turn to lava.
+    CHECK(fluidTypeOf(deep(0.9, stratum::aquifer::kNeverLevel + 1)) == FluidType::Lava);
+
+    // It is also provably INERT downstream, which is why carrying it costs
+    // nothing: a source at the sentinel reads fluid at no `y` any world has,
+    // and every consumer of a source's type is guarded by a reading.
+    CHECK(stratum::aquifer::kNeverLevel < -30000);
+}
+
 TEST_CASE("lava is read on a sixty-four block lattice, and the spread is not", "[aquifer]") {
     // The trap this pair exists to make hard: two router entries with the
     // same SHAPE — a contracted index lattice — and different numbers.

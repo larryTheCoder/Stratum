@@ -100,14 +100,27 @@
 //     the global lava sea, where nothing can be observed, so the conjunct is
 //     carried on the spec's word alone.
 //   * Whether a DRY source is exempt (the spec's `L != never` conjunct).
-//     This build cannot even ask: `cellFluidLevel` reports a dry source as
-//     `level = lambda`, the same number a wet source clamped there gets, so
-//     a dry cell under a `|lava| > 0.3` read is typed lava here. It became
-//     reachable when Q6.4 started typing every ranked source (substance.hpp
-//     — `rankedStatusOf`'s own note), and it is unobservable in every world
-//     Π has been measured on, `lava` being a constant 0.0 there. The dry
-//     sentinel is PROGRESS.md's next aquifer slice; this conjunct falls
-//     out of it.
+//     REPRESENTABLE NOW, and carried in the predicate below — but as spec
+//     hygiene, NOT as a measurement, and the difference is the whole point.
+//     Until the dry sentinel landed, `cellFluidLevel` reported a dry source
+//     as `level = lambda`, the same number a wet source clamped there got,
+//     so the conjunct could not even be written down; it now can, because a
+//     dry source reports `kNeverLevel`.
+//
+//     It is also PROVABLY INERT, which is a stronger statement than
+//     "unmeasured" and is why writing it down costs nothing. A source at
+//     `kNeverLevel` reads fluid at `y` only if `y < -32512`, which no world
+//     has. Every consumer of a source's TYPE is guarded by a reading:
+//     `waterOverLava` requires `y < nearestLevel` (substance.hpp),
+//     `termFires`' mixed-type constant requires BOTH sources reading fluid
+//     (aquifer_barrier.cpp), and `computeSubstance`'s final `Fluid` return
+//     requires `nearestReadsFluid`. So no block's output can depend on how a
+//     dry source is typed, and the conjunct changes nothing this project can
+//     observe — which is exactly what the corpus says: `lava` is a constant
+//     0.0 on both worlds Π was measured on, short-circuiting the level term
+//     before it is reached, and the `comb_*` worlds pin floodedness at 0.5,
+//     so no source is ever dry there either. Calling this "measured" would
+//     repeat the error Q4.8 records.
 //   * Any `default_fluid` other than water.
 #pragma once
 
@@ -185,8 +198,9 @@ struct FluidTypeAt {
     // doubles before C++23, and a ternary is exact here where a subtraction
     // would not be.
     const double magnitude = at.lava < 0.0 ? -at.lava : at.lava;
-    return (at.level <= kLavaLevelCeiling && magnitude > kLavaThreshold) ? FluidType::Lava
-                                                                         : FluidType::Default;
+    return (at.level != kNeverLevel && at.level <= kLavaLevelCeiling && magnitude > kLavaThreshold)
+               ? FluidType::Lava
+               : FluidType::Default;
 }
 
 } // namespace stratum::aquifer

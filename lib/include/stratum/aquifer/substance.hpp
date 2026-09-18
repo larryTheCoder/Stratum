@@ -42,12 +42,15 @@
 //     real barriers missed fall from 1698 to 590 pooled over three seeds,
 //     with 0 false stone before and after.
 //
-// WHAT THE SAME WORLDS LEAVE OPEN is the LEVEL a source carries below
-// lambda, not a barrier question: `cellFluidLevel` reports a dry source as
-// `lambda` (the spec's `never` is -32512) and clamps a ladder below lambda
-// up to it, and re-scoring the same blocks at the spec's levels closes the
-// 590 to 0 on the rows above the sea. Named in PROGRESS.md as the next
-// slice; it is that function's contract to change.
+// WHAT THE SAME WORLDS LEFT OPEN was the LEVEL a source carries below
+// lambda, never a barrier question, and it is now SETTLED in
+// `cellFluidLevel`: a dry source reports the spec's sentinel `kNeverLevel`
+// and the ladder is unclamped. Pooled over rows lambda-1..+40 on all three
+// seeds, mixed/pure real-barrier misses fall 704/1790 -> 7/54 with 0 false
+// stone, both halves separately load-bearing (33/758 and 677/1063 alone);
+// on the independent `barrier3way` world the three-source miss count falls
+// 121 -> 6 of 11 923 real barriers, its mismatches a strict subset of the
+// old build's. See lattice.hpp's `kNeverLevel` and barrier.hpp's header.
 #pragma once
 
 #include <stratum/aquifer/barrier.hpp>
@@ -112,14 +115,17 @@ namespace detail {
 /// reads fluid at the block: Π compares the statuses' types (Q6.4), the same
 /// way `placesBarrier` compares their levels.
 ///
-/// ONE PIECE OF Q5.8 IS NOT REPRESENTABLE HERE, and is named rather than
-/// hidden: the spec exempts a DRY source (`L = never`) from the lava
-/// override, but `cellFluidLevel` reports a dry source as `level = lambda`
-/// — indistinguishable from a wet source whose ladder clamped there — so a
-/// dry source under a `|lava| > 0.3` cell is typed lava. Unobservable in
-/// every world this project has measured Π on (`lava` is a constant 0.0 in
-/// all of them); it only ever reaches a decision through Π, and only at a
-/// separation Π is marginal at. Carried as a known gap, not guessed at.
+/// THE ONE PIECE OF Q5.8 THAT USED TO BE UNREPRESENTABLE HERE now is: the
+/// spec exempts a DRY source (`L = never`) from the lava override, and since
+/// `cellFluidLevel` reports `kNeverLevel` rather than `lambda` for one,
+/// `fluidTypeOf` can and does carry the conjunct. It remains SPEC HYGIENE
+/// rather than a measurement, and it is provably inert into the bargain: a
+/// source at `kNeverLevel` never reads fluid at any real `y`, and every
+/// consumer of a source's type here is guarded by a reading (`waterOverLava`
+/// needs `y < nearestLevel`, Π's mixed-type constant needs both sources
+/// reading fluid, the final `Fluid` return needs `nearestReadsFluid`). So no
+/// block's output can depend on it. See fluid_type.hpp's header for why the
+/// corpus is blind to it — not merely that it is.
 template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
          typename LavaSampler>
 [[nodiscard]] SourceStatus rankedStatusOf(const Source& ranked, const std::int32_t seaLevel,
