@@ -4430,6 +4430,236 @@ Open:
   rather than `ceil(t) - 1`, and the search then failed to find its own plant
   on one dimension.
 
+- **The plant calibrates the statistic; the control calibrates the model
+  (M4).** The plant above is necessary and it is not sufficient, and saying
+  so is the point of this entry. `--plant` synthesises its readings through
+  the analyzer's *own* forward model — `layoutFor`, `sampleNormal`,
+  `quantise` — so a wrong model (a wrong persistence schedule, a wrong
+  `valueFactor`, a missing second stack, a wrong cell-corner assumption, a
+  wrong inversion of the gradient) is shared by the plant and the scan alike
+  and the plant still returns rank 1. It shows the statistic is *sensitive*.
+  It cannot show the model is *right*, and until now nothing in the committed
+  apparatus did.
+
+  `tools/analysis/legacy-seed-analyze.cpp --control` is that second half. It
+  scores a named-noise rule this repository already knows is right — the
+  modern derivation `lib/src/noise_registry.cpp` implements and the
+  conformance suite validates, `XoroshiroPositionalFactory(worldSeed)
+  .fromHashOf(id)` then `NormalNoise::create` — against the probe's `mod_*`
+  mirror dimensions, which name the same noises without the flag in the same
+  world from the same server start. Same readback, same band, same columns
+  the scan uses.
+
+  *The conclusion is a chain, not three independent measurements,* and it is
+  written out here because read as a flat table it claims more than it has.
+  Two arms are measured against the **server**; the rest are
+  transcription-equivalence checks against a **library** whose correctness is
+  established somewhere else entirely:
+
+  | arm | measured against | seed 42 | seed 31337 |
+  |-----|------------------|---------|------------|
+  | `library` within band | the **server's** readings | 6912/6912 | 6912/6912 |
+  | `exact` through `quantise` | the **server's** reading, as a double | 6912/6912 | 6912/6912 |
+  | `model` within band | the server, but *entailed* by the two rows below | 6912/6912 | 6912/6912 |
+  | `identical` | the **library**: `sampleNormal` vs `NormalNoise::sample`, bit for bit | 20736/20736 | 20736/20736 |
+  | `valueFactor` | the **library**: `layoutFor`'s vs `NormalNoise::valueFactor()`, bit for bit | identical | identical |
+
+  (2304 columns in each of `mod_single`, `mod_multi`, `mod_skip`, so 6912;
+  `identical` runs on all nine dimensions, 20736 per seed, 41472 over both.
+  The `valueFactor` rows are `0.83333333333333326` at effective octave count
+  1 and `1.25` at 3.) So the chain reads: the conformance suite validates
+  `NormalNoise` against vanilla; `identical` and `valueFactor` show the
+  analyzer's hand-rolled model is a bit-exact **transcription** of that
+  library rather than a second opinion about it; `library` and `exact` show
+  that function put through *this* readback recovers the server's own
+  columns. `model` passing is then not a fourth piece of evidence — it is
+  what the second and third links imply. Break any link and the conclusion
+  goes; none of them is load-bearing alone.
+
+  *And the mirror runs the other way.* The same rule on the *legacy*
+  dimensions of the same worlds lands at each dimension's own null: at band
+  0.00372, 13/2304 (`leg_single`), 14 (`leg_twin`), 15 (`leg_multi`) and 14
+  (`leg_skip`) at seed 42, and 19, 12, 20 and 23 at seed 31337 — 0.52% to
+  1.00%; at band 0.01488, 61 and 58 (2.65%, 2.52%); at band 0.05952, 262 and
+  246 (11.37%, 10.68%). 379/13824 and 378/13824 across the six legacy
+  dimensions. So the recovery above is the seeding and not the readback.
+
+  *The negative control is the direct form of that argument,* and it was the
+  confound this work was supposed to rule out. The legacy mirror varies the
+  flag and the seeding **together**, so a null score there is consistent with
+  either explanation. Scoring the same modern derivation at `worldSeed + 1`
+  against the same `mod_*` dimensions varies one thing. It falls to the null:
+  **45/6912 at seed 42** (`mod_single` 18, `mod_multi` 8, `mod_skip` 19) and
+  **44/6912 at seed 31337** (13, 15, 16) — 0.65% and 0.64%, against 100% one
+  seed away. `--control` treats a negative arm above a tenth of the columns
+  as a control failure, and the conformance case asserts it per dimension.
+
+  *Two caveats, and the second is new here.*
+
+  1. It does not widen the space. The scan still covers one stack rule and no
+     frequency variation (above), and a control run on a modern rule cannot
+     tell you whether the legacy rule uses a stack shape the scan never
+     enumerates — which remains the most likely place for it to be hiding.
+
+  2. **Everything the control validates, it validates on the MODERN
+     dimensions.** The readback, the coordinate convention, the band and the
+     `quantise` inversion are shown correct where the legacy flag is absent,
+     so the step from "no survivor" to "absent from the space rather than
+     invisible to the tool" *assumes* the flag changes the **seeding** and
+     nothing else in the terrain pipeline. Nothing measured here establishes
+     that, and it is recorded as an assumption rather than left implicit.
+
+  *That assumption is now bounded, cheaply.* If the flag also moved the
+  gradient, the output scale, the cell spacing or the sampling coordinates,
+  a legacy dimension's readback would not have the same **spread** or the
+  same **neighbour-to-neighbour structure** as its modern mirror.
+  `--profile` measures both — the standard deviation of the inverted column
+  values, and their Pearson autocorrelation at lag 4, the probe's own column
+  spacing, where a change in cell size or frequency bites hardest:
+
+  | dimension | shape | sd (42 / 31337) | lag-4 (42 / 31337) |
+  |-----------|-------|-----------------|--------------------|
+  | `leg_single`   | 1-octave | 0.2881 / 0.2949 | 0.3145 / 0.3172 |
+  | `mod_single`   | 1-octave | 0.3421 / 0.3190 | 0.4674 / 0.4254 |
+  | `leg_twin`     | 1-octave | 0.3200 / 0.3388 | 0.4414 / 0.4717 |
+  | `leg_multi`    | 3-octave | 0.2924 / 0.2984 | 0.8769 / 0.8824 |
+  | `mod_multi`    | 3-octave | 0.2906 / 0.3233 | 0.8817 / 0.9022 |
+  | `leg_skip`     | skip     | 0.2956 / 0.2646 | 0.9158 / 0.9084 |
+  | `mod_skip`     | skip     | 0.2808 / 0.2786 | 0.9245 / 0.9090 |
+  | `leg_skip_q4`  | skip     | 0.2957 / 0.2646 | 0.9150 / 0.9077 |
+  | `leg_skip_q16` | skip     | 0.2982 / 0.2671 | 0.9039 / 0.8946 |
+
+  Every dimension's spread lands in one interval, **0.2646 to 0.3421**, and
+  the lag-4 figures group by noise *shape* rather than by the flag: 1-octave
+  0.3145-0.4717, 3-octave 0.8769-0.9022, skip 0.8946-0.9245. Shape for shape,
+  the legacy mean differs from the modern mean by **0.060 at most** in lag-4
+  (1-octave; 0.012 at 3-octave, 0.009 at skip) and by **0.020 at most** in sd
+  (1-octave; 0.012 and 0.001). The statistic is not blind: the gap between
+  the widest 1-octave instance and the narrowest of the others is **0.405**,
+  six times the largest legacy-to-modern difference it reports. So at this
+  resolution the flag does not visibly move the pipeline's spatial structure.
+  That is a bounded, refutable statement and not a proof — nothing short of
+  the pipeline itself would be — but it replaces an assumption that was not
+  being measured at all.
+  `tests/conformance/vanilla_legacy_seed_control_test.cpp` asserts it, with
+  tolerances about three times the measured differences.
+
+  *Four figures supplied with the request for this measurement did not
+  reproduce, and they are listed rather than quietly replaced.* The spread was
+  given as "0.26-0.34 on both sides", which is right (0.2646-0.3421). The
+  lag-4 ranges were not. Given "1-octave 0.305-0.480 across four instances",
+  measured 0.3145-0.4717 across **six** — `leg_single`, `mod_single` and
+  `leg_twin` at two seeds each. Given "3-octave 0.855-0.906", measured
+  0.8769-0.9022; the quoted lower bound is below anything this probe
+  produces. Given "skip 0.904-0.925", measured 0.8946-0.9245: `leg_skip_q16`
+  at seed 31337 is 0.8946, under the quoted floor. And the legacy-side counts
+  at scale 2 were given as "13-23", but `leg_twin` at seed 31337 scores
+  **12**/2304, so the range is 12-23. None of these changes the conclusion —
+  the shapes still separate by 0.405 where the mirror differs by at most
+  0.060 — but a range quoted one instance too narrow is how a later
+  measurement outside it reads as a signal, which is the same mistake this
+  section already records once for the null. (What did reproduce to the
+  column: the negative control's 45/6912 at seed 42, `mod_single` 18,
+  `mod_multi` 8, `mod_skip` 19, and the legacy counts at the two coarse
+  scales, 58-61 and 246-262.)
+
+  *What the control does NOT reach, inside the apparatus rather than outside
+  it.* `blocksFor` under `Generator::Lcg` — Java `Random` driving
+  `PerlinNoise::fromRandom`, which the half of the 270,000 candidates that
+  use the LCG depends on — is exercised by neither `--control` nor the
+  conformance case. Both run Xoroshiro128++ only, because the rule known to
+  be right is the modern one. That path is validated against the server in
+  `tests/conformance/vanilla_legacy_blended_test.cpp`, where
+  `BlendedNoise::legacyFromWorldSeed` is `JavaRandom{worldSeed}` handed
+  straight into the same `PerlinNoise::fromRandom`; the control's guarantee
+  stops at the seed rules it actually runs.
+
+  *One number reported to this project did not survive being measured.* A
+  reviewer's external run gave the worst error on the mirror dimensions as
+  "exactly 0.00372", equal to the band. It is not equal: the largest
+  |ours - server| is 0.003719225, 0.003718785 and 0.003716169 at seed 42 and
+  0.003717617, 0.003719963 and 0.003718207 at seed 31337, against a band of
+  0.0037202380952380952 — strictly under it in all six, by 2.8e-7 to 4.1e-6.
+  Equality would have meant a column sitting exactly on the acceptance
+  boundary, where a one-ulp change in the model flips it; the margin is
+  small because 2304 quantisation errors nearly fill their interval, which is
+  what a correct model looks like, but it is a margin. The "exactly" was a
+  `%.5f` printing the band and the error to the same five places. (The figure
+  `--control` prints is now per arm, `worst(library)` and `worst(model)`
+  separately: a single accumulator fed from the library arm reported nothing
+  about the model arm, which is the one the plant and the scan actually
+  share. They agree to the bit here, as `identical` says they must.)
+
+  *The control is itself calibrated, by breaking the model on purpose.* Five
+  one-line mutations of the analyzer's forward model, each scored at seed 42
+  against the three mirror dimensions, and every one of them fails the
+  control (exit 1) — but not all through the same arm, which is the reason
+  there are three:
+
+  | mutation | `model` in band | `identical` | `exact` |
+  |----------|-----------------|-------------|---------|
+  | drop the second stack | 27-59/2304 | 0/2304 | 27-59/2304 |
+  | second-stack ratio 338/331 | 294-763/2304 | 1/2304 | 294-763/2304 |
+  | `persistence *= 0.25` per octave | 2304 (1 octave), 71 and 129 (3) | 0 where it bites | as `model` |
+  | `valueFactor` as `(5n)/(3(n+1))` | **2304/2304** | 327/2304 at n=1 | **2304/2304** |
+  | `quantise` as `floor(t - 0.5)` | **2304/2304** | 2304/2304 | 1107-1166/2304 |
+
+  The last two rows are the load-bearing ones. A one-ulp `valueFactor` — the
+  algebraically equal spelling this project already measured off the server
+  and rejected — is **invisible** to a band the width of a terrain block and
+  invisible through `quantise`; only the bit comparison against
+  `NormalNoise::valueFactor()` sees it. And the inversion bug that once made
+  the plant score 51% (`floor(t - 0.5)` for `ceil(t) - 1`) is invisible to
+  the band arm, which still reports every column, and shows up only in the
+  exact arm, at 1107-1166 of 2304 (48.0-50.6%) — the historical 51%, reached
+  by a route that names the cause rather than by a plant that merely fails. A
+  control with one arm would have missed one of these two. The mutations are
+  scratch edits rather than committed code; each is the single substitution
+  named in the table, applied to
+  `tools/analysis/legacy-seed-analyze.cpp`. The two load-bearing rows were
+  re-measured against the committed tool while writing this entry and
+  reproduce exactly — `valueFactor` as `(5n)/(3(n+1))` gives `model`
+  2304/2304, `exact` 2304/2304 and `identical` 327/2304 at n=1; `quantise` as
+  `floor(t - 0.5)` gives `model` 2304/2304, `identical` 2304/2304 and `exact`
+  1148, 1107 and 1166 of 2304 — and both exit 1. The other three rows stand
+  as originally measured.
+
+  *And the analyzer is now inside the build, which is the only reason any of
+  the above can be relied on tomorrow.* It used to be compiled by hand from a
+  `g++` line in its own header: in no CMake target, and therefore reached by
+  none of `tools/lint/format.sh`, `tools/lint/warnings.sh` or
+  `tools/lint/tidy.sh`. A claim that its hand-rolled model agrees with the
+  library bit for bit could go stale without one gate turning red — the
+  measurement was real, but it was a one-shot manual one. It is now the
+  target `stratum_legacy_seed_analyze` (`tools/analysis/CMakeLists.txt`), it
+  builds under the project warning set, `format.sh` and `tidy.sh` name it
+  (they list the analysis sources that are build targets rather than sweeping
+  `tools/analysis`, most of which is one-shot investigation code nothing
+  compiles), and `ctest --preset conformance` runs its `--control` on both
+  probe worlds as `conformance.legacy_seed_control_tool`, skipping with exit
+  77 and the regeneration command when they are absent. Entering those gates
+  cost the file seven fixes it had been hiding: four `-Wfloat-equal`
+  comparisons against literal amplitudes, and three `readability-identifier-
+  naming` violations under clang-tidy 18. That test is
+  where the `model`, `identical` and `valueFactor` arms are gated; the
+  conformance case in `tests/` cannot carry them, because there the library
+  *is* the model.
+
+  *What this does and does not license.* It converts "270,000 candidates, no
+  survivor" from an argument into a measurement: a correct named-noise rule
+  **is** recoverable through this apparatus, so the legacy rule is absent
+  from the searched space rather than invisible to the tool — subject to the
+  two caveats above.
+  `tests/conformance/vanilla_legacy_seed_control_test.cpp` guards the
+  recovery, the null, the negative control and the spread/autocorrelation
+  comparison, over both seeds. It requires **both** probe worlds: with either
+  missing it SKIPs naming the one that is gone and the command that
+  regenerates it, rather than scoring one world and reporting a pass. A skip
+  is not a pass — Catch2 exits **4** when every selected case skips, and
+  `ctest` reads that as a skip only because `catch_discover_tests` sets
+  `SKIP_RETURN_CODE 4` (`Catch.cmake:219`); run the binary by hand and the
+  shell reports 4.
+
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares
   `type NoiseParametersRef = (#[id="worldgen/noise"] string | NoiseParameters)`,

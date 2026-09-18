@@ -49,7 +49,13 @@ cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=OFF >/dev/null
 sources=()
 while IFS= read -r file; do
     sources+=("${file}")
-done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort)
+# The tools/analysis entries are the ones that are build targets, so they are
+# in compile_commands.json and clang-tidy can see them. They are analysed for
+# the same reason they were made targets: an analysis tool that claims
+# agreement with the library has to be held to the library's own gates, or the
+# claim drifts unnoticed. Keep this list in step with the one in format.sh.
+done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
+    printf '%s\n' tools/analysis/legacy-seed-analyze.cpp)
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"

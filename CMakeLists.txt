@@ -100,6 +100,12 @@ if(STRATUM_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# After tests/, which is where STRATUM_FIXTURES_DIR is defined: the analysis
+# tools' control test reads the probe worlds under it. They are here at all so
+# that the build, the warning set, clang-format and clang-tidy reach them --
+# see tools/analysis/CMakeLists.txt.
+add_subdirectory(tools/analysis)
+
 message(STATUS "Stratum ${PROJECT_VERSION} | engine v${STRATUM_PIPELINE_ENGINE_VERSION} "
                "| schema pin MC ${STRATUM_MINECRAFT_VERSION} "
                "pack format ${STRATUM_PACK_FORMAT_MAJOR}.${STRATUM_PACK_FORMAT_MINOR}")

@@ -79,11 +79,30 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         //     bytes of MD5("ns:path"), one further LCG fork. It scores at the
         //     dimension's null.
         //
-        // The search is calibrated rather than merely large: a candidate
-        // planted inside the space and put through the same quantisation the
-        // server's terrain imposes is returned at rank 1, as the sole
-        // survivor, at 2304/2304 columns, in every legacy configuration. So
-        // the null result is a null result and not a blind spot.
+        // The search is calibrated rather than merely large, in both of the
+        // ways it has to be:
+        //
+        //   * its STATISTIC is sensitive — a candidate planted inside the
+        //     space and put through the same quantisation the server's
+        //     terrain imposes is returned at rank 1, as the sole survivor, at
+        //     2304/2304 columns, in every legacy configuration;
+        //   * and its FORWARD MODEL is right — which the plant cannot show,
+        //     because a plant synthesises its readings through that same
+        //     model and would come back at rank 1 even if the model were
+        //     wrong. `--control` scores the modern derivation implemented
+        //     below against the probe's flag-off mirror dimensions through
+        //     the identical readback: 6912/6912 columns per seed, exactly
+        //     through the readback's own inversion, while the same rule sits
+        //     at the null (378-379/13824) on the legacy dimensions of the
+        //     same worlds, and at worldSeed + 1 falls to the null on the
+        //     mirror dimensions themselves (44-45/6912) — so the recovery is
+        //     the seeding and not a readback that accepts anything.
+        //
+        // So the null result is a null result and not a blind spot — within
+        // the space, which covers one stack rule and no frequency variation,
+        // and subject to the control having been run on the flag-off
+        // dimensions only. SPEC §11 states that second caveat, and the
+        // spread/autocorrelation measurement that bounds it.
         //
         // What IS settled, and lives next door: this dimension's
         // `old_blended_noise` is seeded by the world seed handed straight to

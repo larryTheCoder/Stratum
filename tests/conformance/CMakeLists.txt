@@ -50,6 +50,7 @@ add_executable(stratum_conformance_tests
     vanilla_block_state_mapping_test.cpp
     vanilla_blended_probe_test.cpp
     vanilla_legacy_blended_test.cpp
+    vanilla_legacy_seed_control_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
     vanilla_freeze_test.cpp

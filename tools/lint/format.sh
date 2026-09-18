@@ -17,6 +17,19 @@ if ! command -v "${CLANG_FORMAT}" >/dev/null 2>&1; then
     exit 77
 fi
 
+# tools/analysis is mostly one-shot investigation code that nothing builds,
+# and formatting it wholesale would rewrite a dozen files nobody is touching.
+# What IS listed here is the part of it that became a build target: a file the
+# project compiles, warns on and tests is a file the project formats too. It
+# was added when legacy-seed-analyze.cpp stopped being compiled by hand from a
+# comment in its own header (see tools/analysis/CMakeLists.txt) -- until then
+# it was outside every gate, and a claim in it about agreeing with the library
+# could go stale with nothing to catch it. Add to this list whenever another
+# analysis tool is brought under the build.
+analysis_targets=(
+    tools/analysis/legacy-seed-analyze.cpp
+)
+
 # A read loop rather than mapfile: macOS still ships bash 3.2, where
 # mapfile does not exist.
 files=()
@@ -24,7 +37,8 @@ while IFS= read -r file; do
     files+=("${file}")
 done < <(find lib cli ext ext-nukkit tests \
     \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.inl' \) \
-    -not -path '*/_deps/*' 2>/dev/null | sort)
+    -not -path '*/_deps/*' 2>/dev/null | sort; \
+    printf '%s\n' "${analysis_targets[@]}")
 
 if [[ ${#files[@]} -eq 0 ]]; then
     echo "no C++ sources to format"
