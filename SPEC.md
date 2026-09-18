@@ -610,25 +610,27 @@ mapping has two halves, split at a platform-neutral midpoint:
   including the surface's thirteen-position aborting-minimum scan, re-derived
   at twenty feature scales.
 
-  Four things stood between MA and closing. Three (1, 2, 3) are now fully
-  CLOSED — the barrier's third source (3) including Q6.3's water-over-lava
+  Four things stood between MA and closing, and all four are now CLOSED —
+  the barrier's third source (3) including Q6.3's water-over-lava
   exception, measured on the server and smaller than it read (see (d)),
-  and Q6.4's mixed-type Π, measured on the same worlds and landed (see (e)).
-  Fluid TYPE (4) is narrowed to one open piece, the level ceiling's exact
-  value. What the barrier measurement left open is not a barrier piece at
+  Q6.4's mixed-type Π, measured on the same worlds and landed (see (e)), and
+  fluid TYPE (4), whose last open piece — the level ceiling — is pinned at
+  -10 and shown to be an absolute constant rather than a sea-relative one
+  (§11). What the barrier measurement left open is not a barrier piece at
   all but the LEVEL a source carries below lambda — the dry sentinel and
-  the ladder clamp (§11, "The mixed-type Π"). **`ChunkFiller` now
+  the ladder clamp (§11, "The mixed-type Π"), which is now the one narrow
+  piece still open here. **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
   measured against a real, aquifer-on overworld region, the wiring's own
   category decision is EXACT on 393216 of 393216 blocks over the four chunks
   `golden_fill_aquifer_test.cpp` pins, and 6290723 of 6291456 (99.988%) over
-  a wider 64-chunk sweep — a residual small enough that the two still-open
-  narrow pieces above plausibly explain the whole of it. WITH the real
+  a wider 64-chunk sweep — a residual small enough that the narrow piece
+  still open above plausibly explains the whole of it. WITH the real
   287-rule surface tree also running, `golden_fill_aquifer_test.cpp` is now
   393216 of 393216 too (§11: the deepslate surface-rule gap
-  `golden_fill_test.cpp` named is CLOSED, not carried). What remains is the
-  two still-open barrier/fluid-type pieces themselves, plus ore veins (M3,
-  untouched) — none of which is unique to aquifers, which is why this still
+  `golden_fill_test.cpp` named is CLOSED, not carried). What remains is that
+  one still-open level piece itself, plus ore veins (M3,
+  untouched) — neither of which is unique to aquifers, which is why this still
   reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
@@ -744,7 +746,7 @@ mapping has two halves, split at a platform-neutral midpoint:
      sentinel and the ladder clamp — measured to close the 590 to 0 on
      the rows above the sea and named as the next slice, not landed.
 
-  4. **Fluid TYPE — measured, and down to one open piece.** `fluid_type.hpp`
+  4. **Fluid TYPE — measured; the ceiling is now CLOSED too.** `fluid_type.hpp`
      scores 0.99873 per source on 3125 sources over four seeds against a
      0.94176 null, and the `lava` entry's own read position is settled:
      contracted indices on a SIXTY-FOUR block horizontal pitch, where the
@@ -752,13 +754,15 @@ mapping has two halves, split at a platform-neutral midpoint:
      `aquifer-fluidtype-probe.sh` drove `lava` to the exact double 0.3 and to
      its two adjacent doubles, and the server's own answer lands exactly
      where the code already read it — strict `>`, confirmed to the ULP. The
-     **level ceiling is NARROWED, not yet pinned**: the same tool brackets it
-     from the original [-14, -5] down to {-10, -9} (-11 and -10 measure as
-     lava, -8 as water), and -10 — this build's own value — fits every
-     reading; -9 could not be reached to rule out on the attempt made. A
-     third piece is carried on the spec's word — whether a source already
-     reading lava is exempt — and cannot be observed, since those sources
-     sit below the lava sea.
+     **level ceiling is now PINNED at -10**, inclusive: group D of the same
+     tool reaches level -9 by the two routes the ladder's mod-3 lattice does
+     not constrain — the sea branch, and the psl cap at two different sea
+     levels — and reads -12/-11/-10 lava and -9/-8/-7 water on all of them,
+     16384 of 16384 columns per dimension with 0 of the other fluid, on
+     seeds 42, 7 and 999. The same run shows the ceiling is ABSOLUTE rather
+     than sea- or lambda-relative (§11). A third piece is carried on the
+     spec's word — whether a source already reading lava is exempt — and
+     cannot be observed, since those sources sit below the lava sea.
 
   5. **CLOSED. `ChunkFiller` now calls the aquifer.** `aquifer::computeSubstance`
      (`lib/include/stratum/aquifer/substance.hpp`) combines everything above
@@ -2804,22 +2808,64 @@ Open:
   *Strictness at exactly 0.3, closed.* `tools/analysis/aquifer-fluidtype-probe.sh`
   (group A) drives `lava` to a literal constant instead of through noise —
   the exact double 0.3, and the two doubles immediately adjacent to it — at a
-  level forced to -32, deep enough that the still-open ceiling question
-  cannot interfere from either side of its own bracket. The transition is
+  level forced to -32, deep enough that the ceiling question, then still
+  open, could not interfere from either side of its own bracket. The transition is
   exact and lands exactly where the code already read it: `lava == 0.3` on
   the server comes back water, the very next representable double above it
   comes back lava. Strict `>`, confirmed to the ULP rather than assumed.
 
-  *The level ceiling, narrowed from ten candidates to two.* The same tool
-  (group B/C) sweeps `fluid_level_spread` — past the ±1.0 any real noise
-  reaches, the same kind of extreme point already used elsewhere in this
-  corpus to pin an exact constant — and reads -11 and -10 as lava, -8 as
-  water. That brackets the true ceiling to {-10, -9}: the -10 this build
-  already used fits every reading and needs no correction, but -9 was not
-  directly reachable to rule out — the one other rung whose base is
-  congruent to it mod 3 collapsed to the lava-sea floor instead of the
-  target level on the attempt made, for a reason not yet understood. A
-  future probe should chase that rather than assume -10 without it.
+  *The level ceiling, pinned at -10 — and shown to be absolute.* The same
+  tool (group B/C) had swept `fluid_level_spread` past the ±1.0 any real
+  noise reaches and read -11 and -10 as lava, -8 as water, which bracketed
+  the ceiling to {-10, -9} but could not choose between them: the sweep
+  steps the level in threes and skipped both candidates. Group D closes it
+  by reaching -9 through the two routes the ladder's mod-3 lattice does not
+  constrain. Arm Q rides the sea branch (`fluid_level_floodedness` 0.9, past
+  the measured 0.8 gate, so the level IS `sea_level`) and reads
+  -12/-11/-10 lava and -9/-8/-7 water. Arm P binds the psl cap instead
+  (`sea_level` -16, spread 6.0 so every rung lands above the cap) and reads
+  the same six. Arm P′ repeats arm P at `sea_level` -70. Every dimension is
+  16384 of 16384 columns with 0 of the other fluid, identical on seeds 42, 7
+  and 999. **The ceiling is -10, inclusive.**
+
+  That is more than the question asked. Three different sea levels (63, -16,
+  -70) and two different level-producing branches put the transition at the
+  same ABSOLUTE pair, which refutes a sea-relative rule — `L ≤ sea_level −
+  73` is indistinguishable from -10 at the shipped sea, but would have moved
+  arm P's transition to -89 and arm P′'s to -143 — and a lambda-relative one
+  with it, arm P′ having moved lambda to -70 for exactly that purpose.
+
+  *Why the earlier attempt collapsed, now arithmetic rather than a mystery.*
+  The ladder level is `40·floorDiv(centreY,40) + 20 + 3·floorDiv(floor(10·
+  spread),3)`, so for a constant spread the offset is uniform world-wide and
+  reaching -9 needs `yi ≡ 1 (mod 3)`. The attempt that collapsed picked
+  `yi = 1` — base 60, cells centred in y ∈ [40,80), a whole rung above the
+  observable band: those -9 sources own no block below their own level and
+  place nothing, while every cell that does own a block in -53..0 lands on
+  base -20 or -60 (levels -89 / -129), below lambda and therefore dry. What
+  was left in the world was the global lava sea alone, which is what the
+  first pass recorded as a collapse to the lava-sea floor. The 68-cell -10
+  reading is the mirror image (base 20, `yi = 0`) and works.
+
+  *And why no golden could ever have decided it.* The same arithmetic makes
+  the gap structural: with a real spread noise (|s| ≤ 1) the offset is
+  confined to [-12, +9], so the reachable uncapped levels are {-72..-51} ∪
+  {-32..-11} ∪ {8..29} ∪ … and -10/-9 fall in the hole between -11 and +8.
+  The conformance corpus contains no source at either level, and the group D
+  reading pins the CODE's comparison boundary rather than anything ordinary
+  terrain produces — its spread 6.0 and floodedness 0.9 are far outside any
+  real noise, deliberately, as the rest of this corpus does to pin a
+  constant. Group D also reproduces all three on-record readings in the same
+  run and world (-11 lava 14150, -8 water 14004, -10 lava 68 — exact on seed
+  42), which is what makes its level model trustworthy here.
+
+  *One readout caveat, measured rather than assumed.* With the analyzer's old
+  "≥5% of bodies" print filter removed, small-count entries appear that are
+  not source levels: `r_b09` prints `-10:water(w1914/l0)` beside its
+  `-11:LAVA(w0/l14150)`. A column dump resolves it — those columns hold a
+  SINGLE water block at y=-11 over obsidian at -12 over a deep lava body
+  (-13..-42), a water/lava contact film where two territories abut. Only the
+  near-16384 entries are readings.
 
   *Still not measured, and marked in the header rather than guessed.*
   Whether a source already reading lava is exempt cannot be observed at all,

@@ -70,17 +70,27 @@ TEST_CASE("a source too high up never turns to lava", "[aquifer]") {
     CHECK(fluidTypeOf(deep(0.9, kLavaLevelCeiling + 1)) == FluidType::Default);
     CHECK(fluidTypeOf(deep(0.9, 63)) == FluidType::Default);
 
-    // The ceiling is NARROWED to {-10, -9}, not yet pinned to one value
-    // (`aquifer-fluidtype-probe.sh` group B/C): -11 and -10 both measured as
-    // lava, -8 measured as water — -10, this file's own default, fits every
-    // reading; -9 could not be reached directly to test (fluid_type.hpp's
-    // own header explains why, and what the next attempt should try).
+    // The ceiling is PINNED at -10 (`aquifer-fluidtype-probe.sh --group d`).
+    // The earlier pass could only bracket it to {-10, -9} — sweeping the
+    // spread steps the level in threes and skipped both candidates — so
+    // these assertions were satisfied by EITHER value and did not
+    // discriminate. Group D reached -9 by two routes the mod-3 ladder does
+    // not constrain (the sea branch, and the psl cap at two different sea
+    // levels) and read water there on three seeds, 16384 of 16384 columns
+    // per dimension with 0 lava; -10 read lava the same way.
+    //
+    // The -9 case below is therefore the one that pins the constant, and it
+    // is written as a LITERAL on purpose: every other assertion in this case
+    // is phrased relative to `kLavaLevelCeiling` and so would survive the
+    // constant moving to -9, which is exactly how the old bracket went
+    // unnoticed. This one fails if it moves.
     CHECK(fluidTypeOf(deep(0.9, -11)) == FluidType::Lava);
     CHECK(fluidTypeOf(deep(0.9, -10)) == FluidType::Lava);
+    CHECK(fluidTypeOf(deep(0.9, -9)) == FluidType::Default);
     CHECK(fluidTypeOf(deep(0.9, -8)) == FluidType::Default);
 
     // Both ends of the ORIGINAL, wider bracket still gate correctly, since
-    // {-10, -9} sits inside [-14, -5] — kept as a coarser sanity check.
+    // -10 sits inside [-14, -5] — kept as a coarser sanity check.
     CHECK(fluidTypeOf(deep(0.9, -14)) == FluidType::Lava);
     CHECK(fluidTypeOf(deep(0.9, -4)) == FluidType::Default);
 }
