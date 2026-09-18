@@ -235,10 +235,13 @@ Open:
       with `psl` floored. The condition opens 2 to 8 blocks BELOW the level it
       is named after, and the 8 is a literal — invariant across cell heights
       4/8/16, cell widths 4/8/16, three floors, three heights and three sea
-      levels (12 geometry dimensions, 442368 of 442368 columns). Since the
-      boundary is true at that y and false one block under it on every column,
-      `y >= C` and `y > C - 1` are the same predicate: the strictness could
-      never have been the answer.
+      levels: 12 geometry dimensions, each scoring all of its own 36864
+      columns, 442368 of 442368. That 442368 is 12 RE-SCORINGS of the same
+      36864 columns at one seed, not 442368 independent columns — the geometry
+      varies, the columns do not. The independent column evidence is 36864
+      columns x 2 seeds. Since the boundary is true at that y and false one
+      block under it on every column, `y >= C` and `y > C - 1` are the same
+      predicate: the strictness could never have been the answer.
 
       What made it measurable was not more chunks. The probe that "found the
       condition true everywhere" is still on disk (`probes/surf`, entry `aps`)
@@ -264,40 +267,107 @@ Open:
       harness that sampled rather than scored every column would have
       accepted it); the 8 as `2 * cellHeight`
       or as any function of cell width, floor, height or sea level (refuted by
-      the 12 geometry dimensions). NOT separated, and said plainly:
-      `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`, since the depth
-      never went negative anywhere measured. Separating them needs a datapack
-      overriding `minecraft:surface`'s own amplitudes.
+      the 12 geometry dimensions).
 
-      On real worlds: across 8 golden overworld regions, 14008 `grass_block`s
-      the server placed sit BELOW `preliminary_surface_level` — blocks the old
-      reading cannot place at all, since it switches the whole gated
-      surface-materials subtree off there. 11579 of them fall inside the
-      measured band. Nothing goes the other way, structurally: the new
-      boundary is never above the old one.
+      NOT separated, and now with the reason rather than an excuse:
+      `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`. These differ only
+      where the RETURNED depth is negative, and it never is — measured over
+      every column of all eight golden overworld regions, 2097152 of them: 0
+      negative, minimum 0, 6745 columns at exactly 0 (one in 311). The depth
+      is `(int)(2.75*surface + 3 + 0.25*u)` and that cast TRUNCATES toward
+      zero, so the raw value has to reach -1, not merely go negative. Inside
+      those regions it does go negative — 207 columns, all at seed 0 — and
+      bottoms out at -0.449658.
+
+      That census is real but it is not a proof of impossibility, and a first
+      version of this entry read it as one. Sweeping the SAME eight seeds over
+      x, z in [-4096, 4096) — 67108864 columns each, 536870912 in all — finds
+      four columns at depth -1, all at seed -4172144997902289642: (2282,1879)
+      raw -1.033659749, (2282,1880) -1.048435300, (2283,1880) -1.008497344,
+      (2284,1880) -1.010109149. About one column in 134 million, so a
+      2097152-column census finding none is what a sample 256x too small is
+      expected to do. Seed 42 reaches -0.966441862 in the same window. The
+      clamp is therefore REACHABLE by vanilla, and the wording this replaces
+      ("unobservable in vanilla", "a data-pack-only difference") was false.
+
+      Still not separated, but for a reason that now names its own remedy: the
+      four columns are in chunk (142,117) — region `r.4.3.mca`, which is not
+      among the `r.0.0.mca` on disk. At depth -1 the candidates differ over
+      exactly one block, `y = psl - 9`. Generating that region and reading
+      that block at those four columns separates them, and no data pack is
+      needed. Scored in the conformance file's own "the surface depth never
+      reaches a negative integer in the eight golden regions" and pinned there
+      as a counter-example.
+
+      The claim ALL of this replaces was wrong too: `surface_executor.cpp`
+      and `executor.hpp` both said the depth "reaches -1 on about one column
+      in 22000". It reaches -1 on none of the 2097152 golden columns and on 4
+      of 536870912 wider ones — four orders of magnitude rarer than claimed.
+
+      On real worlds, and now in BOTH directions, because counting only what
+      the old reading cannot explain rewards a boundary for reaching further
+      down — one at the world floor would score perfectly on it:
+
+      * forward. Across 8 golden overworld regions, 14008 `grass_block`s the
+        server placed sit BELOW `preliminary_surface_level` — blocks the old
+        reading cannot place at all, since it switches the whole gated
+        surface-materials subtree off there. 11579 of them fall inside the
+        measured band.
+      * reverse. 11953 columns have their own SURFACE — the first block from
+        the sky that is neither air nor fluid, which is the position the
+        materials subtree decides — inside the band the new reading opens and
+        the old leaves shut. 10676 of them carry a block that subtree CAN
+        place and the terrain filler cannot, which is an upper bound on
+        confirmations rather than a count of them: vanilla's features place
+        gravel, sand, dirt, podzol and the rest after the surface pass, and
+        gravel alone is 5711 of the 10676. The remaining 1277 neither confirm nor refute it: 1265 are
+        `stone`, which the subtree itself can place, and 12 are granite and
+        copper ore, written by features after the surface pass. So the reverse
+        direction produced no counter-example — and no confirmation of those
+        1277 either. It cannot: the subtree is a `sequence` whose own inner
+        rules may decline at a position its gate opened, so absence of a
+        material is never a refutation. What is structural rather than
+        measured is that the new boundary is never ABOVE the old one, since
+        the depth never exceeded 6 in 2097152 columns.
 
       Landed: `lib/src/surface_executor.cpp`, plus a FLOOR in place of
       `static_cast` in `lib/src/terrain_filler.cpp` (measured: psl -0.5
       reaches the condition as -1, not 0 — datapack-only, since vanilla's
       `find_top_surface` returns integers), and the tree now requires the two
-      surface noises. `tools/analysis/aps-boundary-probe.sh` +
-      `aps-boundary-analyze.cpp` regenerate and re-score it;
-      `tests/conformance/vanilla_above_preliminary_surface_test.cpp` scores it.
+      surface noises. `surface::Executor::surfaceDepthRaw` exposes the value
+      before the cast, which is what makes the clamp census a measurement
+      rather than an assertion. `tools/analysis/aps-boundary-probe.sh` +
+      `aps-boundary-analyze.cpp` (modes `probe`, `golden`, `band`, `bands`,
+      `depth`) regenerate and re-score it;
+      `tests/conformance/vanilla_above_preliminary_surface_test.cpp` scores
+      it, in eight cases: the boundary, the floor-not-truncation conversion,
+      the 8 as a literal, the second seed, both directions on real
+      overworlds, the surface-pass control, the depth census, and the
+      varying-psl counts below.
 - [ ] **Where a spatially varying `preliminary_surface_level` is sampled —
       open, and found by the sweep above.** `terrain::ChunkFiller` evaluates
       the entry per column. The server does not: driven by a three-valued
       `range_choice` (-40 / 0 / 60), the value that reaches the condition
-      comes back as 101 distinct integer values spanning the whole range, so
-      it is sampled on a horizontal lattice and INTERPOLATED before the floor.
+      takes 101 distinct integer values — every integer from -40 to 60, both
+      extremes included and no gaps — so it is sampled on a horizontal lattice
+      and INTERPOLATED before the floor. Two different counts live here and
+      the earlier wording ran them together: 101 counts the psl recovered from
+      the band as `boundary - surfaceDepth + 8`, while the BOUNDARY itself
+      takes 104 distinct values, -47 to 56, also contiguous, because the
+      column's own depth (0..6 over these columns) widens it. Both are over
+      the same 36864 columns of `probes/apsb/v_psl`, and both are now asserted
+      in the conformance file, so neither can drift from the fixture again.
       It is not the cell lattice — cell widths 4, 8 and 16 give identical
       output, as does wrapping the entry in `flat_cache`. A constant psl makes
       the interpolation a no-op, which is why the boundary entry above stands
       without it.
 
       Its size: the residual in the golden re-scoring above — 2429 of the
-      14008 blocks land just below the band, concentrated on the seeds with
-      the steepest terrain, which is where a per-column read and an
-      interpolated one part company. Not implemented here: it needs its own
+      14008 blocks land just below the band, and it is very unevenly spread
+      across the seeds (1398, 404, 285, 259, 56, 26, 1, 0). Which seeds those
+      are is measured; that the spread tracks terrain STEEPNESS is a
+      hypothesis this milestone did not test, and it is written here as one
+      rather than as the finding. Not implemented here: it needs its own
       probe family (the lattice's pitch and anchor separated by moving the
       world origin, as `probes/cellsize` does for the cell lattice) and its
       own conformance case before it touches the filler. The aquifer reads the

@@ -25,7 +25,12 @@
 # single-block resolution, in every column. The control that this is the
 # condition turning false rather than the surface pass stopping is already on
 # disk: the `bandlands` and `steep` entries of `probes/surf`, same density and
-# same world, paint down to y = -64.
+# same world, paint down to y = -64. That control is no longer prose — it is
+# asserted, entry by entry, in
+# tests/conformance/vanilla_above_preliminary_surface_test.cpp ("the band's
+# lower edge is the condition going false, not the surface pass stopping"):
+# `bandlands` 36864 of 36864 columns to the floor, `steep` 6217 of 6217, `aps`
+# 0 of 36864 and its lower edges confined to -8..-2.
 #
 # THE LEVER. `density-probe.sh` pins every router entry to the constant 0
 # unless an entry overrides it by name, which is why the earlier probe
@@ -61,6 +66,21 @@
 #     above_preliminary_surface(x, y, z)  ==  y >= psl + surfaceDepth(x, z) - 8
 #
 # with psl FLOORED, and the 8 a literal invariant under every geometry above.
+# 52 dimensions in all: 19 constants + 7 fractions + 3 over terrain + 1 varying
+# in apsb, 10 in apsb2, 12 in apsb3.
+#
+# WHAT IT DOES NOT MEASURE, and cannot: whether the depth carries a bottom
+# clamp, i.e. `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`. Those
+# differ only where the RETURNED depth is negative, and in the golden regions
+# it never is: over every column of all eight (2097152) the returned depth's
+# minimum is 0 and the raw value's is -0.449658, where the cast truncates to 0
+# either way. That is a statement about those regions and NOT about vanilla —
+# the same eight seeds over 536870912 columns do reach depth -1, on four of
+# them. So reaching a negative depth does not need a data pack after all; it
+# needs the region those columns live in (r.4.3.mca at seed
+# -4172144997902289642), which this sweep deliberately does not build. Scored
+# in the conformance file's own "the surface depth never reaches a negative
+# integer in the eight golden regions".
 #
 # Nothing this writes is committed: worlds are Mojang-derived (SPEC §12).
 set -euo pipefail

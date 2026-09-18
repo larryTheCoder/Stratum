@@ -234,7 +234,7 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     return executor;
 }
 
-std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) const {
+double Executor::surfaceDepthRaw(const std::int32_t x, const std::int32_t z) const {
     if (surface_ == nullptr) {
         throw ExecutionError("this tree was compiled without a surface depth, so nothing in it "
                              "may ask for one");
@@ -243,11 +243,19 @@ std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) 
     // One draw from the UNSALTED positional source, at y = 0 rather than the
     // block's own y.
     rng::Xoroshiro128PlusPlus draw = jitter_.at(x, 0, z);
-    const double raw = (2.75 * field) + 3.0 + (0.25 * draw.nextDouble());
+    return (2.75 * field) + 3.0 + (0.25 * draw.nextDouble());
+}
+
+std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) const {
     // Truncation toward zero, and NO clamp: `floor` and `max(0, floor)` were
-    // both refuted against the server, and the difference is visible because
-    // the value goes below zero on roughly one column in 22000.
-    return static_cast<std::int32_t>(raw);
+    // both refuted against the server. Whether a BOTTOM clamp is there is
+    // still open, and it IS reachable by vanilla — rarely. The value never
+    // reached a negative integer in the 2097152 golden columns, but over
+    // 536870912 columns of the same eight seeds it does, on four of them (all
+    // at seed -4172144997902289642, around x 2282-2284 / z 1879-1880). About
+    // one column in 134 million. Said in the header, measured in the
+    // conformance harness, and not assumed either way.
+    return static_cast<std::int32_t>(surfaceDepthRaw(x, z));
 }
 
 bool Executor::freezing(const std::int32_t x, const std::int32_t y, const std::int32_t z,

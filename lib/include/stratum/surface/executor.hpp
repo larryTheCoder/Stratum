@@ -179,9 +179,16 @@ public:
     ///
     ///     (int)(2.75 * surfaceNoise(x, 0, z) + 3.0 + 0.25 * u)
     ///
-    /// The cast TRUNCATES toward zero and there is no clamp, so the value
-    /// reaches -1 on about one column in 22000 with vanilla's parameters —
-    /// which is not a curiosity, because `hole` is exactly `depth <= 0`.
+    /// The cast TRUNCATES toward zero and there is no clamp. Whether the
+    /// clamp is there is still open. It is not settled by the golden regions
+    /// — over 2097152 columns, every column of all eight, the returned value
+    /// never once went below 0 — but that is a sample limit, not a property
+    /// of vanilla: widening the same eight seeds to 536870912 columns finds
+    /// four at depth -1, all at seed -4172144997902289642. Roughly one column
+    /// in 134 million. Both figures, and the four columns, are recorded in
+    /// `tests/conformance/vanilla_above_preliminary_surface_test.cpp`. What
+    /// IS common is 0 (6745 of those columns, about one in 311), and that is
+    /// not a curiosity, because `hole` is exactly `depth <= 0`.
     ///
     /// `u` is one `nextDouble` from the world seed's UNSALTED positional
     /// source at (x, 0, z) — fork once, no name, no MD5. That is a different
@@ -189,6 +196,13 @@ public:
     /// MD5 of the name, and forks AGAIN. Mixing the two up is the single
     /// easiest mistake here and it cost this project two sessions.
     [[nodiscard]] std::int32_t surfaceDepth(std::int32_t x, std::int32_t z) const;
+
+    /// The same quantity BEFORE the cast, which is what makes the sentence
+    /// above measurable rather than asserted: the distance between the field
+    /// and a negative depth is a property of `minecraft:surface`'s own
+    /// amplitudes, and only the raw double shows it. Nothing in generation
+    /// calls this — it exists for the census that pins it.
+    [[nodiscard]] double surfaceDepthRaw(std::int32_t x, std::int32_t z) const;
 
     /// Whether `minecraft:temperature` fires — that is, whether it is cold
     /// enough to freeze at this block.

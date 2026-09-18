@@ -105,11 +105,16 @@ private:
 /// the server in tests/conformance instead.
 class SurfaceNoiseTree {
 public:
-    SurfaceNoiseTree() : path_(std::filesystem::temp_directory_path() / uniqueName()) {
+    /// @p amplitudes defaults to vanilla's own `minecraft:surface`. A data
+    /// pack may write anything here, and one that writes larger amplitudes is
+    /// the only way a surface depth reaches a negative INTEGER at all — see
+    /// the truncation case below, which passes its own.
+    explicit SurfaceNoiseTree(const char* amplitudes = "[1.0, 1.0, 1.0]")
+        : path_(std::filesystem::temp_directory_path() / uniqueName()) {
         const std::filesystem::path noiseDir = path_ / "noise";
         std::filesystem::create_directories(noiseDir);
         std::ofstream surface(noiseDir / "surface.json");
-        surface << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
+        surface << R"({"firstOctave": -6, "amplitudes": )" << amplitudes << "}";
         std::ofstream secondary(noiseDir / "surface_secondary.json");
         secondary << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
     }
@@ -283,6 +288,63 @@ TEST_CASE("above_preliminary_surface opens below the preliminary surface, not at
     // so `y >= C` and `y > C - 1` are the same predicate, and the pair of
     // CHECKs at `boundary` and `boundary - 1` above is the whole of it. What
     // was unknown was C, and C is not the preliminary surface.
+}
+
+TEST_CASE("the surface depth is its raw value truncated toward zero, never floored or clamped",
+          "[surface]") {
+    // Three separate readings of one cast, and this is where they are kept
+    // apart. `surfaceDepthRaw` is the value before it; `surfaceDepth` is
+    // `(int)` of that, which TRUNCATES — so a raw of -0.4 is 0, where a floor
+    // would give -1 and a bottom clamp would give 0 as well.
+    //
+    // Which is exactly why `depth` and `max(0, depth)` cannot be separated by
+    // a raw in (-1, 0): both are 0 there. Only a raw at or below -1 tells
+    // them apart. Vanilla's own `minecraft:surface` does reach that, but
+    // about one column in 134 million — see
+    // tests/conformance/vanilla_above_preliminary_surface_test.cpp, which
+    // pins the four known columns.
+    //
+    // The 4x amplitudes below are a deliberately generous choice so that both
+    // halves of the split fire densely in a unit test, NOT a threshold: 1x
+    // reaches -1.048 somewhere, it is simply far too rare to write a test
+    // around.
+    const SurfaceNoiseTree tree{"[4.0, 4.0, 4.0]"};
+    const auto noises = surfaceNoises(tree, kSeed);
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:condition"},
+                               {"if_true", {{"type", "minecraft:above_preliminary_surface"}}},
+                               {"then_run", block("minecraft:stone")}});
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry(), &noises);
+
+    int sawAboveMinusOne = 0;
+    int sawBelowMinusOne = 0;
+    for (std::int32_t x = -512; x < 512; x += 7) {
+        for (std::int32_t z = -64; z < 64; z += 11) {
+            const double raw = executor.surfaceDepthRaw(x, z);
+            const std::int32_t depth = executor.surfaceDepth(x, z);
+            INFO("(" << x << ", " << z << ") raw " << raw);
+            CHECK(depth == static_cast<std::int32_t>(raw));
+            if (raw >= 0.0) {
+                continue;
+            }
+            if (raw > -1.0) {
+                // Truncation, not a floor: a negative raw above -1 is 0, and
+                // so is indistinguishable from a clamped depth.
+                ++sawAboveMinusOne;
+                CHECK(depth == 0);
+                CHECK(static_cast<std::int32_t>(std::floor(raw)) == -1);
+            } else {
+                // At or below -1 the clamp WOULD show: this build returns the
+                // negative value, and `max(0, depth)` would not.
+                ++sawBelowMinusOne;
+                CHECK(depth < 0);
+            }
+        }
+    }
+    // Both halves of the split are actually exercised — otherwise the case
+    // above would assert nothing.
+    CHECK(sawAboveMinusOne > 0);
+    CHECK(sawBelowMinusOne > 0);
 }
 
 TEST_CASE("a tree naming above_preliminary_surface is refused without the surface noises",

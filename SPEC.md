@@ -1377,9 +1377,24 @@ Open:
   of the band the rule paints. That probe is still on disk and shows a clean
   stone/marker step in all 36864 of its columns.
 
-  Measured by `tools/analysis/aps-boundary-probe.sh` (58 probe dimensions
-  across three specs and two seeds, read back by `aps-boundary-analyze.cpp`)
-  and scored in `tests/conformance/vanilla_above_preliminary_surface_test.cpp`.
+  Measured by `tools/analysis/aps-boundary-probe.sh` (52 probe dimensions
+  across three specs and two seeds — 30 in `apsb`, 10 in `apsb2`, 12 in
+  `apsb3` — read back by `aps-boundary-analyze.cpp`) and scored in
+  `tests/conformance/vanilla_above_preliminary_surface_test.cpp`. The
+  boundary's own evidence is 36864 columns at each of two seeds; the 12
+  geometry dimensions re-score one seed's same 36864 columns twelve times
+  over, which is what makes the 8 a literal rather than what makes the
+  boundary a boundary.
+
+  That the band's lower edge is the CONDITION going false, rather than the
+  vanilla surface pass stopping at a height, is a separate statement and has
+  its own control: in `probes/surf`, one world and one pinned
+  `preliminary_surface_level`, `bandlands` (no condition at all) paints all
+  36864 columns down to the world floor and `steep` (a condition that does not
+  read y) paints all 6217 of the columns it selects down to it, while `aps`
+  reaches the floor in none and stops between -8 and -2. A pass bounded by
+  height would have clipped all three alike.
+
   Two consequences beyond the boundary itself:
 
   * `preliminary_surface_level` reaches the condition through a FLOOR, not a
@@ -1395,12 +1410,54 @@ Open:
 
   What is NOT settled, and is deliberately not implemented: where a
   spatially varying `preliminary_surface_level` is SAMPLED. Driven by a
-  three-valued `range_choice`, the value that reaches the condition takes 101
-  distinct integer values across the field's range rather than three, and is
-  unchanged by cell width — so it is sampled on a fixed horizontal lattice and
-  interpolated, not read per column as `ChunkFiller` reads it. A constant
-  `psl` makes that a no-op, which is why the boundary above is unaffected by
+  three-valued `range_choice` (-40 / 0 / 60), the value that reaches the
+  condition takes 101 distinct integer values rather than three — every
+  integer from -40 to 60, no gaps — and is unchanged by cell width, so it is
+  sampled on a fixed horizontal lattice and interpolated, not read per column
+  as `ChunkFiller` reads it. The BOUNDARY those columns show takes 104
+  distinct values, -47 to 56, since the column's own surface depth (0..6 here)
+  widens the range; the two counts are different quantities and both are
+  asserted against `probes/apsb/v_psl`'s 36864 columns. A constant `psl` makes
+  the interpolation a no-op, which is why the boundary above is unaffected by
   it. See PROGRESS.md's M4 entry.
+
+  Also NOT settled, and separated from the above because its reason is
+  different: whether the depth carries a bottom clamp, i.e. `8 - surfaceDepth`
+  against `8 - max(0, surfaceDepth)`. Those two differ only where the RETURNED
+  depth is negative, which needs a raw value at or below -1, since the cast
+  truncates toward zero.
+
+  Vanilla does produce such columns, and the golden census is simply too small
+  a sample to contain one. Over every column of all eight golden overworld
+  regions — 2097152 — the returned depth's minimum is 0, 6745 columns sit at
+  exactly 0, the raw value goes below zero on 207 columns (all at seed 0) and
+  bottoms out at -0.449658. Widening the same eight seeds to x, z in
+  [-4096, 4096) — 67108864 columns each, **536870912 in all** — finds four
+  columns at depth -1, all at seed -4172144997902289642:
+
+  | column        | raw depth     |
+  |---------------|---------------|
+  | (2282, 1879)  | -1.033659749  |
+  | (2282, 1880)  | -1.048435300  |
+  | (2283, 1880)  | -1.008497344  |
+  | (2284, 1880)  | -1.010109149  |
+
+  That is about one column in 134 million, so a 2097152-column census finding
+  none is the expected outcome of a sample roughly 256x too small, not
+  evidence that vanilla cannot get there. (Seed 42 reaches -0.966441862 over
+  the same window, which says how thin the margin is.) An earlier revision of
+  this section called the clamp "unobservable in vanilla" and a
+  "data-pack-only difference"; that was wrong, and it was wrong in the
+  direction of closing a question rather than leaving it open.
+
+  What remains true is that it is not separated HERE. Those four columns lie
+  in chunk (142, 117), i.e. region `r.4.3.mca`, which is not among the
+  `r.0.0.mca` regions on disk. At depth -1 the two candidates differ over
+  exactly one block — `y = psl - 9`, which the unclamped reading opens and the
+  clamped one does not — so generating that region and reading that single
+  block at those four columns separates them directly. The columns exist and
+  are located; generating the region that contains them is the remaining work.
+  A data pack overriding `minecraft:surface` is no longer the only route.
 
 - **Surface rules load whole, and refuse by name (M4).**
   `stratum::surface::RuleGraph` resolves the tree for every one of vanilla's
