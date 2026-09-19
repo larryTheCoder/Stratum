@@ -4842,7 +4842,12 @@ Open:
   kind could be regenerated from the repository), with a `<spec>.noises.json`
   sidecar so a spec ships the noises it names.
 
-  *What was scanned, exactly.* 900 seed rules — 5 bases {world seed;
+  *What was scanned, exactly, BEFORE the widening below.* The space in this
+  paragraph and the two after it is the one that stood until the stack-shape,
+  frequency, per-octave-salting and declaration-order axes were added; the
+  entry **"The stack rule was the suspect, and it is now searched"** records
+  what replaced it, and re-indexes every rule number quoted here. 900 seed
+  rules — 5 bases {world seed;
   `JavaRandom(worldSeed).nextLong()`; the first Xoroshiro draw off the world
   seed; the LCG's own scramble of it; zero} x 10 salt spellings {MD5 of
   "ns:path" as first-eight big-endian, first-eight little-endian, last-eight
@@ -4853,14 +4858,17 @@ Open:
   candidates per dimension**, over 9 probe dimensions and 2 world seeds.
   Nothing reached half agreement on the probe subset in any of them.
 
-  *What it does not cover*, because a refutation is only as wide as its
+  *What it did not cover*, because a refutation is only as wide as its
   space: one stack rule only (every octave's Perlin block drawn in order from
   the single generator — the rule confirmed above for `old_blended_noise`),
   and no frequency variation whatever. An earlier write-up described the
   sweep as covering "frequency 2^(firstOctave +/- 1..3)"; no version of this
-  code has swept frequency at all.
+  code had swept frequency at all. **Both of those gaps are now closed and
+  both came back empty** — see the widening entry below. The `end_islands`
+  skip did not close and is now the largest one left.
 
-  *Two gaps the `end_islands` result now points at, neither yet tested.*
+  *Two gaps the `end_islands` result pointed at. The second is now tested;
+  the first is not.*
 
   **A fixed skip is a shape vanilla uses.** `end_islands`' simplex is seeded
   by `new java.util.Random(worldSeed)` and then **17292 discarded LCG steps**
@@ -4878,6 +4886,12 @@ Open:
   scoring at the null says nothing about the seed. Test the stack rule before
   widening the seed space again.
 
+  **That instruction was followed and the suspicion did not pay off.** The
+  per-octave MD5 salting scheme adapted to the LCG is now enumerated, with
+  the String.hashCode spelling beside it, across every base, salt, operator,
+  fork count and generator the seed axis carries. Nothing survives. See the
+  widening entry below for the denominator.
+
   *What is newly measured about the question.* The identifier — or the
   construction order, which these fixtures cannot separate — genuinely enters
   the seed. The probes carry `stratum:na` and `stratum:nb`: identical
@@ -4891,13 +4905,288 @@ Open:
 
   *deepslate's derivation is inside the space and scores at the null.* base =
   `JavaRandom(worldSeed).nextLong()`, XOR the first eight bytes of
-  MD5("ns:path"), one further LCG fork — rule 182, block 0, which
-  `--candidate 182 0` scores by name rather than leaving it to be inferred
-  from a survivor list it is absent from. On the legacy dimensions at band
-  0.00372 it gets 10-25 of 2304 (0.43-1.09%) at seed 42 and 10-23 (0.43-1.00%)
-  at seed 31337, against a null mean of 0.64-0.72% — that is the null, not a
-  near miss. This is a second, independent refutation of it against the
-  server, in an apparatus that can be re-run from the repository.
+  MD5("ns:path"), one further LCG fork — **rule 290** at the baseline stack
+  shape and frequency (it was rule 182 before the widening re-indexed the
+  seed rules; see below), which `--candidate 290 0` scores by name rather
+  than leaving it to be inferred from a survivor list it is absent from. On
+  the legacy dimensions at band 0.00372 it gets 10-25 of 2304 (0.43-1.09%) at
+  seed 42 and 10-23 (0.43-1.00%) at seed 31337, against a null mean of
+  0.61-0.72% — that is the null, not a near miss. Re-measured after the
+  widening through the new evaluator, the figures are unchanged, which is one
+  more check that the re-indexing named the same rule. This is a second,
+  independent refutation of it against the server, in an apparatus that can
+  be re-run from the repository.
+
+- **The stack rule was the suspect, and it is now searched: 729,535,800
+  candidates, still no survivor (M4).** The entry above named the stack rule
+  as "the likelier culprit" and said to test it before widening the seed
+  space again. It is tested. `tools/analysis/legacy-seed-analyze.cpp` now
+  enumerates four axes it did not have, and the answer on every one of them
+  is the same as before.
+
+  *The space, exactly, and it is a cross product rather than a union.* 5
+  bases x **12** salt spellings x 3 operators x **4** fork counts x 2
+  generators = **1,440 seed rules**; x 3 draw rules x 3 per-octave salting
+  rules x 2 octave orders x 2 zero-amplitude rules = **36 stack shapes**; x 7
+  frequency offsets (`firstOctave + d`, d in [-3, +3]); x 300 block offsets =
+  **108,864,000 candidates enumerated per dimension**. A candidate needing
+  two of the new axes at once is inside it, not only the single-axis arms.
+  The four axes, and what each adds on its own off the old 900-rule baseline:
+
+  | axis | new values | candidates when it alone is widened |
+  |------|-----------:|------------------------------------:|
+  | baseline (the old space) | - | 270,000 |
+  | (a)+(c) stack shape | 35 | 9,450,000 |
+  | of which (c) per-octave salting | 24 of the 35 | - |
+  | (b) frequency offset | 6 | 1,620,000 |
+  | (d) declaration order | 540 seed rules | 162,000 |
+  | full cross product | - | 108,864,000 |
+
+  Concretely: **(a)** the Perlin blocks drawn in order from one generator, or
+  one generator per block seeded by the parent's `nextLong()`, or the second
+  stack drawn from a generator forked once off the first's seed; the octaves
+  consumed lowest-first or highest-first; a zero-amplitude octave consuming a
+  block or not. **(c)** each octave's generator seeded `seed ^
+  MD5("octave_<n>")` first-eight big-endian, or with `String.hashCode` in its
+  place — the modern scheme's shape carried onto the LCG, which is exactly
+  what the entry above predicted would defeat every seed candidate. **(b)**
+  the declared `firstOctave` moved by -3 to +3. **(d)** the noise's
+  DECLARATION ORDINAL in the pack entering the seed, as a salt, as MD5 of its
+  decimal spelling, or as the fork count — the axis `--twin` could measure
+  but not separate from the name.
+
+  *The denominator is smaller than the enumeration, deliberately.* Both the
+  seed rules and the stack shapes are deduplicated against each dimension's
+  own noise before scoring: two rules that reduce to the same (seed,
+  generator) for this identifier and ordinal are one candidate, and so are
+  two shapes whose slot-to-block mapping is the same for this amplitude
+  pattern. A 1-octave noise has **13** distinct shapes, not 36 — order and
+  zero-consumption cannot reach anything when there is one octave and no zero
+  — and counting 36 would have been a free 2.8x. What was actually scanned:
+
+  | dimension | distinct rules | shapes | candidates (seed 42) | candidates (seed 31337) |
+  |-----------|---------------:|-------:|---------------------:|------------------------:|
+  | `leg_single`, `mod_single` | 866 | 13 | 23,641,800 | 23,641,800 |
+  | `leg_twin` | 920 / 926 | 13 | 25,116,000 | 25,279,800 |
+  | `leg_multi`, `mod_multi` | 920 / 926 | 16 | 30,912,000 | 31,113,600 |
+  | `leg_skip`, `mod_skip`, `leg_skip_q4`, `leg_skip_q16` | 1,234 / 1,258 | 22 | 57,010,800 | 58,119,600 |
+
+  **362,266,800 candidates at seed 42 and 367,269,000 at seed 31337 —
+  729,535,800 over both worlds, of which 505,096,200 on the six legacy
+  dimensions. Survivors: zero, on every dimension of both worlds.**
+
+  *Against the right denominator:* the previous entry's 270,000 was a
+  PER-DIMENSION count, and its total over 9 dimensions and 2 worlds was
+  4,860,000. So the widening is **87.6x per dimension on the 1-octave ones,
+  211x on the skip ones, and 150x in total** — not the 2,702x that dividing
+  the new total by the old per-dimension figure would give, which is the
+  mismatched-denominator mistake this section already records once.
+
+  *The search is a cascade, and that changes what "survivor" means.* Scoring
+  10^8 candidates on 128 columns each is not affordable, so every candidate
+  is first scored on 8 columns spread across the region and only a candidate
+  agreeing on ALL EIGHT is scored further. **That screen cannot reject a
+  correct candidate** — the control measures the correct rule at 2304/2304,
+  so a rule reproducing the readback agrees on all eight by construction —
+  but it is emphatically NOT a general high-score search: a candidate
+  agreeing on 60% of columns scattered would be dropped, and this scan would
+  not report it. Two candidates in the whole sweep got past the screen, both
+  on `leg_skip_q16` at seed 31337, the widest band in the probe; both then
+  failed the 128-column gate. Everywhere else, zero.
+
+  *So the null is reported twice, in two statistics, with their own
+  denominators.* The SCREEN null is over every candidate in the space; the
+  PROBE null is the 128-column statistic the pre-widening scan reported and
+  the table further down tabulates, measured on a uniform 1-in-N subsample of
+  about 65,600 candidates per dimension. They are not comparable to each
+  other and quoting one as the other would be the same mistake this section
+  already records once.
+
+  | dimension | band | screen null (of 8, all candidates) | screen max | probe null (of 128, ~65,600 sampled) | probe max |
+  |-----------|------|-----------------------------------:|-----------:|-------------------------------------:|----------:|
+  | the seven at scale 2 | 0.00372 | 0.042-0.069 | 4 | 0.79-1.06 (0.61-0.83%) | 6-9 |
+  | `leg_skip_q4` | 0.01488 | 0.229 / 0.269 | 5 / 6 | 3.26 / 3.60 (2.55%, 2.82%) | 19 / 16 |
+  | `leg_skip_q16` | 0.05952 | 0.902 / 1.072 | 7 / 8 | 12.99 / 14.39 (10.15%, 11.24%) | 46 / 39 |
+
+  (Seed 42 / seed 31337 where they differ.) The probe null reproduces the
+  pre-widening measurement to two decimal places on every dimension — 0.88,
+  0.85, 0.79, 0.92, 0.79, 0.82, 1.07, 3.26, 12.99 before against 0.88, 0.85,
+  0.79, 0.92, 0.79, 0.82, 1.06, 3.26, 12.99 after at seed 42 — which is one
+  more check that the widened evaluator is the same function at its baseline
+  point.
+
+  *Every new axis is calibrated, and by two different arguments.* A null on
+  an axis means nothing if the scan cannot find an answer that lives there,
+  and nothing either if the "axis" has only one point on it. Both are
+  measured:
+
+  **Plants, for findability.** `--plant-axes` synthesises the server's
+  readings from a candidate that is off the baseline in one new axis, puts
+  them through the same block quantisation, and runs the identical scan. Five
+  plants — a stack shape (Xoroshiro rule 657, shape 24,
+  `secondStackFork/noOctaveSalt/forward/skipZeros`), a per-octave salting
+  (LCG rule 288, shape 4, `sequential/md5Octave/forward/skipZeros`), a
+  frequency offset (rule 288, delta +2), an ordinal-seeded rule (rule 530,
+  `lcgLong xor md5Ordinal, forks 1`), and one candidate off the baseline in
+  three axes at once (rule 657, shape 28, delta -2) — run on all six legacy
+  dimensions of both worlds is **60 plants, and all 60 came back at rank 1 at
+  2304/2304 columns**, against 23.6M to 58.1M rivals each. 59 of the 60 were
+  the sole survivor. The exception is the one place a runner-up survived at
+  all: `leg_skip_q16`, the widest band in the probe, where the three-axis
+  plant left 23 candidates past the 8-column screen and one of them reached
+  668/2304 (29.0%) — still 3.4x below the plant's 100%, and 29.0% is inside
+  that dimension's own null maximum of 36.7-40.6% recorded below. It is a
+  CTest
+  (`conformance.legacy_seed_control_tool`), run there on `leg_skip` per world
+  because that is the only dimension whose noise has a zero amplitude and so
+  the only one where the order and zero-consumption sub-axes are not
+  degenerate; the full six-dimension run is this entry.
+
+  (The five plants share one pass over the space rather than taking five. A
+  planted reading is the same lattice with different values, so a candidate is
+  evaluated once per screen column and compared against each plant; building
+  the space is what costs. Measured: 95s to 20s for one dimension at seed 42,
+  same five ranks.)
+
+  It also caught a bug that would have read as a result: the ordinal plant
+  first came back at rank 0 while being *perfectly recovered*, because the
+  scan reports the LOWEST rule index that produces a candidate — it collapses
+  duplicates before scoring — and the plant had been named by a
+  higher-numbered alias. Rank is now decided by what the indices MEAN (the
+  resolved seed and generator, and the shape's whole slot-to-block mapping),
+  not by the indices.
+
+  **Perturbations, for non-degeneracy.** A plant cannot catch an axis that
+  has one point on it: if reversing the octave order changed nothing, the
+  plant would still return rank 1 and the scan would have searched one
+  candidate while reporting several.
+  `tests/conformance/vanilla_legacy_seed_control_test.cpp` therefore perturbs
+  the rule known to be right, on the mirror dimensions where it recovers
+  every column, with its own independent forward model. That model
+  reproduces `NormalNoise` bit for bit on **13,824 of 13,824** columns
+  first — without which the perturbations perturb something else — and then
+  every perturbation must fall away from it. Reversed octave order and all
+  six frequency offsets land at **6-24 of 2304 (0.26-1.04%)**, which is the
+  null.
+
+  *One perturbation does not, and it is a real limit rather than a failure.*
+  Exchanging which stack's blocks feed which stack reaches **80-122 of 2304
+  (3.47-5.29%)** on the 3-octave and skip mirrors and **34 of 2304 (1.48%)**
+  on the 1-octave ones, at both seeds — above the null everywhere. The two
+  stacks of a `NormalNoise` are the same octaves at coordinates scaled by
+  337/331, 1.8% apart, so the sum is very nearly symmetric under exchanging
+  them and a swapped field stays partly correlated with the true one instead
+  of becoming an independent draw. It is still 19x below a recovery, so the
+  axis is not degenerate; but it is the sharpest limit measured on how well
+  this readback can separate two stack shapes that differ only in which stack
+  a block feeds, and a shape that differed from the truth *only* that way
+  would be harder to refute than the other numbers here suggest. It carries
+  its own ceiling in the test rather than being folded into the null's.
+
+  *And the widened evaluator is the validated one.* The scan and the plants
+  no longer run `sampleNormal`: they run a table-driven evaluator that
+  resolves a stack shape and a frequency offset before summing, which is what
+  makes 10^8 candidates affordable. `--control` gained an arm requiring that
+  evaluator to reproduce `sampleNormal` **bit for bit at the baseline point**,
+  on every column of every dimension: **20,736 of 20,736 per seed, 41,472
+  over both**. Without it the widening would have moved every number this
+  section reports onto code the control never touched.
+
+  *What is STILL not covered, after the widening.* The list is shorter and it
+  is not empty. The first item used to be billed as the largest gap; it was
+  re-measured, it is not, and the correction is recorded in place rather than
+  quietly dropped:
+
+  * **A skip that is not a whole number of blocks** — narrower than this entry
+    first claimed, and the correction is the point. The list used to lead with
+    "a skip, still", on the ground that every axis here moves whole Perlin
+    BLOCKS while `end_islands` discards **17292 LCG STEPS**, so the one shape
+    vanilla is *known* to use under `legacy_random_source` lay outside the
+    space. The arithmetic under that was never done. A Perlin block costs three
+    `nextDouble`s at two raw steps each plus a 256-entry shuffle at one each =
+    **262 steps**, measured at **4096 of 4096** seeds, and
+    **262 x 66 = 17292 exactly**. `end_islands`' skip is therefore not a
+    partial block: it is **block offset 66**, inside the 300 the block axis has
+    swept all along — verified directly, at five seeds, as the same generator
+    state and the same constructed block both ways
+    (`tests/conformance/vanilla_legacy_seed_control_test.cpp`). What remains
+    outside is a skip whose step count is NOT a multiple of 262, and that is a
+    real gap; but it is no longer the largest one, and the only example anybody
+    has does not live in it. Nothing measured under the flag now sits outside
+    the space.
+  * **Three draw rules, not all of them.** No third stack, no stack whose
+    octave count differs from the amplitude count, no two stacks interleaved
+    octave by octave.
+  * **The 337/331 second-stack ratio is fixed** in every candidate.
+  * **The persistence and `valueFactor` schedules are fixed** at the modern
+    ones. The frequency axis moves octave frequencies and nothing else.
+  * **The octave-salt strings are the modern ones**, `octave_<n>` with n the
+    DECLARED `firstOctave` plus the octave index — not the frequency axis's
+    shifted one, and no other spelling.
+  * **The fork is always the LCG's.** `forks` and the second-stack fork both
+    use `JavaRandom(seed).nextLong()` even when the generator axis selects
+    Xoroshiro, because that is the shape `old_blended_noise` confirmed.
+  * **The ordinals are this pack's.** The declaration-order axis reads the
+    four-noise order `legseed_s*` ships (`na`, `nb`, `nmulti`, `nskip`, which
+    is also their sorted order). Whether vanilla's own build order for
+    `minecraft:temperature` and friends is registry order, sorted order or
+    something else is settled by nothing here. What is tested is that the
+    SHAPE "the seed comes from build position" is refutable, and on this pack
+    it is refuted. The older way build order can enter — every noise in the
+    pack drawn from ONE generator in declaration order — needs no axis at
+    all: it is a block offset, and for these four noises the offsets are 0,
+    2, 4 and 10, all inside the 300 the block axis already sweeps.
+  * **The screen's own limit**, restated because it is a real narrowing: this
+    scan searches for a candidate that REPRODUCES the readback, not for the
+    best-scoring one. A partially-agreeing rule is outside what it reports.
+  * **The known-correct MODERN rule is not a member of the space either**, and
+    this has to be read before `--scan`'s own rows are. Pointed at a `mod_*`
+    mirror — a dimension whose seeding is KNOWN, and which the control recovers
+    at 2304/2304 — the scan reports **`past screen 0  survivors 0`**, exactly
+    as it does on the legacy dimensions (measured at seed 42: `mod_single` over
+    23,641,800 candidates, `mod_multi` over 30,912,000, `mod_skip` over
+    57,010,800; `mod_single` repeats at seed 31337). That is not the scan
+    failing where the answer is known; the modern rule is outside the 64-bit
+    seed and generator axes by construction. Its generator is seeded
+    from a full 128-bit state — `fromHashOf` XORs the identifier's MD5 into
+    BOTH halves of a forked 128-bit base — while every candidate reaches
+    Xoroshiro through the 64-bit constructor, i.e. through
+    `upgradeSeedTo128Bit`'s image, 2^64 of the 2^128 states; and its per-octave
+    salt is a `Seed128` XORed into both halves, where the octave-salt axis XORs
+    64 bits into a 64-bit seed. Membership is decidable rather than argued
+    (`mixStafford13` is a bijection): of the **36** states the modern rule
+    builds over these four noises and both worlds — each noise's named state,
+    plus each stack's per-octave state for each non-zero amplitude — **0 are
+    reachable from any 64-bit seed**, while **1201 of 1201** states built FROM
+    a 64-bit seed do report reachable, so the predicate is not one that refuses
+    everything. This is why the control scores the modern rule DIRECTLY rather
+    than through the scan — through the scan it could only ever report zero —
+    and it is asserted in
+    `tests/conformance/vanilla_legacy_seed_control_test.cpp`.
+  * **The cascade's real-data half rests on the control's `exact` arm**, which
+    is the seam the two calibrations leave between them. The 8-column screen
+    and the 128-column gate meet the SERVER's readings only through candidates
+    that are all wrong, and meet a CORRECT candidate only through a plant's
+    SYNTHETIC readings — the two have never been put through the screen
+    together, and by the item above they cannot be. What carries the claim that
+    the screen never rejects a correct candidate is therefore `--control`'s
+    `exact` arm: `quantise(model)` reproduces the server's own reading as a
+    double on **6912 of 6912** columns over the three mirrors, at each seed, so
+    a correct candidate lands inside the band on all eight screen columns by
+    construction and not by luck.
+
+  *And two things the widening does not change.* The step from "no survivor"
+  to "absent from the space rather than invisible to the tool" still rests on
+  everything the control validates being validated on the MODERN dimensions,
+  bounded but not proved by the `--profile` comparison recorded below. And
+  none of this says where the answer IS. It says the answer is not a
+  sequential, per-block-forked or second-stack-forked stack, with or without
+  an MD5 or hashCode per-octave salt, in either octave order, with or without
+  zero-amplitude octaves consuming blocks, at any frequency within three
+  octaves of the declared one, at any of 300 block offsets, from any of 1,440
+  seeds built from five bases, twelve salt spellings including two that read
+  the declaration ordinal, three operators, four fork counts and two
+  generators — in either of two worlds.
 
 - **"The empirical null" was one number and should have been a function
   (M4).** The correction matters more than the search it came from. A
@@ -4911,6 +5200,11 @@ Open:
   | the seven at 2.0 | 0.00372 | 0.78-1.07 (0.6-0.8%) | 7-9 (5.5-7.0%)      |
   | `leg_skip_q4`  | 0.01488 | 3.26-3.61 (2.6-2.8%) | 18-19 (14.1-14.8%)    |
   | `leg_skip_q16` | 0.05952 | 12.99-14.40 (10-11%) | 47-52 (36.7-40.6%)    |
+
+  (Pre-widening figures, over the whole 270,000. The widened scan re-measures
+  the same statistic on a subsample and reproduces the means to two decimal
+  places; its table, and the separate 8-column screen null it also reports,
+  are in the widening entry above.)
 
   (Both seeds; the same noise, the same seeding, only the output scale
   moving.) The sharpest single demonstration is one fixed wrong candidate
@@ -4942,7 +5236,9 @@ Open:
   quantisation the server's terrain imposes, is returned at **rank 1 as the
   sole survivor, 2304/2304 columns, in all six legacy configurations**
   against 270,000 rivals — twice, at an LCG rule (180, block 7, seed 42) and
-  at a Xoroshiro one (421, block 3, seed 31337). Without that, "N candidates
+  at a Xoroshiro one (421, block 3, seed 31337). Those two indices are the
+  pre-widening ones; the same two rules are now 288 and 657, and the widened
+  scan plants five candidates rather than two (see above). Without that, "N candidates
   refuted" is a number with no power behind it. It also caught a bug in the
   tool that would otherwise have passed for a result: the plant first scored
   51%, because the inverse of the readback was written as `floor(t - 0.5)`

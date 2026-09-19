@@ -1,9 +1,11 @@
 // Stratum — the control on SPEC §11's legacy-seed refutation.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// SPEC §11 records that 270,000 candidate derivations of a NAMED noise's seed
-// under `legacy_random_source` were scored against server output and that none
-// survived. tools/analysis/legacy-seed-analyze.cpp is that scan, and it
+// SPEC §11 records that candidate derivations of a NAMED noise's seed under
+// `legacy_random_source` were scored against server output and that none
+// survived — 270,000 of them when this file was written, and 729,535,800 over
+// two worlds since the stack-shape, per-octave-salting, frequency and
+// declaration-order axes were added. tools/analysis/legacy-seed-analyze.cpp is that scan, and it
 // calibrates itself with `--plant`: a candidate planted inside the scanned
 // space comes back rank 1, sole survivor, every column.
 //
@@ -59,7 +61,18 @@
 //
 //   1. It does not widen the searched space. A control on a modern rule says
 //      nothing about whether the legacy rule uses a stack shape the scan
-//      never enumerates, which remains the likeliest place for it to hide.
+//      never enumerates. That was "the likeliest place for it to hide" when
+//      this was written; the stack shape, the per-octave salting, the
+//      frequency and the declaration ordinal have since been enumerated and
+//      came back empty, and the "the widened legacy-seed axes are axes" case
+//      below is what says those axes are axes. (Cases are named rather than
+//      numbered here: this file has grown two more since, and an ordinal that
+//      silently comes to mean a different case is worse than no reference.)
+//      The remaining gap is a SKIP whose step count is not a
+//      multiple of 262 — and NOT, as this said until it was measured, the
+//      shape `end_islands` uses: a Perlin block is 262 LCG steps and
+//      262 x 66 = 17292, so that one is block offset 66 and inside the sweep.
+//      The last case in this file is that measurement. See SPEC §11.
 //
 //   2. Everything validated here is validated on the MODERN dimensions. The
 //      readback, the coordinate convention, the band and the `quantise`
@@ -79,14 +92,28 @@
 //      bare assumption. See SPEC §11.
 //
 // AND WHAT THE CONTROL DOES NOT REACH, inside the apparatus rather than
-// outside it: `blocksFor` under `Generator::Lcg` — Java `Random` driving
-// `PerlinNoise::fromRandom`, which half of the 270,000 candidates use — is
+// outside it: `streamBlocks` under `Generator::Lcg` — Java `Random` driving
+// `PerlinNoise::fromRandom`, which half of the scanned candidates use — is
 // exercised by neither the control nor this file. Both run Xoroshiro128++
 // only, because the modern derivation is the rule known to be right. That
 // path is validated against the server in
 // tests/conformance/vanilla_legacy_blended_test.cpp, where
 // `BlendedNoise::legacyFromWorldSeed` is `JavaRandom{worldSeed}` handed
 // straight into the same `PerlinNoise::fromRandom`.
+//
+// AND IT DOES NOT REACH THE ANALYZER'S CASCADE, which is the seam the plants
+// and this control leave between them. The 8-column screen and the 128-column
+// gate meet the SERVER's readings only through candidates that are all wrong,
+// and meet a CORRECT candidate only through a plant's SYNTHETIC readings; the
+// two have never been through the screen together, and the "the modern rule is
+// outside the legacy-seed scan's space" case below says they never can,
+// because the rule that IS right is not a member of the scanned space — its
+// 128-bit Xoroshiro seed and Seed128 per-octave salt lie off the scan's 64-bit
+// axes. What carries the real-data half is the `exact` assertion
+// below — the model value put back through `quantise` landing on the server's
+// own reading as a double, on every column of every mirror — so a correct
+// candidate would clear an 8-column screen drawn from those readings by
+// construction rather than by luck. See SPEC §11.
 //
 // THE NULL IS PER-DIMENSION. A column counts as agreement within half a
 // quantum, a quantum being one block of terrain — 2 / height / (K * scale) —
@@ -111,6 +138,7 @@
 #include <stratum/nbt/reader.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -173,7 +201,7 @@ struct Dimension {
     /// scan agrees: its null MEAN at seed 42 is 0.61-0.84% at scale 2, 2.55%
     /// at 0.5 and 10.15% at 0.125, which brackets the measured counts above.
     /// The null MAX (7-9/128, 18/128, 47/128 — 5.5%, 14%, 37%) is deliberately
-    /// NOT the reference: it is the best of 270,000 wrong candidates, so
+    /// NOT the reference: it is the best of every wrong candidate scored, so
     /// sitting under it argues the wrong way. A ceiling has to be near the
     /// null's CENTRE to mean anything.
     double nullCeiling;
@@ -585,4 +613,571 @@ TEST_CASE("the legacy-seed scan recovers a named-noise rule that is known to be 
     INFO("sd over all dimensions and seeds: " << lowestSd << " to " << highestSd);
     CHECK(lowestSd >= 0.20);
     CHECK(highestSd <= 0.40);
+}
+
+// --- the widened axes, and whether they are axes at all ---------------------
+//
+// tools/analysis/legacy-seed-analyze.cpp now enumerates four axes the scan did
+// not have — stack shape, per-octave salting, frequency offset, and a seed
+// read off the noise's DECLARATION ORDINAL — and calibrates each with a plant
+// that must come back at rank 1 (`--plant-axes`, run by
+// conformance.legacy_seed_control_tool).
+//
+// A PLANT CANNOT CATCH A DEGENERATE AXIS, which is what this case is for. If
+// an "axis" produced the same field as the baseline — if reversing the octave
+// order changed nothing, or if a frequency offset were silently ignored — then
+// planting a candidate on it and recovering it at rank 1 would still succeed,
+// perfectly, every time, and the scan would have searched one candidate while
+// reporting several. The plant proves the scan can FIND a point on the axis;
+// only this proves the axis has more than one point.
+//
+// So it perturbs the rule that is KNOWN to be right, on the mirror dimensions
+// where that rule recovers every column, and requires each perturbation to
+// fall to the null:
+//
+//   * the baseline assignment must reproduce the library's NormalNoise bit for
+//     bit — without that the perturbations below are perturbations of
+//     something else;
+//   * reversing the octave order within each stack must fall to the null;
+//   * every non-zero frequency offset in [-3, +3] must fall to the null;
+//   * swapping which stack's blocks feed which stack must be DISTINGUISHABLE
+//     from the right answer — and it is, but it does NOT fall to the null,
+//     which is measured here rather than assumed.
+//
+// THAT LAST ONE IS THE INTERESTING NUMBER. The two stacks of a NormalNoise are
+// the same octaves at coordinates scaled by 337/331 — 1.8% apart — so the sum
+// is very nearly symmetric under exchanging them, and a swapped field stays
+// partly correlated with the true one instead of becoming an independent
+// draw. Measured on the 3-octave and skip mirrors it reaches 80-122 of 2304
+// (3.47-5.29%) against a null of 0.26-1.04%, and even on the 1-octave mirrors,
+// whose single octave is at the much higher frequency 2^-3, it sits at 34 of
+// 2304 (1.48%) at BOTH seeds, still above that null. Every other perturbation
+// here — reversed octave order, and all six frequency offsets — lands at
+// 6-24 of 2304 (0.26-1.04%), which IS the null. It is a real limit on how
+// sharply the
+// analyzer's stack-shape axis can separate two shapes that differ only in
+// which stack a block feeds, and it is recorded in SPEC §11 as one.
+//
+// Axes (c) and (d) are not perturbable this way and are not claimed to be:
+// per-octave salting IS the modern rule's own shape, and the declaration
+// ordinal changes the SEED, whose non-degeneracy is what the negative control
+// above already measures (the same rule one seed away falls to the null).
+//
+// This is a statement about the SEARCH, not about vanilla. It says the widened
+// space has the size the analyzer reports; it says nothing about which point
+// in it vanilla occupies, and no point in it reproduces the legacy dimensions.
+// See SPEC §11.
+
+namespace {
+
+/// lib/src/noise_registry.cpp's modern seeding, taken apart into the
+/// individual octave blocks NormalNoise builds from: one positional fork of
+/// the world seed with the identifier hashed in, two draws per stack, and
+/// lib/src/perlin.cpp's per-octave "octave_<n>" salt XORed onto those. The
+/// blocks come back in (stack, octave) order, non-zero amplitudes only.
+///
+/// It is spelled out rather than reached through OctaveNoise because the point
+/// is to REARRANGE the octaves, and OctaveNoise does not hand them out. The
+/// first assertion in the case below is that this spelling reproduces
+/// NormalNoise exactly, so the duplication is checked rather than trusted.
+[[nodiscard]] std::vector<stratum::noise::PerlinNoise> modernOctaveBlocks(const Noise& noise,
+                                                                          std::int64_t worldSeed) {
+    const stratum::rng::XoroshiroPositionalFactory factory{worldSeed};
+    stratum::rng::Xoroshiro128PlusPlus random = factory.fromHashOf(noise.id);
+    std::vector<stratum::noise::PerlinNoise> blocks;
+    for (int stack = 0; stack < 2; ++stack) {
+        const auto baseLo = static_cast<std::uint64_t>(random.nextLong());
+        const auto baseHi = static_cast<std::uint64_t>(random.nextLong());
+        for (std::size_t i = 0; i < noise.amplitudeCount; ++i) {
+            if (!(noise.amplitudes[i] > 0.0)) {
+                continue;
+            }
+            const stratum::rng::Seed128 salt = stratum::rng::seedFromHashOf(
+                "octave_" + std::to_string(noise.firstOctave + static_cast<int>(i)));
+            stratum::rng::Xoroshiro128PlusPlus octave{
+                stratum::rng::Seed128{.lo = baseLo ^ salt.lo, .hi = baseHi ^ salt.hi}};
+            blocks.push_back(stratum::noise::PerlinNoise::fromRandom(octave));
+        }
+    }
+    return blocks;
+}
+
+/// The amplitude schedule NormalNoise applies, independent of every axis here.
+struct Schedule {
+    std::vector<double> amplitude;
+    std::vector<double> persistence;
+    /// The declared octave exponent of each contributing octave.
+    std::vector<int> exponent;
+    double valueFactor = 1.0;
+    std::size_t perStack = 0;
+};
+
+[[nodiscard]] Schedule scheduleOf(const Noise& noise) {
+    Schedule schedule;
+    double persistence = std::ldexp(1.0, static_cast<int>(noise.amplitudeCount) - 1) /
+                         (std::ldexp(1.0, static_cast<int>(noise.amplitudeCount)) - 1.0);
+    for (std::size_t i = 0; i < noise.amplitudeCount; ++i) {
+        if (noise.amplitudes[i] > 0.0) {
+            schedule.amplitude.push_back(noise.amplitudes[i]);
+            schedule.persistence.push_back(persistence);
+            schedule.exponent.push_back(noise.firstOctave + static_cast<int>(i));
+            ++schedule.perStack;
+        }
+        persistence *= 0.5;
+    }
+    std::size_t first = 0;
+    std::size_t last = noise.amplitudeCount;
+    while (last > first && !(noise.amplitudes[last - 1] > 0.0)) {
+        --last;
+    }
+    while (first < last && !(noise.amplitudes[first] > 0.0)) {
+        ++first;
+    }
+    schedule.valueFactor = (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / static_cast<double>(last - first))));
+    return schedule;
+}
+
+/// One value, with an explicit block assignment and frequency offset. The two
+/// stacks accumulate separately and are added once, which is what
+/// NormalNoise does; folding them together would stop the baseline from
+/// matching bit for bit and the first assertion below would be measuring
+/// rounding rather than the model.
+[[nodiscard]] double sampleAssigned(const Schedule& schedule,
+                                    const std::vector<stratum::noise::PerlinNoise>& blocks,
+                                    const std::vector<std::size_t>& assignment, int delta, double x,
+                                    double z) {
+    constexpr double kSecondStackRatio = 337.0 / 331.0;
+    double first = 0.0;
+    double second = 0.0;
+    for (std::size_t stack = 0; stack < 2; ++stack) {
+        for (std::size_t i = 0; i < schedule.perStack; ++i) {
+            const std::size_t slot = (stack * schedule.perStack) + i;
+            const double frequency = std::ldexp(1.0, schedule.exponent[i] + delta);
+            const double ratio = stack == 1 ? kSecondStackRatio : 1.0;
+            const double value = blocks[assignment[slot]].sample((x * ratio) * frequency, 0.0,
+                                                                 (z * ratio) * frequency);
+            ((stack == 0) ? first : second) +=
+                (value * schedule.amplitude[i]) * schedule.persistence[i];
+        }
+    }
+    return (first + second) * schedule.valueFactor;
+}
+
+[[nodiscard]] std::vector<std::size_t> sequentialAssignment(std::size_t perStack) {
+    std::vector<std::size_t> assignment(perStack * 2, 0);
+    for (std::size_t i = 0; i < assignment.size(); ++i) {
+        assignment[i] = i;
+    }
+    return assignment;
+}
+
+[[nodiscard]] std::vector<std::size_t> reversedAssignment(std::size_t perStack) {
+    std::vector<std::size_t> assignment(perStack * 2, 0);
+    for (std::size_t stack = 0; stack < 2; ++stack) {
+        for (std::size_t i = 0; i < perStack; ++i) {
+            assignment[(stack * perStack) + i] = (stack * perStack) + (perStack - 1 - i);
+        }
+    }
+    return assignment;
+}
+
+[[nodiscard]] std::vector<std::size_t> swappedStacks(std::size_t perStack) {
+    std::vector<std::size_t> assignment(perStack * 2, 0);
+    for (std::size_t i = 0; i < perStack; ++i) {
+        assignment[i] = perStack + i;
+        assignment[perStack + i] = i;
+    }
+    return assignment;
+}
+
+/// `mixStafford13` inverted. Every step of it is a bijection on 64 bits — two
+/// xor-shifts, which invert by iterating, and two multiplies by odd constants,
+/// which invert by their modular inverses — so the inverse is exact rather
+/// than a search. Used only to decide membership in `upgradeSeedTo128Bit`'s
+/// image; the forward direction stays the library's.
+[[nodiscard]] constexpr std::uint64_t undoXorShiftRight(std::uint64_t value, unsigned shift) {
+    std::uint64_t result = value;
+    for (unsigned recovered = shift; recovered < 64U; recovered += shift) {
+        result = value ^ (result >> shift);
+    }
+    return result;
+}
+
+/// The inverse of an odd constant modulo 2^64, by Newton's iteration: each
+/// round doubles the number of correct bits, so six rounds cover 64 from a
+/// seed of 1 correct bit.
+[[nodiscard]] constexpr std::uint64_t oddInverse(std::uint64_t odd) {
+    std::uint64_t inverse = 1;
+    for (int round = 0; round < 6; ++round) {
+        inverse *= 2U - odd * inverse;
+    }
+    return inverse;
+}
+
+[[nodiscard]] constexpr std::uint64_t unmixStafford13(std::uint64_t value) {
+    value = undoXorShiftRight(value, 31U);
+    value *= oddInverse(UINT64_C(0x94D049BB133111EB));
+    value = undoXorShiftRight(value, 27U);
+    value *= oddInverse(UINT64_C(0xBF58476D1CE4E5B9));
+    value = undoXorShiftRight(value, 30U);
+    return value;
+}
+
+/// Is this 128-bit state one that SOME 64-bit seed reaches? `upgradeSeedTo128Bit`
+/// sends a seed to (mixStafford13(l), mixStafford13(l + kGoldenRatio64)) with
+/// l = seed ^ kSilverRatio64, so the image is exactly the states whose halves
+/// stand in that relation — and because the mix is a bijection, the question
+/// is answered by one comparison rather than by a sweep of 2^64 seeds.
+[[nodiscard]] bool reachableFrom64BitSeed(stratum::rng::Seed128 state) {
+    const std::uint64_t low = unmixStafford13(state.lo);
+    return stratum::rng::mixStafford13(low + stratum::rng::kGoldenRatio64) == state.hi;
+}
+
+/// Every 128-bit generator state the MODERN rule builds for one noise: the
+/// named state `fromHashOf` produces, and then, for each of the two stacks,
+/// the per-octave state each NON-ZERO amplitude gets. It mirrors
+/// `modernBlocksFor` in tools/analysis/legacy-seed-analyze.cpp — zero
+/// amplitudes consume no octave and no draw — because the claim being tested
+/// is about the states that rule actually reaches, not about a superset.
+[[nodiscard]] std::vector<stratum::rng::Seed128> modernStatesFor(const Noise& noise,
+                                                                 std::int64_t worldSeed) {
+    const stratum::rng::XoroshiroPositionalFactory factory{worldSeed};
+    const stratum::rng::Seed128 salt = stratum::rng::seedFromHashOf(noise.id);
+    const stratum::rng::Seed128 named{.lo = factory.base().lo ^ salt.lo,
+                                      .hi = factory.base().hi ^ salt.hi};
+
+    std::vector<stratum::rng::Seed128> states{named};
+    stratum::rng::Xoroshiro128PlusPlus random = factory.fromHashOf(noise.id);
+    for (int stack = 0; stack < 2; ++stack) {
+        const auto baseLo = static_cast<std::uint64_t>(random.nextLong());
+        const auto baseHi = static_cast<std::uint64_t>(random.nextLong());
+        for (std::size_t i = 0; i < noise.amplitudeCount; ++i) {
+            // `> 0.0` rather than `!= 0.0`, matching the rest of this file:
+            // the declared amplitudes are literal 0.0 or 1.0, so the two are
+            // equivalent here, and the comparison is the one the warning set
+            // permits.
+            if (!(noise.amplitudes[i] > 0.0)) {
+                continue;
+            }
+            const stratum::rng::Seed128 octave = stratum::rng::seedFromHashOf(
+                "octave_" + std::to_string(noise.firstOctave + static_cast<int>(i)));
+            states.push_back({.lo = baseLo ^ octave.lo, .hi = baseHi ^ octave.hi});
+        }
+    }
+    return states;
+}
+
+} // namespace
+
+// WHY THIS CASE EXISTS, and it is not a curiosity about Xoroshiro's seeding.
+//
+// `--scan` reports `survivors 0` on the mod_* MIRROR dimensions too — the ones
+// whose seeding is known, and which the case above recovers at every column.
+// Measured at seed 42: mod_single over 23,641,800 candidates, mod_multi over
+// 30,912,000, mod_skip over 57,010,800, none past the screen. Read without
+// this, those rows say the scan fails where the answer is KNOWN, and the whole
+// refutation collapses with them.
+//
+// They say something else: the modern rule is not IN the enumerated space, so
+// zero is the only answer the scan could give. The scan's seed axis produces
+// 64 bits and hands them to Xoroshiro's 64-bit constructor, which routes
+// through `upgradeSeedTo128Bit` and so can only ever name 2^64 of the 2^128
+// states; the modern rule seeds from a full 128-bit state, `fromHashOf` XORing
+// the identifier's MD5 into both halves of a forked base. Its per-octave salt
+// is the same mismatch a second time: a `Seed128` into both halves, against a
+// 64-bit XOR into a 64-bit seed.
+//
+// That is a decidable claim and it is decided here rather than asserted in
+// prose, because prose about a search space is exactly what goes stale when
+// somebody widens an axis. If a future axis ever did reach 128-bit states,
+// this case turns red and the mod_* rows have to be re-explained.
+TEST_CASE("the modern rule is outside the legacy-seed scan's space, which is why the mirrors "
+          "report no survivor",
+          "[conformance][legacy][seed][control][space]") {
+    // The inverse must be an inverse before anything is concluded from it.
+    for (const std::uint64_t probe : {UINT64_C(0), UINT64_C(1), UINT64_C(42), UINT64_C(31337),
+                                      UINT64_C(0xDEADBEEFCAFEBABE), ~UINT64_C(0)}) {
+        REQUIRE(unmixStafford13(stratum::rng::mixStafford13(probe)) == probe);
+    }
+
+    // And the membership test must ACCEPT what the scan can actually reach,
+    // or "0 reachable" would be a test that always passes. Every state a
+    // 64-bit seed produces is in the image by definition; this says the
+    // predicate agrees.
+    std::size_t reachablePositives = 0;
+    for (std::int64_t seed = -600; seed <= 600; ++seed) {
+        if (reachableFrom64BitSeed(stratum::rng::upgradeSeedTo128Bit(seed))) {
+            ++reachablePositives;
+        }
+    }
+    INFO(reachablePositives << " of 1201 states built FROM a 64-bit seed report reachable");
+    REQUIRE(reachablePositives == 1201U);
+
+    // Now the states the modern rule actually builds, over every distinct
+    // noise the probe packs declare and both world seeds.
+    constexpr std::array<Noise, 4> kNoises{kNa, kNb, kNmulti, kNskip};
+    std::size_t states = 0;
+    std::size_t reachable = 0;
+    for (const std::int64_t seed : kSeeds) {
+        for (const Noise& noise : kNoises) {
+            for (const stratum::rng::Seed128 state : modernStatesFor(noise, seed)) {
+                ++states;
+                if (reachableFrom64BitSeed(state)) {
+                    ++reachable;
+                    INFO("seed " << seed << " noise " << noise.id
+                                 << ": a modern state IS reachable from a 64-bit seed");
+                }
+            }
+        }
+    }
+
+    // Stated as a count so a run that examined nothing cannot pass. Four
+    // noises x two seeds: one named state each, plus two stacks' worth of
+    // per-octave states for each non-zero amplitude — 1+2, 1+2, 1+6 and 1+4.
+    INFO(reachable << " of " << states
+                   << " modern 128-bit states lie in upgradeSeedTo128Bit's image");
+    REQUIRE(states == 36U);
+    CHECK(reachable == 0U);
+}
+
+// WHAT A "PARTIAL-BLOCK SKIP" ACTUALLY COSTS, measured rather than assumed —
+// and the measurement moved the claim it was meant to support.
+//
+// SPEC §11 led its "still not covered" list with a skip, on the ground that
+// `end_islands` discards 17292 LCG STEPS while every axis in the scan moves
+// whole Perlin BLOCKS, so the one shape vanilla is MEASURED to use under
+// `legacy_random_source` lay outside the space. The arithmetic underneath that
+// was never checked. A Perlin block consumes three `nextDouble`s (two raw
+// steps each) and a 256-entry shuffle (one each) — 262 steps — and
+// 262 x 66 = 17292 EXACTLY. `end_islands`' skip is not a partial block. It is
+// block offset 66, which the block axis has swept all along.
+//
+// Both halves are asserted below, because the first alone would not settle it:
+// `nextInt(bound)` can in principle consume more than one step, rejecting a
+// draw that would bias the result, so 262 is a measurement over many seeds and
+// not a count read off the source. The rejection probability per draw is under
+// 2^-23 here, so a block that costs more than 262 is possible and merely very
+// rare; if one is ever seen, this case says so instead of the claim rotting.
+//
+// The gap the list meant to name is still real — an arbitrary skip that is NOT
+// a multiple of 262 remains outside the space — but it is no longer supported
+// by the only example anybody has, and the example was the reason it was
+// called the largest remaining gap. See SPEC §11.
+TEST_CASE("a Perlin block is 262 LCG steps, so end_islands' 17292-step skip is block offset 66",
+          "[conformance][legacy][seed][control][skip]") {
+    // How many raw LCG steps one block costs, over enough seeds that a
+    // rejection would be likely to show if it happened at all.
+    constexpr int kExpectedSteps = 262;
+    std::size_t blocks = 0;
+    std::size_t atExpected = 0;
+    std::size_t worst = 0;
+    for (std::int64_t seed = 0; seed < 4096; ++seed) {
+        stratum::rng::JavaRandom counted{seed};
+        stratum::rng::JavaRandom drawn{seed};
+        static_cast<void>(stratum::noise::PerlinNoise::fromRandom(drawn));
+
+        std::size_t steps = 0;
+        while (counted.state() != drawn.state() && steps < 4000U) {
+            static_cast<void>(counted.next(32));
+            ++steps;
+        }
+        ++blocks;
+        worst = std::max(worst, steps);
+        if (steps == static_cast<std::size_t>(kExpectedSteps)) {
+            ++atExpected;
+        }
+    }
+    INFO(atExpected << " of " << blocks << " blocks cost exactly " << kExpectedSteps
+                    << " LCG steps; the most any cost was " << worst);
+    REQUIRE(blocks == 4096U);
+    CHECK(atExpected == blocks);
+
+    // And therefore the two constructions land on the same generator state and
+    // build the same block. This is the statement that matters: it is what
+    // makes 17292 reachable by the block axis.
+    constexpr int kEndIslandsSkip = 17292;
+    constexpr int kEquivalentBlockOffset = kEndIslandsSkip / kExpectedSteps;
+    STATIC_REQUIRE(kEquivalentBlockOffset * kExpectedSteps == kEndIslandsSkip);
+
+    std::size_t agreed = 0;
+    std::size_t compared = 0;
+    for (const std::int64_t seed : {std::int64_t{0}, std::int64_t{42}, std::int64_t{31337},
+                                    std::int64_t{-1}, std::int64_t{123456789}}) {
+        stratum::rng::JavaRandom stepped{seed};
+        for (int i = 0; i < kEndIslandsSkip; ++i) {
+            static_cast<void>(stepped.nextInt());
+        }
+        stratum::rng::JavaRandom blocked{seed};
+        for (int i = 0; i < kEquivalentBlockOffset; ++i) {
+            static_cast<void>(stratum::noise::PerlinNoise::fromRandom(blocked));
+        }
+        const std::uint64_t steppedState = stepped.state();
+        const std::uint64_t blockedState = blocked.state();
+
+        const stratum::noise::PerlinNoise fromSteps =
+            stratum::noise::PerlinNoise::fromRandom(stepped);
+        const stratum::noise::PerlinNoise fromBlocks =
+            stratum::noise::PerlinNoise::fromRandom(blocked);
+
+        // Origins compared as bits: the warning set forbids `==` on doubles,
+        // and bit equality is the stronger claim in any case.
+        const bool sameOrigin = std::bit_cast<std::uint64_t>(fromSteps.originX()) ==
+                                    std::bit_cast<std::uint64_t>(fromBlocks.originX()) &&
+                                std::bit_cast<std::uint64_t>(fromSteps.originY()) ==
+                                    std::bit_cast<std::uint64_t>(fromBlocks.originY()) &&
+                                std::bit_cast<std::uint64_t>(fromSteps.originZ()) ==
+                                    std::bit_cast<std::uint64_t>(fromBlocks.originZ());
+
+        ++compared;
+        INFO("seed " << seed << ": a " << kEndIslandsSkip << "-step skip and "
+                     << kEquivalentBlockOffset << " discarded blocks");
+        CHECK(steppedState == blockedState);
+        CHECK(fromSteps.permutation() == fromBlocks.permutation());
+        CHECK(sameOrigin);
+        if (steppedState == blockedState && fromSteps.permutation() == fromBlocks.permutation() &&
+            sameOrigin) {
+            ++agreed;
+        }
+    }
+    INFO(agreed << " of " << compared << " seeds reach an identical block both ways");
+    REQUIRE(compared == 5U);
+    CHECK(agreed == compared);
+}
+
+TEST_CASE("the widened legacy-seed axes are axes: each one moves the field off the right answer",
+          "[conformance][legacy][seed][control][axes]") {
+    std::size_t present = 0;
+    std::string missing;
+    for (const std::int64_t seed : kSeeds) {
+        if (std::filesystem::is_directory(probeRoot(seed))) {
+            ++present;
+        } else {
+            missing += (missing.empty() ? "" : ", ") + std::to_string(seed);
+        }
+    }
+    if (present < kSeeds.size()) {
+        SKIP("legseed probe world(s) for seed(s) "
+             << missing << " missing under "
+             << (std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11" / "probes")
+             << "; this case requires all " << kSeeds.size()
+             << ". Regenerate with: tools/analysis/legacy-seed-probe.sh --accept-eula <seed>");
+    }
+
+    // Every perturbation, on every mirror dimension, at both seeds, must land
+    // at or under this share of columns. It is the same ceiling the negative
+    // control uses on the mirror dimensions, and these are all at scale 2
+    // where the measured null is 0.5-1.0% of columns.
+    constexpr double kNullCeiling = 0.03;
+    /// The stack swap's own ceiling: about twice the 5.3% it actually reaches,
+    /// which is headroom for another world and not for a signal. It is above
+    /// the null on purpose and the header says why.
+    constexpr double kSwapCeiling = 0.10;
+
+    std::size_t baselineColumns = 0;
+    std::size_t baselineIdentical = 0;
+    std::size_t perturbations = 0;
+    double worstPerturbationRate = 0.0;
+    std::size_t perturbationColumns = 0;
+
+    for (const std::int64_t seed : kSeeds) {
+        for (const Dimension& dimension : kDimensions) {
+            if (dimension.legacy) {
+                continue; // the right answer is only known on the mirror side
+            }
+            const std::filesystem::path region = probeRoot(seed) / dimension.name / "r.0.0.mca";
+            REQUIRE(std::filesystem::is_regular_file(region));
+            const std::vector<Column> columns = readColumns(region, dimension.scale);
+            REQUIRE(columns.size() >= 2048U);
+
+            const Schedule schedule = scheduleOf(dimension.noise);
+            const std::vector<stratum::noise::PerlinNoise> blocks =
+                modernOctaveBlocks(dimension.noise, seed);
+            REQUIRE(blocks.size() == schedule.perStack * 2);
+            const stratum::noise::NormalNoise reference = modernNoise(dimension.noise, seed);
+            const std::vector<std::size_t> baseline = sequentialAssignment(schedule.perStack);
+            const double band = 0.5 * quantum(dimension.scale);
+
+            // 1. The baseline assignment IS the library's rule, bit for bit.
+            //    Without this the perturbations below perturb some other
+            //    function and prove nothing about the analyzer's space.
+            for (const Column& column : columns) {
+                const double ours =
+                    sampleAssigned(schedule, blocks, baseline, 0, column.x, column.z);
+                if (std::bit_cast<std::uint64_t>(ours) ==
+                    std::bit_cast<std::uint64_t>(reference.sample(column.x, 0.0, column.z))) {
+                    ++baselineIdentical;
+                }
+            }
+            baselineColumns += columns.size();
+
+            // 2. Every perturbation falls to the null. A perturbation that is
+            //    a no-op for this noise's shape — reversing one octave, or
+            //    swapping two stacks that hold the same single block — is not
+            //    a degenerate AXIS, it is a degenerate INSTANCE, and the
+            //    analyzer collapses exactly those before it counts
+            //    candidates; so they are skipped here by the same rule.
+            struct Perturbation {
+                const char* name;
+                std::vector<std::size_t> assignment;
+                int delta;
+                /// What this perturbation may reach. Most fall to the null and
+                /// carry the null's ceiling; the stack swap does not, for the
+                /// reason in the header, and carries a ceiling justified
+                /// against its own measurement instead of being quietly folded
+                /// into the null's.
+                double ceiling;
+            };
+
+            std::vector<Perturbation> tried;
+            if (schedule.perStack > 1) {
+                tried.push_back({"reversed octave order", reversedAssignment(schedule.perStack), 0,
+                                 kNullCeiling});
+            }
+            tried.push_back({"swapped stacks", swappedStacks(schedule.perStack), 0, kSwapCeiling});
+            for (int delta = -3; delta <= 3; ++delta) {
+                if (delta == 0) {
+                    continue;
+                }
+                tried.push_back({"frequency offset", baseline, delta, kNullCeiling});
+            }
+
+            for (const Perturbation& perturbation : tried) {
+                std::size_t agreed = 0;
+                for (const Column& column : columns) {
+                    const double ours = sampleAssigned(schedule, blocks, perturbation.assignment,
+                                                       perturbation.delta, column.x, column.z);
+                    if (std::abs(ours - column.value) <= band + 1e-12) {
+                        ++agreed;
+                    }
+                }
+                INFO("seed " << seed << " dimension " << dimension.name << " perturbation "
+                             << perturbation.name << " delta " << perturbation.delta
+                             << ": agrees on " << agreed << " of " << columns.size());
+                CHECK(static_cast<double>(agreed) <=
+                      perturbation.ceiling * static_cast<double>(columns.size()));
+                // And whatever its own ceiling, no perturbation may come
+                // anywhere near the 100% the correct rule reaches: that is the
+                // statement "this is an axis with more than one point on it".
+                CHECK(static_cast<double>(agreed) <= 0.10 * static_cast<double>(columns.size()));
+                ++perturbations;
+                perturbationColumns += columns.size();
+                worstPerturbationRate =
+                    std::max(worstPerturbationRate,
+                             static_cast<double>(agreed) / static_cast<double>(columns.size()));
+            }
+        }
+    }
+
+    // Stated as counts, so a run that scored nothing cannot pass by having no
+    // denominator.
+    INFO("baseline reproduced the library on " << baselineIdentical << " of " << baselineColumns
+                                               << " columns");
+    REQUIRE(baselineColumns > 0);
+    CHECK(baselineIdentical == baselineColumns);
+
+    INFO(perturbations << " perturbations over " << perturbationColumns
+                       << " column-scorings; the best any of them reached was "
+                       << (100.0 * worstPerturbationRate) << "% of its dimension");
+    REQUIRE(perturbations >= 2U * kSeeds.size());
+    CHECK(worstPerturbationRate <= kSwapCeiling);
 }

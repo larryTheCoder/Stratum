@@ -13,41 +13,76 @@
 //   base       (5)  the world seed; JavaRandom(worldSeed).nextLong();
 //                   the low half of XoroshiroPositionalFactory(worldSeed);
 //                   the world seed put through the LCG's own scramble; zero
-//   salt      (10)  MD5("ns:path") read as first-eight big-endian, first-eight
+//   salt      (12)  MD5("ns:path") read as first-eight big-endian, first-eight
 //                   little-endian, last-eight big-endian, last-eight
 //                   little-endian, lo^hi, lo+hi; MD5("path") first-eight
 //                   big-endian; String.hashCode("ns:path");
-//                   String.hashCode("path"); no salt at all
+//                   String.hashCode("path"); the noise's DECLARATION ORDINAL
+//                   in the pack; MD5 of that ordinal's decimal spelling,
+//                   first-eight big-endian; no salt at all
 //   combine    (3)  base ^ salt, base + salt, base - salt
-//   forks      (3)  0, 1 or 2 further rounds of seed = JavaRandom(seed).nextLong()
+//   forks      (4)  0, 1 or 2 further rounds of seed =
+//                   JavaRandom(seed).nextLong(), or the noise's DECLARATION
+//                   ORDINAL many rounds
 //   generator  (2)  the Java LCG, or Xoroshiro128++
+//   draw       (3)  the stack's Perlin blocks drawn in order from one
+//                   generator; one generator per block, each seeded by the
+//                   parent's nextLong(); the SECOND stack drawn from a
+//                   generator forked once off the first's seed
+//   octave     (3)  no per-octave salt; each octave's generator seeded
+//     salting       seed ^ MD5("octave_<n>") first-eight big-endian; the same
+//                   with String.hashCode("octave_<n>") — the modern scheme's
+//                   shape carried over to the LCG
+//   order      (2)  octave blocks consumed lowest-first or highest-first
+//   zeros      (2)  a zero-amplitude octave consumes a Perlin block, or does
+//                   not
+//   frequency  (7)  firstOctave + d for d in [-3, +3]
 //   block    (300)  how many complete Perlin blocks are drawn and discarded
 //                   before the stack is built
 //
-// 5 x 10 x 3 x 3 x 2 = 900 seed rules, times 300 block offsets = 270,000
-// candidates per dimension. That number is printed with every run, so a claim
-// about "N candidates refuted" can be checked against the tool rather than
-// against a memory of it.
+// 5 x 12 x 3 x 4 x 2 = 1,440 seed rules, times 3 x 3 x 2 x 2 = 36 stack
+// shapes, times 7 frequency offsets, times 300 block offsets =
+// **108,864,000 candidates per dimension** enumerated. The number actually
+// SCANNED is smaller and is printed per dimension, because both the seed
+// rules and the stack shapes are deduplicated against the dimension's own
+// noise before scoring: two rules that reduce to the same (seed, generator)
+// for this identifier, or two shapes whose slot-to-block mapping is the same
+// for this amplitude pattern, are one candidate and are counted once. A
+// 1-octave noise has 13 distinct shapes, not 36 — order and zero-consumption
+// cannot reach anything when there is one octave and no zero — and saying
+// otherwise would inflate a denominator by 2.8x for free. Measured: 13 shapes
+// on the 1-octave dimensions, 16 on the 3-octave ones and 22 on the skip ones,
+// against 866-1258 distinct seed rules of the 1,440, so 23.6M to 58.1M
+// candidates per dimension rather than 108.9M.
 //
-// WHAT IT DOES NOT COVER, said plainly rather than left to be assumed: only
-// ONE stack rule, the sequential one — every octave's Perlin block drawn in
-// order from the single generator, which is the rule this project has already
-// confirmed for `old_blended_noise` under the same flag. The modern
-// per-octave MD5 salting scheme adapted to an LCG is NOT in this space. Nor
-// is any frequency rule other than the noise's own declared `firstOctave`: an
-// earlier write-up described the sweep as covering "frequency
-// 2^(firstOctave +/- 1..3)", which no version of this code has done.
+// WHAT IT DOES NOT COVER, said plainly rather than left to be assumed, is in
+// the "AFTER THE WIDENING" block below; it is no longer the stack rule.
 //
-// AND NO SKIP, WHICH `end_islands` NOW SAYS IS A SHAPE VANILLA USES. The
-// `block` axis above discards whole PERLIN BLOCKS; `end_islands`' simplex —
-// settled against the server, in a dimension declaring the same flag — is
-// seeded by `new java.util.Random(worldSeed)` followed by 17292 discarded LCG
-// STEPS, which this space cannot express at any offset (SPEC §11).
+// AND ONLY A SKIP THAT IS NOT A WHOLE NUMBER OF BLOCKS, which is narrower than
+// this comment used to claim. It said `end_islands`' shape was outside the
+// space: the `block` axis discards whole PERLIN BLOCKS, while `end_islands`'
+// simplex — settled against the server, in a dimension declaring the same
+// flag — is seeded by `new java.util.Random(worldSeed)` followed by 17292
+// discarded LCG STEPS. The arithmetic was never done. A Perlin block costs
+// three nextDoubles at two raw steps each plus a 256-entry shuffle at one
+// each — 262 steps, measured at 4096 of 4096 seeds — and 262 x 66 = 17292
+// exactly, so that skip IS block offset 66, inside the 300 this axis sweeps
+// (verified as the same generator state and the same constructed block, at
+// five seeds, in tests/conformance/vanilla_legacy_seed_control_test.cpp).
+// What is still outside is a skip whose step count is not a multiple of 262 —
+// a real gap, but one with no known example in it (SPEC §11).
 //
-// Of the two gaps, the stack rule is the one to test first: if a legacy
-// NormalNoise keeps the modern per-octave shape and only swaps the generator
-// and the hash, then no seed candidate can be right while the stack rule is
-// wrong, and 270,000 candidates at the null say nothing at all about seeds.
+// THE SEARCH IS A CASCADE, and that changes what "survivor" means. Scoring
+// 100,000,000 candidates on 128 columns each is not affordable, so every
+// candidate is first scored on 8 columns spread across the region and only a
+// candidate that agrees on ALL EIGHT is scored further. That screen never
+// rejects a correct candidate — `--control` measures the correct rule at
+// 2304/2304, so a rule that reproduces the readback agrees on all eight by
+// construction — and it is NOT a general high-score search: a candidate that
+// agreed on 60% of columns scattered would be dropped. The 8-column
+// agreement histogram over the WHOLE space is reported, and a uniform
+// subsample is additionally scored on the full 128 columns, so the null is
+// measured in the same statistic as before rather than in the screen's.
 //
 // THE NULL IS MEASURED, NOT ASSUMED, and that is the other half of the point.
 // Every candidate in the space is wrong, so the distribution of their
@@ -65,8 +100,12 @@
 // it: base = JavaRandom(worldSeed).nextLong(), salted with the first eight
 // bytes of MD5("ns:path") big-endian, XORed, then one further round of
 // seed = JavaRandom(seed).nextLong(), driving the LCG, at block offset 0.
-// That is rule 182, block 0, and `--candidate 182 0` scores it by name rather
-// than leaving it to be inferred from a list of survivors it is absent from.
+// That is rule 290 at the baseline shape and frequency, and
+// `--candidate 290 0` scores it by name rather than leaving it to be inferred
+// from a list of survivors it is absent from. It was rule 182 before the
+// widening: adding two salt spellings and a fourth fork count re-indexes
+// every rule, and quoting the old index against the new tool would name a
+// different rule (SPEC §11 carries both).
 //
 // `--twin` ASKS ABOUT THE QUESTION RATHER THAN A CANDIDATE. `leg_single` and
 // `leg_twin` carry `stratum:na` and `stratum:nb`: the same parameters under
@@ -79,12 +118,30 @@
 // differently; that needs a probe whose packs differ in which OTHER noises
 // they define.
 //
-// AND THE SEARCH IS CALIBRATED. `--plant <seedRule> <block>` replaces the
-// server's readings with readings synthesised from that candidate, put
-// through the same quantisation the server's terrain imposes, and then runs
-// the identical scan. If the scan does not return the planted candidate
-// first, the scan cannot find a correct answer at this candidate count and no
-// refutation drawn from it means anything.
+// THE DECLARATION-ORDER AXIS IS WHAT THIS FILE CAN DO ABOUT THAT, short of
+// that probe. `legseed_s*`'s `<spec>.noises.json` declares four noises in a
+// fixed order — stratum:na, stratum:nb, stratum:nmulti, stratum:nskip, which
+// is also their sorted order — so each noise has an ORDINAL, 0 to 3, that is
+// a fact about the pack rather than about the name. Two salt spellings and a
+// fork count now read that ordinal instead of the identifier, so a rule that
+// seeds from BUILD POSITION is inside the space and is refutable by the same
+// scan. The other, older way build order can enter — every noise in the pack
+// drawn from ONE generator in declaration order, so noise k starts where
+// noise k-1 stopped — needs no new axis at all: it is a block offset, and
+// with these four noises the offsets are 0, 2, 4 and 10, all inside the 300
+// the `block` axis already sweeps.
+//
+// AND THE SEARCH IS CALIBRATED. `--plant <seedRule> <block> [shape] [delta]`
+// replaces the server's readings with readings synthesised from that
+// candidate, put through the same quantisation the server's terrain imposes,
+// and then runs the identical scan. If the scan does not return the planted
+// candidate first, the scan cannot find a correct answer at this candidate
+// count and no refutation drawn from it means anything. `--plant-axes` runs
+// one plant PER NEW AXIS — a stack shape, a per-octave salting, a frequency
+// offset and an ordinal-seeded rule — and fails if any of them does not come
+// back at rank 1, so "no survivor on axis X" is a measurement on axis X and
+// not a report that the scan cannot reach it. It is a CTest
+// (conformance.legacy_seed_control_tool).
 //
 // THE PLANT IS NOT ENOUGH, and `--control` is the half it cannot supply. A
 // plant synthesises its readings through THIS FILE'S OWN forward model —
@@ -137,14 +194,95 @@
 // control with one arm would have missed one of the two. See SPEC §11.
 //
 // If those recover the mod_* dimensions and sit at the null on the leg_*
-// ones, then "270,000 candidates, no survivor" is a measurement: a correct
+// ones, then "108,864,000 candidates enumerated, no survivor" is a
+// measurement: a correct
 // named-noise rule IS recoverable through this apparatus, and the legacy
 // derivation is absent from the space rather than invisible to the tool.
 //
+// THE MODERN RULE IS NOT A MEMBER OF THE ENUMERATED SPACE, and saying so here
+// is not a footnote: without it `--scan`'s own output reads as a refutation of
+// this tool. Point the scan at a mod_* mirror — a dimension whose seeding is
+// KNOWN and which `--control` recovers at 2304/2304 — and it reports
+// `past screen 0  survivors 0`, exactly what it reports on the legacy
+// dimensions. Measured at seed 42: mod_single over 23,641,800 candidates,
+// mod_multi over 30,912,000 and mod_skip over 57,010,800, none of them past
+// the screen; mod_single repeats at seed 31337. A reader taking those rows at
+// face value concludes the scan fails even where the answer is known. It does
+// not. The modern rule lies OUTSIDE the axes, on two counts that no block or
+// frequency offset can reach because they are different arithmetic:
+//
+//   * its generator is seeded from a full 128-bit state —
+//     XoroshiroPositionalFactory(worldSeed).fromHashOf(id) XORs the MD5 of the
+//     identifier into BOTH halves of a forked 128-bit base — whereas every
+//     candidate here reaches Xoroshiro through the 64-bit constructor, i.e.
+//     through upgradeSeedTo128Bit's image, 2^64 of the 2^128 states;
+//   * and its per-octave salt is a Seed128 XORed into both halves, where the
+//     `octave` salting axis XORs 64 bits into a 64-bit seed.
+//
+// That membership is DECIDABLE rather than argued: mixStafford13 is a
+// bijection, so a 128-bit state is reachable from a 64-bit seed exactly when
+// mixStafford13(unmix(lo) + kGoldenRatio64) == hi. Of the 36 states the modern
+// rule builds over these four noises and both worlds — each noise's named
+// state, plus each stack's per-octave states for each NON-ZERO amplitude —
+// ZERO are reachable, while 1201 of 1201 states built FROM a 64-bit seed do
+// report reachable, so the predicate is not one that refuses everything. That
+// is asserted in tests/conformance/vanilla_legacy_seed_control_test.cpp, so it
+// cannot go stale if an axis is ever widened.
+//
+// So a mod_* row in `--scan` is evidence about the SPACE, not about the tool,
+// and it is why `--control` scores the modern rule DIRECTLY — same readback,
+// same band, same columns, but not through the scan. Running it through the
+// scan could only ever report zero.
+//
+// AND THE CASCADE LEAVES A SEAM of its own, which the two calibrations do not
+// close between them: the 8-column screen and the 128-column gate are run on
+// the SERVER's readings only by candidates that are all wrong, and on a
+// CORRECT candidate only by a plant's SYNTHETIC readings — no run of this tool
+// has ever put a right answer and real data through the screen together, and
+// after the paragraph above none can. What covers the real-data half is
+// `--control`'s `exact` arm: quantise(model) reproduces the server's own
+// reading as a double on every column of every mirror dimension (measured
+// 6912/6912 over three mirrors, at each seed), so a correct candidate would
+// land inside the band on all eight screen columns by construction rather than
+// by luck. The screen's "never rejects a correct candidate" therefore rests on
+// `exact`, not on the plants.
+//
+// AFTER THE WIDENING, WHAT IS STILL NOT COVERED — the list this file used to
+// head with "only ONE stack rule", which is no longer true:
+//
+//   * A SKIP THAT IS NOT A MULTIPLE OF 262 STEPS. Every axis here moves whole
+//     Perlin BLOCKS, and a block is exactly 262 LCG steps, so this space
+//     reaches every step offset divisible by 262 and no other. It used to say
+//     `end_islands`' 17292 was outside; 262 x 66 = 17292, so it is block
+//     offset 66 and is not. The gap is real but has no known example in it.
+//   * THREE STACK RULES, not all of them. The draw axis covers sequential,
+//     per-block forking, and a forked second stack; it does not cover a
+//     third stack, a stack whose octave count differs from the amplitude
+//     count, or the two stacks interleaved octave by octave.
+//   * THE 337/331 SECOND-STACK RATIO IS FIXED. Every candidate uses it; a
+//     legacy shape that scaled the second stack differently is outside.
+//   * THE PERSISTENCE AND valueFactor SCHEDULES ARE FIXED, at the modern
+//     ones. The frequency axis moves octave frequencies and nothing else, so
+//     a legacy normalisation with a different amplitude schedule is outside.
+//   * THE OCTAVE-SALT STRINGS ARE THE MODERN ONES, "octave_<n>" with n the
+//     DECLARED firstOctave plus the octave index — not the frequency axis's
+//     shifted one, and not any other spelling.
+//   * THE FORK IS ALWAYS THE LCG's. `forks` and the second-stack fork both
+//     use JavaRandom(seed).nextLong() even when the generator axis selects
+//     Xoroshiro, because that is the shape `old_blended_noise` confirmed.
+//   * AND THE ORDINALS ARE THIS PACK'S. The declaration-order axis reads the
+//     four-noise order `legseed_s*` ships. Whether vanilla's own build order
+//     for `minecraft:temperature` and friends is registry order, sorted
+//     order, or something else is not settled by anything here; what is
+//     tested is that the SHAPE "the seed comes from build position" is
+//     refutable, and on this pack it is refuted.
+//
 // TWO CAVEATS, and neither is discharged by anything above.
 //
-//   1. It does NOT widen the space: a control on a modern rule cannot say
-//      whether the legacy rule uses a stack shape this scan never enumerates.
+//   1. A control on a MODERN rule still cannot say whether the legacy rule
+//      uses a shape this scan never enumerates. The widening shortens the
+//      list above; it does not close it, and the plants are what make each
+//      new axis a measurement rather than an assertion.
 //
 //   2. Everything the control validates, it validates on the MODERN
 //      dimensions. The step from "no survivor" to "absent from the space
@@ -158,14 +296,18 @@
 //      figures are in SPEC §11 and the comparison is asserted in
 //      tests/conformance/vanilla_legacy_seed_control_test.cpp.
 //
-// AND WHAT THE CONTROL DOES NOT REACH INSIDE THIS FILE: `blocksFor` under
+// AND WHAT THE CONTROL DOES NOT REACH INSIDE THIS FILE: `streamBlocks` under
 // Generator::Lcg — Java Random driving PerlinNoise::fromRandom, which half
-// of the 270,000 candidates use — is exercised by neither `--control` nor the
+// of the candidates use — is exercised by neither `--control` nor the
 // conformance case, both of which run Xoroshiro128++ only. That path is
 // validated against the server in
 // tests/conformance/vanilla_legacy_blended_test.cpp, where
 // BlendedNoise::legacyFromWorldSeed is JavaRandom{worldSeed} handed straight
-// into the same PerlinNoise::fromRandom.
+// into the same PerlinNoise::fromRandom. `--plant-axes` reaches it from the
+// other side: its four plants are LCG rules, synthesised through
+// `streamBlocks` and then recovered through it, so a `streamBlocks` that drew
+// nothing at all would fail the plant rather than pass unnoticed. That is
+// self-consistency, not agreement with the server, and is stated as such.
 //
 // THIS FILE IS A BUILD TARGET (tools/analysis/CMakeLists.txt) and it is one
 // deliberately. Compiled by hand from a header comment, it sat outside every
@@ -177,9 +319,13 @@
 //
 //   cmake --build --preset dev --target stratum_legacy_seed_analyze
 //   A=build/dev/tools/analysis/stratum_legacy_seed_analyze
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --axes
 //   $A .fixtures/1.21.11/probes/legseed_s42 42 --scan
-//   $A .fixtures/1.21.11/probes/legseed_s42 42 --candidate 182 0
-//   $A .fixtures/1.21.11/probes/legseed_s42 42 --plant 180 7
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --scan --only leg_skip
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --candidate 290 0
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --plant 288 7
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --plant 288 7 24 2
+//   $A .fixtures/1.21.11/probes/legseed_s42 42 --plant-axes
 //   $A .fixtures/1.21.11/probes/legseed_s42 42 --control
 //   $A .fixtures/1.21.11/probes/legseed_s42 42 --profile
 #include <stratum/chunk/chunk.hpp>
@@ -202,6 +348,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace stratum;
@@ -221,12 +368,21 @@ struct Noise {
     int firstOctave;
     std::array<double, 3> amplitudes;
     std::size_t amplitudeCount;
+    /// The noise's position in the probe pack's `<spec>.noises.json`, which is
+    /// also its sorted order. This is the only handle these fixtures give on
+    /// "the seed comes from BUILD POSITION rather than from the name" — the
+    /// axis `--twin` measured but could not separate.
+    int ordinal;
 };
 
-constexpr Noise kNa{"stratum:na", -3, {1.0, 0.0, 0.0}, 1};
-constexpr Noise kNb{"stratum:nb", -3, {1.0, 0.0, 0.0}, 1};
-constexpr Noise kNmulti{"stratum:nmulti", -5, {1.0, 1.0, 1.0}, 3};
-constexpr Noise kNskip{"stratum:nskip", -5, {1.0, 0.0, 1.0}, 3};
+constexpr Noise kNa{"stratum:na", -3, {1.0, 0.0, 0.0}, 1, 0};
+constexpr Noise kNb{"stratum:nb", -3, {1.0, 0.0, 0.0}, 1, 1};
+constexpr Noise kNmulti{"stratum:nmulti", -5, {1.0, 1.0, 1.0}, 3, 2};
+constexpr Noise kNskip{"stratum:nskip", -5, {1.0, 0.0, 1.0}, 3, 3};
+
+/// The largest `amplitudeCount` any probe noise declares. The frequency axis
+/// indexes a table by (frequency offset + octave index), so this bounds it.
+constexpr std::size_t kMaxOctaves = 3;
 
 struct Dimension {
     const char* name;
@@ -351,22 +507,32 @@ enum class Salt : std::uint8_t {
     Md5PathFirstBe,
     HashCodeId,
     HashCodePath,
+    Ordinal,
+    Md5Ordinal,
     None
 };
 enum class Combine : std::uint8_t { Xor, Add, Sub };
 enum class Generator : std::uint8_t { Lcg, Xoroshiro };
 
 constexpr std::size_t kBases = 5;
-constexpr std::size_t kSalts = 10;
+constexpr std::size_t kSalts = 12;
 constexpr std::size_t kCombines = 3;
-constexpr std::size_t kForks = 3;
+/// 0, 1, 2 — and a fourth value meaning "the noise's declaration ordinal many
+/// forks", which is the other shape a build-order seeding could take.
+constexpr std::size_t kForks = 4;
+constexpr std::size_t kOrdinalForks = 3;
 constexpr std::size_t kGenerators = 2;
 constexpr std::size_t kSeedRules = kBases * kSalts * kCombines * kForks * kGenerators;
+/// How many seed rules there were before the declaration-order axis added two
+/// salt spellings and a fourth fork count. Only --axes uses it, to say what
+/// each axis adds on its own off the space that stood before.
+constexpr std::size_t kBaselineSeedRules = 900;
 
 struct SeedRule {
     Base base = Base::WorldSeed;
     Salt salt = Salt::None;
     Combine combine = Combine::Xor;
+    /// 0-2 literally; kOrdinalForks means the noise's declaration ordinal.
     int forks = 0;
     Generator generator = Generator::Lcg;
 };
@@ -389,14 +555,16 @@ struct SeedRule {
     static constexpr std::array<const char*, kBases> kBaseNames{"worldSeed", "lcgLong", "xoroLo",
                                                                 "scrambled", "zero"};
     static constexpr std::array<const char*, kSalts> kSaltNames{
-        "md5FirstBE",  "md5FirstLE",     "md5LastBE",  "md5LastLE",    "md5LoXorHi",
-        "md5LoPlusHi", "md5PathFirstBE", "hashCodeId", "hashCodePath", "none"};
+        "md5FirstBE",     "md5FirstLE", "md5LastBE",    "md5LastLE", "md5LoXorHi", "md5LoPlusHi",
+        "md5PathFirstBE", "hashCodeId", "hashCodePath", "ordinal",   "md5Ordinal", "none"};
     static constexpr std::array<const char*, kCombines> kCombineNames{"xor", "add", "sub"};
-    std::string text = std::string{kBaseNames[static_cast<std::size_t>(rule.base)]} + " " +
-                       kCombineNames[static_cast<std::size_t>(rule.combine)] + " " +
-                       kSaltNames[static_cast<std::size_t>(rule.salt)] + ", forks " +
-                       std::to_string(rule.forks) + ", " +
-                       (rule.generator == Generator::Lcg ? "lcg" : "xoroshiro");
+    std::string text =
+        std::string{kBaseNames[static_cast<std::size_t>(rule.base)]} + " " +
+        kCombineNames[static_cast<std::size_t>(rule.combine)] + " " +
+        kSaltNames[static_cast<std::size_t>(rule.salt)] + ", forks " +
+        (rule.forks == static_cast<int>(kOrdinalForks) ? std::string{"ordinal"}
+                                                       : std::to_string(rule.forks)) +
+        ", " + (rule.generator == Generator::Lcg ? "lcg" : "xoroshiro");
     return text;
 }
 
@@ -426,7 +594,8 @@ struct SeedRule {
     return static_cast<std::int32_t>(hash);
 }
 
-[[nodiscard]] std::uint64_t saltFor(Salt salt, std::string_view id) {
+[[nodiscard]] std::uint64_t saltFor(Salt salt, const Noise& noise) {
+    const std::string_view id{noise.id};
     const std::size_t colon = id.find(':');
     const std::string_view path = colon == std::string_view::npos ? id : id.substr(colon + 1);
     const hash::Md5Digest digest = hash::md5(id);
@@ -450,6 +619,12 @@ struct SeedRule {
             return static_cast<std::uint64_t>(static_cast<std::int64_t>(javaHashCode(id)));
         case Salt::HashCodePath:
             return static_cast<std::uint64_t>(static_cast<std::int64_t>(javaHashCode(path)));
+        case Salt::Ordinal:
+            return static_cast<std::uint64_t>(static_cast<std::int64_t>(noise.ordinal));
+        case Salt::Md5Ordinal:
+            // The ordinal's decimal spelling rather than its value, so the
+            // axis is not a relabelling of Salt::None at ordinal 0.
+            return beU64(hash::md5(std::to_string(noise.ordinal)), 0);
         case Salt::None:
             return 0;
     }
@@ -479,9 +654,9 @@ struct SeedRule {
 }
 
 [[nodiscard]] std::int64_t seedFor(const SeedRule& rule, std::int64_t worldSeed,
-                                   std::string_view id) {
+                                   const Noise& noise) {
     const std::uint64_t base = baseFor(rule.base, worldSeed);
-    const std::uint64_t salt = saltFor(rule.salt, id);
+    const std::uint64_t salt = saltFor(rule.salt, noise);
     std::uint64_t seed = 0;
     switch (rule.combine) {
         case Combine::Xor:
@@ -494,11 +669,21 @@ struct SeedRule {
             seed = base - salt;
             break;
     }
-    for (int i = 0; i < rule.forks; ++i) {
+    // The fork is always the LCG's, whichever generator the rule selects:
+    // JavaRandom(seed).nextLong() is the shape `old_blended_noise` confirmed
+    // under this flag, and it is stated as the fixed choice it is.
+    const int forks = rule.forks == static_cast<int>(kOrdinalForks) ? noise.ordinal : rule.forks;
+    for (int i = 0; i < forks; ++i) {
         rng::JavaRandom random{static_cast<std::int64_t>(seed)};
         seed = static_cast<std::uint64_t>(random.nextLong());
     }
     return static_cast<std::int64_t>(seed);
+}
+
+/// One round of the same fork, used by the second-stack-fork draw rule below.
+[[nodiscard]] std::int64_t forkOnce(std::int64_t seed) {
+    rng::JavaRandom random{seed};
+    return random.nextLong();
 }
 
 /// `amplitude != 0.0`, spelled so the project's -Wfloat-equal does not fire.
@@ -508,12 +693,17 @@ struct SeedRule {
     return std::abs(amplitude) > 0.0;
 }
 
-// --- the stack rule ---------------------------------------------------------
+// --- the BASELINE stack rule ------------------------------------------------
 //
-// Sequential, and only sequential: 2 * octaveCount Perlin blocks drawn in
-// order — the first stack's octaves, then the second's — which is the shape
-// `BlendedNoise::legacy` uses and the only stack rule this project has ever
-// confirmed under the flag.
+// Sequential: 2 * octaveCount Perlin blocks drawn in order — the first stack's
+// octaves, then the second's — which is the shape `BlendedNoise::legacy` uses
+// and the only stack rule this project has confirmed under the flag.
+//
+// It is kept, unchanged, because `--control` scores THIS code against the
+// library bit for bit and the widened evaluator below is checked against it
+// at the baseline point rather than replacing it untested. The scan and the
+// plants run the widened evaluator; `layoutFor`/`sampleNormal` are the fixed
+// reference it has to reduce to.
 
 struct Octave {
     std::size_t block = 0;
@@ -583,25 +773,470 @@ struct Layout {
     return combined * layout.valueFactor;
 }
 
-/// Every Perlin block a seed rule can reach, drawn once in order. Building
-/// them incrementally is what keeps the block sweep linear instead of
-/// quadratic.
-[[nodiscard]] std::vector<noise::PerlinNoise> blocksFor(const SeedRule& rule, std::int64_t seed,
-                                                        std::size_t needed) {
+// --- the widened stack-shape, frequency and build-order axes ----------------
+//
+// Four axes the scan did not have, each one enumerated here and each one
+// calibrated by a plant of its own (`--plant-axes`).
+//
+//   draw          how the Perlin blocks are produced
+//   octave salt   whether each octave gets its own generator, and from what
+//   order/zeros   which block each octave slot consumes
+//   frequency     2^(firstOctave + d) for d in [-3, +3]
+//
+// The declaration-order axis is not here: it enters through the SEED (the
+// ordinal salts and the ordinal fork count above), because a build-order rule
+// is a statement about the seed, not about the stack.
+
+enum class Draw : std::uint8_t {
+    /// Every block drawn in order from one generator. The baseline.
+    Sequential,
+    /// One generator per block, each seeded by the parent's nextLong(). This
+    /// is a FORK PER BLOCK, which is not the same as the `forks` axis's fork
+    /// of the whole seed and is not the same as a skip.
+    PerOctaveFork,
+    /// The second stack drawn from a generator forked once off the rule's
+    /// seed, so the two stacks do not share a draw sequence.
+    SecondStackFork
+};
+
+enum class OctaveSalt : std::uint8_t {
+    None,
+    /// The modern scheme's shape on the LCG: each octave's generator seeded
+    /// with seed ^ MD5("octave_<n>") first-eight big-endian, n being the
+    /// DECLARED firstOctave plus the octave index.
+    Md5Octave,
+    /// The same with Java's String.hashCode in place of MD5.
+    HashOctave
+};
+
+enum class Order : std::uint8_t { Forward, Reverse };
+
+enum class Zeros : std::uint8_t {
+    /// A zero-amplitude octave consumes no Perlin block, which is what the
+    /// baseline assumed and what `stratum:nskip` exists to test.
+    Skip,
+    /// It consumes one and contributes nothing.
+    Consume
+};
+
+constexpr std::size_t kDraws = 3;
+constexpr std::size_t kOctaveSalts = 3;
+constexpr std::size_t kOrders = 2;
+constexpr std::size_t kZeros = 2;
+constexpr std::size_t kShapes = kDraws * kOctaveSalts * kOrders * kZeros;
+
+constexpr int kFreqDeltaMin = -3;
+constexpr int kFreqDeltaMax = 3;
+constexpr std::size_t kFreqDeltas = static_cast<std::size_t>(kFreqDeltaMax - kFreqDeltaMin) + 1;
+/// (frequency offset) + (octave index) over their whole ranges.
+constexpr std::size_t kExponents = kFreqDeltas + kMaxOctaves - 1;
+
+struct Shape {
+    Draw draw = Draw::Sequential;
+    OctaveSalt salt = OctaveSalt::None;
+    Order order = Order::Forward;
+    Zeros zeros = Zeros::Skip;
+};
+
+/// Index 0 is the baseline shape, so `--plant <rule> <block>` still means what
+/// it meant before the widening.
+[[nodiscard]] Shape shapeAt(std::size_t index) {
+    Shape shape;
+    shape.zeros = static_cast<Zeros>(index % kZeros);
+    index /= kZeros;
+    shape.order = static_cast<Order>(index % kOrders);
+    index /= kOrders;
+    shape.salt = static_cast<OctaveSalt>(index % kOctaveSalts);
+    index /= kOctaveSalts;
+    shape.draw = static_cast<Draw>(index % kDraws);
+    return shape;
+}
+
+[[nodiscard]] std::string describe(const Shape& shape) {
+    static constexpr std::array<const char*, kDraws> kDrawNames{"sequential", "perBlockFork",
+                                                                "secondStackFork"};
+    static constexpr std::array<const char*, kOctaveSalts> kSaltNames{"noOctaveSalt", "md5Octave",
+                                                                      "hashOctave"};
+    return std::string{kDrawNames[static_cast<std::size_t>(shape.draw)]} + "/" +
+           kSaltNames[static_cast<std::size_t>(shape.salt)] + "/" +
+           (shape.order == Order::Forward ? "forward" : "reverse") + "/" +
+           (shape.zeros == Zeros::Skip ? "skipZeros" : "consumeZeros");
+}
+
+[[nodiscard]] std::size_t exponentIndex(int delta, std::size_t octave) {
+    return static_cast<std::size_t>(delta - kFreqDeltaMin) + octave;
+}
+
+[[nodiscard]] double frequencyAt(const Noise& noise, std::size_t exponent) {
+    return std::ldexp(1.0, noise.firstOctave + kFreqDeltaMin + static_cast<int>(exponent));
+}
+
+[[nodiscard]] std::uint64_t octaveSaltFor(OctaveSalt kind, const Noise& noise, std::size_t octave) {
+    if (kind == OctaveSalt::None) {
+        return 0;
+    }
+    const std::string name =
+        "octave_" + std::to_string(noise.firstOctave + static_cast<int>(octave));
+    if (kind == OctaveSalt::Md5Octave) {
+        return beU64(hash::md5(name), 0);
+    }
+    return static_cast<std::uint64_t>(static_cast<std::int64_t>(javaHashCode(name)));
+}
+
+/// One source of Perlin blocks: a generator seed, and how blocks come off it.
+struct StreamSpec {
+    /// The seed is forked once (JavaRandom(seed).nextLong()) before use.
+    bool forked = false;
+    /// XORed on after the fork; the per-octave salt, or 0.
+    std::uint64_t octaveMix = 0;
+    /// Each block from a fresh generator seeded by the parent's nextLong().
+    bool perBlockFork = false;
+    /// How many blocks the stream has to hold, block offsets included.
+    std::size_t length = 0;
+
+    [[nodiscard]] bool sameSourceAs(const StreamSpec& other) const {
+        return forked == other.forked && octaveMix == other.octaveMix &&
+               perBlockFork == other.perBlockFork;
+    }
+};
+
+/// One contributing octave of one stack: where its Perlin block comes from and
+/// what it is multiplied by.
+struct Slot {
+    std::size_t stream = 0;
+    std::size_t position = 0;
+    std::size_t octave = 0;
+    std::size_t stack = 0;
+    double amplitude = 0.0;
+    double persistence = 0.0;
+};
+
+struct Plan {
+    std::vector<StreamSpec> streams;
+    std::vector<Slot> slots;
+    double valueFactor = 1.0;
+    /// The whole slot-to-block mapping, spelled out. Two shapes with the same
+    /// signature are ONE candidate for this noise, and counting them twice
+    /// would inflate the denominator for free.
+    std::string signature;
+};
+
+[[nodiscard]] Plan planFor(const Noise& noise, const Shape& shape) {
+    Plan plan;
+    const std::size_t count = noise.amplitudeCount;
+
+    // The persistence schedule and the valueFactor are the modern ones and are
+    // NOT on any axis here; layoutFor is the reference and this repeats it.
+    std::vector<double> persistence(count, 0.0);
+    {
+        double value = std::ldexp(1.0, static_cast<int>(count) - 1) /
+                       (std::ldexp(1.0, static_cast<int>(count)) - 1.0);
+        for (std::size_t i = 0; i < count; ++i) {
+            persistence[i] = value;
+            value *= 0.5;
+        }
+    }
+    plan.valueFactor = layoutFor(noise).valueFactor;
+
+    std::vector<char> consuming(count, 0);
+    std::size_t consumed = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        consuming[i] =
+            (shape.zeros == Zeros::Consume || nonZero(noise.amplitudes[i])) ? char{1} : char{0};
+        consumed += consuming[i] != 0 ? 1U : 0U;
+    }
+    std::vector<std::size_t> positionOf(count, 0);
+    {
+        std::size_t seen = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (consuming[i] == 0) {
+                continue;
+            }
+            positionOf[i] = shape.order == Order::Reverse ? (consumed - 1 - seen) : seen;
+            ++seen;
+        }
+    }
+
+    const auto streamIndex = [&plan](const StreamSpec& want) {
+        for (std::size_t i = 0; i < plan.streams.size(); ++i) {
+            if (plan.streams[i].sameSourceAs(want)) {
+                return i;
+            }
+        }
+        plan.streams.push_back(want);
+        return plan.streams.size() - 1;
+    };
+
+    for (std::size_t stack = 0; stack < 2; ++stack) {
+        for (std::size_t i = 0; i < count; ++i) {
+            if (!nonZero(noise.amplitudes[i])) {
+                continue; // contributes nothing; it may still have consumed a block above
+            }
+            StreamSpec spec;
+            spec.perBlockFork = shape.draw == Draw::PerOctaveFork;
+            spec.octaveMix = octaveSaltFor(shape.salt, noise, i);
+            std::size_t position = 0;
+            if (shape.salt == OctaveSalt::None) {
+                if (shape.draw == Draw::SecondStackFork) {
+                    spec.forked = stack == 1;
+                    position = positionOf[i];
+                } else {
+                    position = (stack * consumed) + positionOf[i];
+                }
+            } else {
+                // Per-octave salting gives every octave its own generator, so
+                // the octave's own position in the draw order no longer means
+                // anything: what is left is which stack draws first. `order`
+                // swaps that; `zeros` cannot reach anything at all here, which
+                // is why the signature below collapses those duplicates.
+                if (shape.draw == Draw::SecondStackFork) {
+                    spec.forked = stack == 1;
+                } else {
+                    position = shape.order == Order::Forward ? stack : (1 - stack);
+                }
+            }
+            const std::size_t index = streamIndex(spec);
+            plan.streams[index].length = std::max(plan.streams[index].length, position + 1);
+            plan.slots.push_back({.stream = index,
+                                  .position = position,
+                                  .octave = i,
+                                  .stack = stack,
+                                  .amplitude = noise.amplitudes[i],
+                                  .persistence = persistence[i]});
+        }
+    }
+
+    for (StreamSpec& stream : plan.streams) {
+        stream.length += kBlockOffsets;
+    }
+
+    for (const StreamSpec& stream : plan.streams) {
+        plan.signature += (stream.forked ? "F" : "f");
+        plan.signature += (stream.perBlockFork ? "B" : "b");
+        plan.signature += std::to_string(stream.octaveMix) + ":" + std::to_string(stream.length);
+        plan.signature += ";";
+    }
+    plan.signature += "|";
+    for (const Slot& slot : plan.slots) {
+        plan.signature += std::to_string(slot.stream) + "," + std::to_string(slot.position) + "," +
+                          std::to_string(slot.octave) + "," + std::to_string(slot.stack) + ";";
+    }
+    return plan;
+}
+
+/// The shapes that are DISTINCT for one noise's amplitude pattern, each paired
+/// with the lowest shape index that produces it.
+struct DistinctShape {
+    std::size_t index = 0;
+    Plan plan;
+};
+
+[[nodiscard]] std::vector<DistinctShape> distinctShapes(const Noise& noise) {
+    std::vector<DistinctShape> shapes;
+    std::vector<std::string> seen;
+    for (std::size_t index = 0; index < kShapes; ++index) {
+        Plan plan = planFor(noise, shapeAt(index));
+        if (std::find(seen.begin(), seen.end(), plan.signature) != seen.end()) {
+            continue;
+        }
+        seen.push_back(plan.signature);
+        shapes.push_back({.index = index, .plan = std::move(plan)});
+    }
+    return shapes;
+}
+
+/// The seed rules that are DISTINCT for one noise: two rules that reduce to
+/// the same (seed, generator) for this identifier and ordinal are one
+/// candidate. Ordinal 0 makes the ordinal salt equal to no salt under xor,
+/// and the ordinal fork count equal to zero forks; those collapse here rather
+/// than being counted twice.
+struct DistinctRule {
+    std::size_t index = 0;
+    std::int64_t seed = 0;
+    Generator generator = Generator::Lcg;
+};
+
+[[nodiscard]] std::vector<DistinctRule> distinctRules(const Noise& noise, std::int64_t worldSeed) {
+    std::vector<DistinctRule> rules;
+    std::vector<std::pair<std::int64_t, Generator>> seen;
+    for (std::size_t index = 0; index < kSeedRules; ++index) {
+        const SeedRule rule = ruleAt(index);
+        const std::int64_t seed = seedFor(rule, worldSeed, noise);
+        const std::pair<std::int64_t, Generator> key{seed, rule.generator};
+        if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+            continue;
+        }
+        seen.push_back(key);
+        rules.push_back({.index = index, .seed = seed, .generator = rule.generator});
+    }
+    return rules;
+}
+
+/// Every Perlin block every shape can reach for one seed rule, plus that
+/// block's value at each screen column, at each (frequency offset + octave)
+/// exponent, on each stack's coordinate. Building it once per seed rule is
+/// what makes 10^8 candidates affordable: a candidate is then a weighted sum
+/// of table lookups rather than a set of Perlin evaluations.
+struct Bank {
+    std::vector<StreamSpec> specs;
+    std::vector<std::size_t> base;
     std::vector<noise::PerlinNoise> blocks;
-    blocks.reserve(needed);
-    if (rule.generator == Generator::Lcg) {
-        rng::JavaRandom random{seed};
-        for (std::size_t i = 0; i < needed; ++i) {
-            blocks.push_back(noise::PerlinNoise::fromRandom(random));
+    std::vector<double> samples;
+    std::size_t screen = 0;
+};
+
+[[nodiscard]] std::vector<StreamSpec> bankSpecsFor(const std::vector<DistinctShape>& shapes) {
+    std::vector<StreamSpec> specs;
+    for (const DistinctShape& shape : shapes) {
+        for (const StreamSpec& want : shape.plan.streams) {
+            bool found = false;
+            for (StreamSpec& have : specs) {
+                if (have.sameSourceAs(want)) {
+                    have.length = std::max(have.length, want.length);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                specs.push_back(want);
+            }
+        }
+    }
+    return specs;
+}
+
+/// Where each of a plan's own streams lands in the bank.
+[[nodiscard]] std::vector<std::size_t> bankMapping(const Plan& plan,
+                                                   const std::vector<StreamSpec>& specs) {
+    std::vector<std::size_t> mapping(plan.streams.size(), 0);
+    for (std::size_t i = 0; i < plan.streams.size(); ++i) {
+        for (std::size_t j = 0; j < specs.size(); ++j) {
+            if (specs[j].sameSourceAs(plan.streams[i])) {
+                mapping[i] = j;
+                break;
+            }
+        }
+    }
+    return mapping;
+}
+
+[[nodiscard]] std::vector<noise::PerlinNoise>
+streamBlocks(Generator generator, std::int64_t ruleSeed, const StreamSpec& spec) {
+    auto seed = static_cast<std::uint64_t>(ruleSeed);
+    if (spec.forked) {
+        seed = static_cast<std::uint64_t>(forkOnce(static_cast<std::int64_t>(seed)));
+    }
+    seed ^= spec.octaveMix;
+
+    std::vector<noise::PerlinNoise> blocks;
+    blocks.reserve(spec.length);
+    if (generator == Generator::Lcg) {
+        rng::JavaRandom random{static_cast<std::int64_t>(seed)};
+        for (std::size_t i = 0; i < spec.length; ++i) {
+            if (spec.perBlockFork) {
+                rng::JavaRandom child{random.nextLong()};
+                blocks.push_back(noise::PerlinNoise::fromRandom(child));
+            } else {
+                blocks.push_back(noise::PerlinNoise::fromRandom(random));
+            }
         }
     } else {
-        rng::Xoroshiro128PlusPlus random{seed};
-        for (std::size_t i = 0; i < needed; ++i) {
-            blocks.push_back(noise::PerlinNoise::fromRandom(random));
+        rng::Xoroshiro128PlusPlus random{static_cast<std::int64_t>(seed)};
+        for (std::size_t i = 0; i < spec.length; ++i) {
+            if (spec.perBlockFork) {
+                rng::Xoroshiro128PlusPlus child{random.nextLong()};
+                blocks.push_back(noise::PerlinNoise::fromRandom(child));
+            } else {
+                blocks.push_back(noise::PerlinNoise::fromRandom(random));
+            }
         }
     }
     return blocks;
+}
+
+constexpr double kSecondStackRatio = 337.0 / 331.0;
+
+[[nodiscard]] Bank buildBank(const Noise& noise, const std::vector<StreamSpec>& specs,
+                             const DistinctRule& rule, const std::vector<Column>& screen) {
+    Bank bank;
+    bank.specs = specs;
+    bank.screen = screen.size();
+    bank.base.reserve(specs.size());
+    std::size_t total = 0;
+    for (const StreamSpec& spec : specs) {
+        bank.base.push_back(total);
+        total += spec.length;
+    }
+    bank.blocks.reserve(total);
+    for (const StreamSpec& spec : specs) {
+        const std::vector<noise::PerlinNoise> stream =
+            streamBlocks(rule.generator, rule.seed, spec);
+        for (const noise::PerlinNoise& block : stream) {
+            bank.blocks.push_back(block);
+        }
+    }
+
+    bank.samples.assign(total * kExponents * 2 * bank.screen, 0.0);
+    for (std::size_t block = 0; block < total; ++block) {
+        for (std::size_t exponent = 0; exponent < kExponents; ++exponent) {
+            const double frequency = frequencyAt(noise, exponent);
+            for (std::size_t stack = 0; stack < 2; ++stack) {
+                const double ratio = stack == 1 ? kSecondStackRatio : 1.0;
+                for (std::size_t column = 0; column < bank.screen; ++column) {
+                    const double x = screen[column].x * ratio;
+                    const double z = screen[column].z * ratio;
+                    bank.samples[(((block * kExponents) + exponent) * 2 + stack) * bank.screen +
+                                 column] =
+                        bank.blocks[block].sample(x * frequency, 0.0, z * frequency);
+                }
+            }
+        }
+    }
+    return bank;
+}
+
+/// One candidate's value at one screen column, straight out of the table.
+///
+/// The two stacks are accumulated SEPARATELY and added once, which is what
+/// `sampleNormal` does; folding them into one accumulator would reassociate
+/// the sum and stop the baseline point from reproducing the reference bit for
+/// bit, which `--control` checks.
+[[nodiscard]] double evaluateScreen(const Plan& plan, const std::vector<std::size_t>& mapping,
+                                    const Bank& bank, int delta, std::size_t offset,
+                                    std::size_t column) {
+    double first = 0.0;
+    double second = 0.0;
+    for (const Slot& slot : plan.slots) {
+        const std::size_t spec = mapping[slot.stream];
+        const std::size_t block = bank.base[spec] + slot.position + offset;
+        const std::size_t exponent = exponentIndex(delta, slot.octave);
+        const double value =
+            bank.samples[(((block * kExponents) + exponent) * 2 + slot.stack) * bank.screen +
+                         column];
+        ((slot.stack == 0) ? first : second) += (value * slot.amplitude) * slot.persistence;
+    }
+    return (first + second) * plan.valueFactor;
+}
+
+/// The same candidate away from the screen columns, sampled directly. Used for
+/// the columns the table does not hold: the 128-column probe set, the full
+/// dimension, `--candidate` and the plant's synthesis.
+[[nodiscard]] double evaluateAt(const Noise& noise, const Plan& plan,
+                                const std::vector<std::size_t>& mapping, const Bank& bank,
+                                int delta, std::size_t offset, double x, double z) {
+    double first = 0.0;
+    double second = 0.0;
+    for (const Slot& slot : plan.slots) {
+        const std::size_t spec = mapping[slot.stream];
+        const std::size_t block = bank.base[spec] + slot.position + offset;
+        const std::size_t exponent = exponentIndex(delta, slot.octave);
+        const double frequency = frequencyAt(noise, exponent);
+        const double ratio = slot.stack == 1 ? kSecondStackRatio : 1.0;
+        const double value =
+            bank.blocks[block].sample(x * ratio * frequency, 0.0, z * ratio * frequency);
+        ((slot.stack == 0) ? first : second) += (value * slot.amplitude) * slot.persistence;
+    }
+    return (first + second) * plan.valueFactor;
 }
 
 // --- the control arm --------------------------------------------------------
@@ -678,6 +1313,14 @@ struct Control {
     double libraryValueFactor = 0.0;
     double modelValueFactor = 0.0;
     bool valueFactorIdentical = false;
+    /// THE WIDENING'S OWN CONTROL. The scan and the plants no longer run
+    /// `sampleNormal`: they run the table-driven evaluator, which resolves a
+    /// stack shape and a frequency offset before summing. At the BASELINE
+    /// point — shape 0, frequency offset 0, block offset 0 — that evaluator
+    /// must be the same function, bit for bit, on the same Perlin blocks.
+    /// Without this arm the widening would have quietly moved every number
+    /// this file reports onto code the control never touched.
+    std::size_t widenedIdentical = 0;
 };
 
 [[nodiscard]] Control controlFor(const Dimension& dimension, std::int64_t worldSeed,
@@ -687,6 +1330,15 @@ struct Control {
     const noise::NormalNoise reference = libraryNoiseFor(dimension.noise, worldSeed);
     const std::vector<noise::PerlinNoise> blocks = modernBlocksFor(dimension.noise, worldSeed);
     const noise::NormalNoise wrongSeed = libraryNoiseFor(dimension.noise, worldSeed + 1);
+
+    // The widened evaluator, at its baseline point, driven by the SAME modern
+    // Perlin blocks. One stream, because shape 0 is the sequential rule; the
+    // bank holds no screen samples because this arm reads columns directly.
+    const Plan baselinePlan = planFor(dimension.noise, shapeAt(0));
+    const std::vector<std::size_t> baselineMapping{0};
+    Bank baselineBank;
+    baselineBank.base = {0};
+    baselineBank.blocks = modernBlocksFor(dimension.noise, worldSeed);
 
     Control control;
     control.columns = columns.size();
@@ -706,6 +1358,11 @@ struct Control {
         }
         if (std::bit_cast<std::uint64_t>(byLibrary) == std::bit_cast<std::uint64_t>(byModel)) {
             ++control.identical;
+        }
+        const double byWidened = evaluateAt(dimension.noise, baselinePlan, baselineMapping,
+                                            baselineBank, 0, 0, column.x, column.z);
+        if (std::bit_cast<std::uint64_t>(byWidened) == std::bit_cast<std::uint64_t>(byModel)) {
+            ++control.widenedIdentical;
         }
         // Exact, not near: the readback maps a whole half-open interval of
         // values onto one block, so a correct model put back through
@@ -830,78 +1487,342 @@ struct Profile {
 
 struct Result {
     std::size_t seedRule = 0;
+    std::size_t shape = 0;
+    int delta = 0;
     std::size_t block = 0;
     std::size_t agreed = 0;
 };
 
-/// One pass over the whole space. `probe` is the subset of columns each
-/// candidate is scored on; `full` is every column, used only on the few that
-/// survive, so the reported count is always over the whole dimension.
-[[nodiscard]] std::vector<Result> scan(const Dimension& dimension, std::int64_t worldSeed,
-                                       const std::vector<Column>& columns, std::size_t probeColumns,
-                                       std::size_t keep, std::size_t& candidatesScanned,
-                                       std::vector<std::size_t>& histogram) {
-    const Layout layout = layoutFor(dimension.noise);
+/// A candidate, named the way `--candidate` and `--plant` take one.
+struct CandidateId {
+    std::size_t seedRule = 0;
+    std::size_t block = 0;
+    std::size_t shape = 0;
+    int delta = 0;
+};
+
+/// What one dimension's pass over the space measured, beyond the survivors.
+struct ScanReport {
+    /// (distinct seed rules) x (distinct shapes) x (frequency offsets) x
+    /// (block offsets) — the denominator, after the duplicates this noise
+    /// collapses have been removed.
+    std::size_t candidates = 0;
+    std::size_t distinctRules = 0;
+    std::size_t distinctShapes = 0;
+    /// Agreement on the screen columns, over EVERY candidate. `screen` wide.
+    std::vector<std::size_t> screenHistogram;
+    /// The 128-column null, on a uniform subsample, so it stays the same
+    /// statistic the pre-widening scan reported and SPEC §11 tabulates.
+    std::size_t nullSampled = 0;
+    std::size_t nullProbe = 0;
+    double nullMean = 0.0;
+    std::size_t nullMax = 0;
+    /// How many candidates got past the screen.
+    std::size_t screened = 0;
+};
+
+/// How many screen columns a candidate must agree on before it is scored
+/// further. A correct candidate agrees on every column (`--control` measures
+/// 2304/2304), so an all-agree screen cannot reject one; at the widest band
+/// this probe carries, the chance a wrong candidate passes is 0.114^8 = 2.8e-8.
+constexpr std::size_t kScreenColumns = 8;
+
+/// About this many candidates are scored on the full 128-column probe set, to
+/// measure the null in the statistic the scan has always reported.
+constexpr std::size_t kNullSamples = 65536;
+
+/// Which columns the screen reads, as indices, so that several readings over
+/// the SAME lattice — the server's, and a plant's — can be screened against
+/// one evaluation instead of one each.
+[[nodiscard]] std::vector<std::size_t> screenIndices(std::size_t count) {
+    std::vector<std::size_t> indices;
+    if (count == 0) {
+        return indices;
+    }
+    const std::size_t stride = std::max<std::size_t>(1, count / kScreenColumns);
+    for (std::size_t i = 0; i < kScreenColumns; ++i) {
+        indices.push_back(std::min(count - 1, i * stride));
+    }
+    return indices;
+}
+
+[[nodiscard]] std::vector<Column> screenColumns(const std::vector<Column>& columns) {
+    std::vector<Column> screen;
+    for (const std::size_t index : screenIndices(columns.size())) {
+        screen.push_back(columns[index]);
+    }
+    return screen;
+}
+
+/// One pass over the whole space, as a cascade: every candidate is scored on
+/// the screen columns out of the precomputed table, and only a candidate that
+/// agrees on ALL of them is scored on the 128-column probe set and then, if it
+/// still holds, on every column of the dimension.
+///
+/// SEVERAL TARGETS AT ONCE, and that is a cost decision rather than a
+/// generalisation for its own sake. `--plant-axes` scores five different
+/// planted readings against the SAME space, and the space is the expensive
+/// part: building one seed rule's Perlin blocks and their screen samples costs
+/// far more than comparing a candidate's value against a reading. The targets
+/// share every coordinate — a plant replaces a column's VALUE and nothing else
+/// — so a candidate is evaluated once per screen column and then compared
+/// against each target, which makes five plants cost barely more than one
+/// instead of five times one. The reports come back per target; the null is
+/// measured against target 0, since with a plant in place the others are not
+/// the server's readings at all.
+[[nodiscard]] std::vector<std::vector<Result>>
+scanMany(const Dimension& dimension, std::int64_t worldSeed, const std::vector<Column>& columns,
+         const std::vector<std::vector<Column>>& targets, std::size_t probeColumns,
+         std::size_t keep, std::vector<ScanReport>& reports) {
     const double band = 0.5 * quantum(dimension.scale);
-    const std::size_t needed = kBlockOffsets + layout.blocksPerNoise;
     const std::size_t sampled = std::min(probeColumns, columns.size());
+    // Coordinates only: every target carries the same lattice, so one screen
+    // drives them all and each target contributes only its own values.
+    const std::vector<Column> screen = screenColumns(columns);
+    std::vector<std::vector<double>> screenValues;
+    screenValues.reserve(targets.size());
+    for (const std::vector<Column>& target : targets) {
+        std::vector<double> values;
+        values.reserve(screen.size());
+        for (const std::size_t index : screenIndices(columns.size())) {
+            values.push_back(target[index].value);
+        }
+        screenValues.push_back(std::move(values));
+    }
 
-    std::vector<Result> best;
-    candidatesScanned = 0;
-    histogram.assign(sampled + 1, 0);
+    const std::vector<DistinctShape> shapes = distinctShapes(dimension.noise);
+    const std::vector<DistinctRule> rules = distinctRules(dimension.noise, worldSeed);
+    const std::vector<StreamSpec> specs = bankSpecsFor(shapes);
+    std::vector<std::vector<std::size_t>> mappings;
+    mappings.reserve(shapes.size());
+    for (const DistinctShape& shape : shapes) {
+        mappings.push_back(bankMapping(shape.plan, specs));
+    }
 
-    for (std::size_t ruleIndex = 0; ruleIndex < kSeedRules; ++ruleIndex) {
-        const SeedRule rule = ruleAt(ruleIndex);
-        const std::int64_t seed = seedFor(rule, worldSeed, dimension.noise.id);
-        const std::vector<noise::PerlinNoise> blocks = blocksFor(rule, seed, needed);
-        for (std::size_t offset = 0; offset < kBlockOffsets; ++offset) {
-            ++candidatesScanned;
-            std::size_t agreed = 0;
-            for (std::size_t i = 0; i < sampled; ++i) {
-                const Column& column = columns[i];
-                const double ours = sampleNormal(layout, blocks, offset, column.x, 0.0, column.z);
-                if (std::abs(ours - column.value) <= band + 1e-12) {
-                    ++agreed;
-                }
-            }
-            ++histogram[agreed];
-            if (agreed * 2 >= sampled) {
-                std::size_t full = 0;
-                for (const Column& column : columns) {
-                    const double ours =
-                        sampleNormal(layout, blocks, offset, column.x, 0.0, column.z);
-                    if (std::abs(ours - column.value) <= band + 1e-12) {
-                        ++full;
+    reports.assign(targets.size(), ScanReport{});
+    for (ScanReport& report : reports) {
+        report.distinctRules = rules.size();
+        report.distinctShapes = shapes.size();
+        report.candidates = rules.size() * shapes.size() * kFreqDeltas * kBlockOffsets;
+        report.screenHistogram.assign(screen.size() + 1, 0);
+        report.nullProbe = sampled;
+    }
+    const std::size_t nullStride = std::max<std::size_t>(1, reports[0].candidates / kNullSamples);
+
+    std::vector<std::vector<Result>> best(targets.size());
+    std::vector<double> ours(screen.size(), 0.0);
+    std::size_t visited = 0;
+    std::size_t nullSum = 0;
+
+    for (const DistinctRule& rule : rules) {
+        const Bank bank = buildBank(dimension.noise, specs, rule, screen);
+        for (std::size_t s = 0; s < shapes.size(); ++s) {
+            const Plan& plan = shapes[s].plan;
+            const std::vector<std::size_t>& mapping = mappings[s];
+            for (int delta = kFreqDeltaMin; delta <= kFreqDeltaMax; ++delta) {
+                for (std::size_t offset = 0; offset < kBlockOffsets; ++offset) {
+                    for (std::size_t column = 0; column < screen.size(); ++column) {
+                        ours[column] = evaluateScreen(plan, mapping, bank, delta, offset, column);
+                    }
+
+                    // The null, in the statistic the scan has always quoted:
+                    // a uniform subsample, scored on the full probe set, and
+                    // against target 0 only.
+                    if (visited % nullStride == 0) {
+                        std::size_t hits = 0;
+                        for (std::size_t i = 0; i < sampled; ++i) {
+                            const double value =
+                                evaluateAt(dimension.noise, plan, mapping, bank, delta, offset,
+                                           columns[i].x, columns[i].z);
+                            if (std::abs(value - targets[0][i].value) <= band + 1e-12) {
+                                ++hits;
+                            }
+                        }
+                        ++reports[0].nullSampled;
+                        nullSum += hits;
+                        reports[0].nullMax = std::max(reports[0].nullMax, hits);
+                    }
+                    ++visited;
+
+                    for (std::size_t t = 0; t < targets.size(); ++t) {
+                        std::size_t agreed = 0;
+                        for (std::size_t column = 0; column < screen.size(); ++column) {
+                            if (std::abs(ours[column] - screenValues[t][column]) <= band + 1e-12) {
+                                ++agreed;
+                            }
+                        }
+                        ++reports[t].screenHistogram[agreed];
+                        if (agreed < screen.size()) {
+                            continue;
+                        }
+                        ++reports[t].screened;
+                        std::size_t probe = 0;
+                        for (std::size_t i = 0; i < sampled; ++i) {
+                            const double value =
+                                evaluateAt(dimension.noise, plan, mapping, bank, delta, offset,
+                                           columns[i].x, columns[i].z);
+                            if (std::abs(value - targets[t][i].value) <= band + 1e-12) {
+                                ++probe;
+                            }
+                        }
+                        if (probe * 2 < sampled) {
+                            continue;
+                        }
+                        std::size_t full = 0;
+                        for (std::size_t i = 0; i < columns.size(); ++i) {
+                            const double value =
+                                evaluateAt(dimension.noise, plan, mapping, bank, delta, offset,
+                                           columns[i].x, columns[i].z);
+                            if (std::abs(value - targets[t][i].value) <= band + 1e-12) {
+                                ++full;
+                            }
+                        }
+                        best[t].push_back({.seedRule = rule.index,
+                                           .shape = shapes[s].index,
+                                           .delta = delta,
+                                           .block = offset,
+                                           .agreed = full});
                     }
                 }
-                best.push_back({ruleIndex, offset, full});
             }
         }
     }
-    std::sort(best.begin(), best.end(),
-              [](const Result& a, const Result& b) { return a.agreed > b.agreed; });
-    if (best.size() > keep) {
-        best.resize(keep);
+
+    reports[0].nullMean =
+        reports[0].nullSampled == 0
+            ? 0.0
+            : static_cast<double>(nullSum) / static_cast<double>(reports[0].nullSampled);
+
+    for (std::vector<Result>& list : best) {
+        std::sort(list.begin(), list.end(),
+                  [](const Result& a, const Result& b) { return a.agreed > b.agreed; });
+        if (list.size() > keep) {
+            list.resize(keep);
+        }
     }
     return best;
+}
+
+/// The single-target case, which is what `--scan` and `--plant` want.
+[[nodiscard]] std::vector<Result> scan(const Dimension& dimension, std::int64_t worldSeed,
+                                       const std::vector<Column>& columns, std::size_t probeColumns,
+                                       std::size_t keep, ScanReport& report) {
+    std::vector<ScanReport> reports;
+    std::vector<std::vector<Result>> best =
+        scanMany(dimension, worldSeed, columns, {columns}, probeColumns, keep, reports);
+    report = reports[0];
+    return best[0];
+}
+
+/// One named candidate's value at an arbitrary column, built on its own so
+/// `--candidate` and `--plant` do not have to go through the scan's bank.
+struct OneCandidate {
+    Plan plan;
+    std::vector<std::size_t> mapping;
+    Bank bank;
+};
+
+[[nodiscard]] OneCandidate oneCandidate(const Noise& noise, std::int64_t worldSeed,
+                                        const CandidateId& id) {
+    OneCandidate one;
+    one.plan = planFor(noise, shapeAt(id.shape));
+    const std::vector<StreamSpec> specs = bankSpecsFor({{.index = id.shape, .plan = one.plan}});
+    one.mapping = bankMapping(one.plan, specs);
+    const SeedRule rule = ruleAt(id.seedRule);
+    const DistinctRule resolved{
+        .index = id.seedRule, .seed = seedFor(rule, worldSeed, noise), .generator = rule.generator};
+    one.bank = buildBank(noise, specs, resolved, {});
+    return one;
 }
 
 /// The readings a chosen candidate would produce, put through the same
 /// quantisation the server's terrain imposes.
 [[nodiscard]] std::vector<Column> plant(const Dimension& dimension, std::int64_t worldSeed,
-                                        const std::vector<Column>& columns, std::size_t ruleIndex,
-                                        std::size_t offset) {
-    const Layout layout = layoutFor(dimension.noise);
-    const SeedRule rule = ruleAt(ruleIndex);
-    const std::int64_t seed = seedFor(rule, worldSeed, dimension.noise.id);
-    const std::vector<noise::PerlinNoise> blocks =
-        blocksFor(rule, seed, offset + layout.blocksPerNoise);
+                                        const std::vector<Column>& columns, const CandidateId& id) {
+    const OneCandidate one = oneCandidate(dimension.noise, worldSeed, id);
     std::vector<Column> planted = columns;
     for (Column& column : planted) {
-        column.value = quantise(sampleNormal(layout, blocks, offset, column.x, 0.0, column.z),
+        column.value = quantise(evaluateAt(dimension.noise, one.plan, one.mapping, one.bank,
+                                           id.delta, id.block, column.x, column.z),
                                 dimension.scale);
     }
     return planted;
+}
+
+/// The candidate each new axis is calibrated with. Every one of them is OFF
+/// the baseline in exactly one axis, so a plant that comes back at rank 1 says
+/// the scan can find an answer that lives on that axis — which is what turns
+/// "no survivor there" into a measurement.
+struct AxisPlant {
+    const char* axis;
+    CandidateId id;
+};
+
+/// Rule 288 is base=JavaRandom(worldSeed).nextLong(), xor MD5("ns:path")
+/// first-eight big-endian, no fork, LCG; rule 657 is the Xoroshiro rule
+/// (xoroLo add md5LastLE), so the two generators are both planted rather than
+/// only the one; rule 530 is 288's base xor MD5 of the decimal ORDINAL, which
+/// is distinct from every name-seeded rule even at ordinal 0. Shape 4 is
+/// sequential/md5Octave/forward/skipZeros, shape 24 is
+/// secondStackFork/noOctaveSalt/forward/skipZeros, and shape 28 is
+/// secondStackFork/md5Octave/forward/skipZeros — the last one planted at a
+/// non-zero frequency offset as well, so the space's CROSS PRODUCT is
+/// calibrated and not only its four single-axis arms.
+const std::array<AxisPlant, 5> kAxisPlants{{
+    {"(a) stack shape", {.seedRule = 657, .block = 7, .shape = 24, .delta = 0}},
+    {"(b) frequency", {.seedRule = 288, .block = 7, .shape = 0, .delta = 2}},
+    {"(c) per-octave salting", {.seedRule = 288, .block = 5, .shape = 4, .delta = 0}},
+    {"(d) declaration order", {.seedRule = 530, .block = 3, .shape = 0, .delta = 0}},
+    {"(a)x(b)x(c) together", {.seedRule = 657, .block = 2, .shape = 28, .delta = -2}},
+}};
+
+/// Whether a scan result IS the planted candidate. Not by index: the scan
+/// reports the LOWEST rule index and the LOWEST shape index that produce a
+/// given candidate, because it collapses duplicates before scoring, so a plant
+/// named by a higher-numbered alias comes back under its canonical name. This
+/// compares what the indices MEAN — the resolved seed and generator, and the
+/// shape's whole slot-to-block mapping — which is what "the same candidate"
+/// actually is. Comparing indices instead once reported a perfectly recovered
+/// plant as rank 0.
+[[nodiscard]] bool sameCandidate(const Noise& noise, std::int64_t worldSeed, const CandidateId& a,
+                                 const CandidateId& b) {
+    if (a.block != b.block || a.delta != b.delta) {
+        return false;
+    }
+    const SeedRule ruleA = ruleAt(a.seedRule);
+    const SeedRule ruleB = ruleAt(b.seedRule);
+    if (ruleA.generator != ruleB.generator ||
+        seedFor(ruleA, worldSeed, noise) != seedFor(ruleB, worldSeed, noise)) {
+        return false;
+    }
+    return planFor(noise, shapeAt(a.shape)).signature == planFor(noise, shapeAt(b.shape)).signature;
+}
+
+/// `<rule> <block> [shape] [delta]`, with the last two defaulting to the
+/// baseline so every invocation written before the widening still names the
+/// candidate it named then.
+[[nodiscard]] CandidateId readCandidate(int argc, char** argv) {
+    // A real number, not merely "not a flag": `--only <dimension>` may follow
+    // the candidate's arguments, and `strtol("leg_skip")` is 0, which would
+    // read as a frequency offset of 0 rather than as the mistake it is.
+    const auto numeric = [argc, argv](int index) {
+        if (index >= argc) {
+            return false;
+        }
+        const char* text = argv[index];
+        const char* digits = (text[0] == '-' || text[0] == '+') ? text + 1 : text;
+        return *digits >= '0' && *digits <= '9';
+    };
+    CandidateId id;
+    id.seedRule = static_cast<std::size_t>(std::strtoull(argv[4], nullptr, 10));
+    id.block = static_cast<std::size_t>(std::strtoull(argv[5], nullptr, 10));
+    if (numeric(6)) {
+        id.shape = static_cast<std::size_t>(std::strtoull(argv[6], nullptr, 10));
+    }
+    if (numeric(7)) {
+        id.delta = static_cast<int>(std::strtol(argv[7], nullptr, 10));
+    }
+    return id;
 }
 
 } // namespace
@@ -910,13 +1831,27 @@ int main(int argc, char** argv) {
     if (argc < 4) {
         std::fprintf(stderr,
                      "usage: %s <probe dir> <world seed> "
-                     "--scan|--control|--profile|--twin|--candidate <r> <b>|--plant <r> <b>\n",
+                     "--scan|--control|--profile|--twin|--axes|--plant-axes"
+                     "|--candidate <r> <b> [shape] [delta]"
+                     "|--plant <r> <b> [shape] [delta]   [--only <dimension>]\n",
                      argv[0]);
         return 2;
     }
     const std::filesystem::path root{argv[1]};
     const std::int64_t seed = std::strtoll(argv[2], nullptr, 10);
     const std::string mode{argv[3]};
+
+    // `--only <dimension>` narrows every mode to one dimension. It exists
+    // because a full pass over the widened space is minutes rather than
+    // seconds, and iterating on one dimension should not cost the other
+    // eight; it changes nothing a reported number means, since every count in
+    // this tool is per dimension already.
+    std::string only;
+    for (int i = 3; i + 1 < argc; ++i) {
+        if (std::string{argv[i]} == "--only") {
+            only = argv[i + 1];
+        }
+    }
 
     // --twin asks one question about the QUESTION, not about a candidate:
     // does the noise's identifier reach the seed at all? `leg_single` and
@@ -967,8 +1902,44 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    std::printf("candidate space: %zu seed rules x %d block offsets = %zu per dimension\n",
-                kSeedRules, kBlockOffsets, kSeedRules * kBlockOffsets);
+    // The ENUMERATED space, before any dimension's own duplicates are
+    // collapsed. The number actually scanned is smaller and is printed per
+    // dimension by --scan, because a 1-octave noise cannot tell 36 stack
+    // shapes apart and counting them as 36 would be a free 4x.
+    std::printf("candidate space: %zu seed rules x %zu stack shapes x %zu frequency offsets x %d "
+                "block offsets = %zu enumerated per dimension\n",
+                kSeedRules, kShapes, kFreqDeltas, kBlockOffsets,
+                kSeedRules * kShapes * kFreqDeltas * kBlockOffsets);
+
+    // --axes says what each axis contributes on its own: how many candidates
+    // there would be if that axis alone were widened off the baseline. It is
+    // the breakdown a claim like "axis (b) was searched and found nothing"
+    // has to come with, and it needs no fixtures.
+    if (mode == "--axes") {
+        const std::size_t baseline = kBaselineSeedRules * kBlockOffsets;
+        std::printf(
+            "  axis                      new values   candidates when it alone is widened\n");
+        std::printf("  baseline (the old space)           -   %12zu\n", baseline);
+        std::printf("  (a)+(c) stack shape       %10zu   %12zu\n", kShapes - 1,
+                    (kShapes - 1) * baseline);
+        std::printf("      of which (c) per-octave salting: %zu of the %zu\n",
+                    (kOctaveSalts - 1) * kDraws * kOrders * kZeros, kShapes - 1);
+        std::printf("  (b) frequency offset      %10zu   %12zu\n", kFreqDeltas - 1,
+                    (kFreqDeltas - 1) * baseline);
+        std::printf("  (d) declaration order     %10zu   %12zu\n", kSeedRules - kBaselineSeedRules,
+                    (kSeedRules - kBaselineSeedRules) * kBlockOffsets);
+        std::printf("  full cross product                 -   %12zu\n",
+                    kSeedRules * kShapes * kFreqDeltas * kBlockOffsets);
+        std::printf("  the scan enumerates the CROSS PRODUCT, not the union of those rows: a "
+                    "rule needing two new axes at once is inside it.\n");
+        for (const AxisPlant& axis : kAxisPlants) {
+            std::printf("  calibration plant for %-22s rule %zu block %zu shape %zu (%s) "
+                        "delta %+d\n",
+                        axis.axis, axis.id.seedRule, axis.id.block, axis.id.shape,
+                        describe(shapeAt(axis.id.shape)).c_str(), axis.id.delta);
+        }
+        return 0;
+    }
 
     // --control's verdict, accumulated across dimensions so it can be stated
     // once as a count rather than eyeballed off nine lines.
@@ -981,8 +1952,12 @@ int main(int argc, char** argv) {
     std::size_t negativeColumns = 0;
     std::size_t negativeAgreed = 0;
     bool controlFailed = false;
+    bool plantFailed = false;
 
     for (const Dimension& dimension : kDimensions) {
+        if (!only.empty() && only != dimension.name) {
+            continue;
+        }
         const std::filesystem::path region = root / dimension.name / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             std::fprintf(stderr, "missing %s\n", region.string().c_str());
@@ -995,31 +1970,35 @@ int main(int argc, char** argv) {
             // One named candidate, full-scored on every dimension. A
             // refutation is worth more as a number than as an absence from a
             // list of survivors, and the derivation deepslate uses is a
-            // member of this space (rule 182, block 0) rather than something
-            // outside it.
+            // member of this space (rule 290 at the baseline shape and
+            // frequency) rather than something outside it.
             if (argc < 6) {
                 std::fprintf(stderr, "--candidate needs a rule index and a block offset\n");
                 return 2;
             }
-            const auto ruleIndex = static_cast<std::size_t>(std::strtoull(argv[4], nullptr, 10));
-            const auto offset = static_cast<std::size_t>(std::strtoull(argv[5], nullptr, 10));
-            const Layout layout = layoutFor(dimension.noise);
-            const SeedRule rule = ruleAt(ruleIndex);
-            const std::vector<noise::PerlinNoise> blocks = blocksFor(
-                rule, seedFor(rule, seed, dimension.noise.id), offset + layout.blocksPerNoise);
+            const CandidateId id = readCandidate(argc, argv);
+            if (id.seedRule >= kSeedRules || id.shape >= kShapes || id.delta < kFreqDeltaMin ||
+                id.delta > kFreqDeltaMax || id.block >= kBlockOffsets) {
+                std::fputs("--candidate: rule, shape, frequency offset or block out of range\n",
+                           stderr);
+                return 2;
+            }
+            const OneCandidate one = oneCandidate(dimension.noise, seed, id);
             const double band = 0.5 * quantum(dimension.scale);
             std::size_t agreed = 0;
             for (const Column& column : columns) {
-                const double ours = sampleNormal(layout, blocks, offset, column.x, 0.0, column.z);
+                const double ours = evaluateAt(dimension.noise, one.plan, one.mapping, one.bank,
+                                               id.delta, id.block, column.x, column.z);
                 if (std::abs(ours - column.value) <= band + 1e-12) {
                     ++agreed;
                 }
             }
-            std::printf("%-13s %-6s band %.5f  rule %zu block %zu: %zu/%zu (%.2f%%)  %s\n",
-                        dimension.name, dimension.legacy ? "legacy" : "modern", band, ruleIndex,
-                        offset, agreed, columns.size(),
+            std::printf("%-13s %-6s band %.5f  rule %zu block %zu shape %zu delta %+d: "
+                        "%zu/%zu (%.2f%%)  %s | %s\n",
+                        dimension.name, dimension.legacy ? "legacy" : "modern", band, id.seedRule,
+                        id.block, id.shape, id.delta, agreed, columns.size(),
                         100.0 * static_cast<double>(agreed) / static_cast<double>(columns.size()),
-                        describe(rule).c_str());
+                        describe(ruleAt(id.seedRule)).c_str(), describe(shapeAt(id.shape)).c_str());
             continue;
         }
 
@@ -1035,16 +2014,26 @@ int main(int argc, char** argv) {
         if (mode == "--control") {
             const Control control = controlFor(dimension, seed, columns);
             std::printf("%-13s %-6s band %.6f  columns %4zu  library %4zu/%4zu  model %4zu/%4zu  "
-                        "identical %4zu  exact %4zu  negative %4zu  worst(library) %.9f  "
-                        "worst(model) %.9f  valueFactor %.17g%s\n",
+                        "identical %4zu  widened %4zu  exact %4zu  negative %4zu  "
+                        "worst(library) %.9f  worst(model) %.9f  valueFactor %.17g%s\n",
                         dimension.name, dimension.legacy ? "legacy" : "modern",
                         0.5 * quantum(dimension.scale), control.columns, control.library,
                         control.columns, control.model, control.columns, control.identical,
-                        control.exact, control.negative, control.worstLibrary, control.worstModel,
-                        control.libraryValueFactor,
+                        control.widenedIdentical, control.exact, control.negative,
+                        control.worstLibrary, control.worstModel, control.libraryValueFactor,
                         control.valueFactorIdentical ? "" : " (DIFFERS FROM layoutFor)");
             if (!control.valueFactorIdentical) {
                 std::printf("    layoutFor valueFactor %.17g\n", control.modelValueFactor);
+                controlFailed = true;
+            }
+            // On EVERY dimension, legacy and modern alike: the widened
+            // evaluator is the same function as the reference at its baseline
+            // point, or every number the scan reports is about different code
+            // from the one the control validates.
+            if (control.widenedIdentical != control.columns) {
+                std::printf("    the widened evaluator disagrees with sampleNormal at the "
+                            "baseline point on %zu of %zu columns\n",
+                            control.columns - control.widenedIdentical, control.columns);
                 controlFailed = true;
             }
             if (dimension.legacy) {
@@ -1074,65 +2063,124 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (mode == "--plant") {
+        if (mode == "--plant" || mode == "--plant-axes") {
             if (!dimension.legacy) {
                 continue;
             }
-            if (argc < 6) {
+            if (mode == "--plant" && argc < 6) {
                 std::fprintf(stderr, "--plant needs a rule index and a block offset\n");
                 return 2;
             }
-            const auto ruleIndex = static_cast<std::size_t>(std::strtoull(argv[4], nullptr, 10));
-            const auto offset = static_cast<std::size_t>(std::strtoull(argv[5], nullptr, 10));
-            const std::vector<Column> planted = plant(dimension, seed, columns, ruleIndex, offset);
-            std::size_t scanned = 0;
-            std::vector<std::size_t> histogram;
-            const std::vector<Result> best =
-                scan(dimension, seed, planted, 128, 8, scanned, histogram);
-            std::printf("%-11s planted rule %zu (%s) block %zu into %zu columns; %zu scanned\n",
-                        dimension.name, ruleIndex, describe(ruleAt(ruleIndex)).c_str(), offset,
-                        planted.size(), scanned);
-            std::size_t rank = 0;
-            for (std::size_t i = 0; i < best.size(); ++i) {
-                std::printf("    #%zu rule %zu block %zu: %zu/%zu  %s\n", i + 1, best[i].seedRule,
-                            best[i].block, best[i].agreed, planted.size(),
-                            describe(ruleAt(best[i].seedRule)).c_str());
-                if (best[i].seedRule == ruleIndex && best[i].block == offset) {
-                    rank = i + 1;
+            std::vector<CandidateId> wanted;
+            std::vector<const char*> axes;
+            if (mode == "--plant") {
+                wanted.push_back(readCandidate(argc, argv));
+                axes.push_back("(named)");
+            } else {
+                for (const AxisPlant& axis : kAxisPlants) {
+                    wanted.push_back(axis.id);
+                    axes.push_back(axis.axis);
                 }
             }
-            std::printf("    planted candidate found at rank %zu\n", rank);
+            // ONE pass over the space for all of them. The space is what is
+            // expensive; a planted reading is only a different set of values
+            // over the same lattice.
+            std::vector<std::vector<Column>> targets;
+            targets.reserve(wanted.size());
+            for (const CandidateId& id : wanted) {
+                targets.push_back(plant(dimension, seed, columns, id));
+            }
+            std::vector<ScanReport> reports;
+            const std::vector<std::vector<Result>> best =
+                scanMany(dimension, seed, columns, targets, 128, 8, reports);
+
+            for (std::size_t w = 0; w < wanted.size(); ++w) {
+                const CandidateId id = wanted[w];
+                std::size_t rank = 0;
+                for (std::size_t i = 0; i < best[w].size(); ++i) {
+                    const CandidateId found{.seedRule = best[w][i].seedRule,
+                                            .block = best[w][i].block,
+                                            .shape = best[w][i].shape,
+                                            .delta = best[w][i].delta};
+                    if (sameCandidate(dimension.noise, seed, found, id)) {
+                        rank = i + 1;
+                    }
+                }
+                std::printf("%-13s %-22s rule %zu block %zu shape %zu delta %+d planted into "
+                            "%zu columns; %zu candidates scanned, %zu past the screen, "
+                            "%zu survivors, planted at RANK %zu%s\n",
+                            dimension.name, axes[w], id.seedRule, id.block, id.shape, id.delta,
+                            targets[w].size(), reports[w].candidates, reports[w].screened,
+                            best[w].size(), rank, rank == 1 ? "" : "   <-- NOT RANK 1");
+                for (std::size_t i = 0; i < best[w].size() && i < 3; ++i) {
+                    std::printf("    #%zu rule %zu block %zu shape %zu delta %+d: %zu/%zu  "
+                                "%s | %s\n",
+                                i + 1, best[w][i].seedRule, best[w][i].block, best[w][i].shape,
+                                best[w][i].delta, best[w][i].agreed, targets[w].size(),
+                                describe(ruleAt(best[w][i].seedRule)).c_str(),
+                                describe(shapeAt(best[w][i].shape)).c_str());
+                }
+                if (rank != 1) {
+                    plantFailed = true;
+                }
+            }
             continue;
         }
 
-        std::size_t scanned = 0;
-        std::vector<std::size_t> histogram;
-        const std::vector<Result> best = scan(dimension, seed, columns, 128, 5, scanned, histogram);
+        ScanReport report;
+        const std::vector<Result> best = scan(dimension, seed, columns, 128, 5, report);
 
-        // The null, straight off the scanned population: the whole 270,000
-        // candidates are wrong (none reaches the survival threshold), so their
-        // agreement counts ARE this dimension's null distribution.
-        std::size_t total = 0;
-        std::size_t sum = 0;
-        std::size_t worst = 0;
-        for (std::size_t i = 0; i < histogram.size(); ++i) {
-            total += histogram[i];
-            sum += histogram[i] * i;
-            if (histogram[i] != 0) {
-                worst = i;
+        // TWO nulls, because the cascade reports in two statistics and
+        // conflating them is exactly the mistake this file exists to not
+        // repeat. The SCREEN null is over every candidate in the space and is
+        // 8 columns wide; the PROBE null is the 128-column statistic the
+        // pre-widening scan reported and SPEC §11 tabulates, measured on a
+        // uniform subsample because scoring 10^8 candidates on 128 columns is
+        // not affordable. They are not comparable to each other and are
+        // printed with their own denominators.
+        std::size_t screenTotal = 0;
+        std::size_t screenSum = 0;
+        std::size_t screenWorst = 0;
+        for (std::size_t i = 0; i < report.screenHistogram.size(); ++i) {
+            screenTotal += report.screenHistogram[i];
+            screenSum += report.screenHistogram[i] * i;
+            if (report.screenHistogram[i] != 0) {
+                screenWorst = i;
             }
         }
-        const double mean =
-            total == 0 ? 0.0 : static_cast<double>(sum) / static_cast<double>(total);
+        const double screenMean =
+            screenTotal == 0 ? 0.0
+                             : static_cast<double>(screenSum) / static_cast<double>(screenTotal);
         std::printf("%-13s %-6s scale %5.3f  band %.5f  columns %4zu (sat %4zu, empty %4zu)  "
-                    "null mean %6.2f/128 (%5.2f%%)  null max %3zu/128  survivors %zu\n",
+                    "rules %4zu  shapes %2zu  candidates %9zu  "
+                    "screen null %5.3f/%zu max %zu  probe null %6.2f/%zu (%5.2f%%) max %3zu "
+                    "over %zu sampled  past screen %zu  survivors %zu\n",
                     dimension.name, dimension.legacy ? "legacy" : "modern", dimension.scale,
                     0.5 * quantum(dimension.scale), columns.size(), excluded.saturated,
-                    excluded.empty, mean, 100.0 * mean / 128.0, worst, best.size());
+                    excluded.empty, report.distinctRules, report.distinctShapes, report.candidates,
+                    screenMean, report.screenHistogram.size() - 1, screenWorst, report.nullMean,
+                    report.nullProbe,
+                    100.0 * report.nullMean / static_cast<double>(report.nullProbe), report.nullMax,
+                    report.nullSampled, report.screened, best.size());
         for (const Result& result : best) {
-            std::printf("    best rule %zu block %zu: %zu/%zu  %s\n", result.seedRule, result.block,
-                        result.agreed, columns.size(), describe(ruleAt(result.seedRule)).c_str());
+            std::printf("    best rule %zu block %zu shape %zu delta %+d: %zu/%zu  %s | %s\n",
+                        result.seedRule, result.block, result.shape, result.delta, result.agreed,
+                        columns.size(), describe(ruleAt(result.seedRule)).c_str(),
+                        describe(shapeAt(result.shape)).c_str());
         }
+    }
+
+    if (mode == "--plant" || mode == "--plant-axes") {
+        if (plantFailed) {
+            std::fprintf(stderr,
+                         "PLANT FAILED: a candidate planted inside the widened space was not "
+                         "returned at rank 1, so this scan cannot find a correct answer on that "
+                         "axis and no refutation drawn from it means anything. See SPEC §11.\n");
+            return 1;
+        }
+        std::printf("every planted candidate was recovered at rank 1: a correct answer on each "
+                    "of these axes is findable by this scan\n");
+        return 0;
     }
 
     if (mode == "--control") {
