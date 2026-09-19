@@ -63,6 +63,17 @@ endfunction()
 # Every first-party target goes through this.
 function(stratum_configure_target target)
     stratum_set_warnings(${target})
+    # MSVC alone promotes std::getenv / std::sscanf / std::fopen to C4996
+    # ("may be unsafe, consider the _s variant"), which the warnings-as-errors
+    # set turns into C2220. Those calls are standard C++ and the _s variants
+    # are not portable, so the class is settled here — the one place every
+    # first-party target passes through — rather than per call site. It
+    # reddened both Windows legs at 6738bd0 on the FIRST MSVC compile of two
+    # test files; five more such calls sit in tools/analysis files not yet in
+    # any target, and this covers them the day they are added.
+    if(MSVC)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
     stratum_set_determinism(${target})
     set_target_properties(${target} PROPERTIES
         CXX_STANDARD 20
