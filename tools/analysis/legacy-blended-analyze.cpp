@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     for (const Dimension& dimension : kDimensions) {
         const std::filesystem::path region = root / dimension.name / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
-            std::fprintf(stderr, "missing %s\n", region.c_str());
+            std::fprintf(stderr, "missing %s\n", region.string().c_str());
             return 1;
         }
         std::size_t clipped = 0;

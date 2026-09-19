@@ -224,7 +224,7 @@ private:
 void scoreProbe(const World& world, const std::filesystem::path& dir, double psl) {
     const std::filesystem::path region = dir / "r.0.0.mca";
     if (!std::filesystem::is_regular_file(region)) {
-        std::fprintf(stderr, "missing %s\n", region.c_str());
+        std::fprintf(stderr, "missing %s\n", region.string().c_str());
         return;
     }
     const auto file = region::RegionFile::open(region);
@@ -299,7 +299,7 @@ void scoreProbe(const World& world, const std::filesystem::path& dir, double psl
         }
     }
 
-    std::printf("%s  psl=%g  columns=%lld  broken bands=%lld\n", dir.filename().c_str(), psl,
+    std::printf("%s  psl=%g  columns=%lld  broken bands=%lld\n", dir.filename().string().c_str(), psl,
                 columns, broken);
     for (const auto& [name, hits] : right) {
         std::printf("    %-24s %lld of %lld\n", name.c_str(), hits, columns);
@@ -385,7 +385,7 @@ void scoreGolden(const World& world, const std::filesystem::path& region) {
 void scoreBands(const World& world, const std::filesystem::path& dir) {
     const std::filesystem::path region = dir / "r.0.0.mca";
     if (!std::filesystem::is_regular_file(region)) {
-        std::fprintf(stderr, "missing %s\n", region.c_str());
+        std::fprintf(stderr, "missing %s\n", region.string().c_str());
         return;
     }
     const auto file = region::RegionFile::open(region);
@@ -645,7 +645,7 @@ void censusDepth(const World& world, const std::filesystem::path& region) {
         }
     }
 
-    std::printf("%s  columns=%lld  depth<0: %lld", region.c_str(), columns, negative);
+    std::printf("%s  columns=%lld  depth<0: %lld", region.string().c_str(), columns, negative);
     if (negative > 0) {
         std::printf(" (1 in %lld)", columns / negative);
     }
@@ -743,7 +743,7 @@ void censusDepth(const World& world, const std::filesystem::path& region) {
 void readWindow(const World& world, const std::filesystem::path& region,
                 const std::vector<std::pair<std::int32_t, std::int32_t>>& columns) {
     const auto file = region::RegionFile::open(region);
-    std::printf("%s\n", region.c_str());
+    std::printf("%s\n", region.string().c_str());
 
     for (const auto& [x, z] : columns) {
         const std::int32_t chunkX = javamath::floorDiv(x, 16);

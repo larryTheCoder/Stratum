@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
         // doc for why that matters more than it sounds like it should.
         constexpr std::size_t kLightGrowthPaddingSectors = 4;
         region::writeRegion(path, regionX, regionZ, chunks, kLightGrowthPaddingSectors);
-        std::fprintf(stderr, "wrote %s (%zu chunks)\n", path.c_str(), chunks.size());
+        std::fprintf(stderr, "wrote %s (%zu chunks)\n", path.string().c_str(), chunks.size());
     }
 
     return 0;

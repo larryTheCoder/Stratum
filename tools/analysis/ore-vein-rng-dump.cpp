@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
 
     std::FILE* out = std::fopen(outPath.c_str(), "w");
     if (out == nullptr) {
-        std::fprintf(stderr, "cannot open %s for writing\n", outPath.c_str());
+        std::fprintf(stderr, "cannot open %s for writing\n", outPath.string().c_str());
         return 1;
     }
     std::fprintf(out, "seed,x,y,z,ridged,touched\n");
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
         const std::filesystem::path region =
             root / ("seed-" + std::to_string(seed)) / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
-            std::fprintf(stderr, "skip: no region at %s\n", region.c_str());
+            std::fprintf(stderr, "skip: no region at %s\n", region.string().c_str());
             continue;
         }
         const auto noises = density::NoiseRegistry::create(

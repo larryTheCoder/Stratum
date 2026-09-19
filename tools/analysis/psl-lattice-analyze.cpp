@@ -702,7 +702,7 @@ void modeBlends(const Depths& depths, const noise::NormalNoise& probe,
     for (const auto& name : names) {
         const auto back = readBack(depths, root / name);
         const FieldGrid grid(fields.at(name), probe, back.baseX, back.baseZ);
-        std::printf("%s/%s at pitch 16, anchor (0,0)\n", root.filename().c_str(), name.c_str());
+        std::printf("%s/%s at pitch 16, anchor (0,0)\n", root.filename().string().c_str(), name.c_str());
         for (const Blend blend :
              {Blend::Bilinear, Blend::BilinearPre, Blend::BilinearRound, Blend::BilinearTrunc,
               Blend::BilinearPreTrunc, Blend::BilinearPreRound, Blend::BilinearTruncPre,
@@ -719,7 +719,7 @@ void modeFit(const Depths& depths, const noise::NormalNoise& probe,
     for (const auto& name : names) {
         const auto back = readBack(depths, root / name);
         const FieldGrid grid(fields.at(name), probe, back.baseX, back.baseZ);
-        std::printf("%s/%s  columns=%lld broken=%lld\n", root.filename().c_str(), name.c_str(),
+        std::printf("%s/%s  columns=%lld broken=%lld\n", root.filename().string().c_str(), name.c_str(),
                     back.columns, back.broken);
         struct Best {
             Score score;
