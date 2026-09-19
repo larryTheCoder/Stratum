@@ -141,7 +141,16 @@ TEST_CASE("the ocean floor sits at or below the world surface", "[conformance][h
     if (regions.empty()) {
         SKIP("no golden regions under " << STRATUM_FIXTURES_DIR);
     }
-    CHECK(regions.size() == 24U);
+    // The eight golden seeds x three dimensions, each as its own r.0.0.mca.
+    // Counted rather than compared to the directory's total: probes
+    // legitimately add OTHER regions under the same seed directories — e.g.
+    // r.4.3.mca at seed -4172144997902289642, generated to reach the four
+    // negative-surface-depth columns — and an exact inventory equality turns
+    // every such addition into a spurious failure in an unrelated case.
+    const auto golden = std::ranges::count_if(regions, [](const std::filesystem::path& region) {
+        return region.filename() == "r.0.0.mca";
+    });
+    CHECK(golden == 24);
 
     // OCEAN_FLOOR is the map terrain will actually be compared against, so
     // it gets its own check rather than riding on WORLD_SURFACE's. There is

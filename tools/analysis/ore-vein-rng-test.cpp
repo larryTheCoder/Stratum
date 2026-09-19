@@ -156,50 +156,50 @@ int main(int argc, char** argv) {
     long long checked = 0;
     long long hits = 0;
     for (const std::string& salt : salts) {
-        ++checked;
         // Both senses at every threshold in the sweep. 0.7 is the confirmed
         // one; 0.3 is kept because it is what this file used to test, and
         // seeing 60.3% next to 100.0% is the whole lesson in one line.
         for (const float threshold : kThresholds) {
-        Agreement less, geq, lessCu, geqCu, lessFe, geqFe;
-        std::int64_t cachedSeed = 0;
-        bool haveCached = false;
-        rng::PositionalSource cachedSource{rng::Seed128{.lo = 1, .hi = 1}};
-        for (const Row& row : rows) {
-            if (!haveCached || row.seed != cachedSeed) {
-                cachedSource = rng::positionalSourceFor(row.seed, salt);
-                cachedSeed = row.seed;
-                haveCached = true;
+            ++checked;
+            Agreement less, geq, lessCu, geqCu, lessFe, geqFe;
+            std::int64_t cachedSeed = 0;
+            bool haveCached = false;
+            rng::PositionalSource cachedSource{rng::Seed128{.lo = 1, .hi = 1}};
+            for (const Row& row : rows) {
+                if (!haveCached || row.seed != cachedSeed) {
+                    cachedSource = rng::positionalSourceFor(row.seed, salt);
+                    cachedSeed = row.seed;
+                    haveCached = true;
+                }
+                auto gen = cachedSource.at(row.x, row.y, row.z);
+                const float draw = gen.nextFloat();
+                const bool okLess = (draw < threshold) == row.touched;
+                const bool okGeq = (draw >= threshold) == row.touched;
+                less.record(row.seed, okLess);
+                geq.record(row.seed, okGeq);
+                if (row.y >= 0) { // copper range; iron never reaches y>=0 (upper bound -8)
+                    lessCu.record(row.seed, okLess);
+                    geqCu.record(row.seed, okGeq);
+                } else {
+                    lessFe.record(row.seed, okLess);
+                    geqFe.record(row.seed, okGeq);
+                }
             }
-            auto gen = cachedSource.at(row.x, row.y, row.z);
-            const float draw = gen.nextFloat();
-            const bool okLess = (draw < threshold) == row.touched;
-            const bool okGeq = (draw >= threshold) == row.touched;
-            less.record(row.seed, okLess);
-            geq.record(row.seed, okGeq);
-            if (row.y >= 0) { // copper range; iron never reaches y>=0 (upper bound -8)
-                lessCu.record(row.seed, okLess);
-                geqCu.record(row.seed, okGeq);
-            } else {
-                lessFe.record(row.seed, okLess);
-                geqFe.record(row.seed, okGeq);
+            const auto [lessLo, lessHi] = less.perSeedMinMax();
+            const auto [geqLo, geqHi] = geq.perSeedMinMax();
+            // A real hit clears 85% even on its WORST seed — not just on
+            // average, which is exactly what let "minecraft:vein_gap" through
+            // before per-seed reporting existed.
+            const bool isHit = lessLo >= 85.0 || geqLo >= 85.0;
+            if (isHit) {
+                ++hits;
             }
-        }
-        const auto [lessLo, lessHi] = less.perSeedMinMax();
-        const auto [geqLo, geqHi] = geq.perSeedMinMax();
-        // A real hit clears 85% even on its WORST seed — not just on
-        // average, which is exactly what let "minecraft:vein_gap" through
-        // before per-seed reporting existed.
-        const bool isHit = lessLo >= 85.0 || geqLo >= 85.0;
-        if (isHit) {
-            ++hits;
-        }
-        if (isHit || !quietMode) {
-            std::printf("salt=%-24s t=%.2f  all: <t=%.3f%%[%.0f-%.0f] >=t=%.3f%%[%.0f-%.0f]"
-                        "   Cu: <t=%.3f%%   Fe: <t=%.3f%%%s\n",
-                        salt.c_str(), double(threshold), less.rate(), lessLo, lessHi, geq.rate(),
-                        geqLo, geqHi, lessCu.rate(), lessFe.rate(), isHit ? "   <-- HIT" : "");
-        }
+            if (isHit || !quietMode) {
+                std::printf("salt=%-24s t=%.2f  all: <t=%.3f%%[%.0f-%.0f] >=t=%.3f%%[%.0f-%.0f]"
+                            "   Cu: <t=%.3f%%   Fe: <t=%.3f%%%s\n",
+                            salt.c_str(), double(threshold), less.rate(), lessLo, lessHi, geq.rate(),
+                            geqLo, geqHi, lessCu.rate(), lessFe.rate(), isHit ? "   <-- HIT" : "");
+            }
         }
     }
     if (quietMode) {

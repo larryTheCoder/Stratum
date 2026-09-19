@@ -519,11 +519,17 @@ mapping has two halves, split at a platform-neutral midpoint:
   3. only after an ore: `nextFloat() < 0.02` upgrades it to the raw-metal
      block.
 
-  **91245 of 91245 candidate positions, 100.000%, across 12 seeds**, on
-  every seed alone and on copper and iron alone. That is 36725 on the
-  discovery worlds (`probes/orevein-multi`), 43065 on nine worlds generated
-  afterwards and never used to fit anything (`probes/orevein-heldout`), and
-  11455 more on the sign-varying probe below. `tests/conformance/
+  **79790 of 79790 candidate positions, 100.000%, across 11 CONTRIBUTING
+  seeds**, on every seed alone and on copper and iron alone. That is 36725 on
+  the discovery worlds (`probes/orevein-multi`) and 43065 on nine worlds
+  generated afterwards and never used to fit anything
+  (`probes/orevein-heldout`). Fourteen seeds were run; 200, 24680 and 99991
+  produce no candidate row at all and are not counted. The sign-varying probe
+  below agrees on a further 11455 SOLID candidates (25509 of its positions are
+  air), but those are seed-100 positions already inside the 79790 re-measured
+  at a different density — evidence about PLACEMENT, not additional
+  independent confirmation of the derivation — so they are reported separately
+  rather than summed into it. `tests/conformance/
   vanilla_ore_vein_test.cpp` holds the discovery/held-out split; the
   held-out half is what makes this a law rather than a fit.
 
@@ -562,8 +568,10 @@ mapping has two halves, split at a platform-neutral midpoint:
   positions; of the candidates it left solid, all **11455 came back exact**
   — including the ones the aquifer's own barrier turned solid against a
   negative density, which the fully solid probe cannot produce at all. So
-  veins replace solid ground only, and "solid" means whatever the filler
-  ended up placing, not merely `final_density > 0`.
+  veins replace solid ground only, and "solid" here means whatever the filler
+  ended up placing, not merely `final_density > 0` — with one exception the
+  probe could not see, recorded below: every one of those 11455 was the
+  default block, so the probe says nothing about a vein meeting a FLUID.
 
   *And nothing repaints them afterwards.* The same script's third dimension
   is solid throughout but runs an UNCONDITIONAL surface rule painting
@@ -586,13 +594,24 @@ mapping has two halves, split at a platform-neutral midpoint:
   code:
 
   * `nextFloat()` vs `nextDouble()`. One `nextLong()` backs both, and no
-    row of the 91245 lands between the two precisions, so both read
+    row of the 79790 lands between the two precisions, so both read
     100.000%. Separating them needs a probe that takes a FOURTH draw.
   * whether draw 2 is consumed when `vein_gap <= -0.3`. Nothing downstream
     reads this position's stream — every position gets its own
     `.at(x, y, z)` generator, so there is no ordering between blocks at all
     — and both variants read 100.000%. The implementation takes the draw
     unconditionally, as the simpler reading.
+  * **whether a vein may replace a FLUID — and this one is different in kind.**
+    `ChunkFiller` gates the vein call on `block == &settings_->defaultBlock`,
+    so a vein never replaces water or lava the aquifer placed. Nothing measured
+    that. The placement probe contained zero fluid candidates, provable from
+    its own pass, so the guard was CHOSEN rather than observed. The two above
+    are unobservable in principle on these probes; this one is merely
+    unobserved, and it can change real blocks — a veins-on overworld puts
+    aquifer fluid inside the vein ranges routinely. Settling it needs a
+    placement probe whose aquifer produces water or lava inside y in
+    [-60, 50]. (`categorize()` counts lava as solid, so the probe's "solid"
+    and this guard's "replaceable" are not the same predicate.)
 
   *A spatial fingerprint, measured and deliberately NOT used as evidence.*
   The membership outcome is vertically clustered: agreement with the
@@ -1257,7 +1276,8 @@ Open:
   the block wherever the density alone would not, called from `fill()`
   itself. `ore_veins_enabled` stopped being refused at M3 (above):
   `ore::VeinSource` replaces a solid block wherever the vein system says so,
-  confirmed per block on 91245 candidates across 12 seeds. Vanilla's
+  confirmed per block on 79790 candidates across 11 contributing seeds.
+  Vanilla's
   overworld sets both flags, and this filler now runs both — what remains
   between it and an exact overworld is the two narrow aquifer pieces §11
   names, not a whole subsystem.

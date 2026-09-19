@@ -14,11 +14,15 @@
 // where `ore_veins_enabled` and `aquifers_enabled` are BOTH set, the vein
 // system's own replacement (`ore::VeinSource` — SPEC §10 milestone M3).
 //
-// ORE VEINS, wired (SPEC §11). Confirmed per block against the vanilla server
-// on 91245 candidate positions across 12 seeds — 79790 on the fully solid
-// probes, of which 43065 are held-out worlds generated after the derivation
-// was fixed, plus 11455 on a probe whose density crosses zero inside both vein
-// ranges. 100.000%, on every seed alone and on copper and iron alone.
+// ORE VEINS, wired (SPEC §11). The RNG derivation is confirmed per block
+// against the vanilla server on 79790 of 79790 candidate positions across 11
+// CONTRIBUTING seeds, of which 43065 are held-out worlds generated after the
+// derivation was fixed. 100.000%, on every seed alone and on copper and iron
+// alone. Separately, a PLACEMENT probe whose density crosses zero inside both
+// vein ranges agrees on its 11455 solid candidates (its other 25509 are air).
+// Those 11455 are seed-100 positions already among the 79790, re-measured at
+// a different density — evidence about placement, not additional independent
+// confirmation of the derivation, so the two are not summed.
 // `ore/vein.hpp` carries the derivation, the brackets around each threshold,
 // and the two ambiguities the probes cannot separate.
 //

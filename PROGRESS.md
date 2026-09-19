@@ -171,15 +171,21 @@ Open:
 starting hypothesis came from minecraft.wiki's public documentation, treated
 throughout as something to confirm, not transcribe.
 
-The derivation is confirmed per block against the vanilla server on **91245
-of 91245 candidate positions across 12 seeds, 100.000%** — on every seed
-alone and on copper and iron alone. All three draws come from one generator,
+The derivation is confirmed per block against the vanilla server on **79790
+of 79790 candidate positions across 11 contributing seeds, 100.000%** — on
+every seed alone and on copper and iron alone. (Three of the fourteen seeds
+run, 200/24680/99991, contribute zero candidate rows and are not counted.)
+A separate PLACEMENT probe agrees on its 11455 solid candidates, its other
+25509 being air; those are seed-100 positions already inside the 79790,
+re-measured at a different density, so they are reported beside the RNG
+figure rather than added to it. All three draws come from one generator,
 `rng::positionalSourceFor(worldSeed, "minecraft:ore").at(x, y, z)`:
 `nextFloat() < 0.7` for membership, then the mapped-probability ore/filler
 roll against `vein_gap > -0.3`, then `nextFloat() < 0.02` for raw metal.
 `ore_veins_enabled` is no longer refused; `lib/src/ore_vein.cpp` implements
 it and `ChunkFiller` calls it. Coverage: `tests/unit/ore_vein_test.cpp` and
-`tests/conformance/vanilla_ore_vein{,_solid}_test.cpp`.
+`tests/conformance/vanilla_ore_vein_test.cpp` and
+`tests/conformance/vanilla_ore_vein_placement_test.cpp`.
 
 Placement was measured separately from the derivation, because the solid
 probe is solid everywhere and so cannot see it: veins replace **solid ground
@@ -206,7 +212,7 @@ Open:
 
 - [ ] `nextFloat()` vs `nextDouble()` for the three thresholds, and whether
       draw 2 is consumed when `vein_gap <= -0.3`. Both pairs read 100.000%
-      on all 91245 rows — one `nextLong()` backs both precisions and no row
+      on all 79790 rows — one `nextLong()` backs both precisions and no row
       lands between them, and nothing downstream reads a position's stream.
       Separating either needs a probe that takes a FOURTH draw from the same
       generator. Recorded in `lib/include/stratum/ore/vein.hpp` beside the

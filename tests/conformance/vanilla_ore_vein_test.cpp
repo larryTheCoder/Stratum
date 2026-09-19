@@ -87,11 +87,33 @@ using stratum::settings::RouterEntry;
     return "minecraft:stone";
 }
 
+/// Any block only the vein system places. The probe worlds are solid stone
+/// otherwise, so one of these at a position the gate REJECTED would be a vein
+/// this build cannot produce — the failure the scoring loop is blind to.
+[[nodiscard]] bool isVeinBlock(const std::string& name) {
+    return name == "minecraft:granite" || name == "minecraft:tuff" ||
+           name == "minecraft:copper_ore" || name == "minecraft:deepslate_iron_ore" ||
+           name == "minecraft:raw_copper_block" || name == "minecraft:raw_iron_block";
+}
+
 struct Score {
     long long rows = 0;
     long long agree = 0;
     long long placed = 0;
+    /// Vein blocks the server wrote at a position the gate turned away. The
+    /// scoring loop `continue`s past those without looking, so without this
+    /// counter the case can detect a false POSITIVE and a wrong block type but
+    /// never a false NEGATIVE — and the gate's NECESSITY would go unguarded.
+    long long escaped = 0;
 };
+
+/// Whether the server wrote a vein block at this position — used only at
+/// positions the gate turned away.
+[[nodiscard]] long long serverVeinBlockAt(const stratum::chunk::Chunk& decoded, const int localX,
+                                          const std::int32_t y, const int localZ) {
+    const auto* actual = decoded.blockAt(localX, y, localZ);
+    return (actual != nullptr && isVeinBlock(actual->name)) ? 1 : 0;
+}
 
 /// Walks one probe world, scoring every candidate position the deterministic
 /// gate admits. `seed` is both the world seed and the directory name.
@@ -129,10 +151,12 @@ struct Score {
                         const stratum::density::Point point{.x = x, .y = y, .z = z};
                         const double toggle = interpreter.evaluate(toggleNode, point, cache);
                         if (!stratum::ore::clearsRichness(y, toggle)) {
+                            score.escaped += serverVeinBlockAt(decoded, localX, y, localZ);
                             continue;
                         }
                         const double ridged = interpreter.evaluate(ridgedNode, point, cache);
                         if (ridged >= 0.0) {
+                            score.escaped += serverVeinBlockAt(decoded, localX, y, localZ);
                             continue;
                         }
                         const double gap = interpreter.evaluate(gapNode, point, cache);
@@ -174,9 +198,16 @@ struct Score {
             INFO("set " << set << ", seed " << seed << ": " << one.agree << " of " << one.rows);
             CHECK(one.agree == one.rows);
         }
+        // Checked on EVERY seed, including the ones contributing no candidate
+        // row: a seed the gate turns away entirely is exactly where a vein the
+        // server placed would hide.
+        INFO("set " << set << ", seed " << seed << ": " << one.escaped
+                    << " vein blocks at gate-rejected positions");
+        CHECK(one.escaped == 0);
         total.rows += one.rows;
         total.agree += one.agree;
         total.placed += one.placed;
+        total.escaped += one.escaped;
     }
     return total;
 }
@@ -195,6 +226,10 @@ TEST_CASE("ore veins match the server on the discovery worlds", "[conformance][o
     // rows but the vein system placed nothing, which would make agreement
     // trivially "all stone matches all stone".
     CHECK(score.placed > 20000);
+    // The other direction, which the scoring loop alone cannot see: the gate is
+    // NECESSARY as well as sufficient. Nothing the server placed sits outside
+    // it.
+    CHECK(score.escaped == 0);
 }
 
 TEST_CASE("ore veins match the server on worlds generated after the fact",
@@ -209,4 +244,6 @@ TEST_CASE("ore veins match the server on worlds generated after the fact",
     CHECK(score.rows > 40000);
     CHECK(score.agree == score.rows);
     CHECK(score.placed > 25000);
+    // The gate's necessity, on worlds that were never used to fit it.
+    CHECK(score.escaped == 0);
 }
