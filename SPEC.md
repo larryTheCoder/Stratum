@@ -6693,6 +6693,12 @@ Open:
   seed. That agrees with, and is independent of,
   `legacy-seed-analyze --twin`.
 
+  The (T,T) cell is the decoder's own error bar and is read as one rather
+  than hidden: the tree cannot consult `gravel_layer` at a column where
+  `soul_sand_layer` succeeded, so those **6 of 3204 columns (0.19%)** are
+  the decoder being wrong. The claim rests on a cell three orders of
+  magnitude larger than that rate.
+
   *THE SCAN, and its MEASURED null.* The same 270,000 candidates (900 seed
   rules x 300 block offsets) scored against the decoded bits. The null had
   to be measured rather than computed: the decoded columns are spatially

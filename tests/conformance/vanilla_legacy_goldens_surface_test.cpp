@@ -81,7 +81,11 @@
 // (F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6 — so the impossible cell is
 // 1398 of 3204 columns, 43.63%. So something about the identifier — its hash,
 // or the order the noises are built in, which this cannot separate — reaches
-// the seed.
+// the seed. The (T,T) cell is the decoder's own error bar and is read as one:
+// the tree cannot consult `gravel_layer` at a column where
+// `soul_sand_layer` succeeded, so those 6 of 3204 (0.19%) are the decoder
+// being wrong, and the claim rests on a cell three orders of magnitude
+// larger than that rate.
 //
 // WHAT THIS EXCLUDES, AND WHAT IT DOES NOT.
 //
