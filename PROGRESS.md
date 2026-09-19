@@ -482,9 +482,17 @@ Open:
       **A SECOND, INDEPENDENT ORACLE — and it refutes the same space.**
       Everything above inverts a synthetic probe dimension's terrain height.
       The eight golden NETHER regions were never used for this and are a far
-      bigger oracle: ~2 million columns over **six independent worlds**,
-      every one painted by the real legacy seeding of the six noises the
-      Nether's surface rule names. A `noise_threshold` is a sign test, so a
+      bigger oracle: ~2 million columns over **eight region files, which are
+      SIX independent worlds** — java.util.Random keeps only a seed's low 48
+      bits, so `0`/`Long.MIN_VALUE` and `-1`/`Long.MAX_VALUE` are one world
+      each, and **a fifth to two fifths of every pooled column count below is
+      a second copy of a column already in it** (measured per noise at stride
+      4: `netherrack` 21.73%, `nether_state_selector` 25.58%, `patch`
+      31.27%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%) (measured: the two members of
+      a pair agree on the category of all 67108864 block positions and on
+      every biome, and differ in 11914 block names, 0.0178%, all
+      feature-placed). Every one of them painted by the real legacy seeding
+      of the six noises the Nether's surface rule names. A `noise_threshold` is a sign test, so a
       placed block is one bit about a noise — and
       `tools/analysis/legacy-goldens-surface-analyze.cpp` inverts it by
       WALKING the resolved rule graph and branching on everything it cannot
@@ -503,14 +511,27 @@ Open:
       control failed at 99.77%), **0** of those positions are unexplained by
       the tree, and the decoded bits recover the true seeding at **30104 /
       30104 = 100.0000%** against a trivial-predictor null of 86.37%, with
-      worldSeed + 1 at **78.97% — below the trivial predictor**.
+      worldSeed + 1 at **78.97% — below the trivial predictor**. That arm is
+      HANDED each column's surface depth, though, and the Nether run cannot
+      be; the arm that ENUMERATES it, as the Nether run must, is the one the
+      Nether numbers lean on and is now run too: at stride 4, **16470418
+      positions**, replay 99.9316%, 0 unexplained, recovery **1766 / 1766 =
+      100.0000%** against a trivial predictor of 77.41%, worldSeed + 1 at
+      **73.39%**. Both arms are asserted in the conformance case.
 
       *The identity test is a positive result.* `soul_sand_layer` and
       `gravel_layer` are byte-identical and differ only by name, and the
       `nether_wastes` branch decides both at one column. Joint table over
-      six worlds: **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6**. One field
-      makes (F,T) impossible; it is **1398 of 3204 (43.63%)**. Independent
-      confirmation of `--twin`, on the server's own regions.
+      eight region files / six worlds: **(F,F) 1800, (F,T) 1398, (T,F) 0,
+      (T,T) 6**. The claim rests on **(F,T)** alone — one field makes it
+      impossible, since both conditions test the same value at the same
+      `(x, 0, z)` against the same -0.012 whichever branch reached them, and
+      the tree makes it the expected cell: **1398 of 3204 (43.63%)**. (T,F)
+      and (T,T) are impossible under the TREE too (SPEC §11 re-derives why,
+      from the two children's differing `stone_depth` gates), so the 6
+      columns there are a FLOOR on the decoder's own error rate and not a
+      measurement of it. Independent confirmation of `--twin`, on the
+      server's own regions.
 
       *And no candidate survives.* **176537818 positions decoded**, 0.1489%
       of them unexplained by the tree; the readback decides **688833**
@@ -528,8 +549,11 @@ Open:
       50.02% ± 0.61 (max 52.21%) and a trivial predictor of 50.63%;
       `netherrack` best **96.02%** against 95.66% ± 0.32 (max 96.66%) and a
       trivial predictor of 97.77%. A planted candidate comes back **rank 1
-      at 100.0000% on every decoded column** against a runner-up at 66.1%,
-      so the null result is a measurement. All five noises, and what the
+      at 100.0000% on every decoded column** against a runner-up at 66.1% —
+      RANK in the same sweep, which is the claim, rather than recovery of
+      bits the plant just wrote — so the null result is a measurement. And
+      `--scan` now refuses to print a headline unless a `--control` ran and
+      passed beside it. All five noises, and what the
       readback does and does not exclude, in SPEC §11; asserted in
       `tests/conformance/vanilla_legacy_goldens_surface_test.cpp`, which
       INCLUDES the analyzer's decoder rather than copying it.

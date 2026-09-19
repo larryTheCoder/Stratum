@@ -4,10 +4,13 @@
 // tools/analysis/legacy-seed-analyze.cpp asks how a NAMED noise's identifier
 // becomes a Java LCG seed by inverting a synthetic probe dimension's terrain
 // height. This asks the same question of a different oracle, one that was
-// sitting unused: the eight golden Nether regions — SIX INDEPENDENT WORLDS,
-// since java.util.Random discards bit 63 and 0 == Long.MIN_VALUE,
-// -1 == Long.MAX_VALUE — whose every column was painted by the real legacy
-// seeding of exactly the six surface noises in question.
+// sitting unused: the eight golden Nether region files — SIX INDEPENDENT
+// WORLDS, since java.util.Random sees only a seed's low 48 bits and so
+// 0 == Long.MIN_VALUE, -1 == Long.MAX_VALUE — whose every column was painted
+// by the real legacy seeding of exactly the six surface noises in question.
+// EIGHT FILES, SIX WORLDS: every pooled denominator this prints carries two
+// copies of a world, and every mode says so in its own output rather than
+// leaving it to be remembered.
 //
 // A `noise_threshold` condition is a sign test. So a block vanilla placed is,
 // read backwards, one bit about which side of a threshold a noise was on —
@@ -17,13 +20,23 @@
 // evaluate; this file drives it, controls it, and scores candidates against
 // it.
 //
-// THE ORDER MATTERS AND IT IS NOT NEGOTIABLE. `--control` runs the identical
-// decoder over the eight golden OVERWORLD regions, whose surface-rule noises
-// are MODERN-seeded and which this build already reproduces exactly. If the
-// decoder is wrong — a misread `stone_depth`, a stone-depth run reconstructed
-// with the wrong convention, a missed masking branch — the overworld run says
-// so, because there the right answer is known. A `--scan` result without a
-// passing `--control` beside it is not a measurement, it is a number.
+// THE ORDER MATTERS AND IT IS NOT NEGOTIABLE, AND IT IS NOW ENFORCED.
+// `--control` runs the identical decoder over the eight golden OVERWORLD
+// regions, whose surface-rule noises are MODERN-seeded and which this build
+// already reproduces exactly. If the decoder is wrong — a misread
+// `stone_depth`, a stone-depth run reconstructed with the wrong convention, a
+// missed masking branch — the overworld run says so, because there the right
+// answer is known. A `--scan` result without a passing `--control` beside it
+// is not a measurement, it is a number, so `--scan`/`--scan-all` REFUSE to run
+// unless `--control` ran in the same invocation and passed. `--unvalidated`
+// overrides that and stamps every scan headline with a banner saying so.
+//
+// And the control has to exercise the path the measurement uses. The Nether
+// run cannot know the column's surface depth — `minecraft:surface` is itself a
+// legacy-seeded named noise — so it ENUMERATES it, which is a different and
+// much weaker decode than being handed the exact value. `--enumerate` makes
+// the control do the same, and that is the arm the Nether numbers are
+// entitled to lean on.
 //
 //   modes
 //     --control        overworld goldens: a replay arm on the reconstructed
@@ -43,6 +56,10 @@
 //
 //   modifiers
 //     --stride N       take every Nth chunk of each region (default 1)
+//     --control-stride N  the same for the control, when it runs beside a
+//                      scan: the control enumerating a depth costs 16 walks a
+//                      position, and it does not have to be as fine as the
+//                      thing it is validating (default: --stride)
 //     --plant R B      replace the server's bits with candidate (R, B)'s own
 //                      and rescan: the calibration arm
 //     --census         print the per-condition census for --control too
@@ -54,13 +71,17 @@
 //                      as the Nether run must
 //     --no-replay-gate score every position, not only those the library's own
 //                      Executor reproduces
+//     --unvalidated    run a scan with no control beside it, and stamp every
+//                      headline it prints with a banner saying so
 //
 //   cmake --build --preset dev --target stratum_legacy_goldens_surface_analyze
 //   A=build/dev/tools/analysis/stratum_legacy_goldens_surface_analyze
-//   $A .fixtures/1.21.11 --control --trust-steep
+//   $A .fixtures/1.21.11 --control --trust-steep --enumerate
 //   $A .fixtures/1.21.11 --decode
-//   $A .fixtures/1.21.11 --scan minecraft:nether_state_selector
-//   $A .fixtures/1.21.11 --scan minecraft:nether_state_selector --plant 417 23
+//   $A .fixtures/1.21.11 --control --trust-steep --enumerate --control-stride 4
+//                        --scan minecraft:nether_state_selector
+//   $A .fixtures/1.21.11 --unvalidated --scan minecraft:nether_state_selector
+//                        --plant 417 23
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12); without
 // them every mode reports what is missing and exits 77, CTest's skip code.
@@ -120,9 +141,10 @@ using stratum::surface::RuleGraph;
 /// One region is 32x32 chunks; this takes every `stride`-th one in both axes.
 /// Stride 1 is the whole region — 1024 chunks, 262144 columns — and is what
 /// every headline number in SPEC §11 is measured at.
-[[nodiscard]] std::int32_t strideFrom(int argc, char** argv, std::int32_t fallback) {
+[[nodiscard]] std::int32_t strideNamed(int argc, char** argv, const char* flag,
+                                       std::int32_t fallback) {
     for (int i = 1; i + 1 < argc; ++i) {
-        if (std::strcmp(argv[i], "--stride") == 0) {
+        if (std::strcmp(argv[i], flag) == 0) {
             const int value = std::atoi(argv[i + 1]);
             if (value > 0 && value <= 32) {
                 return value;
@@ -130,6 +152,10 @@ using stratum::surface::RuleGraph;
         }
     }
     return fallback;
+}
+
+[[nodiscard]] std::int32_t strideFrom(int argc, char** argv, std::int32_t fallback) {
+    return strideNamed(argc, argv, "--stride", fallback);
 }
 
 [[nodiscard]] bool hasFlag(int argc, char** argv, std::string_view flag) {
@@ -175,7 +201,7 @@ void printCensus(const char* what, const RuleGraph& graph, const Decoder& decode
     std::map<std::string, ControlArm> recovery;
     std::map<std::string, ControlArm> negative;
     WalkStats total;
-    std::size_t worlds = 0;
+    std::vector<std::int64_t> read;
     std::vector<ConditionTally> pooled(graph.conditionCount());
     const stratum::biome::TemperatureTable temperatures =
         stratum::biome::TemperatureTable::fromPack(pack);
@@ -231,13 +257,14 @@ void printCensus(const char* what, const RuleGraph& graph, const Decoder& decode
             pooled[i].columns += walk.tallies[i].columns;
             pooled[i].contradictions += walk.tallies[i].contradictions;
         }
-        ++worlds;
+        read.push_back(seed);
     }
 
-    if (worlds == 0) {
+    if (read.empty()) {
         std::printf("no overworld golden regions under %s\n", root.string().c_str());
         return 77;
     }
+    const legacy_goldens::WorldCount counted = legacy_goldens::distinctWorlds(read);
 
     std::printf("\ncontrol: the MODERN seeding this build already reproduces, through the "
                 "identical decoder\n");
@@ -250,8 +277,11 @@ void printCensus(const char* what, const RuleGraph& graph, const Decoder& decode
                                               : "BRANCHED ON — the golden shows post-rule heights");
     std::printf("  surface depth   %s\n",
                 enumerateDepth ? "ENUMERATED [-4, 11], exactly as the Nether run does"
-                               : "known exactly (minecraft:surface is modern here)");
-    std::printf("  regions %zu   positions decoded %zu\n", worlds, total.positions);
+                               : "SUPPLIED exactly -- NOT the path the Nether run uses; re-run "
+                                 "with --enumerate for the arm that is");
+    std::printf("  stride %d   region files %zu over %zu independent worlds (%zu of the files "
+                "are a second copy of a world already pooled)   positions decoded %zu\n",
+                stride, counted.regions, counted.worlds, counted.duplicates(), total.positions);
     std::printf("  unexplained by the tree %zu (%.4f%%)   assignment cap hit %zu   no biome %zu\n",
                 total.unexplained, percent(total.unexplained, total.positions), total.overflowed,
                 total.noBiome);
@@ -300,13 +330,25 @@ void printCensus(const char* what, const RuleGraph& graph, const Decoder& decode
 /// Decodes the Nether goldens once and hands back the per-column fields.
 struct NetherRun {
     RuleGraph graph;
-    std::vector<Field> fields; ///< one per condition, unioned over all worlds
+    std::vector<Field> fields; ///< one per condition, unioned over all regions
     std::vector<ConditionTally> tallies;
     WalkStats stats;
-    std::size_t worlds = 0;
-    /// Per world, per condition: kept apart so a claim can be made per world
-    /// rather than only over the pool.
+    /// REGION FILES read, which is not the number of worlds: see
+    /// `legacy_goldens::distinctWorlds`.
+    std::size_t regions = 0;
+    /// Per region file, per condition: kept apart so a claim can be made per
+    /// region rather than only over the pool.
     std::vector<std::pair<std::int64_t, std::vector<Field>>> perWorld;
+
+    /// The region files read, and how many worlds they are.
+    [[nodiscard]] legacy_goldens::WorldCount counted() const {
+        std::vector<std::int64_t> seeds;
+        seeds.reserve(perWorld.size());
+        for (const auto& entry : perWorld) {
+            seeds.push_back(entry.first);
+        }
+        return legacy_goldens::distinctWorlds(seeds);
+    }
 };
 
 [[nodiscard]] std::optional<NetherRun> runNether(const std::filesystem::path& root,
@@ -316,7 +358,7 @@ struct NetherRun {
                   .fields = {},
                   .tallies = {},
                   .stats = {},
-                  .worlds = 0,
+                  .regions = 0,
                   .perWorld = {}};
     const Decoder decoder{run.graph, settings};
     run.tallies.assign(run.graph.conditionCount(), {});
@@ -346,9 +388,9 @@ struct NetherRun {
         run.stats.overflowed += walk.stats.overflowed;
         run.stats.noBiome += walk.stats.noBiome;
         run.perWorld.emplace_back(seed, std::move(walk.fields));
-        ++run.worlds;
+        ++run.regions;
     }
-    if (run.worlds == 0) {
+    if (run.regions == 0) {
         return std::nullopt;
     }
     return run;
@@ -356,8 +398,10 @@ struct NetherRun {
 
 void printDecodeCensus(const NetherRun& run, const Decoder& decoder) {
     std::printf("\nnether readback: which (noise, threshold) the placed block decides\n");
-    std::printf("  regions %zu (SIX independent worlds at stride 1)   positions decoded %zu\n",
-                run.worlds, run.stats.positions);
+    const legacy_goldens::WorldCount counted = run.counted();
+    std::printf("  region files %zu over %zu independent worlds (%zu of the files are a second "
+                "copy of a world already pooled)   positions decoded %zu\n",
+                counted.regions, counted.worlds, counted.duplicates(), run.stats.positions);
     std::printf("  unexplained by the tree %zu (%.4f%%)   assignment cap hit %zu\n",
                 run.stats.unexplained, percent(run.stats.unexplained, run.stats.positions),
                 run.stats.overflowed);
@@ -369,6 +413,29 @@ void printDecodeCensus(const NetherRun& run, const Decoder& decoder) {
 /// differ only by name, and both are read at exactly one threshold (-0.012).
 /// If the name does not enter the seed they are ONE field and their decoded
 /// signs must agree on every column that decides both.
+///
+/// WHICH CELL CARRIES THE CLAIM, re-derived from the resolved tree rather than
+/// assumed. `nether_wastes` is a 2-child sequence. Child 0 is gated by
+/// `stone_depth(floor, add_surface_depth: true)` — depth <= surfaceDepth — and
+/// consults `soul_sand_layer` only inside that gate; its `then_run` ends in an
+/// unconditional `netherrack`, so once entered with the noise at or above
+/// -0.012 it ALWAYS places. Child 1 is gated by
+/// `stone_depth(floor, add_surface_depth: false)` — depth <= 0 — and consults
+/// `gravel_layer`. The two gates are NOT nested, so "gravel is only consulted
+/// after soul failed" is not the reason the (T,*) row is empty; the reason is
+/// that child 1's gate needs depth 0, which is the most permissive depth for
+/// child 0's gate, so wherever child 1 fires with surfaceDepth >= 0 child 0
+/// was entered first and only a FALSE soul bit let control through — and
+/// wherever surfaceDepth < 0 child 0's gate fails at every depth in the
+/// column, so `soul_sand_layer` is never consulted there at all. Either way a
+/// column cannot decide soul TRUE and gravel anything. (T,F) and (T,T) are
+/// therefore impossible under the TREE, which makes them a floor on this
+/// decoder's own error rate and NOT evidence about seeding.
+///
+/// The seeding claim rests on (F,T) alone: soul below the threshold and gravel
+/// at or above it, both conditions testing the SAME value at the same
+/// (x, 0, z) against the same -0.012 whichever branch reached them. Under one
+/// field that cell is impossible; under the tree it is the expected one.
 void printIdentity(const NetherRun& run, const Decoder& decoder) {
     stratum::surface::ConditionIndex soul = 0;
     stratum::surface::ConditionIndex gravel = 0;
@@ -397,7 +464,11 @@ void printIdentity(const NetherRun& run, const Decoder& decoder) {
     std::size_t soulBits = 0;
     std::size_t gravelTrue = 0;
     std::size_t gravelBits = 0;
+    std::vector<std::uint64_t> seen;
     for (const auto& [seed, fields] : run.perWorld) {
+        const std::uint64_t key = legacy_goldens::legacyWorldKey(seed);
+        const bool duplicate = std::ranges::find(seen, key) != seen.end();
+        seen.push_back(key);
         std::size_t worldBoth = 0;
         std::size_t worldSame = 0;
         for (std::size_t slot = 0; slot < legacy_goldens::kColumnsPerRegion; ++slot) {
@@ -420,8 +491,9 @@ void printIdentity(const NetherRun& run, const Decoder& decoder) {
                 ++worldSame;
             }
         }
-        std::printf("  seed %-21lld  %zu / %zu agree  (%.4f%%)\n", static_cast<long long>(seed),
-                    worldSame, worldBoth, percent(worldSame, worldBoth));
+        std::printf("  seed %-21lld  %zu / %zu agree  (%.4f%%)%s\n", static_cast<long long>(seed),
+                    worldSame, worldBoth, percent(worldSame, worldBoth),
+                    duplicate ? "   [SAME WORLD as an earlier line: equal low 48 bits]" : "");
     }
     const std::size_t both = joint[0] + joint[1] + joint[2] + joint[3];
     const std::size_t same = joint[0] + joint[3];
@@ -431,8 +503,22 @@ void printIdentity(const NetherRun& run, const Decoder& decoder) {
     std::printf("  marginals       soul_sand_layer >= -0.012 in %.2f%% of %zu columns, "
                 "gravel_layer in %.2f%% of %zu\n",
                 percent(soulTrue, soulBits), soulBits, percent(gravelTrue, gravelBits), gravelBits);
-    std::printf("  ONE FIELD makes (F,T) and (T,F) IMPOSSIBLE — they are %zu of %zu (%.4f%%).\n",
-                joint[1] + joint[2], both, percent(joint[1] + joint[2], both));
+    // (F,T) is the only cell that separates the two hypotheses. ONE FIELD
+    // forbids it because both conditions test the same value at (x, 0, z)
+    // against the same -0.012 whichever branch reached them; the TREE expects
+    // it, since a column whose soul bit is false is exactly the one child 1
+    // gets to ask about gravel.
+    std::printf("  THE CLAIM rests on (F,T): impossible under one field, expected under the "
+                "tree — %zu of %zu (%.4f%%).\n",
+                joint[1], both, percent(joint[1], both));
+    // (T,F) and (T,T) are impossible under the TREE as well as under one
+    // field — see this function's header — so they are a floor on the
+    // decoder's own error rate, not evidence about seeding. A floor and not a
+    // measurement: an error landing in (F,F) or (F,T) leaves no trace here.
+    std::printf("  DECODER ERROR FLOOR (T,F) + (T,T), which the tree forbids too: %zu of %zu "
+                "(%.4f%%) — a floor, since an error landing in (F,F) or (F,T) is invisible "
+                "to this table.\n",
+                joint[2] + joint[3], both, percent(joint[2] + joint[3], both));
 }
 
 // ----------------------------------------------------------------- the scan
@@ -458,6 +544,11 @@ struct Targets {
     /// are not just in the same column, they are read through different
     /// branches of the tree.
     std::size_t crossContradictions = 0;
+    /// Columns contributed by region files that are a SECOND COPY of a world
+    /// already in the pool. Not an error — the bits are real — but they are
+    /// not independent evidence, and a denominator that hides them overstates
+    /// what the pool covers.
+    std::size_t duplicateColumns = 0;
 };
 
 /// Pools one noise's decoded bits over every condition that reads it and
@@ -493,7 +584,11 @@ struct Targets {
         targets.maxThreshold = condition.maxThreshold;
         conditions.push_back(i);
     }
+    std::vector<std::uint64_t> seen;
     for (const auto& [seed, fields] : run.perWorld) {
+        const std::uint64_t key = legacy_goldens::legacyWorldKey(seed);
+        const bool duplicate = std::ranges::find(seen, key) != seen.end();
+        seen.push_back(key);
         std::vector<std::int8_t> merged(legacy_goldens::kColumnsPerRegion, -1);
         for (const stratum::surface::ConditionIndex i : conditions) {
             for (std::size_t slot = 0; slot < merged.size(); ++slot) {
@@ -517,6 +612,9 @@ struct Targets {
             targets.x.push_back(static_cast<std::int32_t>(slot % 512U));
             targets.z.push_back(static_cast<std::int32_t>(slot / 512U));
             targets.bit.push_back(merged[slot]);
+            if (duplicate) {
+                ++targets.duplicateColumns;
+            }
         }
     }
     return targets;
@@ -568,9 +666,33 @@ scoreCandidate(const Targets& targets, const std::vector<std::size_t>& picked,
     return agreed;
 }
 
+/// Whether a control ran beside this scan, and how it went. A scan is a
+/// statement about a decoder, so a scan whose decoder was never validated in
+/// the same invocation prints a banner saying exactly that; one whose control
+/// FAILED does not print at all.
+enum class ControlStatus : std::uint8_t { NotRun, Passed, Failed };
+
+/// The banner an unvalidated scan carries. Loud on purpose: the headline
+/// beneath it is the one thing a reader is likely to quote, and quoting it
+/// without the control beside it is how a number turns into a claim.
+void printUnvalidatedBanner() {
+    std::printf("  !! ---------------------------------------------------------------- !!\n");
+    std::printf("  !! UNVALIDATED. No --control ran in this invocation, so nothing here !!\n");
+    std::printf("  !! says the decoder that produced these bits reads the tree right.   !!\n");
+    std::printf("  !! Do not quote these numbers. Re-run with --control --enumerate.    !!\n");
+    std::printf("  !! ---------------------------------------------------------------- !!\n");
+}
+
 void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
              const std::string& noiseName, std::size_t sampleSize, std::size_t plantRule,
-             std::size_t plantBlock, bool plant) {
+             std::size_t plantBlock, bool plant, ControlStatus control) {
+    if (control == ControlStatus::Failed) {
+        std::printf("\nscan %s: REFUSED. The control in this invocation FAILED, so the decoder "
+                    "behind these bits is known to be wrong and no number drawn from it means "
+                    "anything.\n",
+                    noiseName.c_str());
+        return;
+    }
     Targets targets = targetsFor(run, decoder, noiseName);
     if (targets.bit.empty()) {
         std::printf("\nscan %s: the decoder observes it at NO column — nothing to score\n",
@@ -597,12 +719,24 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
         trueBits += static_cast<std::size_t>(targets.bit[i] == 1 ? 1 : 0);
     }
 
+    const legacy_goldens::WorldCount counted = run.counted();
     std::printf("\nscan %s  (firstOctave %d, %zu amplitudes, %zu Perlin blocks per noise)\n",
                 noiseName.c_str(), parameters.firstOctave, parameters.amplitudes.size(),
                 layout.blocksPerNoise);
-    std::printf("  decoded columns %zu over %zu worlds (%zu dropped: two branches of the tree "
-                "read the same column both ways); scored on %zu of them\n",
-                targets.bit.size(), run.worlds, targets.crossContradictions, picked.size());
+    if (control == ControlStatus::NotRun) {
+        printUnvalidatedBanner();
+    }
+    std::printf("  decoded columns %zu over %zu REGION FILES, which are %zu independent worlds "
+                "(%zu dropped: two branches of the tree read the same column both ways); "
+                "scored on %zu of them\n",
+                targets.bit.size(), counted.regions, counted.worlds, targets.crossContradictions,
+                picked.size());
+    // The pool is not %zu independent columns and saying so is the point: two
+    // of the eight region files are a second copy of a world already in it, so
+    // those columns are copies of columns already counted.
+    std::printf("  of those columns %zu (%.2f%%) come from a region file that is a SECOND COPY "
+                "of a world already pooled — real bits, but not independent evidence\n",
+                targets.duplicateColumns, percent(targets.duplicateColumns, targets.bit.size()));
     std::printf("  candidates %zu seed rules x %zu block offsets = %zu\n",
                 legacy_goldens::kSeedRules, legacy_goldens::kBlockOffsets,
                 legacy_goldens::kSeedRules * legacy_goldens::kBlockOffsets);
@@ -776,8 +910,16 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
     if (argc < 3) {
         std::printf("usage: %s <fixtures-root> "
                     "--control|--decode|--identity|--scan <noise>|--scan-all\n"
-                    "       [--stride N] [--plant <rule> <block>] [--census] [--trust-steep]\n"
-                    "       [--symbolic-water] [--enumerate] [--no-replay-gate]\n",
+                    "       [--stride N] [--control-stride N] [--plant <rule> <block>] "
+                    "[--census]\n"
+                    "       [--trust-steep] [--symbolic-water] [--enumerate] "
+                    "[--no-replay-gate]\n"
+                    "       [--unvalidated]\n"
+                    "\n"
+                    "a scan needs a control: pass --control (ideally --control --enumerate) "
+                    "beside\n"
+                    "--scan/--scan-all, or --unvalidated to run without one and have every\n"
+                    "headline stamped as unvalidated.\n",
                     argv[0]);
         return 2;
     }
@@ -793,13 +935,40 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
     const Pack pack = Pack::open(tree);
     const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
 
-    if (hasFlag(argc, argv, "--control")) {
+    const bool wantsScan = hasFlag(argc, argv, "--scan") || hasFlag(argc, argv, "--scan-all");
+    const bool wantsControl = hasFlag(argc, argv, "--control");
+    const bool unvalidated = hasFlag(argc, argv, "--unvalidated");
+    ControlStatus control = ControlStatus::NotRun;
+
+    // THE GATE. A scan is a statement about what a decoder read; without the
+    // control the decoder is unexamined, and the headline would be a number
+    // with nothing behind it. Running one is cheap beside a stride-1 scan, so
+    // the default is to insist rather than to warn.
+    if (wantsScan && !wantsControl && !unvalidated) {
+        std::printf("refusing to scan with no control in this invocation. A --scan headline is a "
+                    "claim about the DECODER, and only --control says the decoder reads the tree "
+                    "right.\n"
+                    "  add:      --control --trust-steep --enumerate [--control-stride N]\n"
+                    "  or force: --unvalidated (every headline is then stamped UNVALIDATED)\n");
+        return 2;
+    }
+
+    if (wantsControl) {
         const auto id = ResourceLocation::parse("minecraft:overworld");
-        return runControl(root, pack, loaded, loaded.settings.at(id), id, strideFrom(argc, argv, 1),
-                          hasFlag(argc, argv, "--enumerate"), hasFlag(argc, argv, "--census"),
-                          hasFlag(argc, argv, "--trust-steep"),
-                          !hasFlag(argc, argv, "--symbolic-water"),
-                          !hasFlag(argc, argv, "--no-replay-gate"));
+        const std::int32_t scanStride = strideFrom(argc, argv, 1);
+        const int status = runControl(
+            root, pack, loaded, loaded.settings.at(id), id,
+            strideNamed(argc, argv, "--control-stride", scanStride),
+            hasFlag(argc, argv, "--enumerate"), hasFlag(argc, argv, "--census"),
+            hasFlag(argc, argv, "--trust-steep"), !hasFlag(argc, argv, "--symbolic-water"),
+            !hasFlag(argc, argv, "--no-replay-gate"));
+        if (!wantsScan) {
+            return status;
+        }
+        control = status == 0 ? ControlStatus::Passed : ControlStatus::Failed;
+        if (status == 77) {
+            return status;
+        }
     }
 
     const auto netherId = ResourceLocation::parse("minecraft:nether");
@@ -835,8 +1004,8 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
         if (std::strcmp(argv[i], "--scan") == 0) {
             printDecodeCensus(*run, decoder);
             printIdentity(*run, decoder);
-            runScan(pack, *run, decoder, argv[i + 1], 512, plantRule, plantBlock, plant);
-            return 0;
+            runScan(pack, *run, decoder, argv[i + 1], 512, plantRule, plantBlock, plant, control);
+            return control == ControlStatus::Failed ? 1 : 0;
         }
     }
     if (hasFlag(argc, argv, "--scan-all")) {
@@ -846,18 +1015,22 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
         // no reason to repeat it six times.
         std::vector<std::string> names;
         for (stratum::surface::ConditionIndex i = 0; i < run->graph.conditionCount(); ++i) {
-            if (decoder.noiseOf(i) < 0) {
+            // `noiseOf >= 0` already implies the optional is engaged, but only
+            // the Decoder knows that; spell the check out so the reader and
+            // the analyser both see it.
+            const stratum::surface::Condition& condition = run->graph.condition(i);
+            if (decoder.noiseOf(i) < 0 || !condition.noise.has_value()) {
                 continue;
             }
-            const std::string name = run->graph.condition(i).noise->toString();
+            const std::string name = condition.noise->toString();
             if (std::ranges::find(names, name) == names.end()) {
                 names.push_back(name);
             }
         }
         for (const std::string& name : names) {
-            runScan(pack, *run, decoder, name, 512, plantRule, plantBlock, plant);
+            runScan(pack, *run, decoder, name, 512, plantRule, plantBlock, plant, control);
         }
-        return 0;
+        return control == ControlStatus::Failed ? 1 : 0;
     }
     std::printf("no mode given\n");
     return 2;

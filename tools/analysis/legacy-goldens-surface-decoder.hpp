@@ -109,10 +109,18 @@
 namespace legacy_goldens {
 
 /// The eight seeds tools/fetch-vanilla generates golden regions for. They are
-/// SIX INDEPENDENT WORLDS, not eight: java.util.Random scrambles a seed as
-/// `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)`, which discards bit 63, and both
-/// 0/Long.MIN_VALUE and -1/Long.MAX_VALUE differ only there. Every
-/// denominator drawn from these has to be read against six.
+/// EIGHT REGION FILES OVER SIX INDEPENDENT WORLDS: java.util.Random scrambles
+/// a seed as `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)`, so the TOP SIXTEEN bits
+/// never reach it — not bit 63 alone, which is what this file used to say —
+/// and 0/Long.MIN_VALUE and -1/Long.MAX_VALUE are each one world under any
+/// legacy seeding. Measured on the goldens themselves, not assumed: over the
+/// 67108864 block positions of the 0 and Long.MIN_VALUE Nether regions the two
+/// agree on the air/fluid/solid CATEGORY of every single one, agree on every
+/// biome, and differ in 11914 block NAMES (0.0178%, confined to 142 of the
+/// 1024 chunks; the -1 / Long.MAX_VALUE pair differs in 160 of 1024) — a
+/// feature-sized residue, since features are seeded from the whole 64-bit seed
+/// and run after the surface rules. Every denominator drawn from these eight
+/// files therefore pools two copies of a world: see `distinctWorlds`.
 inline constexpr std::array<std::int64_t, 8> kGoldenSeeds{
     0,
     1,
@@ -123,6 +131,33 @@ inline constexpr std::array<std::int64_t, 8> kGoldenSeeds{
     9223372036854775807LL,
     -9223372036854775807LL - 1,
 };
+
+/// The part of a world seed a legacy (java.util.Random) seeding can see. Two
+/// seeds sharing it are ONE world to every legacy-seeded noise, however far
+/// apart they look.
+[[nodiscard]] inline std::uint64_t legacyWorldKey(std::int64_t seed) {
+    return static_cast<std::uint64_t>(seed) & ((UINT64_C(1) << 48U) - 1);
+}
+
+/// How many independent worlds a list of seeds actually names, and how many
+/// of its entries are a second copy of one already in the list.
+struct WorldCount {
+    std::size_t regions = 0;
+    std::size_t worlds = 0;
+
+    [[nodiscard]] std::size_t duplicates() const noexcept { return regions - worlds; }
+};
+
+[[nodiscard]] inline WorldCount distinctWorlds(const std::vector<std::int64_t>& seeds) {
+    std::vector<std::uint64_t> keys;
+    keys.reserve(seeds.size());
+    for (const std::int64_t seed : seeds) {
+        keys.push_back(legacyWorldKey(seed));
+    }
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return WorldCount{.regions = seeds.size(), .worlds = keys.size()};
+}
 
 /// Columns in one region file: 32x32 chunks of 16x16.
 inline constexpr std::size_t kColumnsPerRegion = std::size_t{512} * 512;

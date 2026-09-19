@@ -6600,14 +6600,52 @@ Open:
   Until now every attempt on this question inverted a *synthetic probe
   dimension's terrain height* (`tools/analysis/legacy-seed-analyze.cpp`).
   The eight golden Nether regions were sitting unused and are a different
-  and much larger oracle: **262144 columns a region, 8 regions, SIX
-  independent worlds** (java.util.Random discards bit 63, so 0 ==
-  Long.MIN_VALUE and -1 == Long.MAX_VALUE), every one of them painted by the
-  real legacy seeding of exactly the six noises the Nether's surface rule
-  names. `tools/analysis/legacy-goldens-surface-analyze.cpp` and its shared
-  decoder `legacy-goldens-surface-decoder.hpp` read them;
+  and much larger oracle: **262144 columns a region, 8 REGION FILES over SIX
+  independent worlds**, every one of them painted by the real legacy seeding
+  of exactly the six noises the Nether's surface rule names.
+  `tools/analysis/legacy-goldens-surface-analyze.cpp` and its shared decoder
+  `legacy-goldens-surface-decoder.hpp` read them;
   `tests/conformance/vanilla_legacy_goldens_surface_test.cpp` includes the
   same decoder rather than a second copy of it.
+
+  *Eight files, six worlds — so every pooled denominator below carries two
+  copies.* java.util.Random scrambles a seed as
+  `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)`, keeping only its low 48 bits —
+  the TOP SIXTEEN, not bit 63 alone, which is what an earlier draft of this
+  entry said — so `0` and `Long.MIN_VALUE` are one world to every
+  legacy-seeded noise, and so are `-1` and `Long.MAX_VALUE`. **Two of the
+  eight region files are therefore a second copy of a world already in the
+  pool: a quarter of the files, and a comparable share of every pooled
+  column count in this entry — MEASURED per noise at stride 4 (what `--scan`
+  now prints): `netherrack` 21.73%, `nether_state_selector` 25.58%,
+  `patch` 31.27%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%.** That is measured, not assumed: over the
+  67108864 block positions of the `0` and `Long.MIN_VALUE` Nether regions
+  the two agree on the air/fluid/solid CATEGORY of every single one, agree
+  on every biome, and differ in **11914 block names — 0.0178%, confined to
+  142 of the 1024 chunks** (`-1` against `Long.MAX_VALUE`: 160 of 1024).
+  That is a feature-sized residue, since features are seeded from the whole
+  64-bit seed and run after the surface rules; a different surface NOISE
+  would move surface blocks in essentially every chunk, and 86% (84% for
+  the second pair) of chunks are bit-identical, which is what says the
+  surface field itself is the same in both. It does leave a trace in the
+  decode, though, and that is worth knowing: at stride 1 the pair's identity
+  runs are 525/607 and 526/608 columns (and 176/551 against 176/547 for the
+  other pair). A duplicate world is a copy of the FIELD, not a copy of the
+  decode, because the features that differ sit on top of the blocks the
+  decode reads. `--scan` now prints the per-noise duplicate share on its own
+  headline rather than leaving a reader to remember this.
+
+  *And that identity is itself evidence, ahead of any scan.* Two of the
+  candidate space's five bases RETAIN the top sixteen bits — `worldSeed`
+  raw, and `xoroLo`, which is Xoroshiro128++ seeded from the full 64-bit
+  value — and so predict a different surface-noise field for seed 0 than for
+  `Long.MIN_VALUE` (measured: `worldSeed` gives
+  `0000000000000000`/`8000000000000000`, `xoroLo` gives
+  `2a2ca488f66f517e`/`4d272cf8f66aec27`). The goldens show the same field.
+  **360 of the 900 seed rules, 108000 of the 270000 candidates, are refuted
+  by the duplicate pair alone** — by the readback's own fixtures rather than
+  by the readback proper. The remaining three bases (`lcgLong`,
+  `scrambled`, `zero`) agree across each pair, as they must.
 
   *The decoder is derived, not hand-read.* A `noise_threshold` is a sign
   test, so a placed block is one bit about a noise — but only for the
@@ -6648,6 +6686,36 @@ Open:
   | the trivial predictor (always the commoner answer) | 86.37% |
   | negative: the same bits against the same noises at worldSeed + 1 | **78.97%** — *below* the trivial predictor |
 
+  *THAT CONTROL DOES NOT TAKE THE PATH THE MEASUREMENT TAKES, so here is one
+  that does.* Every number in the table above comes from a walk that is
+  HANDED each column's exact surface depth, because in the overworld
+  `minecraft:surface` is modern and known. The Nether run cannot be handed
+  it: there the depth is a legacy-seeded named noise, so it is ENUMERATED
+  over [-4, 11] and a bit survives only where all sixteen assignments agree.
+  That is a different and strictly weaker path through the same walker.
+  `--enumerate` makes the control take it. Measured here over the same eight
+  regions at **stride 4 — 16470418 positions decoded** (the enumerated walk
+  costs sixteen walks a position, so stride 1 is hours rather than minutes;
+  the conformance case runs this arm at its own default stride 8 and gets
+  823 / 823 = 100.0000%, trivial 80.19%, worldSeed + 1 68.77%):
+
+  | arm | result |
+  | --- | --- |
+  | replay, as above | **16459152 / 16470418 = 99.9316%** |
+  | positions the tree cannot explain at all | **0** |
+  | recovery: decoded bits against the TRUE modern noise | **1766 / 1766 = 100.0000%** |
+  | the trivial predictor | 77.41% |
+  | negative: worldSeed + 1 | **73.39%** — below the trivial predictor |
+
+  Fewer bits survive than with the depth supplied — at the SAME stride, so
+  the comparison is like for like: stride 8 gives 823 enumerated against 972
+  supplied, both at 100.0000% recovery. That is the point rather than a
+  shortfall: this is the decode the Nether numbers below are entitled to
+  lean on, and until it was run the control was validating code the
+  measurement does not execute. `tests/conformance/vanilla_legacy_goldens_surface_test.cpp` now
+  carries both arms, and asserts that the enumerated one recovers 100% on
+  strictly fewer bits than the supplied one.
+
   The replay arm is the one that matters and it was added because the first
   control failed at 99.77%. A Context is reconstructed out of a POST-rule
   region, and the overworld's tree places `minecraft:water` and
@@ -6674,6 +6742,13 @@ Open:
   | `soul_sand_layer` | >= -0.012 | **41448** | 88.0% |
   | `gravel_layer` | >= -0.012 | **5182** | 65.3% |
 
+  Every column count in that table, and in the scan table below, is over the
+  **eight region files — six worlds**: about a quarter of the pooled columns
+  are a second copy of a column already counted — between 21.73% and 40.59%
+  depending on the noise, measured at stride 4 and listed in the
+  duplicate-pool paragraph above. They are real bits and they are scored, but they are not
+  independent evidence, and `--scan` prints the exact share per noise.
+
   The right-hand column is why a bare count is not enough:
   `minecraft:nether_wart`'s threshold is 1.17 and **not one column of any
   golden region reaches it**, so its bit is constant, its null equals its
@@ -6684,20 +6759,52 @@ Open:
   `minecraft:soul_sand_layer` and `minecraft:gravel_layer` are
   byte-identical (firstOctave -8, amplitudes [1,1,1,1,0,0,0,0,0.01333…])
   and differ only by name. The `nether_wastes` branch reads both at -0.012
-  at the same column, and the decoder's joint table over 6 worlds is
-  **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6** — the shape the tree
-  predicts, since `gravel_layer` is only consulted where `soul_sand_layer`
-  already failed. **Under one field the (F,T) cell is impossible, and it is
-  1398 of 3204 columns (43.63%).** So the identifier — its hash, or the
-  order the noises are built in, which this cannot separate — reaches the
-  seed. That agrees with, and is independent of,
+  at the same column, and the decoder's joint table over 8 region files /
+  6 worlds is **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6** — re-measured at
+  stride 1 for this revision (83m17s wall, 176537818 positions, 262795 of
+  them 0.1489% unexplained), reproducing every column count in the tables
+  above as well.
+
+  *Which cell carries the claim, re-derived from the resolved tree.*
+  `nether_wastes` is a two-child SEQUENCE. Child 0 is gated by
+  `stone_depth(floor, add_surface_depth: true)` — depth <= surfaceDepth —
+  and only inside that gate consults `soul_sand_layer`; its `then_run` ends
+  in an unconditional `netherrack`, so once entered with the noise at or
+  above the threshold it ALWAYS places. Child 1 is gated by
+  `stone_depth(floor, add_surface_depth: false)` — depth <= 0 — and consults
+  `gravel_layer`. **The two gates are different and not nested**, so "gravel
+  is only consulted where soul already failed" is NOT the reason the (T,*)
+  row is empty: child 1 is reached whenever child 0 placed nothing, which
+  includes every position where child 0's depth gate failed and
+  `soul_sand_layer` was never consulted at all. An earlier draft of this
+  entry, and commit `4c214d5`'s message, stated that wrong reason as fact.
+
+  The right reason is that child 1's gate needs depth 0, which is the MOST
+  PERMISSIVE depth for child 0's gate. Where surfaceDepth >= 0, child 0 was
+  entered first at that position and only a FALSE soul bit let control
+  through; where surfaceDepth < 0, child 0's gate fails at every depth in
+  the column, so soul is never consulted there either. **For any fixed
+  surface depth a column cannot decide soul TRUE and gravel anything**, so
+  (T,F) and (T,T) are impossible under the TREE as well as under one field
+  and carry no information about seeding.
+
+  **The claim therefore rests on (F,T) alone** — soul below -0.012, gravel
+  at or above it — which one field makes impossible, because both conditions
+  test the same value at the same `(x, 0, z)` against the same -0.012
+  whichever branch reached them, and which the tree makes the expected cell.
+  It is **1398 of 3204 columns (43.63%)**. So the identifier — its hash, or
+  the order the noises are built in, which this cannot separate — reaches
+  the seed. That agrees with, and is independent of,
   `legacy-seed-analyze --twin`.
 
-  The (T,T) cell is the decoder's own error bar and is read as one rather
-  than hidden: the tree cannot consult `gravel_layer` at a column where
-  `soul_sand_layer` succeeded, so those **6 of 3204 columns (0.19%)** are
-  the decoder being wrong. The claim rests on a cell three orders of
-  magnitude larger than that rate.
+  The **6 of 3204 columns (0.19%)** in (T,T) are the decoder or the
+  reconstruction being wrong. They are a **FLOOR** on this readback's error
+  rate, not a measurement of it and not an upper bound: an error landing in
+  (F,F) or (F,T) leaves no trace in this table. The mechanism is known — the
+  decoder enumerates the surface depth PER POSITION and unions the resulting
+  bits per column, so nothing forces one depth across a column and two
+  positions can be decoded under depths that could not both have been true.
+  The conformance case asserts the floor rather than mentioning it.
 
   *THE SCAN, and its MEASURED null.* The same 270,000 candidates (900 seed
   rules x 300 block offsets) scored against the decoded bits. The null had
@@ -6727,11 +6834,24 @@ Open:
   is nowhere near a correct rule. **A correct rule scores 100%**, and that
   is not an assumption:
 
-  *THE SCAN CAN FIND A CORRECT RULE.* `--plant <rule> <block>` replaces the
-  server's bits with the bits that candidate would have produced and runs
-  the identical scan: it returns **rank 1 at 543/543 thinned and 7599/7599
-  full — 100.0000% — against a runner-up at 66.1%**. So "no survivor" is a
-  measurement of the space, not a property of the apparatus.
+  *THE SCAN CAN FIND A CORRECT RULE, BY RANK.* `--plant <rule> <block>`
+  replaces the server's bits with the bits that candidate would have
+  produced and runs the identical scan: it returns **rank 1 at 543/543
+  thinned and 7599/7599 full — 100.0000% — against a runner-up at 66.1%**.
+  Rank is the claim, not recovery: a planted rule scoring 100% on bits it
+  just wrote is near-tautological, and the conformance case accordingly
+  reruns its whole 1800-candidate sweep after planting and asserts that the
+  planted candidate comes FIRST in it, with the best wrong rule far below.
+  So "no survivor" is a measurement of the space, not a property of the
+  apparatus.
+
+  *AND A SCAN WITHOUT A CONTROL NO LONGER PRINTS A HEADLINE.* A scan result
+  is a statement about a decoder, so `--scan`/`--scan-all` refuse to run
+  unless `--control` ran in the same invocation; if that control FAILS the
+  scan prints nothing at all, and `--unvalidated` is the only way to get
+  numbers without one — stamped with a banner saying they are not to be
+  quoted. `--control-stride` lets the control run coarser than the scan it
+  validates, since the enumerated control is the expensive half.
 
   *What this readback EXCLUDES.* The 270,000 candidates of that space, for
   the five noises whose decoded bit is two-sided, against up to 688833
