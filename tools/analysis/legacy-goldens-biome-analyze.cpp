@@ -125,9 +125,29 @@
 // at ONE block offset. A derivation that seeded `offset` differently from
 // `temperature`, or that drew all three from a single shared generator in
 // declaration order, is outside this space even though every individual noise's
-// rule might be inside it. `--split` measures how much that matters by scoring
-// temperature and vegetation with `offset` held at its correct-by-assumption
-// zero shift; it does not close the gap.
+// rule might be inside it. `--split` measures how much the `offset` half of
+// that matters, by scoring temperature and vegetation with the shift held at
+// zero so that no `offset` rule is being asked to be right at the same time;
+// it does not close the gap.
+//
+// AND ONE ASSUMPTION THAT IS NOT A SEED RULE AT ALL, which no mode here can
+// test and which on its own could account for the whole null. `layoutFor`
+// allocates a Perlin block ONLY for a NON-ZERO amplitude, because that is what
+// the modern draw does, and `blocksFor` then hands the candidate's generator
+// out one block at a time. A legacy draw that consumed a block per DECLARED
+// octave — advancing the generator across the zero amplitudes too — produces a
+// different Perlin block for every noise, and is outside this space AT EVERY
+// ONE OF THE 300 BLOCK OFFSETS, because the offsets shift the whole stack
+// together and cannot re-space it internally. `--model` cannot catch it: it
+// validates the stack against `NormalNoise` at the MODERN seeding, where the
+// blocks come from per-octave salted forks and nothing is consumed
+// sequentially, so both readings of "which block" agree there by construction
+// and disagree everywhere the scan actually looks. And the exposure is not
+// marginal: `minecraft:temperature` declares [1.5, 0, 1, 0, 0, 0] and
+// `minecraft:vegetation` [1, 1, 0, 0, 0, 0] — FOUR zero amplitudes each, of
+// six — with `minecraft:offset` at [1, 1, 1, 0]. Nine dead octaves across the
+// three noises, every one of which a sequential legacy draw might or might not
+// have paid a block for.
 //
 // AND THE READBACK'S OWN POWER IS BOUNDED, which is the honest part. A column
 // carries at most log2(5) = 2.32 bits and in practice far less, because the
@@ -145,7 +165,19 @@
 //   $A .fixtures --modern
 //   $A .fixtures --boundary
 //   $A .fixtures --candidate 182 0
+//   $A .fixtures --candidate 182 0 zero-shift   # one candidate, --split's chain
 //   $A .fixtures --scan            # ~hours in Debug; use the release preset
+//   $A .fixtures --split           # the same scan with the shift held at zero
+//   $A .fixtures --null-full 512   # the null at the FULL denominator, sampled
+//   $A .fixtures --null-full all   # ... enumerated: ~1 hour, and it also
+//                                  #     reports the best score in the space
+//
+// `--null-full` exists because the scan's own null is measured at stage 1's
+// 1536 cells while its headline score is a stage-2 number over 24576, and a
+// maximum read off one denominator says nothing about a score at the other.
+// It scores candidates from the same 270,000 over the FULL sample — drawn
+// uniformly (Java LCG, seed fixed and printed) or, with `all`, every one of
+// them — so the best survivor has a null it can actually be compared with.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12). Without them
 // every mode exits 77, CTest's skip code.
@@ -540,6 +572,13 @@ struct Climate {
     double vegetation = 0.0;
 };
 
+/// Whether the climate chain takes its shift from the `offset` noise, as the
+/// Nether's router does, or holds it at zero. `Zero` is what `--split` runs:
+/// it takes `offset` out of the candidate entirely, so a temperature and
+/// vegetation rule is not required to be right at the same time as an offset
+/// rule. It is NOT vanilla's chain and is never used to claim a match.
+enum class Shift : std::uint8_t { FromOffset, Zero };
+
 /// The chain, written out: shift_a and shift_b over `offset` at the flat_cache
 /// corner, then each climate noise at 0.25 * position plus its shift.
 ///
@@ -550,9 +589,10 @@ struct Climate {
 /// asserted by --model rather than by this comment.
 template<typename OffsetNoise, typename TemperatureNoise, typename VegetationNoise>
 [[nodiscard]] Climate climateAt(const OffsetNoise& offset, const TemperatureNoise& temperature,
-                                const VegetationNoise& vegetation, double x, double z) {
-    const double shiftX = offset(x * 0.25, 0.0, z * 0.25) * 4.0;
-    const double shiftZ = offset(z * 0.25, x * 0.25, 0.0) * 4.0;
+                                const VegetationNoise& vegetation, double x, double z,
+                                Shift shift = Shift::FromOffset) {
+    const double shiftX = shift == Shift::Zero ? 0.0 : offset(x * 0.25, 0.0, z * 0.25) * 4.0;
+    const double shiftZ = shift == Shift::Zero ? 0.0 : offset(z * 0.25, x * 0.25, 0.0) * 4.0;
     return Climate{.temperature = temperature((x * 0.25) + shiftX, 0.0, (z * 0.25) + shiftZ),
                    .vegetation = vegetation((x * 0.25) + shiftX, 0.0, (z * 0.25) + shiftZ)};
 }
@@ -851,7 +891,7 @@ struct Tally {
                                    const std::vector<noise::PerlinNoise>& offsetBlocks,
                                    const std::vector<noise::PerlinNoise>& temperatureBlocks,
                                    const std::vector<noise::PerlinNoise>& vegetationBlocks,
-                                   std::size_t block) {
+                                   std::size_t block, Shift shift = Shift::FromOffset) {
     Tally tally{biomes.size()};
     const auto offset = [&](double x, double y, double z) {
         return sampleNormal(noises.offsetLayout, offsetBlocks, block, x, y, z);
@@ -863,8 +903,9 @@ struct Tally {
         return sampleNormal(noises.vegetationLayout, vegetationBlocks, block, x, y, z);
     };
     for (const Cell& cell : world.cells) {
-        const Climate climate = climateAt(offset, temperature, vegetation,
-                                          static_cast<double>(cell.x), static_cast<double>(cell.z));
+        const Climate climate =
+            climateAt(offset, temperature, vegetation, static_cast<double>(cell.x),
+                      static_cast<double>(cell.z), shift);
         const std::optional<std::uint16_t> chosen =
             biomes.find(table.find(sampleOf(climate)).toString());
         tally.add(cell.biome, chosen.value_or(0), cell.boundary);
@@ -886,8 +927,9 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: %s <fixtures-dir> "
-                     "--preset|--control|--model|--modern|--boundary|--scan|"
-                     "--candidate <rule> <block>\n",
+                     "--preset|--control|--model|--modern|--boundary|--scan|--split|"
+                     "--null-full [draws|all] [draw-seed]|"
+                     "--candidate <rule> <block> [zero-shift]\n",
                      argv[0]);
         return 2;
     }
@@ -1355,10 +1397,13 @@ int main(int argc, char** argv) {
     }
 
     const bool candidateMode = mode == "--candidate";
-    if (!candidateMode && mode != "--scan") {
+    const bool splitMode = mode == "--split";
+    const bool nullFullMode = mode == "--null-full";
+    if (!candidateMode && !splitMode && !nullFullMode && mode != "--scan") {
         std::fprintf(stderr, "unknown mode %s\n", mode.c_str());
         return 2;
     }
+    const Shift shift = splitMode ? Shift::Zero : Shift::FromOffset;
 
     // Stage 1 subsamples chunks hard: the full stride-2 sample is 4096 cells a
     // world and 270,000 candidates over it is not a run anyone would finish.
@@ -1391,6 +1436,14 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "rule must be < %zu and block < %zu\n", kSeedRules, kBlockOffsets);
             return 2;
         }
+        // A fifth argument of `zero-shift` scores that one candidate the way
+        // --split scores all 270,000. It exists so the Shift::Zero path has a
+        // caller that costs a third of a second: --split itself is a second
+        // full scan and no CTest case can afford it, and an arm nothing runs
+        // is how the `--split` sentence in this file's header came to describe
+        // a mode that did not exist.
+        const Shift candidateShift =
+            (argc >= 6 && std::string{argv[5]} == "zero-shift") ? Shift::Zero : Shift::FromOffset;
         const SeedRule rule = ruleAt(ruleIndex);
         const std::vector<World> full = loadWorlds(kDistinctSeeds, kNetherChunkStride);
         Tally overall{biomes.size()};
@@ -1402,13 +1455,15 @@ int main(int argc, char** argv) {
             const auto vegetationBlocks =
                 blocksFor(rule, seedFor(rule, world.seed, kVegetationId), blocksNeeded);
             overall.absorb(scoreCandidate(noises, nether, biomes, world, offsetBlocks,
-                                          temperatureBlocks, vegetationBlocks, block));
+                                          temperatureBlocks, vegetationBlocks, block,
+                                          candidateShift));
         }
-        std::printf("rule %zu block %zu (%s): %zu/%zu = %.2f%%, chance baseline %.2f%%; "
+        std::printf("rule %zu block %zu (%s)%s: %zu/%zu = %.2f%%, chance baseline %.2f%%; "
                     "interior only %zu/%zu = %.2f%%\n",
-                    ruleIndex, block, describe(rule).c_str(), overall.agree, overall.cells,
-                    100.0 * overall.rate(), 100.0 * overall.chanceBaseline(), overall.interiorAgree,
-                    overall.interiorCells,
+                    ruleIndex, block, describe(rule).c_str(),
+                    candidateShift == Shift::Zero ? " with the shift held at zero" : "",
+                    overall.agree, overall.cells, 100.0 * overall.rate(),
+                    100.0 * overall.chanceBaseline(), overall.interiorAgree, overall.interiorCells,
                     overall.interiorCells == 0
                         ? 0.0
                         : 100.0 * static_cast<double>(overall.interiorAgree) /
@@ -1416,9 +1471,196 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // --- the null at the FULL denominator ------------------------------------
+    //
+    // The scan's null is a stage-1 object: 270,000 candidates over 1536 cells.
+    // Its headline score is a stage-2 object: one candidate over 24576. Those
+    // two numbers are not comparable, and the maximum of the first is the worst
+    // possible yardstick for the second — it is an extreme-value statistic over
+    // a quarter-million draws at a sixteenth of the sample, so it carries that
+    // sample's variance and a selection bias on top, and (this is the part that
+    // makes it circular rather than merely mismatched) the candidate that
+    // ATTAINS it is a member of the top table it is being held up against.
+    // This mode measures the null where the answer is quoted: the same
+    // candidates, scored over every cell the oracle offers.
+    //
+    // `all` enumerates the whole space at that denominator. It is about an
+    // hour, and it buys two things a sample does not: the distribution is the
+    // space's own rather than an estimate of it, and the maximum it reports is
+    // the best score ANYWHERE in the space — not the best of the 32 that a
+    // 1536-cell stage 1 happened to promote. "The best we found" and "the best
+    // there is" are different claims, and the gap between this maximum and the
+    // scan's stage-2 winner is the size of stage 1's selection noise.
+    if (nullFullMode) {
+        constexpr std::size_t kDefaultDraws = 512;
+        constexpr std::int64_t kDefaultDrawSeed = 20260919;
+        const std::string howMany{argc >= 4 ? argv[3] : ""};
+        const bool everything = howMany == "all";
+        const std::size_t draws = [&]() -> std::size_t {
+            if (everything) {
+                return kSeedRules * kBlockOffsets;
+            }
+            if (argc >= 4) {
+                return static_cast<std::size_t>(std::strtoull(argv[3], nullptr, 10));
+            }
+            return kDefaultDraws;
+        }();
+        const std::int64_t drawSeed =
+            argc >= 5 ? static_cast<std::int64_t>(std::strtoll(argv[4], nullptr, 10))
+                      : kDefaultDrawSeed;
+        if (draws == 0) {
+            std::fprintf(stderr, "--null-full needs at least one draw, or `all`\n");
+            return 2;
+        }
+        const std::vector<World> full = loadWorlds(kDistinctSeeds, kNetherChunkStride);
+        std::size_t fullCells = 0;
+        for (const World& world : full) {
+            fullCells += world.cells.size();
+        }
+        if (everything) {
+            std::printf("null at the full denominator: EVERY one of the %zu candidates, each "
+                        "scored over %zu cells (%zu worlds)\n",
+                        draws, fullCells, full.size());
+        } else {
+            std::printf("null at the full denominator: %zu candidates drawn uniformly from %zu, "
+                        "each scored over %zu cells (%zu worlds)\n",
+                        draws, kSeedRules * kBlockOffsets, fullCells, full.size());
+            std::printf("  draws come from the project's Java LCG at seed %lld, so this run "
+                        "reproduces exactly\n",
+                        static_cast<long long>(drawSeed));
+        }
+
+        std::vector<std::size_t> histogram(fullCells + 1, 0);
+        std::size_t worst = 0;
+        Result worstAt;
+        rng::JavaRandom draw{drawSeed};
+
+        // Enumerating reuses one rule's Perlin blocks across its 300 block
+        // offsets, exactly as stage 1 does; sampling cannot, because
+        // consecutive draws are unrelated rules.
+        const auto record = [&](std::size_t ruleIndex, std::size_t block, std::size_t agreed) {
+            ++histogram[agreed];
+            if (agreed > worst) {
+                worst = agreed;
+                worstAt = Result{.seedRule = ruleIndex, .block = block, .agreed = agreed};
+            }
+        };
+        if (everything) {
+            for (std::size_t ruleIndex = 0; ruleIndex < kSeedRules; ++ruleIndex) {
+                const SeedRule rule = ruleAt(ruleIndex);
+                std::vector<std::vector<noise::PerlinNoise>> offsetBlocks;
+                std::vector<std::vector<noise::PerlinNoise>> temperatureBlocks;
+                std::vector<std::vector<noise::PerlinNoise>> vegetationBlocks;
+                for (const World& world : full) {
+                    offsetBlocks.push_back(
+                        blocksFor(rule, seedFor(rule, world.seed, kOffsetId), blocksNeeded));
+                    temperatureBlocks.push_back(
+                        blocksFor(rule, seedFor(rule, world.seed, kTemperatureId), blocksNeeded));
+                    vegetationBlocks.push_back(
+                        blocksFor(rule, seedFor(rule, world.seed, kVegetationId), blocksNeeded));
+                }
+                for (std::size_t block = 0; block < kBlockOffsets; ++block) {
+                    std::size_t agreed = 0;
+                    for (std::size_t w = 0; w < full.size(); ++w) {
+                        agreed +=
+                            scoreCandidate(noises, nether, biomes, full[w], offsetBlocks[w],
+                                           temperatureBlocks[w], vegetationBlocks[w], block, shift)
+                                .agree;
+                    }
+                    record(ruleIndex, block, agreed);
+                }
+                if ((ruleIndex % 25) == 24) {
+                    std::printf("  ... %zu/%zu rules\n", ruleIndex + 1, kSeedRules);
+                    std::fflush(stdout);
+                }
+            }
+        } else {
+            for (std::size_t i = 0; i < draws; ++i) {
+                const auto ruleIndex =
+                    static_cast<std::size_t>(draw.nextInt(static_cast<std::int32_t>(kSeedRules)));
+                const auto block = static_cast<std::size_t>(
+                    draw.nextInt(static_cast<std::int32_t>(kBlockOffsets)));
+                const SeedRule rule = ruleAt(ruleIndex);
+                std::size_t agreed = 0;
+                for (const World& world : full) {
+                    agreed +=
+                        scoreCandidate(
+                            noises, nether, biomes, world,
+                            blocksFor(rule, seedFor(rule, world.seed, kOffsetId), blocksNeeded),
+                            blocksFor(rule, seedFor(rule, world.seed, kTemperatureId),
+                                      blocksNeeded),
+                            blocksFor(rule, seedFor(rule, world.seed, kVegetationId), blocksNeeded),
+                            block, shift)
+                            .agree;
+                }
+                record(ruleIndex, block, agreed);
+                if ((i % 64) == 63) {
+                    std::printf("  ... %zu/%zu draws\n", i + 1, draws);
+                    std::fflush(stdout);
+                }
+            }
+        }
+
+        std::size_t total = 0;
+        std::size_t sum = 0;
+        std::size_t least = fullCells;
+        for (std::size_t i = 0; i < histogram.size(); ++i) {
+            total += histogram[i];
+            sum += histogram[i] * i;
+            if (histogram[i] != 0) {
+                least = std::min(least, i);
+            }
+        }
+        const double mean =
+            total == 0 ? 0.0 : static_cast<double>(sum) / static_cast<double>(total);
+        double variance = 0.0;
+        for (std::size_t i = 0; i < histogram.size(); ++i) {
+            const double delta = static_cast<double>(i) - mean;
+            variance += static_cast<double>(histogram[i]) * delta * delta;
+        }
+        variance = total == 0 ? 0.0 : variance / static_cast<double>(total);
+        const double sd = std::sqrt(variance);
+        const auto percent = [&](double count) {
+            return 100.0 * count / static_cast<double>(fullCells);
+        };
+        std::printf("null over %zu candidates at %zu cells: mean %.2f (%.2f%%), sd %.2f (%.2f "
+                    "pts), min %zu (%.2f%%), max %zu (%.2f%%)\n",
+                    total, fullCells, mean, percent(mean), sd, percent(sd), least,
+                    percent(static_cast<double>(least)), worst,
+                    percent(static_cast<double>(worst)));
+        const auto quantile = [&](double fraction) {
+            const auto target = static_cast<std::size_t>(fraction * static_cast<double>(total));
+            std::size_t seen = 0;
+            for (std::size_t i = 0; i < histogram.size(); ++i) {
+                seen += histogram[i];
+                if (seen >= target) {
+                    return i;
+                }
+            }
+            return histogram.size() - 1;
+        };
+        std::printf("  rank distribution: p50 %zu (%.2f%%), p90 %zu (%.2f%%), p99 %zu (%.2f%%), "
+                    "p99.9 %zu (%.2f%%)\n",
+                    quantile(0.50), percent(static_cast<double>(quantile(0.50))), quantile(0.90),
+                    percent(static_cast<double>(quantile(0.90))), quantile(0.99),
+                    percent(static_cast<double>(quantile(0.99))), quantile(0.999),
+                    percent(static_cast<double>(quantile(0.999))));
+        std::printf("  the largest score was rule %zu block %zu (%s): %zu/%zu (%.2f%%), %.2f sd "
+                    "above the mean\n",
+                    worstAt.seedRule, worstAt.block, describe(ruleAt(worstAt.seedRule)).c_str(),
+                    worst, fullCells, percent(static_cast<double>(worst)),
+                    nonZero(sd) ? (static_cast<double>(worst) - mean) / sd : 0.0);
+        return 0;
+    }
+
     // --- the scan -----------------------------------------------------------
     std::printf("candidate space: %zu seed rules x %zu block offsets = %zu candidates\n",
                 kSeedRules, kBlockOffsets, kSeedRules * kBlockOffsets);
+    if (splitMode) {
+        std::printf("--split: the shift is HELD AT ZERO, so `offset` is out of the candidate and "
+                    "only the temperature and vegetation rules are being asked to be right. This "
+                    "is not vanilla's chain; a score here is not a match\n");
+    }
     std::printf("stage 1 over %zu cells (%zu worlds, chunk stride %d)\n", coarseCells,
                 coarse.size(), kScanStride);
 
@@ -1445,7 +1687,7 @@ int main(int argc, char** argv) {
             std::size_t agreed = 0;
             for (std::size_t w = 0; w < coarse.size(); ++w) {
                 agreed += scoreCandidate(noises, nether, biomes, coarse[w], offsetBlocks[w],
-                                         temperatureBlocks[w], vegetationBlocks[w], block)
+                                         temperatureBlocks[w], vegetationBlocks[w], block, shift)
                               .agree;
             }
             ++histogram[agreed];
@@ -1523,7 +1765,7 @@ int main(int argc, char** argv) {
             scoreCandidate(noises, nether, biomes, world,
                            modernBlocksFor(noises.offset, kOffsetId, world.seed),
                            modernBlocksFor(noises.temperature, kTemperatureId, world.seed),
-                           modernBlocksFor(noises.vegetation, kVegetationId, world.seed), 0)
+                           modernBlocksFor(noises.vegetation, kVegetationId, world.seed), 0, shift)
                 .agree;
     }
     std::printf("  for reference, the MODERN rule on these same cells: %zu/%zu (%.2f%%)\n",
@@ -1558,7 +1800,8 @@ int main(int argc, char** argv) {
             const auto vegetationBlocks =
                 blocksFor(rule, seedFor(rule, world.seed, kVegetationId), blocksNeeded);
             overall.absorb(scoreCandidate(noises, nether, biomes, world, offsetBlocks,
-                                          temperatureBlocks, vegetationBlocks, result.block));
+                                          temperatureBlocks, vegetationBlocks, result.block,
+                                          shift));
         }
         bestRate = std::max(bestRate, overall.rate());
         std::printf(

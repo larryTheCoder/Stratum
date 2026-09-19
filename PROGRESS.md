@@ -404,13 +404,30 @@ Open:
 
       | | |
       |---|---|
-      | null over all 270,000 (1536 cells) | mean **26.48%**, sd 8.19 pts, max **56.84%** |
+      | null over all 270,000 (1536 cells) | mean **26.48%**, sd 8.19 pts |
       | p50 / p90 / p99 / p99.9 | 26.56 / 38.02 / 44.21 / 49.48 % |
-      | best of the space, full 24576 cells | **53.16%** (rule 387 block 2) |
+      | the same 270,000 at the full **24576 cells** | mean **25.54%**, sd 7.25 pts; p90 35.73%, p99.9 45.82% |
+      | best in the whole space, full 24576 cells | **53.16%** (rule 387 block 2) |
       | deepslate's rule 182, best block | 49.81% |
-      | what a correct rule would score | ~**100%** |
+      | what a correct rule would score | ~**100%** (measured: the control's 99.94%) |
 
-      The best candidate does not reach the maximum the null itself produces.
+      **~100% against 53.16% is the comparison.** The stage-1 maximum (56.84%)
+      is NOT the yardstick it was written up as: it is a 1536-cell figure
+      standing beside a 24576-cell one, and it is rule 341 block 5's own
+      score — the top row of the table it was supposedly judging. What does
+      carry is that all 32 survivors LOSE ground when the sample grows 16x
+      (mean 54.21% -> 48.43%, rule 341 56.84% -> 50.96%, rule 387 55.14% ->
+      53.16%), and the order scrambles: stage 1's leader finishes third. That
+      is selection noise regressing, not a signal.
+
+      **And the null was measured again at the denominator the answer uses.**
+      `--null-full all` scores every one of the 270,000 over all 24576 cells
+      (an hour): mean **25.54%**, sd 7.25 points, max **53.16%** — the same
+      rule 387 block 2, so stage 1's top-32 shortcut lost nothing and 53.16%
+      really is the ceiling of this space. Being that maximum is what the best
+      candidate necessarily is; it sits 3.81 sd above the mean, against 3.71
+      sd for stage 1's maximum at a sixteenth of the cells. The gap that
+      matters is the 47 points to ~100%.
 
       **The control landed before the measurement**, on the OVERWORLD goldens
       where the seeding is the modern one this build reproduces, through the
@@ -436,9 +453,24 @@ Open:
       *What this does NOT exclude,* stated because it is the larger half: it
       inherits every gap of the borrowed space (one stack rule, no frequency
       variation, no per-octave salting, no fixed LCG-step skip) and adds one —
-      all three noises seeded by ONE rule at ONE block offset. And a rule that
-      got `temperature` right and `vegetation` wrong scores in the null band,
-      so nothing here speaks to partial correctness.
+      all three noises seeded by ONE rule at ONE block offset. Half of that
+      one is now measured rather than assumed: `--split` reruns the whole scan
+      with the shift held at zero, which takes `offset` out of the candidate,
+      and nothing moves — same null, same rules on top, best 53.16% -> 53.21%
+      on the same rule 387 block 2. And a rule that got `temperature` right
+      and `vegetation` wrong scores in the null band, so nothing here speaks
+      to partial correctness.
+
+      *And one assumption that is not a seed rule at all, and could account
+      for the whole null on its own:* a Perlin block is drawn only for a
+      NON-ZERO amplitude, because that is what the modern draw does. A legacy
+      draw that consumed a block per DECLARED octave is outside this space at
+      every one of the 300 block offsets — the offsets slide the stack, they
+      cannot re-space it — and `--model` cannot test it, because at the modern
+      seeding nothing is consumed sequentially and both readings agree by
+      construction. `temperature` and `vegetation` carry FOUR zero amplitudes
+      each of six, `offset` one of four: nine dead octaves, every one a block
+      a sequential draw might have paid for.
 
       *The preset table route, settled:* the Nether's five climate parameter
       points come from the server's own `--reports` data generator, already

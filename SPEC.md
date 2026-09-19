@@ -5818,22 +5818,71 @@ Open:
   | null mean | 406.73 / 1536 = **26.48%** (the 26.64% chance floor, measured) |
   | null sd | 125.81 (8.19 points) |
   | p50 / p90 / p99 / p99.9 | 26.56% / 38.02% / 44.21% / 49.48% |
-  | null **max** | 873 / 1536 = **56.84%** |
+  | largest score at this denominator | 873 / 1536 = 56.84%, rule 341 block 5 — which is the **#1 row of the top-32 table below**, not a threshold anything in that table can be judged against |
   | the MODERN rule on the same cells, for reference | 389 / 1536 = 25.33% |
 
   | stage 2, 24576 cells | |
   |---|---|
-  | best of the space (rule 387 block 2, `xoroLo add md5FirstLE, forks 1, xoroshiro`) | 13064 / 24576 = **53.16%** |
+  | best of stage 1's 32 survivors (rule 387 block 2, `xoroLo add md5FirstLE, forks 1, xoroshiro`) — and, by the enumeration below, the best in the whole space | 13064 / 24576 = **53.16%** |
   | deepslate's own rule (182) at its best block, 219 | 12241 / 24576 = 49.81% |
   | deepslate's own rule at block 0 | 10878 / 24576 = 44.26% |
   | what a correct rule would score | ~**100%**, per the control |
 
-  **The best candidate does not even reach the maximum the null itself
-  produces.** 56.84% is the largest of 270,000 draws from a distribution with
-  mean 26.48% and sd 8.19 points — 3.7 sd out, which is what the maximum of a
-  quarter-million correlated draws looks like — and the best full-sample score,
-  53.16%, sits under it. There is no outlier here; there is a null, and the
-  whole space is inside it.
+  **THE COMPARISON THAT CARRIES: ~100% against 53.16%.** A correctly seeded
+  rule is not estimated at ~100%, it is measured there — 99.939% is what the
+  control's positive arm reaches through this same decoder. The best of 270,000
+  candidates reaches 53.16%, a score whose own chance baseline is 29.63%. That
+  is the whole result, and it needs no null to be read: this sieve was built to
+  separate exactly-right from everything else, and nothing in the space is
+  exactly right.
+
+  **What the top of the table does when the denominator grows is the second
+  half of it.** Rescored from 1536 cells onto all 24576, **all 32 survivors
+  fall** — mean 54.21% -> 48.43%, a drop of 5.78 points, no exception in
+  either direction; rule 341 (stage 1's leader) 56.84% -> 50.96%, rule 387
+  55.14% -> 53.16%. The ordering scrambles with them: stage 1's #1 finishes
+  third and stage 2's winner was only #7 going in. Regression of that size,
+  applied to every row, is the signature of a top table selected out of
+  sampling noise. A rule that actually seeded these noises would not care how
+  many cells it was counted over.
+
+  *A correction, recorded because the wrong version of this claim was here
+  first.* This section used to say the best candidate "does not even reach the
+  maximum the null itself produces", 53.16% against 56.84%. That comparison was
+  void twice over: the two figures have different denominators (24576 against
+  1536), and 56.84% is not an independent null at all — it is rule 341 block
+  5's own stage-1 score, the top row of the table it was being used to judge.
+  The null in this space is real and it is measured, but that measurement was
+  at 1536 cells, and a maximum does not travel between denominators. So the
+  null was measured again where the answer is quoted.
+
+  *THE NULL AT THE DENOMINATOR THE ANSWER USES.* `--null-full all` scores
+  **every one of the 270,000 candidates over the full 24576 cells** — an hour
+  of compute, and the only form of this null a stage-2 score can be held
+  beside. Every candidate in the space is wrong, so these scores ARE the null:
+
+  | the whole space at 24576 cells | |
+  |---|---|
+  | mean | 6276.93 / 24576 = **25.54%** |
+  | sd | 1780.66 (7.25 points) |
+  | p50 / p90 / p99 / p99.9 | 25.50% / 35.73% / 41.13% / 45.82% |
+  | min | 887 / 24576 = 3.61% |
+  | max | 13064 / 24576 = **53.16%**, rule 387 block 2 |
+
+  Two things fall out of it. **Stage 1 lost nothing:** the largest score
+  anywhere in the space, at the full denominator, is the same candidate stage 2
+  reports, so 53.16% is the best this space can do and not merely the best of
+  32 promoted rows — the two-stage shortcut is vindicated by the exhaustive
+  run. And **that best is the maximum of the null, necessarily** — it is a
+  member of the distribution, which is exactly why 56.84% could never have
+  served as a threshold for it. What can be said is where it sits: 3.81 sd
+  above the mean, against 3.71 sd for stage 1's maximum on a sixteenth of the
+  cells. The same shape at both denominators, and an unexceptional place for
+  the largest of a quarter-million draws to land (no correlation model is
+  claimed here; the 300 block offsets of one rule are plainly not independent,
+  which pulls the expected maximum down rather than up). What separates a
+  correct rule from this is not 3.81 sd, it is the 47 points between 53.16%
+  and the ~100% the control measures.
 
   *What this EXCLUDES.* Through a decoder shown to recover a known-correct
   seeding at 99.94% and to put a known-wrong one at the null, and a forward
@@ -5850,13 +5899,44 @@ Open:
   of its own: the three noises are seeded by **one rule at one block offset**,
   so a derivation that seeded `offset` differently from `temperature`, or drew
   all three from one shared generator in declaration order, is outside the
-  space even if each individual noise's rule is inside it. And the readback is
-  coarse: it can only find an EXACTLY correct rule. A rule that got
-  `temperature` right and `vegetation` wrong would score in the null band and
-  be indistinguishable from one that got nothing right, so "no survivor" says
-  nothing about partial correctness. Widening the stack rule remains the most
-  likely place for the answer to be hiding, and this result does not narrow
-  that.
+  space even if each individual noise's rule is inside it. Half of that is now
+  measured rather than assumed: `--split` re-runs the entire scan with the
+  shift **held at zero**, which takes `offset` out of the candidate altogether
+  and asks only the temperature and vegetation rules to be right. Nothing
+  moves. The null is the same distribution (mean 26.48%, sd 8.19 points, its
+  largest score 878 / 1536 = 57.16% and again rule 341 block 5), the same rules
+  fill the top of the table, and the best full-sample score goes from 53.16% to
+  **53.21%** — five hundredths of a point, on the same rule 387 block 2. So
+  whatever is holding this scan at the floor, it is not that one rule is being
+  asked to seed `offset` as well; that half of the assumption costs nothing.
+  A score under `--split` is of course not a match to anything — vanilla's
+  chain is not shift-free — which is why it is a diagnostic and not a result.
+  And the readback is coarse: it can only find an EXACTLY correct rule. A
+  rule that got `temperature` right and `vegetation` wrong would score in the
+  null band and be indistinguishable from one that got nothing right, so "no
+  survivor" says nothing about partial correctness. Widening the stack rule
+  remains the most likely place for the answer to be hiding, and this result
+  does not narrow that.
+
+  *And one assumption that is not a seed rule at all, which could account for
+  the whole null by itself.* A Perlin block is allocated **only for a non-zero
+  amplitude** — that is what the modern draw does, so it is what `layoutFor`
+  does, and the candidate's generator then hands blocks out one at a time in
+  that order. A legacy draw that consumed a block **per declared octave**,
+  advancing across the zero amplitudes as well, produces a different block for
+  every noise and is outside this space **at every one of the 300 block
+  offsets**: the offsets slide the whole stack together and cannot re-space it
+  internally. `--model` cannot catch this, and it is worth being exact about
+  why — it checks the stack against `NormalNoise` at the MODERN seeding, where
+  the blocks come from per-octave salted forks and nothing is consumed
+  sequentially at all, so the two readings of "which block" agree there by
+  construction and can only differ where the scan actually looks. The exposure
+  is large: `minecraft:temperature` is `[1.5, 0, 1, 0, 0, 0]` and
+  `minecraft:vegetation` is `[1, 1, 0, 0, 0, 0]` — **four zero amplitudes each,
+  of six** — with `minecraft:offset` at `[1, 1, 1, 0]`. Nine dead octaves
+  across the three noises, every one of them a block a sequential legacy draw
+  might have paid for. This is the single widest hole in the result and it is
+  the same shape as the stack-rule gap the probe scan inherits.
 
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares

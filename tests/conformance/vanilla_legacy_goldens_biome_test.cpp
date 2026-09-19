@@ -79,15 +79,41 @@
 //
 // THE MEASUREMENT THE ANALYZER MAKES, recorded here so the claim has a
 // denominator in the repository and not only in a run someone remembers:
-// 270,000 candidates (900 seed rules x 300 block offsets), NO SURVIVOR. The
-// null over the whole space has mean 26.48% and sd 8.19 points; its maximum is
-// 56.84%; the best candidate re-scored over the full 24576 cells reaches
-// 53.16%, which is UNDER the maximum the null itself produces, where a correct
-// rule would reach ~100%. The numbers and the rank distribution are in
-// SPEC §11 and are produced by
+// 270,000 candidates (900 seed rules x 300 block offsets), NO SURVIVOR. A
+// CORRECT rule scores ~100% — that is not an estimate, it is what the control
+// measures on the overworld goldens, 99.94%. The best of the 270,000, rescored
+// over the full 24576 cells, reaches 53.16%.
+//
+// The two numbers that comparison needs, and the one it must not use. The null
+// IS measured — every candidate in the space is wrong, so their scores are the
+// null distribution — but it is measured at stage 1's 1536 cells (mean 26.48%,
+// sd 8.19 points), and a maximum read off that sample is not a threshold for a
+// score at 24576. It is also not independent of the candidate: the largest
+// stage-1 score in the space is the top row of the top-32 table itself, so
+// comparing the winner against it compares a candidate with itself. What DOES
+// carry: every one of the top 32 FALLS when the denominator grows 16x — mean
+// 54.21% at 1536 cells against 48.43% at 24576, no exceptions — and stage 1's
+// leader lands third once rescored. That is the shape of selection noise, not
+// of a signal.
+//
+// The null has since been measured at the denominator the answer uses, by
+// scoring all 270,000 over all 24576 cells: mean 25.54%, sd 7.25 points, and a
+// maximum of 53.16% that IS the candidate above — so the two-stage scan lost
+// nothing, and the best of this space is 47 points short of a correct rule
+// rather than a hair under a borrowed threshold. SPEC §11 carries that table,
+// the rank distribution, and the numbers above; they come from
 //   build/release/tools/analysis/stratum_legacy_goldens_biome_analyze .fixtures --scan
 // which is not run from CTest because it is minutes of compute; its --control,
 // --model and --modern arms are, as conformance.legacy_goldens_biome_control.
+//
+// WHAT NONE OF IT TOUCHES, and the reason the amplitudes below are pinned as
+// they are: a Perlin block is drawn only for a NON-ZERO amplitude, because
+// that is what the modern draw does. A legacy draw that consumed one per
+// DECLARED octave is outside the candidate space at every block offset, and
+// --model cannot see the difference, because at the modern seeding nothing is
+// consumed sequentially. `temperature` and `vegetation` declare four zero
+// amplitudes each of six and `offset` one of four — nine dead octaves that
+// this scan assumes cost nothing.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12). Without them
 // every case here skips.
