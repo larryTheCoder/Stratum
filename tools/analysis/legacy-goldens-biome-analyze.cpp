@@ -161,6 +161,9 @@
 //   A=build/release/tools/analysis/stratum_legacy_goldens_biome_analyze
 //   $A .fixtures --preset
 //   $A .fixtures --control
+//   $A .fixtures --attribute     # why each of --control's residual columns disagrees
+//   $A .fixtures --ties          # the tie-break rule scored over both samples
+//   $A .fixtures --quantize      # 36 roundings x both samples: is it the rounding?
 //   $A .fixtures --model
 //   $A .fixtures --modern
 //   $A .fixtures --boundary
@@ -919,6 +922,779 @@ struct Result {
     std::size_t agreed = 0;
 };
 
+// --- attributing the control's residual columns -------------------------
+//
+// `--control` names the columns where our biome disagrees with vanilla's
+// stored one and stops there. This mode says WHY, per column, and the
+// question it has to separate is narrow.
+//
+// Vanilla's answer and ours are the same nearest-neighbour question over
+// the same 7593-row table, asked in the same quantised integer space
+// (parameter_list.hpp). Vanilla does not scan the table — it searches a
+// tree built from it — but a tree search still returns a nearest entry.
+// So an entry whose fitness is STRICTLY WORSE than the one we picked
+// cannot be what a correct tree returned from the same sample. Two cases
+// follow, and they are distinguishable from the data alone:
+//
+//   TIED       the best entry carrying vanilla's biome has EXACTLY the
+//              fitness of the entry we picked. Then the arithmetic is
+//              right and the tie-break — which is to say the tree's shape
+//              — decides. `find` takes the later row; if vanilla's tied
+//              entry sits earlier, "later row wins" is what loses the
+//              column.
+//   DIFFERENT  the best entry carrying vanilla's biome is strictly worse
+//              under our sample. No tie-break can reach it, so our climate
+//              values are not the ones vanilla had, and the fault is
+//              upstream in the climate chain rather than in the search.
+//
+// For DIFFERENT the mode also bisects: per axis, the smallest change to
+// that one coordinate that would make the full search return vanilla's
+// biome. A flip that needs 1e-4 of an axis is a rounding-scale difference;
+// one that needs 0.2 is a different field.
+[[nodiscard]] int runAttribute(const std::filesystem::path& fixtures, const data::Pack& pack,
+                               const stratum::settings::LoadedSettings& loaded,
+                               const biome::ParameterList& overworld) {
+    const auto& settings = loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
+    // The SAME sweep --control runs. Not a subset and not a re-derivation:
+    // the columns this mode explains have to be the columns that mode
+    // reports, and the only way to be sure of that is to walk the same
+    // cells in the same order.
+    constexpr std::int32_t kChunkStride = 4;
+    constexpr std::array<std::int32_t, 4> kHeights{-48, 16, 64, 112};
+    constexpr std::array<const char*, 6> kAxes{"temperature", "humidity", "continentalness",
+                                               "erosion",     "depth",    "weirdness"};
+
+    // Every row of the table in the space the search runs in, alongside
+    // its biome — built once, because the bisection below asks the whole
+    // table for its argmin a few thousand times per column.
+    std::vector<biome::QuantizedPoint> points;
+    std::vector<std::string> labels;
+    points.reserve(overworld.size());
+    labels.reserve(overworld.size());
+    for (const auto& entry : overworld.entries()) {
+        points.push_back(biome::QuantizedPoint::of(entry.parameters));
+        labels.push_back(entry.biome.toString());
+    }
+
+    const auto axesOf = [](const biome::QuantizedSample& sample) {
+        return std::array<std::int64_t, 6>{sample.temperature,     sample.humidity,
+                                           sample.continentalness, sample.erosion,
+                                           sample.depth,           sample.weirdness};
+    };
+    const auto distanceOn = [](const biome::QuantizedPoint& point,
+                               const std::array<std::int64_t, 6>& values, std::size_t axis) {
+        if (values[axis] < point.min[axis]) {
+            return point.min[axis] - values[axis];
+        }
+        if (values[axis] > point.max[axis]) {
+            return values[axis] - point.max[axis];
+        }
+        return std::int64_t{0};
+    };
+    // `ParameterList::find` spelled over the prebuilt rows, so the
+    // bisection asks the same question the engine asks — later row wins.
+    const auto argmin = [&](const biome::QuantizedSample& sample) {
+        std::size_t best = 0;
+        std::int64_t bestFitness = points[0].fitness(sample);
+        for (std::size_t i = 1; i < points.size(); ++i) {
+            const std::int64_t fitness = points[i].fitness(sample);
+            if (fitness <= bestFitness) {
+                bestFitness = fitness;
+                best = i;
+            }
+        }
+        return best;
+    };
+    const auto withAxis = [](biome::QuantizedSample sample, std::size_t axis, std::int64_t value) {
+        switch (axis) {
+            case 0:
+                sample.temperature = value;
+                break;
+            case 1:
+                sample.humidity = value;
+                break;
+            case 2:
+                sample.continentalness = value;
+                break;
+            case 3:
+                sample.erosion = value;
+                break;
+            case 4:
+                sample.depth = value;
+                break;
+            default:
+                sample.weirdness = value;
+                break;
+        }
+        return sample;
+    };
+
+    std::size_t cells = 0;
+    std::size_t missCells = 0;
+    std::map<std::string, std::size_t> classified;
+    for (const std::int64_t seed : kAllSeeds) {
+        const std::filesystem::path region = regionOf(fixtures, seed, "overworld");
+        if (region.empty()) {
+            continue;
+        }
+        const auto registry = density::NoiseRegistry::create(
+            pack, loaded.graph.referencedNoises(), seed, density::RandomSource::Xoroshiro);
+        const density::Interpreter interpreter(
+            loaded.graph, registry,
+            density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                  .height = settings.geometry.cellHeight()});
+        const region::RegionFile file = region::RegionFile::open(region);
+        for (std::int32_t chunkZ = 0; chunkZ < region::kChunksPerAxis; chunkZ += kChunkStride) {
+            for (std::int32_t chunkX = 0; chunkX < region::kChunksPerAxis; chunkX += kChunkStride) {
+                if (!file.hasChunk(chunkX, chunkZ)) {
+                    continue;
+                }
+                const chunk::Chunk decoded =
+                    chunk::Chunk::decode(nbt::read(file.readChunk(chunkX, chunkZ)).root);
+                for (const auto& section : decoded.sections()) {
+                    if (section.biomes.empty()) {
+                        continue;
+                    }
+                    for (int cellY = 0; cellY < 4; ++cellY) {
+                        const std::int32_t y = (section.y * 16) + (cellY * 4);
+                        if (std::find(kHeights.begin(), kHeights.end(), y) == kHeights.end()) {
+                            continue;
+                        }
+                        for (int cellZ = 0; cellZ < 4; ++cellZ) {
+                            for (int cellX = 0; cellX < 4; ++cellX) {
+                                const std::size_t index = (static_cast<std::size_t>(cellY) * 16U) +
+                                                          (static_cast<std::size_t>(cellZ) * 4U) +
+                                                          static_cast<std::size_t>(cellX);
+                                if (index >= section.biomes.size()) {
+                                    continue;
+                                }
+                                const std::string& stored =
+                                    section.biomePalette[section.biomes[index]];
+                                const density::Point at{.x = (chunkX * 16) + (cellX * 4),
+                                                        .y = y,
+                                                        .z = (chunkZ * 16) + (cellZ * 4)};
+                                using stratum::settings::RouterEntry;
+                                const biome::ClimateSample sample{
+                                    .temperature = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Temperature), at),
+                                    .humidity = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Vegetation), at),
+                                    .continentalness = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Continents), at),
+                                    .erosion = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Erosion), at),
+                                    .depth = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Depth), at),
+                                    .weirdness = interpreter.evaluate(
+                                        settings.router.at(RouterEntry::Ridges), at)};
+                                ++cells;
+                                const biome::QuantizedSample quantized =
+                                    biome::QuantizedSample::of(sample);
+                                const std::size_t ours = argmin(quantized);
+                                if (labels[ours] == stored) {
+                                    continue;
+                                }
+                                ++missCells;
+
+                                // Ours, and the best row carrying the
+                                // biome vanilla actually stored. "Best
+                                // row carrying it" and not "the row",
+                                // because 7593 rows cover 54 biomes and
+                                // the stored name says nothing about
+                                // which of its rows a tree reached.
+                                const std::array<std::int64_t, 6> values = axesOf(quantized);
+                                const std::int64_t oursFitness = points[ours].fitness(quantized);
+                                std::size_t theirs = points.size();
+                                std::int64_t theirsFitness = 0;
+                                for (std::size_t i = 0; i < points.size(); ++i) {
+                                    if (labels[i] != stored) {
+                                        continue;
+                                    }
+                                    // Later row on a tie, matching `find`.
+                                    const std::int64_t fitness = points[i].fitness(quantized);
+                                    if (theirs == points.size() || fitness <= theirsFitness) {
+                                        theirs = i;
+                                        theirsFitness = fitness;
+                                    }
+                                }
+                                if (theirs == points.size()) {
+                                    std::printf("seed %lld (%d,%d,%d): stored biome %s is not "
+                                                "in the table at all\n",
+                                                static_cast<long long>(seed), at.x, at.y, at.z,
+                                                stored.c_str());
+                                    classified["stored biome absent from the table"] += 1;
+                                    continue;
+                                }
+
+                                // How many rows beat ours outright, and
+                                // how many tie it: the tie set is the
+                                // thing the tree's shape chooses within.
+                                std::size_t strictlyBetter = 0;
+                                std::vector<std::size_t> tied;
+                                for (std::size_t i = 0; i < points.size(); ++i) {
+                                    const std::int64_t fitness = points[i].fitness(quantized);
+                                    if (fitness < oursFitness) {
+                                        ++strictlyBetter;
+                                    } else if (fitness == oursFitness) {
+                                        tied.push_back(i);
+                                    }
+                                }
+
+                                const char* verdict =
+                                    theirsFitness == oursFitness ? "TIED" : "DIFFERENT";
+                                classified[verdict] += 1;
+                                std::printf(
+                                    "\nseed %lld  (%d,%d)  y=%d   stored %s  ours %s   [%s]\n",
+                                    static_cast<long long>(seed), at.x, at.z, at.y, stored.c_str(),
+                                    labels[ours].c_str(), verdict);
+                                std::printf("  climate   T %+.17g  H %+.17g  C %+.17g\n",
+                                            sample.temperature, sample.humidity,
+                                            sample.continentalness);
+                                std::printf("            E %+.17g  D %+.17g  W %+.17g\n",
+                                            sample.erosion, sample.depth, sample.weirdness);
+                                std::printf("  quantised T %lld  H %lld  C %lld  E %lld  "
+                                            "D %lld  W %lld\n",
+                                            static_cast<long long>(values[0]),
+                                            static_cast<long long>(values[1]),
+                                            static_cast<long long>(values[2]),
+                                            static_cast<long long>(values[3]),
+                                            static_cast<long long>(values[4]),
+                                            static_cast<long long>(values[5]));
+                                const auto dumpRow = [&](const char* which, std::size_t row) {
+                                    std::printf(
+                                        "  %-8s row %4zu  %-32s fitness %lld\n", which, row,
+                                        labels[row].c_str(),
+                                        static_cast<long long>(points[row].fitness(quantized)));
+                                    for (std::size_t axis = 0; axis < 6; ++axis) {
+                                        std::printf("            %-16s [%7lld,%7lld] "
+                                                    "distance %lld\n",
+                                                    kAxes[axis],
+                                                    static_cast<long long>(points[row].min[axis]),
+                                                    static_cast<long long>(points[row].max[axis]),
+                                                    static_cast<long long>(
+                                                        distanceOn(points[row], values, axis)));
+                                    }
+                                    std::printf("            %-16s %lld\n", "offset",
+                                                static_cast<long long>(points[row].offset));
+                                };
+                                dumpRow("ours", ours);
+                                dumpRow("vanilla", theirs);
+                                std::printf("  margin    vanilla's best row is %lld worse than "
+                                            "ours; %zu rows beat ours outright, %zu tie it\n",
+                                            static_cast<long long>(theirsFitness - oursFitness),
+                                            strictlyBetter, tied.size());
+                                std::printf("  tie set  ");
+                                for (const std::size_t row : tied) {
+                                    std::printf(" %zu:%s", row, labels[row].c_str());
+                                }
+                                std::printf("\n");
+
+                                // What it would take on ONE axis. The
+                                // search is re-run in full at each trial
+                                // value, so a flip reported here is a flip
+                                // of the real answer and not just of one
+                                // row's fitness.
+                                for (std::size_t axis = 0; axis < 6; ++axis) {
+                                    const auto flips = [&](std::int64_t delta) {
+                                        const std::size_t at2 =
+                                            argmin(withAxis(quantized, axis, values[axis] + delta));
+                                        return labels[at2] == stored;
+                                    };
+                                    std::int64_t best = 0;
+                                    for (const std::int64_t sign :
+                                         {std::int64_t{-1}, std::int64_t{1}}) {
+                                        std::int64_t high = 1;
+                                        while (high <= 40000 && !flips(sign * high)) {
+                                            high *= 2;
+                                        }
+                                        if (high > 40000) {
+                                            continue;
+                                        }
+                                        std::int64_t low = high / 2;
+                                        while (low + 1 < high) {
+                                            const std::int64_t mid = (low + high) / 2;
+                                            if (flips(sign * mid)) {
+                                                high = mid;
+                                            } else {
+                                                low = mid;
+                                            }
+                                        }
+                                        if (best == 0 || high < best) {
+                                            best = high;
+                                        }
+                                    }
+                                    if (best == 0) {
+                                        std::printf("  flip on %-16s no change up to 4.0000 "
+                                                    "of this axis alone reaches %s\n",
+                                                    kAxes[axis], stored.c_str());
+                                    } else {
+                                        std::printf("  flip on %-16s %lld quanta = %.4f of the "
+                                                    "axis\n",
+                                                    kAxes[axis], static_cast<long long>(best),
+                                                    static_cast<double>(best) / 10000.0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::printf("\nattribution over the control's own sweep: %zu cells, %zu disagreeing\n", cells,
+                missCells);
+    for (const auto& [verdict, count] : classified) {
+        std::printf("  %-12s %zu cell(s)\n", verdict.c_str(), count);
+    }
+    return 0;
+}
+
+// --- the tie-break rule's own denominator -------------------------------
+//
+// `--attribute` says the residual columns are ties. That on its own does
+// not say what the tie-break should be: it names the cells "later row
+// wins" gets wrong without naming the cells it gets right, and a rule is
+// only as good as both counts. This mode supplies both, over two samples
+// at once:
+//
+//   corner  the [biome] conformance cases' own sample — four seeds, the
+//           4x4-chunk corner, every cell of every section. 98304 cells,
+//           and the sample the seventy-five-cell beach/dark_forest
+//           precedent was measured on.
+//   wide    `--control`'s sample — eight regions, every fourth chunk,
+//           four heights. 32768 cells.
+//
+// For every cell it finds the rows that achieve the minimum fitness. Where
+// that set carries more than one BIOME the answer is not determined by the
+// arithmetic, and vanilla's stored biome says which member its tree
+// reached. Counting those is the only way to state "later row wins" as a
+// measurement rather than a habit — and to see whether any positional rule
+// over the list's order can be right at all.
+[[nodiscard]] int runTies(const std::filesystem::path& fixtures, const data::Pack& pack,
+                          const stratum::settings::LoadedSettings& loaded,
+                          const biome::ParameterList& overworld) {
+    const auto& settings = loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
+
+    std::vector<biome::QuantizedPoint> points;
+    std::vector<std::string> labels;
+    points.reserve(overworld.size());
+    labels.reserve(overworld.size());
+    for (const auto& entry : overworld.entries()) {
+        points.push_back(biome::QuantizedPoint::of(entry.parameters));
+        labels.push_back(entry.biome.toString());
+    }
+
+    struct TieTally {
+        std::size_t cells = 0;
+        /// More than one row achieves the minimum fitness.
+        std::size_t tied = 0;
+        /// ... and those rows do not all carry the same biome, so which
+        /// one the tree reaches is visible in the stored answer.
+        std::size_t decisive = 0;
+        std::size_t laterCorrect = 0;
+        std::size_t earlierCorrect = 0;
+        /// Neither end of the tie set carries vanilla's biome, though
+        /// some middle row does.
+        std::size_t middleOnly = 0;
+        /// Vanilla's biome is on no row of the tie set: a strictly worse
+        /// row won, which no tie-break can produce. This is the count
+        /// that would move the finding from the tree to the arithmetic.
+        std::size_t absent = 0;
+        std::map<std::string, std::size_t> shapes;
+    };
+
+    const auto scoreCell = [&](TieTally& tally, const biome::ClimateSample& sample,
+                               const std::string& stored) {
+        const biome::QuantizedSample quantized = biome::QuantizedSample::of(sample);
+        std::int64_t bestFitness = points[0].fitness(quantized);
+        for (std::size_t i = 1; i < points.size(); ++i) {
+            bestFitness = std::min(bestFitness, points[i].fitness(quantized));
+        }
+        std::vector<std::size_t> tie;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            if (points[i].fitness(quantized) == bestFitness) {
+                tie.push_back(i);
+            }
+        }
+        ++tally.cells;
+        if (tie.size() < 2) {
+            return;
+        }
+        ++tally.tied;
+        bool oneBiome = true;
+        for (const std::size_t row : tie) {
+            if (labels[row] != labels[tie.front()]) {
+                oneBiome = false;
+                break;
+            }
+        }
+        if (oneBiome) {
+            return;
+        }
+        ++tally.decisive;
+        const bool later = labels[tie.back()] == stored;
+        const bool earlier = labels[tie.front()] == stored;
+        bool anywhere = false;
+        for (const std::size_t row : tie) {
+            anywhere = anywhere || labels[row] == stored;
+        }
+        if (later) {
+            ++tally.laterCorrect;
+        }
+        if (earlier) {
+            ++tally.earlierCorrect;
+        }
+        if (!later && !earlier && anywhere) {
+            ++tally.middleOnly;
+        }
+        if (!anywhere) {
+            ++tally.absent;
+        }
+        // Keyed on the ROWS, not just their biomes: the question the
+        // shape has to answer is which member of a tie the tree reached,
+        // and a biome name does not identify a member.
+        std::string shape = "rows";
+        for (const std::size_t row : tie) {
+            shape += " " + std::to_string(row) + ":" + labels[row];
+        }
+        const char* end = "?";
+        if (earlier) {
+            end = "FIRST";
+        } else if (later) {
+            end = "LAST";
+        }
+        shape += "  -> stored " + stored + " (" + end + " of the tie)";
+        tally.shapes[shape] += 1;
+    };
+
+    const auto sweep = [&](TieTally& tally, std::span<const std::int64_t> seeds,
+                           std::int32_t chunkStride, std::int32_t chunkSpan,
+                           std::span<const std::int32_t> heights) {
+        for (const std::int64_t seed : seeds) {
+            const std::filesystem::path region = regionOf(fixtures, seed, "overworld");
+            if (region.empty()) {
+                continue;
+            }
+            const auto registry = density::NoiseRegistry::create(
+                pack, loaded.graph.referencedNoises(), seed, density::RandomSource::Xoroshiro);
+            const density::Interpreter interpreter(
+                loaded.graph, registry,
+                density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                      .height = settings.geometry.cellHeight()});
+            const region::RegionFile file = region::RegionFile::open(region);
+            for (std::int32_t chunkZ = 0; chunkZ < chunkSpan; chunkZ += chunkStride) {
+                for (std::int32_t chunkX = 0; chunkX < chunkSpan; chunkX += chunkStride) {
+                    if (!file.hasChunk(chunkX, chunkZ)) {
+                        continue;
+                    }
+                    const chunk::Chunk decoded =
+                        chunk::Chunk::decode(nbt::read(file.readChunk(chunkX, chunkZ)).root);
+                    for (const auto& section : decoded.sections()) {
+                        if (section.biomes.empty()) {
+                            continue;
+                        }
+                        for (int cellY = 0; cellY < 4; ++cellY) {
+                            const std::int32_t y = (section.y * 16) + (cellY * 4);
+                            if (!heights.empty() &&
+                                std::find(heights.begin(), heights.end(), y) == heights.end()) {
+                                continue;
+                            }
+                            for (int cellZ = 0; cellZ < 4; ++cellZ) {
+                                for (int cellX = 0; cellX < 4; ++cellX) {
+                                    const std::size_t index =
+                                        (static_cast<std::size_t>(cellY) * 16U) +
+                                        (static_cast<std::size_t>(cellZ) * 4U) +
+                                        static_cast<std::size_t>(cellX);
+                                    if (index >= section.biomes.size()) {
+                                        continue;
+                                    }
+                                    const density::Point at{.x = (chunkX * 16) + (cellX * 4),
+                                                            .y = y,
+                                                            .z = (chunkZ * 16) + (cellZ * 4)};
+                                    using stratum::settings::RouterEntry;
+                                    scoreCell(
+                                        tally,
+                                        biome::ClimateSample{
+                                            .temperature = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Temperature), at),
+                                            .humidity = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Vegetation), at),
+                                            .continentalness = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Continents), at),
+                                            .erosion = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Erosion), at),
+                                            .depth = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Depth), at),
+                                            .weirdness = interpreter.evaluate(
+                                                settings.router.at(RouterEntry::Ridges), at)},
+                                        section.biomePalette[section.biomes[index]]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    const auto report = [](const char* name, const TieTally& tally) {
+        std::printf("\n%s: %zu cells\n", name, tally.cells);
+        std::printf("  more than one row at the minimum fitness            %zu\n", tally.tied);
+        std::printf("  ... carrying more than one biome (the tie decides)  %zu\n", tally.decisive);
+        if (tally.decisive == 0) {
+            return;
+        }
+        std::printf("  of those, vanilla's stored biome is on\n");
+        std::printf("    the LAST tied row  (\"later row wins\" right)      %zu/%zu\n",
+                    tally.laterCorrect, tally.decisive);
+        std::printf("    the FIRST tied row (\"earlier row wins\" right)    %zu/%zu\n",
+                    tally.earlierCorrect, tally.decisive);
+        std::printf("    only a middle row                                 %zu/%zu\n",
+                    tally.middleOnly, tally.decisive);
+        std::printf("    NO row of the tie set                             %zu/%zu\n", tally.absent,
+                    tally.decisive);
+        for (const auto& [shape, count] : tally.shapes) {
+            std::printf("    %6zu  %s\n", count, shape.c_str());
+        }
+    };
+
+    // The conformance corner, then the wide sweep. The corner's seeds are
+    // the four the [biome] cases use; `kAllSeeds` for the wide one.
+    constexpr std::array<std::int64_t, 4> kCornerSeeds{42, 0, -1, -4172144997902289642};
+    constexpr std::array<std::int32_t, 4> kHeights{-48, 16, 64, 112};
+    TieTally corner;
+    sweep(corner, kCornerSeeds, 1, 4, {});
+    TieTally wide;
+    sweep(wide, kAllSeeds, 4, region::kChunksPerAxis, kHeights);
+    report("corner (the [biome] cases' own sample)", corner);
+    report("wide (--control's sample)", wide);
+    return 0;
+}
+
+// --- is it the rounding rather than the tree? ---------------------------
+//
+// Every decisive tie `--ties` finds has the same shape: the sample's
+// quantised value on ONE axis lands EXACTLY on a bound that two adjacent
+// rows share, so both contain it and both score zero there. Change that
+// one value by a single quantum and the tie is gone. The ties are
+// therefore manufactured by `quantizeCoord` — a truncation TOWARDS ZERO
+// through `float` — and a different rounding would not manufacture them.
+//
+// So before blaming the tree, the rounding has to be ruled out, and ruled
+// out by measurement rather than by the header's say-so. This mode scores
+// the whole biome decision under every combination of six roundings for
+// the SAMPLE against the same six for the table's BOUNDS, over both
+// samples at once. A rule that reaches 131072/131072 is the answer and
+// the tree never comes into it. The current rule is the (trunc-float,
+// trunc-float) row, so its own score is in the table beside the rest.
+[[nodiscard]] int runQuantize(const std::filesystem::path& fixtures, const data::Pack& pack,
+                              const stratum::settings::LoadedSettings& loaded,
+                              const biome::ParameterList& overworld) {
+    const auto& settings = loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
+
+    enum class Rounding : std::uint8_t {
+        TruncFloat = 0,
+        FloorFloat,
+        RoundFloat,
+        TruncDouble,
+        FloorDouble,
+        RoundDouble,
+    };
+    constexpr std::array<const char*, 6> kRoundingNames{"trunc-float",  "floor-float",
+                                                        "round-float",  "trunc-double",
+                                                        "floor-double", "round-double"};
+    const auto quantize = [](Rounding rule, double value) -> std::int64_t {
+        switch (rule) {
+            case Rounding::TruncFloat:
+                return static_cast<std::int64_t>(static_cast<float>(value) * 10000.0F);
+            case Rounding::FloorFloat:
+                return static_cast<std::int64_t>(
+                    std::floor(static_cast<double>(static_cast<float>(value) * 10000.0F)));
+            case Rounding::RoundFloat:
+                return static_cast<std::int64_t>(
+                    std::nearbyint(static_cast<double>(static_cast<float>(value) * 10000.0F)));
+            case Rounding::TruncDouble:
+                return static_cast<std::int64_t>(value * 10000.0);
+            case Rounding::FloorDouble:
+                return static_cast<std::int64_t>(std::floor(value * 10000.0));
+            default:
+                return static_cast<std::int64_t>(std::nearbyint(value * 10000.0));
+        }
+    };
+
+    // Every cell of both samples, evaluated once. The climate chain is by
+    // far the expensive half and it does not depend on the rounding, so
+    // paying for it thirty-six times would be thirty-six times the wait
+    // for the same numbers.
+    struct Observed {
+        std::array<double, 6> climate{};
+        std::uint16_t stored = 0;
+    };
+
+    std::vector<std::string> names;
+    const auto nameIndex = [&](const std::string& name) -> std::uint16_t {
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            if (names[i] == name) {
+                return static_cast<std::uint16_t>(i);
+            }
+        }
+        names.push_back(name);
+        return static_cast<std::uint16_t>(names.size() - 1);
+    };
+    const auto collect = [&](std::span<const std::int64_t> seeds, std::int32_t chunkStride,
+                             std::int32_t chunkSpan, std::span<const std::int32_t> heights) {
+        std::vector<Observed> out;
+        for (const std::int64_t seed : seeds) {
+            const std::filesystem::path region = regionOf(fixtures, seed, "overworld");
+            if (region.empty()) {
+                continue;
+            }
+            const auto registry = density::NoiseRegistry::create(
+                pack, loaded.graph.referencedNoises(), seed, density::RandomSource::Xoroshiro);
+            const density::Interpreter interpreter(
+                loaded.graph, registry,
+                density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                      .height = settings.geometry.cellHeight()});
+            const region::RegionFile file = region::RegionFile::open(region);
+            for (std::int32_t chunkZ = 0; chunkZ < chunkSpan; chunkZ += chunkStride) {
+                for (std::int32_t chunkX = 0; chunkX < chunkSpan; chunkX += chunkStride) {
+                    if (!file.hasChunk(chunkX, chunkZ)) {
+                        continue;
+                    }
+                    const chunk::Chunk decoded =
+                        chunk::Chunk::decode(nbt::read(file.readChunk(chunkX, chunkZ)).root);
+                    for (const auto& section : decoded.sections()) {
+                        if (section.biomes.empty()) {
+                            continue;
+                        }
+                        for (int cellY = 0; cellY < 4; ++cellY) {
+                            const std::int32_t y = (section.y * 16) + (cellY * 4);
+                            if (!heights.empty() &&
+                                std::find(heights.begin(), heights.end(), y) == heights.end()) {
+                                continue;
+                            }
+                            for (int cellZ = 0; cellZ < 4; ++cellZ) {
+                                for (int cellX = 0; cellX < 4; ++cellX) {
+                                    const std::size_t index =
+                                        (static_cast<std::size_t>(cellY) * 16U) +
+                                        (static_cast<std::size_t>(cellZ) * 4U) +
+                                        static_cast<std::size_t>(cellX);
+                                    if (index >= section.biomes.size()) {
+                                        continue;
+                                    }
+                                    const density::Point at{.x = (chunkX * 16) + (cellX * 4),
+                                                            .y = y,
+                                                            .z = (chunkZ * 16) + (cellZ * 4)};
+                                    using stratum::settings::RouterEntry;
+                                    Observed observed;
+                                    observed.climate = {
+                                        interpreter.evaluate(
+                                            settings.router.at(RouterEntry::Temperature), at),
+                                        interpreter.evaluate(
+                                            settings.router.at(RouterEntry::Vegetation), at),
+                                        interpreter.evaluate(
+                                            settings.router.at(RouterEntry::Continents), at),
+                                        interpreter.evaluate(
+                                            settings.router.at(RouterEntry::Erosion), at),
+                                        interpreter.evaluate(settings.router.at(RouterEntry::Depth),
+                                                             at),
+                                        interpreter.evaluate(
+                                            settings.router.at(RouterEntry::Ridges), at)};
+                                    observed.stored =
+                                        nameIndex(section.biomePalette[section.biomes[index]]);
+                                    out.push_back(observed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return out;
+    };
+
+    constexpr std::array<std::int64_t, 4> kCornerSeeds{42, 0, -1, -4172144997902289642};
+    constexpr std::array<std::int32_t, 4> kHeights{-48, 16, 64, 112};
+    const std::vector<Observed> corner = collect(kCornerSeeds, 1, 4, {});
+    const std::vector<Observed> wide = collect(kAllSeeds, 4, region::kChunksPerAxis, kHeights);
+
+    // The table's biome per row, as an index into the same name table, so
+    // the scoring loop never touches a string.
+    std::vector<std::uint16_t> rowBiome;
+    rowBiome.reserve(overworld.size());
+    for (const auto& entry : overworld.entries()) {
+        rowBiome.push_back(nameIndex(entry.biome.toString()));
+    }
+
+    std::printf("biome decision under each rounding, over the corner (%zu cells) and the "
+                "wide sweep (%zu cells)\n",
+                corner.size(), wide.size());
+    std::printf("%-14s %-14s %18s %18s\n", "bounds", "sample", "corner", "wide");
+    for (std::size_t boundsRule = 0; boundsRule < 6; ++boundsRule) {
+        // The table in this rounding: min, max and offset per row.
+        std::vector<std::array<std::int64_t, 6>> mins(overworld.size());
+        std::vector<std::array<std::int64_t, 6>> maxes(overworld.size());
+        std::vector<std::int64_t> offsets(overworld.size());
+        for (std::size_t row = 0; row < overworld.size(); ++row) {
+            const auto& p = overworld.entries()[row].parameters;
+            const std::array<biome::Parameter, 6> axes{p.temperature, p.humidity, p.continentalness,
+                                                       p.erosion,     p.depth,    p.weirdness};
+            for (std::size_t axis = 0; axis < 6; ++axis) {
+                mins[row][axis] = quantize(
+                    static_cast<Rounding>(static_cast<std::uint8_t>(boundsRule)), axes[axis].min);
+                maxes[row][axis] = quantize(
+                    static_cast<Rounding>(static_cast<std::uint8_t>(boundsRule)), axes[axis].max);
+            }
+            offsets[row] =
+                quantize(static_cast<Rounding>(static_cast<std::uint8_t>(boundsRule)), p.offset);
+        }
+        for (std::size_t sampleRule = 0; sampleRule < 6; ++sampleRule) {
+            const auto score = [&](const std::vector<Observed>& cells) {
+                std::size_t exact = 0;
+                for (const Observed& cell : cells) {
+                    std::array<std::int64_t, 6> values{};
+                    for (std::size_t axis = 0; axis < 6; ++axis) {
+                        values[axis] =
+                            quantize(static_cast<Rounding>(static_cast<std::uint8_t>(sampleRule)),
+                                     cell.climate[axis]);
+                    }
+                    std::size_t best = 0;
+                    std::int64_t bestFitness = -1;
+                    for (std::size_t row = 0; row < rowBiome.size(); ++row) {
+                        std::int64_t total = offsets[row] * offsets[row];
+                        for (std::size_t axis = 0; axis < 6; ++axis) {
+                            std::int64_t distance = 0;
+                            if (values[axis] < mins[row][axis]) {
+                                distance = mins[row][axis] - values[axis];
+                            } else if (values[axis] > maxes[row][axis]) {
+                                distance = values[axis] - maxes[row][axis];
+                            }
+                            total += distance * distance;
+                        }
+                        if (bestFitness < 0 || total <= bestFitness) {
+                            bestFitness = total;
+                            best = row;
+                        }
+                    }
+                    if (rowBiome[best] == cell.stored) {
+                        ++exact;
+                    }
+                }
+                return exact;
+            };
+            const std::size_t cornerExact = score(corner);
+            const std::size_t wideExact = score(wide);
+            std::printf(
+                "%-14s %-14s %9zu/%-8zu %9zu/%-8zu%s\n", kRoundingNames[boundsRule],
+                kRoundingNames[sampleRule], cornerExact, corner.size(), wideExact, wide.size(),
+                (cornerExact == corner.size() && wideExact == wide.size()) ? "   <-- exact on both"
+                                                                           : "");
+            std::fflush(stdout);
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape): a throw here is a fixture fault
@@ -927,7 +1703,8 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: %s <fixtures-dir> "
-                     "--preset|--control|--model|--modern|--boundary|--scan|--split|"
+                     "--preset|--control|--attribute|--ties|--quantize|--model|--modern|--boundary|"
+                     "--scan|--split|"
                      "--null-full [draws|all] [draw-seed]|"
                      "--candidate <rule> <block> [zero-shift]\n",
                      argv[0]);
@@ -1200,6 +1977,20 @@ int main(int argc, char** argv) {
                     "reaches)\n",
                     100.0 * positiveRate, 100.0 * negativeRate, 100.0 * nullRate);
         return 0;
+    }
+
+    if (mode == "--attribute") {
+        return runAttribute(fixtures, pack, loaded,
+                            readTable(overworldTable, "minecraft:overworld"));
+    }
+
+    if (mode == "--ties") {
+        return runTies(fixtures, pack, loaded, readTable(overworldTable, "minecraft:overworld"));
+    }
+
+    if (mode == "--quantize") {
+        return runQuantize(fixtures, pack, loaded,
+                           readTable(overworldTable, "minecraft:overworld"));
     }
 
     // --- the forward-model control, on the Nether ---------------------------

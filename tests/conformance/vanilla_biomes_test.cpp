@@ -6,6 +6,26 @@
 // regions store a biome per 4x4x4 cell; the climate chain and the parameter
 // table between them decide one; the two are compared directly.
 //
+// WHAT "EXACT" MEANS HERE, because it used to be said without a denominator
+// and the denominator turns out to matter. Over THIS sample — four seeds, the
+// 4x4-chunk corner of r.0.0, every cell of every section, 98304 cells — the
+// biome source reproduces vanilla's stored biome on every cell, and the cases
+// below pin that at the whole rather than at a threshold.
+//
+// It is not exact everywhere. Spread the identical decode over the whole
+// 512x512 of all eight golden regions at four heights and it is 32748 of
+// 32768: five columns disagree, each at every sampled height.
+// tools/analysis/legacy-goldens-biome-analyze.cpp `--control` reports them and
+// tests/conformance/vanilla_biome_tie_break_test.cpp attributes them — all
+// twenty cells are TIES, where the row carrying vanilla's biome has exactly
+// the fitness of the row this engine picks, so the climate values are right
+// and only the tie-break separates the two. Measured across both samples
+// together: 104 ties whose members carry different biomes, of which "later row
+// wins" — the rule `ParameterList::find` ships — gets 84 right and 20 wrong,
+// while "earlier row wins" gets 20 right and 84 wrong. Neither is vanilla's;
+// both approximate the order of the leaves in its search tree. So the claim
+// this file makes is "exact over 98304 cells of this corner", not "exact".
+//
 // The parameter table is not in the jar as data — the pack ships only
 // `{"preset": "minecraft:overworld"}` — so tools/fetch-vanilla asks the
 // server's own data generator to dump it. Mojang-derived and never committed
@@ -145,7 +165,8 @@ struct Comparison {
 
 } // namespace
 
-TEST_CASE("the biome source reproduces the biomes vanilla recorded", "[conformance][biome]") {
+TEST_CASE("the biome source reproduces vanilla's biomes over the 64x64 corner",
+          "[conformance][biome]") {
     const std::filesystem::path tree = findWorldgenTree();
     const std::filesystem::path parameters = findParameterList();
     if (tree.empty() || parameters.empty()) {
@@ -173,17 +194,21 @@ TEST_CASE("the biome source reproduces the biomes vanilla recorded", "[conforman
     const Pack pack = Pack::open(tree);
     const Comparison result = compare(pack, table, 42, region, 4);
 
-    // Every cell, not a threshold. This seed used to sit at 24500: the
-    // residual was seventy-five cells in a single column where `beach` and
-    // `dark_forest` are 9e-9 apart in double arithmetic and *exactly equal*
-    // once quantised. Quantising plus taking the later of a tied pair closes
-    // it. Pinned at the whole so that any regression is visible as one.
+    // Every cell of this corner, not a threshold, and not a claim about
+    // anywhere else. This seed used to sit at 24500: the residual was
+    // seventy-five cells in a single column where `beach` and `dark_forest`
+    // are 9e-9 apart in double arithmetic and *exactly equal* once quantised.
+    // Quantising plus taking the later of a tied pair closes it — and those
+    // seventy-five are still the largest single block of ties in the corner,
+    // which is why "later wins" cannot simply be inverted to rescue the five
+    // columns the wider sample finds (vanilla_biome_tie_break_test.cpp).
+    // Pinned at the whole so that any regression is visible as one.
     CHECK(result.cells == 24576U);
     CHECK(result.exact == 24576U);
     CHECK(result.misses.empty());
 }
 
-TEST_CASE("three other seeds are exact too", "[conformance][biome]") {
+TEST_CASE("three other seeds match over the same corner too", "[conformance][biome]") {
     const std::filesystem::path tree = findWorldgenTree();
     const std::filesystem::path parameters = findParameterList();
     if (tree.empty() || parameters.empty()) {
@@ -197,11 +222,14 @@ TEST_CASE("three other seeds are exact too", "[conformance][biome]") {
         nlohmann::json::parse(contents.str()), ResourceLocation::parse("minecraft:overworld"));
     const Pack pack = Pack::open(tree);
 
-    // Three more seeds, 73728 further cells. Seed -4172144997902289642 is
-    // the load-bearing one: it is exact under the old double-precision
-    // search *and* under the new one, but quantising without the tie-break
-    // breaks it. That it takes both changes together to keep all four seeds
-    // whole is why the tie-break is not just seed 42 being fitted.
+    // Three more seeds, 73728 further cells, 98304 with seed 42's — the whole
+    // of what "exact" is claimed over. Seed -4172144997902289642 is the
+    // load-bearing one: it is exact under the old double-precision search
+    // *and* under the new one, but quantising without the tie-break breaks it.
+    // That it takes both changes together to keep all four seeds whole is why
+    // the tie-break is not just seed 42 being fitted. It is still not a
+    // derivation of vanilla's tree: outside this corner it is wrong on 20
+    // cells, attributed in vanilla_biome_tie_break_test.cpp.
     for (const std::int64_t seed :
          {std::int64_t{0}, std::int64_t{-1}, std::int64_t{-4172144997902289642}}) {
         const std::filesystem::path region = fixtures() / "1.21.11" / "regions" /

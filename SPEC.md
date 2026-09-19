@@ -6110,6 +6110,71 @@ Open:
   counterexample would be a finding about the shape of vanilla's tree, not a
   bug in the arithmetic.
 
+- **The counterexample arrived, and it is the tree (M4).** Spreading the
+  identical decode over the whole 512x512 of all eight golden overworld
+  regions at four heights leaves 32748 of 32768 — five columns, each wrong at
+  every sampled height. `tools/analysis/legacy-goldens-biome-analyze.cpp`
+  gained `--attribute`, `--ties` and `--quantize` for them, and
+  `tests/conformance/vanilla_biome_tie_break_test.cpp` pins what they found.
+
+  **All twenty cells are ties, so the arithmetic is right.** In every one of
+  them the best row carrying vanilla's stored biome reaches EXACTLY the
+  minimum fitness — margin zero, in the integer space the comparison happens
+  in — and the tie set is a pair whose two members are equidistant on every
+  one of the six axes, not merely equal in the sum. A tree searching the same
+  table from the same sample could have returned either, so nothing upstream
+  in the climate chain is implicated: this is case (a), five columns out of
+  five. The mechanism is the same every time. On ONE axis the sample's
+  quantised value lands exactly on a bound two adjacent rows share —
+  `deep_ocean` is continentalness [-10500,-4550] and `ocean` is [-4550,-1900],
+  and the sample quantises to -4550 — so both contain it and both score zero
+  there. One quantum either way and there is no tie.
+
+  **It is not the rounding, and that was measured rather than argued.**
+  `--quantize` scores the whole biome decision under all thirty-six
+  combinations of six roundings for the sample against six for the table's
+  bounds. The bounds rounding changes nothing at all: every bound in the table
+  quantises the same way under all six. The sample rounding trades one
+  residual for a larger one — truncation (the shipped rule) is 98304/98304 on
+  the corner and 32748/32768 wide; flooring or rounding is 98229 and 32752, a
+  NET gain of four cells wide against a loss of seventy-five in the corner,
+  the beach/dark_forest precedent. Nothing in the thirty-six is exact on
+  both. And two of the four deciding axis values argue for truncation beyond
+  the totals: at seed 0 (328,4) the weirdness quantises to 500 under BOTH
+  roundings — the unrounded 0.05001 is above the 0.05 that `river` and `beach`
+  share — so no rounding removes that tie; and at seed MAX (68,128)/(72,128)
+  flooring would put erosion strictly inside `forest` where vanilla stored
+  `river`, turning two ties this engine loses into outright arithmetic
+  disagreements.
+
+  **And no order over the list can be the tie-break.** Counted where it means
+  something — ties whose members carry different biomes, which is the only
+  case the rule decides — over both samples together:
+
+  | sample                | cells  | tied | decisive | later | earlier |
+  |-----------------------|--------|------|----------|-------|---------|
+  | corner (the [biome] cases') | 98304  |  76  |    76    |  76   |    0    |
+  | wide (`--control`'s)  | 32768  |  36  |    28    |   8   |   20    |
+  | **total**             | 131072 | 112  |   104    |  84   |   20    |
+
+  Each rule is refuted by the other sample's cells: "later row wins" is right
+  on 84 of 104 and wrong on 20, "earlier row wins" right on 20 and wrong on
+  84. Every tie is a PAIR, so first and last exhaust the positional rules —
+  there is no third one to try. What the 104 ties do fit is a single total
+  order on rows that is not the list's: the 15 distinct pairs they form
+  contain no cycle (row 12 loses to row 10 below it and to row 1710 above
+  it), which is what the leaf order of a tree looks like.
+
+  **So the rule is unchanged, and restated.** "Later row wins" stays because
+  inverting it is strictly worse on this evidence, and it is now named as a
+  PROXY for vanilla's leaf order rather than as a match to it. Recovering that
+  order would mean reconstructing how vanilla builds the tree, which is not in
+  the dumped table, is not derivable from it, and may not be taken from the
+  source (CLAUDE.md). The honest state of the overworld biome source is
+  therefore: exact over the 98304-cell corner; 32748 of 32768 over the wider
+  sample; 104 decisive ties across the two, of which the shipped rule gets 84;
+  and 20 cells attributed to the tree's shape and open.
+
 - **The three blending types take their no-blending values (M2, extended M3).**
   This engine generates every chunk itself and never blends against terrain
   another generator wrote. `blend_alpha` is 1.0, `blend_offset` is 0.0, and

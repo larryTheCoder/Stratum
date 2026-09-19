@@ -1056,6 +1056,50 @@ Open:
       assumed: all 7 dimensions' resolved trees dump byte-for-byte the same
       before and after (2285 lines covering every node index, every member,
       the unrunnable list and the referenced noises).
+- [x] **The overworld biome source's five residual columns — attributed to
+      the tie-break, which is now stated as a proxy.** `--control` had named
+      five columns out of 8192 where the decode disagrees with vanilla's
+      stored biome, each wrong at every sampled height, and nobody had looked
+      at them. Reproduced from the repo's own analyzer first (32748 / 32768,
+      the same five columns), then attributed with three new analyzer modes
+      (`--attribute`, `--ties`, `--quantize`) and pinned by
+      `tests/conformance/vanilla_biome_tie_break_test.cpp`.
+
+      **All twenty cells are case (a): TIES.** The best row carrying
+      vanilla's biome reaches exactly the minimum fitness, and the tie set is
+      a pair equidistant on every one of the six axes. The climate chain is
+      not implicated — no arithmetic separates two rows the arithmetic calls
+      equally far — so nothing here reaches the Nether readback, which shares
+      that chain. Cause in every case: the sample's quantised value lands
+      exactly on a bound two adjacent rows share.
+
+      **Not the rounding.** `--quantize` scores the decision under all 36
+      combinations of six sample roundings against six bounds roundings. The
+      bounds rounding changes nothing; flooring or rounding the sample is a
+      net +4 cells wide (32752) against -75 in the corner (98229), losing the
+      beach/dark_forest precedent. None of the 36 is exact on both samples.
+
+      **The tie-break is the cause, and no list order can be it.** Counted
+      over ties whose members carry different biomes:
+
+      | sample | cells | tied | decisive | later right | earlier right |
+      |--------|-------|------|----------|-------------|---------------|
+      | corner (the [biome] cases') | 98304 | 76 | 76 | 76 | 0 |
+      | wide (`--control`'s) | 32768 | 36 | 28 | 8 | 20 |
+      | **total** | 131072 | 112 | 104 | 84 | 20 |
+
+      Every tie is a pair, so first and last exhaust the positional rules and
+      each is refuted by the other sample. The shipped "later row wins" is
+      kept — inverting it is strictly worse, 84 wrong instead of 20 — and is
+      now named a PROXY for the leaf order of vanilla's tree. The 104 ties
+      are consistent with one total order on rows that is not the list's (no
+      cycle among the 15 distinct pairs).
+
+      **Still open**: the leaf order itself. Recovering it means
+      reconstructing how vanilla builds its tree, which is not in the dumped
+      table and may not be taken from the source. 20 cells in 131072 are
+      attributed and unfixed, and `[biome]`'s "exact" now reads "exact over
+      the 98304-cell corner".
 
 ## M5 — Integration
 
