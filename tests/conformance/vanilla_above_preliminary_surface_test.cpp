@@ -45,10 +45,11 @@
 //   * both DIRECTIONS on real overworlds. Counting only the blocks the old
 //     reading cannot place rewards a boundary for reaching further down, so
 //     the band the new reading opens is read at the column's own surface too.
-//   * the census that says what is still open and why: `8 - surfaceDepth`
-//     against `8 - max(0, surfaceDepth)` is not separated by any vanilla
-//     world, because the returned depth is never negative in 2097152 golden
-//     columns.
+//   * the bottom clamp, `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`,
+//     which the golden regions cannot separate — the returned depth is never
+//     negative in their 2097152 columns — and which a widened sweep plus a
+//     probe pointed at where the negative columns actually are does: REFUTED,
+//     49 separating columns across three seeds.
 //   * the varying-psl counts, so the numbers SPEC §11 and PROGRESS.md quote
 //     for the still-open sampling question cannot drift from the fixture.
 //
@@ -73,6 +74,7 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -777,19 +779,34 @@ TEST_CASE("vanilla does reach a negative surface depth, four columns in half a b
     // WHAT FOUND THESE. The same eight golden seeds, swept over x, z in
     // [-4096, 4096) — 67108864 columns each, 536870912 in all, versus the
     // 2097152 of the r.0.0 regions. Four columns come back at depth -1, all
-    // at one seed. That is about one in 134 million: the golden census is
-    // roughly 256x too small to expect even one, so finding none there was
-    // never evidence of anything. The sweep is not re-run here — it is ~9
-    // minutes of pure noise evaluation — but its four answers are pinned, and
-    // any change to the derivation moves them.
+    // at one seed. The sweep is committed as `aps-boundary-analyze sweep` and
+    // is not re-run here — it is ~78 seconds of pure noise evaluation on
+    // twelve threads — but its four answers are pinned, and any change to the
+    // derivation moves them.
+    //
+    // WIDENED SINCE. The same eight seeds over x, z in [-16384, 16384) —
+    // 1073741824 columns each, 8589934592 in all, of which this window is a
+    // sub-window that still reproduces exactly — find 98 columns at depth -1
+    // on six of the eight seeds, in ten distinct regions: 1 in 87652393. So
+    // the golden census of 2097152 is ~40x too small to expect even one, and
+    // finding none there was never evidence of anything.
     //
     // WHY IT MATTERS RATHER THAN BEING A CURIOSITY. At depth -1 the two
     // candidates differ over exactly one block: the unclamped reading opens
-    // the gated subtree at `y = psl - 9`, the clamped one at `y = psl - 8`.
-    // These four columns sit in chunk (142, 117) — region r.4.3.mca, which is
-    // not in the golden set — so generating that one region and reading that
-    // one block separates the two readings directly. No data pack is needed,
-    // which is what the previous write-up concluded was the only route.
+    // at `y = psl - 9`, the clamped one at `y = psl - 8`. Reading that block
+    // in the OVERWORLD at these four columns does not separate them — they
+    // are warm_ocean, 21 blocks of stone below the ocean floor, where the
+    // gated subtree declines under both readings — so the separation is done
+    // by `aps-clamp-probe.sh` instead, and the case that scores it is "the
+    // surface depth carries no bottom clamp". A clamp AT 0 —
+    // `max(0, surfaceDepth)` — is REFUTED there.
+    //
+    // At 0 and no lower, and this case is where the bound comes from: the
+    // returned depth at all four columns is exactly -1, and across the whole
+    // 8589934592-column sweep the lowest raw is -1.134416806, which truncates
+    // to -1 as well. No column at depth <= -2 has been observed anywhere, so
+    // a clamp at -1 or below agrees with the unclamped reading on every
+    // column ever read and is not separated by any of this.
     if (!std::filesystem::is_directory(fixtures() / "worldgen")) {
         SKIP("no vanilla pack at " << (fixtures() / "worldgen")
                                    << "; generate it with tools/fetch-vanilla");
@@ -826,6 +843,475 @@ TEST_CASE("vanilla does reach a negative surface depth, four columns in half a b
     for (const auto& column : kNegative) {
         CHECK(stratum::javamath::floorDiv(column.x, 16) == 142);
         CHECK(stratum::javamath::floorDiv(column.z, 16) == 117);
+    }
+}
+
+/// One `aps-clamp-probe.sh` case: a seed, the region its negative-depth
+/// cluster lives in, and how many columns of that cluster the probe window
+/// contains.
+struct ClampCase {
+    std::int64_t seed;
+    const char* directory;
+    const char* region;
+    long long separating;
+};
+
+/// Scores one probe dimension of one case against both candidate boundaries.
+struct ClampScore {
+    long long painted = 0;
+    long long broken = 0;
+    long long unclampedRight = 0;
+    long long clampedRight = 0;
+    /// `(int)` replaced by `floor` on the DEPTH. Everywhere the raw depth is
+    /// >= 0 the two are the same function, so this is not separable outside
+    /// the negative tail either — and in this tail it is, in the opposite
+    /// direction from the clamp.
+    long long flooredRight = 0;
+    /// Columns whose RAW depth is negative but above -1, so `(int)` returns 0
+    /// and `floor` returns -1. `floor` is wrong on these too — that is the
+    /// evidence that already existed for truncation-over-floor, and it is
+    /// counted here so the floor identity below is an equation rather than a
+    /// number that happened to come out.
+    long long nearZeroNegative = 0;
+    long long separating = 0;
+    long long separatingUnclamped = 0;
+    long long separatingClamped = 0;
+    long long separatingFloored = 0;
+    /// Separating columns whose measured lower edge is NOT `psl - 9`. A
+    /// COUNTER rather than the last column's edge: a single `separatingEdge`
+    /// field is overwritten once per separating column, so asserting on it
+    /// tests only whichever column the scan happened to reach last — 1 of 4,
+    /// 1 of 22, 1 of 23 — while reading as though it covered all of them.
+    /// Counting the mismatches makes the assertion mean what its comment
+    /// says.
+    long long separatingEdgeWrong = 0;
+    /// The distinct lower edges seen on separating columns, so a failure says
+    /// what was read rather than only how many disagreed.
+    std::set<std::int32_t> separatingEdges;
+    /// The distinct DEPTHS of the separating columns. This is what bounds
+    /// what the case may claim: if every one of them is -1, a clamp at -1 or
+    /// lower predicts the same edge as no clamp and is not separated here.
+    std::set<std::int32_t> separatingDepths;
+    double separatingLowestRaw = 0.0;
+    double separatingHighestRaw = -1e30;
+};
+
+[[nodiscard]] ClampScore scoreClampEntry(const World& world, const std::filesystem::path& region,
+                                         std::int32_t psl) {
+    const auto file = stratum::region::RegionFile::open(region);
+    ClampScore score;
+
+    for (std::int32_t chunkZ = 0; chunkZ < 32; ++chunkZ) {
+        for (std::int32_t chunkX = 0; chunkX < 32; ++chunkX) {
+            if (!file.hasChunk(chunkX, chunkZ)) {
+                continue;
+            }
+            const auto chunk = stratum::chunk::Chunk::decode(
+                stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    std::int32_t lowest = 0;
+                    std::int32_t highest = 0;
+                    long long marked = 0;
+                    for (std::int32_t y = -64; y < 320; ++y) {
+                        const auto* block = chunk.blockAt(localX, y, localZ);
+                        if (block == nullptr || block->name != "minecraft:diamond_block") {
+                            continue;
+                        }
+                        if (marked == 0) {
+                            lowest = y;
+                        }
+                        highest = y;
+                        ++marked;
+                    }
+                    if (marked == 0) {
+                        continue;
+                    }
+                    ++score.painted;
+                    if (highest - lowest + 1 != marked) {
+                        ++score.broken;
+                        continue;
+                    }
+                    const std::int32_t x = (chunk.x() * 16) + localX;
+                    const std::int32_t z = (chunk.z() * 16) + localZ;
+                    const double raw = world.surfaceDepthRaw(x, z);
+                    const std::int32_t depth = world.surfaceDepth(x, z);
+                    const auto floored = static_cast<std::int32_t>(std::floor(raw));
+                    const bool unclamped = lowest == psl + depth - 8;
+                    const bool clamped = lowest == psl + std::max(0, depth) - 8;
+                    const bool flooredFits = lowest == psl + floored - 8;
+                    score.unclampedRight += static_cast<long long>(unclamped);
+                    score.clampedRight += static_cast<long long>(clamped);
+                    score.flooredRight += static_cast<long long>(flooredFits);
+                    score.nearZeroNegative += static_cast<long long>(raw < 0.0 && raw > -1.0);
+                    if (depth >= 0) {
+                        continue;
+                    }
+                    ++score.separating;
+                    score.separatingUnclamped += static_cast<long long>(unclamped);
+                    score.separatingClamped += static_cast<long long>(clamped);
+                    score.separatingFloored += static_cast<long long>(flooredFits);
+                    score.separatingEdgeWrong += static_cast<long long>(lowest != psl - 9);
+                    score.separatingEdges.insert(lowest);
+                    score.separatingDepths.insert(depth);
+                    score.separatingLowestRaw = std::min(score.separatingLowestRaw, raw);
+                    score.separatingHighestRaw = std::max(score.separatingHighestRaw, raw);
+                }
+            }
+        }
+    }
+    return score;
+}
+
+TEST_CASE("the surface depth carries no bottom clamp", "[conformance][surface]") {
+    // THE LAST THING OPEN about this boundary, and the one this project has
+    // already answered wrongly twice. `y >= floor(psl) + surfaceDepth - 8` is
+    // measured to single-block resolution against 52 probe dimensions. What
+    // those could not separate is whether the depth enters clamped:
+    // `+ surfaceDepth` against `+ max(0, surfaceDepth)`. The two agree on
+    // every column whose RETURNED depth is >= 0, and the cast truncates
+    // toward zero, so the whole question is the columns whose RAW depth
+    // reaches -1 — of which the eight golden r.0.0 regions contain none in
+    // 2097152 columns, a sample ~40x too small to expect one.
+    //
+    // WHY NOT THE OVERWORLD. Generating the region the first known cluster
+    // lives in and reading the single disagreed-about block, `y = psl - 9`,
+    // returns `minecraft:stone` — and that refutes nothing, which is the
+    // point. Those columns are `warm_ocean` with the ocean floor at y = 36
+    // and psl = 24, so y = 15 is 21 blocks deep in stone, and at
+    // `surfaceDepth == -1` every arm of the gated subtree declines there
+    // under BOTH candidates: arms 0/2/4/3.0 need a solid-run depth of 0; arm
+    // 3.1 — the grass/dirt/gravel/mud family — is gated by
+    // `stone_depth(floor, offset 0, add_surface_depth true)` whose threshold
+    // is `0 + surfaceDepth = -1`, which a run depth never satisfies; arms
+    // 3.2/3.3 reach 5 and 29 deep but only in warm_ocean/beach/snowy_beach
+    // and desert, and 21 > 5; arm 1 is badlands only; and `NOT(hole)` is
+    // false because `hole` is exactly `depth <= 0`. Absence of a gated
+    // material was never going to be a refutation, and here it is not even a
+    // measurement. `aps-boundary-analyze window` runs it anyway.
+    //
+    // WHAT THIS CASE READS INSTEAD. `aps-clamp-probe.sh` takes the gated
+    // subtree out of the question: solid column, pinned
+    // `preliminary_surface_level`, and the single surface rule
+    // `{ above_preliminary_surface -> diamond_block }`, so a column's lowest
+    // marker IS the boundary with nothing in between — no `hole`, no
+    // `stone_depth`, no biome, no materials tree. The surface-depth field is
+    // a function of (world seed, x, z) alone, so the negative-depth columns
+    // sit at the same coordinates in a probe dimension as in the overworld.
+    //
+    // THREE SEEDS, because four columns at one seed is four samples at one
+    // seed. `aps-boundary-analyze sweep` over the eight golden seeds and
+    // x, z in [-16384, 16384) — 8589934592 columns — finds 98 at depth -1 on
+    // six of the eight, 1 in 87652393, in ten distinct regions. Three of
+    // those clusters are probed, at five pinned psl values each.
+    //
+    // WHY 49 CORRELATED COLUMNS ARE ENOUGH, said plainly because the count
+    // looks small and the columns are NOT independent — they sit in three
+    // spatially compact clusters of a smooth field, so 49 is nothing like 49
+    // draws. It does not matter here, and the reason is arithmetic rather
+    // than statistical. `psl + max(0, d) - 8 >= psl - 8` for ANY depth field
+    // `d` whatsoever, whatever its distribution and however its columns
+    // correlate, because `max(0, d) >= 0`. The clamped candidate therefore
+    // predicts a lower edge at or above `psl - 8` everywhere, with no
+    // exceptions and no tail. A SINGLE correct reading of an edge at
+    // `psl - 9` contradicts it outright. This is a refutation by
+    // counter-example, not a test whose power grows with the sample, so
+    // nothing here needs the 49 to be independent and no independence caveat
+    // is owed.
+    //
+    // What the three seeds and five psl values ARE for is the other failure
+    // mode: that the counter-example is not real. A misread region, a probe
+    // whose psl did not take, a fixed offset between what the server wrote
+    // and what this scorer reads, a coincidence at one seed — each of those
+    // would produce the same wrong edge at one seed or one psl and not at
+    // four other psl values (including a negative one) across three
+    // independently generated worlds. They are guards on the READING, and
+    // that is a different job from statistical power.
+    //
+    // Contrast the rate `1 in 87652393` a few lines up, which IS a
+    // statistical quantity: there the 98 columns are ten excursions and the
+    // write-ups say ten, because a rate's uncertainty does depend on how many
+    // independent draws are behind it. Both statements appear here; only one
+    // of them is about sampling.
+    //
+    // A CROSS-CHECK THIS GETS FOR FREE, worth naming because the whole
+    // argument leans on it: the depth compared against here comes from a
+    // `World` built from the vanilla OVERWORLD settings, while the band being
+    // read comes from a PROBE dimension. `minecraft:surface` and the
+    // unsalted positional draw behind the jitter are both per-WORLD, not
+    // per-dimension, so the two should agree — and the unclamped candidate
+    // matching on every painted column of every dimension is that agreement
+    // measured rather than assumed. Were the probe's depth a different field,
+    // it would not line up 65536 times over.
+    //
+    // WHAT IS ASSERTED AND WHAT IS NOT. The painted-column totals are NOT
+    // pinned. The probe forceloads an 8x8 chunk block, but the server takes a
+    // wider skirt past the `surface` stage than it takes to `full`, so what
+    // carries a marker band is every chunk that reached at least `carvers` —
+    // measured as a 16x16 chunk window, 65536 columns, in s1 and s2. A
+    // probe's settle heuristic stops when the region file's size holds still,
+    // and in s3 that left 12 of those 16 chunk ROWS in z rather than all 16
+    // (192 chunks, 49152 painted columns; the four missing rows are the
+    // low-z edge, and all 23 of s3's separating columns are inside what was
+    // painted). That is a generation-completeness number, not a measurement,
+    // and pinning it would make this case fail on a regeneration that
+    // happened to be more patient. What IS pinned is the separating-column
+    // COUNT per case — those come from the sweep and are a property of the
+    // seed, not of the run — and the scoring: unclamped right on every
+    // painted column, clamped wrong on exactly the separating ones.
+    //
+    // FIFTEEN GENERATED DIMENSIONS, and they are not fifteen configurations:
+    // each of the three worlds carries the SAME five entries, of which
+    // `k_p100_b` is a byte-identical repeat of `k_p100` (deliberately, so
+    // "the reading is stable" is not "one dimension did something"). So it is
+    // four distinct dimension configurations per world, twelve distinct
+    // (seed, psl) pairs and three repeats, fifteen generated dimensions in
+    // all.
+    const std::filesystem::path root = fixtures() / "probes";
+    static constexpr std::array<ClampCase, 3> kCases{{
+        {std::int64_t{-4172144997902289642}, "apsc_s1", "r.4.3.mca", 4},
+        {std::int64_t{42}, "apsc_s2", "r.6.10.mca", 22},
+        {std::int64_t{-9223372036854775807} - 1, "apsc_s3", "r.13.26.mca", 23},
+    }};
+    // psl is pinned per dimension; -20 is the one that separates a clamp from
+    // sign handling in the boundary, and k_p100_b repeats k_p100 in a second
+    // dimension so "the reading is stable" is not "one dimension did
+    // something".
+    static constexpr std::array<std::pair<const char*, std::int32_t>, 5> kEntries{
+        {{"k_p100", 100}, {"k_p100_b", 100}, {"k_p40", 40}, {"k_p0", 0}, {"k_m20", -20}}};
+
+    for (const auto& probe : kCases) {
+        for (const auto& [entry, psl] : kEntries) {
+            const std::filesystem::path region = root / probe.directory / entry / probe.region;
+            if (!std::filesystem::is_directory(fixtures() / "worldgen") ||
+                !std::filesystem::is_regular_file(region)) {
+                SKIP("no clamp probe at "
+                     << region
+                     << "; generate it with tools/analysis/aps-clamp-probe.sh --accept-eula");
+            }
+        }
+    }
+
+    long long paintedTotal = 0;
+    long long separatingTotal = 0;
+    long long separatingUnclampedTotal = 0;
+    long long separatingClampedTotal = 0;
+    long long separatingFlooredTotal = 0;
+
+    for (const auto& probe : kCases) {
+        const World world{probe.seed};
+        for (const auto& [entry, psl] : kEntries) {
+            const std::filesystem::path region = root / probe.directory / entry / probe.region;
+            const ClampScore score = scoreClampEntry(world, region, psl);
+
+            INFO(probe.directory << "/" << entry << " (seed " << probe.seed << ", psl " << psl
+                                 << "): " << score.painted << " painted columns, " << score.broken
+                                 << " broken bands, unclamped right " << score.unclampedRight
+                                 << ", clamped right " << score.clampedRight << ", floored right "
+                                 << score.flooredRight << ", separating " << score.separating
+                                 << ", raw in (-1, 0) " << score.nearZeroNegative);
+
+            // The probe paints a contiguous band per column or the readout is
+            // not a boundary at all.
+            REQUIRE(score.broken == 0);
+            // Enough of the window generated to carry the cluster. Not an
+            // equality: see the note above.
+            REQUIRE(score.painted >= 49152);
+
+            // The measurement. Right everywhere, including on the columns
+            // that separate the two.
+            CHECK(score.unclampedRight == score.painted);
+            // The clamp is right on every control and wrong on every
+            // separating column — which is what "these are the only columns
+            // in existence that separate them" means, stated as a number.
+            CHECK(score.clampedRight == score.painted - probe.separating);
+            // A THREE-WAY separation, not a two-way. Every separating raw
+            // here lies in (-1.14, -1.00), so `floor` gives -2 where `(int)`
+            // gives -1 and the clamp gives 0 — three candidates, three
+            // different lower edges (psl-10, psl-9, psl-8), one reading.
+            //
+            // The ROW BELOW IS AN IDENTITY, NOT A SECOND REFUTATION. Once
+            // `unclampedRight == painted` holds — the line above — every
+            // painted column's edge IS `psl + depth - 8`, so `floor` differs
+            // from the reading exactly where `floor(raw) != (int)raw`, which
+            // is exactly the separating columns (raw <= -1) plus the columns
+            // with raw in (-1, 0), two disjoint sets that are counted
+            // independently here. `flooredRight == painted - separating -
+            // nearZeroNegative` then follows by definition and cannot come
+            // out any other way. It is kept because it would catch a BUG IN
+            // THIS SCORER — a `flooredFits` that read the wrong column, or a
+            // `nearZeroNegative` predicate off by a boundary, breaks the
+            // identity — but it is a consistency check on the apparatus, and
+            // the refutation of `floor` is the unclamped row plus the raws
+            // being in (-1.14, -1.00), not this one.
+            CHECK(score.flooredRight == score.painted - probe.separating - score.nearZeroNegative);
+            CHECK(score.nearZeroNegative > 0);
+            CHECK(score.separatingLowestRaw > -1.14);
+            CHECK(score.separatingHighestRaw < -1.0);
+            // AND THE BOUND ON WHAT THIS CASE MAY CLAIM. Every separating
+            // column is at depth exactly -1 — nothing here reaches -2 — so
+            // what is refuted is a clamp AT 0. `max(-1, depth)`, or a clamp
+            // anywhere below -1, predicts the same edge as no clamp on every
+            // column in this reading and is NOT separated by it. Asserted
+            // rather than remarked, so a future run that did reach -2 would
+            // fail here and force the claim to be widened deliberately.
+            CHECK(score.separatingDepths == std::set<std::int32_t>{-1});
+
+            CHECK(score.separating == probe.separating);
+            CHECK(score.separatingUnclamped == probe.separating);
+            CHECK(score.separatingClamped == 0);
+            // And the edge tracks the pinned psl rather than sitting at a
+            // fixed height: 100 -> 91, 40 -> 31, 0 -> -9, -20 -> -29. The
+            // negative one is the control against sign handling. Asserted as
+            // "no column disagrees" across ALL of this dimension's separating
+            // columns, not as the value the last one happened to carry.
+            CHECK(score.separatingEdgeWrong == 0);
+            CHECK(score.separatingEdges == std::set<std::int32_t>{psl - 9});
+
+            paintedTotal += score.painted;
+            separatingTotal += score.separating;
+            separatingUnclampedTotal += score.separatingUnclamped;
+            separatingClampedTotal += score.separatingClamped;
+            separatingFlooredTotal += score.separatingFloored;
+        }
+    }
+
+    // 49 separating columns across three seeds, read in five dimensions each.
+    // The painted total is printed rather than pinned, for the reason above —
+    // it is what SPEC.md and PROGRESS.md quote as the denominator (901120 on
+    // the runs behind those write-ups, of which 245 are separating readings
+    // and the remaining 900875 are controls), and printing it here is what
+    // makes that figure reproducible from this repository rather than
+    // multiplied out by hand.
+    INFO(paintedTotal << " painted columns, " << (paintedTotal - separatingTotal) << " of them "
+                      << "controls");
+    INFO(separatingTotal << " separating readings: " << separatingUnclampedTotal << " unclamped, "
+                         << separatingClampedTotal << " clamped, " << separatingFlooredTotal
+                         << " floored");
+    // A floor, not the total: 15 dimensions each painting at least the
+    // partial window s3 settled at.
+    CHECK(paintedTotal >= 15 * 49152);
+    CHECK(separatingTotal == 245);
+    CHECK(separatingUnclampedTotal == 245);
+    CHECK(separatingClampedTotal == 0);
+    CHECK(separatingFlooredTotal == 0);
+}
+
+TEST_CASE("the overworld read at a negative-depth column is stone under both candidates",
+          "[conformance][surface]") {
+    // The NON-result, pinned — because it is the reading someone will reach
+    // for first, and on its own it looks like evidence for the clamp.
+    //
+    // At depth -1 the two candidates differ over one block: `y = psl - 9`,
+    // which the unclamped reading opens and the clamped one does not. In
+    // vanilla's own overworld at the first known cluster that block is
+    // `minecraft:stone` at all four columns. That is NOT a refutation of the
+    // unclamped reading, and this case exists so the reasoning cannot be lost
+    // and the number re-read as one.
+    //
+    // The four columns are `warm_ocean` with the ocean floor at y = 36 and
+    // psl = 24, so y = 15 sits 21 blocks down a solid run. At
+    // `surfaceDepth == -1` every arm of the gated surface-materials subtree
+    // declines at a position like that whatever the gate does:
+    //   * arms 0, 2, 4 and 3.0 are gated by `stone_depth(floor, offset 0,
+    //     add_surface_depth false)`, i.e. a run depth of exactly 0.
+    //   * arm 3.1 — the grass/dirt/gravel/mud family — is gated by
+    //     `stone_depth(floor, offset 0, add_surface_depth TRUE)`, threshold
+    //     `0 + surfaceDepth = -1`, and a run depth is never negative.
+    //   * arms 3.2 and 3.3 add a `secondary_depth_range` of 6 and 30, so they
+    //     reach run depths 5 and 29 — but only in warm_ocean/beach/
+    //     snowy_beach and desert respectively. 21 > 5 rules the first out
+    //     here; the biome rules the second out.
+    //   * arm 1 is the badlands family, and `NOT(hole)` is false because
+    //     `hole` is exactly `depth <= 0`.
+    // So BOTH candidates predict the terrain filler's block, and the server
+    // placed it. What is asserted below is therefore the geometry that makes
+    // the reading uninformative — biome, psl, ocean floor, run depth — not
+    // the block alone.
+    //
+    // The world is generated terrain-only (carvers and features stripped per
+    // biome by `fetch-vanilla`'s datapack), so the other standing confound —
+    // features placing gravel, sand, dirt, podzol and the rest AFTER the
+    // surface pass — cannot apply to this column either.
+    //
+    // AND ONE MORE REASON THIS READING COULD NOT HAVE SETTLED IT, which is
+    // the reason the real separation was done elsewhere: `y = psl - 9` and
+    // `y = psl - 8` are located here using STRATUM's own per-column
+    // `preliminary_surface_level` — psl = 24 below is this engine's value,
+    // not a number the server reported. How the server SAMPLES
+    // `preliminary_surface_level` is still open (SPEC records it as sampled
+    // on a horizontal lattice and interpolated rather than read per column),
+    // so a wrong psl here would move both candidate edges together and the
+    // block read would be at the wrong y without saying so. That is circular
+    // in exactly the way a separation must not be. It is why this case is
+    // pinned as a NON-result and why the reading that does settle the clamp
+    // is done in probe dimensions where `preliminary_surface_level` is a
+    // datapack CONSTANT — there the y being read is fixed by the datapack,
+    // the sampling question cannot reach it, and the measured edge tracking
+    // 100 / 40 / 0 / -20 is itself the check that it did not.
+    const std::filesystem::path region =
+        fixtures() / "regions" / "seed--4172144997902289642" / "overworld" / "r.4.3.mca";
+    if (!std::filesystem::is_directory(fixtures() / "worldgen") ||
+        !std::filesystem::is_regular_file(region)) {
+        SKIP("no r.4.3 region at "
+             << region
+             << "; generate it with tools/fetch-vanilla --generate-regions --accept-eula "
+                "--seeds -4172144997902289642 --dimensions overworld --regions 4,3");
+    }
+
+    const World world{std::int64_t{-4172144997902289642}};
+    const auto file = stratum::region::RegionFile::open(region);
+    static constexpr std::array<std::pair<std::int32_t, std::int32_t>, 4> kColumns{
+        {{2282, 1879}, {2282, 1880}, {2283, 1880}, {2284, 1880}}};
+
+    for (const auto& [x, z] : kColumns) {
+        INFO("column (" << x << ", " << z << ")");
+        const std::int32_t localChunkX =
+            stratum::javamath::floorMod(stratum::javamath::floorDiv(x, 16), 32);
+        const std::int32_t localChunkZ =
+            stratum::javamath::floorMod(stratum::javamath::floorDiv(z, 16), 32);
+        REQUIRE(file.hasChunk(localChunkX, localChunkZ));
+        const auto chunk = stratum::chunk::Chunk::decode(
+            stratum::nbt::read(file.readChunk(localChunkX, localChunkZ)).root);
+        REQUIRE(chunk.status() == "minecraft:full");
+
+        const int localX = stratum::javamath::floorMod(x, 16);
+        const int localZ = stratum::javamath::floorMod(z, 16);
+        const std::int32_t depth = world.surfaceDepth(x, z);
+        const std::int32_t psl = world.preliminarySurface(x, z);
+        REQUIRE(depth == -1);
+        CHECK(psl == 24);
+
+        // The discriminating block and the control one above it. Both stone,
+        // which is the whole point.
+        const auto* discriminating = chunk.blockAt(localX, psl - 9, localZ);
+        const auto* control = chunk.blockAt(localX, psl - 8, localZ);
+        REQUIRE(discriminating != nullptr);
+        REQUIRE(control != nullptr);
+        CHECK(discriminating->name == "minecraft:stone");
+        CHECK(control->name == "minecraft:stone");
+
+        // And WHY it is stone: the run depth at y = psl - 9 is 21, far past
+        // the 0 that arms 0/2/4/3.0 need and past arm 3.2's reach of 5.
+        std::int32_t run = 0;
+        for (std::int32_t y = 63; y >= psl - 9; --y) {
+            const auto* block = chunk.blockAt(localX, y, localZ);
+            const bool solid = block != nullptr && block->name != "minecraft:air" &&
+                               block->name != "minecraft:water" && block->name != "minecraft:lava";
+            run = solid ? run + 1 : 0;
+        }
+        CHECK(run - 1 == 21);
+        // The ocean floor, and the biome that rules arm 3.2 out by depth
+        // rather than by name.
+        const auto top = chunk.highestNonAir(localX, localZ);
+        REQUIRE(top.has_value());
+        CHECK(*top == 62);
+        const auto* floorBlock = chunk.blockAt(localX, 36, localZ);
+        REQUIRE(floorBlock != nullptr);
+        CHECK(floorBlock->name == "minecraft:sand");
+        const auto* above = chunk.blockAt(localX, 37, localZ);
+        REQUIRE(above != nullptr);
+        CHECK(above->name == "minecraft:water");
     }
 }
 

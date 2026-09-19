@@ -247,14 +247,27 @@ double Executor::surfaceDepthRaw(const std::int32_t x, const std::int32_t z) con
 }
 
 std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) const {
-    // Truncation toward zero, and NO clamp: `floor` and `max(0, floor)` were
-    // both refuted against the server. Whether a BOTTOM clamp is there is
-    // still open, and it IS reachable by vanilla — rarely. The value never
-    // reached a negative integer in the 2097152 golden columns, but over
-    // 536870912 columns of the same eight seeds it does, on four of them (all
-    // at seed -4172144997902289642, around x 2282-2284 / z 1879-1880). About
-    // one column in 134 million. Said in the header, measured in the
-    // conformance harness, and not assumed either way.
+    // Truncation toward zero, and NO BOTTOM CLAMP AT 0: `floor`,
+    // `max(0, floor)` and `max(0, surfaceDepth)` were all refuted against the
+    // server. The last of those was open for two milestones because the
+    // golden regions contain no column where it would show — 0 of 2097152 —
+    // and a negative depth is rare rather than impossible: 98 columns in
+    // 8589934592 over the eight golden seeds, 1 in 87652393.
+    // `aps-clamp-probe.sh` reads three of those clusters at three seeds with
+    // nothing between the condition and the readout, and the band's lower
+    // edge is `psl + surfaceDepth - 8` on all 49 separating columns. Those 49
+    // raws all lie in (-1.14, -1.00), so that one reading separates THREE
+    // candidates at once — `floor` would put the edge at `psl - 10`, this
+    // cast at `psl - 9`, a clamp at 0 at `psl - 8` — and it is the only
+    // evidence anywhere that tells this cast from `floor`, since above -1
+    // they are the same function.
+    //
+    // AT 0, and no further. All 49 separating columns are at depth exactly
+    // -1, and the lowest raw in the whole 8589934592-column sweep is
+    // -1.134416806, so a depth of -2 or below has never been seen. A clamp at
+    // -1 or lower would agree with this line on every column ever read and is
+    // NOT refuted by it — it is simply not implemented, because nothing
+    // documents one. Said in the header, measured in the conformance harness.
     return static_cast<std::int32_t>(surfaceDepthRaw(x, z));
 }
 

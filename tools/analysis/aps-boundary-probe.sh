@@ -71,16 +71,23 @@
 #
 # WHAT IT DOES NOT MEASURE, and cannot: whether the depth carries a bottom
 # clamp, i.e. `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`. Those
-# differ only where the RETURNED depth is negative, and in the golden regions
-# it never is: over every column of all eight (2097152) the returned depth's
-# minimum is 0 and the raw value's is -0.449658, where the cast truncates to 0
-# either way. That is a statement about those regions and NOT about vanilla —
-# the same eight seeds over 536870912 columns do reach depth -1, on four of
-# them. So reaching a negative depth does not need a data pack after all; it
-# needs the region those columns live in (r.4.3.mca at seed
-# -4172144997902289642), which this sweep deliberately does not build. Scored
-# in the conformance file's own "the surface depth never reaches a negative
-# integer in the eight golden regions".
+# differ only where the RETURNED depth is negative, and no column of any of
+# these 52 dimensions is — nor is any column of the golden regions: over every
+# column of all eight (2097152) the returned depth's minimum is 0 and the raw
+# value's is -0.449658, where the cast truncates to 0 either way.
+#
+# That is a statement about those columns and NOT about vanilla. The columns
+# exist — `aps-boundary-analyze sweep` over the same eight seeds and
+# x, z in [-16384, 16384), 8589934592 columns, finds 98 of them, 1 in
+# 87652393 — they are simply nowhere near the world origin this probe
+# forceloads. So the question is answered by a probe pointed at where they
+# ARE: tools/analysis/aps-clamp-probe.sh, which is this same machinery with
+# `density-probe.sh --origin-chunk` and three clusters at three seeds. The
+# clamp AT 0 is REFUTED: 49 separating columns, lower edge
+# `psl + surfaceDepth - 8` on every one. At 0 and no lower — all 49 are at
+# depth exactly -1, and the sweep's lowest raw anywhere is -1.134416806, so a
+# clamp at -1 or below predicts the same edge as none. Scored in the
+# conformance file's "the surface depth carries no bottom clamp".
 #
 # Nothing this writes is committed: worlds are Mojang-derived (SPEC §12).
 set -euo pipefail

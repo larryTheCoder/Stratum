@@ -3,6 +3,19 @@
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
 #   tools/analysis/density-probe.sh --accept-eula --spec <spec.json> [--seed N]
+#                                   [--origin-chunk <chunkX> <chunkZ>]
+#
+# --origin-chunk moves the CHUNKSxCHUNKS block this forceloads away from the
+# world origin, and with it the region file collected. It exists because some
+# questions are about a specific COLUMN rather than about a function's shape:
+# `minecraft:surface`'s own lower tail reaches a negative surface depth on 98
+# of 8589934592 columns over the eight golden seeds (1 in 87652393), and the
+# columns that do are wherever the noise put them — at seed
+# -4172144997902289642 the nearest are at x 2282-2284, z 1879-1880, which is
+# chunk (142, 117) and region r.4.3. A probe pinned to r.0.0 cannot see them
+# at all. The default is 0 0, i.e. exactly what every existing spec
+# already got, and the forceloaded block must lie inside ONE region so the
+# collected file is the whole of it.
 #
 # STRATUM_PROBE_KEEP_WORK=1 in the environment keeps the work directory
 # (server, world, generated datapack) instead of deleting it on exit —
@@ -56,11 +69,15 @@ readonly CHUNKS=8          # per dimension, squared: 8 -> 128x128 blocks
 accept_eula=0
 spec=""
 seed=42
+origin_chunk_x=0
+origin_chunk_z=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --accept-eula) accept_eula=1; shift ;;
         --spec)        spec="${2:?--spec needs a file}"; shift 2 ;;
         --seed)        seed="${2:?--seed needs a number}"; shift 2 ;;
+        --origin-chunk) origin_chunk_x="${2:?--origin-chunk needs chunkX chunkZ}"
+                        origin_chunk_z="${3:?--origin-chunk needs chunkX chunkZ}"; shift 3 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -326,10 +343,37 @@ import json,sys
 for e in json.load(open('${spec}')): print(e['name'])
 ")
 
-log "forceloading ${CHUNKS}x${CHUNKS} chunks in each of ${#names[@]} dimension(s)"
-last=$(( CHUNKS * 16 - 1 ))
+# Which region file the forceloaded block lands in. Bash's / truncates toward
+# zero, so a negative chunk coordinate needs the floor form spelled out —
+# the same trap javamath::floorDiv exists for on the C++ side.
+floor_div_32() {
+    local value="$1"
+    if (( value >= 0 )); then
+        echo $(( value / 32 ))
+    else
+        echo $(( -(((-value) + 31) / 32) ))
+    fi
+}
+region_x="$(floor_div_32 "${origin_chunk_x}")"
+region_z="$(floor_div_32 "${origin_chunk_z}")"
+last_region_x="$(floor_div_32 $(( origin_chunk_x + CHUNKS - 1 )))"
+last_region_z="$(floor_div_32 $(( origin_chunk_z + CHUNKS - 1 )))"
+if [[ "${region_x}" != "${last_region_x}" || "${region_z}" != "${last_region_z}" ]]; then
+    die "the ${CHUNKS}x${CHUNKS} block from chunk (${origin_chunk_x}, ${origin_chunk_z}) straddles
+       regions r.${region_x}.${region_z} and r.${last_region_x}.${last_region_z}; move
+       --origin-chunk so it lies inside one"
+fi
+region_file="r.${region_x}.${region_z}.mca"
+
+log "forceloading ${CHUNKS}x${CHUNKS} chunks from chunk (${origin_chunk_x}, ${origin_chunk_z})" \
+    "into ${region_file} in each of ${#names[@]} dimension(s)"
+from_block_x=$(( origin_chunk_x * 16 ))
+from_block_z=$(( origin_chunk_z * 16 ))
+to_block_x=$(( (origin_chunk_x + CHUNKS - 1) * 16 + 15 ))
+to_block_z=$(( (origin_chunk_z + CHUNKS - 1) * 16 + 15 ))
 for name in "${names[@]}"; do
-    printf 'execute in stratum:%s run forceload add 0 0 %d %d\n' "${name}" "${last}" "${last}" >&3
+    printf 'execute in stratum:%s run forceload add %d %d %d %d\n' "${name}" \
+        "${from_block_x}" "${from_block_z}" "${to_block_x}" "${to_block_z}" >&3
 done
 
 expected="${#names[@]}"
@@ -339,7 +383,7 @@ while (( waited < 3600 )); do
     printf 'save-all flush\n' >&3 || true
     sleep 15; waited=$((waited + 15))
     sizes="$(for name in "${names[@]}"; do
-        f="${server}/world/dimensions/stratum/${name}/region/r.0.0.mca"
+        f="${server}/world/dimensions/stratum/${name}/region/${region_file}"
         [[ -f "${f}" ]] && wc -c < "${f}" || echo -
     done | tr '\n' ' ')"
     present="$(tr ' ' '\n' <<< "${sizes}" | grep -c '^[0-9]' || true)"
@@ -361,11 +405,13 @@ out_root="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/${spec_name}"
 mkdir -p "${out_root}"
 for name in "${names[@]}"; do
     mkdir -p "${out_root}/${name}"
-    cp "${server}/world/dimensions/stratum/${name}/region/r.0.0.mca" "${out_root}/${name}/r.0.0.mca"
+    cp "${server}/world/dimensions/stratum/${name}/region/${region_file}" \
+       "${out_root}/${name}/${region_file}"
 done
 cat > "${out_root}/manifest.json" <<MANIFEST
 {"seed": ${seed}, "k": ${K}, "min_y": ${MIN_Y}, "height": ${HEIGHT},
  "chunks": ${CHUNKS}, "version": "${MINECRAFT_VERSION}",
+ "origin_chunk": [${origin_chunk_x}, ${origin_chunk_z}], "region": "${region_file}",
  "probe_noise": {"id": "stratum:probe_noise", "first_octave": -3, "amplitudes": [1.0]}}
 MANIFEST
 cp "${spec}" "${out_root}/spec.json"

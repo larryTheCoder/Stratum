@@ -299,10 +299,12 @@ TEST_CASE("the surface depth is its raw value truncated toward zero, never floor
     //
     // Which is exactly why `depth` and `max(0, depth)` cannot be separated by
     // a raw in (-1, 0): both are 0 there. Only a raw at or below -1 tells
-    // them apart. Vanilla's own `minecraft:surface` does reach that, but
-    // about one column in 134 million — see
-    // tests/conformance/vanilla_above_preliminary_surface_test.cpp, which
-    // pins the four known columns.
+    // them apart. Vanilla's own `minecraft:surface` does reach that, about
+    // one column in 87.7 million, and a clamp AT 0 is now REFUTED against
+    // the server at 49 such columns across three seeds — see
+    // tests/conformance/vanilla_above_preliminary_surface_test.cpp. Only at
+    // 0: all 49 are at depth exactly -1, so a clamp at -1 or lower predicts
+    // the same thing as none and is untouched by that reading.
     //
     // The 4x amplitudes below are a deliberately generous choice so that both
     // halves of the split fire densely in a unit test, NOT a threshold: 1x

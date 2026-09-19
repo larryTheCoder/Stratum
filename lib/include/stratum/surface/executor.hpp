@@ -179,16 +179,32 @@ public:
     ///
     ///     (int)(2.75 * surfaceNoise(x, 0, z) + 3.0 + 0.25 * u)
     ///
-    /// The cast TRUNCATES toward zero and there is no clamp. Whether the
-    /// clamp is there is still open. It is not settled by the golden regions
-    /// — over 2097152 columns, every column of all eight, the returned value
-    /// never once went below 0 — but that is a sample limit, not a property
-    /// of vanilla: widening the same eight seeds to 536870912 columns finds
-    /// four at depth -1, all at seed -4172144997902289642. Roughly one column
-    /// in 134 million. Both figures, and the four columns, are recorded in
-    /// `tests/conformance/vanilla_above_preliminary_surface_test.cpp`. What
-    /// IS common is 0 (6745 of those columns, about one in 311), and that is
-    /// not a curiosity, because `hole` is exactly `depth <= 0`.
+    /// The cast TRUNCATES toward zero and there is NO BOTTOM CLAMP AT 0 —
+    /// measured, not assumed. `max(0, surfaceDepth)` is REFUTED. A clamp at 0
+    /// shows up only where the returned value is negative, which the golden
+    /// regions never reach (0 of 2097152 columns, every column of all eight),
+    /// so for two milestones this was open on a sample ~40x too small to say
+    /// anything. Widening the same eight seeds to x, z in [-16384, 16384) —
+    /// 8589934592 columns — finds 98 at depth -1, on six of the eight seeds,
+    /// 1 in 87652393. Probing three of those clusters at three seeds with a
+    /// bare `{ above_preliminary_surface -> diamond_block }` rule over a
+    /// solid column puts the band's lower edge at `psl + surfaceDepth - 8` on
+    /// all 49 separating columns and never at
+    /// `psl + max(0, surfaceDepth) - 8`.
+    ///
+    /// And exactly that far, because of where the field's tail stops. Every
+    /// one of those 49 columns has depth EXACTLY -1, and the lowest raw value
+    /// anywhere in the 8589934592 swept columns is -1.134416806, so no column
+    /// at depth -2 or below has ever been observed. A clamp at -1 or lower —
+    /// `max(-1, surfaceDepth)`, say — predicts the same edge as no clamp at
+    /// all on every column this reading contains, and is NOT separated by it.
+    /// Nothing here is evidence against one; the engine simply does not apply
+    /// one, and if vanilla did, only a column at depth <= -2 could say so.
+    /// The numbers are in
+    /// `tests/conformance/vanilla_above_preliminary_surface_test.cpp` and the
+    /// apparatus is `tools/analysis/aps-clamp-probe.sh`. What IS common is 0
+    /// (6745 of the golden columns, about one in 311), and that is not a
+    /// curiosity, because `hole` is exactly `depth <= 0`.
     ///
     /// `u` is one `nextDouble` from the world seed's UNSALTED positional
     /// source at (x, 0, z) — fork once, no name, no MD5. That is a different

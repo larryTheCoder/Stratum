@@ -310,40 +310,184 @@ Open:
       or as any function of cell width, floor, height or sea level (refuted by
       the 12 geometry dimensions).
 
-      NOT separated, and now with the reason rather than an excuse:
-      `8 - surfaceDepth` against `8 - max(0, surfaceDepth)`. These differ only
-      where the RETURNED depth is negative, and it never is — measured over
-      every column of all eight golden overworld regions, 2097152 of them: 0
-      negative, minimum 0, 6745 columns at exactly 0 (one in 311). The depth
-      is `(int)(2.75*surface + 3 + 0.25*u)` and that cast TRUNCATES toward
-      zero, so the raw value has to reach -1, not merely go negative. Inside
-      those regions it does go negative — 207 columns, all at seed 0 — and
-      bottoms out at -0.449658.
+      SEPARATED, and this was the last thing open about the boundary's own
+      FORMULA — where a spatially varying `preliminary_surface_level` is
+      sampled is a separate question and stays open, below. There
+      is **NO bottom clamp AT 0**: `max(0, surfaceDepth)` is refuted and the
+      depth enters as returned, negative values included. At 0 only — every
+      separating column is at depth exactly -1 and the lowest raw in the
+      8589934592-column sweep is -1.134416806, so a clamp at -1 or lower is
+      not separated by any of this (below).
 
-      That census is real but it is not a proof of impossibility, and a first
-      version of this entry read it as one. Sweeping the SAME eight seeds over
-      x, z in [-4096, 4096) — 67108864 columns each, 536870912 in all — finds
-      four columns at depth -1, all at seed -4172144997902289642: (2282,1879)
-      raw -1.033659749, (2282,1880) -1.048435300, (2283,1880) -1.008497344,
-      (2284,1880) -1.010109149. About one column in 134 million, so a
-      2097152-column census finding none is what a sample 256x too small is
-      expected to do. Seed 42 reaches -0.966441862 in the same window. The
-      clamp is therefore REACHABLE by vanilla, and the wording this replaces
-      ("unobservable in vanilla", "a data-pack-only difference") was false.
+      The two differ only where the RETURNED depth is negative. The depth is
+      `(int)(2.75*surface + 3 + 0.25*u)` and that cast TRUNCATES toward zero,
+      so the raw value has to reach -1, not merely go negative. This project
+      answered that twice from samples that could not support either answer —
+      first "about one column in 22000" (far too common), then "vanilla's
+      amplitudes do not produce one at all" (false). The second rested on
+      every column of the eight golden `r.0.0` regions, 2097152 of them: 0
+      negative, minimum 0, 6745 at exactly 0 (one in 311), 207 columns with a
+      negative RAW value (all at seed 0), lowest -0.449658. That census is
+      correct and reproduces; it is also ~40x too small to expect one hit.
 
-      Still not separated, but for a reason that now names its own remedy: the
-      four columns are in chunk (142,117) — region `r.4.3.mca`, which is not
-      among the `r.0.0.mca` on disk. At depth -1 the candidates differ over
-      exactly one block, `y = psl - 9`. Generating that region and reading
-      that block at those four columns separates them, and no data pack is
-      needed. Scored in the conformance file's own "the surface depth never
-      reaches a negative integer in the eight golden regions" and pinned there
-      as a counter-example.
+      THE SEARCH, widened. `aps-boundary-analyze sweep` (new, committed,
+      parallel — 6.85M columns/sec on 12 threads) over the same eight seeds
+      and x, z in [-16384, 16384): 1073741824 columns each, **8589934592 in
+      all**, **98** columns at depth -1, **1 in 87652393**, on six of the
+      eight seeds and in ten distinct regions. Per seed: 0 → none, 1 → 28,
+      -1 → none, 42 → 27, -4172144997902289642 → 16, 2891948927356891 → 1,
+      9223372036854775807 → 3, -9223372036854775808 → 23. The lowest raw
+      reached is -1.134416806. The raw tail falls smoothly across -1 (0.01
+      bands from [-0.81,-0.80) down: 68, 62, 55, 50, 46, 50, 62, 41, 41, 33,
+      33, 34, 16, 22, 26, 19, 18, 17, 13, **19** in [-1.00,-0.99), 13, 11, 12,
+      9, 8, 9, 9, 1, 10, and 16 for everything below -1.09), so the crossing
+      columns are the distribution's continuation rather than its edge. The
+      bands strictly below -1.00 sum to 98 — the same count arrived at
+      independently, which is the histogram's own consistency check.
+
+      The 98 are NOT 98 independent draws. The field is smooth, so a crossing
+      column has near-crossing neighbours: they fall into TEN spatially
+      compact clusters, one per region — 23, 22, 18, 12, 7, 5, 4, 3, 3, 1.
+      1 in 87652393 is the figure for "how much area to sweep to find one",
+      which is all it is used for; ten is what bounds how well that rate is
+      itself pinned. The three probe cases take three DIFFERENT clusters at
+      three different seeds for exactly this reason. The previous
+      revision's [-4096, 4096) sweep is a sub-window and still reproduces
+      exactly: four columns, all at seed -4172144997902289642.
+
+      THE OVERWORLD READ, which does NOT settle it — run rather than assumed.
+      Region `r.4.3.mca` at seed -4172144997902289642 was generated and the
+      one disagreed-about block, `y = psl - 9 = 15`, read at all four columns:
+      `minecraft:stone`, four for four. That refutes nothing. All four are
+      `warm_ocean`, ocean floor at y = 36, psl = 24, so y = 15 is 21 blocks
+      deep in stone, and at `surfaceDepth == -1` every arm of the gated
+      subtree declines there under BOTH candidates — arms 0/2/4/3.0 need a
+      solid-run depth of 0; arm 3.1, the whole grass/dirt/gravel/mud family,
+      is gated by `stone_depth(floor, offset 0, add_surface_depth true)` whose
+      threshold is `0 + surfaceDepth = -1` and a run depth is never negative,
+      so that arm is off everywhere in such a column; arms 3.2/3.3 reach 5 and
+      29 deep but only in warm_ocean/beach/snowy_beach and desert, and 21 > 5;
+      arm 1 is badlands only; `NOT(hole)` is false because `hole` is exactly
+      `depth <= 0`. Both candidates predict stone. Features were not a
+      confound either way: the world is generated terrain-only, carvers and
+      features stripped per biome, so nothing ran after the surface pass.
+
+      And it could not have settled it for a second reason, which is why the
+      real separation is done where it is: `y = psl - 9` and `y = psl - 8` are
+      located using STRATUM's own per-column `preliminary_surface_level` — the
+      psl of 24 is this engine's value, not one the server reported — and how
+      the server SAMPLES that quantity is still open (lattice + interpolation,
+      not per column). A wrong psl moves both candidate edges together and
+      reads the wrong y without saying so, which is circular exactly where a
+      separation must not be. Hence the case is pinned as a non-result, and
+      the reading that does settle the clamp lives in probe dimensions where
+      `preliminary_surface_level` is a datapack CONSTANT: the y is fixed by
+      the datapack, the sampling question cannot reach it, and the edge
+      tracking 100 / 40 / 0 / -20 is itself the check that it did not.
+
+      THE READ THAT DOES SETTLE IT. `tools/analysis/aps-clamp-probe.sh` drops
+      the gated subtree from the question entirely: solid column, pinned
+      `preliminary_surface_level`, and the single surface rule
+      `{ above_preliminary_surface -> diamond_block }`, so the marker band's
+      lower edge IS the boundary at single-block resolution. The surface-depth
+      field is a function of (world seed, x, z) alone, so the same columns
+      carry depth -1 in a probe dimension; `density-probe.sh` gained
+      `--origin-chunk` so the probe is forceloaded where they are.
+
+      Three cases — three seeds, three regions — times five pinned psl values
+      (100, 100 again in a second dimension, 40, 0, -20):
+
+        s1  seed -4172144997902289642  r.4.3    4 separating columns
+        s2  seed 42                    r.6.10  22 separating columns
+        s3  seed -9223372036854775808  r.13.26 23 separating columns
+
+      49 separating columns and 245 separating readings over 15 generated
+      dimensions — which are FOUR distinct dimension configurations plus one
+      deliberate byte-identical repeat (`k_p100_b` repeats `k_p100`) in each
+      of three worlds: twelve distinct (seed, psl) pairs, three repeats.
+
+      The denominator, MEASURED with `aps-boundary-analyze clamp` rather than
+      multiplied out: **901120 painted columns**, of which 245 are separating
+      readings and **900875 are controls**. Composition, per dimension:
+      65536 × 10 (s1 and s2, whose windows each painted a full 16×16 chunk
+      block) + 49152 × 5 (s3, which settled at 12 of those 16 chunk rows in
+      z — 192 chunks, the four missing rows on the low-z edge, all 23 of its
+      separating columns inside what was painted). Not 983040: that figure
+      assumed all fifteen windows painted 65536 and five of them did not.
+
+      `psl + surfaceDepth - 8` is right on every one of the 901120;
+      `psl + max(0, surfaceDepth) - 8` is right on every control and wrong on
+      every separating column. The measured lower edge tracks the pinned psl
+      exactly (100 → 91, 40 → 31, 0 → -9, -20 → -29), and the negative case is
+      what rules out sign handling in the boundary rather than a clamp. Scored
+      in the conformance file's "the surface depth carries no bottom clamp",
+      which prints the painted total so the 901120 above is reproducible from
+      this repository rather than arithmetic done by hand.
+
+      NO CLAMP **AT 0**, and not one word further. Every separating column is
+      at depth exactly -1 and the lowest raw in the 8589934592-column sweep is
+      -1.134416806, so a depth of -2 or below has never been observed. A clamp
+      at -1 or lower predicts the same edge as no clamp on every column in
+      this reading and is NOT separated by it. What is refuted is
+      `max(0, surfaceDepth)`, the candidate this project actually held.
+
+      WHY 49 CORRELATED COLUMNS SUFFICE, since the count looks small and the
+      columns sit in three compact clusters of a smooth field. The refutation
+      is arithmetic, not statistical: `psl + max(0, d) - 8 >= psl - 8` for ANY
+      depth field `d`, whatever its distribution and however its columns
+      correlate, so the clamped candidate predicts an edge at or above
+      `psl - 8` everywhere with no tail, and one correct reading of an edge at
+      `psl - 9` refutes it. No sample-size question arises and no independence
+      caveat is owed. The three seeds and five psl values guard the READING
+      instead — a misread region, a psl that did not take, a fixed offset, a
+      one-seed coincidence — which is a different job from statistical power.
+      The rate below (1 in 87652393) IS statistical, and is stated as ten
+      excursions rather than 98 columns for exactly that reason.
+
+      WHAT IT DOES NOT SAY. It settles the CONDITION's boundary, not what a
+      vanilla overworld visibly does at such a column: the one cluster read as
+      a real overworld shows no block difference either way (above), and the
+      other two were never generated as overworlds. "The clamp is unobservable
+      in vanilla's block output" is a different claim and is NOT made — that
+      would need a depth -1 column whose solid run TOP is at `y = psl - 9`, or
+      a desert/beach one within arms 3.3/3.2's 29- and 5-block reach, and none
+      has been looked for. The rate is pinned by ten independent excursions
+      rather than 98 columns, so 1 in 87652393 carries about a third of its
+      own size in uncertainty; it is used only to say the 2097152-column
+      census was uninformative, which holds at any plausible value. And the
+      window is x, z in [-16384, 16384) on the eight golden seeds — no other
+      seed, no further-out window.
+
+      AND IT IS A THREE-WAY SEPARATION. Every separating raw depth lies in
+      (-1.14, -1.00), so the three candidate conversions of that double
+      predict three DIFFERENT lower edges: `floor` → -2 → `psl - 10`,
+      `(int)` → -1 → `psl - 9`, a bottom clamp → 0 → `psl - 8`. Measured:
+      `psl - 9`, on all 49 columns at all five pinned psl values.
+
+      `floor` is wrong on exactly two disjoint sets: the separating columns
+      (raw at or below -1) and the columns whose raw is negative but above -1
+      (`(int)` 0, `floor` -1). Everywhere raw >= 0 the two ARE the same
+      function — per window at psl 100 / 100 / -20: 65536 - 4 - 440 = 65092,
+      65536 - 22 - 436 = 65078, 49152 - 23 - 508 = 48621. The first set is
+      what is new: without a raw reaching -1 nothing separates `(int)` from
+      `floor` at all, which is why neither the 52 apsb dimensions nor the
+      2097152 golden columns do.
+
+      That floor row is an IDENTITY, not a second refutation, and is labelled
+      so in the conformance case. Once "unclamped right == painted" holds,
+      every painted column's edge IS `psl + depth - 8`, so `floor` differs
+      exactly where `floor(raw) != (int)raw` — the two sets above — and
+      `floored right == painted - separating - nearZeroNegative` follows BY
+      DEFINITION. It is kept as a CHECK because it would catch a bug in the
+      scorer itself, not because it measures anything about vanilla. What
+      refutes `floor` is the unclamped row together with the separating raws
+      lying in (-1.14, -1.00).
 
       The claim ALL of this replaces was wrong too: `surface_executor.cpp`
       and `executor.hpp` both said the depth "reaches -1 on about one column
-      in 22000". It reaches -1 on none of the 2097152 golden columns and on 4
-      of 536870912 wider ones — four orders of magnitude rarer than claimed.
+      in 22000". It reaches -1 on none of the 2097152 golden columns and on 98
+      of 8589934592 wider ones, 1 in 87652393 — nearly four orders of
+      magnitude rarer than claimed.
 
       On real worlds, and now in BOTH directions, because counting only what
       the old reading cannot explain rewards a boundary for reaching further
@@ -377,14 +521,16 @@ Open:
       `find_top_surface` returns integers), and the tree now requires the two
       surface noises. `surface::Executor::surfaceDepthRaw` exposes the value
       before the cast, which is what makes the clamp census a measurement
-      rather than an assertion. `tools/analysis/aps-boundary-probe.sh` +
-      `aps-boundary-analyze.cpp` (modes `probe`, `golden`, `band`, `bands`,
-      `depth`) regenerate and re-score it;
+      rather than an assertion. `tools/analysis/aps-boundary-probe.sh` and
+      `tools/analysis/aps-clamp-probe.sh` + `aps-boundary-analyze.cpp` (modes
+      `probe`, `golden`, `band`, `bands`, `depth`, `sweep`, `window`,
+      `clamp`) regenerate and re-score it;
       `tests/conformance/vanilla_above_preliminary_surface_test.cpp` scores
-      it, in eight cases: the boundary, the floor-not-truncation conversion,
+      it, in ten cases: the boundary, the floor-not-truncation conversion,
       the 8 as a literal, the second seed, both directions on real
-      overworlds, the surface-pass control, the depth census, and the
-      varying-psl counts below.
+      overworlds, the surface-pass control, the depth census, the four
+      negative-depth columns, the bottom clamp, and the varying-psl counts
+      below.
 - [ ] **Where a spatially varying `preliminary_surface_level` is sampled —
       open, and found by the sweep above.** `terrain::ChunkFiller` evaluates
       the entry per column. The server does not: driven by a three-valued

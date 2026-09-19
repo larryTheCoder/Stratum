@@ -150,6 +150,7 @@ TEST_CASE("the ocean floor sits at or below the world surface", "[conformance][h
     const auto golden = std::ranges::count_if(regions, [](const std::filesystem::path& region) {
         return region.filename() == "r.0.0.mca";
     });
+    INFO(regions.size() << " region(s) found, " << golden << " of them the golden r.0.0");
     CHECK(golden == 24);
 
     // OCEAN_FLOOR is the map terrain will actually be compared against, so
