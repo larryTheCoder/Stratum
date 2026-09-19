@@ -13,6 +13,8 @@
 // tell whoever holds the pack to go and fix something that is not their
 // problem.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -95,8 +97,7 @@ private:
     }
 
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-validate-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-validate-test");
     }
 
     std::filesystem::path path_;
@@ -325,8 +326,7 @@ TEST_CASE("validation is deterministic", "[validate]") {
 
 TEST_CASE("Pack::open finds either layout, and names all three when it finds none",
           "[validate][pack]") {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "stratum-open-layout-test";
+    const std::filesystem::path root = stratum::test::tempPath("stratum-open-layout-test");
     std::filesystem::remove_all(root);
 
     // A worldgen tree: density_function/ at the root.

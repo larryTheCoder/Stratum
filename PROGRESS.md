@@ -1248,6 +1248,39 @@ but waits on the same table and is untested against a real Nukkit build.
 Out of scope for now: features/structures, read/write radii, the scripting
 escape hatch.
 
+## Test harness — scratch paths under `ctest -j`
+
+- [x] **The unit suite is now parallel-safe; it was not, for one reason.**
+      `catch_discover_tests` registers every Catch2 case as its own ctest
+      test, so each runs in a *separate process*. Every scratch-path scheme
+      in the suite was unique only *within* a process — twelve copies of a
+      `static int counter` `uniqueName()`, one `scratchPath()` of the same
+      shape, and twelve sites composing nineteen hard-coded
+      `temp_directory_path() / "stratum-…"` names: twenty-five code sites in
+      all. Concurrent processes therefore handed out the same first name,
+      and these fixtures clear their directory in the constructor
+      (`remove_all`), so one case deleted another's tree mid-test.
+      Measured on f792e64, `ctest --preset dev -j8`: 10, 8 and 10 failures
+      in three runs, out of 418 — a different set each time, which is the
+      signature. Serial was 418/418 in the same tree.
+      The fix is one header, `tests/support/temp_path.hpp`, giving
+      `stratum::test::tempName/tempPath` — `<stem>-<pid>-<serial>`, the pid
+      from `getpid`/`_getpid` — used at all twenty-five sites, each keeping its own
+      descriptive stem so a leaked file still names the test that dropped
+      it. After: five `-j8` runs and three `-j12` runs at 418/418, serial
+      still 418/418.
+      Isolated control for the mechanism, the conformance case
+      `vanilla_inline_noise_test.cpp` run as 16 concurrent processes:
+      6/16 passed before the change, 24/24 after, and the pre-change
+      failures name it exactly — *recursive directory iterator cannot open
+      directory: No such file or directory
+      [/tmp/stratum-inline-noise-replay-1]*.
+      Bound, not a guarantee: a pid can be reused once its process has
+      exited, so this makes concurrent collision unreachable, not collision
+      in general. A process that crashed without cleaning up and a later
+      process drawing the same pid would still meet — the constructors'
+      existing `remove_all` is what covers that, as before.
+
 ## Smaller loose ends
 
 - The loader's strict-rejection-by-default policy for user-supplied
@@ -1255,3 +1288,22 @@ escape hatch.
   anything, just undecided.
 - `README.md` is stale relative to this session's work: it still describes
   aquifers as unwired and most surface rules as refused. Worth a pass.
+- **Whether the `dev` test preset should pass `-j` is still open, and is a
+  separate decision from the fix above.** It never has, so nothing regresses
+  by leaving it; the change only means `-j` is now *available*. For: the
+  suite drops from ~4.3 s serial to ~0.9 s at `-j8`, and CI runs it on every
+  push. Against: parallel is the mode that hides shared-state bugs rather
+  than reporting them — serial is what caught this one, and a preset that
+  defaults to `-j` would have turned a reproducible 418/418 into a green
+  tick over a real defect. Three `tests/conformance/` files still hold fixed
+  scratch paths (below), so a `-j` default is in any case premature for the
+  conformance preset. Suggested: leave `dev` serial, let the developer pass
+  `-j` deliberately, and revisit once conformance is clean too.
+- Three fixed scratch paths remain in `tests/conformance/`, outside this
+  change's ownership: `golden_fill_test.cpp:169`
+  (`stratum-golden-fill-probe-biome`), `golden_fill_aquifer_test.cpp:157`
+  (`stratum-golden-fill-aquifer-probe-biome`) and
+  `vanilla_legacy_gradient_gap_test.cpp:509`. They are the same defect and
+  `tests/support/temp_path.hpp` is already on that target's include path.
+  Not measured: those cases skip without fixtures, so no claim is made here
+  about whether they currently collide.

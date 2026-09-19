@@ -5,6 +5,8 @@
 // CRCs by hand, pixel data by inflating the IDAT. A "it didn't crash" test
 // would not notice a scanline filter byte in the wrong place.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/image/png.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -175,8 +177,7 @@ TEST_CASE("a written file matches what the encoder produced", "[png]") {
     Image image(8, 4);
     image.setPixel(3, 2, 10, 20, 30);
 
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "stratum-test-image.png";
+    const std::filesystem::path path = stratum::test::tempPath("stratum-test-image", ".png");
     stratum::image::writePng(path, image);
 
     std::vector<char> written;

@@ -5,6 +5,8 @@
 // — independently tested against synthetic bytes (region_file_test.cpp) — so
 // reading back what this writes is a genuine check, not a tautology.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/region/region_file.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -36,9 +38,7 @@ namespace {
 }
 
 [[nodiscard]] std::filesystem::path scratchPath(const char* name) {
-    static int counter = 0;
-    return std::filesystem::temp_directory_path() /
-           ("stratum-region-writer-test-" + std::to_string(++counter) + "-" + name);
+    return stratum::test::tempPath("stratum-region-writer-test", std::string("-") + name);
 }
 
 } // namespace

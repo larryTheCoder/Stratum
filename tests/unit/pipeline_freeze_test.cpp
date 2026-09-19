@@ -10,6 +10,8 @@
 // works is pleasant; a world that opens when it should not have is a seam in
 // somebody's terrain that no later fix can remove.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -82,8 +84,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-freeze-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-freeze-test");
     }
 
     std::filesystem::path root_;

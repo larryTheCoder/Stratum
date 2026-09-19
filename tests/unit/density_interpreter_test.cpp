@@ -12,6 +12,8 @@
 // says "still the same as last time" would have passed just as happily
 // before the code was written.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -92,8 +94,7 @@ private:
     }
 
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-interpreter-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-interpreter-test");
     }
 
     std::filesystem::path path_;

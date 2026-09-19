@@ -5,6 +5,8 @@
 // halfway. Every file is either understood, or reported by name — never
 // dropped (SPEC §8).
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -53,8 +55,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-pack-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-pack-test");
     }
 
     std::filesystem::path path_;

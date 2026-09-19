@@ -11,6 +11,8 @@
 // of the renderer, so agreement means the mapping is right rather than
 // self-consistent.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -85,8 +87,7 @@ private:
     }
 
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-render-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-render-test");
     }
 
     std::filesystem::path path_;

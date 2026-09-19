@@ -1,5 +1,7 @@
 // Stratum — the chunk filler.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include "support/temp_path.hpp"
+
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
@@ -101,8 +103,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-filler-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-filler-test");
     }
 
     std::filesystem::path path_;

@@ -6,6 +6,8 @@
 // walked forever, a dangling reference read as zero, a node type skipped —
 // so most of what is checked here is that those are refused, by name.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -64,8 +66,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-density-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-density-test");
     }
 
     std::filesystem::path path_;

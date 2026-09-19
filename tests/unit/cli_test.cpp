@@ -6,6 +6,7 @@
 // rather than the functions behind it.
 
 #include "support/region_builder.hpp"
+#include "support/temp_path.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -33,7 +34,7 @@ struct CliResult {
 
 [[nodiscard]] CliResult runCli(const std::string& arguments) {
     const std::filesystem::path outputPath =
-        std::filesystem::temp_directory_path() / "stratum-cli-test-output.txt";
+        stratum::test::tempPath("stratum-cli-test-output", ".txt");
     std::string command = std::string("\"") + STRATUM_CLI_PATH + "\" " + arguments + " > \"" +
                           outputPath.string() + "\" 2>&1";
 
@@ -85,10 +86,10 @@ struct CliResult {
     return section;
 }
 
-[[nodiscard]] std::filesystem::path writeRegion(const std::string& name, bool withDirt) {
+[[nodiscard]] std::filesystem::path writeRegion(const std::string& stem, bool withDirt) {
     RegionBuilder builder;
     builder.addChunk(1, 1, {stoneSection(withDirt)});
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    const std::filesystem::path path = stratum::test::tempPath(stem, ".mca");
     builder.writeTo(path);
     return path;
 }
@@ -98,8 +99,8 @@ struct CliResult {
 class TempPack {
 public:
     explicit TempPack(bool withUnevaluable = true)
-        : path_(std::filesystem::temp_directory_path() /
-                (withUnevaluable ? "stratum-cli-pack" : "stratum-cli-pack-clean")) {
+        : path_(stratum::test::tempPath(withUnevaluable ? "stratum-cli-pack"
+                                                        : "stratum-cli-pack-clean")) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_ / "density_function");
         std::filesystem::create_directories(path_ / "noise");
@@ -137,8 +138,8 @@ private:
 } // namespace
 
 TEST_CASE("diff exits 0 and says so when regions are identical", "[cli]") {
-    const std::filesystem::path left = writeRegion("stratum-cli-a.mca", false);
-    const std::filesystem::path right = writeRegion("stratum-cli-b.mca", false);
+    const std::filesystem::path left = writeRegion("stratum-cli-a", false);
+    const std::filesystem::path right = writeRegion("stratum-cli-b", false);
 
     const CliResult result = runCli("diff \"" + left.string() + "\" \"" + right.string() + "\"");
     CHECK(result.exitCode == 0);
@@ -149,8 +150,8 @@ TEST_CASE("diff exits 0 and says so when regions are identical", "[cli]") {
 }
 
 TEST_CASE("diff exits 1 and names the block when regions differ", "[cli]") {
-    const std::filesystem::path left = writeRegion("stratum-cli-c.mca", false);
-    const std::filesystem::path right = writeRegion("stratum-cli-d.mca", true);
+    const std::filesystem::path left = writeRegion("stratum-cli-c", false);
+    const std::filesystem::path right = writeRegion("stratum-cli-d", true);
 
     const CliResult result = runCli("diff \"" + left.string() + "\" \"" + right.string() + "\"");
     // Exit 1 for "there are differences", as diff(1) does — a script can tell
@@ -165,9 +166,8 @@ TEST_CASE("diff exits 1 and names the block when regions differ", "[cli]") {
 }
 
 TEST_CASE("render writes a PNG", "[cli]") {
-    const std::filesystem::path region = writeRegion("stratum-cli-e.mca", false);
-    const std::filesystem::path image =
-        std::filesystem::temp_directory_path() / "stratum-cli-render.png";
+    const std::filesystem::path region = writeRegion("stratum-cli-e", false);
+    const std::filesystem::path image = stratum::test::tempPath("stratum-cli-render", ".png");
 
     const CliResult result =
         runCli("render \"" + region.string() + "\" --out \"" + image.string() + "\"");
@@ -200,14 +200,14 @@ TEST_CASE("the CLI fails loudly rather than half-succeeding", "[cli]") {
     }
 
     SECTION("render without an output path") {
-        const std::filesystem::path region = writeRegion("stratum-cli-f.mca", false);
+        const std::filesystem::path region = writeRegion("stratum-cli-f", false);
         const CliResult result = runCli("render \"" + region.string() + "\"");
         CHECK(result.exitCode == 2);
         std::filesystem::remove(region);
     }
 
     SECTION("an unknown render mode") {
-        const std::filesystem::path region = writeRegion("stratum-cli-g.mca", false);
+        const std::filesystem::path region = writeRegion("stratum-cli-g", false);
         const CliResult result =
             runCli("render \"" + region.string() + "\" --out /tmp/x.png --mode nonsense");
         CHECK(result.exitCode == 2);
@@ -224,8 +224,7 @@ TEST_CASE("the CLI fails loudly rather than half-succeeding", "[cli]") {
 
 TEST_CASE("render --pack writes a PNG of a density function", "[cli]") {
     const TempPack pack;
-    const std::filesystem::path image =
-        std::filesystem::temp_directory_path() / "stratum-cli-density.png";
+    const std::filesystem::path image = stratum::test::tempPath("stratum-cli-density", ".png");
     std::filesystem::remove(image);
 
     const CliResult result = runCli("render --pack \"" + pack.path().string() +
@@ -246,8 +245,7 @@ TEST_CASE("render --pack writes a PNG of a density function", "[cli]") {
 
 TEST_CASE("render refuses half-given density options", "[cli]") {
     const TempPack pack;
-    const std::filesystem::path image =
-        std::filesystem::temp_directory_path() / "stratum-cli-unused.png";
+    const std::filesystem::path image = stratum::test::tempPath("stratum-cli-unused", ".png");
 
     // --pack without --function: there is no default function, and picking
     // one would be a guess about what was wanted.
@@ -273,8 +271,7 @@ TEST_CASE("render refuses half-given density options", "[cli]") {
 
 TEST_CASE("render says which node type it cannot draw", "[cli]") {
     const TempPack pack;
-    const std::filesystem::path image =
-        std::filesystem::temp_directory_path() / "stratum-cli-refused.png";
+    const std::filesystem::path image = stratum::test::tempPath("stratum-cli-refused", ".png");
     std::filesystem::remove(image);
 
     const CliResult result = runCli("render --pack \"" + pack.path().string() +
@@ -310,8 +307,7 @@ TEST_CASE("validate exits 0 on a clean pack and 1 on one with warnings", "[cli]"
 }
 
 TEST_CASE("validate exits 4 on a pack that will not resolve", "[cli]") {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "stratum-cli-broken-pack";
+    const std::filesystem::path root = stratum::test::tempPath("stratum-cli-broken-pack");
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "density_function");
     {
@@ -328,8 +324,7 @@ TEST_CASE("validate exits 4 on a pack that will not resolve", "[cli]") {
 }
 
 TEST_CASE("validate refuses a directory that is not a pack", "[cli]") {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "stratum-cli-not-a-pack";
+    const std::filesystem::path root = stratum::test::tempPath("stratum-cli-not-a-pack");
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
 

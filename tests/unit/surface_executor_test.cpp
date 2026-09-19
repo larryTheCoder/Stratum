@@ -1,5 +1,7 @@
 // Stratum — running a dimension's surface rules.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -91,8 +93,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-bandlands-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-bandlands-test");
     }
 
     std::filesystem::path path_;
@@ -135,8 +136,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-surface-noise-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-surface-noise-test");
     }
 
     std::filesystem::path path_;

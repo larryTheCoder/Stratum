@@ -32,6 +32,8 @@
 // The recording is Mojang-derived and never committed (SPEC §12). Without it
 // this SKIPs, naming the command that produces it.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -98,8 +100,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-inline-noise-replay-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-inline-noise-replay");
     }
 
     std::filesystem::path path_;

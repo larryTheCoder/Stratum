@@ -89,7 +89,12 @@ target_compile_definitions(stratum_conformance_tests PRIVATE
 # second copy of the inversion -- and the analyzer's overworld control, which
 # is the only thing that says the inversion is right, would not be validating
 # the copy the test runs.
+# tests/ is on the include path for support/, the same headers tests/unit
+# already reaches by the same relative spelling — support/temp_path.hpp is
+# what keeps a scratch name unique across the separate processes
+# catch_discover_tests hands each case.
 target_include_directories(stratum_conformance_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/.."
     "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/analysis"
 )
 

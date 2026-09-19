@@ -12,6 +12,8 @@
 // tests do not restate them either — where a name appears below it is
 // because that particular field's *handling* is under test.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -75,8 +77,7 @@ private:
     }
 
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-settings-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-settings-test");
     }
 
     std::filesystem::path path_;

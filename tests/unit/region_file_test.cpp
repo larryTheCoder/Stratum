@@ -9,6 +9,7 @@
 // did not verify.
 
 #include "support/region_builder.hpp"
+#include "support/temp_path.hpp"
 
 #include <stratum/region/region_file.hpp>
 
@@ -138,8 +139,11 @@ TEST_CASE("a region file on disk reads the same as one in memory", "[region]") {
     const std::vector<std::byte> payload = payloadOfLength(2048, 23);
     addCompressed(builder, 2, 3, Compression::Zlib, payload);
 
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "stratum-test-r.0.0.mca";
+    // Held as a string as well as a path: RegionFile::name() is checked
+    // against the name this test chose, not against the path it built, so the
+    // assertion still pins "name() is the file name component".
+    const std::string fileName = stratum::test::tempName("stratum-test-r.0.0", ".mca");
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / fileName;
     {
         std::ofstream out(path, std::ios::binary);
         REQUIRE(out);
@@ -148,7 +152,7 @@ TEST_CASE("a region file on disk reads the same as one in memory", "[region]") {
     }
 
     const RegionFile region = RegionFile::open(path);
-    CHECK(region.name() == "stratum-test-r.0.0.mca");
+    CHECK(region.name() == fileName);
     CHECK(region.readChunk(2, 3) == payload);
     std::filesystem::remove(path);
 

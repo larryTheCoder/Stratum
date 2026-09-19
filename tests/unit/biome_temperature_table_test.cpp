@@ -7,6 +7,8 @@
 // real ones are exercised wherever the conformance suite runs `temperature`
 // end to end.
 
+#include "support/temp_path.hpp"
+
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -60,8 +62,7 @@ public:
 
 private:
     [[nodiscard]] static std::string uniqueName() {
-        static int counter = 0;
-        return "stratum-temperature-test-" + std::to_string(++counter);
+        return stratum::test::tempName("stratum-temperature-test");
     }
 
     std::filesystem::path path_;
