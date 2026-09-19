@@ -634,12 +634,18 @@ TEST_CASE("real overworlds, both directions of the boundary at once", "[conforma
     // The old reading switches the whole subtree off below `psl`, so each of
     // these is a block it cannot explain.
     CHECK(belowOld == 14008);
-    // Most of them land inside the band, per column. The residual is not
-    // noise and is not waved away: a spatially varying `preliminary_surface_
-    // level` reaches the condition SAMPLED AND INTERPOLATED rather than read
-    // per column (SPEC §11, PROGRESS.md's M4 entry), which moves the
-    // boundary by a few blocks on steep ground. That is measured, open, and
-    // deliberately not implemented here.
+    // Most of them land inside the band when `psl` is read PER COLUMN, which
+    // is what this number is: the reading the engine no longer uses, kept
+    // here as the baseline the lattice is measured against. The 2429 it
+    // leaves are not noise and are not waved away — a spatially varying
+    // `preliminary_surface_level` reaches the condition sampled on a 16-block
+    // lattice and blended (SPEC §11), and under that reading the residual is
+    // 0 on every one of the eight seeds — over EVERY grass_block in these
+    // regions, not just the ones below the per-column psl. Scored, together
+    // with the reverse direction under the same lattice, in
+    // vanilla_psl_lattice_test.cpp, "the lattice on real terrain, both
+    // directions and every grass block"; the two reverse counts just below
+    // are recomputed there in the same pass, so the two files cannot drift.
     CHECK(insideBand == 11579);
 
     INFO(surfaceInBand << " column surfaces inside the band, " << surfaceMaterial

@@ -64,7 +64,14 @@ readonly MINECRAFT_VERSION="1.21.11"
 readonly K="0.35"          # scales the function into the gradient's range
 readonly MIN_Y=-64
 readonly HEIGHT=384
-readonly CHUNKS=8          # per dimension, squared: 8 -> 128x128 blocks
+# Per dimension, squared: 8 -> a 128x128-block FORCELOADED square. What the
+# readback then covers is larger, because the server generates a border of
+# chunks around the square and the whole region file is copied: at --origin 0
+# that is x, z in [0, 191] (the negative half of the border falling in a
+# region that is not copied) and at --origin -12 it is x, z in [-256, -1].
+# Measured in tests/conformance/vanilla_psl_lattice_test.cpp, "every dimension
+# of the sweep, scored twice and with its extent measured".
+readonly CHUNKS=8
 
 accept_eula=0
 spec=""

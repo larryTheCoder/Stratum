@@ -1467,9 +1467,12 @@ Open:
 
       above_preliminary_surface(x, y, z)  ==  y >= psl + surfaceDepth(x, z) - 8
 
-  where `psl` is the router's `preliminary_surface_level` at `(x, 0, z)`,
-  FLOORED. The condition opens `8 - surfaceDepth` blocks BELOW the level it is
-  named after — two to eight on ordinary terrain — and the 8 is a literal,
+  where `psl` is the router's `preliminary_surface_level` — NOT read at
+  `(x, 0, z)`: it is sampled on a 16-block lattice and blended, which the
+  measurement further down settles, and which every constant-psl probe in this
+  sweep is blind to by construction. The condition opens `8 - surfaceDepth`
+  blocks BELOW the level it is named after — two to eight on ordinary
+  terrain — and the 8 is a literal,
   invariant under cell height (4/8/16), cell width (4/8/16), `min_y`, `height`
   and `sea_level`. `surfaceDepth` is the same quantity the table above
   defines; no new noise and no new RNG derivation enter here, which is part of
@@ -1520,18 +1523,200 @@ Open:
     reason, and `ChunkFiller` reports a tree it cannot supply as blocked by
     name rather than throwing at the first block.
 
-  What is NOT settled, and is deliberately not implemented: where a
-  spatially varying `preliminary_surface_level` is SAMPLED. Driven by a
-  three-valued `range_choice` (-40 / 0 / 60), the value that reaches the
-  condition takes 101 distinct integer values rather than three — every
-  integer from -40 to 60, no gaps — and is unchanged by cell width, so it is
-  sampled on a fixed horizontal lattice and interpolated, not read per column
-  as `ChunkFiller` reads it. The BOUNDARY those columns show takes 104
-  distinct values, -47 to 56, since the column's own surface depth (0..6 here)
-  widens the range; the two counts are different quantities and both are
-  asserted against `probes/apsb/v_psl`'s 36864 columns. A constant `psl` makes
-  the interpolation a no-op, which is why the boundary above is unaffected by
-  it. See PROGRESS.md's M4 entry.
+  **Where a varying `preliminary_surface_level` is SAMPLED — MEASURED, and
+  it is not the column.** The entry that reaches `above_preliminary_surface`
+  is
+
+      psl(x, z) = floor( bilerp( floor(R(X0, Z0)), floor(R(X1, Z0)),
+                                 floor(R(X0, Z1)), floor(R(X1, Z1)),
+                                 (x - X0)/16, (z - Z0)/16 ) )
+
+      X0 = floorDiv(x, 16) * 16,  X1 = X0 + 16   (Z likewise)
+
+  where `R` is the router entry. A 16-block horizontal lattice anchored at the
+  world origin — which, a chunk being 16 wide, is exactly each chunk's own
+  four corners — blended linearly in x and z, with the floor falling TWICE:
+  once at each lattice sample and once on the blend. Implemented in
+  `terrain::ChunkFiller` (`kPreliminarySurfacePitch`,
+  `preliminarySurfaceIn`), which now evaluates the entry four times per chunk
+  rather than 256 times.
+
+  Each part was measured separately rather than fitted together, and the
+  lattice is then re-derived without any of them — which matters here because
+  this question had already collected two wrong universal claims from
+  under-powered samples:
+
+  * **The pitch, by TRANSLATION, with no blending rule assumed.**
+    `probes/psllat`'s `s_cNN` dimensions drive the entry with the SAME field
+    shifted NN blocks in x (a `shifted_noise` constant shift, so the shift is
+    exact); `t_cNN` the same in z. A per-column read gives
+    `psl_NN(x, z) == psl_0(x+NN, z)` for every NN. Measured: it holds on
+    every column for NN in {0, 16, 32} — 33792 of 33792 at 16, 30720 of
+    30720 at 32 — and on 2.2% to 20.4% of them for NN in {1..8, 12}, the
+    worst being 783 of 35520 at NN = 7. Repeated in z, and repeated at seed
+    31337. That refutes a per-column read AND every pitch in {1, 2, 4, 8, 32}
+    at once, because each would have made a different subset of those rows
+    total.
+  * **The anchor, as one scan over one parameter at that pitch, and it is
+    not assumption-free.** Exactly 1 of the 256 phases reproduces all 36864
+    columns, and it is (0, 0); the runner-up gets 7542 of 36864. What that
+    scan ASSUMES is worth stating, because it is where the circularity would
+    hide: each phase is scored at the pitch the TRANSLATION test measured and
+    under the double-floored bilinear blend, so it is one axis of a joint
+    pitch x anchor x blend search, not an independent measurement of the
+    anchor. The pitch arrives from an argument that assumes no blend at all,
+    and the blend from `f_*` dimensions whose verdict does not depend on the
+    anchor — which is what keeps the three from leaning on each other.
+  * **The blend and the two floors.** `probes/psllat`'s `f_half` (arms -0.5 /
+    +0.5) and `f_quart` (-0.25 / +0.75) are the only probes of this entry
+    whose arms are not integers, and therefore the only ones that can
+    separate where the double becomes an int — every earlier probe used
+    integer arms, where "floor at the sample" and "floor after the blend" are
+    the same function. At pitch 16 anchor (0, 0), out of 36864 columns: the
+    reading above 36864; flooring only after the blend 20423 / 12121;
+    truncating at the sample 3119; truncating after the blend 4764; rounding
+    after it 22010; quantising to the cell's LOWER corner 21039; quantising
+    to the NEAREST of the four corners 21103. (Those last two are different
+    functions and each carries its own count — the earlier version of this
+    section called the lower-corner reading "nearest corner", which it is
+    not.)
+
+    `f_half` and `f_quart` are NOT two observations of this. Their arms land
+    on the same side of every integer the server can return, so the two
+    dimensions carry IDENTICAL server data — measured: the readbacks agree on
+    all 36864 columns, 33745 of them at psl = -1 and 3119 at psl = 0 in both.
+    What `f_quart` separates is the REJECTED models from one another, which
+    is the one column of that table where the two rows differ. The floor
+    placement itself is therefore measured at seed 42, again at seed 31337
+    (`psllat2`'s own `f_half`: 36864 of 36864, against 20164 / 2488 / 5409 /
+    21465 / 20664 / 20920 for the six refusals) and again below zero.
+  * **The cell index is floorDiv.** `floorDiv` and a truncating division are
+    the same function while x, z >= 0, so every probe this project had ever
+    run on this entry was blind to it. `probes/psllat3` FORCELOADS the subset
+    at chunk -12 (blocks -192..-65) and is read back over x, z in [-256, -1],
+    all 65536 columns of r.-1.-1 — the server generates a border of chunks
+    around every forceloaded square, and here that border shares the region
+    file. floorDiv keeps 65536 of 65536 columns; truncation drops to 4216.
+
+    The same correction applies to the other two specs, whose extent this
+    section previously gave as the forceloaded square: `psllat` and `psllat2`
+    are forceloaded at chunk 0 and read back over x, z in [0, 191] — 36864
+    columns, not the 128x128 of the square — the negative half of their
+    border falling in r.-1.-1, which is not copied. All three extents are
+    measured from the marked columns themselves in
+    `vanilla_psl_lattice_test.cpp`, "every dimension of the sweep, scored
+    twice and with its extent measured".
+  * **And the whole lattice again, MODEL-FREE.** The strongest form of the
+    claim available needs none of the above: predict every interior column
+    from the SERVER's own recovered psl at the four multiples of 16 around
+    it. No probe-noise replica, no anchor (the corners are taken where the
+    pitch says they are), and no calibration of the first floor, since a
+    recovered corner value is already an integer. It scores 30976 of 30976 on
+    each of the 24 `psllat` dimensions, 30976 of 30976 on each of the 9
+    `psllat2`, 57600 of 57600 on each of the 10 `psllat3` and 30976 of 30976
+    on each of the 6 `apsb4` — 1784064 interior columns, all exact.
+
+  It is NOT the cell lattice, and that now has its denominator: `probes/apsb4`
+  varies cell width 4/8/16 and cell height WITH the varying field in place and
+  gets 36864 of 36864 identical columns each time. (`probes/apsb3` varied the
+  same knobs under a CONSTANT psl, where a blend is a no-op and nothing could
+  have shown — which is why apsb4 exists.) Wrapping the entry in `flat_cache`,
+  which relocates its argument to the 4x4 column corner, also changes nothing,
+  consistent with a lattice whose own samples already sit at multiples of 16.
+  Nor is the pitch a property of the driving field: `xz_scale` 0.5, 1, 2 and 8
+  all reproduce every column.
+
+  **And it is corroborated on real terrain in BOTH directions.**
+  `above_preliminary_surface` gates the overworld's surface-materials subtree
+  and occurs exactly three times in the whole pinned tree — `overworld.json`,
+  `amplified.json`, `large_biomes.json`, once each, all of them that same gate
+  (asserted, not assumed, in `vanilla_psl_lattice_test.cpp`'s case
+  "above_preliminary_surface occurs exactly three times in the pinned tree").
+  So a block only that subtree can place is a block only that condition can
+  gate. Neither direction below is decisive alone, which is why both are run
+  — and this is not the only test on real terrain that could have said no,
+  since `vanilla_above_preliminary_surface_test.cpp` runs the same two
+  directions under the per-column reading.
+
+  * **Forward — blocks the reading cannot place.** Over EVERY `grass_block`
+    the server wrote in the eight golden regions — 627766 of them, not the
+    subset below the per-column psl, so a lattice psl sitting HIGHER than the
+    per-column one cannot hide a counter-example — **not one** falls below
+    the band the lattice opens. For contrast, 14008 of those fall below the
+    per-column boundary, and the per-column band leaves 2429 of them
+    unexplained, spread very unevenly across the seeds (1398, 404, 285, 259,
+    56, 26, 1, 0). Under the lattice the residual is 0 on every one of the
+    eight seeds, not 0 on average. What makes one seed's share large is still
+    untested — the steepness hypothesis is neither confirmed nor needed now
+    that none of the residual is left.
+  * **Reverse — the band the reading OPENS.** Counting only what the old
+    reading cannot explain rewards a boundary for reaching further down: a
+    boundary at the world floor would score perfectly forward. So the band
+    `[psl + depth - 8, psl)` is also read at the column's own SURFACE, where
+    the materials subtree is what decides the block. Under the lattice, 12916
+    column surfaces fall in the band and 12403 carry a block only the gated
+    subtree places — **96.03%** — against 10676 of 11953, **89.32%**, for the
+    per-column band, both recomputed in the same pass. The 513 that are not
+    gated-only are 503 `stone` (which the subtree itself places, so the block
+    is silent either way), 9 `granite` and 1 `copper_ore`, both written by
+    features after the surface pass. Absence of a material is never counted
+    as a refutation here — the subtree is a `sequence` whose inner rules may
+    decline at a position its gate opened — so this direction is a bound, and
+    says so.
+
+  **The shipped engine therefore reads this one router entry TWO different
+  ways, deliberately.** `terrain::ChunkFiller` puts
+  `preliminary_surface_level` through the 16-block lattice above for the
+  SURFACE RULE, and reads it PER COLUMN, at `(x, 0, z)`, for the AQUIFER's
+  four surface consumers. The lattice half is measured, through
+  `above_preliminary_surface`, over everything in this section. **The aquifer
+  half is UNMEASURED** — nothing in this sweep touches it, and the aquifer's
+  own probes scoring well under a per-column read is not evidence either way,
+  because a three-valued field on a 16-lattice and the same field per column
+  agree on most columns. Whichever reading is wrong there is a parity bug
+  waiting to be found; PROGRESS.md's M4 entry carries the probe that would
+  settle it.
+
+  Three things this does NOT say. It does not say the pitch is 16 for any
+  consumer other than this condition — the AQUIFER reads the same router entry
+  and its own reading is not measured here (see the paragraph above, and
+  PROGRESS.md's M4 entry). Every field in the sweep is y-independent, so this
+  is the HORIZONTAL sampling only; that the entry is read at absolute y = 0
+  was settled separately and is unchanged. And it does not separate `a + (b - a) * t` from other
+  algebraically equal spellings of a linear blend: it is exact on every column
+  it was scored over, which makes those spellings indistinguishable here
+  rather than decided. The population is the one the conformance file itself
+  scores and no larger — **1871872** columns, every one of the 43 dimensions
+  of `psllat`, `psllat2` and `psllat3`, against the probe-noise replica, plus
+  the 1784064 interior columns of the model-free reading above. (An earlier
+  version of this section quoted 1613824 across 36 dimensions, a figure that
+  came from analyser runs and was pinned by no test. Numbers here are the
+  ones the tests hold.)
+
+  The counts the earlier, open version of this section quoted still stand and
+  are still asserted: driven by the three-valued `range_choice` the psl
+  recovered from the band takes 101 distinct integer values, -40 to 60 with no
+  gaps, while the BOUNDARY takes 104, -47 to 56, since the column's own
+  surface depth (0..6 there) widens it. Both are over `probes/apsb/v_psl`'s
+  36864 columns and they are different quantities.
+
+  And the 101 is now PREDICTED rather than only reproduced. Enumerate the
+  model's reachable values
+  — every assignment of the three arms to the four lattice samples, at every
+  offset inside a cell, with no fixture involved — and pitch 16 gives exactly
+  101 values, -40 to 60, contiguous. Read as a bound rather than as a fit: the
+  contiguity rules out the pitches too coarse to reach every integer (4 gives
+  57 values with 44 gaps, 2 gives 15 with 86) and says nothing against 8 or
+  32, which also predict 101. Those two are refused by the translation test,
+  not by this count — which is exactly why the pitch was measured by
+  translation instead. Asserted in `tests/unit/terrain_filler_test.cpp`.
+
+  Measured by `tools/analysis/psl-lattice-probe.sh` (43 probe dimensions
+  across three specs, two seeds and both signs of the world origin), read back
+  by `psl-lattice-analyze.cpp`, scored in
+  `tests/conformance/vanilla_psl_lattice_test.cpp` — twelve cases, every
+  number in this section among them.
+
 
   SETTLED, and it was the last thing open about the boundary's own FORMULA —
   the sampling question above is about `preliminary_surface_level` and stays

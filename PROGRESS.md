@@ -549,16 +549,108 @@ Open:
       the interpolation a no-op, which is why the boundary entry above stands
       without it.
 
-      Its size: the residual in the golden re-scoring above — 2429 of the
-      14008 blocks land just below the band, and it is very unevenly spread
-      across the seeds (1398, 404, 285, 259, 56, 26, 1, 0). Which seeds those
-      are is measured; that the spread tracks terrain STEEPNESS is a
-      hypothesis this milestone did not test, and it is written here as one
-      rather than as the finding. Not implemented here: it needs its own
-      probe family (the lattice's pitch and anchor separated by moving the
-      world origin, as `probes/cellsize` does for the cell lattice) and its
-      own conformance case before it touches the filler. The aquifer reads the
-      same router entry and would be affected too.
+      Measured part by part rather than fitted, since this question had
+      already taken two wrong universal claims:
+
+      * pitch, by TRANSLATION and with no blending rule in the argument
+        (`s_cNN` / `t_cNN` drive the same field shifted NN blocks): the
+        identity a per-column read would satisfy holds on 33792 of 33792
+        columns at NN = 16 and 30720 of 30720 at 32, and on 783-7489 of
+        ~36000 for NN in {1..8, 12}. Both axes, two seeds.
+      * anchor: 1 of 256 phases reproduces all 36864 columns; runner-up 7542.
+        Stated with what it assumes — the scan runs at the translation-
+        measured pitch under the double-floored blend, so it is one axis of a
+        joint pitch x anchor x blend search rather than a free-standing
+        measurement of the anchor.
+      * blend and floors, on the only non-integer arms ever pointed at this
+        entry (`f_half`, `f_quart`): 36864 of 36864 against 20423 / 12121 for
+        flooring only after the blend, 3119 for truncating at the sample,
+        4764 for truncating after it, 22010 for rounding, 21039 for
+        quantising to the cell's lower corner and 21103 to the nearest of the
+        four. `f_quart` is NOT a second observation — it is byte-for-byte the
+        same server data as `f_half` (measured: 36864 of 36864 identical,
+        33745 columns at psl = -1 and 3119 at 0 in both) and separates only
+        the rejected models from one another. So the placement is re-measured
+        at seed 31337 (36864 of 36864, refusals 20164 / 2488 / 5409 / 21465 /
+        20664 / 20920) and below zero.
+      * `floorDiv` vs a truncating cell index, which only NEGATIVE
+        coordinates can see: `probes/psllat3`, forceloaded at chunk -12 and
+        read back over x, z in [-256, -1], gives 65536 of 65536 against 4216.
+      * and the whole lattice again MODEL-FREE, which assumes none of the
+        above: every interior column predicted from the SERVER's own
+        recovered psl at the four multiples of 16 around it — no noise
+        replica, no anchor, no floor calibration. 30976 of 30976 on each of
+        the 24 `psllat` dimensions, the same on each of the 9 `psllat2` and
+        the 6 `apsb4`, 57600 of 57600 on each of the 10 `psllat3`: 1784064
+        interior columns, all exact.
+
+      Not the cell lattice, and that claim now has its denominator rather than
+      only its conclusion: `probes/apsb4` moves cell width 4/8/16 and cell
+      height WITH the varying field in place and gets 36864 of 36864 identical
+      columns each time. (`probes/apsb3` moves the same knobs under a CONSTANT
+      psl — the right probe for the separate question of whether the 8 is cell
+      geometry, and blind to this one, since a blend under a constant is a
+      no-op.) `flat_cache` around the entry changes nothing either, and
+      `xz_scale` 0.5/1/2/8 all reproduce every column, so the pitch is not a
+      property of the driving field.
+
+      **The residual this item owned: 2429 of 14008 -> 0.** Per seed rather
+      than pooled (1398, 404, 285, 259, 56, 26, 1, 0 -> 0, 0, 0, 0, 0, 0, 0,
+      0). The hypothesis that the spread tracked terrain STEEPNESS is still
+      untested — this measured where the value comes from, not what makes one
+      seed's share of the residual large — and it is no longer load-bearing,
+      since every block of the residual is now inside the band.
+
+      **And both directions on real terrain, not one.** Forward, over EVERY
+      `grass_block` the server wrote in the eight golden regions — 627766,
+      rather than the 14008 the per-column reading had already singled out,
+      so a lattice psl HIGHER than the per-column one cannot hide a
+      counter-example: 0 fall below the band the lattice opens. Reverse, at
+      the column's own surface: 12916 surfaces inside the lattice band, 12403
+      of them a block only the gated subtree places (96.03%), against 10676
+      of 11953 (89.32%) per column, both recomputed in the same pass; the 513
+      that are not are 503 `stone`, 9 `granite`, 1 `copper_ore`. The universal
+      underneath both — that `above_preliminary_surface` occurs exactly three
+      times in the pinned tree — is now an assertion rather than a comment.
+
+      And the count that opened the item is now PREDICTED, not just
+      reproduced: enumerate the model's reachable values for arms
+      {-40, 0, 60} — no fixture — and pitch 16 gives exactly 101, -40 to 60,
+      contiguous. As a bound it refuses pitch 4 (57 values, 44 gaps) and 2
+      (15, 86 gaps) and says nothing against 8 or 32; those die to the
+      translation family, which is why the pitch was measured that way.
+
+      `tools/analysis/psl-lattice-probe.sh` + `psl-lattice-analyze.cpp`
+      (43 dimensions, 3 specs, 2 seeds, both signs of the origin);
+      `tests/conformance/vanilla_psl_lattice_test.cpp` scores it in twelve
+      cases, over all 43 dimensions — 1871872 columns against the replica —
+      and no number in SPEC §11 now comes from an analyser run that no test
+      repeats. The probes' own EXTENTS are measured there too, and they are
+      not the forceloaded square: `psllat`/`psllat2` read back x, z in
+      [0, 191] and `psllat3` x, z in [-256, -1], because the server generates
+      a border of chunks around the 128x128 square and the whole region file
+      is copied.
+      `tools/analysis/density-probe.sh` gained `--origin`, without which the
+      negative-coordinate half could not have been generated at all.
+- [ ] **Whether the AQUIFER reads the same entry through the same lattice —
+      open, and untouched by the item above.** SPEC §11 now says this in the
+      specification itself rather than only here: the shipped engine reads
+      this one router entry two different ways on purpose, and the aquifer
+      half is unmeasured. `above_preliminary_surface` is
+      where the lattice was measured; `aquifer::` reads
+      `preliminary_surface_level` at its own cell centres and still reads it
+      per column here. Nothing in this sweep says whether that is right, and
+      the two readings are NOT close: on the three-valued field the
+      per-column reading matches the server on 3600 of 36864 columns
+      (`probes/apsb/v_psl`, pitch 1 in the analyzer's fit), so the aquifer is
+      reading a different number from the surface rule on about nine columns
+      in ten. That the aquifer's own conformance cases pass under it is
+      therefore worth something — but those cases were fitted under it, and
+      the aquifer's four surface consumers are gates and caps that quantise
+      hard, so passing is weak evidence rather than none. What would settle
+      it: re-score `probes/pslvar`'s six aquifer dimensions under BOTH
+      readings and report the two counts. The readout dimensions naming each
+      column's arm are already on disk beside them.
 - [x] **Surface-rule mcdoc schema generation debt — closed.** All 10 of the
       types mcdoc declares are now generated (`tools/mcdoc/surface.py`,
       `lib/src/surface_schema.inc`), and the loader reads them through the

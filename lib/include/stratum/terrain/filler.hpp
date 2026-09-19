@@ -200,6 +200,45 @@ public:
         return surfaceRulesBlockedBy_;
     }
 
+    /// The horizontal pitch the router's `preliminary_surface_level` is
+    /// SAMPLED on before it reaches `above_preliminary_surface` — measured,
+    /// and not a column (SPEC §11). 16 blocks, anchored at the world origin
+    /// through floorDiv (so the lattice does not fold at x = 0), which is the
+    /// same lattice as every chunk's own four corners.
+    static constexpr std::int32_t kPreliminarySurfacePitch = 16;
+
+    /// The value that reaches the condition at a column @p offsetX, @p offsetZ
+    /// blocks into a lattice cell whose four RAW samples are @p corners,
+    /// ordered (x0,z0), (x1,z0), (x0,z1), (x1,z1).
+    ///
+    /// The floor falls TWICE, and both places are measured rather than
+    /// chosen. Each lattice sample is floored where it is taken; the four
+    /// integers are then blended linearly in x and z; the blend is floored
+    /// again. `tools/analysis/psl-lattice-probe.sh`'s `f_*` family is the
+    /// only probe of this entry whose arms are not integers, and so the only
+    /// one that could ever have separated these. With arms -0.5 and +0.5, at
+    /// the measured pitch and anchor, this reading scores 36864 of 36864
+    /// columns and 65536 of 65536 at negative coordinates, while flooring
+    /// only after the blend scores 20423 and 34387, truncating at the sample
+    /// 3119, truncating after the blend 4764, rounding after it 22010,
+    /// quantising to the cell's LOWER corner 21039 and to the NEAREST of the
+    /// four corners 21103. On vanilla's own router the difference is
+    /// invisible — `find_top_surface` returns whole multiples of its cell
+    /// height — so this is a data-pack-only distinction, and it is measured.
+    [[nodiscard]] static std::int32_t preliminarySurfaceIn(const std::array<double, 4>& corners,
+                                                           std::int32_t offsetX,
+                                                           std::int32_t offsetZ) noexcept {
+        const double u =
+            static_cast<double>(offsetX) / static_cast<double>(kPreliminarySurfacePitch);
+        const double v =
+            static_cast<double>(offsetZ) / static_cast<double>(kPreliminarySurfacePitch);
+        const double low =
+            std::floor(corners[0]) + ((std::floor(corners[1]) - std::floor(corners[0])) * u);
+        const double high =
+            std::floor(corners[2]) + ((std::floor(corners[3]) - std::floor(corners[2])) * u);
+        return static_cast<std::int32_t>(std::floor(low + ((high - low) * v)));
+    }
+
 private:
     ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                 const settings::NoiseSettings& settings);
