@@ -107,9 +107,11 @@ public:
         write("density_function", "field",
               R"({"type":"minecraft:noise","noise":"test","xz_scale":1.0,"y_scale":0.0})");
         if (withUnevaluable) {
-            // end_islands, because it is still refused. This used to be
+            // slide, because it is still refused. This used to be
+            // end_islands, which is now settled and evaluates; before that it
+            // was
             // old_blended_noise, which now evaluates.
-            write("density_function", "blended", R"({"type":"minecraft:end_islands"})");
+            write("density_function", "blended", R"({"type":"minecraft:slide","argument":0.0})");
         }
     }
 
@@ -281,19 +283,19 @@ TEST_CASE("render says which node type it cannot draw", "[cli]") {
     // Exit 4 is "the command failed", distinct from exit 2's "you asked for
     // something malformed" — the request was well formed and cannot be met.
     CHECK(result.exitCode == 4);
-    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:end_islands"));
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:slide"));
     CHECK_FALSE(std::filesystem::exists(image));
 }
 
 TEST_CASE("validate exits 0 on a clean pack and 1 on one with warnings", "[cli]") {
     const TempPack pack;
 
-    // The pack carries `blended`, whose end_islands this build cannot
+    // The pack carries `blended`, whose slide this build cannot
     // evaluate, so it is not clean — exit 1 means "loads, with caveats",
     // matching diff's use of 1 for "there is something to tell you about".
     const CliResult warned = runCli("validate \"" + pack.path().string() + "\"");
     CHECK(warned.exitCode == 1);
-    CHECK_THAT(warned.output, Catch::Matchers::ContainsSubstring("minecraft:end_islands"));
+    CHECK_THAT(warned.output, Catch::Matchers::ContainsSubstring("minecraft:slide"));
     CHECK_THAT(warned.output, Catch::Matchers::ContainsSubstring("evaluable: 1 of 2"));
 
     // --strict is where SPEC §8's open question is handed to the caller

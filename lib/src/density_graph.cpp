@@ -454,4 +454,106 @@ std::vector<data::ResourceLocation> Graph::referencedNoises() const {
     return {unique.begin(), unique.end()};
 }
 
+std::vector<NodeIndex> Graph::reachableFrom(const NodeIndex root) const {
+    if (static_cast<std::size_t>(root) >= nodes_.size()) {
+        throw ResolveError("no node " + std::to_string(root) + " in a graph of " +
+                           std::to_string(nodes_.size()));
+    }
+
+    // SPLINES ARE PART OF THE REACH, and forgetting them is how a walk
+    // undercounts: a spline's `coordinate` is a density function, and in the
+    // overworld those coordinates are continents, erosion and ridges — three
+    // named noises that appear NOWHERE in the node arguments above them.
+    //
+    // An explicit stack, not recursion: a spline tree is deep enough that a
+    // hostile pack could reach the C stack's limit, and a refusal has to be
+    // an error rather than a crash (SPEC §8). Interior indices are bounds
+    // checked too, because a graph can also arrive from Assembler — a frozen
+    // pipeline blob is input, and a corrupt one must be refused rather than
+    // read out of bounds.
+    std::vector<char> seenNode(nodes_.size(), 0);
+    std::vector<char> seenSpline(splines_.size(), 0);
+    std::vector<NodeIndex> pending{root};
+    std::vector<SplineIndex> pendingSplines;
+    std::vector<NodeIndex> out;
+    seenNode[static_cast<std::size_t>(root)] = 1;
+
+    const auto pushNode = [&](const NodeIndex index) {
+        if (static_cast<std::size_t>(index) >= nodes_.size()) {
+            throw ResolveError("a node index of " + std::to_string(index) +
+                               " is outside this graph, which has " +
+                               std::to_string(nodes_.size()) + " node(s)");
+        }
+        if (std::exchange(seenNode[static_cast<std::size_t>(index)], static_cast<char>(1)) == 0) {
+            pending.push_back(index);
+        }
+    };
+    const auto pushSpline = [&](const SplineIndex index) {
+        if (static_cast<std::size_t>(index) >= splines_.size()) {
+            throw ResolveError("a spline index of " + std::to_string(index) +
+                               " is outside this graph, which has " +
+                               std::to_string(splines_.size()) + " spline(s)");
+        }
+        if (std::exchange(seenSpline[static_cast<std::size_t>(index)], static_cast<char>(1)) == 0) {
+            pendingSplines.push_back(index);
+        }
+    };
+
+    while (!pending.empty() || !pendingSplines.empty()) {
+        while (!pending.empty()) {
+            const NodeIndex index = pending.back();
+            pending.pop_back();
+            out.push_back(index);
+            const Node& node = nodes_[static_cast<std::size_t>(index)];
+            for (const NodeIndex argument : node.arguments) {
+                pushNode(argument);
+            }
+            if (node.spline.has_value()) {
+                pushSpline(*node.spline);
+            }
+        }
+        while (!pendingSplines.empty()) {
+            const SplineIndex index = pendingSplines.back();
+            pendingSplines.pop_back();
+            const SplineDefinition& spline = splines_[static_cast<std::size_t>(index)];
+            pushNode(spline.coordinate);
+            for (const SplinePoint& point : spline.points) {
+                if (point.nested.has_value()) {
+                    pushSpline(*point.nested);
+                }
+            }
+        }
+    }
+
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::vector<data::ResourceLocation> Graph::noisesReachableFrom(const NodeIndex root) const {
+    std::set<data::ResourceLocation> unique;
+    for (const NodeIndex index : reachableFrom(root)) {
+        const Node& node = nodes_[static_cast<std::size_t>(index)];
+        if (node.noise.has_value()) {
+            unique.insert(*node.noise);
+        }
+    }
+    return {unique.begin(), unique.end()};
+}
+
+std::vector<data::ResourceLocation>
+Graph::noisesReachableFrom(std::span<const NodeIndex> roots) const {
+    // The union of the per-root answer, rather than a second walk with a
+    // shared visited set. Which roots a dimension has is a list of fifteen,
+    // so the repeated visits cost nothing measurable, and the alternative is
+    // two definitions of "reaches" in one library that could drift apart —
+    // which is exactly the bug this whole area is about.
+    std::set<data::ResourceLocation> unique;
+    for (const NodeIndex root : roots) {
+        for (const data::ResourceLocation& id : noisesReachableFrom(root)) {
+            unique.insert(id);
+        }
+    }
+    return {unique.begin(), unique.end()};
+}
+
 } // namespace stratum::density

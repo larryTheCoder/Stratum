@@ -52,6 +52,7 @@
 #include <stratum/density/graph.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/noise/blended.hpp>
+#include <stratum/noise/end_islands.hpp>
 #include <stratum/noise/perlin.hpp>
 
 #include <array>
@@ -282,11 +283,17 @@ private:
     /// changed under the interpreter.
     [[nodiscard]] const noise::BlendedNoise& blendedFor(NodeIndex index) const;
 
-    /// Refuses @p node, by name and with a reason, if this interpreter
-    /// cannot evaluate it — because of its type, or because of what its
-    /// noise field carried. Both requireEvaluable() and evaluate() go
-    /// through it, so a refusal reads the same whichever asked.
-    void refuseIfUnevaluable(const Node& node) const;
+    /// Refuses the node at @p index, by name and with a reason, if this
+    /// interpreter cannot evaluate it — because of its type, because its
+    /// noise field carried parameters inline, or because the named noise it
+    /// samples was never built into the registry. Both requireEvaluable()
+    /// and evaluate() go through it, so a refusal reads the same whichever
+    /// asked.
+    ///
+    /// Takes an index rather than the node, because the third of those three
+    /// is a fact about this interpreter's binding table and not about the
+    /// node alone.
+    void refuseIfUnevaluable(NodeIndex index) const;
 
     void requireEvaluableNode(NodeIndex index, std::vector<char>& seen) const;
     void requireEvaluableSpline(SplineIndex index, std::vector<char>& seen) const;
@@ -310,6 +317,10 @@ private:
     /// a function of the world seed and the node's own five parameters, both
     /// fixed once the pipeline is compiled.
     std::vector<std::optional<noise::BlendedNoise>> blendedOf_;
+    /// The End island field, built once if any node needs it. It carries no
+    /// per-node parameters at all — every `end_islands` node in a graph is
+    /// the same function — so one per interpreter is one per graph.
+    std::optional<noise::EndIslands> endIslands_;
     /// Column invariance per node, computed once at construction rather than
     /// memoised on demand: an interpreter is shared across threads and const
     /// has to mean const (SPEC §4.1).

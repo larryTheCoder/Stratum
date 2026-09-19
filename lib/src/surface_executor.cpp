@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace stratum::surface {
 
@@ -176,9 +177,70 @@ buildClayBands(rng::Xoroshiro128PlusPlus& random) {
 
 } // namespace
 
+std::vector<std::string> verticalGradientNames(const RuleGraph& graph) {
+    // The `random_name` of every `vertical_gradient` in the tree, sorted and
+    // deduplicated. Each one is a SALT into the dimension's declared random
+    // source, so each one is a place where a legacy dimension needs a random
+    // this build cannot derive — which is why the list is public rather than
+    // a detail of Executor::compile: a caller has to know BEFORE compiling,
+    // the same way it has to know which noises the tree needs.
+    std::set<std::string> unique;
+    for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
+        const Condition& condition = graph.condition(index);
+        if (condition.type == ConditionType::VerticalGradient) {
+            unique.insert(condition.randomName);
+        }
+    }
+    return {unique.begin(), unique.end()};
+}
+
+std::vector<data::ResourceLocation> requiredNoises(const RuleGraph& graph) {
+    std::set<data::ResourceLocation> unique;
+    for (const data::ResourceLocation& id : graph.referencedNoises()) {
+        unique.insert(id);
+    }
+    if (readsSurfaceDepth(graph)) {
+        unique.insert(data::ResourceLocation::parse(std::string(kSurfaceNoise)));
+        unique.insert(data::ResourceLocation::parse(std::string(kSurfaceSecondaryNoise)));
+    }
+    if (usesBandlands(graph)) {
+        unique.insert(data::ResourceLocation::parse(std::string(kClayBandsOffsetNoise)));
+    }
+    return {unique.begin(), unique.end()};
+}
+
 Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                            const settings::NoiseGeometry& geometry,
                            const density::NoiseRegistry* noises, const std::int32_t seaLevel) {
+    // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11). A
+    // `vertical_gradient`'s randomness comes from the DIMENSION'S declared
+    // random source, not from a named noise, so it passes through no
+    // `wanted` list and NoiseRegistry::create never sees it. Under a legacy
+    // source this build has only the modern derivation for it, and that
+    // derivation is measured to agree with vanilla's own bedrock at chance
+    // (tests/conformance/vanilla_legacy_gradient_gap_test.cpp). Refusing
+    // here is what keeps a legacy pack that names no noise from compiling
+    // and quietly filling a chunk with bedrock.
+    //
+    // Only when a registry was supplied, because only a registry carries the
+    // source. A tree compiled without one is a caller that has told us
+    // nothing about the dimension, and ChunkFiller::compile — which is how a
+    // real dimension gets here — always supplies one.
+    const std::vector<std::string> gradientNames = verticalGradientNames(graph);
+    if (noises != nullptr && noises->source() == density::RandomSource::Legacy &&
+        !gradientNames.empty()) {
+        std::string names;
+        for (const std::string& name : gradientNames) {
+            if (!names.empty()) {
+                names += ", ";
+            }
+            names += name;
+        }
+        throw ExecutionError(density::legacyConstructRefusal(
+            "minecraft:vertical_gradient",
+            "its random_name(s) " + names + " salt this dimension's own random source"));
+    }
+
     const std::vector<std::string> blocked = graph.unrunnable();
     if (!blocked.empty()) {
         std::string message = "this build cannot run " + std::to_string(blocked.size()) +

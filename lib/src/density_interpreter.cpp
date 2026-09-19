@@ -114,21 +114,25 @@ std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) co
         case NodeType::Slide:
             return "it applies the vertical slides from a noise settings entry, which this "
                    "pipeline does not carry yet (SPEC §10, M3)";
-        case NodeType::FindTopSurface:
-            // Settled (SPEC §11). It needs no cell lattice — the old refusal
-            // said it did, and that was wrong; it scans its own column on a
-            // lattice of its own `cell_height`.
-            return std::nullopt;
-        case NodeType::EndIslands:
-            return "the End island field is not implemented yet; it arrives with the End's "
-                   "terrain (SPEC §10, M3)";
-
-        // `old_blended_noise` and `weird_scaled_sampler` were refused here
-        // until M3 settled them (SPEC §11) — the first against vanilla's own
-        // values to within a part in a billion, the second from vanilla's
-        // changelog plus both rarity ladders measured off the server. They
-        // reach the default deliberately, and had cases of their own until
-        // clang-tidy pointed out that saying so twice is saying it once.
+        // WHAT NO LONGER HAS A CASE HERE, and why each left:
+        //
+        //   `find_top_surface` — settled (SPEC §11). It needs no cell
+        //     lattice; the old refusal said it did and that was wrong. It
+        //     scans its own column on a lattice of its own `cell_height`.
+        //   `old_blended_noise` and `weird_scaled_sampler` — settled in M3,
+        //     the first against vanilla's own values to within a part in a
+        //     billion, the second from vanilla's changelog plus both rarity
+        //     ladders measured off the server.
+        //   `end_islands` — settled here. It was refused for the same reason
+        //     the other three were, no documentation this project trusted and
+        //     no oracle; the oracle turned out to be eight golden End regions
+        //     already on disk, plus two probe regions for the parts of the
+        //     field they cannot reach (noise::EndIslands' header, and
+        //     tests/conformance/golden_end_test.cpp).
+        //
+        // All four reach the default deliberately. Each had a case of its own
+        // saying so until clang-tidy pointed out that a branch identical to
+        // the default is the default written twice.
         default:
             return std::nullopt;
     }
@@ -156,12 +160,25 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
             // evaluated. refuseIfUnevaluable() is where it is refused.
             continue;
         }
-        const noise::NormalNoise* noise = noises.find(*node.noise);
-        if (noise == nullptr) {
-            throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' samples noise '" +
-                            node.noise->toString() + "', which was not built for this world seed");
-        }
-        noiseOf_[i] = noise;
+        // A NAMED noise the registry does not hold is LEFT UNBOUND, NOT
+        // THROWN — and the difference is a dimension. This used to throw
+        // here. One graph carries all seven of vanilla's dimensions, so
+        // construction-time refusal meant the registry had to satisfy every
+        // OTHER dimension's noises before this one could be sampled at all —
+        // and under a legacy source, where the registry is empty by
+        // necessity (SPEC §11), that made the nether's `final_density`
+        // unreachable because the OVERWORLD names `minecraft:cave_entrance`.
+        // Nothing about that node is wrong; nothing reaches it.
+        //
+        // The refusal is not softened, only moved to where the reach is
+        // known: refuseIfUnevaluable() throws at the node that actually
+        // samples an unbuilt noise, naming it, and requireEvaluable(root)
+        // still gives a caller the whole answer up front — ChunkFiller
+        // ::compile calls it on final_density and on every router entry it
+        // will sample, so a reached node is still refused before a single
+        // block is filled. SPEC §8's rule is about not generating a wrong
+        // world quietly, and a node no root reaches generates nothing.
+        noiseOf_[i] = noises.find(*node.noise);
     }
 
     // The blended noises, built once. Forty Perlin permutations each, from the
@@ -186,15 +203,31 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         // modern derivation scores at the empirical null in a legacy
         // dimension and vice versa (SPEC §11, measured on the server).
         //
-        // The Legacy arm is presently unreachable — `NoiseRegistry::create`
-        // refuses a Legacy source before any graph is compiled, because a
-        // legacy dimension's NAMED noises are still underived. It is written
-        // here anyway: this half is settled, and a settled answer belongs at
-        // the site that will use it rather than in a note about the site.
+        // THE LEGACY ARM IS REACHED. This comment used to say it was not,
+        // and that stopped being true when `NoiseRegistry::create` was
+        // narrowed to refuse only a Legacy source that is asked for a NAMED
+        // noise: a legacy dimension's `final_density` names none, so it
+        // builds an EMPTY registry and arrives here. It is the path the
+        // legacy Nether's terrain measurement runs through —
+        // tests/conformance/vanilla_legacy_nether_terrain_test.cpp, 99.99591%
+        // of block classes over eight golden regions (six independent
+        // worlds) — and the path the End generates its terrain on.
         blendedOf_[i] =
             noises.source() == RandomSource::Legacy
                 ? noise::BlendedNoise::legacyFromWorldSeed(noises.worldSeed(), parameters)
                 : noise::BlendedNoise::modern(noises.worldSeed(), parameters);
+    }
+
+    // The End island field, built once if anything asks for it. Unlike the
+    // blended noises it takes no per-node parameters — every `end_islands`
+    // node is the same function — so there is one per graph, not one per
+    // node, and it is left empty when no node needs it rather than built
+    // speculatively (it draws 256 LCG values).
+    for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
+        if (graph.node(static_cast<NodeIndex>(i)).type == NodeType::EndIslands) {
+            endIslands_ = noise::EndIslands::fromWorldSeed(noises.worldSeed());
+            break;
+        }
     }
 
     // Column invariance, in one forward pass. Node indices are assigned as
@@ -298,7 +331,18 @@ bool Interpreter::isColumnInvariant(NodeIndex index) const {
 const noise::NormalNoise& Interpreter::noiseFor(NodeIndex index) const {
     const noise::NormalNoise* noise = noiseOf_[static_cast<std::size_t>(index)];
     if (noise == nullptr) {
-        throw EvalError("node " + std::to_string(index) + " samples a noise it does not name");
+        // The same sentence refuseIfUnevaluable() produces up front, so the
+        // late refusal is as informative as the early one it replaced: the
+        // node's TYPE and the noise's NAME, not a bare node index.
+        const Node& node = graph_->node(index);
+        if (node.noise.has_value()) {
+            throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' samples noise '" +
+                            node.noise->toString() +
+                            "', which was not built for this world seed. A dimension's "
+                            "registry holds only the noises that dimension names");
+        }
+        throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' (node " +
+                        std::to_string(index) + ") samples a noise it does not name");
     }
     return *noise;
 }
@@ -349,10 +393,22 @@ double rarityValueMapper(std::string_view mapper, double input) {
                     "and 'type_2'");
 }
 
-void Interpreter::refuseIfUnevaluable(const Node& node) const {
+void Interpreter::refuseIfUnevaluable(const NodeIndex index) const {
+    const Node& node = graph_->node(index);
     if (const std::optional<std::string_view> reason = unevaluableReason(node.type)) {
         throw EvalError("'" + std::string(nodeTypeName(node.type)) +
                         "' cannot be evaluated by this build: " + std::string(*reason));
+    }
+    if (node.noise.has_value() && noiseOf_[static_cast<std::size_t>(index)] == nullptr) {
+        // Moved here from the constructor — see the note there. It used to
+        // throw for every node in the graph, including the ones belonging to
+        // other dimensions; it is refused here instead, where "is this node
+        // reached" is known. Same loudness, same name, and still before a
+        // single block is filled (SPEC §8).
+        throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' samples noise '" +
+                        node.noise->toString() +
+                        "', which was not built for this world seed. A dimension's registry "
+                        "holds only the noises that dimension names");
     }
     if (node.inlineNoise.has_value()) {
         // Not an admission that this build is behind: vanilla does not build
@@ -384,8 +440,8 @@ void Interpreter::requireEvaluableNode(NodeIndex index, std::vector<char>& seen)
     }
     seen[static_cast<std::size_t>(index)] = 1;
 
+    refuseIfUnevaluable(index);
     const Node& node = graph_->node(index);
-    refuseIfUnevaluable(node);
 
     // The subtree first, so that a refusal names the real cause. Column
     // invariance is deliberately conservative about a node it cannot
@@ -453,8 +509,8 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         return scope.get(index);
     }
 
+    refuseIfUnevaluable(index);
     const Node& node = graph_->node(index);
-    refuseIfUnevaluable(node);
 
     const Point at = scope.at();
     const auto x = static_cast<double>(at.x);
@@ -603,6 +659,18 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             } else {
                 value = blendedFor(index).sample(at.x, at.y, at.z);
             }
+            break;
+        }
+        case NodeType::EndIslands: {
+            // Built at construction, exactly once per graph; see endIslands_.
+            // Absent only if the graph changed under the interpreter, which
+            // is a bug rather than an input, so it is an error and not a
+            // fallback value.
+            if (!endIslands_.has_value()) {
+                throw EvalError("'minecraft:end_islands' was reached with no island field built "
+                                "for this world seed");
+            }
+            value = endIslands_->sample(at.x, at.z);
             break;
         }
         case NodeType::FindTopSurface: {

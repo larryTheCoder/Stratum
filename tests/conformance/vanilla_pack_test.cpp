@@ -167,7 +167,10 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // milestone lands, and both are things a person should have to look at
     // rather than have slide past.
     CHECK(report.densityFunctions == 35U);
-    CHECK(report.evaluable == 33U);
+    // `minecraft:end/sloped_cheese` joins the evaluable set with
+    // `end_islands` (SPEC §11); `minecraft:overworld/caves/noodle` is still
+    // out, needing a cell lattice this pack-level pass does not give it.
+    CHECK(report.evaluable == 34U);
     // The routers reach fourteen noises no named density function does —
     // the aquifer and ore-vein ones — so this is larger than the 25 the
     // density functions alone reference.
@@ -178,31 +181,68 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
 
     // The routers are resolved into the same graph, so the settings are
     // checked here too — but only the dimensions whose noises this build can
-    // actually seed. Four of vanilla's seven declare `legacy_random_source`,
-    // and their entries are left unchecked rather than counted as failures:
-    // "we did not look" is not "we looked and it does not work".
+    // actually seed. Four of vanilla's seven declare `legacy_random_source`;
+    // THREE of those four are still refused, and their entries are left
+    // unchecked rather than counted as failures ("we did not look" is not
+    // "we looked and it does not work"). The fourth is the End, which names
+    // no noise at all and is now checked like any other dimension — the
+    // refusal fires on a non-empty want list, not on the flag (SPEC §11).
     CHECK(report.noiseSettings == 7U);
-    CHECK(report.dimensionsChecked == 3U);
-    CHECK(report.routerEntries == 45U);
-    CHECK(report.routerEntriesEvaluable == 45U);
+    CHECK(report.dimensionsChecked == 4U);
+    CHECK(report.routerEntries == 60U);
+    CHECK(report.routerEntriesEvaluable == 60U);
 
-    // The six are preliminary_surface_level and final_density in each of the
-    // three, waiting on find_top_surface and old_blended_noise respectively.
     std::vector<std::string> unseeded;
+    std::vector<std::string> constructsRefused;
     for (const stratum::validate::Finding& finding : report.findings) {
         // Match the phrase the *dimension* refusal opens with, not the bare
         // registry name: old_blended_noise's refusal names
         // `legacy_random_source` too, now that the seeding is the only thing
         // left unsettled about it, and a looser test silently counted every
         // final_density here as an unseedable dimension.
-        if (finding.message.find("this dimension declares legacy_random_source") !=
+        if (finding.message.find("this dimension declares legacy_random_source") ==
             std::string::npos) {
+            continue;
+        }
+        // TWO KINDS NOW, and keeping them apart is the point of this block.
+        // A refusal naming a CONSTRUCT rather than a noise says the phrase
+        // "and needs" — those are the gradient / aquifer / vein refusals
+        // (SPEC §11), and they are reported per construct.
+        if (finding.message.find("legacy_random_source and needs") != std::string::npos) {
+            constructsRefused.push_back(finding.subject);
+        } else {
             unseeded.push_back(finding.subject);
         }
     }
     std::ranges::sort(unseeded);
-    CHECK(unseeded == std::vector<std::string>{"minecraft:caves", "minecraft:end",
-                                               "minecraft:floating_islands", "minecraft:nether"});
+    std::ranges::sort(constructsRefused);
+    // The End is NOT here any more, and that is the whole of the narrowing:
+    // it declares the same flag as the other three and names none of the
+    // noises the unsolved derivation would have to seed — not in its router
+    // (the bare subjects) and not in its surface rule (the ` surface_rule`
+    // ones, which validate began reporting when its `wanted` stopped being
+    // router-only; a legacy dimension naming noises only in its surface rule
+    // used to validate clean and then not generate).
+    CHECK(unseeded == std::vector<std::string>{
+                          "minecraft:caves", "minecraft:caves surface_rule",
+                          "minecraft:floating_islands", "minecraft:floating_islands surface_rule",
+                          "minecraft:nether", "minecraft:nether surface_rule"});
+
+    // AND THE CONSTRUCTS, one warning per `vertical_gradient` random_name.
+    // The End has none, which is why it still generates. No aquifer or vein
+    // warning appears because every vanilla legacy dimension has both flags
+    // off — asserted, so that a pack turning one on would show up here
+    // rather than silently taking the modern derivation.
+    CHECK(constructsRefused ==
+          std::vector<std::string>{
+              "minecraft:caves surface_rule", "minecraft:caves surface_rule",
+              "minecraft:caves surface_rule", "minecraft:floating_islands surface_rule",
+              "minecraft:nether surface_rule", "minecraft:nether surface_rule"});
+    for (const stratum::validate::Finding& finding : report.findings) {
+        INFO(finding.subject << ": " << finding.message);
+        CHECK(finding.message.find("aquifers_enabled") == std::string::npos);
+        CHECK(finding.message.find("ore_veins_enabled") == std::string::npos);
+    }
 
     // The ten that are left are exactly the ones SPEC §11 accounts for, and
     // no others. A refusal that spread to a function nobody expected would
@@ -222,7 +262,6 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     }
     std::ranges::sort(unevaluable);
     const std::vector<std::string> expected{
-        "minecraft:end/sloped_cheese",
         "minecraft:overworld/caves/noodle",
     };
     CHECK(unevaluable == expected);

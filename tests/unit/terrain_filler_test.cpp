@@ -555,14 +555,23 @@ TEST_CASE("bandlands runs through the whole filler pipeline, not just the execut
     filler.fill(0, 0, buffer);
     // bandlands always places something (its table has no "place nothing"
     // entry, only colours — surface_executor_test.cpp's own golden-table
-    // tests establish that), so every block the density chain left solid,
-    // fluid or air is replaced by one of its seven terracotta colours.
+    // tests establish that), so every position the surface pass REACHES is
+    // replaced by one of its seven terracotta colours.
     const auto isClay = [](const std::string& name) {
         return name == "minecraft:terracotta" || name.ends_with("_terracotta");
     };
+    // The flat plane: stone below y 0, water up to the sea level of 8, open
+    // air above it.
     CHECK(isClay(buffer.at(0, -16, 0).name.toString()));
     CHECK(isClay(buffer.at(0, 0, 0).name.toString()));
-    CHECK(isClay(buffer.at(0, 8, 0).name.toString()));
+    // AND THE OPEN AIR IS NOT REACHED. The pass starts at the column's
+    // topmost non-air block — here the water at y 7 — so an unconditioned
+    // rule cannot paint the sky. This assertion read `isClay` at y 8 until
+    // the End was generated against real blocks: vanilla's End has exactly
+    // this tree shape and does NOT stack its default block up the sky
+    // (golden_end_test.cpp; the sky-start reading scored 441481 of 2097152
+    // blocks there).
+    CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
 }
 
 TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pipeline",
@@ -718,10 +727,15 @@ TEST_CASE("an unconditioned rule never rewrites a buried air pocket either",
     // The buried air notch — solid rock already crossed above it — keeps
     // its own air untouched, unlike a fluid-only guard would.
     CHECK(buffer.at(0, 22, 0).name.toString() == "minecraft:air");
-    // The column's own open sky, with no solid crossed above it yet, stays
-    // reachable — the same distinction the buried-fluid test draws for
-    // water.
-    CHECK(buffer.at(0, 31, 0).name.toString() == "minecraft:end_stone");
+    // The open sky above the terrain is NOT reachable, which is a second,
+    // separate bound from the buried-notch one above: the pass starts at the
+    // column's topmost non-air block, so air that was never under anything
+    // is not a surface-rule position at all. This used to assert end_stone
+    // here, on the reading that "no solid crossed above it yet" was the only
+    // gate. Vanilla's End refutes that — see golden_end_test.cpp. The
+    // distinction a rule keyed on `water` needs is untouched, because fluid
+    // counts as non-air and so is at or below where the scan starts.
+    CHECK(buffer.at(0, 31, 0).name.toString() == "minecraft:air");
 }
 
 TEST_CASE("biome reads the biome the climate router and parameter list compute",
@@ -743,10 +757,14 @@ TEST_CASE("biome reads the biome the climate router and parameter list compute",
 
     // The flat dimension's climate router is constant zero everywhere, and
     // the table's one entry matches it everywhere, so the biome is
-    // "minecraft:plains" for every block — solid, fluid and air alike.
+    // "minecraft:plains" at every position the pass reaches — solid and
+    // fluid alike.
     CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:podzol");
     CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:podzol");
-    CHECK(buffer.at(15, 31, 15).name.toString() == "minecraft:podzol");
+    // Open sky above the water is not reached at all; see the scan bound in
+    // ChunkFiller::applySurfaceRules. What this case is about is the BIOME
+    // lookup, and the two positions above exercise it.
+    CHECK(buffer.at(15, 31, 15).name.toString() == "minecraft:air");
 }
 
 TEST_CASE("a tree that reads the biome without a parameter list is blocked, not crashed",

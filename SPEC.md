@@ -2045,10 +2045,12 @@ Open:
   a real bug immediately, closed in the same change: see `stone_depth`,
   below. The Nether's tree compiles and needs neither `biome` data nor a
   temperature table to run — but its `noise_settings` sets
-  `legacy_random_source: true`, and `NoiseRegistry::create` refuses
-  `RandomSource::Legacy` outright (§11: nothing available says how a name
-  becomes an LCG seed here), so there is no way yet to build the density
-  chain the Nether's blocks would need in the first place. Closing the
+  `legacy_random_source: true`, and its surface rule needs eight noises whose
+  LCG seeding is unsettled (§11), so its *rules* cannot run. Its density
+  chain can: that refusal was later narrowed, the Nether's `final_density`
+  names no noise at all, and its terrain is now measured against the goldens
+  at 99.99591% (§11). What is missing is which solid a position holds, not
+  whether it is solid. Closing the
   temperature gap did not, and could not, touch that one; it closes the
   distance between "the executor can run this tree" and "the filler asked
   it to and had everything the tree needed."
@@ -4021,15 +4023,19 @@ Open:
   not a rounding-scale correction. Recorded fully in `lib/src/perlin.cpp`'s
   own comment at the fix.
 
-  *No documentation and no oracle here* — `end_islands` and, as it was,
-  `old_blended_noise`, `weird_scaled_sampler` and `blend_density`; the last
-  three are settled above, leaving `end_islands` and `find_top_surface`. minecraft.wiki documents neither
+  *No documentation and no oracle here* — as it was, `end_islands`,
+  `old_blended_noise`, `weird_scaled_sampler` and `blend_density`. **All four
+  are now settled**, the last of them `end_islands`, whose oracle turned out
+  to be sitting on disk unused: eight golden End regions, plus two probe
+  regions generated for the two parts of the field they cannot reach (see
+  "The End generates, exactly" below). minecraft.wiki documents neither
   `weird_scaled_sampler`'s rarity mapping nor what `blend_density` returns
   outside blending, and cubiomes models neither terrain density nor the End
   islands. Implementing them from memory would produce a world that
   generates and is quietly wrong, which §8 treats as the most severe class
-  of bug, so they are refused until M3's goldens can tell right from
-  plausible.
+  of bug, so each stayed refused until a golden could tell right from
+  plausible — which is exactly how `end_islands`' first, analogy-based
+  seeding was caught and replaced.
 
   Two types *are* implemented on documentation alone: `squeeze` and `invert`
   (the latter documented only through its later rename to `reciprocal`).
@@ -4463,10 +4469,15 @@ Open:
 
   Registries are now per dimension, and `RandomSource` is a required
   argument with no default, because a default is how this happened.
-  `RandomSource::Legacy` throws: how a noise's *name* becomes an LCG seed is
+  `RandomSource::Legacy` throws **when, and only when, the dimension actually
+  names a noise** — see "The refusal was four dimensions wide and the gap was
+  three" below, which narrowed it. How a noise's *name* becomes an LCG seed is
   not settled here. cubiomes seeds named noises only through Xoroshiro; it
   models the LCG for the blended noise alone, which is a different
-  construction with no name hashing. So the four legacy dimensions cannot be
+  construction with no name hashing. An empty `wanted` has no identifier to
+  derive and is built, which is what makes the legacy Nether's terrain and the
+  End reachable. The rest of this paragraph describes the state before that
+  narrowing: the four legacy dimensions could not be
   built, and `stratum validate` reports each one as a warning and leaves its
   router **unchecked** — deliberately not counted as fifteen failures, since
   "we did not look" and "we looked and it does not work" are different
@@ -4474,10 +4485,103 @@ Open:
   dimensions rather than 94 of 105: fewer entries, and all of them ones we
   can actually speak to.
 
+  **Those headline numbers moved when the refusal narrowed** (below): the
+  End needs no named noise, so it is checked like any other dimension and
+  `stratum validate` now reads **60 of 60 router entries across 4 of 7
+  dimensions**, with three warnings rather than four — each naming the three
+  noises it could not build.
+
   One assumption, stated because it has not been verified: that the flag
   selects the generator for *all* of a dimension's noises rather than some
   subset. That matches a single RandomState being constructed once, but
   nothing here checks it, and if it is wrong this refusal is too broad.
+
+  **It is wrong for at least one thing, and that is now measured.**
+  `minecraft:end_islands` builds a simplex field of its own, and a
+  `legacy_random_source` probe dimension and its flag-off control read that
+  field identically on 1024 of 1024 shared columns, at two seeds
+  (`tools/analysis/end-islands-analyze.cpp`). So the flag does not reach it.
+  The assumption stands for everything a `worldgen/noise` identifier names;
+  it does not stand for a source a density function builds for itself.
+
+  **And "what the refusal is actually about" is no longer only noises —
+  which is the correction this paragraph needed most.** After the narrowing,
+  `NoiseRegistry::create`'s predicate is "this dimension names a
+  worldgen/noise", and a legacy dimension draws on its declared random source
+  for three things that are not noises and pass through no `wanted` list:
+  `minecraft:vertical_gradient`'s `random_name`, the aquifer lattice's centre
+  jitter, and the ore-vein source. This build derives all three with
+  Xoroshiro128++. So the noise predicate alone is not enough, and each of the
+  three is refused by name, by THROWING, from `ChunkFiller::compile` — the
+  path every real dimension takes — and the gradient also from
+  `surface::Executor::compile` for a caller that reaches it directly (SPEC
+  §8: the construct is named, not merely the dimension).
+
+  Two shapes were wrong on the way here and are recorded because each let a
+  constructed pack through. The gradient refusal was first landed as a
+  non-fatal entry in `ChunkFiller::surfaceRulesBlockedBy()` — the shape that
+  list has for "a caller did not supply something" — and nothing on the
+  public `CompiledDimension::compile` path consults that list, so a legacy
+  End doctored with a gradient compiled clean through it and filled 13549
+  blocks with its surface rules silently dropped. It throws now, and
+  `vanilla_legacy_gradient_gap_test.cpp` drives exactly that doctored pack
+  through `CompiledDimension::compile` and asserts the throw, beside the
+  undoctored End compiling on the same path as the control. And the ore-vein
+  refusal first sat inside the `veinsPlaceBlocks` gate, which is
+  `ore_veins && aquifers`, so a legacy pack with veins ALONE was not refused
+  — materially inert, since with aquifers off no vein random is ever drawn
+  and the chunk is bit-identical to the undoctored one (measured), but
+  `validatePack` warns on the flag alone, so validate and generation
+  disagreed about one pack. It now refuses on the flag.
+
+  *`vertical_gradient` under a legacy source is MEASURED not to be
+  Xoroshiro.* `tests/conformance/vanilla_legacy_gradient_gap_test.cpp` scores
+  this build's Xoroshiro-derived gradient against the golden **Nether's** own
+  bedrock, over the four probabilistic levels of each of its two gradients,
+  on 8x8 chunks of `r.0.0` — 65536 labelled positions per gradient per seed.
+  It lands on the chance band — 39321.6 of 65536, computed from the anchors as
+  sum p² + (1−p)² rather than assumed — at all four seeds, floor and roof
+  alike:
+
+  | seed | `bedrock_floor` | `bedrock_roof` |
+  |------|-----------------|----------------|
+  | 0    | 39303 / 65536   | 39543 / 65536  |
+  | 1    | 39411 / 65536   | 39464 / 65536  |
+  | -1   | 39419 / 65536   | 38912 / 65536  |
+  | 42   | 39172 / 65536   | 39237 / 65536  |
+
+  The **control is in the same file on the same seeds**: the identical code
+  on the modern overworld's bedrock floor is **65536 of 65536 at all four**.
+  So the shortfall is the seeding, not this build's gradient, region reader
+  or anchor resolution. The full per-level ladder is asserted too — 100% at
+  the certain anchor, 80/60/40/20% across the band, 0% at the impossible one
+  — so the band being scored is pinned to the band the anchors name. Only
+  gradients that place bedrock DIRECTLY are scored, which excludes the
+  overworld's `minecraft:deepslate` gradient: it sits under further
+  conditions, so its outcome is not readable from the blocks. That exclusion
+  is a property of the tree's shape, decided before any block is read.
+
+  *The aquifer and ore sources are structurally identical and UNTESTED.*
+  Both draw a positional random from the same primitive under the same
+  declared source. Every vanilla legacy dimension has `aquifers_enabled` and
+  `ore_veins_enabled` false, so **no oracle for either is on disk** and none
+  can be generated from vanilla data alone. They are refused on the
+  structural argument — same source, same primitive, one member of the class
+  measured wrong — and not on a measurement of their own. That is the
+  boundary: one construct measured, two argued.
+
+  *What this closed.* A legacy dimension naming no noise whose surface rule
+  used vanilla's bedrock-floor gradient used to compile clean
+  (`runsSurfaceRules()` true, `surfaceRulesBlockedBy()` empty) and fill a
+  chunk with bedrock from a derivation measured above to be at chance — no
+  error, no warning. That is the plausible-but-wrong world §8 forbids. It is
+  closed on BOTH paths: `ChunkFiller::compile` throws, and the public
+  `CompiledDimension::compile` is driven with the doctored pack and asserted
+  to throw. The End is unaffected and still passes: its tree has no
+  `vertical_gradient` and both flags are false, asserted in the same test,
+  and it compiles through the public path as the control. A doctored MODERN
+  overworld with the identical gradient still generates — the refusal keys on
+  the legacy source, not on the construct.
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is
@@ -4521,11 +4625,212 @@ Open:
   is a function of the readback, and a later run of the same comparison
   measured it below the bottom of that range.
 
-  It is left reachable but unreached. `Interpreter` selects it on a Legacy
-  registry, and `NoiseRegistry::create` refuses a Legacy source before any
-  graph is compiled, so nothing calls it for a real world yet. That is
-  deliberate: the settled half is written where it belongs so that lifting
-  the refusal does not have to rediscover it.
+  It was left reachable but unreached — `Interpreter` selects it on a Legacy
+  registry, and `NoiseRegistry::create` refused a Legacy source before any
+  graph was compiled. **It is reached now, with an empty registry**, and
+  every passage that said otherwise has been corrected (`blended.hpp`,
+  `density_interpreter.cpp`). The refusal narrowed (next entry), and the
+  End's and the Nether's `final_density` name no noise, so this rule is what
+  draws their terrain: the End's 25165824 exactly-matching blocks and the
+  Nether's 15465864 of 15466496 block classes (99.99591%) are this seeding
+  running in a real pipeline rather than in a probe dimension. Both
+  denominators cover eight golden regions over **six independent worlds** —
+  `java.util.Random` discards bit 63, so seed 0 is the same world as
+  `Long.MIN_VALUE` and -1 the same as `Long.MAX_VALUE`, and the server
+  confirms it: each colliding pair's regions differ in 0 of 2097152 blocks.
+
+- **The refusal was four dimensions wide and the gap was three (M4).** The
+  unsolved named-noise derivation above used to refuse every
+  `legacy_random_source` dimension, before `wanted` — the list of noises the
+  dimension asks for — was consulted at all. That was measured, and the
+  refusal narrowed to fire only on a non-empty `wanted`.
+
+  *What vanilla's four legacy dimensions actually name.* Walked from the
+  pinned pack and pinned, per dimension and per router entry, by
+  `tests/conformance/vanilla_legacy_named_noises_test.cpp`:
+
+  | dimension          | router entries naming anything | router names | surface names spelled | surface noises needed |
+  |--------------------|--------------------------------|--------------|-----------------------|-----------------------|
+  | `end`              | none                           | 0            | 0                     | 0                     |
+  | `nether`           | `temperature`, `vegetation`    | 3            | 6                     | 8                     |
+  | `caves`            | `temperature`, `vegetation`    | 3            | 7                     | 9                     |
+  | `floating_islands` | `temperature`, `vegetation`    | 3            | 7                     | 9                     |
+
+  The last two columns differ on purpose. A rule tree SPELLS a noise only in a
+  `noise_threshold`; it also NEEDS `minecraft:surface` and
+  `minecraft:surface_secondary` wherever a surface depth is read and
+  `minecraft:clay_bands_offset` wherever `bandlands` is placed, and none of
+  those three appears in any field (`surface::requiredNoises`). The registry
+  is asked for the second number, so that is the one the refusal fires on.
+
+  Every terrain-shaping entry of all four — `final_density`, `depth`,
+  `erosion`, `ridges`, `continents`, `barrier`,
+  `preliminary_surface_level`, the two `fluid_level` entries, `lava` and the
+  three vein entries — names nothing at all. So the derivation blocks biome
+  climate and surface rules in three dimensions and **nothing whatsoever in
+  the fourth**.
+
+  *The three, not two.* The round that opened this work was given a table
+  built by scanning each `noise_settings` document for `"noise": "<id>"`
+  fields, which says `temperature` and `vegetation`. It undercounts, twice
+  over: `shift`, `shift_a` and `shift_b` spell their noise field
+  `"argument"`, and the climate entries reach them through a *reference* to
+  `minecraft:shift_x` / `shift_z`, which live in another file. The third name
+  is `minecraft:offset`. It changes nothing about the narrowing — three is as
+  non-empty as two — and everything about what the refusal's message should
+  say, which is why the message now lists the names.
+
+  *What had to change with it.* `Graph::reachableFrom` /
+  `noisesReachableFrom` walk a dimension's own router entries rather than the
+  whole pack (one graph holds every dimension at once, so "what this pack
+  names" was never the question) — ONE walk in `lib/`, with a single-root
+  form, a noise filter over it, and a multi-root union over that, so
+  "reaches" has one definition;
+  `surface::requiredNoises` centralises the three names no condition spells;
+  and `Interpreter` no longer refuses at construction for a noise some *other*
+  dimension's node names — it refuses that node, by name, when a walk
+  actually reaches it, which `ChunkFiller::compile` does for every root it
+  will sample. Same loudness, same name, still before a block is filled
+  (§8).
+
+- **The End generates, exactly, and `end_islands` is settled (M4).** With the
+  refusal narrowed, vanilla's End builds its (empty) registry and runs. It is
+  scored block by block against the goldens the way `golden_fill_test.cpp`
+  scores the overworld, and it comes back **exact**:
+
+  | fixture                            | seeds | blocks per seed | exact |
+  |------------------------------------|-------|-----------------|-------|
+  | golden `end/r.0.0`, chunks 0..7    | 8*    | 2097152         | all   |
+  | probe `r.64.0`, chunks 2048..2055  | 2     | 2097152         | all   |
+  | probe `r.-1.-1`, chunks -8..-1     | 2     | 2097152         | all   |
+
+  \* Eight golden regions, **six independent worlds** — `java.util.Random`
+  discards bit 63, so 0 is the same End as `Long.MIN_VALUE` and -1 the same as
+  `Long.MAX_VALUE`. The server confirms it rather than the arithmetic being
+  taken on trust: each colliding pair's regions differ in 0 of 2097152 blocks,
+  which is itself evidence that nothing in the End's terrain is seeded from
+  outside those 48 bits. Read every End and Nether denominator against six.
+
+  25165824 blocks in total, every one of them. The probe regions are
+  `tools/analysis/end-islands-probe.sh`'s, and they exist because r.0.0 cannot
+  reach two whole parts of the field (below).
+
+  *Eight regions, SIX distinct worlds — say the denominator.* `java.util.
+  Random` scrambles its seed as `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)`, and
+  that mask discards bit 63, so 2^16 world seeds share every End. Two pairs in
+  the fixed golden set collide: 0 with LONG_MIN, and -1 with LONG_MAX. Not
+  inferred — the SERVER says so, and the fact is worth having on its own: the
+  golden End regions of each colliding pair differ in **0 of 2097152 blocks**,
+  which is an independent confirmation that nothing in the End's terrain is
+  seeded from anything outside the 48 bits the LCG keeps. Both rows stay in
+  the table because the collision is a claim about this build too: spell the
+  scramble wrong and the pairs stop agreeing.
+
+  *What it took.* Two things, one of them a bug in code the overworld had
+  already exercised:
+
+  **`minecraft:end_islands`, implemented.** A radial central-island term plus
+  an outer term gated on a simplex field, mapped to density as
+  `(height - 8) / 128` on a `/8` grid. Refused until now for want of an
+  oracle (§11's own "no documentation and no oracle" entry named it); the
+  goldens are that oracle.
+
+  **The surface-rule scan did not start at the sky, and had for two
+  milestones.** `ChunkFiller::applySurfaceRules` walked every column from the
+  world ceiling down. It now starts at the column's topmost NON-AIR block
+  (fluid counting as non-air, so an ocean column still starts at its water
+  surface and the ice case is untouched). Invisible in every overworld
+  fixture, because vanilla's overworld tree is gated top to bottom and fires
+  nothing up there; catastrophic the moment a tree is not gated. The End's
+  entire `surface_rule` is one unconditioned `block` placing end_stone, and
+  without the bound it painted end_stone from the island's surface to y 127 in
+  every column: **441481 of 2097152 blocks at seed 0, against 2097152 of
+  2097152 with it.**
+
+  *The two holes r.0.0 leaves, and why they needed their own fixtures.* The
+  outer term is gated on `cellX^2 + cellZ^2 > 4096` with the cell being
+  `blockX / 16`; inside r.0.0 even the far corner of the +/-12 cell
+  neighbourhood reaches 43^2 * 2 = 3698, so the term cannot fire once. And
+  r.0.0 is entirely non-negative, so it cannot tell `floorDiv` from Java's
+  truncating `/` — which disagree for the *central* term too, since
+  `floorDiv(-1, 8)` is -1 where truncation gives 0. `r.64.0` closes the first
+  and `r.-1.-1` the second; floorDiv is what the second says.
+
+- **The Nether's TERRAIN is unblocked too, and measured (M4).** The narrowing
+  is not only about the End. The Nether's three names all come from its
+  `temperature` and `vegetation` router entries and its surface rule; its
+  `final_density` names **none**, so a registry built for the terrain alone
+  builds, on a Legacy source, today.
+
+  `tests/conformance/vanilla_legacy_nether_terrain_test.cpp` is the single
+  case for this claim — an earlier round had two, one scoring 524288 blocks
+  of 4x4 chunks and one scoring every fourth chunk of the whole region, and
+  the second subsumes the first's denominator. It scores every fourth chunk
+  of all eight golden Nether regions, y in [5, 123): **15465864 of 15466496
+  block classes, 99.99591%**. Eight regions, **six distinct worlds** — the
+  same 48-bit collision the End's table notes, computed in the test from the
+  LCG's own scramble rather than asserted in prose.
+
+  The surface rules are NOT run: the tree spells six noises and NEEDS eight
+  (`minecraft:surface` and `minecraft:surface_secondary` on top), none of
+  which can be seeded, and §8 refuses a tree whole rather than running it
+  with branches skipped. (It is now refused for a second, independent reason
+  as well — its two `vertical_gradient` conditions, above.) So block
+  identity cannot be exact and is not asserted. Three things are asserted
+  instead, and together they are stronger than a percentage:
+
+  * the residual's SHAPE: longest disagreeing run down any column is **1**,
+    it is one-directional (`solid` where vanilla has `lava`, never the
+    reverse, air never involved), and all of it sits in y [20, 30];
+  * the residual's SIZE against the right denominator: **632 of 226702**
+    solid-to-fluid boundaries in the scored band, 0.279% — not 632 of 15.4
+    million, which would make it look like noise;
+  * **every** block that differs at all is one the Nether's own surface rule
+    tree can place — and that set is read out of the resolved tree rather
+    than written into the test, so a disagreement the surface rules cannot
+    explain fails by name rather than hiding under a tolerance. The
+    category-crossing ones are the tree's single `minecraft:lava` placement
+    under a `hole` condition.
+
+  *And the trivial baseline is stated, because 99.99591% against nothing is
+  not a result.* A stub that ignores the density chain and answers "solid"
+  everywhere scores **9792427 of 15466496 = 63.31%** — measured in the same
+  file and pinned there. So the result is 36.7 points above the trivial
+  answer. (A first guess put the baseline near 88%; it is not, because the
+  scored band excludes the two bedrock bands and what remains is the
+  cheese-and-lava interior.) The boundary counter behind the 226702
+  denominator was corrected in the same pass — it tracked solidity only
+  inside the scored band, so the band's first layer was compared against an
+  assumption — and the count did not move, which is what shows the
+  assumption happened to hold for this dimension.
+
+- **`end_islands`' simplex is seeded by a 17292-step skip, and not by the
+  dimension's random source (M4).** The seeding was initially carried over by
+  analogy from `BlendedNoise::legacyFromWorldSeed` — the world seed straight
+  into `java.util.Random`. That is wrong, and terrain could not say so: scored
+  against the far probe it reached 87.9% of blocks at seed 0 against an 85.7%
+  base rate for predicting pure void, which is to say the island positions
+  were uncorrelated with vanilla's.
+
+  *The instrument.* `tools/analysis/end-islands-field-probe.sh` reads the
+  field itself rather than the terrain built on it — `density-probe.sh`'s
+  `flat_cache` + gradient inversion, at a window 32768 blocks out, which
+  needed `density-probe.sh` to grow an `--at CHUNK_X,CHUNK_Z` (every probe
+  before this one generated at the origin, and the outer term does not exist
+  there).
+
+  *The rule.* `new java.util.Random(worldSeed)`, then **17292 LCG steps
+  discarded**, then the ordinary three-doubles-and-a-permutation
+  construction. 1024 of 1024 columns at seed 0 and 1024 of 1024 at seed 42,
+  each to within half a quantum — 0.3 blocks of island height at the fine
+  scale. The 17292 is a literal with nothing deriving it; it is what the
+  measurement says.
+
+  *And it ignores `legacy_random_source`.* Each probe world carries the
+  function in a legacy dimension and a flag-off control. They read the same
+  field on 1024 of 1024 shared columns, at both seeds. That is a fact about
+  the flag as much as about this function, and it is recorded against the
+  refusal's own "one assumption" above.
 
 - **The named-noise derivation: searched, still open, and now reproducible
   (M4).** How a noise's identifier becomes a Java LCG seed is unanswered.
@@ -4554,6 +4859,35 @@ Open:
   and no frequency variation whatever. An earlier write-up described the
   sweep as covering "frequency 2^(firstOctave +/- 1..3)"; no version of this
   code has swept frequency at all.
+
+  *Two gaps the `end_islands` result now points at, neither yet tested.*
+
+  **A fixed skip is a shape vanilla uses.** `end_islands`' simplex is seeded
+  by `new java.util.Random(worldSeed)` and then **17292 discarded LCG steps**
+  — measured, in a dimension declaring the same flag. The scanned space has
+  no skip dimension: it varies bases, salt spellings, operators and 0-2
+  further *forks*, and a fork (`new Random(random.nextLong())`) is not a skip.
+
+  **The stack rule is the likelier culprit, and it would defeat every seed
+  candidate.** A modern `NormalNoise` does not draw its octaves in order from
+  one generator at all: it takes two draws once and XORs them with a
+  per-octave salt from the MD5 of `octave_<n>`, so an octave can be added or
+  removed without disturbing the others (`OctaveNoise::create`). If a legacy
+  `NormalNoise` keeps that shape and swaps only the generator and the hash,
+  then no seed is right while the stack rule is wrong, and 270,000 candidates
+  scoring at the null says nothing about the seed. Test the stack rule before
+  widening the seed space again.
+
+  *What is newly measured about the question.* The identifier — or the
+  construction order, which these fixtures cannot separate — genuinely enters
+  the seed. The probes carry `stratum:na` and `stratum:nb`: identical
+  parameters, different names, legacy dimensions of one world. Inverted by
+  `legacy-seed-analyze <probe> <seed> --twin`, added for this, their fields
+  agree on **21 of 2304 columns at seed 42 and 18 of 2304 at seed 31337** —
+  0.91% and 0.78%, against the null mean of 0.6-0.8% measured for this band
+  above. They are unrelated fields, so a name-blind rule is out. It does NOT
+  separate "the name enters" from "the build ORDER enters"; that needs a probe
+  whose packs differ in which other noises they define.
 
   *deepslate's derivation is inside the space and scores at the null.* base =
   `JavaRandom(worldSeed).nextLong()`, XOR the first eight bytes of
@@ -4864,6 +5198,196 @@ Open:
   `ctest` reads that as a skip only because `catch_discover_tests` sets
   `SKIP_RETURN_CODE 4` (`Catch.cmake:219`); run the binary by hand and the
   shell reports 4.
+
+- **The blanket refusal was far wider than the gap, and the Nether's terrain
+  was never behind it (M4).** The refusal above fired before `wanted` was
+  consulted, so it also refused a legacy dimension that named *no* noise —
+  and the note at that site said nobody had measured whether such a case
+  existed. It does, and it is most of what was blocked. Walking the pinned
+  pack's own resolved graph per router entry, following shared
+  density-function references *and* splines (`Graph::reachableFrom` /
+  `noisesReachableFrom`, new here):
+
+  | dimension | router named | which entries | surface rule *spells* | surface rule *needs* |
+  |-----------|--------------|---------------|-----------------------|----------------------|
+  | `end` | 0 | — | 0 | 0 |
+  | `nether` | 3 | `temperature`, `vegetation` only | 6 | **8** |
+  | `caves` | 3 | `temperature`, `vegetation` only | 7 | **9** |
+  | `floating_islands` | 3 | `temperature`, `vegetation` only | 7 | **9** |
+
+  **The last column is the one that matters, and an earlier version of this
+  table had only the one before it.** A rule tree needs more noises than its
+  fields spell: `minecraft:surface` and `minecraft:surface_secondary`
+  wherever a depth is read — which `hole`, `above_preliminary_surface` and a
+  depth-adding `stone_depth` all do without saying so — and
+  `minecraft:clay_bands_offset` wherever `bandlands` is placed. None of the
+  three appears in any field of any tree. `surface::requiredNoises` is the
+  single answer to "what does this tree need", and it is why the refusal
+  names 8/9/9 rather than 6/7/7.
+
+  Thirteen of fifteen router entries reach zero in every one — `final_density`,
+  `depth`, `erosion`, `ridges`, `continents`, `barrier`,
+  `preliminary_surface_level`, both fluid levels, `lava` and the three vein
+  entries. **Three, not two**: `minecraft:offset` arrives through the shared
+  `minecraft:shift_x` / `shift_z`, whose `shift_a` / `shift_b` argument is a
+  *noise* rather than a nested function, so a per-entry scan of the JSON
+  never sees it. `tests/conformance/vanilla_legacy_named_noises_test.cpp`
+  pins the table by TWO INDEPENDENT WALKS that must agree: a hand-written
+  type-to-field table with its own reference resolution, and the engine's
+  own `Graph::reachableFrom`. `tools/analysis/legacy-named-noise-reach.py`
+  walks the raw JSON as a third route. There is exactly one reachability
+  walk in `lib/`; the other two live in the test and the tool, on purpose,
+  because two walks that share an implementation agree by construction and
+  prove nothing. The same test also pins the SET of `legacy_random_source`
+  entries to exactly these four, so a fifth cannot appear unnoticed.
+
+  Two consequences, and they cut against the intuition the refusal was built
+  on. The seeding question does **not** block a legacy dimension's terrain —
+  only its biome climate and its surface decoration. And the one dimension
+  that needs no named noise anywhere, the End, is unblocked all the way to
+  its surface rules: `minecraft:end_islands` was the other thing standing in
+  the way and it is now implemented and measured (below), so the End's
+  terrain and surface rules reproduce vanilla's exactly.
+
+  **"Unblocked" here is a ChunkFiller-level, terrain-and-surface-rules claim
+  and nothing more, and it should be read nowhere wider.** The End's
+  `biome_source` is `minecraft:the_end` — read from the pinned
+  `world_preset/normal.json`, neither `multi_noise` nor `fixed` — and it is
+  not implemented. A first version of this paragraph then said
+  "`CompiledDimension::compile` still refuses **every** legacy dimension";
+  that was a universal, it was false, and a reviewer refuted it by
+  construction. The measured boundary is narrower: the public path refuses
+  the End on `(end, end)` for ONE reason — vanilla ships no biome parameter
+  list named `minecraft:end`, and the refusal names exactly that — and NOT
+  for being legacy. Pair the End's settings with any list that does exist
+  and it compiles and generates through `CompiledDimension::compile`
+  (asserted in `vanilla_compiled_dimension_test.cpp`; the block-level result
+  is `golden_end_test.cpp`'s). So the End IS available through the public
+  compile path, with the wrong biomes; what is not implemented is its own
+  biome source, and that is the whole of what "unblocked" must not be read
+  past. The other three legacy dimensions are refused on that path by name
+  of the noises they need.
+
+  The refusal is therefore narrowed to a **non-empty** `wanted` under
+  `RandomSource::Legacy`. That is the rule stated exactly rather than
+  loosened: with no identifier there is nothing to hash and nothing is
+  approximated. Nothing else about it changed, and no guessed derivation
+  exists anywhere in shipped code.
+
+  One further change was needed and is worth its own line, because it moves a
+  refusal. `Interpreter`'s constructor bound every named noise in the graph
+  and threw if the registry lacked one — but a pack resolves all seven
+  dimensions into **one** graph, so a missing overworld noise
+  (`minecraft:cave_entrance`) blocked the nether's roots. An unbuilt named
+  noise is now left unbound and refused by `refuseIfUnevaluable` at the node
+  that samples it, naming it, exactly as an inline noise already was;
+  `requireEvaluable(root)` still answers up front per router entry. Loudness
+  is unchanged (§8) — a node no root reaches generates nothing.
+
+- **How close the legacy Nether's terrain actually is: 99.99591%, and the
+  residual is one block (M4).** With an empty registry and no surface rules,
+  `ChunkFiller` produces the Nether's netherrack / lava / air against all
+  eight golden regions.
+  `tests/conformance/vanilla_legacy_nether_terrain_test.cpp`, every fourth
+  chunk of each region (512 chunks, 15466496 scored positions):
+
+  | | |
+  |---|---|
+  | exact solid/lava/air class | 15465864 / 15466496 = 99.99591% |
+  | disagreeing runs | 632, **longest run 1 block** |
+  | direction | every one `solid` where vanilla has `lava`; never the reverse, air never involved |
+  | location | every one in y [20, 30] |
+  | excluded bands | 1310720 further positions, agreeing whole |
+
+  *What is compared and what is not.* The goldens are terrain-only — the
+  eleven block names occurring across all eight regions are censused in the
+  test, and no glowstone, quartz or fire is among them, so carvers and
+  features were removed (§7 Tier B). What remains between the filler and the
+  golden is the surface rule, which needs eight named noises this build
+  cannot seed — six spelled in the tree plus `minecraft:surface` and
+  `surface_secondary`, which no field of it names — and whose two
+  `vertical_gradient` conditions draw from the dimension's own random source,
+  which is separately measured to be underivable here (the gradient gap,
+  above). So the comparison is over a **class** (solid / lava / air), not a
+  block name; a twelfth name fails rather than being bucketed (§8). The
+  scored range is y [5, 123), excluding the two bands the surface rule writes
+  regardless of density — `bedrock_floor` below 5, and `bedrock_roof` plus
+  `y_above(below_top 5) -> netherrack` at 123 and above. At class level those
+  bands agree anyway; the exclusion would matter to a comparison of names.
+
+  *Eight regions, seven worlds.* Seeds 0 and Long.MIN_VALUE land on the same
+  229 positions, because `java.util.Random` scrambles as
+  `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)` and they differ only in bit 63.
+  That is a check on the seeding, not a coincidence to explain away.
+
+  *What the residual is, and the reading of it that was refuted.* A longest
+  run of one means the solid/fluid **boundary** sits one block high; the shape
+  is otherwise vanilla's. The obvious next step is to call that a knife-edge —
+  a density a hair over zero landing on the wrong side of an integer `y`
+  because the surface is nearly horizontal there, the same shape as the
+  floating-point epsilon the overworld's chase already found once. Evaluating
+  `final_density` at all 632 refutes it:
+
+  | | |
+  |---|---|
+  | margin past zero | median 0.0101367, worst 0.0344581 |
+  | one block of y is worth | median 0.0275955, smallest 0.0204291 |
+  | iso-surface displaced by | **>= 0.367 blocks** at the median, up to 1.687 |
+  | against the right denominator | 632 of **226702** solid-to-fluid boundaries = **0.279%** |
+
+  Vanilla's density there is `<= 0` and this build's is `> 0`, so the margin
+  is a *lower* bound on the gap. Where the two disagree they disagree by about
+  a block of terrain, not by an ulp — but only at 0.279% of the boundaries
+  where they could. **Sparse and large, not uniform and small**, which is the
+  opposite of what an epsilon looks like.
+
+  **Open, and now specifically:** the cause is localised and this does not
+  name it. It does not distinguish the `interpolated` lattice over the
+  nether's 4x8 cell, `blend_density` (the identity in a fresh world), or
+  `BlendedNoise::legacyFromWorldSeed` itself — whose probe scored terrain
+  height to within **half a block** and would have passed a third-of-a-block
+  error without seeing it, so its 13824 of 13824 does **not** exclude this.
+  `tools/analysis/final-density-probe.sh` bisects the server's own density at
+  a point rather than reading the sign of its terrain, and is what would
+  decide it; that needs a probe world and was not run here.
+
+- **What the modern derivation would actually do to the Nether, measured
+  (M4).** This section used to say only that substituting it "would produce a
+  Nether that is not vanilla's". That is an assertion. The number, from
+  `tests/conformance/vanilla_legacy_nether_climate_gap_test.cpp` — 4096 biome
+  columns a seed spanning each full 512x512 region, 32768 over the eight, one
+  y per column (justified in the run: **zero** columns of vanilla's own
+  stored biomes vary with y, as `y_scale: 0.0` requires):
+
+  | | |
+  |---|---|
+  | agreement with vanilla's biome | 8873 / 32768 = **27.08%** |
+  | chance baseline for these marginals | **30.23%** |
+
+  The baseline is `sum_b p_vanilla(b) * p_modern(b)`, the agreement two
+  independent labelings with these marginals would reach. The modern
+  derivation does not beat it; it comes in below it, and per seed sits on it
+  — on three seeds to the last cell, which is what happens when the wrong
+  seeding lets one biome swallow the sample. The marginals are wrong too:
+
+  | biome | vanilla | modern rule |
+  |-------|---------|-------------|
+  | `basalt_deltas` | 3938 | **0** |
+  | `crimson_forest` | 11109 | 12090 |
+  | `nether_wastes` | 9566 | 19397 |
+  | `soul_sand_valley` | 4804 | 283 |
+  | `warped_forest` | 3351 | 998 |
+
+  Total variation distance 0.33. Basalt deltas — 12% of vanilla's sample —
+  do not occur at all; soul sand valleys occur at a seventeenth of their
+  rate. The Nether's biome is a function of `temperature` and `vegetation`
+  alone, because its other four climate parameters are the constant 0.0, so
+  there is nothing to absorb a wrong seeding.
+
+  So the gap is now quantified rather than asserted: **right blocks, right
+  terrain, wrong world.** Not a Nether that looks slightly off. The test
+  reaches around the refusal on purpose and is not shipped code; no shipped
+  path can substitute the modern rule for a legacy dimension.
 
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares

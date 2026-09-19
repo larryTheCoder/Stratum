@@ -305,18 +305,20 @@ TEST_CASE("cache_2d over a column-varying function is refused", "[density][inter
 
 TEST_CASE("a cache over something unevaluable blames the right thing", "[density][interpreter]") {
     const TempTree tree;
-    // Exactly the shape of vanilla's end/erosion. end_islands is as
-    // column-invariant as a function gets, but this build cannot evaluate it,
-    // and column invariance is deliberately conservative about anything it
-    // cannot evaluate — so checking the cache before its contents produced a
-    // true refusal with a false reason stapled to it.
+    // The shape of vanilla's end/erosion, with an unevaluable argument in
+    // place of the `end_islands` that used to be one. The point is
+    // unchanged: column invariance is deliberately conservative about
+    // anything it cannot evaluate, so checking the cache before its contents
+    // produced a true refusal with a false reason stapled to it. `slide` is
+    // as column-dependent as end_islands was column-invariant, and the
+    // refusal must still blame the argument rather than the cache.
     tree.define("islands", R"({"type":"minecraft:cache_2d",
-        "argument":{"type":"minecraft:end_islands"}})");
+        "argument":{"type":"minecraft:slide","argument":0.0}})");
 
     const Pipeline pipeline(tree.pack());
 
     CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("islands")),
-                      ContainsSubstring("minecraft:end_islands"));
+                      ContainsSubstring("minecraft:slide"));
     CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("islands")),
                       !ContainsSubstring("varies with y"));
 }
@@ -330,6 +332,7 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":1.0,
         "y_scale":1.0,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
     tree.define("islands", R"({"type":"minecraft:end_islands"})");
+    tree.define("slide", R"({"type":"minecraft:slide","argument":0.0})");
     tree.define("weird", R"({"type":"minecraft:weird_scaled_sampler",
         "rarity_value_mapper":"type_1","noise":"test","input":1.0})");
     // Buried two levels down, to make sure the walk descends rather than
@@ -355,7 +358,12 @@ TEST_CASE("the node types this build cannot evaluate are refused by name",
     // here so that a regression which re-refuses it is a failure rather than
     // a quiet loss of terrain.
     CHECK_THAT(refusal("blended"), ContainsSubstring("no refusal"));
-    CHECK_THAT(refusal("islands"), ContainsSubstring("minecraft:end_islands"));
+    // Not end_islands any more: settled against the golden End regions and
+    // two probe regions, so it evaluates. Left in the tree so the walk still
+    // passes over it, and asserted so a regression that re-refuses it is a
+    // failure rather than a quiet loss of the End.
+    CHECK_THAT(refusal("islands"), ContainsSubstring("no refusal"));
+    CHECK_THAT(refusal("slide"), ContainsSubstring("minecraft:slide"));
     // Not weird_scaled_sampler any more either: its formula and both rarity
     // ladders are settled, so it evaluates. Left in the tree so the walk
     // still passes over it.
@@ -788,6 +796,70 @@ TEST_CASE("a legacy random source is refused rather than approximated", "[densit
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Xoroshiro) ==
           "xoroshiro");
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
+}
+
+TEST_CASE("a legacy source with nothing to seed is not refused", "[density][noise][legacy]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":0.0})");
+    tree.define("plain", R"({"type":"minecraft:add","argument1":1.5,"argument2":-0.25})");
+
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+
+    // The refusal is about turning an IDENTIFIER into a Java LCG seed. With
+    // no identifier asked for there is nothing to derive and nothing to
+    // approximate, so this is not a softening of the rule — it is the rule
+    // applied to what it is actually about. Every legacy dimension's
+    // `final_density` is this case (SPEC §11).
+    const std::vector<ResourceLocation> nothing;
+    const NoiseRegistry empty =
+        NoiseRegistry::create(pack, nothing, 7, stratum::density::RandomSource::Legacy);
+    CHECK(empty.size() == 0U);
+    CHECK(empty.source() == stratum::density::RandomSource::Legacy);
+    CHECK(empty.worldSeed() == 7);
+
+    // Asking for even one name brings the refusal straight back.
+    CHECK_THROWS_WITH(NoiseRegistry::create(pack, graph.referencedNoises(), 7,
+                                            stratum::density::RandomSource::Legacy),
+                      ContainsSubstring("legacy_random_source"));
+}
+
+TEST_CASE("an unbuilt named noise is refused at the node that samples it, not at construction",
+          "[density][interpreter][noise]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":0.0})");
+    tree.define("plain", R"({"type":"minecraft:add","argument1":1.5,"argument2":-0.25})");
+
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const std::vector<ResourceLocation> nothing;
+    const NoiseRegistry empty =
+        NoiseRegistry::create(pack, nothing, 7, stratum::density::RandomSource::Legacy);
+
+    // Constructing over the WHOLE graph used to throw here, because the graph
+    // holds a node naming `test`. One graph carries every dimension a pack
+    // defines, so that made one dimension's missing noise block every other
+    // dimension's roots — which is what kept the nether's terrain, itself
+    // naming nothing, unreachable.
+    const Interpreter interpreter(graph, empty);
+
+    // A root that never reaches the unbuilt noise evaluates.
+    const stratum::density::NodeIndex plain = graph.rootOf(ResourceLocation::parse("plain"));
+    interpreter.requireEvaluable(plain);
+    CHECK(bits(interpreter.evaluate(plain, Point{.x = 0, .y = 0, .z = 0})) == bits(1.25));
+
+    // And a root that does reach it is refused, by the noise's own name,
+    // from both the up-front check and the evaluation. Nothing is silently
+    // treated as zero (SPEC §8).
+    const stratum::density::NodeIndex field = graph.rootOf(ResourceLocation::parse("field"));
+    CHECK_THROWS_WITH(interpreter.requireEvaluable(field),
+                      ContainsSubstring("test") && ContainsSubstring("not built"));
+    CHECK_THROWS_WITH(interpreter.evaluate(field, Point{.x = 0, .y = 0, .z = 0}),
+                      ContainsSubstring("test") && ContainsSubstring("not built"));
 }
 
 TEST_CASE("a noise written inline loads, and is refused because vanilla refuses it too",

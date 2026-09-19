@@ -375,3 +375,73 @@ TEST_CASE("every node type has a name that round-trips", "[density][graph]") {
     }
     CHECK_FALSE(stratum::density::nodeTypeFromName("minecraft:nonsense").has_value());
 }
+
+TEST_CASE("reachability from one root is not the whole graph's reach", "[density][graph][reach]") {
+    const TempTree tree;
+    tree.define("mine", R"({"type":"minecraft:noise","noise":"wanted",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("theirs", R"({"type":"minecraft:noise","noise":"unwanted",
+        "xz_scale":1.0,"y_scale":1.0})");
+
+    // A spline's coordinate is reached through NO argument list, and
+    // `shift_a`'s argument is a NOISE rather than a nested function. Both are
+    // how a naive walk undercounts — vanilla's overworld reaches
+    // continentalness only through the first, and every dimension that has
+    // climate at all reaches `minecraft:offset` only through the second.
+    tree.define("coord", R"({"type":"minecraft:noise","noise":"through_spline",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("shifted", R"({"type":"minecraft:shift_a","argument":"through_shift"})");
+    tree.define("splined", R"({"type":"minecraft:spline","spline":{
+        "coordinate":"coord",
+        "points":[{"location":0.0,"derivative":0.0,"value":1.0}]}})");
+    tree.define("root", R"({"type":"minecraft:add","argument1":"mine","argument2":{
+        "type":"minecraft:add","argument1":"splined","argument2":"shifted"}})");
+    tree.define("plain", R"({"type":"minecraft:abs","argument":-3.5})");
+
+    const Graph graph = tree.resolve();
+
+    const auto reach = graph.noisesReachableFrom(graph.rootOf(ResourceLocation::parse("root")));
+    CHECK(reach == std::vector<ResourceLocation>{ResourceLocation::parse("through_shift"),
+                                                 ResourceLocation::parse("through_spline"),
+                                                 ResourceLocation::parse("wanted")});
+
+    // The whole graph reaches one more — `unwanted`, which no root above
+    // touches. Asking per root rather than per graph is the entire point.
+    CHECK(graph.referencedNoises().size() == reach.size() + 1U);
+
+    // A root that reaches nothing named reaches nothing named. This is the
+    // case the legacy dimensions turn on: thirteen of their fifteen router
+    // entries are exactly this.
+    CHECK(graph.noisesReachableFrom(graph.rootOf(ResourceLocation::parse("plain"))).empty());
+
+    // reachableFrom includes the root itself, and refuses an index naming no
+    // node rather than reading past the end of the node table.
+    const auto nodes = graph.reachableFrom(graph.rootOf(ResourceLocation::parse("plain")));
+    CHECK(nodes.size() == 2U); // the abs and the constant under it
+    CHECK_THROWS_AS(
+        graph.reachableFrom(static_cast<stratum::density::NodeIndex>(graph.nodeCount())),
+        ResolveError);
+
+    // THE MULTI-ROOT FORM IS THE UNION, which is the question a whole
+    // dimension asks: its fifteen router entries at once. It is a thin
+    // fan-out over the single-root walk rather than a second walk with its
+    // own visited set, so that "reaches" has exactly one definition in the
+    // library — two walks that could drift apart is the bug this whole area
+    // is about.
+    const std::vector<stratum::density::NodeIndex> bothRoots{
+        graph.rootOf(ResourceLocation::parse("root")),
+        graph.rootOf(ResourceLocation::parse("theirs"))};
+    const auto unioned = graph.noisesReachableFrom(bothRoots);
+    CHECK(unioned == std::vector<ResourceLocation>{ResourceLocation::parse("through_shift"),
+                                                   ResourceLocation::parse("through_spline"),
+                                                   ResourceLocation::parse("unwanted"),
+                                                   ResourceLocation::parse("wanted")});
+    // Deduplicated across roots, not concatenated: `root` and itself is
+    // still three names, not six.
+    const std::vector<stratum::density::NodeIndex> twice{
+        graph.rootOf(ResourceLocation::parse("root")),
+        graph.rootOf(ResourceLocation::parse("root"))};
+    CHECK(graph.noisesReachableFrom(twice) == reach);
+    // And no roots reaches nothing, rather than reaching everything.
+    CHECK(graph.noisesReachableFrom(std::vector<stratum::density::NodeIndex>{}).empty());
+}

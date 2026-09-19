@@ -8,6 +8,8 @@
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/executor.hpp>
+#include <stratum/surface/rule_graph.hpp>
 #include <stratum/validate/pack_report.hpp>
 
 #include <algorithm>
@@ -203,10 +205,83 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // Xoroshiro in the overworld and by the Java LCG in the Nether.
         const auto source = dimension.legacyRandomSource ? density::RandomSource::Legacy
                                                          : density::RandomSource::Xoroshiro;
+        // WHAT A ROUTER CHECK DOES NOT COVER, reported rather than left for
+        // the first chunk to discover, and reported BEFORE the router
+        // registry is built on purpose: a dimension whose router registry is
+        // refused skips the entry loop entirely, and it is exactly those
+        // dimensions that most need this answer. `wanted`, below, is the
+        // router's reach, which is the right question for the fifteen
+        // entries and the wrong one for "will this dimension generate".
+        // Generation additionally needs:
+        //
+        //   * the surface rule tree's noises — surface::requiredNoises(),
+        //     which is a SUPERSET of what the tree spells, since
+        //     `minecraft:surface`, `surface_secondary` and
+        //     `clay_bands_offset` appear in no field of it;
+        //   * and, under a legacy source, a random for every
+        //     `vertical_gradient` in that tree, for the aquifer lattice and
+        //     for the ore-vein source. None of those three is a noise, none
+        //     passes through `wanted`, and all three are refused by name
+        //     where they are built (SPEC §11).
+        //
+        // Without this a legacy dimension naming noises only in its surface
+        // rule validated clean and then did not generate. These are warnings
+        // and are NOT folded into routerEntries/dimensionsChecked: those
+        // counts answer a narrower question on purpose, and widening them
+        // would make the headline number mean something else again.
+        try {
+            const surface::RuleGraph rules = surface::RuleGraph::resolve(dimension.surfaceRule, id);
+            const std::vector<data::ResourceLocation> surfaceWanted =
+                surface::requiredNoises(rules);
+            if (!surfaceWanted.empty()) {
+                try {
+                    static_cast<void>(
+                        density::NoiseRegistry::create(pack, surfaceWanted, options.seed, source));
+                } catch (const density::NoiseError& error) {
+                    add(report, Severity::Warning, id.toString() + " surface_rule", error.what());
+                }
+            }
+            if (source == density::RandomSource::Legacy) {
+                for (const std::string& name : surface::verticalGradientNames(rules)) {
+                    add(report, Severity::Warning, id.toString() + " surface_rule",
+                        density::legacyConstructRefusal("minecraft:vertical_gradient",
+                                                        "its random_name '" + name +
+                                                            "' salts this dimension's own source"));
+                }
+                if (dimension.aquifersEnabled) {
+                    add(report, Severity::Warning, id.toString(),
+                        density::legacyConstructRefusal(
+                            "aquifers_enabled",
+                            "the lattice's centre jitter is drawn from that source"));
+                }
+                if (dimension.oreVeinsEnabled) {
+                    add(report, Severity::Warning, id.toString(),
+                        density::legacyConstructRefusal(
+                            "ore_veins_enabled", "the vein source is drawn from that source"));
+                }
+            }
+        } catch (const surface::RuleError& error) {
+            add(report, Severity::Error, id.toString() + " surface_rule", error.what());
+        }
+
+        // THIS dimension's noises, not the pack's. The distinction decides
+        // whether a legacy dimension is checkable at all: the refusal below
+        // fires only when a name is actually needed, and vanilla's End needs
+        // none — handing it the pack's whole list would refuse it for the
+        // overworld's noises and leave its fifteen entries unchecked for no
+        // reason (SPEC §11, "The refusal was four dimensions wide").
+        //
+        // AND IT IS THE ROUTER'S REACH ONLY, deliberately — see the
+        // generation-readiness block just above, which is where everything a
+        // dimension needs BEYOND its fifteen router entries is reported.
+        // Keeping the two apart is what lets "60 of 60 router entries" keep
+        // meaning exactly that.
+        const std::vector<data::ResourceLocation> wanted =
+            graph->noisesReachableFrom(dimension.router.entries);
         std::optional<density::NoiseRegistry> dimensionNoises;
         try {
             dimensionNoises.emplace(
-                density::NoiseRegistry::create(pack, referenced, options.seed, source));
+                density::NoiseRegistry::create(pack, wanted, options.seed, source));
         } catch (const density::NoiseError& error) {
             // A warning, not an error: the pack is not wrong, this build
             // cannot seed that dimension. Its router entries are left

@@ -27,6 +27,7 @@ add_library(stratum_core STATIC
     src/surface_rule_graph.cpp
     src/terrain_filler.cpp
     src/density_render.cpp
+    src/end_islands.cpp
     src/fdlibm_log.cpp
     src/md5.cpp
     src/pack.cpp

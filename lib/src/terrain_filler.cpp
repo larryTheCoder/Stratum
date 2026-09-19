@@ -243,6 +243,29 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // veins on and aquifers off really does come back as unbroken stone, so
     // leaving the source unbuilt here reproduces the server exactly rather
     // than approximating it.
+    // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11). The vein
+    // source is a positional random derived from the world seed through the
+    // DIMENSION'S declared random source, not from any named noise, so it
+    // never reaches NoiseRegistry::create's `wanted` list. Under a legacy
+    // source this build has only the modern derivation, and it is UNTESTED
+    // there: every vanilla legacy dimension has `ore_veins_enabled` false, so
+    // no oracle for it exists on disk. It is the same primitive whose gradient
+    // use is measured WRONG under a legacy source, so running it would be the
+    // plausible-but-wrong world SPEC §8 forbids.
+    //
+    // On the FLAG, deliberately, and outside the veinsPlaceBlocks gate below.
+    // With aquifers off the vein source is never built and no random is ever
+    // drawn — a legacy pack with veins alone fills a chunk bit-identical to
+    // the undoctored one (measured: FNV-1a 2b9f4b6af4ed174a both ways). But
+    // `validatePack` warns on the flag alone, and SPEC §11 says each of the
+    // three constructs is refused by name; a refusal that fires on one path
+    // and not the other is the disagreement this build exists to avoid.
+    if (settings.oreVeinsEnabled && noises.source() == density::RandomSource::Legacy) {
+        throw FillError(density::legacyConstructRefusal(
+            "ore_veins_enabled",
+            "the vein source is a positional random drawn from that source, and no vanilla "
+            "legacy dimension enables veins, so nothing on disk can say what it should be"));
+    }
     if (ore::veinsPlaceBlocks(settings.oreVeinsEnabled, settings.aquifersEnabled)) {
         filler.oreVeins_.emplace(noises.worldSeed());
         for (const settings::RouterEntry entry :
@@ -253,6 +276,18 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     }
 
     if (settings.aquifersEnabled) {
+        // Same refusal, same reason (SPEC §8, §11): the aquifer lattice's
+        // centre jitter is a positional random from the dimension's declared
+        // random source and names no noise. UNTESTED under a legacy source
+        // for the same reason as the veins — every vanilla legacy dimension
+        // has `aquifers_enabled` false.
+        if (noises.source() == density::RandomSource::Legacy) {
+            throw FillError(density::legacyConstructRefusal(
+                "aquifers_enabled",
+                "the lattice's centre jitter is a positional random drawn from that source, and "
+                "no vanilla legacy dimension enables aquifers, so nothing on disk can say what "
+                "it should be"));
+        }
         // The salted positional source (SPEC §4) is per-world, not per-block
         // — built once here from the registry's own seed rather than
         // re-derived on every call to fill().
@@ -308,6 +343,41 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                 "minecraft:surface (this dimension's rules read a column's surface depth, and no "
                 "minecraft:surface noise was built into the registry supplied to "
                 "ChunkFiller::compile)");
+        }
+        if (noises.source() == density::RandomSource::Legacy) {
+            // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11) —
+            // and it THROWS, exactly as the aquifer and ore-vein refusals
+            // above do. A first version of this recorded the refusal as an
+            // entry in blockedBy_ instead, which is the shape this function
+            // uses for "a caller did not supply something". That was the
+            // wrong shape for "this dimension is underivable": nothing on the
+            // public path (`world::CompiledDimension::compile`, which every
+            // native binding generates through) consults blockedBy_, so a
+            // doctored legacy pack with a gradient compiled clean and filled
+            // 13549 blocks with its surface rules silently dropped — the
+            // best-effort partial load SPEC §8 forbids. Measured, not
+            // supposed; the conformance case below drives that pack through
+            // CompiledDimension and asserts the throw.
+            //
+            // MEASURED WRONG, not merely unverified: this build's Xoroshiro
+            // vertical_gradient against the golden NETHER's bedrock agrees
+            // at chance, while the identical code on the modern overworld is
+            // exact — see tests/conformance/
+            // vanilla_legacy_gradient_gap_test.cpp.
+            const std::vector<std::string> names = surface::verticalGradientNames(*surfaceRules);
+            if (!names.empty()) {
+                std::string list;
+                for (const std::string& name : names) {
+                    list += (list.empty() ? "'" : ", '") + name + "'";
+                }
+                throw FillError(density::legacyConstructRefusal(
+                    "minecraft:vertical_gradient",
+                    "its random_name(s) " + list +
+                        " salt this dimension's own random source, which declares "
+                        "legacy_random_source; this build can only derive the modern one, and "
+                        "for this construct that derivation is measured to agree with vanilla "
+                        "at chance"));
+            }
         }
         if (needs.bandlands &&
             noises.find(data::ResourceLocation::parse("minecraft:clay_bands_offset")) == nullptr) {
@@ -696,8 +766,43 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // from the sky, nothing solid crossed yet) stays reachable,
             // which is what a rule keyed on `water` — freezing ice onto a
             // lake's own surface — needs.
-            bool crossedSolid = false;
+            //
+            // AND THE SCAN DOES NOT START AT THE SKY. It starts at the
+            // column's topmost NON-AIR block — fluid counting as non-air, so
+            // an ocean column still starts at its water surface and the ice
+            // case above is untouched. The open air above the terrain is
+            // never a surface-rule position at all.
+            //
+            // Invisible in every overworld fixture, because vanilla's own
+            // overworld tree is gated top to bottom and fires nothing up
+            // there; catastrophic the moment a tree is NOT gated. Vanilla's
+            // End is exactly that tree — its entire `surface_rule` is one
+            // unconditioned `block` placing end_stone — and without this
+            // bound it paints end_stone from the island's surface to y 127
+            // in every column. Measured as such: golden_end_test.cpp scored
+            // 441481 of 2097152 blocks at seed 0 with the scan starting at
+            // the sky, and 2097152 of 2097152 with it starting here.
+            //
+            // THE TOPMOST NON-AIR BLOCK, not the one above it. The obvious
+            // rival reading — start one higher, at the first air — is
+            // REFUTED rather than merely unchosen: that position is air with
+            // no solid crossed above it, so an unconditioned rule would fire
+            // there, and the End's tree is unconditioned. Under that reading
+            // every island in the End would carry one extra end_stone block
+            // on top, and the eight golden regions say it does not.
+            //
+            // A column of nothing but air leaves `scanFrom` below `minY` and
+            // the loop below runs zero times, which is the right answer for
+            // it: the End's void is most of the dimension.
+            std::int32_t scanFrom = minY - 1;
             for (std::int32_t y = topY - 1; y >= minY; --y) {
+                if (categorize(into.at(localX, y, localZ), *settings_) != Category::Air) {
+                    scanFrom = y;
+                    break;
+                }
+            }
+            bool crossedSolid = false;
+            for (std::int32_t y = scanFrom; y >= minY; --y) {
                 const Category category = categorize(into.at(localX, y, localZ), *settings_);
                 if (category != Category::Solid) {
                     if (crossedSolid) {

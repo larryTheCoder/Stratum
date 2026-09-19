@@ -163,14 +163,17 @@ public:
     /// the rivals it beat are in SPEC §11 rather than here, so that one copy
     /// of them can be kept current.
     ///
-    /// Nothing reaches this for a real world yet. `NoiseRegistry::create`
-    /// still refuses `RandomSource::Legacy` outright, because a legacy
-    /// dimension's *named* noises remain underived (see its comment, and
-    /// SPEC §11) — and that refusal comes first, before any density function
-    /// is built. So `Interpreter` selecting this on a Legacy registry is
-    /// correct-and-unreachable: it is the half of the answer that is
-    /// settled, written where it belongs, so that lifting the refusal does
-    /// not also have to rediscover this.
+    /// THIS ARM IS REACHED, and the sentence here used to say it was not.
+    /// `NoiseRegistry::create` no longer refuses `RandomSource::Legacy`
+    /// outright: it refuses one that is asked for a NAMED noise, and a legacy
+    /// dimension's `final_density` names none. So a legacy dimension builds an
+    /// EMPTY registry and `Interpreter` selects this arm on it, which is the
+    /// path the Nether's terrain measurement runs through —
+    /// tests/conformance/vanilla_legacy_nether_terrain_test.cpp, 15465864 of
+    /// 15466496 block classes (99.99591%) against the eight golden Nether
+    /// regions, which are six independent worlds. This is not a
+    /// correct-and-unreachable half-answer any more; it is the seeding under
+    /// the only measurement that currently exercises it.
     [[nodiscard]] static BlendedNoise legacyFromWorldSeed(std::int64_t worldSeed,
                                                           Parameters parameters);
 

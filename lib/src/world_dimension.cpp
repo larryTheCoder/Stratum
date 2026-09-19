@@ -6,9 +6,11 @@
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
+#include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
 #include <stratum/world/dimension.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -38,11 +40,33 @@ constexpr std::int32_t kQuartsPerChunkEdge = 4;
     return found->second;
 }
 
-[[nodiscard]] std::vector<data::ResourceLocation> everyNoise(const freeze::Pipeline& pipeline) {
-    std::vector<data::ResourceLocation> ids;
-    ids.reserve(pipeline.noises.size());
-    for (const auto& [id, parameters] : pipeline.noises) {
-        ids.push_back(id);
+/// The noises THIS dimension needs — not every noise the pipeline carries.
+///
+/// The distinction used to be invisible, because a pipeline holds one graph
+/// for every dimension in the pack and building the extras cost only time.
+/// It is not invisible any more: `NoiseRegistry::create` refuses a
+/// `legacy_random_source` dimension exactly when it is asked for a NAMED
+/// noise, so handing it the pack's whole list would refuse vanilla's End —
+/// which names none of them — for noises the overworld wants.
+///
+/// Two sources, because the two graphs are separate objects and neither
+/// knows about the other: the density functions reachable from this
+/// dimension's own fifteen router entries, and whatever its surface rule
+/// tree needs (`surface::requiredNoises`, which knows about the three that
+/// no condition names).
+[[nodiscard]] std::vector<data::ResourceLocation>
+noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& settings,
+          const surface::RuleGraph& surfaceRules) {
+    std::vector<density::NodeIndex> roots;
+    roots.reserve(settings::kRouterEntryCount);
+    for (const density::NodeIndex entry : settings.router.entries) {
+        roots.push_back(entry);
+    }
+    std::vector<data::ResourceLocation> ids = pipeline.graph.noisesReachableFrom(roots);
+    for (const data::ResourceLocation& id : surface::requiredNoises(surfaceRules)) {
+        if (std::ranges::find(ids, id) == ids.end()) {
+            ids.push_back(id);
+        }
     }
     return ids;
 }
@@ -66,10 +90,10 @@ struct CompiledDimension::Impl {
         : pipeline(std::move(frozen)), settings(settingsNamed(pipeline, noiseSettings)),
           biomeParameters(listNamed(pipeline, biomeParameterList)),
           surfaceRules(surface::RuleGraph::resolve(settings.surfaceRule, noiseSettings)),
-          noises(density::NoiseRegistry::create(pipeline.noises, everyNoise(pipeline), worldSeed,
-                                                settings.legacyRandomSource
-                                                    ? density::RandomSource::Legacy
-                                                    : density::RandomSource::Xoroshiro)),
+          noises(density::NoiseRegistry::create(
+              pipeline.noises, noisesFor(pipeline, settings, surfaceRules), worldSeed,
+              settings.legacyRandomSource ? density::RandomSource::Legacy
+                                          : density::RandomSource::Xoroshiro)),
           filler(terrain::ChunkFiller::compile(pipeline.graph, noises, settings, &surfaceRules,
                                                &biomeParameters, &pipeline.biomeTemperatures)),
           biomeInterpreter(pipeline.graph, noises,

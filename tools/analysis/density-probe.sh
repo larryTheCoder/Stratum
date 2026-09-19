@@ -96,6 +96,12 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [[ ${accept_eula} -eq 1 ]] || die "this runs the Minecraft server, so it needs --accept-eula"
 [[ -n "${spec}" && -f "${spec}" ]] || die "--spec must name a readable JSON file"
+[[ "${origin_chunk_x}" =~ ^-?[0-9]+$ && "${origin_chunk_z}" =~ ^-?[0-9]+$ ]] \
+    || die "--origin-chunk takes two whole numbers: chunkX chunkZ"
+# Not required to sit on a region boundary — only required not to STRADDLE
+# one, which is a weaker condition and is checked exactly, below, once CHUNKS
+# is known. An origin a multiple of 32 always satisfies it; so does any origin
+# whose window happens to fit.
 command -v java >/dev/null 2>&1 || die "java is needed"
 command -v python3 >/dev/null 2>&1 || die "python3 is needed"
 

@@ -166,11 +166,34 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
         SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR);
     }
     const auto overworld = ResourceLocation::parse("minecraft:overworld");
-    // The Nether seeds its noises from the Java LCG, which is not derived yet.
+    // The Nether seeds its NAMED noises from the Java LCG, which is not
+    // derived yet — and the refusal now says which three, because the
+    // refusal is no longer about the flag alone. Vanilla's End declares the
+    // same flag and is NOT refused: it names none (SPEC §11, and
+    // vanilla_legacy_named_noises_test.cpp).
+    CHECK_THROWS_WITH(
+        CompiledDimension::compile(thawedVanilla(), ResourceLocation::parse("minecraft:nether"),
+                                   ResourceLocation::parse("minecraft:nether"), 1),
+        ContainsSubstring("legacy_random_source") && ContainsSubstring("minecraft:temperature") &&
+            ContainsSubstring("minecraft:vegetation") && ContainsSubstring("minecraft:offset"));
+    // THE END'S BOUNDARY, stated as measured rather than as a universal. A
+    // first version of this case said "CompiledDimension::compile still
+    // refuses EVERY legacy dimension"; that is false, and a reviewer refuted
+    // it by construction. The End is refused on (end, end) for ONE reason
+    // only: its `biome_source` is `minecraft:the_end` — neither `multi_noise`
+    // nor `fixed` — so vanilla ships no biome parameter list named
+    // `minecraft:end`, and the refusal names exactly that. It is not refused
+    // for being legacy. Paired with any list that does exist it compiles and
+    // generates through this public path; golden_end_test.cpp holds the
+    // block-level result (25165824 of 25165824). What is NOT implemented is
+    // the End's own biome source, and that is the whole of the boundary.
     CHECK_THROWS_WITH(CompiledDimension::compile(thawedVanilla(),
-                                                 ResourceLocation::parse("minecraft:nether"),
-                                                 ResourceLocation::parse("minecraft:nether"), 1),
-                      ContainsSubstring("legacy_random_source"));
+                                                 ResourceLocation::parse("minecraft:end"),
+                                                 ResourceLocation::parse("minecraft:end"), 1),
+                      ContainsSubstring("no biome parameter list 'minecraft:end'"));
+    CHECK_NOTHROW(CompiledDimension::compile(
+        thawedVanilla(), ResourceLocation::parse("minecraft:end"), overworld, 1));
+
     CHECK_THROWS_WITH(CompiledDimension::compile(thawedVanilla(),
                                                  ResourceLocation::parse("minecraft:not_settings"),
                                                  overworld, 1),

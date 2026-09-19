@@ -34,6 +34,14 @@
 
 namespace {
 
+/// A density function this build genuinely cannot evaluate, for the tests
+/// that need one. `minecraft:slide` applies a noise settings entry's vertical
+/// slides, which no pipeline here carries yet (SPEC §10). These tests used
+/// `minecraft:end_islands` until it was settled and became evaluable, which
+/// is why the stand-in has a name of its own now rather than being spelled
+/// out at each site: the next type to be settled should be one edit.
+constexpr const char* kUnevaluable = R"({"type":"minecraft:slide","argument":0.0})";
+
 using Catch::Matchers::ContainsSubstring;
 using stratum::data::Pack;
 using stratum::data::Registry;
@@ -182,7 +190,7 @@ TEST_CASE("a registry this engine does not execute is a warning, not an error", 
 TEST_CASE("a function this build cannot evaluate is named with its reason", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.define("blended", R"({"type":"minecraft:end_islands"})");
+    tree.define("blended", kUnevaluable);
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
@@ -195,7 +203,7 @@ TEST_CASE("a function this build cannot evaluate is named with its reason", "[va
     const Finding* finding = findingAbout(report, "minecraft:blended");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
+    CHECK_THAT(finding->message, ContainsSubstring("minecraft:slide"));
 }
 
 TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate]") {
@@ -282,7 +290,7 @@ TEST_CASE("findings come worst first", "[validate]") {
     defineWorkingPack(tree);
     tree.defineIn("biome", "plains", "{}");
     tree.defineIn("placed_feature", "a", "{}");
-    tree.define("blended", R"({"type":"minecraft:end_islands"})");
+    tree.define("blended", kUnevaluable);
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
@@ -300,7 +308,7 @@ TEST_CASE("validation is deterministic", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
     tree.defineIn("placed_feature", "a", "{}");
-    tree.define("blended", R"({"type":"minecraft:end_islands"})");
+    tree.define("blended", kUnevaluable);
 
     const Pack pack = tree.pack();
     const Report first = stratum::validate::validatePack(pack);
@@ -379,7 +387,7 @@ TEST_CASE("noise settings that will not load are an error", "[validate]") {
 TEST_CASE("a router entry this build cannot evaluate is named with its dimension", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.define("blended", R"({"type":"minecraft:end_islands"})");
+    tree.define("blended", kUnevaluable);
     defineSettings(tree, "overworld", "blended");
 
     const Report report = stratum::validate::validatePack(tree.pack());
@@ -394,7 +402,7 @@ TEST_CASE("a router entry this build cannot evaluate is named with its dimension
     const Finding* finding = findingAbout(report, "minecraft:overworld final_density");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("minecraft:end_islands"));
+    CHECK_THAT(finding->message, ContainsSubstring("minecraft:slide"));
 }
 
 TEST_CASE("an inline noise is a warning where it sits and an error where a dimension reaches it",

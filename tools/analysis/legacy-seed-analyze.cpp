@@ -38,6 +38,17 @@
 // earlier write-up described the sweep as covering "frequency
 // 2^(firstOctave +/- 1..3)", which no version of this code has done.
 //
+// AND NO SKIP, WHICH `end_islands` NOW SAYS IS A SHAPE VANILLA USES. The
+// `block` axis above discards whole PERLIN BLOCKS; `end_islands`' simplex —
+// settled against the server, in a dimension declaring the same flag — is
+// seeded by `new java.util.Random(worldSeed)` followed by 17292 discarded LCG
+// STEPS, which this space cannot express at any offset (SPEC §11).
+//
+// Of the two gaps, the stack rule is the one to test first: if a legacy
+// NormalNoise keeps the modern per-octave shape and only swaps the generator
+// and the hash, then no seed candidate can be right while the stack rule is
+// wrong, and 270,000 candidates at the null say nothing at all about seeds.
+//
 // THE NULL IS MEASURED, NOT ASSUMED, and that is the other half of the point.
 // Every candidate in the space is wrong, so the distribution of their
 // agreement counts IS this dimension's null, and `--scan` prints it: mean,
@@ -56,6 +67,17 @@
 // seed = JavaRandom(seed).nextLong(), driving the LCG, at block offset 0.
 // That is rule 182, block 0, and `--candidate 182 0` scores it by name rather
 // than leaving it to be inferred from a list of survivors it is absent from.
+//
+// `--twin` ASKS ABOUT THE QUESTION RATHER THAN A CANDIDATE. `leg_single` and
+// `leg_twin` carry `stratum:na` and `stratum:nb`: the same parameters under
+// different identifiers, in legacy dimensions of one world. If those two
+// inverted fields were the same field, every name-hashing rule in this file
+// would be answering something vanilla does not ask. They are not — 21 of
+// 2304 columns at seed 42 and 18 of 2304 at 31337, which is this readback's
+// own null. What it does NOT separate is "the name enters" from "the order
+// the noises are built in enters", since the two names also order
+// differently; that needs a probe whose packs differ in which OTHER noises
+// they define.
 //
 // AND THE SEARCH IS CALIBRATED. `--plant <seedRule> <block>` replaces the
 // server's readings with readings synthesised from that candidate, put
@@ -887,14 +909,63 @@ struct Result {
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::fprintf(stderr,
-                     "usage: %s <probe dir> <world seed> --scan|--control|--profile|--candidate "
-                     "<r> <b>|--plant <r> <b>\n",
+                     "usage: %s <probe dir> <world seed> "
+                     "--scan|--control|--profile|--twin|--candidate <r> <b>|--plant <r> <b>\n",
                      argv[0]);
         return 2;
     }
     const std::filesystem::path root{argv[1]};
     const std::int64_t seed = std::strtoll(argv[2], nullptr, 10);
     const std::string mode{argv[3]};
+
+    // --twin asks one question about the QUESTION, not about a candidate:
+    // does the noise's identifier reach the seed at all? `leg_single` and
+    // `leg_twin` are `stratum:na` and `stratum:nb` — identical parameters,
+    // different names, legacy dimensions of the same world. If the two
+    // inverted fields were the same field, every name-hashing candidate in
+    // this file would be answering a question vanilla does not ask.
+    //
+    // They are not: agreement lands at the readback's own null. It does NOT
+    // separate "the name enters" from "the ORDER the noises are built in
+    // enters", since the two names also order differently; that separation
+    // needs a probe whose packs differ in which OTHER noises they define.
+    if (mode == "--twin") {
+        Excluded excludedA;
+        Excluded excludedB;
+        const std::vector<Column> a =
+            readColumns(root / "leg_single" / "r.0.0.mca", 2.0, excludedA);
+        const std::vector<Column> b = readColumns(root / "leg_twin" / "r.0.0.mca", 2.0, excludedB);
+        std::size_t both = 0;
+        std::size_t same = 0;
+        double worst = 0.0;
+        for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+            // readColumns walks the same lattice in the same order in both,
+            // so equal indices are the same column; asserted rather than
+            // assumed.
+            // x and z are block coordinates carried as double, so they are
+            // exact integers; comparing them as integers says that, and keeps
+            // -Wfloat-equal meaningful where a float comparison would be a
+            // real mistake.
+            if (std::llround(a[i].x) != std::llround(b[i].x) ||
+                std::llround(a[i].z) != std::llround(b[i].z)) {
+                std::fputs("--twin: the two dimensions' column lattices disagree\n", stderr);
+                return 1;
+            }
+            ++both;
+            const double error = std::abs(a[i].value - b[i].value);
+            worst = std::max(worst, error);
+            if (error <= 1e-12) {
+                ++same;
+            }
+        }
+        std::printf("leg_single (stratum:na) vs leg_twin (stratum:nb), seed %lld: "
+                    "%zu of %zu columns identical, worst |diff| %.6f\n",
+                    static_cast<long long>(seed), same, both, worst);
+        std::printf("  the null for this readback is about 1%% of columns; anything near it "
+                    "means the two are unrelated fields, and the identifier (or the build "
+                    "order) reaches the seed.\n");
+        return 0;
+    }
 
     std::printf("candidate space: %zu seed rules x %d block offsets = %zu per dimension\n",
                 kSeedRules, kBlockOffsets, kSeedRules * kBlockOffsets);

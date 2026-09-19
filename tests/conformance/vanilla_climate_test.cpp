@@ -322,14 +322,22 @@ TEST_CASE("the interpreter's account of vanilla's graph is honest",
           // is that node, and sloped_cheese is the function built on it.
           "overworld/base_3d_noise", "overworld/sloped_cheese",
           // The cave functions, since weird_scaled_sampler was settled.
-          "overworld/caves/entrances", "overworld/caves/spaghetti_2d"}) {
+          "overworld/caves/entrances", "overworld/caves/spaghetti_2d",
+          // AND THE END'S OWN TERRAIN, since `end_islands` was settled.
+          // `end/sloped_cheese` is NOT pure old_blended_noise — it is
+          // `end_islands` + `end/base_3d_noise` — which is why it sat in the
+          // refused list below for two milestones after the blended noise
+          // stopped being the blocker. It moved groups when the island field
+          // landed (noise::EndIslands), and this is the test that had to
+          // admit it.
+          "end/base_3d_noise", "end/sloped_cheese"}) {
         CAPTURE(path);
         CHECK_NOTHROW(interpreter.requireEvaluable(root(path)));
     }
 
-    // What is left waits on weird_scaled_sampler and end_islands, not on
-    // anything about the blended noise.
-    for (const std::string_view path : {"end/sloped_cheese", "overworld/caves/noodle"}) {
+    // What is left waits on weird_scaled_sampler's remaining use, not on
+    // anything about the blended noise or the island field.
+    for (const std::string_view path : {"overworld/caves/noodle"}) {
         CAPTURE(path);
         CHECK_THROWS_AS(interpreter.requireEvaluable(root(path)), stratum::density::EvalError);
     }

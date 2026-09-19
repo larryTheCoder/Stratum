@@ -28,6 +28,7 @@ add_executable(stratum_conformance_tests
     golden_fill_aquifer_test.cpp
     golden_terrain_test.cpp
     golden_terrain_no_aquifer_test.cpp
+    golden_end_test.cpp
     golden_regions_test.cpp
     nbt_structures_test.cpp
     nbt_writer_test.cpp
@@ -51,6 +52,10 @@ add_executable(stratum_conformance_tests
     vanilla_blended_probe_test.cpp
     vanilla_legacy_blended_test.cpp
     vanilla_legacy_seed_control_test.cpp
+    vanilla_legacy_named_noises_test.cpp
+    vanilla_legacy_nether_terrain_test.cpp
+    vanilla_legacy_nether_climate_gap_test.cpp
+    vanilla_legacy_gradient_gap_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
     vanilla_freeze_test.cpp
@@ -59,6 +64,7 @@ add_executable(stratum_conformance_tests
     vanilla_settings_test.cpp
     vanilla_surface_level_test.cpp
     vanilla_surface_rules_test.cpp
+    vanilla_psl_lattice_test.cpp
     vanilla_weird_scaled_test.cpp
     vanilla_render_test.cpp
 )

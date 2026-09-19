@@ -35,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace stratum::surface {
 
@@ -117,6 +118,30 @@ struct Context {
 /// even though nothing about its name or its schema says so (SPEC §11), and
 /// a second copy of that knowledge is exactly what would drift.
 [[nodiscard]] bool readsSurfaceDepth(const RuleGraph& graph);
+
+/// Every `random_name` a `vertical_gradient` in this tree salts its
+/// dimension's random source with, sorted and deduplicated.
+///
+/// Public for the same reason requiredNoises() is: a caller has to know
+/// BEFORE compiling. This list is not a list of noises and never passes
+/// through NoiseRegistry, so a dimension whose only draw on its declared
+/// random source is a gradient looks, to the registry, like a dimension that
+/// needs nothing. Under `legacy_random_source` that is exactly the case this
+/// build cannot derive, so the filler refuses it by name (SPEC §11).
+[[nodiscard]] std::vector<std::string> verticalGradientNames(const RuleGraph& graph);
+
+/// Every `worldgen/noise` entry this tree needs built before it can be
+/// compiled: the ones its `noise_threshold` conditions name, plus the three
+/// that no condition names — `minecraft:surface` and
+/// `minecraft:surface_secondary` where a depth is read, and
+/// `minecraft:clay_bands_offset` where `bandlands` is placed.
+///
+/// Sorted and deduplicated. This exists because the list was open-coded at
+/// every call site, and one of those sites is now load-bearing in a way it
+/// was not: a `legacy_random_source` dimension is refused if it needs a
+/// NAMED noise, so "which noises does this dimension need" decides whether
+/// it generates at all rather than only what gets built.
+[[nodiscard]] std::vector<data::ResourceLocation> requiredNoises(const RuleGraph& graph);
 
 /// The four clamped neighbour heights `steep` compares, given a way to read a
 /// column's surface height. Chunk-local and clamped, so no neighbouring chunk

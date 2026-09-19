@@ -181,6 +181,39 @@ public:
     /// nothing and so appear in no list; they travel on the node itself.
     [[nodiscard]] std::vector<data::ResourceLocation> referencedNoises() const;
 
+    /// Every node reachable from @p root, @p root included, sorted. Follows
+    /// arguments AND splines: a spline's `coordinate` is a density function,
+    /// and in the overworld those coordinates are continents, erosion and
+    /// ridges — three named noises that appear in no argument list above
+    /// them, so a walk that skips splines silently undercounts.
+    ///
+    /// This is what lets a caller ask what ONE router entry needs, rather
+    /// than what the whole graph needs. The two are very different in a
+    /// legacy dimension: the nether's fifteen router entries reference three
+    /// named noises between them, and thirteen of the fifteen reference none
+    /// (SPEC §11).
+    ///
+    /// This is the ONLY reachability walk in the library. Everything that
+    /// asks "what does this dimension need" — the registry's `wanted`, the
+    /// validator's, and the conformance tables — goes through it or through
+    /// the two filters below, so there is one definition of "reaches".
+    [[nodiscard]] std::vector<NodeIndex> reachableFrom(NodeIndex root) const;
+
+    /// The named noises reachable from @p root, sorted and deduplicated.
+    /// Same reach as reachableFrom(); inline noises name nothing and so
+    /// appear here no more than they do in referencedNoises().
+    [[nodiscard]] std::vector<data::ResourceLocation> noisesReachableFrom(NodeIndex root) const;
+
+    /// The same over several roots at once, unioned — which is the question
+    /// a whole dimension asks: one graph holds every dimension's functions,
+    /// so referencedNoises() above answers "what does this pack name", never
+    /// "what does this dimension need". The difference decides whether a
+    /// `legacy_random_source` dimension can be built at all
+    /// (NoiseRegistry::create): vanilla's End needs no named noise, but the
+    /// graph it shares with the overworld names a dozen.
+    [[nodiscard]] std::vector<data::ResourceLocation>
+    noisesReachableFrom(std::span<const NodeIndex> roots) const;
+
 private:
     friend class Resolver;
 

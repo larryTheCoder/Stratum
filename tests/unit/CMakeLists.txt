@@ -19,6 +19,7 @@ add_executable(stratum_unit_tests
     aquifer_substance_test.cpp
     terrain_filler_test.cpp
     density_render_test.cpp
+    end_islands_test.cpp
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
