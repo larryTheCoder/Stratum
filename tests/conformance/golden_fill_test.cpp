@@ -68,6 +68,8 @@
 // too, not in the rule tree but in the pass around it.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/temp_path.hpp"
+
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
@@ -166,7 +168,7 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     // entry would be — just from a scratch tree rather than the fixture
     // pack, since the synthetic `stratum:probe` biome is never in it.
     const std::filesystem::path probeBiomeTree =
-        std::filesystem::temp_directory_path() / "stratum-golden-fill-probe-biome";
+        stratum::test::tempPath("stratum-golden-fill-probe-biome");
     std::filesystem::remove_all(probeBiomeTree);
     std::filesystem::create_directories(probeBiomeTree / "biome");
     {

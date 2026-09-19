@@ -208,8 +208,13 @@ TEST_CASE("the CLI fails loudly rather than half-succeeding", "[cli]") {
 
     SECTION("an unknown render mode") {
         const std::filesystem::path region = writeRegion("stratum-cli-g", false);
-        const CliResult result =
-            runCli("render \"" + region.string() + "\" --out /tmp/x.png --mode nonsense");
+        // --out is never written: the mode is rejected before any output is
+        // opened. It still has to be a path this platform could accept, so it
+        // is spelled the same way every other scratch path here is rather
+        // than as a POSIX literal.
+        const std::filesystem::path out = stratum::test::tempPath("stratum-cli-g-out", ".png");
+        const CliResult result = runCli("render \"" + region.string() + "\" --out \"" +
+                                        out.string() + "\" --mode nonsense");
         CHECK(result.exitCode == 2);
         CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("heightmap"));
         std::filesystem::remove(region);

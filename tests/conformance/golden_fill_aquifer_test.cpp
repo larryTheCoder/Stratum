@@ -73,6 +73,8 @@
 // it is where the next pass should start.
 //
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
+#include "support/temp_path.hpp"
+
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
@@ -154,7 +156,7 @@ TEST_CASE("the aquifer wiring places the blocks the server placed, before any su
         probeBiome);
 
     const std::filesystem::path probeBiomeTree =
-        std::filesystem::temp_directory_path() / "stratum-golden-fill-aquifer-probe-biome";
+        stratum::test::tempPath("stratum-golden-fill-aquifer-probe-biome");
     std::filesystem::remove_all(probeBiomeTree);
     std::filesystem::create_directories(probeBiomeTree / "biome");
     {

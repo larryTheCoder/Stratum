@@ -43,6 +43,8 @@
 // written down.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/temp_path.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -63,7 +65,6 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -505,10 +506,7 @@ TEST_CASE("a doctored legacy pack with a gradient is refused through CompiledDim
         }
     };
 
-    const TempTree tmp{
-        std::filesystem::temp_directory_path() /
-        ("stratum-doctored-gradient-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))};
+    const TempTree tmp{stratum::test::tempPath("stratum-doctored-gradient")};
     std::filesystem::copy(tree, tmp.dir, std::filesystem::copy_options::recursive);
 
     const std::filesystem::path endJson = tmp.dir / "noise_settings" / "end.json";
