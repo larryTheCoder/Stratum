@@ -410,10 +410,15 @@ Open:
       multiplied out: **901120 painted columns**, of which 245 are separating
       readings and **900875 are controls**. Composition, per dimension:
       65536 × 10 (s1 and s2, whose windows each painted a full 16×16 chunk
-      block) + 49152 × 5 (s3, which settled at 12 of those 16 chunk rows in
-      z — 192 chunks, the four missing rows on the low-z edge, all 23 of its
-      separating columns inside what was painted). Not 983040: that figure
-      assumed all fifteen windows painted 65536 and five of them did not.
+      block) + 49152 × 5 (s3, which painted 16×12 — 192 chunks). s3's
+      shortfall is a REGION BOUNDARY, not an impatient probe: the painted
+      skirt is deterministically `origin_chunk - 4 .. origin_chunk + 11` per
+      axis, s3's origin chunk is (420, 856), so the skirt wants z 852..867
+      while region `r.13.26` ends at chunk z 863 — the four missing rows are
+      864..867 on the HIGH-z edge, in `r.13.27`, which the probe does not
+      keep. The low-z row 852 is painted, and all 23 of s3's separating
+      columns are inside what was kept. Not 983040: that figure assumed all
+      fifteen windows painted 65536 and five of them did not.
 
       `psl + surfaceDepth - 8` is right on every one of the 901120;
       `psl + max(0, surfaceDepth) - 8` is right on every control and wrong on
@@ -641,10 +646,13 @@ Open:
       `preliminary_surface_level` at its own cell centres and still reads it
       per column here. Nothing in this sweep says whether that is right, and
       the two readings are NOT close: on the three-valued field the
-      per-column reading matches the server on 3600 of 36864 columns
-      (`probes/apsb/v_psl`, pitch 1 in the analyzer's fit), so the aquifer is
-      reading a different number from the surface rule on about nine columns
-      in ten. That the aquifer's own conformance cases pass under it is
+      per-column reading matches the server on 3600 of 36864 columns, so the
+      aquifer is reading a different number from the surface rule on about
+      nine columns in ten. That figure is an ANALYZER measurement, not one a
+      conformance case holds — reproduce it with
+      `build/psl-lattice-analyze fit .fixtures/1.21.11/worldgen 42
+      .fixtures/1.21.11/probes/apsb v_psl` and read the pitch-1 rows, which
+      are the per-column reading. That the aquifer's own conformance cases pass under it is
       therefore worth something — but those cases were fitted under it, and
       the aquifer's four surface consumers are gates and caps that quantise
       hard, so passing is weak evidence rather than none. What would settle

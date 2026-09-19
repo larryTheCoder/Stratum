@@ -106,9 +106,13 @@
 # they are scored too. A window is not the forceloaded 8x8 block: the server
 # takes a wider skirt of chunks past the `surface` stage than it takes to
 # `full`, and what carries a marker band is every chunk that reached at least
-# `carvers` — measured as 16x16 chunks, 65536 columns, for s1 and s2, and
-# 16x12 = 49152 for s3, whose settle heuristic stopped four chunk rows short
-# on the low-z edge. Measured total across the 15 dimensions: 901120 painted
+# `carvers` — a deterministic `origin_chunk - 4 .. origin_chunk + 11` per
+# axis, measured as 16x16 chunks, 65536 columns, for s1 and s2, and 16x12 =
+# 49152 for s3. s3's shortfall is a REGION BOUNDARY: its origin chunk is
+# (420, 856), so the skirt wants z 852..867 while region r.13.26 ends at chunk
+# z 863 — the four missing rows are 864..867 on the HIGH-z edge and fall in
+# r.13.27, which this probe does not keep. The low-z row 852 IS painted.
+# Measured total across the 15 dimensions: 901120 painted
 # columns, 245 separating readings, 900875 controls. Re-measure with
 # `aps-boundary-analyze clamp` rather than multiplying 65536 by 15.
 #

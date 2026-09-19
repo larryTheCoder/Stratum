@@ -1054,14 +1054,19 @@ TEST_CASE("the surface depth carries no bottom clamp", "[conformance][surface]")
     // pinned. The probe forceloads an 8x8 chunk block, but the server takes a
     // wider skirt past the `surface` stage than it takes to `full`, so what
     // carries a marker band is every chunk that reached at least `carvers` —
-    // measured as a 16x16 chunk window, 65536 columns, in s1 and s2. A
-    // probe's settle heuristic stops when the region file's size holds still,
-    // and in s3 that left 12 of those 16 chunk ROWS in z rather than all 16
-    // (192 chunks, 49152 painted columns; the four missing rows are the
-    // low-z edge, and all 23 of s3's separating columns are inside what was
-    // painted). That is a generation-completeness number, not a measurement,
-    // and pinning it would make this case fail on a regeneration that
-    // happened to be more patient. What IS pinned is the separating-column
+    // a deterministic `origin_chunk - 4 .. origin_chunk + 11` in each axis,
+    // measured as a 16x16 chunk window, 65536 columns, in s1 and s2.
+    //
+    // s3 paints 16x12 instead (192 chunks, 49152 columns) and the reason is a
+    // REGION BOUNDARY, not an impatient probe: its origin chunk is (420, 856),
+    // so the skirt wants z 852..867, and region r.13.26 ends at chunk z 863.
+    // The four missing rows are 864..867, on the HIGH-z edge, and they lie in
+    // r.13.27 which the probe does not retain. The low-z row 852 IS painted.
+    // All 23 of s3's separating columns are inside what was kept.
+    //
+    // So 49152 is deterministic given the origin chunk and the region
+    // boundary, and the floor below is tolerance for a RE-SITED probe rather
+    // than for a slower one. What IS pinned is the separating-column
     // COUNT per case — those come from the sweep and are a property of the
     // seed, not of the run — and the scoring: unclamped right on every
     // painted column, clamped wrong on exactly the separating ones.

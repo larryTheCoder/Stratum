@@ -4716,13 +4716,32 @@ Open:
 
   Every dimension's spread lands in one interval, **0.2646 to 0.3421**, and
   the lag-4 figures group by noise *shape* rather than by the flag: 1-octave
-  0.3145-0.4717, 3-octave 0.8769-0.9022, skip 0.8946-0.9245. Shape for shape,
-  the legacy mean differs from the modern mean by **0.060 at most** in lag-4
-  (1-octave; 0.012 at 3-octave, 0.009 at skip) and by **0.020 at most** in sd
-  (1-octave; 0.012 and 0.001). The statistic is not blind: the gap between
-  the widest 1-octave instance and the narrowest of the others is **0.405**,
-  six times the largest legacy-to-modern difference it reports. So at this
-  resolution the flag does not visibly move the pipeline's spatial structure.
+  0.3145-0.4717, 3-octave 0.8769-0.9022, skip 0.8946-0.9245. The statistic is
+  not blind: the gap between the widest 1-octave instance and the narrowest of
+  the others is **0.405**.
+
+  Read the comparison per MIRROR PAIR rather than pooled, because pooling
+  understates it. The only true same-noise pair — `stratum:na` with the flag
+  on and off, `leg_single` against `mod_single` — differs in lag-4 by **0.153
+  (seed 42) and 0.108 (seed 31337)**, not by the 0.060 a shape-group mean
+  gives. Pooling drags the legacy side up because `leg_twin` (`stratum:nb`)
+  has NO modern mirror, so the 1-octave group is four legacy observations
+  against two modern, of two different noise definitions.
+
+  And the statistic's own NOISE FLOOR is the same size as the effect. Two
+  legacy 1-octave realizations of the same shape — `leg_single` against
+  `leg_twin`, same flag, same world — differ by **0.127 and 0.155**, i.e. by
+  MORE than the mirror pair does. So this comparison bounds a flag effect only
+  to within realization-to-realization scatter at 1 octave; it does not
+  resolve anything smaller, and the 3-octave and skip rows (0.012 and 0.009)
+  are the ones carrying real precision. Note also that `leg_skip_q4` and
+  `leg_skip_q16` are NOT independent samples: they are the same field as
+  `leg_skip` re-read at a coarser output scale, so the skip group holds one
+  realization per flag, not three.
+
+  So at this resolution the flag does not visibly move the pipeline's spatial
+  structure — with "this resolution" meaning ~0.15 in lag-4 at 1 octave, and
+  ~0.01 at the other two shapes.
   That is a bounded, refutable statement and not a proof — nothing short of
   the pipeline itself would be — but it replaces an assumption that was not
   being measured at all.
@@ -4740,8 +4759,9 @@ Open:
   at seed 31337 is 0.8946, under the quoted floor. And the legacy-side counts
   at scale 2 were given as "13-23", but `leg_twin` at seed 31337 scores
   **12**/2304, so the range is 12-23. None of these changes the conclusion —
-  the shapes still separate by 0.405 where the mirror differs by at most
-  0.060 — but a range quoted one instance too narrow is how a later
+  the shapes still separate by 0.405, an order above both the mirror-pair
+  difference and the realization scatter above — but a range quoted one
+  instance too narrow is how a later
   measurement outside it reads as a signal, which is the same mistake this
   section already records once for the null. (What did reproduce to the
   column: the negative control's 45/6912 at seed 42, `mod_single` 18,
