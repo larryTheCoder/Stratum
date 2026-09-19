@@ -186,6 +186,21 @@ public:
     /// records that distinction, and a counterexample would be a finding
     /// about the tree rather than a bug in the arithmetic.
     ///
+    /// That counterexample now exists, and this rule is a PROXY. Over every
+    /// fourth chunk of all eight golden overworld regions (32768 cells,
+    /// tests/conformance/vanilla_biome_tie_break_test.cpp) twenty cells in
+    /// five columns are genuine ties — equal minimum fitness, equidistant on
+    /// every axis, the sample sitting on a shared quantised bound — that
+    /// vanilla resolves to the EARLIER row. Across both samples, 104 ties
+    /// decide a biome: "later" is right on 84 and "earlier" on 20, each rule
+    /// refuted by the other sample, and every tie is a pair, so the two
+    /// positional rules exhaust what a list order can express. All 104 are
+    /// consistent with one total order on rows that is not the list's —
+    /// the shape of a tree's leaf order, which the parameter table does not
+    /// carry and this project may not read from source. "Later" stays
+    /// because inverting it is strictly worse; the twenty are attributed,
+    /// not fixed, and the [biome] cases now state the measured extent.
+    ///
     /// Throws ParameterError on an empty list rather than inventing a biome:
     /// there is no sensible default, and a world full of one wrong biome is
     /// worse than a refusal.

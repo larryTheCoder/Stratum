@@ -164,6 +164,7 @@
 //   $A .fixtures --attribute     # why each of --control's residual columns disagrees
 //   $A .fixtures --ties          # the tie-break rule scored over both samples
 //   $A .fixtures --quantize      # 36 roundings x both samples: is it the rounding?
+//                                # (<5 min in release; Debug does not finish in 20)
 //   $A .fixtures --model
 //   $A .fixtures --modern
 //   $A .fixtures --boundary

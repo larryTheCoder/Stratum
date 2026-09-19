@@ -6147,7 +6147,7 @@ Open:
   `river`, turning two ties this engine loses into outright arithmetic
   disagreements.
 
-  **And no order over the list can be the tie-break.** Counted where it means
+  **And no positional rule over the list can be the tie-break.** Counted where it means
   something — ties whose members carry different biomes, which is the only
   case the rule decides — over both samples together:
 

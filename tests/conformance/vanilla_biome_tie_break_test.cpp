@@ -540,7 +540,7 @@ TEST_CASE("the five residual columns are ties, not climate values that differ",
     CHECK(checked == 20U);
 }
 
-TEST_CASE("no order over the parameter list is vanilla's tie-break",
+TEST_CASE("no rule based on list position is vanilla's tie-break",
           "[conformance][biome][tiebreak]") {
     const std::filesystem::path tree = findWorldgenTree();
     const std::filesystem::path parameters = findParameterList();
