@@ -57,6 +57,7 @@ add_executable(stratum_conformance_tests
     vanilla_legacy_nether_climate_gap_test.cpp
     vanilla_legacy_goldens_biome_test.cpp
     vanilla_legacy_gradient_gap_test.cpp
+    vanilla_legacy_goldens_surface_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp
     vanilla_freeze_test.cpp
@@ -79,6 +80,17 @@ target_link_libraries(stratum_conformance_tests PRIVATE
 
 target_compile_definitions(stratum_conformance_tests PRIVATE
     "STRATUM_FIXTURES_DIR=\"${STRATUM_FIXTURES_DIR}\""
+)
+
+# vanilla_legacy_goldens_surface_test.cpp INCLUDES the analyzer's own decoder
+# rather than reimplementing it. A conformance case that re-derived which
+# positions the surface system visits, how a stone-depth run is counted and
+# what a golden block says about a noise threshold would be asserting its own
+# second copy of the inversion -- and the analyzer's overworld control, which
+# is the only thing that says the inversion is right, would not be validating
+# the copy the test runs.
+target_include_directories(stratum_conformance_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/analysis"
 )
 
 stratum_configure_target(stratum_conformance_tests)

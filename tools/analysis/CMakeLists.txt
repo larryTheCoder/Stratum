@@ -43,6 +43,16 @@ add_executable(stratum_legacy_goldens_biome_analyze legacy-goldens-biome-analyze
 target_link_libraries(stratum_legacy_goldens_biome_analyze PRIVATE stratum::core ZLIB::ZLIB)
 stratum_configure_target(stratum_legacy_goldens_biome_analyze)
 
+# The golden-region readback. Its decoder lives in a header beside it because
+# tests/conformance/vanilla_legacy_goldens_surface_test.cpp runs the SAME
+# decoder: a conformance case that re-derived the inversion would be asserting
+# its own copy of it, which is the one thing the control exists to rule out.
+add_executable(stratum_legacy_goldens_surface_analyze legacy-goldens-surface-analyze.cpp)
+target_link_libraries(stratum_legacy_goldens_surface_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_legacy_goldens_surface_analyze PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+stratum_configure_target(stratum_legacy_goldens_surface_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()

@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control).
+Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control).; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too).)
 
 ## At a glance
 
@@ -478,6 +478,61 @@ Open:
       `.fixtures/<version>/biome_parameters/minecraft/nether.json`. No
       minecraft.wiki transcription and no jar reading was needed; the points
       are pinned by the conformance case.
+
+      **A SECOND, INDEPENDENT ORACLE — and it refutes the same space.**
+      Everything above inverts a synthetic probe dimension's terrain height.
+      The eight golden NETHER regions were never used for this and are a far
+      bigger oracle: ~2 million columns over **six independent worlds**,
+      every one painted by the real legacy seeding of the six noises the
+      Nether's surface rule names. A `noise_threshold` is a sign test, so a
+      placed block is one bit about a noise — and
+      `tools/analysis/legacy-goldens-surface-analyze.cpp` inverts it by
+      WALKING the resolved rule graph and branching on everything it cannot
+      evaluate (the thresholds, a `vertical_gradient` inside its band, and
+      the column's surface depth, which is itself a named noise and so is
+      enumerated over the range `minecraft:surface`'s own parameters bound it
+      to, [-3, 10], swept as [-4, 11]). A bit is reported only where every
+      assignment reproducing the golden block agrees on it.
+
+      *The control passes, and it was the hard part.* The identical decoder
+      over the golden OVERWORLD regions, whose surface-rule noises are
+      modern-seeded and exact here: at stride 1, **262581476 positions**,
+      the library's own `surface::Executor` reproduces **262406910 /
+      262581476 = 99.9335%** of golden blocks from the RECONSTRUCTED Context
+      (an independent check on the reconstruction, added because the first
+      control failed at 99.77%), **0** of those positions are unexplained by
+      the tree, and the decoded bits recover the true seeding at **30104 /
+      30104 = 100.0000%** against a trivial-predictor null of 86.37%, with
+      worldSeed + 1 at **78.97% — below the trivial predictor**.
+
+      *The identity test is a positive result.* `soul_sand_layer` and
+      `gravel_layer` are byte-identical and differ only by name, and the
+      `nether_wastes` branch decides both at one column. Joint table over
+      six worlds: **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6**. One field
+      makes (F,T) impossible; it is **1398 of 3204 (43.63%)**. Independent
+      confirmation of `--twin`, on the server's own regions.
+
+      *And no candidate survives.* **176537818 positions decoded**, 0.1489%
+      of them unexplained by the tree; the readback decides **688833**
+      columns for `netherrack`, **545395** for `nether_state_selector`,
+      **56330** for `patch`, **41448** for `soul_sand_layer`, **5182** for
+      `gravel_layer` — and **674596** for `nether_wart`, whose bit is
+      CONSTANT (its 1.17 threshold is reached by no column of any golden
+      region), so its null equals its signal and it is reported rather than
+      scanned. The same 270,000 candidates are scored against each, with the
+      null MEASURED on the same columns rather than computed — decoded
+      columns are spatially clustered and a candidate noise is spatially
+      smooth, so `sqrt(n)` would call every leader an impossible outlier. On
+      the two big ones nothing in the space clears the null's own observed
+      maximum: `nether_state_selector` best **51.36%** against a null of
+      50.02% ± 0.61 (max 52.21%) and a trivial predictor of 50.63%;
+      `netherrack` best **96.02%** against 95.66% ± 0.32 (max 96.66%) and a
+      trivial predictor of 97.77%. A planted candidate comes back **rank 1
+      at 100.0000% on every decoded column** against a runner-up at 66.1%,
+      so the null result is a measurement. All five noises, and what the
+      readback does and does not exclude, in SPEC §11; asserted in
+      `tests/conformance/vanilla_legacy_goldens_surface_test.cpp`, which
+      INCLUDES the analyzer's decoder rather than copying it.
 - [x] **The half of it that is settled: legacy `old_blended_noise`.** A
       dimension declaring the flag seeds it with
       `new java.util.Random(worldSeed)` — no fork, no name salt — read the

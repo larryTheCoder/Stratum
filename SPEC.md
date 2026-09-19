@@ -6595,6 +6595,169 @@ Open:
   it, not the packing. M5's performance pass now has a number to work
   against.
 
+- **The legacy named-noise seeding, read straight out of the golden Nether
+  regions — a second oracle, a passing control, and still no survivor.**
+  Until now every attempt on this question inverted a *synthetic probe
+  dimension's terrain height* (`tools/analysis/legacy-seed-analyze.cpp`).
+  The eight golden Nether regions were sitting unused and are a different
+  and much larger oracle: **262144 columns a region, 8 regions, SIX
+  independent worlds** (java.util.Random discards bit 63, so 0 ==
+  Long.MIN_VALUE and -1 == Long.MAX_VALUE), every one of them painted by the
+  real legacy seeding of exactly the six noises the Nether's surface rule
+  names. `tools/analysis/legacy-goldens-surface-analyze.cpp` and its shared
+  decoder `legacy-goldens-surface-decoder.hpp` read them;
+  `tests/conformance/vanilla_legacy_goldens_surface_test.cpp` includes the
+  same decoder rather than a second copy of it.
+
+  *The decoder is derived, not hand-read.* A `noise_threshold` is a sign
+  test, so a placed block is one bit about a noise — but only for the
+  conditions the tree consulted before placing it. The decoder walks the
+  resolved `surface::RuleGraph` at each position, evaluates every condition
+  it can evaluate from the golden region, and BRANCHES on every one it
+  cannot: the noise thresholds themselves, a `vertical_gradient` strictly
+  inside its own band (outside it the gradient is certain, which is
+  arithmetic and not a seeding assumption), `above_preliminary_surface` and
+  `temperature` unless supplied. A condition is observed only where every
+  assignment reproducing the golden block agrees on it. Two conditions on
+  one noise are not independent, and an assignment is pruned as soon as the
+  intervals it asserts about that noise have no value in common.
+
+  *The surface depth is ENUMERATED, not assumed.* `minecraft:surface` is
+  itself a named noise, so under a legacy source every `stone_depth`
+  carrying `add_surface_depth`, every `hole` and every
+  `surface_depth_multiplier` would be unreadable if the depth had to be
+  known. It does not: depth is `(int)(2.75 * surface(x,0,z) + 3.0 + 0.25u)`,
+  and `minecraft:surface` is firstOctave -6 with amplitudes [1,1,1], whose
+  persistence schedule sums to 1 per stack, two stacks, valueFactor
+  `(1/6)/(0.1*(1+1/3))` = 1.25 — so with |perlin| <= 1 the noise is in
+  [-2.5, 2.5] and the depth in **[-3, 10]**. The decoder enumerates
+  **[-4, 11]** and reports a bit only where it is determined for every
+  depth in that range, so widening the range can lose bits and never invent
+  one. (For scale: over the 8589934592 columns swept for
+  `above_preliminary_surface` the raw value never left [-1.14, 1.14].)
+
+  *THE CONTROL, and it passes.* The identical decoder over the eight golden
+  OVERWORLD regions, whose surface-rule noises are modern-seeded and already
+  exact here. At stride 1 — **262581476 positions decoded**:
+
+  | arm | result |
+  | --- | --- |
+  | replay: the library's own `surface::Executor` on the RECONSTRUCTED Context reproduces the golden block | **262406910 / 262581476 = 99.9335%** |
+  | positions the tree cannot explain at all, among those | **0** |
+  | recovery: decoded bits against the TRUE modern noise | **30104 / 30104 = 100.0000%** |
+  | the trivial predictor (always the commoner answer) | 86.37% |
+  | negative: the same bits against the same noises at worldSeed + 1 | **78.97%** — *below* the trivial predictor |
+
+  The replay arm is the one that matters and it was added because the first
+  control failed at 99.77%. A Context is reconstructed out of a POST-rule
+  region, and the overworld's tree places `minecraft:water` and
+  `minecraft:air`, so a rule that freezes a water surface to ice moves the
+  column's water height and no post-rule region can undo it. The water
+  height is therefore carried as an INTERVAL — the golden's topmost fluid,
+  up through any rule-placeable solid above it — and a `water` condition is
+  branched on wherever the two ends disagree; the residual 0.0665% is gated
+  out and counted rather than absorbed. **The Nether's tree contains no
+  `water` and no `steep` condition at all**, so that whole failure mode is
+  absent from the run this control is for.
+
+  *WHAT THE NETHER READBACK REACHES.* At stride 1 over all eight regions:
+  **176537818 positions decoded**, **262795 (0.1489%)** of which the tree
+  cannot explain at all. Decoded COLUMNS per noise, after pooling the
+  several conditions that read each one at the same threshold:
+
+  | noise | threshold | columns | bit is true |
+  | --- | --- | --- | --- |
+  | `netherrack` | >= 0.54 | **688833** | 2.2-2.3% |
+  | `nether_wart` | >= 1.17 | **674596** | **0.00% — constant** |
+  | `nether_state_selector` | >= 0.0 | **545395** | 47.5-50.2% |
+  | `patch` | >= -0.012 | **56330** | 40.8-43.9% |
+  | `soul_sand_layer` | >= -0.012 | **41448** | 88.0% |
+  | `gravel_layer` | >= -0.012 | **5182** | 65.3% |
+
+  The right-hand column is why a bare count is not enough:
+  `minecraft:nether_wart`'s threshold is 1.17 and **not one column of any
+  golden region reaches it**, so its bit is constant, its null equals its
+  signal, and it is not scanned at all. `netherrack`'s bit is 2.3% true, so
+  its trivial predictor already scores 97.8%.
+
+  *THE IDENTITY TEST — the one positive result here.*
+  `minecraft:soul_sand_layer` and `minecraft:gravel_layer` are
+  byte-identical (firstOctave -8, amplitudes [1,1,1,1,0,0,0,0,0.01333…])
+  and differ only by name. The `nether_wastes` branch reads both at -0.012
+  at the same column, and the decoder's joint table over 6 worlds is
+  **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6** — the shape the tree
+  predicts, since `gravel_layer` is only consulted where `soul_sand_layer`
+  already failed. **Under one field the (F,T) cell is impossible, and it is
+  1398 of 3204 columns (43.63%).** So the identifier — its hash, or the
+  order the noises are built in, which this cannot separate — reaches the
+  seed. That agrees with, and is independent of,
+  `legacy-seed-analyze --twin`.
+
+  *THE SCAN, and its MEASURED null.* The same 270,000 candidates (900 seed
+  rules x 300 block offsets) scored against the decoded bits. The null had
+  to be measured rather than computed: the decoded columns are spatially
+  clustered and a candidate noise is spatially smooth, so a wrong
+  candidate's effective sample size is patches, not columns, and `sqrt(n)`
+  would call every leader an impossible outlier. An evenly spaced
+  thousandth of the space (997 candidates) is rescored on the FULL column
+  set to get it, and the leaders of the whole space are rescored there too:
+
+  | noise | columns | trivial predictor | BEST of 270000, full set | measured null, full set | deepslate's own rule (182, 0) |
+  | --- | --- | --- | --- | --- | --- |
+  | `nether_state_selector` | 545395 | 50.63% | **51.36%** | 50.02% ± 0.61, max 52.21% | 49.68% |
+  | `netherrack` | 688833 | 97.77% | **96.02%** | 95.66% ± 0.32, max 96.66% | 95.61% |
+  | `patch` | 56330 | 59.87% | **64.74%** | 49.74% ± 3.04, max 59.25% | 47.53% |
+  | `soul_sand_layer` | 41448 | 68.69% | **83.96%** | 51.03% ± 9.11, max 81.90% | 51.98% |
+  | `gravel_layer` | 5182 | 65.26% | **89.89%** | 50.33% ± 11.03, max 81.42% | 32.61% |
+
+  **No survivor.** On the two noises with hundreds of thousands of columns
+  the null is tight and NOTHING in the space clears the null's own observed
+  maximum — the best of 270000 candidates for `nether_state_selector` is
+  51.36% against a null max of 52.21%, and for `netherrack` it is 96.02%
+  against a null max of 96.66% and a trivial predictor of 97.77%. The three
+  small-column noises have nulls 3 to 11 points wide, precisely because
+  their columns sit in a few patches, and their leaders are 3 to 4 sigma out
+  — which is where the extreme of 270000 draws from such a null belongs, and
+  is nowhere near a correct rule. **A correct rule scores 100%**, and that
+  is not an assumption:
+
+  *THE SCAN CAN FIND A CORRECT RULE.* `--plant <rule> <block>` replaces the
+  server's bits with the bits that candidate would have produced and runs
+  the identical scan: it returns **rank 1 at 543/543 thinned and 7599/7599
+  full — 100.0000% — against a runner-up at 66.1%**. So "no survivor" is a
+  measurement of the space, not a property of the apparatus.
+
+  *What this readback EXCLUDES.* The 270,000 candidates of that space, for
+  the five noises whose decoded bit is two-sided, against up to 688833
+  columns each of the server's own Nether — a second, independent oracle
+  refuting the same space the probe dimensions refuted, with a control that
+  recovers a known-correct seeding through the identical decoder.
+
+  *What it does NOT.* It does not widen the space: the same gaps stand —
+  ONE stack rule (sequential Perlin blocks from one generator), no
+  per-octave salting, no frequency rule but the declared `firstOctave`, and
+  no discarded-LCG-STEP offset of the kind `minecraft:end_islands` uses.
+  `minecraft:nether_wart` is observed on 674596 columns and carries NO
+  information, as the table above says. The Nether run has no replay arm,
+  because its tree cannot be compiled under a legacy source at all, so its
+  reconstruction is bounded only by the overworld's 99.9335% and by its own
+  two reported rates: positions the tree cannot explain (**262795 of
+  176537818, 0.1489%**) and CONTRADICTIONS — columns where two positions
+  decode one condition both ways, which cannot honestly happen because a
+  `noise_threshold` samples at (x, 0, z) and is constant down a column.
+  **8514 of 238576** columns on the worst-affected condition, 0 on the
+  best. Contradicting columns are dropped whole rather than resolved
+  first-wins, which would keep exactly the wrong half. Their likely cause is
+  named rather than waved at: vanilla's own `hole` branch replaces a solid
+  block with LAVA below y = 32, which turns a solid position fluid and
+  leaves the reconstructed stone-depth run one short, and `hole` — a surface
+  depth of 0 or less — fires on about 0.3% of columns.
+
+  And the scan is one NOISE at a time against one THRESHOLD. It does not
+  test whether the six noises share a seeding rule with one another, and it
+  cannot: each is scored on its own decoded columns, so six independent
+  refutations is what this is, not one refutation of a joint rule.
+
 ---
 
 ## 12. Content, provenance & distribution policy

@@ -56,7 +56,8 @@ while IFS= read -r file; do
 # claim drifts unnoticed. Keep this list in step with the one in format.sh.
 done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
     printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
-                   tools/analysis/legacy-goldens-biome-analyze.cpp)
+                   tools/analysis/legacy-goldens-biome-analyze.cpp \
+                   tools/analysis/legacy-goldens-surface-analyze.cpp)
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"
