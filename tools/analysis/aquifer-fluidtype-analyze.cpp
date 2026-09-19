@@ -22,9 +22,9 @@
 // informative reading of the last pass — a 68-cell level -10 — behind a
 // threshold that had no measurement behind it.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
-//       tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz \
-//       -o build/aquifer-fluidtype-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//     \ tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz
+//     \ -o build/aquifer-fluidtype-analyze
 //   build/aquifer-fluidtype-analyze .fixtures/1.21.11/probes/fluidtype
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>

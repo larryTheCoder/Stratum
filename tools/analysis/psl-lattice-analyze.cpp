@@ -69,24 +69,24 @@
 //          how many each reading's band reaches, and the residual. Run it once
 //          per seed — the seed argument builds the world.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
-//       -I build/dev/_deps/nlohmann_json-src/single_include \
-//       tools/analysis/psl-lattice-analyze.cpp -L build/dev/lib -lstratum_core -lz \
-//       -o build/psl-lattice-analyze
-//   build/psl-lattice-analyze census .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/apsb v_psl
-//   build/psl-lattice-analyze pitch  .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/psllat
-//   build/psl-lattice-analyze anchor .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/psllat s_c00
-//   build/psl-lattice-analyze fit    .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/psllat s_c00
-//   build/psl-lattice-analyze blends .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/psllat f_half f_quart
-//   build/psl-lattice-analyze same   .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/probes/apsb4 w_sh1 w_sh2
-//   build/psl-lattice-analyze golden .fixtures/1.21.11/worldgen 42 \
-//       .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//     \ -I build/dev/_deps/nlohmann_json-src/single_include
+//     \ tools/analysis/psl-lattice-analyze.cpp -L build/dev/lib -lstratum_core -lz
+//     \ -o build/psl-lattice-analyze
+//   build/psl-lattice-analyze census .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/apsb v_psl
+//   build/psl-lattice-analyze pitch  .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/psllat
+//   build/psl-lattice-analyze anchor .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/psllat s_c00
+//   build/psl-lattice-analyze fit    .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/psllat s_c00
+//   build/psl-lattice-analyze blends .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/psllat f_half f_quart
+//   build/psl-lattice-analyze same   .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/probes/apsb4 w_sh1 w_sh2
+//   build/psl-lattice-analyze golden .fixtures/1.21.11/worldgen 42
+//     \ .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>

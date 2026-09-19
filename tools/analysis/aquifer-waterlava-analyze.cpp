@@ -49,10 +49,10 @@
 // lava-typed sources are those centred below `lambda` — which is exactly
 // what puts them on the rows just above the sea, and nowhere else.)
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
-//       -I build/dev/_deps/nlohmann_json-src/single_include \
-//       tools/analysis/aquifer-waterlava-analyze.cpp -L build/dev/lib -lstratum_core -lz \
-//       -o build/aquifer-waterlava-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//     \ -I build/dev/_deps/nlohmann_json-src/single_include
+//     \ tools/analysis/aquifer-waterlava-analyze.cpp -L build/dev/lib -lstratum_core -lz
+//     \ -o build/aquifer-waterlava-analyze
 //   build/aquifer-waterlava-analyze .fixtures/1.21.11/probes/waterlava_s42
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>

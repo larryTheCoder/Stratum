@@ -29,10 +29,10 @@
 // exactly the deterministic gate `ore-vein-analyze.cpp` found zero
 // exceptions to.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
-//       -I build/dev/_deps/nlohmann_json-src/single_include \
-//       tools/analysis/ore-vein-rng-dump.cpp -L build/dev/lib -lstratum_core -lz \
-//       -o build/ore-vein-rng-dump
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//     \ -I build/dev/_deps/nlohmann_json-src/single_include
+//     \ tools/analysis/ore-vein-rng-dump.cpp -L build/dev/lib -lstratum_core -lz
+//     \ -o build/ore-vein-rng-dump
 //   build/ore-vein-rng-dump .fixtures/1.21.11/probes/orevein-multi out.csv <seed1> <seed2> ...
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>

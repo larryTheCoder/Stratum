@@ -25,9 +25,9 @@
 // and skipping only the handful of blocks that are neither, has no such
 // failure mode.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated \
-//       tools/analysis/aquifer-nearsurface-analyze.cpp -L build/dev/lib -lstratum_core -lz \
-//       -o build/aquifer-nearsurface-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//     \ tools/analysis/aquifer-nearsurface-analyze.cpp -L build/dev/lib -lstratum_core -lz
+//     \ -o build/aquifer-nearsurface-analyze
 //   build/aquifer-nearsurface-analyze .fixtures/1.21.11/probes/nearsurface <seed>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
