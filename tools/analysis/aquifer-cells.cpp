@@ -10,9 +10,7 @@
 //
 // Build it against a configured tree, for example:
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ tools/analysis/aquifer-cells.cpp -L build/dev/lib -lstratum_core -lz
-//     \ -o build/aquifer-cells
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated tools/analysis/aquifer-cells.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-cells
 //   build/aquifer-cells .fixtures/1.21.11/probes/<probe>/<dimension>
 //
 // It wants a world made by tools/analysis/density-probe.sh with aquifers on

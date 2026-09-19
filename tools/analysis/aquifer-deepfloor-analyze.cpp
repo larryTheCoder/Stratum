@@ -28,10 +28,7 @@
 // `aquifer::placesBarrier` on every block it scores (the mismatch counter
 // must print 0).
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ -I build/dev/_deps/nlohmann_json-src/single_include
-//     \ tools/analysis/aquifer-deepfloor-analyze.cpp -L build/dev/lib
-//     \ -lstratum_core -lz -o build/aquifer-deepfloor-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-deepfloor-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-deepfloor-analyze
 //   build/aquifer-deepfloor-analyze .fixtures/1.21.11/probes/aqdeep
 //
 // Nothing this reads is committed: the worlds are Mojang-derived (SPEC §12).

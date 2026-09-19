@@ -12,10 +12,7 @@
 // this is an end-to-end check of the shipped code, not a parallel
 // reimplementation of it.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ -I build/dev/_deps/nlohmann_json-src/single_include
-//     \ tools/analysis/aquifer-barrier-analyze.cpp -L build/dev/lib -lstratum_core -lz
-//     \ -o build/aquifer-barrier-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-barrier-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-barrier-analyze
 //   build/aquifer-barrier-analyze .fixtures/1.21.11/probes/barrier3way <seed>
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>

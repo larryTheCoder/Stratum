@@ -92,31 +92,15 @@
 // stops at -8..-2, which is what separates "the condition went false" from
 // "the surface pass stopped".
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ -I build/dev/_deps/nlohmann_json-src/single_include
-//     \ tools/analysis/aps-boundary-analyze.cpp -L build/dev/lib -lstratum_core -lz
-//     \ -o build/aps-boundary-analyze
-//   build/aps-boundary-analyze probe  .fixtures/1.21.11/worldgen 42
-//     \ .fixtures/1.21.11/probes/apsb/k_p0 0 .fixtures/1.21.11/probes/apsb/r_m0_5 -0.5
-//   build/aps-boundary-analyze golden .fixtures/1.21.11/worldgen 42
-//     \ .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
-//   build/aps-boundary-analyze band  .fixtures/1.21.11/worldgen 42
-//     \ .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
-//   build/aps-boundary-analyze depth .fixtures/1.21.11/worldgen 0
-//     \ .fixtures/1.21.11/regions/seed-0/overworld/r.0.0.mca
-//   build/aps-boundary-analyze bands .fixtures/1.21.11/worldgen 42
-//     \ .fixtures/1.21.11/probes/surf/aps .fixtures/1.21.11/probes/surf/bandlands
-//     \ .fixtures/1.21.11/probes/surf/steep
-//   build/aps-boundary-analyze sweep .fixtures/1.21.11/worldgen
-//     \ -16384 16384 -16384 16384 12
-//     \ 0 1 -1 42 -4172144997902289642 2891948927356891
-//     \ 9223372036854775807 -9223372036854775808
-//   build/aps-boundary-analyze window .fixtures/1.21.11/worldgen -4172144997902289642
-//     \ .fixtures/1.21.11/regions/seed--4172144997902289642/overworld/r.4.3.mca
-//     \ 2282 1879 2282 1880 2283 1880 2284 1880
-//   build/aps-boundary-analyze clamp .fixtures/1.21.11/worldgen 42
-//     \ .fixtures/1.21.11/probes/apsc_s2/k_p100/r.6.10.mca 100
-//     \ .fixtures/1.21.11/probes/apsc_s2/k_m20/r.6.10.mca -20
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aps-boundary-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aps-boundary-analyze
+//   build/aps-boundary-analyze probe  .fixtures/1.21.11/worldgen 42 .fixtures/1.21.11/probes/apsb/k_p0 0 .fixtures/1.21.11/probes/apsb/r_m0_5 -0.5
+//   build/aps-boundary-analyze golden .fixtures/1.21.11/worldgen 42 .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
+//   build/aps-boundary-analyze band  .fixtures/1.21.11/worldgen 42 .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
+//   build/aps-boundary-analyze depth .fixtures/1.21.11/worldgen 0 .fixtures/1.21.11/regions/seed-0/overworld/r.0.0.mca
+//   build/aps-boundary-analyze bands .fixtures/1.21.11/worldgen 42 .fixtures/1.21.11/probes/surf/aps .fixtures/1.21.11/probes/surf/bandlands .fixtures/1.21.11/probes/surf/steep
+//   build/aps-boundary-analyze sweep .fixtures/1.21.11/worldgen -16384 16384 -16384 16384 12 0 1 -1 42 -4172144997902289642 2891948927356891 9223372036854775807 -9223372036854775808
+//   build/aps-boundary-analyze window .fixtures/1.21.11/worldgen -4172144997902289642 .fixtures/1.21.11/regions/seed--4172144997902289642/overworld/r.4.3.mca 2282 1879 2282 1880 2283 1880 2284 1880
+//   build/aps-boundary-analyze clamp .fixtures/1.21.11/worldgen 42 .fixtures/1.21.11/probes/apsc_s2/k_p100/r.6.10.mca 100 .fixtures/1.21.11/probes/apsc_s2/k_m20/r.6.10.mca -20
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>

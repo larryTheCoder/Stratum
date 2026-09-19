@@ -27,10 +27,7 @@
 //     read the same field, `end_islands` does not go through the dimension's
 //     declared random source at all.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ -I build/dev/_deps/nlohmann_json-src/include
-//     \ tools/analysis/end-islands-analyze.cpp build/dev/lib/libstratum_core.a -lz
-//     \ -o build/end-islands-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/include tools/analysis/end-islands-analyze.cpp build/dev/lib/libstratum_core.a -lz -o build/end-islands-analyze
 //   build/end-islands-analyze .fixtures/1.21.11/probes/endfield_s0_2048_0 0
 //   build/end-islands-analyze .fixtures/1.21.11/probes/endfield_s0_2048_0 0 0 65536
 #include <stratum/chunk/chunk.hpp>

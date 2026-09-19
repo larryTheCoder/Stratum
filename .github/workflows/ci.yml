@@ -130,7 +130,11 @@ jobs:
 
       - name: clang-tidy
         run: |
-          mapfile -t sources < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*')
+          # The same list tools/lint/tidy.sh analyses; keep the two in step.
+          mapfile -t sources < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
+            printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
+                           tools/analysis/legacy-goldens-biome-analyze.cpp \
+                           tools/analysis/legacy-goldens-surface-analyze.cpp)
           if [ ${#sources[@]} -eq 0 ]; then
             echo "no first-party sources to analyse"; exit 0
           fi

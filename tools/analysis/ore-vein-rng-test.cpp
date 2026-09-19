@@ -43,9 +43,7 @@
 // A genuine salt should read close to 100% in EVERY seed and EVERY type, not
 // just on average.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//     \ tools/analysis/ore-vein-rng-test.cpp -L build/dev/lib -lstratum_core -lz
-//     \ -o build/ore-vein-rng-test
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated tools/analysis/ore-vein-rng-test.cpp -L build/dev/lib -lstratum_core -lz -o build/ore-vein-rng-test
 //   build/ore-vein-rng-test dataset.csv salt1 salt2 ...
 //   build/ore-vein-rng-test dataset.csv --file candidates.txt   (one salt/line;
 //       silent unless a candidate's per-seed min clears 85% in some

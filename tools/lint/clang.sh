@@ -17,11 +17,17 @@
 # the ordinary loop in build/dev stays undisturbed and fast.
 #
 # The -D flags are re-passed on every run, not only when the directory is
-# new. `cmake -B <dir>` over an existing cache is a reconfigure, so a
-# build/clang-check somebody already configured by hand — with some other
-# compiler, or with STRATUM_WERROR left at the preset's OFF — is corrected
-# rather than inherited. A gate that accepts whatever cache it finds is a gate
-# that reports success for a build it did not run.
+# new, and the cache is then read back. `cmake -B <dir>` over an existing
+# cache is a reconfigure, but a CHANGE of CMAKE_CXX_COMPILER makes CMake
+# delete that cache and run configure again, and on that forced re-run the
+# dev preset's own STRATUM_WERROR=OFF wins over the -D on the command line.
+# Measured: the first run of this script against a directory configured for
+# GCC came out with clang++ and WITHOUT -Werror, built, and would have
+# printed the clean line for a build it did not gate. So after configuring,
+# the script checks STRATUM_WERROR in CMakeCache.txt, configures once more if
+# it is not ON — the second pass sticks, since the compiler no longer changes
+# — and refuses to build if it still is not. A gate that accepts whatever
+# cache it finds is a gate that reports success for a build it did not run.
 #
 # The Clang major need not be CI's. Majors differ in which warnings they
 # raise, so a clean run here is evidence, not proof, and CI's clang legs stay
@@ -45,7 +51,19 @@ fi
 version="$("${CLANGXX}" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
 build_dir="${1:-build/clang-check}"
-cmake -B "${build_dir}" --preset dev \
-    -DCMAKE_CXX_COMPILER="${CLANGXX}" -DSTRATUM_WERROR=ON >/dev/null
+configure() {
+    cmake -B "${build_dir}" --preset dev \
+        -DCMAKE_CXX_COMPILER="${CLANGXX}" -DSTRATUM_WERROR=ON >/dev/null
+}
+werror_on() {
+    grep -qx 'STRATUM_WERROR:BOOL=ON' "${build_dir}/CMakeCache.txt"
+}
+configure
+# A compiler change wiped the cache and the preset's OFF won; see the header.
+werror_on || configure
+if ! werror_on; then
+    echo "${build_dir} did not take STRATUM_WERROR=ON; delete it and re-run." >&2
+    exit 1
+fi
 cmake --build "${build_dir}"
 echo "clang clean: the project set builds with -Werror under clang++ ${version}"
