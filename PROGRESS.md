@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control).; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too).)
+Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 

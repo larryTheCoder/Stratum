@@ -4635,7 +4635,7 @@ Open:
   Nether's 15465864 of 15466496 block classes (99.99591%) are this seeding
   running in a real pipeline rather than in a probe dimension. Both
   denominators cover eight golden regions over **six independent worlds** —
-  `java.util.Random` discards bit 63, so seed 0 is the same world as
+  `java.util.Random` keeps only the low 48 bits (dropping the top sixteen), so seed 0 is the same world as
   `Long.MIN_VALUE` and -1 the same as `Long.MAX_VALUE`, and the server
   confirms it: each colliding pair's regions differ in 0 of 2097152 blocks.
 
@@ -4705,7 +4705,7 @@ Open:
   | probe `r.-1.-1`, chunks -8..-1     | 2     | 2097152         | all   |
 
   \* Eight golden regions, **six independent worlds** — `java.util.Random`
-  discards bit 63, so 0 is the same End as `Long.MIN_VALUE` and -1 the same as
+  keeps only the low 48 bits (dropping the top sixteen), so 0 is the same End as `Long.MIN_VALUE` and -1 the same as
   `Long.MAX_VALUE`. The server confirms it rather than the arithmetic being
   taken on trust: each colliding pair's regions differ in 0 of 2097152 blocks,
   which is itself evidence that nothing in the End's terrain is seeded from
@@ -4717,7 +4717,7 @@ Open:
 
   *Eight regions, SIX distinct worlds — say the denominator.* `java.util.
   Random` scrambles its seed as `(seed ^ 0x5DEECE66D) & ((1 << 48) - 1)`, and
-  that mask discards bit 63, so 2^16 world seeds share every End. Two pairs in
+  that mask keeps only the low 48 bits (dropping the top sixteen), so 2^16 world seeds share every End. Two pairs in
   the fixed golden set collide: 0 with LONG_MIN, and -1 with LONG_MAX. Not
   inferred — the SERVER says so, and the fact is worth having on its own: the
   golden End regions of each colliding pair differ in **0 of 2097152 blocks**,
