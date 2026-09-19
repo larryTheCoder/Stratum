@@ -488,6 +488,13 @@ TEST_CASE("the five residual columns are ties, not climate values that differ",
              << " — Mojang-derived and never committed (SPEC §12). Generate them with: "
                 "tools/fetch-vanilla");
     }
+    // The same guard the sibling case uses: no golden regions at all is a
+    // SKIP (CI has none — SPEC §12), but a fixture set that is present and
+    // missing one of the five seeds still fails at `checked == 20U` below.
+    if (!std::filesystem::is_regular_file(regionOf(42))) {
+        SKIP("no golden regions; generate them with: tools/fetch-vanilla "
+             "--generate-regions --accept-eula");
+    }
     const ParameterList list = loadTable(parameters);
     REQUIRE(list.size() == 7593U);
     const Table table{list};
