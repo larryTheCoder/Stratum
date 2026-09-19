@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured).
+Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control).
 
 ## At a glance
 
@@ -386,6 +386,66 @@ Open:
       a `<spec>.noises.json` sidecar. Before that, none of this kind of
       measurement could be reproduced from the repository at all. SPEC §11
       carries the numbers.
+
+      **A SECOND ORACLE, and it says the same thing with a different
+      denominator.** The scan above runs on synthetic probe worlds. The eight
+      golden NETHER regions — six independent worlds — are the real server's
+      output from the real legacy seeding of the real climate noises, and each
+      stored biome is a coarse readback of `temperature`, `vegetation` and
+      `offset` at that column. `tools/analysis/legacy-goldens-biome-analyze.cpp`
+      scores the same 270,000 candidates against them;
+      `vanilla_legacy_goldens_biome_test.cpp` and
+      `conformance.legacy_goldens_biome_control` guard it. **No survivor.**
+
+      Denominator: **24576 cells** over 6 worlds, 979 of them (3.98%)
+      boundary-adjacent, zero varying with y. Chance floor for vanilla's own
+      marginals: **26.64%** — so the sieve separates *exactly right* from
+      everything else and cannot rank near-misses.
+
+      | | |
+      |---|---|
+      | null over all 270,000 (1536 cells) | mean **26.48%**, sd 8.19 pts, max **56.84%** |
+      | p50 / p90 / p99 / p99.9 | 26.56 / 38.02 / 44.21 / 49.48 % |
+      | best of the space, full 24576 cells | **53.16%** (rule 387 block 2) |
+      | deepslate's rule 182, best block | 49.81% |
+      | what a correct rule would score | ~**100%** |
+
+      The best candidate does not reach the maximum the null itself produces.
+
+      **The control landed before the measurement**, on the OVERWORLD goldens
+      where the seeding is the modern one this build reproduces, through the
+      identical decoder: **32748 / 32768 = 99.939%** at `worldSeed`,
+      **5.670%** at `worldSeed + 1`, against a **6.371%** null measured as
+      vanilla-at-one-seed against vanilla-at-another over 28 world pairs. The
+      forward model — a hand-rolled `NormalNoise` stack and climate chain, both
+      needed because the library's `NormalNoise` only builds from
+      Xoroshiro128++ — is identical to `NormalNoise::sample` and to
+      `Interpreter` **to the bit**, 1024/1024 on each of the three noises. And
+      `--modern` reproduces the already-recorded **8873 / 32768 = 27.08%**
+      against **30.23%** through entirely different code.
+
+      *A finding fell out of the control:* the `[biome]` cases call the
+      overworld biome source exact, and over their 64x64-block corner it is.
+      Over the full 512x512 of eight regions, **five columns in 8192** (0.061%)
+      disagree — `deep_ocean`→`ocean`, `mushroom_fields`→`deep_lukewarm_ocean`,
+      `river`→`beach`, `river`→`forest` x2 — each wrong at every height, so
+      horizontal and not depth. Named with seeds and coordinates in SPEC §11;
+      the kind of tie-break counterexample `parameter_list.hpp` already says is
+      possible. Open, and its own piece of work.
+
+      *What this does NOT exclude,* stated because it is the larger half: it
+      inherits every gap of the borrowed space (one stack rule, no frequency
+      variation, no per-octave salting, no fixed LCG-step skip) and adds one —
+      all three noises seeded by ONE rule at ONE block offset. And a rule that
+      got `temperature` right and `vegetation` wrong scores in the null band,
+      so nothing here speaks to partial correctness.
+
+      *The preset table route, settled:* the Nether's five climate parameter
+      points come from the server's own `--reports` data generator, already
+      fetched by `tools/fetch-vanilla` to
+      `.fixtures/<version>/biome_parameters/minecraft/nether.json`. No
+      minecraft.wiki transcription and no jar reading was needed; the points
+      are pinned by the conformance case.
 - [x] **The half of it that is settled: legacy `old_blended_noise`.** A
       dimension declaring the flag seeds it with
       `new java.util.Random(worldSeed)` — no fork, no name salt — read the

@@ -5685,6 +5685,179 @@ Open:
   reaches around the refusal on purpose and is not shipped code; no shipped
   path can substitute the modern rule for a legacy dimension.
 
+- **The Nether's own stored biomes read back as the legacy climate noises:
+  270,000 candidates, no survivor, and the control that makes that a
+  measurement (M4).** The scan above works on synthetic probe dimensions. This
+  is the same question asked of a different oracle — the eight golden Nether
+  regions, which are the real server's output from the real legacy seeding of
+  the real noises, with no probe world involved. `tools/analysis/legacy-
+  goldens-biome-analyze.cpp` runs it and
+  `tests/conformance/vanilla_legacy_goldens_biome_test.cpp` plus
+  `conformance.legacy_goldens_biome_control` guard it.
+
+  *The oracle, and its denominator.* Eight seeds, **six independent worlds** —
+  a legacy dimension's randomness is `new java.util.Random(worldSeed)`, whose
+  scramble keeps only the low 48 bits, so 0 collides with `Long.MIN_VALUE` and
+  -1 with `Long.MAX_VALUE`. Every second chunk of each 32x32 region, sixteen
+  4x4 biome cells a chunk, one y per column (justified in the run: **zero**
+  columns of vanilla's own stored biomes vary with y, as `y_scale: 0.0`
+  requires):
+
+  | | |
+  |---|---|
+  | cells | **24576** over 6 worlds |
+  | boundary-adjacent (a 4-neighbour inside the chunk differs) | 979 (**3.98%**) |
+  | interior | 23597 (96.02%) |
+  | `crimson_forest` / `nether_wastes` / `soul_sand_valley` / `basalt_deltas` / `warped_forest` | 38.66 / 27.79 / 13.66 / 12.41 / 7.48 % |
+  | chance floor for those marginals | **26.64%** |
+
+  That last row is the readback's real limit and it is why every number below
+  is quoted against it. A stored biome is a cell of a five-way partition of the
+  (temperature, vegetation) plane, not a number: two unrelated climate fields
+  already agree 26.64% of the time. This sieve separates **exactly right** from
+  everything else. It cannot rank near-misses, and 50% over it is not halfway
+  to an answer.
+
+  *The preset table it decodes against is the SERVER'S OWN, not the wiki's.*
+  The pack ships
+  `worldgen/multi_noise_biome_source_parameter_list/nether.json` as nothing but
+  `{"preset": "minecraft:nether"}`; the five parameter points are compiled into
+  the jar. `tools/fetch-vanilla` already asks the server's data generator
+  (`--reports`) for them and keeps the dump at
+  `.fixtures/<version>/biome_parameters/minecraft/nether.json` — the same route
+  the overworld's 7593-row table has used since M4 opened. That is observed
+  server output, which the provenance rule permits where it forbids the source,
+  so neither minecraft.wiki nor the jar is a dependency of this build. The five
+  points (temperature, humidity; every other axis a single point at 0.0) are
+  pinned by the conformance case: `nether_wastes` (0, 0), `soul_sand_valley`
+  (0, -0.5), `crimson_forest` (0.4, 0), `warped_forest` (0, 0.5, offset
+  0.375), `basalt_deltas` (-0.5, 0, offset 0.175).
+
+  *THE CONTROL LANDED FIRST, and it has three arms, not two.* The decoder is
+  "stored biome per cell against `ParameterList::find` over the dimension's own
+  climate router". Run it on the OVERWORLD goldens, where the seeding is the
+  modern one this build reproduces, at every fourth chunk of all eight regions
+  and four heights — 32768 cells:
+
+  | arm | |
+  |-----|---|
+  | worldSeed | 32748 / 32768 = **99.939%** |
+  | worldSeed + 1 | 1858 / 32768 = **5.670%** |
+  | null: vanilla at one seed vs vanilla at another, same cells, 28 world pairs | 7307 / 114688 = **6.371%** |
+
+  The third arm is what makes the second readable, and leaving it out is how
+  this control failed twice before it passed. **First failure:** the negative
+  arm was read against the independence baseline `sum_b p(b) q(b)`, which a
+  wrong seeding has no business reaching, because it is not a random
+  relabeling — it shares the coordinates, the y structure and vanilla's own
+  biome marginals. **Second failure:** even with a cross-world null in place,
+  the sample was a 2x2-chunk CORNER, where the wrong-seed arm read **10.56%**
+  against a **3.87%** null. Over 32x32 blocks a world is essentially one biome,
+  so the effective sample size there is the number of REGIONS and not the
+  number of cells — the same mistake, in the same shape, that the climate-gap
+  case already records having made. Spread over the whole region the wrong-seed
+  arm falls to 5.67% at a null of 6.37%, i.e. onto it.
+
+  *And the positive arm is 99.939%, not 100%, which is a finding rather than a
+  slackened threshold.* The `[biome]` conformance cases report the overworld
+  biome source as exact, and over their sample it is — a 64x64-block corner of
+  four regions, 98304 cells, no miss. Spread the identical decode over the full
+  512x512 of eight regions and **five columns** disagree, each of them at every
+  sampled height, so a horizontal disagreement and not a depth one:
+
+  | world | column | vanilla | ours |
+  |-------|--------|---------|------|
+  | -1 | (196, 268) | `deep_ocean` | `ocean` |
+  | -4172144997902289642 | (460, 200) | `mushroom_fields` | `deep_lukewarm_ocean` |
+  | 0 | (328, 4) | `river` | `beach` |
+  | 9223372036854775807 | (68, 128) | `river` | `forest` |
+  | 9223372036854775807 | (72, 128) | `river` | `forest` |
+
+  Five in 8192 columns, 0.061% of cells. `biome/parameter_list.hpp` already
+  records that "ties go to the later entry" is a **measured match** to vanilla's
+  search TREE and not a derivation of it; these five are the kind of
+  counterexample that note anticipates, and they are named with seeds and
+  coordinates rather than rounded into "exact". They are far too small to blunt
+  a control that has to separate 99.94% from 6.37%, and chasing them is its own
+  piece of work.
+
+  *The forward model is controlled separately, because the scan cannot use the
+  library's `NormalNoise` — it only builds from Xoroshiro128++, and half the
+  candidate space drives a Java LCG.* `--model` compares, bit for bit, at the
+  modern seeding where the library is known right, over 1024 points:
+
+  | arm | |
+  |-----|---|
+  | this file's `sampleNormal` over modern Perlin blocks vs `NormalNoise::sample`, for all THREE noises | 1024 / 1024 |
+  | this file's `shift_a`/`shift_b`/`shifted_noise`/`flat_cache` chain over library noises vs `Interpreter` on the Nether's own router | 1024 / 1024 |
+  | the composition, which is exactly what the scan runs | 1024 / 1024 |
+
+  All three noises, not a convenient one: `temperature` (firstOctave -10,
+  amplitudes `[1.5, 0, 1, 0, 0, 0]`), `vegetation` (-8, `[1, 1, 0, 0, 0, 0]`)
+  and `offset` (-3, `[1, 1, 1, 0]`), whose amplitude gaps and non-unit leading
+  amplitude are exactly where a wrong persistence schedule or `valueFactor`
+  would show.
+
+  *And the number already on record reproduces through entirely different
+  code.* `--modern` scores the MODERN derivation through this analyzer's own
+  chain rather than through `Interpreter`, over all eight seeds as
+  `vanilla_legacy_nether_climate_gap_test.cpp` measured it:
+  **8873 / 32768 = 27.08%** against a **30.23%** baseline, every per-seed row
+  and every biome marginal identical to that case's table. The CTest wrapper
+  matches both figures as text.
+
+  *THE RESULT: NO SURVIVOR.* 900 seed rules x 300 block offsets = **270,000**
+  candidates, the same enumeration `legacy-seed-analyze.cpp` defines (read out
+  of that file, re-implemented here; the two must agree on what rule index 182
+  means and the CTest wrapper checks the string). Stage 1 scores all 270,000
+  over 1536 cells; stage 2 re-scores the top 32 over the full 24576, so nothing
+  is reported at a denominator smaller than the oracle offers.
+
+  | stage 1, 1536 cells, all 270,000 | |
+  |---|---|
+  | null mean | 406.73 / 1536 = **26.48%** (the 26.64% chance floor, measured) |
+  | null sd | 125.81 (8.19 points) |
+  | p50 / p90 / p99 / p99.9 | 26.56% / 38.02% / 44.21% / 49.48% |
+  | null **max** | 873 / 1536 = **56.84%** |
+  | the MODERN rule on the same cells, for reference | 389 / 1536 = 25.33% |
+
+  | stage 2, 24576 cells | |
+  |---|---|
+  | best of the space (rule 387 block 2, `xoroLo add md5FirstLE, forks 1, xoroshiro`) | 13064 / 24576 = **53.16%** |
+  | deepslate's own rule (182) at its best block, 219 | 12241 / 24576 = 49.81% |
+  | deepslate's own rule at block 0 | 10878 / 24576 = 44.26% |
+  | what a correct rule would score | ~**100%**, per the control |
+
+  **The best candidate does not even reach the maximum the null itself
+  produces.** 56.84% is the largest of 270,000 draws from a distribution with
+  mean 26.48% and sd 8.19 points — 3.7 sd out, which is what the maximum of a
+  quarter-million correlated draws looks like — and the best full-sample score,
+  53.16%, sits under it. There is no outlier here; there is a null, and the
+  whole space is inside it.
+
+  *What this EXCLUDES.* Through a decoder shown to recover a known-correct
+  seeding at 99.94% and to put a known-wrong one at the null, and a forward
+  model identical to the library's to the bit: no rule in the 270,000 — five
+  bases x ten salt spellings x three combining operators x three fork counts x
+  two generators x 300 discarded Perlin blocks — seeds `minecraft:temperature`,
+  `minecraft:vegetation` and `minecraft:offset` the way vanilla's Nether does,
+  for any of six independent worlds.
+
+  *What it does NOT exclude,* and this is the larger half. It inherits every
+  gap of the space it borrows: ONE stack rule (sequential Perlin blocks out of
+  one generator), no frequency variation, no per-octave salting, and no
+  fixed LCG-STEP skip of the kind `end_islands` turned out to use. It adds one
+  of its own: the three noises are seeded by **one rule at one block offset**,
+  so a derivation that seeded `offset` differently from `temperature`, or drew
+  all three from one shared generator in declaration order, is outside the
+  space even if each individual noise's rule is inside it. And the readback is
+  coarse: it can only find an EXACTLY correct rule. A rule that got
+  `temperature` right and `vegetation` wrong would score in the null band and
+  be indistinguishable from one that got nothing right, so "no survivor" says
+  nothing about partial correctness. Widening the stack rule remains the most
+  likely place for the answer to be hiding, and this result does not narrow
+  that.
+
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares
   `type NoiseParametersRef = (#[id="worldgen/noise"] string | NoiseParameters)`,

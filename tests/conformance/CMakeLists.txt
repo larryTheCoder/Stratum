@@ -55,6 +55,7 @@ add_executable(stratum_conformance_tests
     vanilla_legacy_named_noises_test.cpp
     vanilla_legacy_nether_terrain_test.cpp
     vanilla_legacy_nether_climate_gap_test.cpp
+    vanilla_legacy_goldens_biome_test.cpp
     vanilla_legacy_gradient_gap_test.cpp
     vanilla_climate_test.cpp
     vanilla_density_test.cpp

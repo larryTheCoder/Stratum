@@ -35,6 +35,14 @@ add_executable(stratum_legacy_seed_analyze legacy-seed-analyze.cpp)
 target_link_libraries(stratum_legacy_seed_analyze PRIVATE stratum::core ZLIB::ZLIB)
 stratum_configure_target(stratum_legacy_seed_analyze)
 
+# The Nether goldens' stored biomes read back as the legacy climate noises.
+# A target for the same reason the one above is: its --control, --model and
+# --modern arms are claims about agreeing with the library, and a file nothing
+# builds can drift out of agreement without a gate noticing.
+add_executable(stratum_legacy_goldens_biome_analyze legacy-goldens-biome-analyze.cpp)
+target_link_libraries(stratum_legacy_goldens_biome_analyze PRIVATE stratum::core ZLIB::ZLIB)
+stratum_configure_target(stratum_legacy_goldens_biome_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()
@@ -51,6 +59,23 @@ add_test(NAME conformance.legacy_seed_control_tool
             -P "${CMAKE_CURRENT_SOURCE_DIR}/run-legacy-seed-control.cmake"
 )
 set_tests_properties(conformance.legacy_seed_control_tool PROPERTIES
+    LABELS "conformance"
+    SKIP_RETURN_CODE 77
+)
+
+# The same idea for the goldens-biome readback: its --control (the decoder on
+# the overworld goldens), --model (the hand-rolled stack and climate chain
+# against the library, bit for bit) and --modern (the 27.08% already on record)
+# arms exist only inside the analyzer, because the conformance case cannot use
+# the library as both the model and the thing being checked.
+add_test(NAME conformance.legacy_goldens_biome_control
+    COMMAND "${CMAKE_COMMAND}"
+            "-DANALYZER=$<TARGET_FILE:stratum_legacy_goldens_biome_analyze>"
+            "-DSTRATUM_FIXTURES_DIR=${STRATUM_FIXTURES_DIR}"
+            "-DSTRATUM_MINECRAFT_VERSION=${STRATUM_MINECRAFT_VERSION}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run-legacy-goldens-biome-control.cmake"
+)
+set_tests_properties(conformance.legacy_goldens_biome_control PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
 )

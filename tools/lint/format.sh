@@ -28,6 +28,7 @@ fi
 # analysis tool is brought under the build.
 analysis_targets=(
     tools/analysis/legacy-seed-analyze.cpp
+    tools/analysis/legacy-goldens-biome-analyze.cpp
 )
 
 # A read loop rather than mapfile: macOS still ships bash 3.2, where
