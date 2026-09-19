@@ -62,7 +62,21 @@ struct Parameter {
     double min = 0.0;
     double max = 0.0;
 
-    [[nodiscard]] bool operator==(const Parameter& other) const = default;
+    /// Exact equality, spelled without a float `==` because the project
+    /// builds with -Wfloat-equal (see perlin.cpp's `isZero`). A defaulted
+    /// `operator==` here is compiler-generated float `==`: GCC lets that
+    /// through, Clang does not, and nothing instantiated it until
+    /// vanilla_legacy_goldens_biome_test.cpp compared parameter-list entries
+    /// — which is how it reddened every Clang and AppleClang leg at f792e64
+    /// while GCC and MSVC stayed green.
+    ///
+    /// For every value JSON can yield (finite, never NaN), `!(a < b) &&
+    /// !(b < a)` is IEEE `a == b` to the bit, -0.0 == 0.0 included. These are
+    /// parsed constants compared for entry identity, not arithmetic results
+    /// compared with a tolerance — the exactness is the intent.
+    [[nodiscard]] bool operator==(const Parameter& other) const noexcept {
+        return !(min < other.min) && !(other.min < min) && !(max < other.max) && !(other.max < max);
+    }
 };
 
 /// The six climate values a point in the world has. `depth` is a function of

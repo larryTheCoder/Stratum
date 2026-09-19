@@ -17,6 +17,27 @@ if ! command -v "${CLANG_FORMAT}" >/dev/null 2>&1; then
     exit 77
 fi
 
+# The VERSION matters as much as the presence. CI pins clang-format to one
+# exact release (CLANG_FORMAT_VERSION in .github/workflows/ci.yml, installed
+# via pipx in the lint job) because clang-format's line-wrapping decisions
+# differ between releases — including between minors of the same major. The
+# build-matrix jobs run this same script through `ctest`'s lint.format with
+# whatever clang-format the runner image has on PATH, and at f792e64 that
+# binary rejected three lines the pinned one accepted, turning seven legs red
+# for a disagreement between two formatters rather than a defect in the tree.
+# A check by a different version is not a weaker check, it is not a check:
+# skip visibly (77) and leave the pinned lint job as the authority. Set
+# CLANG_FORMAT=/path/to/the/pinned/binary to run it here.
+pinned="$(grep -oE 'CLANG_FORMAT_VERSION: *"[0-9.]+"' .github/workflows/ci.yml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+actual="$("${CLANG_FORMAT}" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+if [[ -n "${pinned}" && "${actual}" != "${pinned}" ]]; then
+    echo "${CLANG_FORMAT} is clang-format ${actual}, but CI pins ${pinned}; formatting was" >&2
+    echo "NOT checked, since a different release wraps differently. Install the pin with" >&2
+    echo "  pipx install \"clang-format==${pinned}\"" >&2
+    echo "or set CLANG_FORMAT=/path/to/clang-format-${pinned}." >&2
+    exit 77
+fi
+
 # tools/analysis is mostly one-shot investigation code that nothing builds,
 # and formatting it wholesale would rewrite a dozen files nobody is touching.
 # What IS listed here is the part of it that became a build target: a file the
