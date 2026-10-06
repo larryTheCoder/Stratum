@@ -4,8 +4,9 @@
 // SPEC §4.1 permits exactly this as a Milestone-M2 stepping stone: "the
 // resolved graph is compiled into a flat execution program ... interpretation
 // of the graph per block is acceptable only as a Milestone-M2 stepping
-// stone." The compiled program arrives in M3; this is what makes the 2D
-// values comparable against an oracle before then.
+// stone." The compiled program was due in M3 and was not built; it is
+// deferred to M5's performance pass (SPEC §10, M3). Until it lands, this is
+// what every density value in the engine comes from.
 //
 // WHAT IT WILL NOT DO. A node type it cannot evaluate correctly at a point
 // is refused by name, with the reason (SPEC §8). That covers two groups:
