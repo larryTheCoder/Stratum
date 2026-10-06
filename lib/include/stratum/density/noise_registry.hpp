@@ -57,11 +57,12 @@ enum class RandomSource : std::uint8_t {
     /// two variants.
     Xoroshiro,
     /// The Java LCG. What the Nether, the End, caves and floating islands
-    /// use. What this build cannot derive is the seeding of a NAMED noise,
-    /// because nothing available says how a name becomes an LCG seed here.
-    /// The nameless one, `old_blended_noise`, IS derived — the world seed
-    /// handed straight to the LCG (SPEC §11) — which is why these four
-    /// dimensions' terrain is not blocked by this and their climate is.
+    /// use. The nameless `old_blended_noise` is derived — the world seed
+    /// handed straight to the LCG — and so are the three CLIMATE noises,
+    /// `minecraft:temperature`, `vegetation` and `offset`, by the rule
+    /// cubiomes documents for the Nether and the goldens confirm (SPEC §11).
+    /// Every other NAMED noise is not: nothing available says how a name
+    /// becomes an LCG seed, and those are refused.
     Legacy,
 };
 
@@ -76,13 +77,17 @@ public:
     /// reached it — which is the whole reason Graph::referencedNoises()
     /// exists.
     ///
-    /// @p source has no default on purpose. Throws NoiseError for
-    /// RandomSource::Legacy WITH A NON-EMPTY @p wanted: this build cannot
-    /// derive how a NAME becomes an LCG seed, and it will not quietly
-    /// substitute the modern derivation, which would produce a world that
-    /// generates and is wrong. The names go in the message, because which
-    /// noises a dimension still cannot have is the actionable part of the
-    /// refusal now that it is no longer all-or-nothing (SPEC §8).
+    /// @p source has no default on purpose. Under RandomSource::Legacy,
+    /// `minecraft:temperature` and `minecraft:vegetation` are built from
+    /// `java.util.Random(worldSeed)` and `(worldSeed + 1)` as two-octave
+    /// noises at first octave -7, and `minecraft:offset` is zero — the pack's
+    /// parameters for those three are not read (SPEC §11, measured against
+    /// the golden Nether). Throws NoiseError if @p wanted names ANY OTHER
+    /// noise under Legacy: this build cannot derive how a NAME becomes an
+    /// LCG seed, and it will not quietly substitute the modern derivation,
+    /// which would produce a world that generates and is wrong. Those names,
+    /// and only those, go in the message, because which noises a dimension
+    /// still cannot have is the actionable part of the refusal (SPEC §8).
     ///
     /// An EMPTY @p wanted under Legacy is not refused, and that is not a
     /// loosening of the rule but the rule stated exactly: with no identifier
@@ -90,7 +95,8 @@ public:
     /// the case that matters, because thirteen of a legacy dimension's
     /// fifteen router entries — `final_density` among them — name no noise
     /// at all, so a legacy dimension's TERRAIN builds from an empty registry
-    /// while its climate and surface rules stay refused. The refusal used to
+    /// — and, by the climate rule above, its climate builds too — while its
+    /// surface rules stay refused. The refusal used to
     /// fire before @p wanted was looked at, which made the gap look four
     /// dimensions wide when it is two climate router entries and one surface
     /// rule wide in three of them, and zero wide in the fourth — the End,

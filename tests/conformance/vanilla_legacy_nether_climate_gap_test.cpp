@@ -8,13 +8,14 @@
 // between "cannot generate" and "generates, with the wrong things in the
 // wrong places". This file measures it for the Nether's biome layout.
 //
-// NOTHING HERE IS SHIPPED. The modern derivation is not offered as a
-// fallback, and no shipped path can reach it for a legacy dimension —
-// `NoiseRegistry::create` still refuses a non-empty `wanted` under Legacy.
-// This test reaches around that refusal ON PURPOSE, by asking for a
-// Xoroshiro registry and evaluating the nether's climate with it, precisely
-// so that the size of the resulting error is a number in the repository
-// rather than a claim about one.
+// TWO CASES, and only the second is shipped. The first measures the modern
+// derivation, which no shipped path can reach for a legacy dimension: it asks
+// for a Xoroshiro registry ON PURPOSE, so that the size of the resulting error
+// is a number in the repository rather than a claim about one. The second
+// runs the SHIPPED legacy registry — whose climate rule is read from cubiomes
+// and measured here (SPEC §11, "The legacy Nether's climate, read from
+// cubiomes") — over the same cells: 32765 of 32768, every miss an exact
+// fitness tie. The first case is now the second's negative control.
 //
 // WHY THE NETHER'S BIOMES ARE PURE CLIMATE. Its router sets continents,
 // erosion, depth and ridges to the constant 0.0 — measured in
@@ -106,13 +107,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -206,6 +210,11 @@ struct Score {
     /// `y_scale: 0.0`; counted rather than assumed, because sampling one y
     /// per column is only sound if it is.
     std::size_t columnsVaryingWithY = 0;
+    /// Of the cells that disagree, how many are an exact fitness TIE: vanilla's
+    /// biome sits on a row reaching exactly the minimum fitness, so the climate
+    /// value is right and only the search's tie-break chose differently. The
+    /// rest would be a climate value that is not vanilla's.
+    std::size_t tiedResidual = 0;
 
     /// The agreement two independent labelings with these marginals would
     /// reach. This is the baseline the measurement is read against — quoting
@@ -230,7 +239,165 @@ struct Score {
     [[nodiscard]] double rate() const {
         return cells == 0 ? 0.0 : static_cast<double>(agree) / static_cast<double>(cells);
     }
+
+    void absorb(const Score& other) {
+        columnsVaryingWithY += other.columnsVaryingWithY;
+        cells += other.cells;
+        agree += other.agree;
+        tiedResidual += other.tiedResidual;
+        for (const auto& [biome, count] : other.vanillaCounts) {
+            vanillaCounts[biome] += count;
+        }
+        for (const auto& [biome, count] : other.ourCounts) {
+            ourCounts[biome] += count;
+        }
+    }
 };
+
+/// Whether vanilla's biome sits on a row reaching EXACTLY the minimum
+/// fitness for @p sample — the question --attribute asks of the overworld.
+[[nodiscard]] bool vanillaIsTied(const ParameterList& table, const ClimateSample& sample,
+                                 const std::string& vanilla) {
+    std::int64_t best = std::numeric_limits<std::int64_t>::max();
+    std::int64_t bestVanilla = std::numeric_limits<std::int64_t>::max();
+    for (const auto& entry : table.entries()) {
+        const std::int64_t fitness = entry.parameters.fitness(sample);
+        best = std::min(best, fitness);
+        if (entry.biome.toString() == vanilla) {
+            bestVanilla = std::min(bestVanilla, fitness);
+        }
+    }
+    return bestVanilla == best;
+}
+
+/// The Nether's climate exactly as the engine evaluates it — the router's
+/// own `temperature` and `vegetation` entries through `Interpreter`, then
+/// `ParameterList::find` — over every second chunk of one golden region,
+/// with the noises built under @p source.
+[[nodiscard]] Score scoreSeed(const Pack& pack, const stratum::settings::LoadedSettings& loaded,
+                              const stratum::settings::NoiseSettings& nether,
+                              const ParameterList& table,
+                              const std::vector<ResourceLocation>& wanted,
+                              const std::filesystem::path& region, std::int64_t seed,
+                              stratum::density::RandomSource source) {
+    const auto noises = stratum::density::NoiseRegistry::create(pack, wanted, seed, source);
+    const stratum::density::Interpreter interpreter(
+        loaded.graph, noises,
+        stratum::density::CellGeometry{.width = nether.geometry.cellWidth(),
+                                       .height = nether.geometry.cellHeight()});
+
+    const auto file = stratum::region::RegionFile::open(region);
+    Score score;
+
+    for (std::int32_t cz = 0; cz < stratum::region::kChunksPerAxis; cz += kChunkStride) {
+        for (std::int32_t cx = 0; cx < stratum::region::kChunksPerAxis; cx += kChunkStride) {
+            if (!file.hasChunk(cx, cz)) {
+                continue;
+            }
+            const auto chunk =
+                stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
+
+            // One biome per 4x4x4 cell; this walks the 4x4 COLUMNS of the
+            // chunk and reads vanilla's biome at every section of each, so
+            // the column-invariance claim is checked on real data before
+            // it is used to justify sampling one y.
+            for (int cellZ = 0; cellZ < 4; ++cellZ) {
+                for (int cellX = 0; cellX < 4; ++cellX) {
+                    const std::size_t offset =
+                        (static_cast<std::size_t>(cellZ) * 4U) + static_cast<std::size_t>(cellX);
+                    const std::string* columnBiome = nullptr;
+                    const std::string* atSampleY = nullptr;
+                    for (const auto& section : chunk.sections()) {
+                        if (section.biomes.empty()) {
+                            continue;
+                        }
+                        for (int cellY = 0; cellY < 4; ++cellY) {
+                            const std::size_t index =
+                                (static_cast<std::size_t>(cellY) * 16U) + offset;
+                            if (index >= section.biomes.size()) {
+                                continue;
+                            }
+                            const std::string& here = section.biomePalette[section.biomes[index]];
+                            if (columnBiome == nullptr) {
+                                columnBiome = &here;
+                            } else if (here != *columnBiome) {
+                                ++score.columnsVaryingWithY;
+                            }
+                            if ((section.y * 16) + (cellY * 4) == kSampleY) {
+                                atSampleY = &here;
+                            }
+                        }
+                    }
+                    if (atSampleY == nullptr) {
+                        continue;
+                    }
+
+                    const stratum::density::Point at{.x = (chunk.x() * 16) + (cellX * 4),
+                                                     .y = kSampleY,
+                                                     .z = (chunk.z() * 16) + (cellZ * 4)};
+                    const ClimateSample sample{
+                        .temperature =
+                            interpreter.evaluate(nether.router.at(RouterEntry::Temperature), at),
+                        .humidity =
+                            interpreter.evaluate(nether.router.at(RouterEntry::Vegetation), at),
+                        .continentalness =
+                            interpreter.evaluate(nether.router.at(RouterEntry::Continents), at),
+                        .erosion = interpreter.evaluate(nether.router.at(RouterEntry::Erosion), at),
+                        .depth = interpreter.evaluate(nether.router.at(RouterEntry::Depth), at),
+                        .weirdness =
+                            interpreter.evaluate(nether.router.at(RouterEntry::Ridges), at)};
+                    const std::string chosen = table.find(sample).toString();
+
+                    ++score.cells;
+                    ++score.vanillaCounts[*atSampleY];
+                    ++score.ourCounts[chosen];
+                    if (chosen == *atSampleY) {
+                        ++score.agree;
+                    } else if (vanillaIsTied(table, sample, *atSampleY)) {
+                        ++score.tiedResidual;
+                    }
+                }
+            }
+        }
+    }
+    return score;
+}
+
+/// What both cases share: the pack, the Nether's settings and table, and
+/// exactly the noises its climate reaches.
+struct NetherClimate {
+    Pack pack;
+    stratum::settings::LoadedSettings loaded;
+    ParameterList table;
+    std::vector<ResourceLocation> wanted;
+
+    [[nodiscard]] const stratum::settings::NoiseSettings& nether() const {
+        return loaded.settings.at(ResourceLocation::parse("minecraft:nether"));
+    }
+};
+
+[[nodiscard]] NetherClimate openNetherClimate(const std::filesystem::path& tree,
+                                              const std::filesystem::path& parameters) {
+    Pack pack = Pack::open(tree);
+    auto loaded = stratum::settings::loadAll(pack);
+    std::ifstream stream(parameters);
+    ParameterList table = ParameterList::fromJson(nlohmann::json::parse(stream),
+                                                  ResourceLocation::parse("minecraft:nether"));
+    const auto& nether = loaded.settings.at(ResourceLocation::parse("minecraft:nether"));
+    // Exactly the noises the nether's climate reaches, which is the whole
+    // point of Graph::noisesReachableFrom: temperature, vegetation and the
+    // `offset` that arrives through the shared shift_x/shift_z.
+    std::vector<ResourceLocation> wanted =
+        loaded.graph.noisesReachableFrom(nether.router.at(RouterEntry::Temperature));
+    for (const auto& id :
+         loaded.graph.noisesReachableFrom(nether.router.at(RouterEntry::Vegetation))) {
+        wanted.push_back(id);
+    }
+    return NetherClimate{.pack = std::move(pack),
+                         .loaded = std::move(loaded),
+                         .table = std::move(table),
+                         .wanted = std::move(wanted)};
+}
 
 } // namespace
 
@@ -245,26 +412,10 @@ TEST_CASE("the modern derivation would redraw the Nether's biome map entirely",
                 "tools/fetch-vanilla");
     }
 
-    const Pack pack = Pack::open(tree);
-    const auto loaded = stratum::settings::loadAll(pack);
-    const auto& nether = loaded.settings.at(ResourceLocation::parse("minecraft:nether"));
-    REQUIRE(nether.legacyRandomSource);
-
-    std::ifstream stream(parameters);
-    const ParameterList table = ParameterList::fromJson(
-        nlohmann::json::parse(stream), ResourceLocation::parse("minecraft:nether"));
-    REQUIRE(table.size() > 0U);
-
-    // Exactly the noises the nether's climate reaches, which is the whole
-    // point of Graph::noisesReachableFrom: temperature, vegetation and the
-    // `offset` that arrives through the shared shift_x/shift_z.
-    std::vector<ResourceLocation> wanted =
-        loaded.graph.noisesReachableFrom(nether.router.at(RouterEntry::Temperature));
-    for (const auto& id :
-         loaded.graph.noisesReachableFrom(nether.router.at(RouterEntry::Vegetation))) {
-        wanted.push_back(id);
-    }
-    REQUIRE(wanted.size() == 4U); // offset twice, temperature, vegetation
+    const NetherClimate climate = openNetherClimate(tree, parameters);
+    REQUIRE(climate.nether().legacyRandomSource);
+    REQUIRE(climate.table.size() > 0U);
+    REQUIRE(climate.wanted.size() == 4U); // offset twice, temperature, vegetation
 
     Score overall;
     std::size_t seedsMeasured = 0;
@@ -279,87 +430,9 @@ TEST_CASE("the modern derivation would redraw the Nether's biome map entirely",
         // DELIBERATELY the modern derivation on a legacy dimension. This is
         // the thing the shipped build refuses to do; measuring its error is
         // why it refuses.
-        const auto noises = stratum::density::NoiseRegistry::create(
-            pack, wanted, seed, stratum::density::RandomSource::Xoroshiro);
-        const stratum::density::Interpreter interpreter(
-            loaded.graph, noises,
-            stratum::density::CellGeometry{.width = nether.geometry.cellWidth(),
-                                           .height = nether.geometry.cellHeight()});
-
-        const auto file = stratum::region::RegionFile::open(region);
-        Score perSeed;
-
-        for (std::int32_t cz = 0; cz < stratum::region::kChunksPerAxis; cz += kChunkStride) {
-            for (std::int32_t cx = 0; cx < stratum::region::kChunksPerAxis; cx += kChunkStride) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
-                const auto chunk =
-                    stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
-
-                // One biome per 4x4x4 cell; this walks the 4x4 COLUMNS of the
-                // chunk and reads vanilla's biome at every section of each, so
-                // the column-invariance claim is checked on real data before
-                // it is used to justify sampling one y.
-                for (int cellZ = 0; cellZ < 4; ++cellZ) {
-                    for (int cellX = 0; cellX < 4; ++cellX) {
-                        const std::size_t offset = (static_cast<std::size_t>(cellZ) * 4U) +
-                                                   static_cast<std::size_t>(cellX);
-                        const std::string* columnBiome = nullptr;
-                        const std::string* atSampleY = nullptr;
-                        for (const auto& section : chunk.sections()) {
-                            if (section.biomes.empty()) {
-                                continue;
-                            }
-                            for (int cellY = 0; cellY < 4; ++cellY) {
-                                const std::size_t index =
-                                    (static_cast<std::size_t>(cellY) * 16U) + offset;
-                                if (index >= section.biomes.size()) {
-                                    continue;
-                                }
-                                const std::string& here =
-                                    section.biomePalette[section.biomes[index]];
-                                if (columnBiome == nullptr) {
-                                    columnBiome = &here;
-                                } else if (here != *columnBiome) {
-                                    ++perSeed.columnsVaryingWithY;
-                                }
-                                if ((section.y * 16) + (cellY * 4) == kSampleY) {
-                                    atSampleY = &here;
-                                }
-                            }
-                        }
-                        if (atSampleY == nullptr) {
-                            continue;
-                        }
-
-                        const stratum::density::Point at{.x = (chunk.x() * 16) + (cellX * 4),
-                                                         .y = kSampleY,
-                                                         .z = (chunk.z() * 16) + (cellZ * 4)};
-                        const ClimateSample sample{
-                            .temperature = interpreter.evaluate(
-                                nether.router.at(RouterEntry::Temperature), at),
-                            .humidity =
-                                interpreter.evaluate(nether.router.at(RouterEntry::Vegetation), at),
-                            .continentalness =
-                                interpreter.evaluate(nether.router.at(RouterEntry::Continents), at),
-                            .erosion =
-                                interpreter.evaluate(nether.router.at(RouterEntry::Erosion), at),
-                            .depth = interpreter.evaluate(nether.router.at(RouterEntry::Depth), at),
-                            .weirdness =
-                                interpreter.evaluate(nether.router.at(RouterEntry::Ridges), at)};
-                        const std::string chosen = table.find(sample).toString();
-
-                        ++perSeed.cells;
-                        ++perSeed.vanillaCounts[*atSampleY];
-                        ++perSeed.ourCounts[chosen];
-                        if (chosen == *atSampleY) {
-                            ++perSeed.agree;
-                        }
-                    }
-                }
-            }
-        }
+        const Score perSeed =
+            scoreSeed(climate.pack, climate.loaded, climate.nether(), climate.table, climate.wanted,
+                      region, seed, stratum::density::RandomSource::Xoroshiro);
 
         REQUIRE(perSeed.cells > 0U);
         ++seedsMeasured;
@@ -368,16 +441,7 @@ TEST_CASE("the modern derivation would redraw the Nether's biome map entirely",
                      << "% of cells; chance baseline for these marginals "
                      << 100.0 * perSeed.chanceBaseline() << "%; " << perSeed.columnsVaryingWithY
                      << " column(s) varying with y");
-
-        overall.columnsVaryingWithY += perSeed.columnsVaryingWithY;
-        overall.cells += perSeed.cells;
-        overall.agree += perSeed.agree;
-        for (const auto& [biome, count] : perSeed.vanillaCounts) {
-            overall.vanillaCounts[biome] += count;
-        }
-        for (const auto& [biome, count] : perSeed.ourCounts) {
-            overall.ourCounts[biome] += count;
-        }
+        overall.absorb(perSeed);
     }
 
     if (seedsMeasured == 0) {
@@ -433,4 +497,69 @@ TEST_CASE("the modern derivation would redraw the Nether's biome map entirely",
     CHECK(overall.vanillaCounts.contains("minecraft:basalt_deltas"));
     CHECK(overall.vanillaCounts.at("minecraft:basalt_deltas") > 0U);
     CHECK_FALSE(overall.ourCounts.contains("minecraft:basalt_deltas"));
+}
+
+TEST_CASE("the legacy registry draws vanilla's Nether biome map",
+          "[conformance][legacy][nether][climate]") {
+    // THE SHIPPED PATH, on the same cells the case above scores: the legacy
+    // registry's climate rule (SPEC §11, read from cubiomes), the Nether's own
+    // router entries through Interpreter, and ParameterList::find. Nothing
+    // here is hand-rolled — tools/analysis/legacy-goldens-biome-analyze.cpp
+    // --cubiomes is where the construction was first scored, and this case is
+    // what keeps the engine itself holding the number.
+    const std::filesystem::path tree = findWorldgenTree();
+    const std::filesystem::path parameters = findNetherParameterList();
+    if (tree.empty() || parameters.empty()) {
+        SKIP("no extracted vanilla worldgen or nether biome parameter list under "
+             << STRATUM_FIXTURES_DIR
+             << " — Mojang-derived and never committed (SPEC §12). Generate them with: "
+                "tools/fetch-vanilla");
+    }
+
+    const NetherClimate climate = openNetherClimate(tree, parameters);
+    Score overall;
+    std::size_t seedsMeasured = 0;
+    for (const std::int64_t seed : kSeeds) {
+        const std::filesystem::path region = netherRegionOf(seed);
+        if (region.empty()) {
+            continue;
+        }
+        CAPTURE(seed);
+        const Score perSeed =
+            scoreSeed(climate.pack, climate.loaded, climate.nether(), climate.table, climate.wanted,
+                      region, seed, stratum::density::RandomSource::Legacy);
+        REQUIRE(perSeed.cells > 0U);
+        ++seedsMeasured;
+        overall.absorb(perSeed);
+    }
+    if (seedsMeasured == 0) {
+        SKIP("no golden nether regions under " << STRATUM_FIXTURES_DIR
+                                               << " — run tools/fetch-vanilla --generate-regions");
+    }
+    WARN("nether climate under the legacy registry, "
+         << seedsMeasured << " seed(s): " << overall.agree << " / " << overall.cells << " = "
+         << 100.0 * overall.rate() << "%; " << overall.cells - overall.agree
+         << " residual cell(s), " << overall.tiedResidual << " of them exact fitness ties");
+
+    CHECK(seedsMeasured == kSeeds.size());
+    CHECK(overall.columnsVaryingWithY == 0U);
+
+    // THE CLAIM, as numbers rather than a threshold: 32765 of 32768 over the
+    // eight golden regions (six independent worlds), where the case above
+    // scores 8873.
+    CHECK(overall.cells == 32768U);
+    CHECK(overall.agree == 32765U);
+
+    // AND THE RESIDUAL IS NOT THE CLIMATE. Every cell that disagrees is an
+    // exact fitness tie — vanilla's biome reaches the minimum exactly, so the
+    // climate value is right and `find`'s "later row wins" proxy for the
+    // tree's leaf order is what loses it (SPEC §11). A cell that disagreed
+    // WITHOUT a tie would be a climate value that is not vanilla's, and would
+    // fail this.
+    CHECK(overall.tiedResidual == overall.cells - overall.agree);
+
+    // The marginals the modern rule got wrong, now right to within the three
+    // tied cells: basalt deltas, absent above, all present.
+    CHECK(overall.ourCounts.at("minecraft:basalt_deltas") ==
+          overall.vanillaCounts.at("minecraft:basalt_deltas"));
 }

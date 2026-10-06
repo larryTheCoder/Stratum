@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-06 (record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -16,7 +16,7 @@ Last swept: 2026-10-06 (record corrected: M5's `ext/` state and block state tran
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
-| M4 — biomes + surface | Open — the legacy RNG blocks climate and surface rules in 3 legacy dimensions and nothing in the 4th: the End generates at the ChunkFiller level exactly, the legacy Nether's terrain measures 99.99591% vs the goldens |
+| M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — every constant pinned; a 192-block fluid-extent residual (of 6291456) unattributed, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
@@ -279,7 +279,32 @@ Open:
       `requiredNoises` and the three constructs — the router counts keep
       answering the narrower question on purpose.
 
-- [ ] **`legacy_random_source` for NAMED noises (the Java LCG derivation).**
+- [x] **The legacy CLIMATE noises — `temperature`, `vegetation`, `offset` —
+      derived, from cubiomes, and measured.** cubiomes' `setNetherSeed`
+      (MIT, §2's reference, at the pinned e61f905) builds them from
+      `java.util.Random(worldSeed)` and `(worldSeed + 1)`, two octaves at a
+      fixed first octave of -7 drawn highest frequency first after 262-step
+      skips, the pack's parameters unread, and no shift — outside both scanned
+      spaces on four axes. Through the SHIPPED registry and Interpreter:
+      **32765 / 32768** golden Nether cells over eight regions (six worlds),
+      interior 31436 / 31436, every chunk 131061 / 131072; the same
+      construction at wrong seeds scores 22.69%, under chance. **All 11
+      residual cells are exact fitness ties**, and in all 11 vanilla took the
+      EARLIER row (evidence for the tie-break item below; not acted on).
+      Pinned by `tests/unit/legacy_climate_test.cpp` (96 cubiomes vectors, bit
+      for bit) and `vanilla_legacy_nether_climate_gap_test.cpp`'s second case.
+      Carried, not measured: the rule is keyed on the noise NAME (caves and
+      floating islands take it with no oracle), and a datapack redefining the
+      three is not read — both settle with one `density-probe.sh` world. SPEC
+      §11, "The legacy Nether's climate, read from cubiomes".
+- [ ] **`legacy_random_source` for the remaining NAMED noises — now the
+      surface rules' only** (the Nether's eight; nine each for caves and
+      floating islands). The next hypothesis to test, before widening any seed
+      scan: the climate's own shape — cubiomes' `octaveInit`, highest
+      frequency first after 262-step skips, and whether the pack's parameters
+      are read at all — applied to the surface noises, against the existing
+      golden surface readback (`legacy-goldens-surface-analyze.cpp`).
+      The history below is the item as it stood before the climate closed.
       Still open — but it never blocked a legacy dimension's DENSITY CHAIN,
       and the previous wording here was wrong about that. **No longer blocks
       4 of 7 dimensions — it blocks parts of 3.** Measured per router entry

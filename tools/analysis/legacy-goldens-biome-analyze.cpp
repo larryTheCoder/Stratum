@@ -167,6 +167,7 @@
 //                                # (<5 min in release; Debug does not finish in 20)
 //   $A .fixtures --model
 //   $A .fixtures --modern
+//   $A .fixtures --cubiomes      # cubiomes' Nether construction, model-checked first
 //   $A .fixtures --boundary
 //   $A .fixtures --candidate 182 0
 //   $A .fixtures --candidate 182 0 zero-shift   # one candidate, --split's chain
@@ -194,6 +195,7 @@
 #include <stratum/density/noise_parameters.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/hash/md5.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/region/region_file.hpp>
@@ -212,12 +214,16 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+// cubiomes' own Nether climate, the model --cubiomes must reproduce first.
+#include "../../tests/unit/nether_climate_vectors.inc"
 
 using namespace stratum;
 
@@ -560,6 +566,96 @@ modernBlocksFor(const density::NoiseParameters& parameters, std::string_view id,
             rng::Xoroshiro128PlusPlus octaveRandom{
                 rng::Seed128{.lo = baseLo ^ salt.lo, .hi = baseHi ^ salt.hi}};
             blocks.push_back(noise::PerlinNoise::fromRandom(octaveRandom));
+        }
+    }
+    return blocks;
+}
+
+// --- cubiomes' legacy Nether climate ------------------------------------------
+//
+// Adapted from cubiomes (MIT, Cubitect), at the commit tools/vectors pins
+// (e61f905): biomenoise.c `setNetherSeed`, noise.c `octaveInit` and
+// `doublePerlinInit`. cubiomes builds the Nether's climate for every version
+// from 1.16 on from the world seed alone — temperature from
+// `java.util.Random(worldSeed)`, humidity from `java.util.Random(worldSeed +
+// 1)` — as two-octave noises at a FIXED first octave of -7, not from the
+// pack's `minecraft:temperature`/`minecraft:vegetation` parameters, and samples
+// them with no shift. Every axis of the 270,000-candidate space is a rule for
+// turning a NAME into a seed for the PACK'S parameters, so this construction
+// was outside all of it (SPEC §11).
+//
+// Two details decide the bits, and both are cubiomes' rather than this file's
+// guess: each stack first discards 262 LCG steps per octave above its top one
+// (octaves 0 to -5 here, six of them), then draws its octaves HIGHEST frequency
+// first; and the second stack repeats that discard from where the first left
+// off. --cubiomes checks the result against cubiomes' own output
+// (tests/unit/nether_climate_vectors.inc) before it scores anything.
+
+constexpr int kCubiomesNetherFirstOctave = -7;
+constexpr int kCubiomesNetherOctaves = 2;
+constexpr int kCubiomesNetherTopOctave = kCubiomesNetherFirstOctave + kCubiomesNetherOctaves - 1;
+/// Three nextDoubles at two steps each plus a 256-entry shuffle at one each
+/// (SPEC §11, measured at 4096 of 4096 seeds). cubiomes' `skipNextN` takes
+/// exactly this many raw steps per skipped octave.
+constexpr int kLcgStepsPerPerlinBlock = 262;
+
+/// Two choices below the resolution of the agreement score, and above the
+/// resolution of a cell sitting exactly on a quantisation boundary. cubiomes
+/// makes one of each; vanilla's legacy Nether makes its own, and only the
+/// goldens can say which.
+///
+///   factor  cubiomes' `(10/6) * n / (n + 1)` against the modern spelling
+///           `(1/6) / (0.1 * (1 + 1/n))` that perlin.cpp carries, which vanilla
+///           is measured to use for modern noises (SPEC §11). At n = 2 they
+///           are ONE ULP apart: 0x1.1c71c71c71c72p+0 against ...c71p+0.
+///   order   the summation order within a stack: highest frequency first, as
+///           cubiomes' `sampleOctave` adds them, or lowest first, as the
+///           modern `OctaveNoise::sample` does. The blocks are the same in
+///           both; only the order of two additions changes.
+enum class Factor : std::uint8_t { Cubiomes, Modern };
+enum class Order : std::uint8_t { HighestFirst, LowestFirst };
+
+/// cubiomes' octave layout: per stack, highest frequency first, so that both
+/// the blocks and (by default) the summation run in the order `octaveInit` and
+/// `sampleOctave` use. Amplitudes are [1, 1], so `amplitude * persistence` is
+/// cubiomes' per-octave `amplitude` to the bit.
+[[nodiscard]] Layout cubiomesNetherLayout(Factor factor = Factor::Cubiomes,
+                                          Order order = Order::HighestFirst) {
+    Layout layout;
+    std::size_t block = 0;
+    for (std::vector<Layout::Octave>* stack : {&layout.first, &layout.second}) {
+        double persistence = 1.0 / (std::ldexp(1.0, kCubiomesNetherOctaves) - 1.0);
+        double frequency = std::ldexp(1.0, kCubiomesNetherTopOctave);
+        for (int octave = 0; octave < kCubiomesNetherOctaves; ++octave) {
+            stack->push_back({block, 1.0, persistence, frequency});
+            ++block;
+            persistence *= 2.0;
+            frequency *= 0.5;
+        }
+        if (order == Order::LowestFirst) {
+            std::reverse(stack->begin(), stack->end());
+        }
+    }
+    layout.blocksPerNoise = block;
+    constexpr auto kLength = static_cast<double>(kCubiomesNetherOctaves);
+    // doublePerlinInit's `(10.0 / 6.0) * len / (len + 1)`, evaluated in the
+    // same order; or perlin.cpp's modern spelling.
+    layout.valueFactor = factor == Factor::Cubiomes ? (10.0 / 6.0) * kLength / (kLength + 1.0)
+                                                    : (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / kLength)));
+    return layout;
+}
+
+/// The four Perlin blocks one cubiomes Nether noise draws from
+/// `java.util.Random(seed)`, in cubiomesNetherLayout's block order.
+[[nodiscard]] std::vector<noise::PerlinNoise> cubiomesNetherBlocks(std::int64_t seed) {
+    rng::JavaRandom random{seed};
+    std::vector<noise::PerlinNoise> blocks;
+    for (int stack = 0; stack < 2; ++stack) {
+        for (int step = 0; step < -kCubiomesNetherTopOctave * kLcgStepsPerPerlinBlock; ++step) {
+            static_cast<void>(random.nextInt());
+        }
+        for (int octave = 0; octave < kCubiomesNetherOctaves; ++octave) {
+            blocks.push_back(noise::PerlinNoise::fromRandom(random));
         }
     }
     return blocks;
@@ -1704,7 +1800,8 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: %s <fixtures-dir> "
-                     "--preset|--control|--attribute|--ties|--quantize|--model|--modern|--boundary|"
+                     "--preset|--control|--attribute|--ties|--quantize|--model|--modern|--cubiomes|"
+                     "--boundary|"
                      "--scan|--split|"
                      "--null-full [draws|all] [draw-seed]|"
                      "--candidate <rule> <block> [zero-shift]\n",
@@ -2146,6 +2243,182 @@ int main(int argc, char** argv) {
                         biomes.nameOf(static_cast<std::uint16_t>(i)).c_str(),
                         overall.vanillaCounts[i], overall.ourCounts[i]);
         }
+        return 0;
+    }
+
+    if (mode == "--cubiomes") {
+        // cubiomes' construction (SPEC §11), scored exactly as --modern scores
+        // the modern one — same eight seeds, same stride, same cells — so the
+        // two numbers share a denominator.
+        //
+        // THE MODEL FIRST. This file's stack must reproduce cubiomes' own
+        // output bit for bit before a score means anything: a miss below has to
+        // be vanilla disagreeing with cubiomes, not this file disagreeing with
+        // cubiomes.
+        const Layout layout = cubiomesNetherLayout();
+        std::size_t reproduced = 0;
+        for (const NetherClimateVector& vector : kNetherClimateVectors) {
+            const auto temperatureBlocks = cubiomesNetherBlocks(vector.seed);
+            const auto humidityBlocks =
+                cubiomesNetherBlocks(javamath::wrappingAdd(vector.seed, std::int64_t{1}));
+            const auto x = static_cast<double>(vector.x);
+            const auto z = static_cast<double>(vector.z);
+            const double temperature = sampleNormal(layout, temperatureBlocks, 0, x, 0.0, z);
+            const double humidity = sampleNormal(layout, humidityBlocks, 0, x, 0.0, z);
+            if (std::bit_cast<std::uint64_t>(temperature) == vector.temperature &&
+                std::bit_cast<std::uint64_t>(humidity) == vector.humidity) {
+                ++reproduced;
+            } else {
+                std::printf("  model MISMATCH seed %lld at (%d, %d)\n",
+                            static_cast<long long>(vector.seed), vector.x, vector.z);
+            }
+        }
+        std::printf("model: %zu/%zu cubiomes climate vectors reproduced bit for bit\n", reproduced,
+                    kNetherClimateVectors.size());
+        if (reproduced != kNetherClimateVectors.size()) {
+            std::fprintf(stderr, "the model does not reproduce cubiomes; refusing to score\n");
+            return 1;
+        }
+
+        const std::vector<World> worlds = loadWorlds(kAllSeeds, kNetherChunkStride);
+        if (worlds.empty()) {
+            std::fprintf(stderr, "no golden nether regions under %s\n", fixtures.string().c_str());
+            return 77;
+        }
+        // Only the layouts change: the climate chain, the table, the search
+        // and the cells are the ones --modern uses. Shift::Zero is cubiomes'
+        // chain here, not --split's diagnostic, so the `offset` blocks are
+        // never read.
+        ClimateNoises model = noises;
+        model.temperatureLayout = layout;
+        model.vegetationLayout = layout;
+        const std::vector<noise::PerlinNoise> noOffset;
+
+        // THE NEGATIVE ARM. The same construction at seeds it does not
+        // claim: if this scores near the positive arm, the decoder is
+        // accepting the SHAPE rather than the seeding, and the positive arm
+        // is not evidence of anything.
+        Tally overall{biomes.size()};
+        Tally negative{biomes.size()};
+        std::size_t varying = 0;
+        for (const World& world : worlds) {
+            varying += world.varyingWithY;
+            const auto temperatureBlocks = cubiomesNetherBlocks(world.seed);
+            const auto humidityBlocks =
+                cubiomesNetherBlocks(javamath::wrappingAdd(world.seed, std::int64_t{1}));
+            const Tally tally = scoreCandidate(model, nether, biomes, world, noOffset,
+                                               temperatureBlocks, humidityBlocks, 0, Shift::Zero);
+            const auto wrongTemperature =
+                cubiomesNetherBlocks(javamath::wrappingAdd(world.seed, std::int64_t{2}));
+            const auto wrongHumidity =
+                cubiomesNetherBlocks(javamath::wrappingAdd(world.seed, std::int64_t{3}));
+            const Tally wrong = scoreCandidate(model, nether, biomes, world, noOffset,
+                                               wrongTemperature, wrongHumidity, 0, Shift::Zero);
+            std::printf("  seed %-21lld %5zu/%5zu = %7.3f%%  interior %5zu/%5zu  baseline "
+                        "%6.2f%%  wrong seeds %6.2f%%\n",
+                        static_cast<long long>(world.seed), tally.agree, tally.cells,
+                        100.0 * tally.rate(), tally.interiorAgree, tally.interiorCells,
+                        100.0 * tally.chanceBaseline(), 100.0 * wrong.rate());
+            overall.absorb(tally);
+            negative.absorb(wrong);
+        }
+        std::printf("cubiomes' construction on the nether, %zu regions: %zu/%zu = %.3f%% "
+                    "(interior %zu/%zu), chance baseline %.2f%%; the same construction at "
+                    "wrong seeds %zu/%zu = %.2f%%; %zu column(s) varying with y\n",
+                    worlds.size(), overall.agree, overall.cells, 100.0 * overall.rate(),
+                    overall.interiorAgree, overall.interiorCells, 100.0 * overall.chanceBaseline(),
+                    negative.agree, negative.cells, 100.0 * negative.rate(), varying);
+        for (std::size_t i = 0; i < biomes.size(); ++i) {
+            std::printf("    %-28s vanilla %6zu, cubiomes' construction %6zu\n",
+                        biomes.nameOf(static_cast<std::uint16_t>(i)).c_str(),
+                        overall.vanillaCounts[i], overall.ourCounts[i]);
+        }
+
+        // THE TWO ULP-LEVEL CHOICES, scored rather than inherited from
+        // cubiomes. Same seeds and blocks; only the factor spelling and the
+        // summation order move. At this stride and at stride 1, because a
+        // one-ulp difference only shows on a cell that lands exactly on a
+        // quantisation boundary, and the denominator is what makes the
+        // absence of such a cell mean something.
+        for (const std::int32_t stride : {kNetherChunkStride, std::int32_t{1}}) {
+            const std::vector<World> variantWorlds = loadWorlds(kAllSeeds, stride);
+            std::printf("variants, chunk stride %d:\n", stride);
+            for (const Factor factor : {Factor::Cubiomes, Factor::Modern}) {
+                for (const Order order : {Order::HighestFirst, Order::LowestFirst}) {
+                    ClimateNoises variant = noises;
+                    variant.temperatureLayout = cubiomesNetherLayout(factor, order);
+                    variant.vegetationLayout = variant.temperatureLayout;
+                    Tally total{biomes.size()};
+                    for (const World& world : variantWorlds) {
+                        const auto temperatureBlocks = cubiomesNetherBlocks(world.seed);
+                        const auto humidityBlocks = cubiomesNetherBlocks(
+                            javamath::wrappingAdd(world.seed, std::int64_t{1}));
+                        total.absorb(scoreCandidate(variant, nether, biomes, world, noOffset,
+                                                    temperatureBlocks, humidityBlocks, 0,
+                                                    Shift::Zero));
+                    }
+                    std::printf("  factor %-8s order %-13s %7zu/%7zu, %zu disagreeing\n",
+                                factor == Factor::Cubiomes ? "cubiomes" : "modern",
+                                order == Order::HighestFirst ? "highest-first" : "lowest-first",
+                                total.agree, total.cells, total.cells - total.agree);
+                }
+            }
+        }
+
+        // THE RESIDUAL, ATTRIBUTED, at stride 1 under cubiomes' own variant.
+        // The same question --attribute asks of the overworld: is vanilla's
+        // biome on a row reaching EXACTLY the minimum fitness (a tie, which
+        // the search order decides and `find`'s "later row wins" proxy can
+        // lose), or on a strictly worse row (which no tie-break reaches, so
+        // the climate value itself is not vanilla's)?
+        std::vector<biome::QuantizedPoint> points;
+        for (const auto& entry : nether.entries()) {
+            points.push_back(biome::QuantizedPoint::of(entry.parameters));
+        }
+        std::size_t tied = 0;
+        std::size_t different = 0;
+        for (const World& world : loadWorlds(kAllSeeds, 1)) {
+            const auto temperatureBlocks = cubiomesNetherBlocks(world.seed);
+            const auto humidityBlocks =
+                cubiomesNetherBlocks(javamath::wrappingAdd(world.seed, std::int64_t{1}));
+            const auto temperature = [&](double x, double y, double z) {
+                return sampleNormal(layout, temperatureBlocks, 0, x, y, z);
+            };
+            const auto vegetation = [&](double x, double y, double z) {
+                return sampleNormal(layout, humidityBlocks, 0, x, y, z);
+            };
+            const auto noShift = [](double, double, double) { return 0.0; };
+            for (const Cell& cell : world.cells) {
+                const Climate climate =
+                    climateAt(noShift, temperature, vegetation, static_cast<double>(cell.x),
+                              static_cast<double>(cell.z), Shift::Zero);
+                const std::string ours = nether.find(sampleOf(climate)).toString();
+                if (biomes.find(ours) == cell.biome) {
+                    continue;
+                }
+                const biome::QuantizedSample quantized =
+                    biome::QuantizedSample::of(sampleOf(climate));
+                std::int64_t best = std::numeric_limits<std::int64_t>::max();
+                std::int64_t bestVanilla = std::numeric_limits<std::int64_t>::max();
+                for (std::size_t row = 0; row < points.size(); ++row) {
+                    const std::int64_t fitness = points[row].fitness(quantized);
+                    best = std::min(best, fitness);
+                    if (biomes.find(nether.entries()[row].biome.toString()) == cell.biome) {
+                        bestVanilla = std::min(bestVanilla, fitness);
+                    }
+                }
+                const bool isTie = bestVanilla == best;
+                (isTie ? tied : different) += 1;
+                std::printf("  residual seed %-21lld (%5d, %5d)  vanilla %-26s ours %-26s "
+                            "T %lld H %lld  %s\n",
+                            static_cast<long long>(world.seed), cell.x, cell.z,
+                            biomes.nameOf(cell.biome).c_str(), ours.c_str(),
+                            static_cast<long long>(quantized.temperature),
+                            static_cast<long long>(quantized.humidity),
+                            isTie ? "TIED" : "DIFFERENT");
+            }
+        }
+        std::printf("residual at stride 1: %zu tied, %zu different\n", tied, different);
         return 0;
     }
 

@@ -98,6 +98,10 @@ jobs:
           tools/vectors/generate-blended-vectors.sh "${RUNNER_TEMP}/blended_vectors.inc"
           diff -u tests/unit/blended_vectors.inc "${RUNNER_TEMP}/blended_vectors.inc"
 
+          # And the legacy Nether climate (setNetherSeed), from the same commit.
+          tools/vectors/generate-nether-vectors.sh "${RUNNER_TEMP}/nether_climate_vectors.inc"
+          diff -u tests/unit/nether_climate_vectors.inc "${RUNNER_TEMP}/nether_climate_vectors.inc"
+
           # And the deepslate oracle, run as a black box at a pinned version.
           tools/vectors/generate-deepslate-vectors.sh "${RUNNER_TEMP}/deepslate_vectors.inc"
           diff -u tests/unit/deepslate_vectors.inc "${RUNNER_TEMP}/deepslate_vectors.inc"

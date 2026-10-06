@@ -180,17 +180,18 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     CHECK(report.splines == 354U);
 
     // The routers are resolved into the same graph, so the settings are
-    // checked here too — but only the dimensions whose noises this build can
-    // actually seed. Four of vanilla's seven declare `legacy_random_source`;
-    // THREE of those four are still refused, and their entries are left
-    // unchecked rather than counted as failures ("we did not look" is not
-    // "we looked and it does not work"). The fourth is the End, which names
-    // no noise at all and is now checked like any other dimension — the
-    // refusal fires on a non-empty want list, not on the flag (SPEC §11).
+    // checked here too — but only the dimensions whose router noises this
+    // build can actually seed, and that is now all seven. Four of vanilla's
+    // seven declare `legacy_random_source`. The End names no noise at all;
+    // the other three name only `temperature`, `vegetation` and `offset` in
+    // their routers, which are derived under the Java LCG since the climate
+    // was read from cubiomes and measured against the golden Nether (SPEC
+    // §11). Before that, those three routers were left unchecked rather than
+    // counted as failures, and this read 60 of 60 across 4 of 7.
     CHECK(report.noiseSettings == 7U);
-    CHECK(report.dimensionsChecked == 4U);
-    CHECK(report.routerEntries == 60U);
-    CHECK(report.routerEntriesEvaluable == 60U);
+    CHECK(report.dimensionsChecked == 7U);
+    CHECK(report.routerEntries == 105U);
+    CHECK(report.routerEntriesEvaluable == 105U);
 
     std::vector<std::string> unseeded;
     std::vector<std::string> constructsRefused;
@@ -223,10 +224,14 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // ones, which validate began reporting when its `wanted` stopped being
     // router-only; a legacy dimension naming noises only in its surface rule
     // used to validate clean and then not generate).
-    CHECK(unseeded == std::vector<std::string>{
-                          "minecraft:caves", "minecraft:caves surface_rule",
-                          "minecraft:floating_islands", "minecraft:floating_islands surface_rule",
-                          "minecraft:nether", "minecraft:nether surface_rule"});
+    //
+    // And the bare subjects — a ROUTER that names an unseedable noise — are
+    // gone too: the climate noises are the only ones a legacy router names,
+    // and they are derived. What a legacy dimension still cannot seed lives
+    // in its surface rule alone.
+    CHECK(unseeded == std::vector<std::string>{"minecraft:caves surface_rule",
+                                               "minecraft:floating_islands surface_rule",
+                                               "minecraft:nether surface_rule"});
 
     // AND THE CONSTRUCTS, one warning per `vertical_gradient` random_name.
     // The End has none, which is why it still generates. No aquifer or vein

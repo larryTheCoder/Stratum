@@ -6,7 +6,9 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/noise_parameters.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/noise/perlin.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <nlohmann/json.hpp>
@@ -18,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace stratum::density {
 
@@ -49,14 +52,13 @@ NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
                                     std::int64_t worldSeed, RandomSource source) {
     std::map<data::ResourceLocation, NoiseParameters> parameters;
     if (source == RandomSource::Legacy && !wanted.empty()) {
-        // Straight through to the refusal below, so that a legacy dimension
-        // naming a noise the pack does not define is refused for the reason
-        // that actually blocks it — the seeding — rather than for a missing
-        // entry it would never have been able to seed anyway. Still before
-        // any lookup, but only once `wanted` says a name is actually needed:
-        // a legacy dimension that names nothing falls through to the
-        // ordinary path and builds an empty registry, which is the correct
-        // answer rather than a lenient one.
+        // No lookup at all under Legacy. The three climate noises it can
+        // build ignore the pack's parameters (see the overload below), and
+        // every other name is refused for the reason that actually blocks it
+        // — the seeding — rather than for a missing entry it could never have
+        // seeded anyway. A legacy dimension that names nothing falls through
+        // to the ordinary path and builds an empty registry, which is the
+        // correct answer rather than a lenient one.
         return create(parameters, wanted, worldSeed, source);
     }
     for (const data::ResourceLocation& id : wanted) {
@@ -73,11 +75,89 @@ NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
     return create(parameters, wanted, worldSeed, source);
 }
 
+namespace {
+
+// THE LEGACY CLIMATE, read from cubiomes and measured against the goldens
+// (SPEC §11, "The legacy Nether's climate, read from cubiomes"). Adapted from
+// cubiomes (https://github.com/Cubitect/cubiomes, MIT, Cubitect),
+// biomenoise.c `setNetherSeed`, at e61f905.
+//
+// Under the Java LCG, the three climate noises a legacy router names are NOT
+// built from the pack's parameters, and no name is hashed:
+//
+//   minecraft:temperature  java.util.Random(worldSeed)
+//   minecraft:vegetation   java.util.Random(worldSeed + 1)
+//   both                   two octaves at a fixed first octave of -7
+//   minecraft:offset       zero everywhere: the climate takes no shift
+//
+// Measured, through this registry and the shipped Interpreter, against all
+// eight golden Nether regions: 32765 of 32768 cells pick vanilla's biome
+// (131061 of 131072 at every chunk), and every cell that does not is an exact
+// fitness tie lost to ParameterList::find's tie-break proxy, not a climate
+// value that differs (vanilla_legacy_nether_climate_gap_test.cpp).
+//
+// TWO READINGS ARE CARRIED, NOT MEASURED, and SPEC §11 states both:
+//   * the rule is keyed on the noise's NAME under a legacy source, which is
+//     all a registry can see. The Nether cannot tell that apart from keying
+//     on the dimension, and caves and floating_islands — which name the same
+//     three — take it with no oracle of their own;
+//   * the pack's parameters for these three are ignored, as vanilla's own
+//     shipped ones are. Whether a datapack that REDEFINES them would move a
+//     legacy dimension's climate is unmeasured.
+constexpr int kLegacyClimateFirstOctave = -7;
+constexpr int kLegacyClimateOctaves = 2;
+
+[[nodiscard]] const data::ResourceLocation& legacyTemperature() {
+    static const data::ResourceLocation kId =
+        data::ResourceLocation::parse("minecraft:temperature");
+    return kId;
+}
+
+[[nodiscard]] const data::ResourceLocation& legacyVegetation() {
+    static const data::ResourceLocation kId = data::ResourceLocation::parse("minecraft:vegetation");
+    return kId;
+}
+
+[[nodiscard]] const data::ResourceLocation& legacyOffset() {
+    static const data::ResourceLocation kId = data::ResourceLocation::parse("minecraft:offset");
+    return kId;
+}
+
+[[nodiscard]] bool isLegacyClimateNoise(const data::ResourceLocation& id) {
+    return id == legacyTemperature() || id == legacyVegetation() || id == legacyOffset();
+}
+
+[[nodiscard]] noise::NormalNoise legacyClimateNoise(const data::ResourceLocation& id,
+                                                    std::int64_t worldSeed) {
+    if (id == legacyOffset()) {
+        return noise::NormalNoise::zero();
+    }
+    // `worldSeed + 1` in two's complement, as Java's long addition is:
+    // Long.MAX_VALUE + 1 is Long.MIN_VALUE, not undefined behaviour.
+    rng::JavaRandom random{
+        id == legacyTemperature() ? worldSeed : javamath::wrappingAdd(worldSeed, std::int64_t{1})};
+    return noise::NormalNoise::createLegacy(random, kLegacyClimateFirstOctave,
+                                            kLegacyClimateOctaves);
+}
+
+} // namespace
+
 NoiseRegistry
 NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& parameters,
                       std::span<const data::ResourceLocation> wanted, std::int64_t worldSeed,
                       RandomSource source) {
-    if (source == RandomSource::Legacy && !wanted.empty()) {
+    // The three climate noises are settled under Legacy (above); only the
+    // rest of `wanted` still reaches the refusal below, and only the rest is
+    // named in it.
+    std::vector<data::ResourceLocation> unresolved;
+    if (source == RandomSource::Legacy) {
+        for (const data::ResourceLocation& id : wanted) {
+            if (!isLegacyClimateNoise(id)) {
+                unresolved.push_back(id);
+            }
+        }
+    }
+    if (source == RandomSource::Legacy && !unresolved.empty()) {
         // NARROWED, and the narrowing is a measurement rather than a guess.
         // This used to fire on the source alone, before `wanted` was
         // consulted at all, so it refused a legacy dimension that named NO
@@ -172,12 +252,13 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         // over-read it. It unblocks a legacy dimension's terrain only where
         // that terrain names no noise, which is every legacy dimension — and
         // for the End, which names none anywhere, it unblocks the surface
-        // rules too. Three of the four still need this function for their
-        // biome climate and their surface rules. Nothing here unblocks a
-        // legacy BIOME SOURCE: the End's is `minecraft:the_end`, which is
-        // not implemented, and CompiledDimension::compile still refuses
-        // every legacy dimension. What is unblocked is at ChunkFiller level
-        // — terrain and surface rules — and nothing above it. See SPEC §11.
+        // rules too. The climate noises are now derived as well (above), so
+        // what the other three still need from this function is their
+        // SURFACE RULES' noises alone — the Nether's eight, nine each for
+        // caves and floating islands — and CompiledDimension::compile still
+        // refuses them for exactly those. The End compiles when paired with
+        // an existing biome list; its own `minecraft:the_end` biome source is
+        // not implemented. See SPEC §11.
         //
         // The names go in the message. Which noises a legacy dimension still
         // cannot have is the actionable part of this refusal now that it is
@@ -189,7 +270,12 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         // graph's names with a surface rule graph's, and `minecraft:surface`
         // legitimately appears in both. A message that listed it twice would
         // read as two different problems.
-        const std::set<data::ResourceLocation> unique{wanted.begin(), wanted.end()};
+        //
+        // NARROWED AGAIN, to what is still unsolved: the three climate noises
+        // are derived (the block above this function) and are neither built
+        // nor named here when anything else is refused, because naming them
+        // would send the reader after a problem that no longer exists.
+        const std::set<data::ResourceLocation> unique{unresolved.begin(), unresolved.end()};
         std::string names;
         for (const data::ResourceLocation& id : unique) {
             if (!names.empty()) {
@@ -201,13 +287,23 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
             "this dimension declares legacy_random_source and names " +
             std::to_string(unique.size()) + " noise(s) — " + names +
             " — and how a noise's name becomes a seed under the Java LCG is not settled here, "
-            "so they cannot be built. This build will not substitute the modern derivation "
+            "so they cannot be built (only minecraft:temperature, minecraft:vegetation and "
+            "minecraft:offset are). This build will not substitute the modern derivation "
             "(SPEC §11)");
     }
 
     NoiseRegistry registry;
     registry.worldSeed_ = worldSeed;
     registry.source_ = source;
+
+    if (source == RandomSource::Legacy) {
+        for (const data::ResourceLocation& id : wanted) {
+            if (!registry.noises_.contains(id)) {
+                registry.noises_.emplace(id, legacyClimateNoise(id, worldSeed));
+            }
+        }
+        return registry;
+    }
 
     // Forked once, then salted per name. Building it outside the loop is not
     // an optimisation: the base is defined by two draws from the world seed

@@ -4495,8 +4495,10 @@ Open:
   fixed first octave of -7 — not the pack's `minecraft:temperature` or
   `minecraft:vegetation` parameters — drawn by `octaveInit`, highest
   frequency first after 262 discarded LCG steps per skipped octave, and
-  sampled with no shift. That is cubiomes' claim, not a measurement here,
-  and it sits outside every candidate space this project has scanned. An
+  sampled with no shift. It sits outside every candidate space this project
+  has scanned, and it is vanilla's: "The legacy Nether's climate, read from
+  cubiomes" below measures 32765 of 32768 golden Nether cells, every miss an
+  exact tie, and `NoiseRegistry` now builds those three noises. An
   empty `wanted` has no identifier to
   derive and is built, which is what makes the legacy Nether's terrain and the
   End reachable. The rest of this paragraph describes the state before that
@@ -4512,7 +4514,12 @@ Open:
   End needs no named noise, so it is checked like any other dimension and
   `stratum validate` now reads **60 of 60 router entries across 4 of 7
   dimensions**, with three warnings rather than four — each naming the three
-  noises it could not build.
+  noises it could not build. They moved again when the climate noises were
+  derived ("The legacy Nether's climate, read from cubiomes"): **105 of 105
+  router entries across 7 of 7 dimensions**, and what the legacy dimensions
+  are still warned about is their surface rules alone — the Nether's eight
+  named noises and nine each for caves and floating islands, plus their
+  `vertical_gradient`s.
 
   One assumption, stated because it has not been verified: that the flag
   selects the generator for *all* of a dimension's noises rather than some
@@ -5960,6 +5967,105 @@ Open:
   across the three noises, every one of them a block a sequential legacy draw
   might have paid for. This is the single widest hole in the result and it is
   the same shape as the stack-rule gap the probe scan inherits.
+
+  **Superseded by the entry that follows.** The null above was a correct null
+  about a space the answer was never in.
+
+- **The legacy Nether's climate, read from cubiomes: 32765 of 32768, and every
+  miss an exact tie (M4).** cubiomes (MIT; §2's named reference) builds the
+  Nether's climate for every version from 1.16 on in `setNetherSeed`
+  (`biomenoise.c`, at the commit `tools/vectors` pins, e61f905). This section
+  used to say cubiomes seeds named noises only through Xoroshiro; it does not,
+  and that unchecked claim is why nobody looked. The construction:
+
+  | noise | generator | shape |
+  |---|---|---|
+  | `minecraft:temperature` | `java.util.Random(worldSeed)` | 2 octaves, first octave -7, amplitudes [1, 1] |
+  | `minecraft:vegetation` | `java.util.Random(worldSeed + 1)` | the same |
+  | `minecraft:offset` | — | zero: the climate takes no shift |
+
+  Each stack is cubiomes' `octaveInit`: discard 262 raw LCG steps per octave
+  above the top one (six, for a top octave of -6), then draw the octaves
+  HIGHEST frequency first; the second stack repeats that from where the first
+  stopped. It is outside every space the two scans above enumerated on four
+  separate axes at once — no name enters, the pack's parameters are not read
+  (vanilla's own `[1.5, 0, 1, 0, 0, 0]` and `[1, 1, 0, 0, 0, 0]` are simply
+  not what its legacy Nether uses, which also retires the nine-dead-octaves
+  question above), the draw runs the opposite way, and there is no shift.
+
+  *The model first.* `tools/vectors/generate-nether-vectors.sh` records
+  cubiomes' own temperature and humidity at twelve quart positions for each of
+  the eight golden seeds — 96 vectors, `Long.MAX_VALUE` included because its
+  `+ 1` wraps. `legacy-goldens-biome-analyze --cubiomes` refuses to score until
+  its hand-rolled stack reproduces all 96 bit for bit, and it does; so does
+  the shipped `NoiseRegistry` (`tests/unit/legacy_climate_test.cpp`).
+
+  *The measurement* — the analyzer and the shipped path agree to the cell
+  (`vanilla_legacy_nether_climate_gap_test.cpp`'s second case runs the
+  Nether's own router entries through `Interpreter` and `ParameterList::find`):
+
+  | | |
+  |---|---|
+  | eight golden regions (six independent worlds), every second chunk | **32765 / 32768 = 99.991%** |
+  | interior cells (no differing neighbour) | **31436 / 31436** |
+  | every chunk | **131061 / 131072** |
+  | chance baseline for these marginals | 24.66% |
+  | the same construction at wrong seeds (`+ 2`, `+ 3`) | 22.69% — below chance |
+  | the modern derivation, for comparison (case one, unchanged) | 8873 / 32768 = 27.08% |
+
+  The negative arm is what makes the positive one evidence: the decoder does
+  not accept the SHAPE, only the seeding. `basalt_deltas`, never placed under
+  the modern rule, is 3938 of 3938.
+
+  *Every miss is a tie, not a climate value.* All 11 residual cells at every
+  chunk reach exactly the minimum quantised fitness on a row carrying
+  vanilla's biome: temperature exactly 2000 (nether_wastes against
+  crimson_forest), humidity exactly -2500 (nether_wastes against
+  soul_sand_valley), or 2020/-2516 (equidistant from soul_sand_valley and
+  crimson_forest). Three of the 11 are `Long.MAX_VALUE` repeating seed -1.
+  The conformance case asserts the tie property rather than a threshold: a
+  disagreeing cell that is not a tie fails it. In all 11, vanilla chose the
+  EARLIER row of the dumped list — the opposite of `ParameterList::find`'s
+  "later row wins", which the overworld's ties favour 84 to 20. That is more
+  evidence for the tie-break entry's reading (a total order over rows that is
+  not the list's, i.e. the tree's leaf order), and it is not acted on here:
+  inverting the proxy globally is strictly worse on the overworld.
+
+  *Not separated, and said so.* Two choices sit below what these goldens can
+  see: `doublePerlinInit`'s `(10/6) * n / (n + 1)` is one ulp from
+  `perlin.cpp`'s modern spelling at n = 2, and the stack can be summed
+  highest- or lowest-frequency first. All four combinations score identically
+  on all 131072 cells. cubiomes' choice is the one implemented, because it is
+  the documented one and the vectors pin it.
+
+  *Carried rather than measured* (CLAUDE.md's rule for an ambiguity — the
+  documented reading, flagged):
+
+  * The rule is keyed on the noise's NAME under a legacy source, because that
+    is all `NoiseRegistry` sees. The Nether cannot tell that apart from keying
+    on the dimension, so caves and floating islands — which name the same
+    three noises — take it with no oracle of their own.
+  * The pack's parameters for the three are not read. Whether a datapack that
+    REDEFINES them would move a legacy dimension's climate is unmeasured.
+  * Both are settled the same way: a `density-probe.sh` world with a legacy
+    dimension of its own naming these noises, once with vanilla's parameters
+    and once with changed ones.
+
+  *What it unblocks, exactly.* `NoiseRegistry::create` builds the three under
+  `RandomSource::Legacy` and refuses any other name, listing only those. The
+  legacy Nether's BIOMES are now vanilla's to the tie-break; its surface rules
+  are not, because they need eight more named noises
+  (`vanilla_compiled_dimension_test.cpp` pins the refusal at exactly eight),
+  so `CompiledDimension::compile` still refuses the Nether. The pipeline
+  engine version does not change: everything this alters was refused before,
+  so no stored world's output moves.
+
+  *The transferable part.* The 270,000-candidate scans were rigorous — measured
+  nulls, planted controls, negative arms — and every word of their null was
+  true. What sank them was upstream of the rigour: a permitted reference was
+  described from memory, the description was wrong, and it was never
+  re-checked. A reference sweep costs minutes; this one would have saved the
+  scans.
 
 - **A `noise` field is a union, and narrowing it refused legal input (M4).**
   Upstream mcdoc declares
