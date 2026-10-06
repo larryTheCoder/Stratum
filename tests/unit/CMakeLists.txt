@@ -23,6 +23,7 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    legacy_climate_test.cpp
     mapping_biome_test.cpp
     mapping_block_state_test.cpp
     md5_test.cpp

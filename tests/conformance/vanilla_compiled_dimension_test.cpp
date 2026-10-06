@@ -33,8 +33,10 @@
 
 #include <array>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -166,16 +168,26 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
         SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR);
     }
     const auto overworld = ResourceLocation::parse("minecraft:overworld");
-    // The Nether seeds its NAMED noises from the Java LCG, which is not
-    // derived yet — and the refusal now says which three, because the
-    // refusal is no longer about the flag alone. Vanilla's End declares the
-    // same flag and is NOT refused: it names none (SPEC §11, and
-    // vanilla_legacy_named_noises_test.cpp).
-    CHECK_THROWS_WITH(
-        CompiledDimension::compile(thawedVanilla(), ResourceLocation::parse("minecraft:nether"),
-                                   ResourceLocation::parse("minecraft:nether"), 1),
-        ContainsSubstring("legacy_random_source") && ContainsSubstring("minecraft:temperature") &&
-            ContainsSubstring("minecraft:vegetation") && ContainsSubstring("minecraft:offset"));
+    // The Nether seeds its NAMED noises from the Java LCG. Its three climate
+    // noises are derived now (SPEC §11, read from cubiomes), so what it is
+    // refused for is its SURFACE RULE's eight — and only those are named. The
+    // count is the assertion that matters: the message also says which three
+    // ARE built, so checking for the climate names' presence or absence would
+    // pass whichever way the refusal went. Vanilla's End declares the same
+    // flag and is NOT refused: it names none (vanilla_legacy_named_noises_test).
+    std::string netherRefusal;
+    try {
+        static_cast<void>(
+            CompiledDimension::compile(thawedVanilla(), ResourceLocation::parse("minecraft:nether"),
+                                       ResourceLocation::parse("minecraft:nether"), 1));
+    } catch (const std::exception& error) {
+        netherRefusal = error.what();
+    }
+    CAPTURE(netherRefusal);
+    CHECK_THAT(netherRefusal, ContainsSubstring("legacy_random_source") &&
+                                  ContainsSubstring("names 8 noise(s) — ") &&
+                                  ContainsSubstring("minecraft:surface, ") &&
+                                  ContainsSubstring("minecraft:nether_state_selector"));
     // THE END'S BOUNDARY, stated as measured rather than as a universal. A
     // first version of this case said "CompiledDimension::compile still
     // refuses EVERY legacy dimension"; that is false, and a reviewer refuted
