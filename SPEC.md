@@ -473,6 +473,18 @@ mapping has two halves, split at a platform-neutral midpoint:
      the other three named functions is End-dimension-specific and does not
      block overworld generation; it has not been re-surveyed since.
 
+  **Not delivered, and deferred rather than closed: the compiled flat
+  execution program.** This milestone's own definition above, and §4.1, call
+  for the resolved graph to be compiled into a flat program with no per-block
+  dispatch through a node tree. It was never built. Every density value in
+  this tree still comes from `density::Interpreter`, the per-point evaluator
+  §4.1 permits only as an M2 stepping stone. M3 closed on terrain parity,
+  which the interpreter delivers; the compiled program is speed rather than
+  correctness, so it moves to M5's performance pass, where a measured
+  237 ms/chunk gives it a target. It is written down here because a
+  milestone marked closed with one of its named deliverables missing is a
+  claim nobody re-checks.
+
   **Ore veins, SETTLED — the derivation confirmed per block and wired.**
   Unlike the aquifer, no clean-room spec covers this: there is no
   `spec/ore-vein-spec.md`, so the starting hypothesis came from the
@@ -4472,9 +4484,20 @@ Open:
   `RandomSource::Legacy` throws **when, and only when, the dimension actually
   names a noise** — see "The refusal was four dimensions wide and the gap was
   three" below, which narrowed it. How a noise's *name* becomes an LCG seed is
-  not settled here. cubiomes seeds named noises only through Xoroshiro; it
-  models the LCG for the blended noise alone, which is a different
-  construction with no name hashing. An empty `wanted` has no identifier to
+  not settled here. This paragraph used to say that cubiomes seeds named
+  noises only through Xoroshiro and models the LCG for the blended noise
+  alone. **That was wrong**, and it pointed the search away from a permitted
+  reference that speaks to the question directly: at the commit
+  `tools/vectors` pins (`e61f905`), cubiomes' `setNetherSeed` builds the
+  Nether's climate, for every version from 1.16 on, from
+  `java.util.Random(worldSeed)` (temperature) and
+  `java.util.Random(worldSeed + 1)` (humidity), each a two-octave noise at a
+  fixed first octave of -7 — not the pack's `minecraft:temperature` or
+  `minecraft:vegetation` parameters — drawn by `octaveInit`, highest
+  frequency first after 262 discarded LCG steps per skipped octave, and
+  sampled with no shift. That is cubiomes' claim, not a measurement here,
+  and it sits outside every candidate space this project has scanned. An
+  empty `wanted` has no identifier to
   derive and is built, which is what makes the legacy Nether's terrain and the
   End reachable. The rest of this paragraph describes the state before that
   narrowing: the four legacy dimensions could not be

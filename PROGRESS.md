@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-06 (record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -15,10 +15,10 @@ Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unso
 | M0 — repo scaffolding | Closed |
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
-| M3 — 3D density | Closed for the overworld²; ore veins closed too (below) |
+| M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG blocks climate and surface rules in 3 legacy dimensions and nothing in the 4th: the End generates at the ChunkFiller level exactly, the legacy Nether's terrain measures 99.99591% vs the goldens |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 constant unpinned, 1 golden residual unattributed |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk) |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — every constant pinned; a 192-block fluid-extent residual (of 6291456) unattributed, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -1103,15 +1103,16 @@ Open:
 
 ## M5 — Integration
 
-Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
-project) is still an empty stub, waiting on block state mapping below —
-which is back in `lib/mapping/` as a platform-neutral Java → Bedrock
-blockstate table, with each binding doing only the last step through its
-platform's own resolver (see the corrected architecture bullet). Also
-unstarted: chunkutils2 output, the PMMP world-load path, the performance
-pass. `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) is further
-along than `ext/` itself — a real, compiling, tested JNI interface exists —
-but waits on the same table and is untested against a real Nukkit build.
+Started. `ext/` (the PocketMine-MP binding — the actual point of this
+project) is written end to end: the chunkutils2 sub-chunk encoder, the zend
+module, and the plugin, which registers the generator, freezes the pipeline
+into a new world's folder, and translates block states through
+PocketMine-MP's own upgrader and deserializer (slices 1-5 below). None of it
+has executed inside a real PocketMine-MP server, and that run is the largest
+unretired risk in the project. Still open: that run, and the performance
+pass. `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) has a compiling,
+tested JNI interface, but its block state mapping is not started and its
+Java side has never been compiled.
 
 - [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
       (`stratum_mapping`) now, downstream of the conformance boundary by
@@ -1212,17 +1213,22 @@ but waits on the same table and is untested against a real Nukkit build.
       dimension 0.01 s, peak 2 MB). Fine for background generation, slow
       next to PocketMine-MP's own generators; M5's performance pass has a
       real number to work against now. Most of it is the density evaluation
-      and the per-quart biome search, not the packing.
-- [ ] **Block state resolution in the bindings — not started.**
-      1. **`ext/` resolves the table through PMMP** — upgrader then
-         deserializer, once per distinct state at generator start, catching
-         `UnsupportedBlockStateException` itself so SPEC §9's explicit
-         fallback table applies rather than PMMP's silent `info_update`.
-         Needs a fallback entry for `minecraft:powder_snow` from day one:
-         PMMP `stable` has no powder snow block, and the overworld's
-         surface rules emit it (measured, not hypothetical).
-      2. **`ext-nukkit/` resolves it through `BlockStateMapping`** — see
-         that binding's own bullet below.
+      and the per-quart biome search, not the packing. The density half
+      still runs through the per-point `density::Interpreter`: the compiled
+      flat execution program SPEC §4.1 calls for was due in M3, was never
+      built, and is this item's main lever (SPEC §10, M3).
+- [x] **Block state resolution in `ext/` — landed with the plugin (slice
+      5), never executed.** `ext/plugin/src/BlockStateTranslator.php`
+      resolves each Java state through PMMP's `BlockStateUpgrader` then
+      `BlockStateToObjectDeserializer`, once per distinct state per worker
+      thread (memoized on first use, not at generator start), and catches
+      `BlockStateDeserializeException` itself so SPEC §9's explicit fallback
+      table applies rather than PMMP's silent `info_update`. The table maps
+      `minecraft:powder_snow` to snow from day one — PMMP `stable` has no
+      powder snow block and the overworld's surface rules emit it — and any
+      other miss falls back to `info_update` with a warning naming the
+      block, logged once. `ext-nukkit/`'s side is still not started: see
+      that binding's own bullet below.
 - [x] **Biome mapping's placement re-checked against the same three
       codebases — confirmed correct, not merely assumed by analogy to
       blocks.** A real biome id reassignment exists (GeyserMC/mappings:
