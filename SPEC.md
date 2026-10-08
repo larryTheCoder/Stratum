@@ -2965,9 +2965,8 @@ Open:
   blocks as well: where such a sea is the nearest source above lambda and
   the barrier falls through, v3 filled lava and the server holds water; the
   capfloor case counts those blocks (51 422 at cf58) and requires the fluid
-  right on every one. The -10 lava ceiling's override still applies to such
-  a sea — the documented reading, unmeasured: no case isolates a
-  near-surface sea at or under the ceiling with `lava` past its threshold.
+  right on every one. Nor does the -10 lava ceiling's override reach such a
+  sea; that was measured later (below, "*Nor the lava override*").
 
   `cellLevel` now reports where a level came from (`LevelOrigin`), and
   `aquifer::sourceStatus` puts level and type together — the filler's path,
@@ -3019,6 +3018,39 @@ Open:
   fluid-type corpus cannot (it scores no centre below the lava sea): a cell
   centred below lambda whose ladder reaches above it is lava up to its
   level, 14 494 blocks.
+
+  *Nor the lava override: a short-circuit sea is the default fluid.* Both
+  sea outcomes of the near-surface path — the near-surface return, and an
+  aborted scan's sea for a cell more than twenty blocks above its surface —
+  are the global picker's status at or above lambda in the clean-room spec
+  (Q5.3(a)/(b)), returned before Q5.8 types anything. Through engine v6
+  this build applied Q5.8's override to both, and no world could say
+  otherwise: at the shipped sea neither sits at or under -10.
+  `tools/analysis/aquifer-fluidnear-probe.sh` builds them there, with every
+  router entry constant and nothing else holding fluid above lambda: sea
+  -40, -20, -12 and -10 (the ceiling itself) over constant surfaces 20 to 38
+  blocks lower, `lava` 0.5 or -0.5, each with a `lava` 0.0 twin; psl -64 at
+  sea -20 for the aborted scan; sea -9 over psl -29, where only a rule keyed
+  on the surface would give lava; and the cell's own sea branch at -20 as a
+  positive control. Over seeds 42 and 31337, every second column
+  (`vanilla_aquifer_fluidnear_test.cpp`), the readings part on 742 856
+  server source blocks owned by a near-surface sea centred within twenty
+  blocks of its surface, 155 533 by one centred higher and 129 304 by an
+  aborted scan's sea, and the server holds water on every one — and not one
+  lava source in the rows above lambda the aquifer decides on any of those
+  arms. So the spec's literal reading holds,
+  and this build now reads it so (`LevelOrigin::NearSurfaceSea` marks both
+  seas, and `fluidTypeOf` types it the default fluid); the three rivals are
+  each wrong on a whole class: the override on one class only (within
+  twenty of the surface, or above it), and a ceiling keyed on the surface.
+  The control is lava on all 241 896 of its sources, and the `lava` 0.0
+  twins are exact but for the frozen world's flow remnant (at most 1 017
+  blocks an arm), which says the level these seas carry at sea levels this
+  low is right as well. No golden block changes: vanilla's sea is 63.
+  What it does not settle is the type of an aborted scan's floor (level
+  lambda): the spec gives it the global picker's lava, this build types it
+  as a cell's own, and since it reads fluid nowhere above lambda only spec
+  Q8's fluid-update flag can tell them apart; no case scores it.
 
 - **amplified and large_biomes, against the server (MA).** No output
   changes. Vanilla's two other overworld presets are the overworld's

@@ -101,6 +101,11 @@ UNITS = [
     unit('lowsea', 'aquifer', ['aquifer-lowsea-probe.sh', '42'], density(('lowsea', 42))),
     unit('comb', 'aquifer', ['aquifer-comb-probe.sh', '42', '7', '12345', '999'],
          density(('comb_42', 42), ('comb_7', 7), ('comb_12345', 12345), ('comb_999', 999))),
+    # Q5.8 on the short-circuit seas: two 10 GB runs per seed.
+    unit('fluidnear_s42', 'aquifer', ['aquifer-fluidnear-probe.sh', '42'],
+         density(('fluidnear_s42', 42), ('fluidnearb_s42', 42))),
+    unit('fluidnear_s31337', 'aquifer', ['aquifer-fluidnear-probe.sh', '31337'],
+         density(('fluidnear_s31337', 31337), ('fluidnearb_s31337', 31337))),
     # water: the water/lava seeds, the 10 GB nsfloor and ddfloor families, and
     # the two real overworlds.
     unit('waterlava_s42', 'water', ['aquifer-waterlava-probe.sh', '42'],

@@ -94,6 +94,30 @@
 // (-13..-42), i.e. a water/lava contact film where two territories abut, not
 // a source holding level -10. Only the near-16384 entries are readings.
 //
+// THE OVERRIDE DOES NOT REACH A SHORT-CIRCUIT SEA (`aquifer-fluidnear-probe.sh`,
+// `vanilla_aquifer_fluidnear_test.cpp`). The near-surface return and an
+// aborted scan's sea take `sea_level` before the level rule runs, and the
+// clean-room spec's Q5.3 returns the global picker's status from both — the
+// default fluid at any height at or above lambda — before Q5.8 types
+// anything. The server agrees. At sea levels -40, -20, -12 and -10 (the
+// ceiling itself) with `lava` 0.5 or -0.5, two seeds, every second column:
+// the server holds water on all 742 856 source blocks owned by a near-surface
+// sea centred within twenty blocks of its surface, all 155 533 owned by one
+// centred higher, and all 129 304 owned by an aborted scan's sea, and not
+// one lava source in the rows above lambda the aquifer decides on those
+// arms. This build typed every one of them lava (pipeline engine v6 and
+// earlier), and a rival that reaches only one of those classes is wrong on
+// every block of the class it reaches. The same worlds' control, the cell's
+// own sea branch at -20, is lava on all 241 896 of its sources, so the
+// override is in force there.
+//
+// One adjacent status is NOT settled by this: an aborted scan's floor (level
+// lambda, centred twenty or fewer above the surface). The spec's Q5.3(b)
+// gives it the global picker's lava status; this build types it as a cell's
+// own, water at `|lava| <= 0.3` when centred at or above lambda. No block
+// can show the difference — such a source reads fluid nowhere above lambda
+// — and only spec Q8's fluid-update flag compares the types.
+//
 // WHAT IS STILL NOT MEASURED, and is marked rather than guessed:
 //
 //   * Whether a source already reading lava is exempt. Those cells sit below
@@ -182,12 +206,12 @@ struct FluidTypeAt {
     /// contracted indices, NOT the block position. See `sampling.hpp`.
     double lava = 0.0;
 
-    /// Whether the level is the near-surface sea outcome
-    /// (`LevelOrigin::NearSurfaceSea`): the sea taken from a submerged
-    /// surface rather than from the cell's own centre, so the centre's
-    /// height does not make it lava. Defaulted, so a hand-built status that
-    /// forgets it types a near-surface sea below lambda as lava; build
-    /// statuses with `sourceStatus` (substance.hpp) instead.
+    /// Whether the level is one of the near-surface path's short-circuit
+    /// seas (`LevelOrigin::NearSurfaceSea`): the global picker's status,
+    /// taken before the level rule, so neither the centre's height nor the
+    /// `lava` override types it — it is the default fluid. Defaulted, so a
+    /// hand-built status that forgets it types such a sea as a cell's own;
+    /// build statuses with `sourceStatus` (substance.hpp) instead.
     bool fromNearSurface = false;
 };
 
@@ -199,14 +223,18 @@ struct FluidTypeAt {
 /// measurement rather than from this corpus, which cannot see below the lava
 /// sea at all.
 [[nodiscard]] constexpr FluidType fluidTypeOf(const FluidTypeAt& at) noexcept {
-    // A centre below the lava sea makes a source lava — except the
-    // near-surface sea, which is the sea of the surface the cell sits under,
-    // not of its centre (cf58: 20 462 blocks of false barrier otherwise). The
-    // lava override below still applies to it as before, and that is the
-    // documented reading, NOT a measurement: no conformance case isolates a
-    // near-surface sea at or under the -10 ceiling with `lava` past its
-    // threshold, so whether Q5.8's override reaches this outcome is open.
-    if (!at.fromNearSurface && at.centreY < lambdaLevel(at.seaLevel)) {
+    // A short-circuit sea is the global picker's status at a height at or
+    // above lambda (spec Q5.3): the default fluid, before either test below
+    // is reached. Not the centre's — cf58 built 20 462 blocks of false
+    // barrier typing such a sea lava for a centre below lambda — and not the
+    // override's: at a sea at or under -10 with `lava` past its threshold the
+    // server holds water on every source such a sea owns (this file's
+    // header).
+    if (at.fromNearSurface) {
+        return FluidType::Default;
+    }
+    // A centre below the lava sea makes a source lava.
+    if (at.centreY < lambdaLevel(at.seaLevel)) {
         return FluidType::Lava;
     }
     // Strict, and on the absolute value. `std::abs` is not constexpr for

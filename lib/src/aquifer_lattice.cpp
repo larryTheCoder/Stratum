@@ -121,11 +121,18 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         // and on the 1666 blocks where the two floors give different
         // verdicts the server sides with lambda on all 1666
         // (vanilla_aquifer_nsfloor_test.cpp).
-        return CellLevel{.level = (cell.centreY >= lambda &&
-                                   cell.centreY > javamath::wrappingAdd(cell.surface.cap,
-                                                                        kNearSurfaceFloorOffset))
-                                      ? cell.seaLevel
-                                      : lambda};
+        //
+        // The sea here is the other short-circuit (spec Q5.3(a)): the global
+        // picker's status at the cell's own centre, which sits at or above
+        // lambda, so it carries the near-surface origin and is typed the
+        // default fluid — over an aborting surface at psl -64 and sea -20,
+        // with `lava` 0.5, the server holds water on every source it owns
+        // (vanilla_aquifer_fluidnear_test.cpp).
+        if (cell.centreY >= lambda &&
+            cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset)) {
+            return CellLevel{.level = cell.seaLevel, .origin = LevelOrigin::NearSurfaceSea};
+        }
+        return CellLevel{.level = lambda};
     }
 
     // The DRY level is the spec's sentinel, not `lambda`. Q2.4 hands every
