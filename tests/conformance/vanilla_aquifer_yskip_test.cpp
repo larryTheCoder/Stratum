@@ -696,13 +696,18 @@ struct StepArm {
 [[nodiscard]] nlohmann::json specEntry(const std::filesystem::path& dir, const std::string& name) {
     std::ifstream in(dir / "spec.json");
     const nlohmann::json spec = nlohmann::json::parse(in);
+    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
+    // unconditional FAIL as unreachable (C4702), and warnings are errors.
+    const nlohmann::json* named = nullptr;
     for (const auto& entry : spec) {
         if (entry.at("name").get<std::string>() == name) {
-            return entry;
+            named = &entry;
+            break;
         }
     }
-    FAIL("no dimension " << name << " in " << (dir / "spec.json"));
-    return {};
+    INFO("no dimension " << name << " in " << (dir / "spec.json"));
+    REQUIRE(named != nullptr);
+    return *named;
 }
 
 } // namespace

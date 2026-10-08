@@ -669,15 +669,21 @@ TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact o
             REQUIRE(in.good());
         }
         const nlohmann::json spec = nlohmann::json::parse(in);
+        // REQUIRE rather than FAIL-then-return: MSVC sees the return after
+        // an unconditional FAIL as unreachable (C4702), and warnings are
+        // errors.
+        const nlohmann::json* named = nullptr;
         for (const auto& entry : spec) {
             if (entry.at("name").get<std::string>() == name) {
-                nlohmann::json unnamed = entry;
-                unnamed.erase("name");
-                return unnamed;
+                named = &entry;
+                break;
             }
         }
-        FAIL((probeDir / "spec.json") << " has no dimension " << name);
-        return nlohmann::json{};
+        INFO((probeDir / "spec.json") << " has no dimension " << name);
+        REQUIRE(named != nullptr);
+        nlohmann::json unnamed = *named;
+        unnamed.erase("name");
+        return unnamed;
     };
 
     // (A) The server against the server. Both corpora are seed 42 and
