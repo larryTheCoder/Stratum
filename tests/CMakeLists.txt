@@ -107,6 +107,14 @@ if(UNIX)
     )
     set_tests_properties(unit.tools.no_artifact_upload PROPERTIES LABELS "unit")
 
+    # check-determinism.sh rule 9, a line scan, against the spellings it must
+    # accept and refuse: lint.determinism only sees today's tree.
+    add_test(NAME unit.tools.after_fail
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/after_fail_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.after_fail PROPERTIES LABELS "unit")
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
