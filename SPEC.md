@@ -1856,19 +1856,21 @@ Open:
   anchor, window, scan order and abort unchanged. On `probes/pslvar`'s six
   aquifer worlds, over the blocks the local aquifer decides (from the lava
   sea's top to the lower of the two readings' `y_skip`), the readings
-  predict a different category on **778125** blocks: the server sides with
-  the per-column reading on **658371** and with the lattice on **0**. The
-  rest are 104596 solid blocks, which neither predicts, and 15158 fluid
+  predict a different category on **781897** blocks: the server sides with
+  the per-column reading on **661223** and with the lattice on **0** (778125
+  and 658371 before pipeline engine v8 widened `y_skip`'s rectangle, which
+  moves the lower cutoff and so the population). The rest are 105516 solid
+  blocks, which neither predicts, and 15158 fluid
   blocks `explainedByFlow` cannot rule out as moved: 1580 flowing and 13578
   still sources beside two more — the infinite-source shape, which every
   interior block of a pool the lattice would leave dry satisfies (on 13302
   of the 15158 it is the lattice that predicted air). The barrier-on nsfloor
   corpus repeats it at seeds 42, 31337 and 8675309, floodedness 0.9 and 0:
-  1529200 blocks, 1309596 to the per-column reading, 0 to the lattice. The
+  1542768 blocks, 1320468 to the per-column reading, 0 to the lattice. The
   lattice taken at the unquantised centre, the one way it could stand in for
-  the 4-quantum, loses the same way (898686 blocks on pslvar, 746543 to 0).
+  the 4-quantum, loses the same way (902458 blocks on pslvar, 749395 to 0).
   A source anchored on the lattice on both axes reads the same under either
-  for every field — 378 of the 2446 scored, and none of the 778125 blocks —
+  for every field — 378 of the 2446 scored, and none of the 781897 blocks —
   so the evidence is the other 2068. What is not tested is a lattice reading
   with a window refitted to it. Against that there is only an argument, from
   analyser runs no test pins: the sieves below derived the thirteen offsets,
@@ -4528,10 +4530,10 @@ Open:
   *Per column, not through the surface rule's lattice.* The same corpus
   scores the scan's samples read per column against the same samples put
   through the 16-block lattice `above_preliminary_surface` reads the entry
-  through: 778125 blocks where the two predict different categories, 658371
-  to the per-column reading and 0 to the lattice — 0 of 1529200 again on the
+  through: 781897 blocks where the two predict different categories, 661223
+  to the per-column reading and 0 to the lattice — 0 of 1542768 again on the
   nsfloor corpus at three seeds with the barrier on. Every feature size
-  discriminates on its own (221019 blocks at 16, the scan's own pitch). The
+  discriminates on its own, over 100000 blocks each. The
   figures and their population are in "Where a varying
   `preliminary_surface_level` is SAMPLED" above.
 
