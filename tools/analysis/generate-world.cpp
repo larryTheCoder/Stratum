@@ -4,27 +4,28 @@
 //
 // Deliberately not a `stratum` subcommand: a one-off deliverable, not a
 // feature this build claims to support end to end (there is no level.dat
-// writer here — see the usage note below). tools/analysis/generate-world.sh
-// compiles this against the built library the same way the other analysis
-// tools do.
+// writer here — see the usage note below). Nothing builds it; compile it by
+// hand against the built library, as the header of any other one-shot tool
+// under tools/analysis says.
 //
-// WHAT THIS PRODUCES. The aquifer-free, ore-vein-free approximation of the
-// real overworld: `aquifers_enabled`/`ore_veins_enabled` forced off to match
-// the golden regions this renders against, which were generated with both
-// off — not because either is unimplemented (both have landed: MA and M3), the
-// real multi-noise biome search on (not a fixed biome), and the full
-// 287-rule surface-rule tree running end to end — the same configuration
-// golden_fill_test.cpp measures at 99.879% exact against a real probe world.
+// WHAT THIS PRODUCES. Vanilla's own overworld settings, aquifers and ore
+// veins ON exactly as the pack has them (the golden regions keep both on too:
+// tools/fetch-vanilla rewrites only the biome files), the real multi-noise
+// biome search, and the full 287-rule surface-rule tree — the same first and
+// surface passes `golden_overworld_test.cpp` scores against the golden
+// regions. Carvers, features and structures are not part of this engine.
 // Every chunk is written at Status "minecraft:full" with `isLightOn: 0`
 // (chunk::encode's own doc): the server relights on load rather than this
 // build guessing at vanilla's light-storage convention.
 //
-// NOT a level.dat writer: this writes only `region/*.mca` files. Drop them
-// into an existing world's `region/` directory (a fresh vanilla world
-// bootstrapped once and stopped, or tools/analysis/aquifer-free-probe.sh's
-// own setup) rather than expecting this to produce a whole save on its own.
+// NOT a level.dat writer, and not even a region writer: this writes one
+// `<cx>_<cz>.nbt` chunk per file into the given directory, so that several
+// processes can each take a disjoint chunk range; assemble-regions.cpp turns
+// those into `region/*.mca` in one pass. Drop the result into an existing
+// world's `region/` directory (a fresh vanilla world bootstrapped once and
+// stopped) rather than expecting a whole save from this.
 //
-//   generate-world <region-dir> <seed> <chunkMinX> <chunkMinZ> <chunkCountX> <chunkCountZ>
+//   generate-world <chunk-dir> <seed> <chunkMinX> <chunkMinZ> <chunkCountX> <chunkCountZ>
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
@@ -255,12 +256,8 @@ int main(int argc, char** argv) {
         std::filesystem::path(STRATUM_FIXTURES_DIR) / "1.21.11";
     const auto pack = data::Pack::open(fixtures / "worldgen");
     const auto loaded = settings::loadAll(pack);
-    auto overworld = loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
-    overworld.aquifersEnabled = false;
-    // Off here because the golden regions this renders against were
-    // generated with it off, not because it is unimplemented: ore veins
-    // landed in M3 (SPEC §11).
-    overworld.oreVeinsEnabled = false;
+    const auto& overworld =
+        loaded.settings.at(data::ResourceLocation::parse("minecraft:overworld"));
 
     std::ifstream parametersFile(fixtures / "biome_parameters" / "minecraft" / "overworld.json");
     std::stringstream parametersJson;

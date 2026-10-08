@@ -71,6 +71,7 @@ add_test(NAME conformance.legacy_seed_control_tool
 set_tests_properties(conformance.legacy_seed_control_tool PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )
 
 # The same idea for the goldens-biome readback: its --control (the decoder on
@@ -88,4 +89,5 @@ add_test(NAME conformance.legacy_goldens_biome_control
 set_tests_properties(conformance.legacy_goldens_biome_control PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )
