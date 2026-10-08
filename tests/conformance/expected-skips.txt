@@ -1,0 +1,59 @@
+# Conformance cases CI expects to SKIP, and why (SPEC §7).
+#
+# tools/check-skips fails the conformance job on any skip this does not
+# list, and on any case listed here that ran, so the list stays exact: when
+# a fixture starts arriving, its lines go in the same change. One per line:
+# <reason> <full ctest name>. A case that starts skipping in CI either gets
+# its corpus generated (a unit in tools/probe-worlds) or a reviewed line here.
+#
+#   regions       needs the region goldens (tools/fetch-vanilla
+#                 --generate-regions), which CI does not generate yet:
+#                 golden_overworld_test pins flow-dependent counts measured on
+#                 one local generation, which a fresh one need not reproduce.
+#   no-generator  reads a probe corpus that no committed script produces.
+
+regions conformance.the End generates the blocks the server wrote, on every golden seed
+regions conformance.vanilla's stored heightmaps agree with the blocks beneath them
+regions conformance.the ocean floor sits at or below the world surface
+regions conformance.the shipped overworld against the golden regions: the aquifer survives the surface pass
+regions conformance.the deep-dark override reads erosion and depth through the chunk's flat_cache window
+regions conformance.golden regions read back correctly with our own tools
+regions conformance.the terrain chain runs end to end, and is close but not right
+regions conformance.real overworlds, both directions of the boundary at once
+regions conformance.the surface depth never reaches a negative integer in the eight golden regions
+# Needs r.4.3 at seed -4172144997902289642, outside the default set:
+#   tools/fetch-vanilla --generate-regions --accept-eula \
+#       --seeds -4172144997902289642 --dimensions overworld --regions 4,3
+regions conformance.the overworld read at a negative-depth column is stone under both candidates
+regions conformance.the biome source reproduces vanilla's biomes over the 64x64 corner
+regions conformance.three other seeds match over the same corner too
+regions conformance.the five residual columns are ties, not climate values that differ
+regions conformance.no rule based on list position is vanilla's tie-break
+regions conformance.the decoder recovers a known-correct seeding and rejects a known-wrong one
+regions conformance.the readback's denominator, and the floor under every score it prints
+regions conformance.the golden-region surface readback recovers a known-correct modern seeding
+regions conformance.two Nether surface noises with identical parameters read different fields
+regions conformance.no candidate legacy seeding reproduces the Nether's decoded surface noise
+regions conformance.a legacy dimension's vertical_gradient is not Xoroshiro, and the modern one is
+regions conformance.the modern derivation would redraw the Nether's biome map entirely
+regions conformance.the legacy registry draws vanilla's Nether biome map
+regions conformance.the legacy Nether's terrain matches vanilla with no named noise built
+regions conformance.the lattice on real terrain, both directions and every grass block
+regions conformance.legacy_goldens_biome_control
+
+# probes/surf (entries aps, bandlands, steep)
+no-generator conformance.the band's lower edge is the condition going false, not the surface pass stopping
+# probes/apsb4 (SPEC §11 describes it; no script makes it)
+no-generator conformance.neither the cell geometry nor flat_cache moves the lattice
+no-generator conformance.the model-free reading holds where the cell geometry varies too
+# probes/orevein-multi and probes/orevein-heldout: ore-vein-probe.sh writes
+# probes/orevein/ov instead, and density-probe.sh refuses its second seed
+no-generator conformance.ore veins match the server on the discovery worlds
+no-generator conformance.ore veins match the server on worlds generated after the fact
+# probes/psl/psl_overworld
+no-generator conformance.the surface level the server itself computes is the one this build computes
+# probes/cellsize/cell1 and probes/tall/t00..t54
+no-generator conformance.vertical_gradient fires where the server fired it
+no-generator conformance.vertical_gradient holds across every band of the bracket sweep
+# probes/wss-edges
+no-generator conformance.the rarity ladders the server itself uses are the ones this build uses

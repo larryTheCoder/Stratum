@@ -1,8 +1,9 @@
 # tests/conformance/ — Tier-A golden diffs against vanilla output (SPEC §7).
 #
 # Fixtures are Mojang-derived and are NEVER committed (SPEC §12): they are
-# produced locally or in CI by tools/fetch-vanilla from an official jar the
-# user downloads themselves. The repo ships the scripts, not the data.
+# produced locally or in CI by tools/fetch-vanilla and tools/probe-worlds
+# from an official jar downloaded from Mojang. The repo ships the scripts,
+# not the data.
 #
 # M0 wires the label, the fixture location and the guard. The real cases
 # (cli diff over a fixed seed set) arrive with the harness in M1.

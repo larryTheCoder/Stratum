@@ -61,11 +61,24 @@ generation and carvers and features are stripped, so the goldens isolate
 Tier A and two runs of the same seed agree exactly — see SPEC §7 for why
 both matter.
 
+Probe worlds — the purpose-built worlds many conformance cases read — come
+from the generators under `tools/analysis`, which `tools/probe-worlds` names
+in one table, with the seeds the cases expect:
+
+```bash
+tools/probe-worlds generate --accept-eula   # every corpus, one server at a time; hours
+tools/probe-worlds verify                   # what is there, checked without a server
+```
+
+This repository's own CI passes `--accept-eula` to generate probe worlds, on
+the owner's recorded acceptance (SPEC §12); a fork's CI does not.
+
 | Preset | Purpose |
 |--------|---------|
 | `dev` | Debug, warnings visible but not fatal |
 | `release` | RelWithDebInfo; identical determinism flags to `dev` |
 | `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
+| `ci-conformance` | Build and test presets on `dev`'s tree: the conformance suite four cases at a time, an hour per case, as CI runs it |
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
 zlib, and network access on first configure so Catch2 v3 can be fetched (or
@@ -334,8 +347,10 @@ including that vendored licence notices are still intact.
 
 This repository ships **no Mojang data and no Mojang source code**, in any
 form (SPEC §12). Vanilla worldgen definitions and conformance fixtures are
-produced on your machine by `tools/fetch-vanilla` from an official jar you
-download yourself; they are gitignored and never redistributed here.
+produced on your machine, or on this repository's CI runners, by
+`tools/fetch-vanilla` and the probe generators, from an official jar
+downloaded from Mojang; they are gitignored and never redistributed here:
+not committed, and not published as CI artifacts.
 Behaviour is implemented from minecraft.wiki / datapack.wiki documentation,
 mcdoc schemas, licensed references (cubiomes, MIT; Cuberite, Apache-2.0) and
 the observed input/output of the vanilla server.

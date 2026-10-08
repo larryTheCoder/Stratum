@@ -77,6 +77,12 @@
       "configuration": "Debug"
     },
     {
+      "name": "ci-conformance",
+      "configurePreset": "dev",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
       "name": "release",
       "configurePreset": "release",
       "configuration": "RelWithDebInfo"
@@ -135,6 +141,17 @@
       },
       "execution": {
         "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ci-conformance",
+      "inherits": "conformance",
+      "displayName": "conformance, as CI runs it",
+      "description": "The conformance suite four cases at a time, an hour per case: with the probe worlds present it is about 70 minutes of Debug test time serially, and its longest case has measured 1237 s against include(CTest)'s 1500 s default.",
+      "execution": {
+        "noTestsAction": "error",
+        "jobs": 4,
+        "timeout": 3600
       }
     },
     {
