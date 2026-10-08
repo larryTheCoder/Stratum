@@ -2483,6 +2483,28 @@ Open:
   each exit of `fluidUpdateFlag`, built from distances and statuses
   directly. The PHP binding does not carry the positions yet; that is M5's.
 
+- **Three probe residuals this project carried as unexplained were fluid
+  that moved, or attribution (MA).** No output changes. The probe worlds are
+  not tick-frozen, so their fluids flow after generating exactly as the
+  goldens' do; read with `support/fluid_flow.hpp`, each closes:
+
+  * *The varying-surface residual* — 34 878 of 9 039 986 blocks the server
+    has as fluid and the level rule as air, "unexplained" and held to a
+    99.0% bound — is every block of it fluid that moved. The case is now
+    exact: 9 005 108 agree, 34 878 flow, nothing else in either direction.
+  * *Selection's readout two* — 999 blocks, "about 5e-5 and NOT the
+    selection" — likewise, all 999. Exact now too.
+  * *The fluid type's "4% of sources hold both fluids", and its two false
+    positives and two false negatives* — attribution, not the rule. The case
+    credited every water or lava block to its nearest source, flowing ones
+    included. Counting a source's own SOURCE blocks below its own level, and
+    setting aside 9583 flowing blocks and 799 above their nearest source's
+    level (another body's fluid in that territory — both of the old false
+    positives were this), the rule types 3162 of 3162 sources. 15 of 3177
+    still mix, every one a lava body holding 1-4 water sources: 22 blocks,
+    14 of them beside the obsidian or cobblestone that water leaves on
+    meeting lava. The other 8 are pinned and named, not explained.
+
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
   round-trip tested against a real chunk's own bytes), `chunk::encode` (the

@@ -23,6 +23,8 @@
 // constant-surface dimension can produce at all.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -127,6 +129,11 @@ constexpr std::array<Arm, 6> kArms{{
 struct Score {
     long long blocks = 0;
     long long agree = 0;
+    /// Disagreements that are fluid the server's ticks moved (fluid_flow.hpp).
+    long long flow = 0;
+    /// And the rest, by direction.
+    long long serverFluidOursAir = 0;
+    long long serverAirOursFluid = 0;
     long long sources = 0;
     long long aborted = 0;
     long long prefixDiffersFromWhole = 0;
@@ -152,6 +159,7 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
         const Field field{readout};
         const CentreSource centres{42};
         const auto file = stratum::region::RegionFile::open(world);
+        stratum::test::GoldenRegion golden(world);
         std::set<std::tuple<std::int32_t, std::int32_t, std::int32_t>> counted;
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
@@ -206,7 +214,17 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
                                                             .floodedness = arm.floodedness,
                                                             .spread = 0.0});
                             ++total.blocks;
-                            total.agree += static_cast<int>((y < level) == fluid);
+                            const bool oursFluid = y < level;
+                            if (oursFluid == fluid) {
+                                ++total.agree;
+                            } else if (fluid &&
+                                       stratum::test::explainedByFlow(
+                                           golden, x, y, z, stratum::test::categoryOf(block->name),
+                                           stratum::test::Category::Air)) {
+                                ++total.flow;
+                            } else {
+                                ++(fluid ? total.serverFluidOursAir : total.serverAirOursFluid);
+                            }
 
                             if (counted.insert({centre.x, centre.y, centre.z}).second) {
                                 ++total.sources;
@@ -223,8 +241,10 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
     }
 
     REQUIRE(total.blocks > 5000000);
-    INFO("blocks " << total.blocks << ", agree " << total.agree << "; sources " << total.sources
-                   << ", aborted " << total.aborted << ", prefix != whole "
+    INFO("blocks " << total.blocks << ", agree " << total.agree << ", flow " << total.flow
+                   << ", server fluid ours air " << total.serverFluidOursAir
+                   << ", server air ours fluid " << total.serverAirOursFluid << "; sources "
+                   << total.sources << ", aborted " << total.aborted << ", prefix != whole "
                    << total.prefixDiffersFromWhole << ", distinct gate values "
                    << total.gateValues.size());
 
@@ -236,9 +256,13 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
     CHECK(total.aborted * 10 > total.sources * 9);
     CHECK(total.prefixDiffersFromWhole * 2 > total.sources);
 
-    // 0.9924, 0.9991 and 0.9968 per arm when this was written. The residual
-    // is entirely one-directional — fluid this build calls air, never the
-    // reverse — and piles at the global lava sea's top and just under
-    // `sea_level`; SPEC §11 names it rather than explaining it.
-    CHECK(total.agree * 1000 > total.blocks * 990);
+    // Exact. The residual this case used to hold to a 99.0% bound — 34 878
+    // blocks, all fluid this build calls air, piled at the lava sea's top
+    // and just under `sea_level` — is every block of it fluid the server's
+    // ticks moved after generating (support/fluid_flow.hpp): this probe is
+    // not tick-frozen, and the level rule was right throughout.
+    CHECK(total.serverFluidOursAir == 0);
+    CHECK(total.serverAirOursFluid == 0);
+    CHECK(total.flow == 34878);
+    CHECK(total.agree + total.flow == total.blocks);
 }

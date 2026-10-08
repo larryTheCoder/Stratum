@@ -20,6 +20,8 @@
 // own centre sits below that line cannot be observed at all.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -41,6 +43,7 @@
 #include <map>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace {
 
@@ -71,6 +74,12 @@ constexpr std::array<World, 4> kWorlds{
 struct Score {
     long long sources = 0;
     long long mixed = 0;
+    long long flowing = 0;   ///< flowing blocks set aside, not attributed
+    long long intruding = 0; ///< source blocks above their nearest source's own level
+    long long minorityAtContact = 0;
+    long long minorityElsewhere = 0;
+    std::string mixedSamples;
+    std::string missSamples;
     long long lava = 0;
     long long agree = 0;
     long long nullAllDefault = 0; ///< the majority baseline
@@ -112,8 +121,13 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                                            .height = overworld.geometry.cellHeight()});
         const stratum::aquifer::CentreSource centres{world.seed};
         const auto file = stratum::region::RegionFile::open(region);
+        stratum::test::GoldenRegion golden(region);
 
-        std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::pair<long, long>> owned;
+        // Per source: the y of every source block it is nearest to, and
+        // whether that block is lava.
+        std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>,
+                 std::vector<std::tuple<std::int32_t, std::int32_t, std::int32_t, bool>>>
+            owned;
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
                 // A probe region holds every chunk of its window: a missing one is
@@ -132,28 +146,27 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                             if (!isLava && block->name != "minecraft:water") {
                                 continue;
                             }
+                            // SOURCE blocks only: a flowing one is fluid the
+                            // server's ticks moved after generating, from
+                            // whichever body it left — not this source's.
+                            if (stratum::test::fluidLevel(block) != 0) {
+                                ++total.flowing;
+                                continue;
+                            }
                             const CellIndex cell = stratum::aquifer::selectSources(
                                                        centres, (cx * 16) + lx, y, (cz * 16) + lz)
                                                        .nearest()
                                                        .cell;
-                            auto& tally = owned[{cell.x, cell.y, cell.z}];
-                            if (isLava) {
-                                ++tally.first;
-                            } else {
-                                ++tally.second;
-                            }
+                            owned[{cell.x, cell.y, cell.z}].emplace_back((cx * 16) + lx, y,
+                                                                         (cz * 16) + lz, isLava);
                         }
                     }
                 }
             }
         }
 
-        for (const auto& [key, tally] : owned) {
+        for (const auto& [key, blocks] : owned) {
             const auto [ix, iy, iz] = key;
-            if (tally.first > 0 && tally.second > 0) {
-                ++total.mixed;
-                continue;
-            }
             const CellIndex centre = centres.centreOf(ix, iy, iz);
             if (centre.y < globalLava) {
                 continue; // nothing observable below the lava sea
@@ -168,6 +181,46 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                                             .seaLevel = kSeaLevel,
                                             .floodedness = kFloodedness,
                                             .spread = spread});
+            // Only the blocks this source itself holds — below its own level.
+            // A source block at or above it is another body's fluid that
+            // reached this territory, which no type rule can be scored on.
+            std::pair<long, long> tally{0, 0};
+            for (const auto& [bx, y, bz, isLava] : blocks) {
+                if (y >= level) {
+                    ++total.intruding;
+                    continue;
+                }
+                ++(isLava ? tally.first : tally.second);
+            }
+            if (tally.first == 0 && tally.second == 0) {
+                continue;
+            }
+            if (tally.first > 0 && tally.second > 0) {
+                ++total.mixed;
+                // The minority fluid's blocks: does each touch what water
+                // meeting lava leaves behind?
+                const bool minorityIsWater = tally.second < tally.first;
+                for (const auto& [bx, y, bz, isLava] : blocks) {
+                    if (y >= level || isLava == minorityIsWater) {
+                        continue;
+                    }
+                    bool contact = false;
+                    for (const auto& [dx, dy, dz] :
+                         {std::tuple{1, 0, 0}, std::tuple{-1, 0, 0}, std::tuple{0, 1, 0},
+                          std::tuple{0, -1, 0}, std::tuple{0, 0, 1}, std::tuple{0, 0, -1}}) {
+                        contact = contact || stratum::test::fluidContactBlock(
+                                                 golden.blockAt(bx + dx, y + dy, bz + dz));
+                    }
+                    ++(contact ? total.minorityAtContact : total.minorityElsewhere);
+                }
+                if (total.mixed <= 18) {
+                    total.mixedSamples += " [" + std::to_string(ix) + "," + std::to_string(iy) +
+                                          "," + std::to_string(iz) + " lava " +
+                                          std::to_string(tally.first) + " water " +
+                                          std::to_string(tally.second) + "]";
+                }
+                continue;
+            }
 
             const auto lavaAt = stratum::aquifer::lavaSample(centre);
             const double lava =
@@ -191,6 +244,14 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             ++total.sources;
             total.lava += static_cast<int>(observed);
             total.agree += static_cast<int>(predicted == observed);
+            if (predicted != observed) {
+                total.missSamples += " [cell " + std::to_string(ix) + "," + std::to_string(iy) +
+                                     "," + std::to_string(iz) + " centre y " +
+                                     std::to_string(centre.y) + " level " + std::to_string(level) +
+                                     " lava " + std::to_string(lava) + " observed " +
+                                     (observed ? "lava " : "water ") +
+                                     std::to_string(observed ? tally.first : tally.second) + "]";
+            }
             total.nullAllDefault += static_cast<int>(!observed);
             total.pitch16 += static_cast<int>(asSixteen == observed);
         }
@@ -199,16 +260,28 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
     REQUIRE(total.sources > 2500);
     INFO("sources " << total.sources << " (lava " << total.lava << "), agree " << total.agree
                     << ", null " << total.nullAllDefault << ", on the spread's pitch "
-                    << total.pitch16 << ", mixed " << total.mixed);
+                    << total.pitch16 << ", mixed " << total.mixed << ", flowing set aside "
+                    << total.flowing << ", intruding " << total.intruding
+                    << ", minority at contact " << total.minorityAtContact << ", elsewhere "
+                    << total.minorityElsewhere << ";" << total.mixedSamples << "; misses"
+                    << total.missSamples);
 
-    // The type IS a property of the source: sources holding both fluids are a
-    // few per cent, not the norm. Those are unexplained and named as such in
-    // SPEC §11 — the leading candidate is Q6.3's water-over-lava exception,
-    // which no instrument in this project has yet touched.
-    CHECK(total.mixed * 10 < total.sources);
+    // The type IS a property of the source. The "4% of sources hold both
+    // fluids" this case once carried was attribution, not the rule: count a
+    // source's own SOURCE blocks below its own level, and set aside flowing
+    // blocks (9583) and blocks above that level (799, another body's fluid
+    // in this territory), and 15 of 3177 sources still mix — every one a
+    // lava body holding 1-4 water sources, 22 blocks in all, 14 of them
+    // beside the obsidian or cobblestone water leaves on meeting lava. The
+    // other 8 are named, not explained (SPEC §11).
+    CHECK(total.mixed == 15);
+    CHECK(total.minorityAtContact == 14);
+    CHECK(total.minorityElsewhere == 8);
 
-    // 0.99873 when this was written, against a 0.94176 majority baseline.
-    CHECK(total.agree * 1000 > total.sources * 997);
+    // And every pure source is typed as the rule says: 3162 of 3162, where
+    // the old attribution read 0.99873 — its four misses were two sources'
+    // worth of another body's water, which the rule was never asked about.
+    CHECK(total.agree == total.sources);
     CHECK(total.agree > total.nullAllDefault);
 
     // And the horizontal pitch is the finding. On the spread's lattice the
