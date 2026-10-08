@@ -85,14 +85,23 @@ struct Context {
     /// How deep this block sits in its run of solid, counting DOWN from the
     /// world top: 1 at the top of a run, reset by air, and — measured, not
     /// assumed — left UNCHANGED by fluid, which neither breaks a run nor
-    /// counts toward it. Uncapped.
+    /// counts toward it. Fluid is water and lava alike: the aquifer's literal
+    /// lava in a water dimension, of the lattice or of the lava sea, holds
+    /// the run exactly as water does (SPEC §11). Uncapped.
     std::int32_t stoneDepthAbove = 1;
-    /// The same counting up from the world floor, for `surface_type: ceiling`.
+    /// How deep this block sits in its run of solid counting UP from the
+    /// world floor, for `surface_type: ceiling`. NOT the mirror image of
+    /// `stoneDepthAbove`: here fluid RESETS the run, exactly as air does —
+    /// water as much as lava — so a block one above a pool's roof is at 1.
+    /// Measured (SPEC §11); this doc once called it "the same", and the
+    /// filler skipped fluid here until the probe that measured lava showed
+    /// water resetting too.
     std::int32_t stoneDepthBelow = 1;
 
     /// The column's water height: one above the FIRST fluid block met
-    /// descending, latched and never updated again. Absent where the column
-    /// holds no fluid at all, which makes `water` unconditionally true.
+    /// descending — water or lava, measured alike (SPEC §11) — latched and
+    /// never updated again. Absent where the column holds no fluid at all,
+    /// which makes `water` unconditionally true.
     ///
     /// `sea_level` alone does not create one — only real fluid blocks do.
     std::optional<std::int32_t> waterHeight;

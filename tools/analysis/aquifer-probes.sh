@@ -48,6 +48,7 @@ run tools/analysis/aquifer-depthgate-probe.sh 42
 run tools/analysis/aquifer-fluidtype-probe.sh 42
 run tools/analysis/aquifer-lowsea-probe.sh 42
 run tools/analysis/aquifer-nearsurface-probe.sh 42
+run tools/analysis/aquifer-lavarun-probe.sh 42
 for seed in 42 31337; do
     run tools/analysis/aquifer-capfloor-probe.sh "${seed}"
 done

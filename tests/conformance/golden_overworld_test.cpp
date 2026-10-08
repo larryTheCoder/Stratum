@@ -281,9 +281,13 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
     // every one of them fluid that moved after generation (above).
     CHECK(total.rawSameCategory == 12582889U);
     CHECK(total.rawFlow == 23U);
-    // The shipped residual, 540 blocks, is mostly surface MATERIAL near biome
-    // borders (sand/dirt, sandstone/stone) — M4, not the aquifer.
-    CHECK(total.exact == 12582372U);
+    // The shipped residual, 438 blocks, is mostly surface MATERIAL near biome
+    // borders (sand/dirt, sandstone/stone) — M4, not the aquifer. It was 540
+    // while the bottom-up stone-depth run skipped water: 102 blocks directly
+    // over water — 60 stone the filler made gravel, 42 sandstone it made
+    // sand — are the `stone_depth` ceiling rules firing once water resets the
+    // run, as aquifer-lavarun-probe.sh measured; none got worse (SPEC §11).
+    CHECK(total.exact == 12582474U);
 
     // A vein never replaces the aquifer's fluid. The filler runs the vein
     // chain only over `default_block`, which was a choice (ore/vein.hpp):

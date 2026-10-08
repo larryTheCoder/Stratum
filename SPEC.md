@@ -671,8 +671,10 @@ mapping has two halves, split at a platform-neutral midpoint:
     unobserved, and it can change real blocks — a veins-on overworld puts
     aquifer fluid inside the vein ranges routinely. Settling it needs a
     placement probe whose aquifer produces water or lava inside y in
-    [-60, 50]. (`categorize()` counts lava as solid, so the probe's "solid"
-    and this guard's "replaceable" are not the same predicate.)
+    [-60, 50]. (`categorize()` counted lava as solid when this was written;
+    it now counts it as fluid (§11, "Lava in the surface pass's runs"), and
+    its "solid" still takes in more than this guard's `default_block`, so the
+    two are not the same predicate.)
 
   *A spatial fingerprint, measured and deliberately NOT used as evidence.*
   The membership outcome is vertically clustered: agreement with the
@@ -1475,9 +1477,11 @@ Open:
   source — fork once, no name, no MD5 — where `vertical_gradient` forks, salts
   and forks AGAIN; mixing them up is the easiest mistake here. `stoneDepthAbove`
   SKIPS fluid without resetting, so a stone run below a water band does not
-  inherit the top of the world. And `steep` is asymmetric on purpose: west
-  minus east, south minus north, with `abs()` refuted by 17375 columns that
-  have to stay false.
+  inherit the top of the world. (`stoneDepthBelow` does not skip it: bottom
+  up, fluid resets the run as air does, and lava is fluid in both — measured
+  later, §11 "Lava in the surface pass's runs".) And `steep` is asymmetric
+  on purpose: west minus east, south minus north, with `abs()` refuted by
+  17375 columns that have to stay false.
 
   **RESOLVED.** `biome` and `temperature` both run, and so, now, does
   `bandlands` — the list went ten, nine, three, one, zero. The overworld's
@@ -2321,6 +2325,75 @@ Open:
   `vanilla_compiled_dimension_test.cpp`, which needs only the fetched worldgen
   data and so runs in CI's conformance job on x86-64 AND ARM64: the first
   cross-architecture check of aquifer-on output.
+
+- **Lava in the surface pass's runs — and the bottom-up run through any
+  fluid (MA; output changes).** The surface pass reads three things off the
+  first pass's blocks: the top-down stone-depth run (`stone_depth` floor),
+  the bottom-up one (`stone_depth` ceiling) and the column's latched water
+  height (`water`). The filler classed a block as fluid only if it was
+  `default_fluid`, so in the overworld the aquifer's literal lava was Solid:
+  it counted toward both runs and never latched the height. Nothing could
+  check that. Every aquifer probe ran a surface rule that never fires, and in
+  the aquifer presets every run-reading condition sits under
+  `above_preliminary_surface`, far above the goldens' lava.
+
+  `tools/analysis/aquifer-lavarun-probe.sh` asks directly. Its terrain
+  depends on y alone (a constant plus one `y_clamped_gradient` per 8-block
+  cell, every boundary at a half-integer y). Its aquifer is the fluid-type
+  probe's arm P, so every source sits at -12: lava, or water in twin
+  dimensions. Sixteen-rung wool ladders make every stone block show its own
+  0-based depth in a run, or its distance below the water height. Lattice
+  lava, the lava sea's lava and water are scored as separate factors: three
+  run readings each (counts like stone, holds like water, resets like air)
+  and two height readings (latches or not). Twelve dimensions separate every
+  reading of every factor on whole columns. Each has 16 384 columns, frozen,
+  with 0 blocks of flow, and each ladder's dimensions together leave exactly
+  one reading:
+
+  | | top down (floor) | bottom up (ceiling) | water height |
+  |---|---|---|---|
+  | lava, lattice or sea | holds | **resets** | latches |
+  | water | holds (as documented) | **resets** (documented as holding) | latches (as documented) |
+
+  So, two corrections. Lava is a fluid like water in every respect, as its
+  block says; the server does not tell the lattice's lava from the sea's.
+  And the bottom-up run is not the mirror image of the top-down one: any
+  fluid resets it, as air does. `surface::Context` called it "the same
+  counting up", and the filler skipped water there. The water twins, meant
+  as the in-run control for the documented water behaviour, are what refuted
+  it: stone above an enclosed water pool reads depth 0..7, where a held run
+  leaves it stone.
+
+  The filler now classes lava as fluid (`categorize`) and resets the
+  bottom-up run on anything not solid. On the probe the old filler wrote
+  2 392 064 of 74 973 184 blocks wrong (every one a marker, in nine of the
+  twelve dimensions); the new one writes none.
+
+  On `golden_overworld_test.cpp`'s grid (16 chunks on each of the eight
+  golden seeds) the shipped exact count moves from 12 582 372 to 12 582 474
+  of 12 582 912. Every block that changed was compared, before and after.
+  All 102 newly right blocks sit directly over water and none got worse: 60
+  are stone the filler made gravel, and 42 are sandstone it made sand. They
+  are the overworld's ceiling rules firing once water resets the run. Nine
+  more blocks, also over water, change from one wrong material to another
+  (sand to sandstone, where the golden holds grass at a biome border). No
+  block moves because of lava, since the rules that read a run sit near the
+  surface. The FNV-1a hash of four shipped chunks in
+  `vanilla_compiled_dimension_test.cpp` does not move. The every-second-chunk
+  figure in the entry above (99.9942%) predates this change and was not
+  re-measured.
+
+  Held by `vanilla_aquifer_lava_run_test.cpp` (the server's readings,
+  pinned; and the shipped filler, name-exact on all 74 973 184 probe
+  blocks), by the re-pinned `golden_overworld_test.cpp`, and fixture-free
+  by three cases in `terrain_filler_test.cpp` that fail on the old filler.
+
+  The probe's first version put the bottom-up pocket at y -52..-45 over a
+  -64 floor, and its water twin held lava at the pocket's floor in 5 445
+  blocks. A source centred below lambda is lava whatever `lava` says
+  (`fluid_type.hpp`), and such sources are candidates that low. The script's
+  layout model missed that, so the pocket now sits over a floor lifted to
+  -48.
 
 - **The deep-dark override, read through the chunk's `flat_cache` window —
   and the aquifer's golden residual is all fluid that moved (MA, pipeline

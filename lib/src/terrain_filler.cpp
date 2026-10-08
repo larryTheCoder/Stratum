@@ -81,12 +81,13 @@ constexpr int kChunkWidth = 16;
 
 /// Solid, fluid or air — what the FIRST pass decided, read back for the
 /// second. Not stored anywhere: rederived from the block a position already
-/// holds. Coarse: the aquifer's lava and the ore veins' blocks come out as
-/// Solid. The surface pass's WRITE does not rely on this — it writes over
-/// `default_block` only (`applySurfaceRules`) — but its stone-depth run does,
-/// so a lava block counts toward the run where a water block neither counts
-/// nor breaks it. Water's behaviour is measured; lava's is not, and is
-/// carried as an open item (PROGRESS.md, MA).
+/// holds. Fluid is `default_fluid` AND the aquifer's literal lava, the only
+/// two fluids the first pass writes; the ore veins' blocks are Solid. The
+/// surface pass's WRITE does not rely on this — it writes over
+/// `default_block` only (`applySurfaceRules`) — but its two stone-depth runs
+/// and its water height do, and the server treats lava there exactly as
+/// water: measured on `tools/analysis/aquifer-lavarun-probe.sh` (SPEC §11),
+/// where this called lava Solid and so counted it toward both runs.
 enum class Category : std::uint8_t { Air, Fluid, Solid };
 
 [[nodiscard]] Category categorize(const settings::BlockState& block,
@@ -94,7 +95,7 @@ enum class Category : std::uint8_t { Air, Fluid, Solid };
     if (block == air()) {
         return Category::Air;
     }
-    if (block == settings.defaultFluid) {
+    if (block == settings.defaultFluid || block == lava()) {
         return Category::Fluid;
     }
     return Category::Solid;
@@ -794,8 +795,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
 
             // Top-down: the stone-depth run counting from the world's top,
             // and the water height latched at the first fluid block met
-            // descending. Air resets the run; fluid neither breaks it nor
-            // counts toward it (surface::Context's own doc, measured).
+            // descending. Air resets the run; fluid — water or lava alike —
+            // neither breaks it nor counts toward it, and lava latches the
+            // height as water does (surface::Context's own doc, measured).
             std::optional<std::int32_t> waterHeight;
             {
                 std::int32_t run = 0;
@@ -812,16 +814,21 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     }
                 }
             }
-            // The same run counted from the world's floor, for
-            // `surface_type: ceiling`.
+            // The run counted from the world's floor, for `surface_type:
+            // ceiling` — and NOT the mirror image of the one above: bottom
+            // up, fluid RESETS the run exactly as air does, water as much as
+            // lava. Measured (aquifer-lavarun-probe.sh, SPEC §11): stone
+            // over an enclosed pool reads depth 0 from the pool's roof up,
+            // on every column of every pool, where a run that skipped the
+            // fluid — this loop's reading until then, for water too — left
+            // it stone.
             {
                 std::int32_t run = 0;
                 for (std::int32_t y = minY; y < topY; ++y) {
-                    const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else if (category == Category::Solid) {
+                    if (categorize(into.at(localX, y, localZ), *settings_) == Category::Solid) {
                         ++run;
+                    } else {
+                        run = 0;
                     }
                     stoneDepthBelow[static_cast<std::size_t>(y - minY)] = run;
                 }
@@ -858,8 +865,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // What this replaced, and what it cost. The pass used to rewrite
             // every position of the column's first non-solid stretch plus
             // every Solid one, exempting only the six vein blocks — and
-            // `categorize` calls the aquifer's lava Solid, because lava is not
-            // the overworld's `default_fluid`. So the overworld's own
+            // `categorize` then called the aquifer's lava Solid, because lava
+            // is not the overworld's `default_fluid`. So the overworld's own
             // unconditioned `deepslate` gradient (true at y <= 0) turned every
             // aquifer lava block into deepslate, 127531 of the goldens' 127700
             // lava blocks, and painted the bottom of open water in the
