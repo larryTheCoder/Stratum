@@ -60,7 +60,14 @@ if(MISSING)
         "      tools/analysis/legacy-seed-probe.sh --accept-eula <seed>\n"
         "  for each of: ${SEEDS_TEXT}")
     message(STATUS "SKIP: no legacy-seed probe worlds")
-    cmake_language(EXIT 77)
+    # cmake_language(EXIT) exists only from CMake 3.29, and this project's
+    # minimum is 3.24: on 3.28 the bare call was itself an error, so a missing
+    # fixture FAILED instead of skipping. Below 3.29 the script just ends, and
+    # the test's SKIP_REGULAR_EXPRESSION reads the "SKIP:" line above.
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
+        cmake_language(EXIT 77)
+    endif()
+    return()
 endif()
 
 foreach(SEED IN LISTS SEEDS)

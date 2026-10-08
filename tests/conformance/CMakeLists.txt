@@ -19,6 +19,7 @@ add_test(NAME conformance.fixtures_present
 set_tests_properties(conformance.fixtures_present PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )
 
 # --- The NBT reader against real, vanilla-written files ---------------------

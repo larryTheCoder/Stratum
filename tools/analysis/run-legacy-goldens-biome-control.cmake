@@ -59,7 +59,14 @@ if(MISSING)
         "  Generate them with:\n"
         "      tools/fetch-vanilla --generate-regions --accept-eula")
     message(STATUS "SKIP: no golden regions")
-    cmake_language(EXIT 77)
+    # cmake_language(EXIT) exists only from CMake 3.29, and this project's
+    # minimum is 3.24: on 3.28 the bare call was itself an error, so a missing
+    # fixture FAILED instead of skipping. Below 3.29 the script just ends, and
+    # the test's SKIP_REGULAR_EXPRESSION reads the "SKIP:" line above.
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
+        cmake_language(EXIT 77)
+    endif()
+    return()
 endif()
 
 # All eight or none. Six of them are the six independent worlds and two are
