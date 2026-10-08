@@ -254,6 +254,7 @@ to bump the version and be called out; this is that call-out.
 | 4 | **Two aquifer status corrections, measured through the barrier** (§11, "Sub-lambda levels and the near-surface sea"). An aborted psl scan's wet level never sits below lambda: it reads lambda. A near-surface sea is not typed lava for its centre sitting below the lava sea. The first is visible only through the barrier (the cell is dry above lambda either way): 7 690 blocks of stone over an aborting surface that v3 built and the server does not. The second is visible in blocks too: under a psl between -62 and -54, v3 built 20 462 blocks of barrier the server does not and filled lava where such a sea is the nearest source above lambda, and the server holds water there. No golden block changes. |
 | 5 | **An aborted scan floors the dry sentinel at lambda too** (§11, "Sub-lambda levels and the near-surface sea"). v4 floored only a wet level; an aborted cell that nothing floods kept `kNeverLevel`. At floodedness 0 over an aborting surface that built 3 770 blocks of barrier the server does not, and the server took lambda's verdict on every block where the two part. No golden block changes. v4 had reached only this development branch; bumped rather than amended because a v4 blob could exist. |
 | 6 | **Q5.9's deep-dark override does not reach an aborted scan** (§11, "Sub-lambda levels and the near-surface sea"). v5 returned the override's dry sentinel before an aborted scan's lambda; the spec's order puts the abort's status first, and over an aborting surface under the override (`aquifer-ddfloor-probe.sh`) the sentinel built 10 577 blocks of barrier the server does not — every block where the two orders part. No golden block changes. v5 had reached only this development branch; bumped rather than amended because a v5 blob could exist. |
+| 7 | **Lava is fluid to the surface pass, and the bottom-up stone-depth run resets on every fluid** (§11, "Lava in the surface pass's runs"). Aquifer lava now holds the top-down run and latches the water height as water does; the bottom-up run (`stone_depth` ceiling) resets on water and lava where it used to skip water and count lava. On the lava-run probe the old filler wrote 2 392 064 of 74 973 184 blocks wrong and the new one none; on the golden overworld grid 102 blocks over water become exact (gravel to stone, sand to sandstone) and none get worse (12 582 372 to 12 582 474). v6 had reached only this development branch; bumped rather than amended because a v6 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2327,8 +2328,8 @@ Open:
   cross-architecture check of aquifer-on output.
 
 - **Lava in the surface pass's runs — and the bottom-up run through any
-  fluid (MA; output changes).** The surface pass reads three things off the
-  first pass's blocks: the top-down stone-depth run (`stone_depth` floor),
+  fluid (MA, pipeline engine v7).** The surface pass reads three things off
+  the first pass's blocks: the top-down stone-depth run (`stone_depth` floor),
   the bottom-up one (`stone_depth` ceiling) and the column's latched water
   height (`water`). The filler classed a block as fluid only if it was
   `default_fluid`, so in the overworld the aquifer's literal lava was Solid:
