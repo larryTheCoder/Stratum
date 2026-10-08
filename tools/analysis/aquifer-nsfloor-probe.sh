@@ -25,6 +25,8 @@
 # file rather than reconstructing it.
 #
 # `lava` is 0.0, so every fluid is water and the fluid type plays no part.
+# The nsd_* arms repeat the field at floodedness 0.0, where an aborting cell
+# with nothing to flood it is what separates "dry" from "lambda".
 #
 # The spec's NAME carries the seed (density-probe.sh names its output after
 # the spec), so a second seed lands beside the first instead of on it.
@@ -80,7 +82,7 @@ NO_SURFACE = {"type": "minecraft:condition",
               "then_run": {"type": "minecraft:block",
                            "result_state": {"Name": "minecraft:stone"}}}
 
-def aquifer(name, scale):
+def aquifer(name, scale, floodedness=0.9):
     return {"name": name, "min_y": MIN_Y, "height": HEIGHT,
             "raw_final_density": {"type": "minecraft:constant", "argument": -1.0},
             "aquifers_enabled": True, "sea_level": SEA,
@@ -88,12 +90,16 @@ def aquifer(name, scale):
             "size_vertical": 2, "surface_rule": NO_SURFACE,
             "router": {"barrier": REAL_BARRIER, "lava": 0.0,
                        "preliminary_surface_level": field(scale, LOW, MID, HIGH),
-                       "fluid_level_floodedness": 0.9,
+                       "fluid_level_floodedness": floodedness,
                        "fluid_level_spread": 0.0}}
 
 spec = []
 for tag, scale in (("8", 1.0), ("16", 0.5)):
     spec.append(aquifer("nsb_" + tag, scale))
+    # The same field with floodedness 0: below both of the level rule's gates,
+    # so a cell that does not abort is dry unless it floods from the near
+    # surface, and an aborting cell is where "dry" and "lambda" part.
+    spec.append(aquifer("nsd_" + tag, scale, 0.0))
     # The readout: same noise, same thresholds, an indicator instead of a
     # surface, so terrain height names the arm per column.
     spec.append({"name": "nsr_" + tag, "function": field(scale, -1.0, 0.0, 1.0)})
@@ -102,6 +108,10 @@ json.dump(spec, open(sys.argv[1], "w"))
 print(len(spec), "dimensions", file=sys.stderr)
 PY
 
+# A frozen world keeps every fluid tick it schedules, and these worlds are
+# water from wall to wall: at density-probe.sh's 6 GB default the server runs
+# out of heap before the regions settle. Overridable, as there.
+export STRATUM_PROBE_XMX="${STRATUM_PROBE_XMX:-10G}"
 exec tools/analysis/density-probe.sh \
     $([[ ${accept_eula} -eq 1 ]] && printf -- --accept-eula) \
     --spec "${spec}" --seed "${seed}"

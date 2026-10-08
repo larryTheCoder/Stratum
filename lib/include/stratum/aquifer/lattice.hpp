@@ -563,6 +563,26 @@ struct CellFluid {
     bool deepDark = false;
 };
 
+/// Where a cell's level came from, where that decides more than the level.
+enum class LevelOrigin : std::uint8_t {
+    /// Everything but the case below: the cell's own lattice, floodedness and
+    /// guards, or one of the dry outcomes.
+    Cell,
+    /// The near-surface early return's sea outcome: a cell close under a
+    /// submerged surface takes the sea from THAT surface, not from its own
+    /// centre (spec Q5.3(b)). A centre below the lava sea therefore does not
+    /// make it lava (`fluidTypeOf`) — measured on
+    /// `aquifer-capfloor-probe.sh`'s cf58 arm, where typing those cells lava
+    /// built 20 462 blocks of barrier the server does not have.
+    NearSurfaceSea,
+};
+
+/// A cell's level and where it came from (`cellLevel`).
+struct CellLevel {
+    std::int32_t level = 0;
+    LevelOrigin origin = LevelOrigin::Cell;
+};
+
 /// The level a cell's fluid body tops out at: fluid occupies `y < level`, so
 /// `level` is the first air block above the body.
 ///
@@ -593,6 +613,23 @@ struct CellFluid {
 /// across the whole ten-thousandth grid except within about an ulp of a
 /// crossing, where they differ because the crossing floodedness is not itself
 /// representable.
-[[nodiscard]] std::int32_t cellFluidLevel(const CellFluid& cell) noexcept;
+///
+/// AN ABORTED SCAN NEVER LEAVES A WET CELL BELOW LAMBDA. A cell whose
+/// surface scan aborted (a sample below `abortThreshold`) and whose level
+/// would otherwise sit below lambda reports lambda: such a cell has met a
+/// surface submerged in the lava sea, whose level is lambda (spec Q5.3(b)).
+/// No block readout sees it — the cell is dry above lambda either way, and
+/// the lava sea takes everything below — but the barrier weighs the level:
+/// over an aborting surface with vanilla's barrier on
+/// (`aquifer-nsfloor-probe.sh`) the unfloored levels write 7 690 blocks of
+/// stone the server does not, and the floor writes none. The unclamped
+/// ladder of a cell that did NOT abort stays unclamped, which is what the
+/// water/lava and deep-floor worlds measured.
+[[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
+
+/// `cellLevel(cell).level`, for the callers that need nothing else.
+[[nodiscard]] inline std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
+    return cellLevel(cell).level;
+}
 
 } // namespace stratum::aquifer

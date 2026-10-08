@@ -23,6 +23,8 @@
 #          separates the two readings.
 #   cf66   psl -66: aborted, so both readings floor (control).
 #   cf200  psl 200: neither floors (control, the deep-floor probe's own).
+#   cf58d  psl -58 again, at density -0.05: where a small level change flips
+#          a verdict, so the two readings' few-block difference shows.
 #
 # Floodedness is 0.6, strictly between the level rule's two gates, so cells
 # below the near-surface band take the LADDER; the spread is the deep-floor
@@ -75,9 +77,9 @@ NO_SURFACE = {"type": "minecraft:condition",
               "then_run": {"type": "minecraft:block",
                            "result_state": {"Name": "minecraft:stone"}}}
 
-def aquifer(name, psl):
+def aquifer(name, psl, density=-1.0):
     return {"name": name, "min_y": MIN_Y, "height": HEIGHT,
-            "raw_final_density": {"type": "minecraft:constant", "argument": -1.0},
+            "raw_final_density": {"type": "minecraft:constant", "argument": density},
             "aquifers_enabled": True, "sea_level": SEA,
             "default_fluid": {"Name": "minecraft:water", "Properties": {"level": "0"}},
             "size_vertical": 2, "surface_rule": NO_SURFACE,
@@ -86,12 +88,20 @@ def aquifer(name, psl):
                        "fluid_level_floodedness": LADDER_FLOODEDNESS,
                        "fluid_level_spread": FAST_SPREAD}}
 
-spec = [aquifer("cf58", -58.0), aquifer("cf66", -66.0), aquifer("cf200", 200.0)]
+spec = [aquifer("cf58", -58.0), aquifer("cf66", -66.0), aquifer("cf200", 200.0),
+        # The same surface at a density barely below zero, as the deep-floor
+        # probe's d005 arm: there a small change in either level of a pair
+        # flips the barrier's verdict, which at -1.0 it almost never does.
+        aquifer("cf58d", -58.0, -0.05)]
 
 json.dump(spec, open(sys.argv[1], "w"))
 print(len(spec), "dimensions", file=sys.stderr)
 PY
 
+# A frozen world keeps every fluid tick it schedules, and these worlds are
+# water from wall to wall: at density-probe.sh's 6 GB default the server runs
+# out of heap before the regions settle. Overridable, as there.
+export STRATUM_PROBE_XMX="${STRATUM_PROBE_XMX:-10G}"
 exec tools/analysis/density-probe.sh \
     $([[ ${accept_eula} -eq 1 ]] && printf -- --accept-eula) \
     --spec "${spec}" --seed "${seed}"
