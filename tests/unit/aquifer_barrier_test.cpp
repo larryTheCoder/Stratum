@@ -141,6 +141,19 @@ TEST_CASE("the barrier's LID is the /2.5 arm, and only a both-air pair reaches i
     CHECK_FALSE(placesBarrier(lid));
     lid.barrier = 1.2;
     CHECK(placesBarrier(lid));
+
+    // The pair above separates /2.5 from /1.5 only: it accepts any divisor
+    // d with 1.5/d in [0.5, 0.7), i.e. (2.143, 3.0], so the /3 arm's own
+    // constant passed it on the boundary. The block fires iff
+    // b > 0.5 + 1.5/d, and 1.09/1.11 narrows that to (2.459, 2.542] —
+    // inside the server's own bracket, rejecting both neighbours: on the
+    // deepfloor worlds 2.4 leaves real barriers unwritten and 2.6 writes
+    // stone the server does not (vanilla_aquifer_deepfloor_test.cpp). At
+    // d = 2.5 each side sits 0.02 from the threshold, far above rounding.
+    lid.barrier = 1.09;
+    CHECK_FALSE(placesBarrier(lid));
+    lid.barrier = 1.11;
+    CHECK(placesBarrier(lid));
 }
 
 TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reaches it",
@@ -166,6 +179,16 @@ TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reache
     floor.barrier = 1.1;
     CHECK_FALSE(placesBarrier(floor));
     floor.barrier = 1.2;
+    CHECK(placesBarrier(floor));
+    // 1.1/1.2 accepts any d with 6.5/d in [0.6, 0.7), i.e. (9.286, 10.833].
+    // The block fires iff b > 0.5 + 6.5/d, so 1.145/1.155 narrows it to
+    // (9.924, 10.078] — inside the server's bracket, rejecting 9.9 (real
+    // barriers left unwritten on the deepfloor worlds) and 10.1 (stone the
+    // server does not have). At d = 10 each side sits 0.01 from the
+    // threshold.
+    floor.barrier = 1.145;
+    CHECK_FALSE(placesBarrier(floor));
+    floor.barrier = 1.155;
     CHECK(placesBarrier(floor));
 
     // And the arm's own boundary, four blocks under the lower level. At

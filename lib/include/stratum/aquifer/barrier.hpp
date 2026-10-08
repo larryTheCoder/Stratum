@@ -133,9 +133,11 @@
 //     no guard at all (Q6.4 as written)          0 misses   0 false stone
 //
 // Exact, on every block of every arm. The control dimension — real
-// floodedness, nothing rescaled — reproduces `barrier3way` exactly (6
-// guarded misses, 0 un-gated, 0 false stone either way), so the recipe
-// distorts nothing but the level diversity it was built to create.
+// floodedness, nothing rescaled — IS `barrier3way`'s `d_neg0_3`: at seed 42
+// the server wrote the two identically, 0 of 5 242 880 blocks differing.
+// On all three seeds the predicate is exact on it as well (62 642 blocks
+// of server stone, none missed, none invented), so the recipe distorts
+// nothing but the level diversity it was built to create.
 //
 // AND THE DIVISOR ITSELF IS 10, bracketed two-sided. The `/10` arm decides
 // 96 292 blocks across the three seeds; on the 65 231 where divisor 10 and
@@ -151,12 +153,22 @@
 // The `/2.5` arm, dead under the same guard, brackets the same way and
 // confirms 2.5: 2.4 leaves 1104 misses, 2.5 is exact, 2.6 writes 1111
 // blocks of false stone. That bracket is corroborated on a world NOT built
-// for it — on `barrier3way`, 1.5 and 2.0 leave 5 and 1 misses, 2.4/2.5/2.6
-// are all exact, 3.0 writes 3 blocks of false stone and 10 writes 37 — so
-// `/2.5` is not an artefact of the deepfloor recipe. Both arms mean
-// something now that they can be stated: `/2.5` is the barrier's LID a few
-// blocks above the higher of two levels, `/10` its FLOOR four or more
-// blocks below the lower.
+// for it — on the control's real noise over three seeds, 1.5 and 2.0 leave
+// 82 and 33 misses, 3.0 writes 28 blocks of false stone and 10 writes 386
+// (2.4 and 2.6 move 1 and 5 blocks, too few to weigh) — so `/2.5` is not an
+// artefact of the deepfloor recipe. Both arms mean something now that they
+// can be stated: `/2.5` is the barrier's LID a few blocks above the higher
+// of two levels, `/10` its FLOOR four or more blocks below the lower.
+//
+// The seven-dimension figures above are the analyzer's
+// (`tools/analysis/aquifer-deepfloor-analyze.cpp`), and re-running it on the
+// frozen corpora reproduces every one. `vanilla_aquifer_deepfloor_test.cpp`
+// repeats them on its own window, two dimensions x 4x4 chunks x three seeds:
+// 9.9 / 10.1 at 160/0 and 0/159, 2.4 / 2.6 at 194/0 and 0/193, each side
+// non-empty on every seed; the guard reinstated on both-air pairs at 3824
+// misses, on both-fluid pairs 69 811; and the control's figures in full.
+// The unit cases bracket each divisor arithmetically inside the server's
+// interval, (2.459, 2.542] and (9.924, 10.078].
 //
 // WHAT THE GUARD COST ELSEWHERE: 425 of the 617-block golden-fill residual
 // (`golden_fill_aquifer_test.cpp`), which SPEC §11 carried as unattributed

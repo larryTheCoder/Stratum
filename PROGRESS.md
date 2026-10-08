@@ -332,8 +332,8 @@ Open:
       stone: guarded 480354 misses, both-air lifted 457970, both-fluid
       lifted 22384, un-gated **0 misses and 0 false stone**. The four older
       worlds order the same way (161/46/154/39 of 243887). The control arm,
-      real floodedness with nothing rescaled, reproduces `barrier3way`
-      exactly.
+      real floodedness with nothing rescaled, IS `barrier3way`'s world (0 of
+      5242880 blocks differ at seed 42) and is exact on all three seeds.
       *The divisor.* The arm decides 96292 blocks; on the 65231 where 10 and
       3 disagree the server has stone on 65231 of 65231. The bracket is
       two-sided and monotone — 9.9 leaves 937 barriers unwritten, 10 is
@@ -346,7 +346,11 @@ Open:
       residual is a strict subset (192, 0 introduced) and is all "we say air,
       the server says water" — a fluid-extent question, not a barrier one.
       Pinned by `vanilla_aquifer_deepfloor_test.cpp`, which fails loudly if
-      the arm ever stops deciding blocks.
+      the arm ever stops deciding blocks, and which brackets both divisors
+      from both sides on every seed of its own window (9.9 160/0, 10.1
+      0/159, 2.4 194/0, 2.6 0/193); the unit brackets are now (2.459, 2.542]
+      and (9.924, 10.078]. The seven-dimension figures above are the
+      analyzer's, reproduced unchanged on the frozen corpora.
 
 ## Ore veins (SPEC's M3 section)
 
