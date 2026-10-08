@@ -15,6 +15,9 @@
 #      test binary as a filter, and through the Windows codepage a non-ASCII
 #      character arrives mangled, so the case matches nothing and fails on
 #      both Windows legs alone
+#   8. no workflow uploads an artifact: CI's files can be Mojang-derived
+#      (probe worlds, server work directories), and on a public repository
+#      an artifact is a download for anyone signed in (SPEC §12)
 #
 # NOT enforced here, on purpose: "no raw % or >> on possibly-negative
 # values". Detecting that textually produces false positives on streams and
@@ -179,6 +182,20 @@ non_ascii_names="$(LC_ALL=C grep -rnE --include='*.cpp' --include='*.hpp' \
 if [[ -n "${non_ascii_names}" ]]; then
     fail "test names must be ASCII (ctest filters cross the Windows codepage):"
     printf '%s\n' "${non_ascii_names}" >&2
+else
+    echo "  ok"
+fi
+
+echo "== 8. nothing published from CI =="
+# Jobs hand each other probe worlds, the jar and extracted data through the
+# repository-scoped Actions cache only. A workflow artifact on a public
+# repository is a download for anyone signed in, so no workflow may upload
+# one — not even "just the logs", which is how a .fixtures or server work
+# directory gets swept in. Commented-out lines do not count.
+uploads="$(grep -rnE '^[^#]*uses:.*upload-(pages-)?artifact' .github/workflows 2>/dev/null || true)"
+if [[ -n "${uploads}" ]]; then
+    fail "a workflow uploads an artifact; CI's files can be Mojang-derived (SPEC §12):"
+    printf '%s\n' "${uploads}" >&2
 else
     echo "  ok"
 fi

@@ -168,8 +168,11 @@ These are hard requirements; violations are release blockers.
    output. Transcendental functions are **not** covered by these flags:
    vanilla uses `StrictMath` (fdlibm) in places, and a platform libm may
    differ by an ulp. See the open item in §11.
-5. CI runs the golden suite on x86-64 **and** ARM64, Linux + Windows +
-   macOS. Cross-architecture divergence is a build failure.
+5. CI runs the unit suites on x86-64 **and** ARM64 across Linux, Windows
+   and macOS, and the conformance suite on Linux x86-64 and ARM64, both legs
+   scored against one set of server-generated probe worlds made on x86-64
+   (§7). The region goldens are not generated in CI yet (§7).
+   Cross-architecture divergence is a build failure.
 6. Engine updates must reproduce stored pipelines byte-identically (§6). Any
    intentional output change bumps the pipeline engine version and is called
    out in release notes.
@@ -320,15 +323,44 @@ cannot keep stamping the old number.
   (`tests/support/fluid_flow.hpp`); it never pins a count of it.
   `tools/analysis/aquifer-probes.sh --accept-eula` regenerates every aquifer
   corpus the conformance cases read, with the seeds they expect.
+  Which corpora those are is one table, `tools/probe-worlds`: each unit is
+  a generator command, the corpora it writes with the seed each must record,
+  and a CI shard; `aquifer-probes.sh` is that table's aquifer units, and a
+  `tools/analysis/*-probe.sh` that is neither a unit nor exempted with a
+  reason fails `unit.tools.probe_worlds`. `tools/probe-worlds generate
+  --accept-eula` replaces each corpus whole and then runs `verify`, which
+  starts no server: every corpus present, recorded under the seed its cases
+  expect, frozen, with a non-empty region for every entry its spec names —
+  the check several cases cannot make, since they score whatever subset of
+  seeds or entries they find. **CI generates the probe worlds**: one x86-64
+  runner per shard, one server at a time, each shard cached in the Actions
+  cache only once `verify` passes, under a key that hashes the shard's rows
+  and every script they run (never the engine, which does not change what
+  the server writes), so editing one generator regenerates one shard. Both
+  conformance legs, x86-64 and ARM64, restore every shard and score the same
+  worlds, so both architectures meet the same flow remnant; a missing shard
+  fails the job by name. ctest counts a skip as a pass, so
+  `tools/check-skips` fails it on any case that skipped without a line in
+  `tests/conformance/expected-skips.txt`, and on any listed case that ran:
+  the list names every case CI does not check, and why.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
   engine output block-for-block in Java block space (before Bedrock
   mapping), reporting first divergence with coordinates and pipeline node
   trace.
 - Fixed seed set: at least 8 seeds × overworld/nether/end noise settings ×
   a spread of chunk regions including y-extremes and biome borders.
-- Golden fixtures are **generated locally / in CI and never committed**
-  (they are derived from Mojang data). The repo ships scripts, not
-  fixtures.
+- Fixtures are **generated, never committed** (they are derived from Mojang
+  data); the repo ships scripts, not fixtures. CI generates the probe worlds
+  (above). The region goldens are generated locally only, for now: a fresh
+  generation keeps a run-dependent flow remnant (871 moved blocks on the
+  current set, PROGRESS.md), and `golden_overworld_test.cpp` still pins
+  flow-dependent counts measured on one local set. Before CI generates
+  goldens, in order: a second set generated locally with CI's exact commands
+  is scored; those pins become bounds plus flow-shape checks, as the probe
+  cases' did; and `fetch-vanilla --with-structures`, which today also turns
+  structures on in any regions it generates, stops doing so. Nothing
+  generated in CI leaves the runner except through the repository-scoped
+  Actions cache (§12).
 
 ---
 
@@ -7766,6 +7798,21 @@ Open:
   extracted assets, no golden fixtures derived from them. Users obtain
   vanilla presets by pointing `tools/fetch-vanilla` (or the in-server
   equivalent) at the official jar they download from Mojang.
+- **CI and Mojang's EULA.** Generating probe worlds runs the vanilla server,
+  which requires accepting Mojang's EULA (https://aka.ms/MinecraftEULA). The
+  repository owner accepted it for this repository's CI on 2026-10-08. The
+  workflow passes `--accept-eula` only in the job guarded by
+  `github.repository == 'larryTheCoder/Stratum'`, so a fork's own CI never
+  accepts it on its owner's behalf, and no script accepts it for anyone who
+  did not pass the flag. Everything Mojang-derived that CI handles — the
+  jar, extracted JSON and reports, probe worlds, server work directories —
+  stays on the runner or in the Actions cache: never committed, and never
+  published as a workflow artifact, release, Pages site or package
+  (`tools/lint/check-determinism.sh` rule 8 refuses any `upload-artifact`
+  step). The cache is repository-scoped, not private: this repository's own
+  workflow runs restore it, pull-request runs from forks included once they
+  are approved to run, so outside contributors' pull-request runs must stay
+  behind that approval.
 - No Mojang source code — decompiled or unobfuscated — is read, pasted,
   transcribed, or paraphrased in this repository or by Implementer
   sessions. Since commit 7f8a5ebe, behavior may additionally derive from

@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+# Stratum — every probe world a conformance case reads, from one table.
+# Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+"""Generate, check and name the probe worlds the conformance suite reads.
+
+  tools/probe-worlds generate --accept-eula [--shard NAME] [--only GLOB]
+  tools/probe-worlds verify [--shard NAME] [--only GLOB] [--fixtures DIR]
+  tools/probe-worlds shards        the CI shards, one per line
+  tools/probe-worlds key SHARD     `key=<Actions cache key>` for one shard (CI)
+  tools/probe-worlds keys          `<shard>=<Actions cache key>` for every shard (CI)
+  tools/probe-worlds inventory     the table below, as JSON
+  tools/probe-worlds lint          the table against tools/analysis and ci.yml
+
+UNITS is the list: each unit is one generator command under tools/analysis,
+the corpora it writes and the seed each must record, and the CI shard it
+runs in. CI runs each shard on its own runner, one server at a time, and
+caches it under `key`; so this table IS the set of corpora CI provides
+(SPEC §7). A case that reads a corpus no unit writes skips in CI, and CI
+fails on any skip tests/conformance/expected-skips.txt does not list.
+
+`generate` replaces each selected unit's corpora whole (deleting them
+first), runs every selected unit even after one fails, then runs `verify`
+on the selection. `verify` starts nothing: every corpus present, recorded
+under the seed its cases expect, frozen where its generator freezes, and a
+non-empty region for every entry its spec names. The cases cannot be left
+to notice, because several score whatever subset of seeds or entries they
+find, so a half-generated set would pass them.
+
+A shard's cache key hashes its rows of this table and the text of every
+script those rows run (each generator and the tools/analysis/*.sh it
+calls, i.e. density-probe.sh): editing one generator regenerates only its
+shard. The engine is never an input; the server's output does not depend on
+it. FORMAT, or PROBE_CACHE_EPOCH in ci.yml, forces a regeneration for a
+change this cannot see (the JDK patch level, the heap, the runner).
+
+Running a generator runs the Minecraft server, so `generate` needs
+--accept-eula, which it passes on to each generator and accepts for nobody
+else. Nothing this writes is committed or uploaded: worlds are
+Mojang-derived (SPEC §12).
+"""
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+VERSION = '1.21.11'
+FORMAT = 1
+REPO = pathlib.Path(__file__).resolve().parent.parent
+ANALYSIS = 'tools/analysis/'
+
+
+def density(*pairs):
+    """Corpora written by density-probe.sh: probes/<corpus>/{manifest,spec}.json."""
+    return [{'dir': corpus, 'seed': seed, 'density': True} for corpus, seed in pairs]
+
+
+def own(directory, files, record=None):
+    """A generator with a layout of its own: files under probes/<dir>."""
+    out = {'dir': directory, 'files': list(files)}
+    if record:
+        out['record'] = record
+    return [out]
+
+
+def unit(name, shard, argv, outputs):
+    return {'name': name, 'shard': shard, 'argv': [ANALYSIS + argv[0]] + list(argv[1:]),
+            'outputs': outputs}
+
+
+FROZEN_MANIFEST = {'file': 'manifest.json', 'seed': -1, 'frozen': True}
+END_REGIONS = ['r.-1.-1.mca', 'r.64.0.mca']
+
+UNITS = [
+    # aquifer: aquifer-probes.sh's corpora that are not the 10 GB families.
+    unit('pslvar', 'aquifer', ['aquifer-psl-probe.sh', '42'], density(('pslvar', 42))),
+    unit('barrier3way', 'aquifer', ['aquifer-barrier-probe.sh', '42'], density(('barrier3way', 42))),
+    unit('aqdeep', 'aquifer', ['aquifer-deepfloor-probe.sh', '42'], density(('aqdeep', 42))),
+    unit('aqdeep2', 'aquifer', ['aquifer-deepfloor-probe.sh', '31337'], density(('aqdeep2', 31337))),
+    unit('aqdeep3', 'aquifer', ['aquifer-deepfloor-probe.sh', '8675309'],
+         density(('aqdeep3', 8675309))),
+    unit('depthgate', 'aquifer', ['aquifer-depthgate-probe.sh', '42'], density(('depthgate', 42))),
+    unit('fluidtype', 'aquifer', ['aquifer-fluidtype-probe.sh', '42'], density(('fluidtype', 42))),
+    unit('lowsea', 'aquifer', ['aquifer-lowsea-probe.sh', '42'], density(('lowsea', 42))),
+    unit('comb', 'aquifer', ['aquifer-comb-probe.sh', '42', '7', '12345', '999'],
+         density(('comb_42', 42), ('comb_7', 7), ('comb_12345', 12345), ('comb_999', 999))),
+    # water: the water/lava seeds, the 10 GB nsfloor and ddfloor families, and
+    # the two real overworlds.
+    unit('waterlava_s42', 'water', ['aquifer-waterlava-probe.sh', '42'],
+         density(('waterlava_s42', 42))),
+    unit('waterlava_s31337', 'water', ['aquifer-waterlava-probe.sh', '31337'],
+         density(('waterlava_s31337', 31337))),
+    unit('waterlava_s8675309', 'water', ['aquifer-waterlava-probe.sh', '8675309'],
+         density(('waterlava_s8675309', 8675309))),
+    unit('nsfloor_s42', 'water', ['aquifer-nsfloor-probe.sh', '42'], density(('nsfloor_s42', 42))),
+    unit('nsfloor_s31337', 'water', ['aquifer-nsfloor-probe.sh', '31337'],
+         density(('nsfloor_s31337', 31337))),
+    unit('nsfloor_s8675309', 'water', ['aquifer-nsfloor-probe.sh', '8675309'],
+         density(('nsfloor_s8675309', 8675309))),
+    unit('ddfloor_s42', 'water', ['aquifer-ddfloor-probe.sh', '42'], density(('ddfloor_s42', 42))),
+    unit('ddfloor_s31337', 'water', ['aquifer-ddfloor-probe.sh', '31337'],
+         density(('ddfloor_s31337', 31337))),
+    unit('ddfloor_s8675309', 'water', ['aquifer-ddfloor-probe.sh', '8675309'],
+         density(('ddfloor_s8675309', 8675309))),
+    unit('lavarun_s42', 'water', ['aquifer-lavarun-probe.sh', '42'], density(('lavarun_s42', 42))),
+    unit('aquifer-on', 'water', ['aquifer-on-probe.sh', '-1'],
+         own('aquifer-on/seed--1', ['r.0.0.mca'], FROZEN_MANIFEST)),
+    unit('no-aquifer', 'water', ['aquifer-free-probe.sh', '-1'],
+         own('no-aquifer/seed--1', ['r.0.0.mca'], FROZEN_MANIFEST)),
+    # capfloor: two 10 GB runs per seed (four arms, then the fifth alone);
+    # capfloor_s<seed> and capfloorl_s<seed> are one unit, as the case pairs them.
+    unit('capfloor_s42', 'capfloor', ['aquifer-capfloor-probe.sh', '42'],
+         density(('capfloor_s42', 42), ('capfloorl_s42', 42))),
+    unit('capfloor_s31337', 'capfloor', ['aquifer-capfloor-probe.sh', '31337'],
+         density(('capfloor_s31337', 31337), ('capfloorl_s31337', 31337))),
+    # surface: above_preliminary_surface and the psl lattice.
+    unit('apsb', 'surface', ['aps-boundary-probe.sh', '42', '31337'],
+         density(('apsb', 42), ('apsb2', 31337), ('apsb3', 42))),
+    unit('psllat', 'surface', ['psl-lattice-probe.sh', '42', '31337'],
+         density(('psllat', 42), ('psllat2', 31337), ('psllat3', 42))),
+    unit('apsc', 'surface', ['aps-clamp-probe.sh', 's1', 's2', 's3'],
+         density(('apsc_s1', -4172144997902289642), ('apsc_s2', 42),
+                 ('apsc_s3', -9223372036854775808))),
+    # legacy: legacy random sources, ore-vein placement, blended and inline noise.
+    unit('legblend_s42', 'legacy', ['legacy-blended-probe.sh', '42'], density(('legblend_s42', 42))),
+    unit('legblend_s0', 'legacy', ['legacy-blended-probe.sh', '0'], density(('legblend_s0', 0))),
+    unit('legblend_s-4172144997902289642', 'legacy',
+         ['legacy-blended-probe.sh', '-4172144997902289642'],
+         density(('legblend_s-4172144997902289642', -4172144997902289642))),
+    unit('legseed_s42', 'legacy', ['legacy-seed-probe.sh', '42'], density(('legseed_s42', 42))),
+    unit('legseed_s31337', 'legacy', ['legacy-seed-probe.sh', '31337'],
+         density(('legseed_s31337', 31337))),
+    unit('oreveinplacement', 'legacy', ['ore-vein-placement-probe.sh', '100'],
+         density(('oreveinplacement', 100))),
+    unit('blended-noise', 'legacy', ['blended-datapack-probe.sh', '42'],
+         own('blended-noise/seed-42', ['r.0.0.mca'])),
+    unit('inline-noise', 'legacy', ['inline-noise-probe.sh', '42'],
+         own('inline-noise', [], {'file': 'verdicts.json', 'seed': 42, 'variants': 11})),
+    # end: the End's outer islands, 3200 chunks per seed.
+    unit('end-islands', 'end', ['end-islands-probe.sh', '--seeds', '0,42', '--regions', '-1,-1 64,0'],
+         own('end-islands/seed-0', END_REGIONS) + own('end-islands/seed-42', END_REGIONS)),
+]
+
+# Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`
+# fails on a probe script in neither list, so a new generator is a decision.
+EXEMPT = {
+    'density-probe.sh': 'the harness the density units run; hashed into their keys, never run alone',
+    'run-blended-probe.sh': 'starts no server: it runs the deepslate oracle for the blended vectors',
+    'aquifer-nearsurface-probe.sh': 'no conformance case reads probes/nearsurface; only '
+                                    'aquifer-nearsurface-analyze does',
+    'bandlands-probe.sh': 'no conformance case reads probes/bandlands; a second seed also dies on '
+                          "density-probe.sh's seed guard",
+    'end-islands-field-probe.sh': 'read only by end-islands-analyze, which is not a CTest',
+    'final-density-probe.sh': 'needs a --targets file the repository does not carry',
+    'ore-vein-probe.sh': 'writes probes/orevein/ov, but the ore-vein cases read orevein-multi/ and '
+                         'orevein-heldout/ (no-generator in expected-skips.txt) until a per-seed '
+                         'wrapper exists',
+}
+
+SHARDS = list(dict.fromkeys(u['shard'] for u in UNITS))
+
+
+def die(message, code=1):
+    print(f'probe-worlds: {message}', file=sys.stderr)
+    sys.exit(code)
+
+
+def select(shard, only):
+    if shard is not None and shard not in SHARDS:
+        die(f'unknown shard {shard!r}; the shards are {", ".join(SHARDS)}', 2)
+    chosen = [u for u in UNITS
+              if (shard is None or u['shard'] == shard)
+              and (only is None or fnmatch.fnmatch(u['name'], only)
+                   or fnmatch.fnmatch(os.path.basename(u['argv'][0]), only))]
+    if not chosen:
+        die(f'no unit matches --only {only!r}', 2)
+    return chosen
+
+
+def outputs(units):
+    return [out for u in units for out in u['outputs']]
+
+
+# --- verify -----------------------------------------------------------------
+
+def problems_in(units, probes):
+    problems = []
+
+    def present(path):
+        if not path.is_file() or path.stat().st_size == 0:
+            problems.append(f'{path.relative_to(probes)}: missing or empty')
+            return False
+        return True
+
+    def record(path, seed, frozen):
+        if not present(path):
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except ValueError as error:
+            problems.append(f'{path.relative_to(probes)}: not JSON ({error})')
+            return None
+        if not isinstance(data, dict):
+            problems.append(f'{path.relative_to(probes)}: not a JSON object')
+            return None
+        if data.get('seed') != seed:
+            problems.append(f'{path.relative_to(probes)}: seed {data.get("seed")!r}, expected {seed}')
+        if frozen and data.get('ticks_frozen') is not True:
+            problems.append(f'{path.relative_to(probes)}: ticks_frozen is '
+                            f'{data.get("ticks_frozen")!r}; the world was not frozen')
+        return data
+
+    for out in outputs(units):
+        root = probes / out['dir']
+        if out.get('density'):
+            manifest = record(root / 'manifest.json', out['seed'], True)
+            if manifest is None or not present(root / 'spec.json'):
+                continue
+            try:
+                entries = [entry['name'] for entry in json.loads((root / 'spec.json').read_text())]
+            except (ValueError, TypeError, KeyError) as error:
+                problems.append(f'{out["dir"]}/spec.json: unreadable ({error!r})')
+                continue
+            if not entries:
+                problems.append(f'{out["dir"]}/spec.json names no entries')
+            for name in entries:
+                present(root / name / manifest.get('region', 'r.0.0.mca'))
+            continue
+        spec = out.get('record')
+        if spec:
+            data = record(root / spec['file'], spec['seed'], spec.get('frozen', False))
+            if data is not None and 'variants' in spec and (
+                    data.get('version') != VERSION
+                    or len(data.get('variants') or []) != spec['variants']):
+                problems.append(f'{out["dir"]}/{spec["file"]}: expected version {VERSION} '
+                                f'and {spec["variants"]} variants')
+        for name in out['files']:
+            present(root / name)
+    return problems
+
+
+def verify(units, fixtures):
+    probes = fixtures / VERSION / 'probes'
+    problems = problems_in(units, probes)
+    count = len(outputs(units))
+    if problems:
+        print(f'{len(problems)} problem(s) across {count} probe corpora under {probes}:',
+              file=sys.stderr)
+        print('\n'.join('  ' + problem for problem in problems), file=sys.stderr)
+        print('regenerate with: tools/probe-worlds generate --accept-eula', file=sys.stderr)
+        return 1
+    print(f'all {count} probe corpora of {len(units)} unit(s) present, each from the seed its '
+          'cases expect, every density probe frozen')
+    return 0
+
+
+# --- generate ---------------------------------------------------------------
+
+def generate(units):
+    for tool in ('java', 'python3'):
+        if shutil.which(tool) is None:
+            die(f'{tool} is needed')
+    if any(u['name'] in ('inline-noise', 'end-islands') for u in units) and not shutil.which('jq'):
+        die('jq is needed (inline-noise, end-islands)')
+    fixture_root = REPO / '.fixtures' / VERSION
+    if not any(fixture_root.glob('server*.jar')) and not any(fixture_root.glob('*/server*.jar')):
+        die(f'no server jar under {fixture_root}; run tools/fetch-vanilla first')
+    if not ((fixture_root / 'worldgen/noise_settings/overworld.json').is_file()
+            and (fixture_root / 'worldgen/biome').is_dir()):
+        die(f'no extracted worldgen under {fixture_root}; run tools/fetch-vanilla first')
+
+    # Every generator writes under <repo>/.fixtures, which is where verify looks.
+    env = {k: v for k, v in os.environ.items() if k not in ('STRATUM_FIXTURES_DIR', 'PROBE_OUT')}
+    in_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
+    probes = fixture_root / 'probes'
+    rows, failed = [], []
+    for u in units:
+        for out in u['outputs']:
+            shutil.rmtree(probes / out['dir'], ignore_errors=True)
+        command = u['argv'] + ['--accept-eula']
+        print(f'{"::group::" if in_actions else "==> "}{u["name"]}: {" ".join(command)}',
+              file=sys.stderr, flush=True)
+        started = time.monotonic()
+        code = subprocess.call(command, cwd=REPO, env=env)
+        seconds = round(time.monotonic() - started)
+        if in_actions:
+            print('::endgroup::', file=sys.stderr, flush=True)
+        rows.append((u['name'], 'ok' if code == 0 else f'exit {code}', seconds))
+        if code != 0:
+            failed.append(u['name'])
+            print(f'{"::error title=probe world " + u["name"] + "::" if in_actions else "error: "}'
+                  f'{" ".join(command)} exited {code} after {seconds}s', file=sys.stderr, flush=True)
+        else:
+            print(f'==> {u["name"]}: done in {seconds}s', file=sys.stderr, flush=True)
+
+    summary = os.environ.get('GITHUB_STEP_SUMMARY')
+    if summary:
+        with open(summary, 'a', encoding='utf-8') as out:
+            out.write('| unit | result | seconds |\n|---|---|---|\n')
+            out.writelines(f'| {name} | {result} | {seconds} |\n' for name, result, seconds in rows)
+    if failed:
+        die(f'{len(failed)} of {len(units)} unit(s) failed: {", ".join(failed)}')
+    return verify(units, REPO / '.fixtures')
+
+
+# --- cache keys ---------------------------------------------------------------
+
+def scripts_of(units):
+    """Each unit's generator plus every tools/analysis/*.sh it runs, transitively.
+
+    A script counts as run when a line that is not a comment names it; a
+    script that is only mentioned in prose is not an input."""
+    found, queue = set(), [u['argv'][0] for u in units]
+    while queue:
+        path = queue.pop()
+        if path in found:
+            continue
+        found.add(path)
+        try:
+            lines = (REPO / path).read_text(encoding='utf-8').splitlines()
+        except OSError as error:
+            die(f'cannot read {path}: {error}')
+        for line in lines:
+            if not line.lstrip().startswith('#'):
+                queue.extend(re.findall(r'tools/analysis/[A-Za-z0-9_.-]+\.sh', line))
+    return sorted(found)
+
+
+def key(shard):
+    epoch, java = os.environ.get('PROBE_CACHE_EPOCH'), os.environ.get('PROBE_JAVA')
+    if not epoch or not java:
+        die('PROBE_CACHE_EPOCH and PROBE_JAVA must be set (ci.yml sets both)')
+    pinned = os.environ.get('MINECRAFT_VERSION')
+    if pinned and pinned != VERSION:
+        die(f'MINECRAFT_VERSION is {pinned}, but this table is for {VERSION}')
+    units = select(shard, None)
+    digest = hashlib.sha256(f'format {FORMAT}\nversion {VERSION}\n'.encode())
+    for u in units:
+        digest.update(json.dumps(u, sort_keys=True).encode() + b'\n')
+    for path in scripts_of(units):
+        digest.update(path.encode() + b'\0' + (REPO / path).read_bytes() + b'\0')
+    return f'probe-worlds-e{epoch}-{VERSION}-jdk{java}-{shard}-{digest.hexdigest()[:32]}'
+
+
+# --- lint -------------------------------------------------------------------
+
+def lint():
+    problems = []
+    generators = {os.path.basename(u['argv'][0]) for u in UNITS}
+    for u in UNITS:
+        path = REPO / u['argv'][0]
+        if not (path.is_file() and os.access(path, os.X_OK)):
+            problems.append(f'{u["name"]}: {u["argv"][0]} is missing or not executable')
+    names = [u['name'] for u in UNITS]
+    problems += [f'unit {n} is listed twice' for n in sorted({n for n in names if names.count(n) > 1})]
+    dirs = [out['dir'] for out in outputs(UNITS)]
+    problems += [f'output {d!r} must be a plain path under probes/' for d in dirs
+                 if d.startswith('/') or '..' in d.split('/') or not d]
+    for i, a in enumerate(dirs):
+        for b in dirs[i + 1:]:
+            if a == b or a.startswith(b + '/') or b.startswith(a + '/'):
+                problems.append(f'two outputs overlap: probes/{a} and probes/{b}')
+    for path in sorted((REPO / ANALYSIS).glob('*-probe.sh')):
+        if path.name not in generators and path.name not in EXEMPT:
+            problems.append(f'{ANALYSIS}{path.name} is neither a unit nor exempt: add it to UNITS '
+                            '(CI then generates it) or to EXEMPT with the reason it is not')
+    for name in sorted(EXEMPT):
+        if name in generators:
+            problems.append(f'{name} is both a unit and exempt')
+        elif not (REPO / ANALYSIS / name).is_file():
+            problems.append(f'{name} is exempt but does not exist')
+
+    workflow = REPO / '.github/workflows/ci.yml'
+    try:
+        text = workflow.read_text(encoding='utf-8')
+    except OSError as error:
+        problems.append(f'cannot read {workflow}: {error}')
+        text = ''
+    if text:
+        matrix = re.search(r'^\s*shard:\s*\[([^\]]*)\]', text, re.M)
+        listed = [s.strip() for s in matrix.group(1).split(',')] if matrix else []
+        if sorted(listed) != sorted(SHARDS):
+            problems.append(f'ci.yml probes matrix lists {listed}, the table has {SHARDS}')
+        restored = set(re.findall(r'steps\.probe-keys\.outputs\.([a-z0-9-]+)', text))
+        if restored != set(SHARDS):
+            problems.append(f'ci.yml restores shards {sorted(restored)}, the table has {sorted(SHARDS)}')
+        version = re.search(r'^\s*MINECRAFT_VERSION:\s*"([^"]+)"', text, re.M)
+        if not version or version.group(1) != VERSION:
+            problems.append(f'ci.yml MINECRAFT_VERSION is not {VERSION}')
+    if problems:
+        print(f'{len(problems)} problem(s):', file=sys.stderr)
+        print('\n'.join('  ' + p for p in problems), file=sys.stderr)
+        return 1
+    print(f'ok: {len(UNITS)} unit(s) in {len(SHARDS)} shard(s), {len(EXEMPT)} exempt probe script(s)')
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='tools/probe-worlds', description=__doc__.split('\n')[0])
+    sub = parser.add_subparsers(dest='command', required=True)
+    for name in ('generate', 'verify'):
+        p = sub.add_parser(name)
+        p.add_argument('--shard')
+        p.add_argument('--only', metavar='GLOB', help='unit name or generator basename')
+        if name == 'generate':
+            p.add_argument('--accept-eula', action='store_true')
+        else:
+            p.add_argument('--fixtures', type=pathlib.Path, default=REPO / '.fixtures')
+    sub.add_parser('shards')
+    sub.add_parser('keys')
+    sub.add_parser('inventory')
+    sub.add_parser('lint')
+    sub.add_parser('key').add_argument('shard')
+    args = parser.parse_args()
+
+    if args.command == 'generate':
+        if not args.accept_eula:
+            die('this runs the Minecraft server, so it needs --accept-eula (verify only checks)')
+        return generate(select(args.shard, args.only))
+    if args.command == 'verify':
+        return verify(select(args.shard, args.only), args.fixtures)
+    if args.command == 'shards':
+        print('\n'.join(SHARDS))
+    elif args.command == 'key':
+        print(f'key={key(args.shard)}')
+    elif args.command == 'keys':
+        print('\n'.join(f'{shard}={key(shard)}' for shard in SHARDS))
+    elif args.command == 'inventory':
+        print(json.dumps({'version': VERSION, 'shards': SHARDS, 'units': UNITS,
+                          'exempt': sorted(EXEMPT)}, indent=1))
+    elif args.command == 'lint':
+        return lint()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

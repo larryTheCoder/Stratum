@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# Stratum — fail CI on a conformance case that skipped without being expected to.
+# Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#
+#   tools/check-skips <ctest-junit.xml> <expected-skips.txt>
+#
+# A case whose fixture is missing SKIPs, and ctest counts a skip as a pass, so a
+# run whose probe worlds silently stopped arriving is green. This reads the
+# report `ctest --output-junit` writes and fails when
+#   * a test did not run (skipped, disabled, not run) and the list does not
+#     name it — printing the end of its output, where Catch2's SKIP reason
+#     names the missing fixture;
+#   * the list names a test that ran: its fixture now arrives, and the line
+#     goes, which is what keeps the list exact rather than a growing excuse;
+#   * the list names a test the report does not hold: renamed or removed;
+#   * the report is missing, unreadable or empty.
+# A FAILED test is not this script's business; ctest has already failed the step.
+#
+# The list holds one test per line, `<reason> <full ctest name>`: the reason
+# is one word, the name begins with `conformance.`, and `#` starts a comment.
+import sys
+import xml.etree.ElementTree as ElementTree
+
+RAN = ('run', 'fail')
+
+
+def die(message):
+    print(f'check-skips: {message}', file=sys.stderr)
+    sys.exit(1)
+
+
+def read_report(path):
+    try:
+        root = ElementTree.parse(path).getroot()
+    except (OSError, ElementTree.ParseError) as error:
+        die(f'cannot read the ctest report {path}: {error}')
+    ran, skipped = set(), {}
+    for case in root.iter('testcase'):
+        name = case.get('name')
+        if case.get('status') in RAN:
+            ran.add(name)
+        else:
+            output = (case.findtext('system-out') or '').strip().splitlines()
+            skipped[name] = output[-6:]
+    if not ran and not skipped:
+        die(f'{path} holds no tests')
+    return ran, skipped
+
+
+def read_list(path):
+    expected = {}
+    try:
+        lines = open(path, encoding='utf-8').read().splitlines()
+    except OSError as error:
+        die(f'cannot read {path}: {error}')
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].startswith('conformance.'):
+            die(f'{path}:{number}: expected "<reason> conformance.<test name>"')
+        reason, name = parts
+        if name in expected:
+            die(f'{path}:{number}: {name} is listed twice')
+        expected[name] = reason
+    return expected
+
+
+def main(argv):
+    if len(argv) != 3:
+        print('usage: check-skips <ctest-junit.xml> <expected-skips.txt>', file=sys.stderr)
+        return 2
+    ran, skipped = read_report(argv[1])
+    expected = read_list(argv[2])
+
+    problems = []
+    for name in sorted(skipped):
+        if name not in expected:
+            tail = ''.join(f'\n      | {line}' for line in skipped[name])
+            problems.append(f'unexpected skip: {name}{tail}')
+    for name, reason in sorted(expected.items()):
+        if name in ran:
+            problems.append(f'listed ({reason}) but ran: {name}; delete its line from {argv[2]}')
+        elif name not in skipped:
+            problems.append(f'listed ({reason}) but not in the report: {name}; renamed or removed?')
+
+    reasons = {}
+    for name in skipped:
+        if name in expected:
+            reasons[expected[name]] = reasons.get(expected[name], 0) + 1
+    summary = ', '.join(f'{count} {reason}' for reason, count in sorted(reasons.items()))
+    print(f'{len(ran)} ran, {len(skipped)} did not; expected: {summary or "none"}')
+    if problems:
+        print(f'{len(problems)} problem(s):', file=sys.stderr)
+        print('\n'.join('  ' + problem for problem in problems), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

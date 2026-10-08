@@ -82,6 +82,23 @@ if(UNIX)
     set_tests_properties(unit.tools.mcdoc_generator PROPERTIES
         LABELS "unit" SKIP_RETURN_CODE 77)
 
+    # tools/probe-worlds: its table against tools/analysis and ci.yml (every
+    # *-probe.sh a unit or exempt, the CI matrix and restores in step), and
+    # generate/verify/key end to end against stub generators. Offline.
+    add_test(NAME unit.tools.probe_worlds
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/probe_worlds_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.probe_worlds PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
+
+    # tools/check-skips, the conformance job's gate: ctest counts a skip as a
+    # pass, so without it a fixture that stopped arriving leaves CI green.
+    add_test(NAME unit.tools.check_skips
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_skips_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.check_skips PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
