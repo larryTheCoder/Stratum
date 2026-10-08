@@ -208,13 +208,16 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         level = kLavaLevel;
     }
     // An aborted scan met a surface submerged in the lava sea, whose level
-    // is lambda (spec Q5.3(b)); a wet level below it reads as lambda. Only
-    // the barrier can see this — the cell is dry above lambda either way —
-    // and over an aborting surface the unfloored ladder builds 7 690 blocks
-    // of barrier the server does not (aquifer-nsfloor-probe.sh). A cell that
-    // did not abort keeps its unclamped ladder: the water/lava and
-    // deep-floor worlds measured that, and a floor there breaks them.
-    if (cell.surface.aborted && level != kNeverLevel && level < lambda) {
+    // is lambda (spec Q5.3(b)), and takes that status before any floodedness
+    // is weighed: a level below lambda — a capped or deep ladder, or the dry
+    // sentinel itself — reads as lambda. Only the barrier can see this (the
+    // cell is dry above lambda either way). Over an aborting surface with
+    // the barrier on (aquifer-nsfloor-probe.sh) the unfloored ladder builds
+    // 7 690 blocks of stone the server does not, and at floodedness 0 the
+    // sentinel builds 3 770 more, every one of them decided lambda's way by
+    // the server. A cell that did not abort keeps its unclamped ladder and
+    // its sentinel: the water/lava and deep-floor worlds measured that.
+    if (cell.surface.aborted && level < lambda) {
         level = lambda;
     }
     return CellLevel{.level = level};
