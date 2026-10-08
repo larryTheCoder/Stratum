@@ -243,6 +243,20 @@ two sample bit-identically. The pipeline engine version does not change:
 nothing about the terrain a given pipeline generates moved, only what the
 blob carries.
 
+**Pipeline engine versions.** §5.6 requires every intentional output change
+to bump the version and be called out; this is that call-out.
+
+| version | what changed in generated output |
+|---|---|
+| 1 | the initial engine |
+| 2 | **The surface pass writes over `default_block` only**: aquifer lava and open water in the overworld are no longer repainted (§11, "The surface pass wrote over the aquifer"). **`above_preliminary_surface` reads the 16-block psl lattice**, not the column. **Aquifers-off dimensions keep the global lava sea** below `min(-54, sea_level)`. And, recorded here because they were never bumped when they landed after freeze format 3 made blobs generate: the aquifer's fluid-type ceiling at -10 (5799e6c), the dry sentinel and unclamped ladder (9fbaa17, ae5ab17), and the barrier's `/10` floor with its agree-guard removed (aa26e4a). The legacy climate noises (§11) changed no output a v1 blob could produce: v1 refused them. |
+
+A v1 blob is refused by a v2 build through the existing engine-version
+check, which is the point: a world frozen under v1 would otherwise grow seams
+at every chunk generated after the upgrade. The version is a plain CMake
+variable, not a cache entry, so a build directory configured before a bump
+cannot keep stamping the old number.
+
 ---
 
 ## 7. Parity tiers & conformance
@@ -595,11 +609,15 @@ mapping has two halves, split at a platform-neutral midpoint:
   below y = -8 and iron's whole range is `[-60, -8]`, so a filler that let
   surface rules win would erase every iron vein in the world — and every
   existing golden test, all of which run with ore veins off, would have
-  stayed green while it happened. `ChunkFiller::applySurfaceRules` skips a
-  position holding a vein block; it is keyed on the six vein blocks rather
-  than on "anything that is not the default block", because `categorize`
-  counts lava as solid too and shielding that would have moved the aquifer
-  results §11 already has exact.
+  stayed green while it happened. `ChunkFiller::applySurfaceRules` now
+  writes over the default block and nothing else, which covers veins as one
+  case of the general rule (§11, "The surface pass wrote over the aquifer").
+  It was first keyed on the six vein blocks alone, on the argument that
+  `categorize` counts lava as solid too and shielding that "would have moved
+  the aquifer results §11 already has exact" — and that argument was the
+  bug: the surface pass was turning every aquifer lava block in the
+  overworld into deepslate, and no aquifer measurement ran with surface
+  rules on over lava.
 
   *Two ambiguities carried rather than guessed.* Neither is observable on
   any probe run so far, and both are recorded in `ore/vein.hpp` beside the
@@ -1550,8 +1568,15 @@ Open:
   four corners — blended linearly in x and z, with the floor falling TWICE:
   once at each lattice sample and once on the blend. Implemented in
   `terrain::ChunkFiller` (`kPreliminarySurfacePitch`,
-  `preliminarySurfaceIn`), which now evaluates the entry four times per chunk
-  rather than 256 times.
+  `preliminarySurfaceIn`), which evaluates the entry four times per chunk
+  rather than 256 times — since pipeline engine v2. This sentence predates
+  that by several commits: the helper landed with the measurement (801453d)
+  and every conformance case scored the helper as a replica of the server,
+  while `applySurfaceRules` itself still read the raw entry per column. The
+  engine never reproduced what the cases credited it with until v2 wired it
+  in; `golden_overworld_test.cpp` now holds the engine's own output, and on
+  the eight golden overworld regions the wiring alone takes exact blocks
+  from 99.9915% to 99.9942% (every second chunk).
 
   Each part was measured separately rather than fitted together, and the
   lattice is then re-derived without any of them — which matters here because
@@ -1677,10 +1702,12 @@ Open:
     says so.
 
   **The shipped engine therefore reads this one router entry TWO different
-  ways, deliberately.** `terrain::ChunkFiller` puts
+  ways, deliberately** (true since engine v2; before it the surface rule read
+  per column too — see above). `terrain::ChunkFiller` puts
   `preliminary_surface_level` through the 16-block lattice above for the
-  SURFACE RULE, and reads it PER COLUMN, at `(x, 0, z)`, for the AQUIFER's
-  four surface consumers. The lattice half is measured, through
+  SURFACE RULE, and the aquifer reads the RAW entry at its own anchor points
+  (`aquifer::readPreliminarySurface`: `floorDiv(centre, 4) * 4` plus a fixed
+  window, as an aborting minimum) for its four surface consumers. The lattice half is measured, through
   `above_preliminary_surface`, over everything in this section. **The aquifer
   half is UNMEASURED** — nothing in this sweep touches it, and the aquifer's
   own probes scoring well under a per-column read is not evidence either way,
@@ -2130,7 +2157,13 @@ Open:
   own air indistinguishable from the column's open sky under a
   fluid-shaped guard.
 
-  The general rule both goldens now confirm: a NON-SOLID position (fluid or
+  **Superseded (engine v2): the rule is narrower still — a rule writes over
+  the default block and nothing else** ("The surface pass wrote over the
+  aquifer", below). The first-stretch reading that follows explained both
+  probes, which have no lava and no open water inside the deepslate band;
+  the golden overworld regions have both, and vanilla rewrote none of them.
+
+  The general rule both goldens then confirmed: a NON-SOLID position (fluid or
   air alike) stays eligible for surface rules only while it is part of the
   column's FIRST (topmost, reached straight from the sky) non-solid
   stretch. Once solid has been crossed anywhere above a position — a plain
@@ -2161,6 +2194,79 @@ Open:
   end to end. Fixed by reading `addStoneDepth`; every existing test that
   exercised either field had it set to `false` in both spellings, so nothing
   masked the bug and nothing regressed fixing it.
+
+- **The surface pass wrote over the aquifer — and the shipped overworld had
+  no lava at all (M4/MA, pipeline engine v2).** Found by running the SHIPPED
+  overworld — `world::CompiledDimension`, aquifers and ore veins on, real
+  biomes, the whole surface tree — against the eight golden overworld
+  regions for the first time. Every aquifer case had run on probe worlds
+  with surface rules off, and the one surface-on aquifer case read four
+  chunks with no lava in them. Over all 805306368 golden blocks:
+
+  | | before | after (v2) |
+  |---|---|---|
+  | raw first pass (aquifer only), category agreement | 805305057 / 805306368 = 99.99984% | unchanged |
+  | vanilla's 127700 lava blocks, shipped output | **0 lava** (127531 deepslate, 169 air) | the aquifer's 127531 kept |
+  | vanilla water written as deepslate | 4215 | 0 |
+  | shipped exact blocks, every second chunk | 99.9755% (full regions) | 99.9942% |
+
+  Two mechanisms in `applySurfaceRules`, one predicate fixing both:
+
+  1. `categorize` calls anything that is not air or `default_fluid` Solid, so
+     the aquifer's literal `lava[level=0]` was Solid in the overworld (whose
+     `default_fluid` is water), and the overworld's own unconditioned
+     `deepslate` gradient (true at y <= 0) repainted it.
+  2. Non-solid positions were skipped only after the column's first solid
+     block, so open water reached straight from the sky stayed in reach: the
+     same gradient painted the bottom of open water in its band (seed 1:
+     y 4..7, 1005 blocks).
+
+  **The predicate, measured: a rule writes over `default_block` and nothing
+  else.** On every second chunk of the eight regions the raw first pass holds
+  6619641 water positions and 31491 lava positions; vanilla's output differs
+  on NONE of the water — open or buried — and on 47 of the lava, all below
+  solid rock and all aquifer residual (20 deepslate, 17 obsidian, 9 air,
+  1 water), not repaint. The ore-vein placement probe measured the same
+  predicate first, from the other side (12934 vein blocks kept, 5548 stone
+  positions repainted). The six-block vein exemption it motivated is now one
+  case of it. The first-stretch reading it replaces (the entry above) kept
+  open water reachable for "a rule keyed on `water` — freezing ice onto a
+  lake's own surface"; that premise is refuted by the same measurement,
+  because reachability is a property of the position and not of the rule —
+  vanilla's unconditioned gradient would have painted some of that open
+  water. The goldens contain no frozen ocean or river biome, so ice-on-water
+  itself is unobserved here; any ice vanilla places on frozen water is
+  therefore not a surface rule's.
+
+  Two further fixes rode the same measurement, both in `ChunkFiller`:
+
+  * **The psl lattice is wired.** `above_preliminary_surface` now reads
+    `preliminary_surface_level` through the measured 16-block lattice
+    (above). Before v2 the helper existed and was tested only as a replica;
+    the engine read per column. Exact blocks 99.9915% -> 99.9942%.
+  * **Aquifers off still keeps a global lava sea** (spec Q1.2/Q2.1): a
+    non-solid position below `min(-54, sea_level)` is lava, not
+    `default_fluid`. Measured on the aquifer-free probe: 1005 positions at
+    y -58..-55 the server filled with lava had all been written as water —
+    invisible to every category-only comparison, where both are "fluid".
+    `golden_fill_test.cpp` now holds it by name.
+
+  What is left of the shipped residual is mostly surface MATERIAL at biome
+  borders — sand/dirt, sandstone/stone, gravel — about 0.006% of blocks. Not
+  attributed. One hypothesis worth testing first, from a permitted reference:
+  vanilla's surface rules read the biome through its seeded "fuzzy" zoom,
+  which cubiomes implements (`voronoiAccess3D`), while this build reads the
+  plain quart cell.
+
+  Held by `golden_overworld_test.cpp` (16 chunks per golden seed, pinned:
+  12582372 exact, 12582889 raw-category, 1191 lava of 1191 surviving; and,
+  per seed, no fluid overwritten), by `golden_fill_test.cpp`'s lava-sea case,
+  by the fixture-free unit case "a surface rule writes over the default block
+  and nothing else" — which fails on the old pass — and by a pinned FNV-1a
+  hash of four shipped overworld chunks (two of them lava-heavy) in
+  `vanilla_compiled_dimension_test.cpp`, which needs only the fetched worldgen
+  data and so runs in CI's conformance job on x86-64 AND ARM64: the first
+  cross-architecture check of aquifer-on output.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

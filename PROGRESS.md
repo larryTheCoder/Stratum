@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-08 (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -33,6 +33,25 @@ pressure, and the fluid type rule. `ChunkFiller` now calls all of it
 directly — the old refusal is gone.
 
 Open:
+
+- [x] **The surface pass wrote over the aquifer — the shipped overworld had no
+      lava — found and fixed (pipeline engine v2).** Nothing had ever run the
+      SHIPPED overworld (CompiledDimension: aquifers, veins, biomes, the whole
+      surface tree) against the golden overworld regions. Doing so: the raw
+      aquifer is 805305057 / 805306368 categories right, but the surface pass
+      turned all of vanilla's 127700 lava blocks into deepslate (127531) or
+      left them air (169), and painted 4215 open-water blocks deepslate.
+      `categorize` called the aquifer's lava Solid, and open water above the
+      first solid stayed in the rules' reach. Measured predicate: a rule
+      writes over `default_block` and nothing else (vanilla changes none of
+      6619641 raw water positions). Now: lava kept, exact blocks 99.9942%
+      (every second chunk). Held by `golden_overworld_test.cpp`, a
+      fixture-free unit case that fails on the old pass, and a pinned
+      cross-architecture fill hash that runs in CI. SPEC §11.
+- [x] **Aquifers-off dimensions keep the global lava sea** (spec Q1.2/Q2.1):
+      1005 positions at y -58..-55 of the aquifer-free probe were written
+      water where the server has lava; invisible to category-only goldens.
+      Fixed in v2, held by `golden_fill_test.cpp` by name.
 
 - [x] **Q6.3's water-over-lava exception — closed, and smaller than it
       read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,
@@ -946,8 +965,15 @@ Open:
       overworlds, the surface-pass control, the depth census, the four
       negative-depth columns, the bottom clamp, and the varying-psl counts
       below.
-- [ ] **Where a spatially varying `preliminary_surface_level` is sampled —
-      open, and found by the sweep above.** `terrain::ChunkFiller` evaluates
+- [x] **Where a spatially varying `preliminary_surface_level` is sampled —
+      measured below, and WIRED into the engine since pipeline engine v2.**
+      Until v2 this box's text was the code's truth even after the
+      measurement landed: `ChunkFiller::preliminarySurfaceIn` existed and the
+      conformance cases scored it as a replica, while `applySurfaceRules`
+      still read the raw entry per column — so the engine never produced what
+      the cases credited it with. Wired now: four samples a chunk, and on the
+      eight golden overworld regions exact blocks go 99.9915% -> 99.9942%
+      (`golden_overworld_test.cpp`). The original finding: `terrain::ChunkFiller` evaluated
       the entry per column. The server does not: driven by a three-valued
       `range_choice` (-40 / 0 / 60), the value that reaches the condition
       takes 101 distinct integer values — every integer from -40 to 60, both

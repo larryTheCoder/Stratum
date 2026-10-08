@@ -138,6 +138,22 @@ private:
     };
 }
 
+/// Deep enough to reach the global lava sea: stone at y <= -61, then every
+/// non-solid position below min(-54, sea_level) is lava (spec Q1.2/Q2.1, with
+/// aquifers off), water from there up to the sea level of 8, open air above.
+[[nodiscard]] nlohmann::json lavaSeaSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 1}};
+    settings["noise_router"]["final_density"] =
+        nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                       {"from_y", -61},
+                       {"to_y", -59},
+                       {"from_value", 1.0},
+                       {"to_value", -1.0}};
+    return settings;
+}
+
 /// `flatSettings` with the three vein router entries pinned to constants that
 /// clear every deterministic gate, so only the RNG is left to decide.
 ///
@@ -562,9 +578,12 @@ TEST_CASE("bandlands runs through the whole filler pipeline, not just the execut
         return name == "minecraft:terracotta" || name.ends_with("_terracotta");
     };
     // The flat plane: stone below y 0, water up to the sea level of 8, open
-    // air above it.
+    // air above it. Only the stone is a surface-rule position: a rule's block
+    // replaces the default block and nothing else (SPEC §11, measured on the
+    // eight golden overworld regions), so the water at y 0 stays water.
     CHECK(isClay(buffer.at(0, -16, 0).name.toString()));
-    CHECK(isClay(buffer.at(0, 0, 0).name.toString()));
+    CHECK(isClay(buffer.at(0, -1, 0).name.toString()));
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:water");
     // AND THE OPEN AIR IS NOT REACHED. The pass starts at the column's
     // topmost non-air block — here the water at y 7 — so an unconditioned
     // rule cannot paint the sky. This assertion read `isClay` at y 8 until
@@ -636,7 +655,7 @@ TEST_CASE("water reads the filler's own latched height, not sea_level directly",
     const LoadedSettings loaded = tree.load();
     const RuleGraph surface =
         resolveSurface(condition(nlohmann::json{{"type", "minecraft:water"},
-                                                {"offset", -2},
+                                                {"offset", -9},
                                                 {"surface_depth_multiplier", 0},
                                                 {"add_stone_depth", false}},
                                  block("minecraft:ice")));
@@ -648,11 +667,22 @@ TEST_CASE("water reads the filler's own latched height, not sea_level directly",
     filler.fill(0, 0, buffer);
 
     // Water fills y = 0..7, so the latched height is 8 — one above the
-    // topmost fluid block, not sea_level compared directly. offset -2 moves
-    // the fired boundary down to y = 6.
-    CHECK(buffer.at(0, 5, 0).name.toString() == "minecraft:water");
-    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:ice");
-    CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:ice");
+    // topmost fluid block. offset -9 puts the fired boundary at y = -1, the
+    // plane's top solid block: the condition is true there and false one
+    // below. (Here the latched height equals sea_level, so this pins the
+    // latch's arithmetic, not its independence from sea_level.)
+    //
+    // The rule fires only on default-block positions. This case used to
+    // assert ice painted INTO the water at y 6 and 7, on the reading that a
+    // column's open fluid stays in reach of the rules for exactly this — a
+    // rule keyed on `water` freezing a lake's surface. Refuted on the golden
+    // overworld regions: vanilla's own unconditioned deepslate gradient
+    // leaves every one of 6619641 open and buried water positions alone, so
+    // no rule reaches a fluid position at all (SPEC §11).
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:ice");
+    CHECK(buffer.at(0, -2, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:water");
+    CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:water");
 }
 
 TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own fluid",
@@ -689,11 +719,13 @@ TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own flui
     // The notch itself — solid rock already crossed above it on the way
     // down — keeps its own fluid untouched.
     CHECK(buffer.at(0, -8, 0).name.toString() == "minecraft:water");
-    // The column's OWN topmost fluid, reached with no solid crossed above
-    // it yet, stays reachable — the same distinction "water reads the
-    // filler's own latched height" exercises through a condition instead of
-    // a bare rule.
-    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:end_stone");
+    // And so does the column's OWN topmost fluid, reached with no solid
+    // crossed above it. An earlier reading kept that one in reach of the
+    // rules; the golden overworld regions refute it — vanilla's
+    // unconditioned deepslate gradient leaves open water alone exactly as it
+    // leaves buried water alone (SPEC §11). A rule writes over the default
+    // block and nothing else.
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:water");
 }
 
 TEST_CASE("an unconditioned rule never rewrites a buried air pocket either",
@@ -758,10 +790,12 @@ TEST_CASE("biome reads the biome the climate router and parameter list compute",
 
     // The flat dimension's climate router is constant zero everywhere, and
     // the table's one entry matches it everywhere, so the biome is
-    // "minecraft:plains" at every position the pass reaches — solid and
-    // fluid alike.
+    // "minecraft:plains" at every position the pass reaches — every
+    // default-block position, at any depth.
     CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:podzol");
-    CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:podzol");
+    CHECK(buffer.at(3, -4, 9).name.toString() == "minecraft:podzol");
+    // The water above the plane is not a surface-rule position at all.
+    CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:water");
     // Open sky above the water is not reached at all; see the scan bound in
     // ChunkFiller::applySurfaceRules. What this case is about is the BIOME
     // lookup, and the two positions above exercise it.
@@ -958,4 +992,35 @@ TEST_CASE("steep reads neighbours clamped to this chunk, never a block outside i
     CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
     CHECK(buffer.at(15, -1, 15).name.toString() == "minecraft:stone");
     CHECK(buffer.paletteSize() == 3U);
+}
+
+TEST_CASE("a surface rule writes over the default block and nothing else",
+          "[terrain][filler][surface]") {
+    // The fixture-free guard for what golden_overworld_test.cpp measured on
+    // the real overworld (SPEC §11): an unconditioned rule — the shape of the
+    // overworld's own deepslate gradient — replaces the default block at any
+    // depth, and leaves lava, open water and air exactly as the first pass
+    // left them. The pass used to repaint lava (categorised Solid, because it
+    // is not this dimension's default_fluid) and the column's open water.
+    const TempTree tree;
+    tree.defineSettings("test", lavaSeaSettings());
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(block("minecraft:diamond_block"));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    for (int x : {0, 7, 15}) {
+        CAPTURE(x);
+        CHECK(buffer.at(x, -64, x).name.toString() == "minecraft:diamond_block");
+        CHECK(buffer.at(x, -61, x).name.toString() == "minecraft:diamond_block");
+        // The aquifers-off global lava sea: below min(-54, sea_level).
+        CHECK(buffer.at(x, -60, x).name.toString() == "minecraft:lava");
+        CHECK(buffer.at(x, -55, x).name.toString() == "minecraft:lava");
+        // ... and default_fluid from -54 up to sea_level.
+        CHECK(buffer.at(x, -54, x).name.toString() == "minecraft:water");
+        CHECK(buffer.at(x, 7, x).name.toString() == "minecraft:water");
+        CHECK(buffer.at(x, 8, x).name.toString() == "minecraft:air");
+    }
 }

@@ -66,9 +66,9 @@ readonly MIN_Y=-64
 readonly HEIGHT=384
 # Per dimension, squared: 8 -> a 128x128-block FORCELOADED square. What the
 # readback then covers is larger, because the server generates a border of
-# chunks around the square and the whole region file is copied: at --origin 0
+# chunks around the square and the whole region file is copied: at --origin-chunk 0 0
 # that is x, z in [0, 191] (the negative half of the border falling in a
-# region that is not copied) and at --origin -12 it is x, z in [-256, -1].
+# region that is not copied) and at --origin-chunk -12 -12 it is x, z in [-256, -1].
 # Measured in tests/conformance/vanilla_psl_lattice_test.cpp, "every dimension
 # of the sweep, scored twice and with its extent measured".
 readonly CHUNKS=8
