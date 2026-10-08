@@ -8,8 +8,8 @@
 # run whose probe worlds silently stopped arriving is green. This reads the
 # report `ctest --output-junit` writes and fails when
 #   * a test did not run (skipped, disabled, not run) and the list does not
-#     name it — printing the end of its output, where Catch2's SKIP reason
-#     names the missing fixture;
+#     name it — printing its output from Catch2's SKIPPED: line on, the
+#     reason that names the missing fixture, without Catch2's run totals;
 #   * the list names a test that ran: its fixture now arrives, and the line
 #     goes, which is what keeps the list exact rather than a growing excuse;
 #   * the list names a test the report does not hold: renamed or removed;
@@ -22,11 +22,25 @@ import sys
 import xml.etree.ElementTree as ElementTree
 
 RAN = ('run', 'fail')
+# Catch2's run totals, which end every report and say nothing about why.
+TOTALS = ('====', 'test cases:', 'assertions:')
 
 
 def die(message):
     print(f'check-skips: {message}', file=sys.stderr)
     sys.exit(1)
+
+
+def reason_in(output):
+    """Why a test skipped: from its last SKIPPED: line on, where Catch2 puts the
+    message (wrapped at 80 columns), else the last lines; never the totals."""
+    lines = [line for line in output.splitlines() if not line.startswith(TOTALS)]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    for index in range(len(lines) - 1, -1, -1):
+        if 'SKIPPED:' in lines[index]:
+            return lines[index:index + 12]
+    return lines[-8:]
 
 
 def read_report(path):
@@ -40,8 +54,7 @@ def read_report(path):
         if case.get('status') in RAN:
             ran.add(name)
         else:
-            output = (case.findtext('system-out') or '').strip().splitlines()
-            skipped[name] = output[-6:]
+            skipped[name] = reason_in(case.findtext('system-out') or '')
     if not ran and not skipped:
         die(f'{path} holds no tests')
     return ran, skipped

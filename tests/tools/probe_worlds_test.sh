@@ -49,7 +49,8 @@ export PATH="${work}/bin:${PATH}"
 
 # What every stub runs: finds its unit by script and arguments and writes
 # what the table says that unit writes. FAKE_FAIL=<unit> makes the unit exit
-# 1; FAKE_THAWED=<corpus> records that corpus as not frozen.
+# 1 having written nothing, FAKE_PARTIAL=<unit> after writing everything;
+# FAKE_THAWED=<corpus> records that corpus as not frozen.
 cat > "${work}/stub.py" <<'PY'
 import json, os, pathlib, sys
 inventory, script, args = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3:]
@@ -79,6 +80,8 @@ for out in unit['outputs']:
         (root / spec['file']).write_text(json.dumps(
             {'seed': spec['seed'], 'ticks_frozen': spec.get('frozen', False),
              'version': inventory['version'], 'variants': [{}] * spec.get('variants', 0)}))
+if os.environ.get('FAKE_PARTIAL') == unit['name']:
+    sys.exit(1)
 PY
 
 # One stub per generator (a density one names density-probe.sh, as the real
@@ -122,9 +125,42 @@ mkdir -p "${probes}/pslvar/stale"
 expect 0 "replaces a unit's corpus whole" "of 1 unit(s) present" "${pw}" generate --only pslvar --accept-eula
 test ! -e "${probes}/pslvar/stale"
 rm -r "${probes}/lowsea"
+echo old > "${probes}/fluidtype/old"
 expect 1 "names a failed unit, after running the rest" "1 of 9 unit(s) failed: fluidtype" \
     env FAKE_FAIL=fluidtype "${pw}" generate --shard aquifer --accept-eula
 test -s "${probes}/lowsea/manifest.json"
+if ! { test -s "${probes}/fluidtype/old" && test -s "${probes}/fluidtype/one/r.0.0.mca"; }; then
+    echo "FAIL: a failed unit lost the corpus it had"; exit 1
+fi
+test ! -e "${probes}.previous" || { echo "FAIL: probes.previous left behind"; exit 1; }
+echo "ok: a failed unit keeps the corpus it had"
+for corpus in comb_42 comb_7 comb_12345 comb_999; do echo old > "${probes}/${corpus}/old"; done
+expect 1 "a unit that fails part-way is undone whole" "1 of 1 unit(s) failed: comb" \
+    env FAKE_PARTIAL=comb "${pw}" generate --only comb --accept-eula
+for corpus in comb_42 comb_7 comb_12345 comb_999; do
+    test -s "${probes}/${corpus}/old" || { echo "FAIL: ${corpus} not put back"; exit 1; }
+done
+rm -r "${probes}/depthgate"
+expect 1 "a first generation that fails leaves nothing half-written" "failed: depthgate" \
+    env FAKE_PARTIAL=depthgate "${pw}" generate --only depthgate --accept-eula
+test ! -e "${probes}/depthgate" || { echo "FAIL: a half-written depthgate was kept"; exit 1; }
+echo "ok: a failed unit's half-written corpus goes"
+# A run killed outright: the corpus set aside is the last whole one.
+mkdir -p "${probes}.previous" && mv "${probes}/lowsea" "${probes}.previous/lowsea"
+echo old > "${probes}.previous/lowsea/old"
+mkdir -p "${probes}/lowsea" && echo half > "${probes}/lowsea/half"
+expect 1 "after a killed run, a failure restores the copy set aside" "failed: lowsea" \
+    env FAKE_FAIL=lowsea "${pw}" generate --only lowsea --accept-eula
+if ! { test -s "${probes}/lowsea/old" && test ! -e "${probes}/lowsea/half" \
+        && test ! -e "${probes}.previous"; }; then
+    echo "FAIL: the copy set aside by a killed run was not restored"; exit 1
+fi
+echo "ok: a killed run's half-written corpus is not taken for the previous one"
+expect 0 "a success replaces the copy set aside" "of 1 unit(s) present" \
+    "${pw}" generate --only lowsea --accept-eula
+if ! { test ! -e "${probes}/lowsea/old" && test ! -e "${probes}.previous"; }; then
+    echo "FAIL: a successful unit kept its previous corpus"; exit 1
+fi
 expect 1 "refuses what it generated unfrozen" "lowsea/manifest.json: ticks_frozen is False" \
     env FAKE_THAWED=lowsea "${pw}" generate --only lowsea --accept-eula
 expect 0 "generates every shard" "probe corpora of 35 unit(s) present" "${pw}" generate --accept-eula

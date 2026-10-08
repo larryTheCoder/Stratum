@@ -99,6 +99,14 @@ if(UNIX)
     )
     set_tests_properties(unit.tools.check_skips PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
 
+    # check-determinism.sh rule 8 against every YAML spelling of an artifact
+    # upload: lint.determinism only sees that today's tree has none.
+    add_test(NAME unit.tools.no_artifact_upload
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/no_artifact_upload_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.no_artifact_upload PROPERTIES LABELS "unit")
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."

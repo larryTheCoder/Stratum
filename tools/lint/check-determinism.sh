@@ -15,9 +15,10 @@
 #      test binary as a filter, and through the Windows codepage a non-ASCII
 #      character arrives mangled, so the case matches nothing and fails on
 #      both Windows legs alone
-#   8. no workflow uploads an artifact: CI's files can be Mojang-derived
-#      (probe worlds, server work directories), and on a public repository
-#      an artifact is a download for anyone signed in (SPEC §12)
+#   8. nothing in .github, nor any action.yml, names upload-artifact or
+#      upload-pages-artifact: CI's files can be Mojang-derived (probe
+#      worlds, server work directories), and on a public repository an
+#      artifact is a download for anyone signed in (SPEC §12)
 #
 # NOT enforced here, on purpose: "no raw % or >> on possibly-negative
 # values". Detecting that textually produces false positives on streams and
@@ -191,10 +192,22 @@ echo "== 8. nothing published from CI =="
 # repository-scoped Actions cache only. A workflow artifact on a public
 # repository is a download for anyone signed in, so no workflow may upload
 # one — not even "just the logs", which is how a .fixtures or server work
-# directory gets swept in. Commented-out lines do not count.
-uploads="$(grep -rnE '^[^#]*uses:.*upload-(pages-)?artifact' .github/workflows 2>/dev/null || true)"
+# directory gets swept in. Any non-comment line that names either action
+# counts, in any case and in any YAML spelling (a quoted key, a folded
+# `uses: >-`), anywhere under .github (workflows and local actions alike)
+# or in an action.yml elsewhere in the tree. What a third-party action does
+# inside itself is beyond a grep, which is why ci.yml uses actions/* only.
+upload_pattern='^[^#]*upload-(pages-)?artifact'
+uploads="$( {
+    grep -rniE "${upload_pattern}" .github 2>/dev/null
+    find . -path ./.git -prune -o -path ./.github -prune -o -path ./.claude -prune -o \
+        -path ./.fixtures -prune -o -path ./fixtures -prune -o -path ./build -prune -o \
+        -path './cmake-build-*' -prune -o -path '*/_deps' -prune -o -path '*/node_modules' -prune -o \
+        -type f \( -name action.yml -o -name action.yaml \) \
+        -exec grep -niHE "${upload_pattern}" {} + 2>/dev/null
+} || true)"
 if [[ -n "${uploads}" ]]; then
-    fail "a workflow uploads an artifact; CI's files can be Mojang-derived (SPEC §12):"
+    fail "CI would upload an artifact; CI's files can be Mojang-derived (SPEC §12):"
     printf '%s\n' "${uploads}" >&2
 else
     echo "  ok"
