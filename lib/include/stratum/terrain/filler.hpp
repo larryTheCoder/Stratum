@@ -43,14 +43,15 @@
 //
 // WHAT THIS DOES NOT DO, and refuses rather than approximating (SPEC §8):
 //
-//   * **Two narrow pieces of the aquifer**, carried rather than guessed
-//     (`aquifer/substance.hpp`'s own header has the numbers): Q6.3's
-//     water-over-lava exception, and Pi's mixed-fluid-type branch. Measured
-//     against a real, aquifer-on overworld region
+//   * **The aquifer's fluid ticks** (spec Q8): the fill decision is
+//     implemented whole — Q6.3's water-over-lava exception and Π's
+//     mixed-fluid-type branch included — but no position is flagged for the
+//     post-processing that makes the server's fluids flow once a chunk
+//     loads. Measured against a real, aquifer-on overworld region
 //     (`golden_fill_aquifer_test.cpp`): EXACT on 393216 of 393216 blocks'
-//     category, before any surface rule runs, on the four chunks that test
-//     pins; over a wider 64-chunk sweep the residual — everything the two
-//     gaps above together could plausibly explain — is 733 of 6291456.
+//     category before any surface rule runs, and over a 64-chunk sweep
+//     6291264 of 6291456, every one of the 192 flowing water the server's
+//     ticks spread (`tests/support/fluid_flow.hpp`).
 //   * **Surface rules.** These are not refused, because they only ever
 //     REPLACE blocks this filler has already placed — a column filled without
 //     them is the same column with stone where grass, dirt, gravel, deepslate

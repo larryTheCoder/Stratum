@@ -9,8 +9,8 @@
 // and it was still armed here.
 //
 // It matters on its own. A correct level with a wrong type still writes the
-// wrong block, so this gates the filler's refusal by itself (SPEC §10,
-// milestone MA blocker 4).
+// wrong block — which is why it was MA's blocker 4 before the filler stopped
+// refusing aquifers (SPEC §10).
 //
 // WHAT IS MEASURED, on the `elava` probe arm across four world seeds — the one
 // arm that gives `lava` vanilla's own noise instead of a constant. 3125 cells

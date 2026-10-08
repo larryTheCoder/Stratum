@@ -156,9 +156,9 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {

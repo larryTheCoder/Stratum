@@ -25,8 +25,10 @@
 // and skipping only the handful of blocks that are neither, has no such
 // failure mode.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated tools/analysis/aquifer-nearsurface-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-nearsurface-analyze
-//   build/aquifer-nearsurface-analyze .fixtures/1.21.11/probes/nearsurface <seed>
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//   tools/analysis/aquifer-nearsurface-analyze.cpp -L build/dev/lib -lstratum_core -lz -o
+//   build/aquifer-nearsurface-analyze build/aquifer-nearsurface-analyze
+//   .fixtures/1.21.11/probes/nearsurface <seed>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -43,6 +45,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -92,9 +95,9 @@ void record(Tally& t, bool observedWet, bool currentWet, bool altWet) {
 
 void report(const char* label, const Tally& t) {
     const double pc =
-        t.total ? static_cast<double>(t.matchCurrent) / static_cast<double>(t.total) : 0.0;
+        (t.total != 0) ? static_cast<double>(t.matchCurrent) / static_cast<double>(t.total) : 0.0;
     const double pa =
-        t.total ? static_cast<double>(t.matchAlt) / static_cast<double>(t.total) : 0.0;
+        (t.total != 0) ? static_cast<double>(t.matchAlt) / static_cast<double>(t.total) : 0.0;
     std::printf("  %-14s total=%-7lld current=%-7lld (%.4f)  alt=%-7lld (%.4f)  both=%-7lld  "
                 "neither=%-7lld\n",
                 label, t.total, t.matchCurrent, pc, t.matchAlt, pa, t.matchBoth, t.matchNeither);
@@ -102,7 +105,7 @@ void report(const char* label, const Tally& t) {
 
 /// Which xz_scale each probe dimension's field was built with — must match
 /// aquifer-nearsurface-probe.sh's own `aquifer(name, scale)` calls exactly.
-double scaleForDimension(const std::string& name) {
+std::optional<double> scaleForDimension(const std::string& name) {
     if (name == "nsf_8") {
         return 1.0;
     }
@@ -110,7 +113,7 @@ double scaleForDimension(const std::string& name) {
         return 0.5;
     }
     std::fprintf(stderr, "unknown dimension %s, skipping\n", name.c_str());
-    return 0.0;
+    return std::nullopt;
 }
 
 } // namespace
@@ -134,7 +137,7 @@ int main(int argc, char** argv) {
     }
     {
         std::ofstream noiseFile(packDir / "data" / "stratum" / "worldgen" / "noise" /
-                                 "probe_noise.json");
+                                "probe_noise.json");
         noiseFile << R"({"firstOctave": -3, "amplitudes": [1.0]})";
     }
     const auto pack = data::Pack::open(packDir);
@@ -160,13 +163,14 @@ int main(int argc, char** argv) {
     long long skipped = 0;
 
     for (const std::string& name : names) {
-        const double xzScale = scaleForDimension(name);
-        if (xzScale == 0.0) {
+        const std::optional<double> scale = scaleForDimension(name);
+        if (!scale.has_value()) {
             continue;
         }
+        const double xzScale = *scale;
         const auto psl = [&](std::int32_t x, std::int32_t /*y*/, std::int32_t z) -> double {
             const double n = probeNoise.sample(static_cast<double>(x) * xzScale, 0.0,
-                                                static_cast<double>(z) * xzScale);
+                                               static_cast<double>(z) * xzScale);
             if (n < kTLow) {
                 return kLow;
             }
@@ -194,9 +198,8 @@ int main(int argc, char** argv) {
                         for (int y = kMinY; y <= kMaxY; ++y) {
                             const auto* b = ch.blockAt(lx, y, lz);
                             bool observedWet;
-                            if (b && b->name == "minecraft:water") {
-                                observedWet = true;
-                            } else if (b && b->name == "minecraft:lava") {
+                            if (b != nullptr &&
+                                (b->name == "minecraft:water" || b->name == "minecraft:lava")) {
                                 observedWet = true;
                             } else if (b && b->name == "minecraft:air") {
                                 observedWet = false;
@@ -225,11 +228,11 @@ int main(int argc, char** argv) {
                             const aquifer::PslRead surface =
                                 aquifer::readPreliminarySurface(psl, centre, kSeaLevel);
 
-                            aquifer::CellFluid cellFluid{.centreY = centre.y,
-                                                          .surface = surface,
-                                                          .seaLevel = kSeaLevel,
-                                                          .floodedness = kFloodedness,
-                                                          .spread = kSpread};
+                            aquifer::CellFluid const cellFluid{.centreY = centre.y,
+                                                               .surface = surface,
+                                                               .seaLevel = kSeaLevel,
+                                                               .floodedness = kFloodedness,
+                                                               .spread = kSpread};
                             const std::int32_t current = aquifer::cellFluidLevel(cellFluid);
                             const bool currentWet = y < current;
                             record(baseline, observedWet, currentWet, currentWet);

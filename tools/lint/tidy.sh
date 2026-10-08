@@ -58,7 +58,13 @@ while IFS= read -r file; do
 done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
     printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
                    tools/analysis/legacy-goldens-biome-analyze.cpp \
-                   tools/analysis/legacy-goldens-surface-analyze.cpp)
+                   tools/analysis/legacy-goldens-surface-analyze.cpp \
+                   tools/analysis/aquifer-barrier-analyze.cpp \
+                   tools/analysis/aquifer-cells.cpp \
+                   tools/analysis/aquifer-deepfloor-analyze.cpp \
+                   tools/analysis/aquifer-fluidtype-analyze.cpp \
+                   tools/analysis/aquifer-nearsurface-analyze.cpp \
+                   tools/analysis/aquifer-waterlava-analyze.cpp)
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"

@@ -78,8 +78,8 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz))
-                    continue;
+                // A missing chunk is a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (int lz = 0; lz < 16; ++lz) {

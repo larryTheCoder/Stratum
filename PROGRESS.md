@@ -79,6 +79,18 @@ Open:
 - [ ] **`y_skip` against the server.** Only the arithmetic and the
       invariance are pinned; a world whose surface sits at -81..-92 is where
       the server would show it.
+- [x] **Aquifer hygiene.** Java int semantics at every aquifer narrowing
+      and level sum (no datapack input is undefined behaviour); Q1.4's
+      sentinel derived from the spec's arithmetic; Q5.6's clamp proven inert
+      by sweep; dead API (`baseLevel`, `fluidLevel`, the two-source reach)
+      removed; the vacuous waterlava and lattice assertions replaced; the
+      legacy-source refusals tested; probe chunks REQUIREd; the six aquifer
+      analyzers built, formatted and tidied, their output unchanged. SPEC §11.
+- [ ] **Lava in the surface pass's stone-depth run.** `categorize` calls the
+      aquifer's lava Solid, so it counts toward `stone_depth` where water
+      neither counts nor breaks the run. Water's behaviour is measured;
+      lava's is not, and no golden block has been attributed to it either
+      way. Needs a probe with a `stone_depth` rule under an aquifer lava pool.
 - [ ] **Q8's fluid-update flag.** Unimplemented, so Stratum's output has no
       post-processing positions and no fluid ever ticks after generation —
       the whole of the golden residual above. Rank 4 is computed and unused.

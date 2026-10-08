@@ -2,11 +2,11 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // `lattice.hpp` says what fluid ONE cell holds. `barrier.hpp` says what
-// happens where TWO of them disagree. Nothing said which cells those are, and
-// that gap is why the filler still refuses aquifers: `placesBarrier` has only
-// ever been called with two levels handed to it by a caller that does not
-// exist in this tree, and about 13% of the server's real barriers come from a
-// THIRD source that no two-source caller could ever supply.
+// happens where TWO of them disagree. This says which cells those are — the
+// layer whose absence once kept the filler refusing aquifers, since about 13%
+// of the server's real barriers come from a THIRD source that no two-source
+// caller could ever supply. `ChunkFiller` calls it through
+// `computeSubstance` (substance.hpp).
 //
 // This file is that missing layer. It is the first code in `lib/` written
 // against the clean-room specification of SPEC §12 rather than derived here
@@ -41,7 +41,7 @@
 //
 // WHAT THE WHOLE LAYER SCORES AGAINST THE SERVER, which is the part no unit
 // vector can supply. Two readouts of the open-void probe, neither of them
-// touching the refuted barrier predicate (tests/conformance):
+// touching the barrier predicate at all (tests/conformance):
 //
 //   * 637252 barrier blocks the server wrote, on four seeds. Every one has
 //     `d2 - d1 < 25`, which is the only separation at which any of Q6.6's

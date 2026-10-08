@@ -49,7 +49,9 @@
 // lava-typed sources are those centred below `lambda` — which is exactly
 // what puts them on the rows just above the sea, and nowhere else.)
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-waterlava-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-waterlava-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I
+//   build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-waterlava-analyze.cpp
+//   -L build/dev/lib -lstratum_core -lz -o build/aquifer-waterlava-analyze
 //   build/aquifer-waterlava-analyze .fixtures/1.21.11/probes/waterlava_s42
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
@@ -74,6 +76,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -84,6 +87,11 @@
 using namespace stratum;
 
 namespace {
+
+/// A bool as a count, spelled out: `+= flag` is an implicit conversion.
+[[nodiscard]] constexpr long long one(const bool flag) noexcept {
+    return flag ? 1 : 0;
+}
 
 struct Dimension {
     std::string name;
@@ -96,7 +104,7 @@ struct Dimension {
 };
 
 /// What the server left at a block, reduced to what the aquifer decided.
-enum class Observed { Stone, Water, Lava, Air, Other };
+enum class Observed : std::uint8_t { Stone, Water, Lava, Air, Other };
 
 Observed classify(const std::string& name) {
     if (name == "minecraft:stone") {
@@ -142,8 +150,7 @@ bool typeMatches(Observed o, aquifer::SubstanceAt s) {
 /// `placesBarrier` uses, needed here only to weigh the ALTERNATIVE
 /// mixed-type readings the committed predicate does not implement.
 double similarity(const std::int64_t di, const std::int64_t dj) {
-    return 1.0 -
-           static_cast<double>(dj - di) / static_cast<double>(aquifer::kSimilarityRange);
+    return 1.0 - static_cast<double>(dj - di) / static_cast<double>(aquifer::kSimilarityRange);
 }
 
 /// The types-regardless reading of Q6.4's first clause: would a mixed-type
@@ -191,11 +198,10 @@ NearestPairMixedDisagreeing nearestPairTypeField(const aquifer::BarrierAt& at) {
 /// past the sea gate `Global(Q).level` — -54 below lambda, the sea at or
 /// above it — past the local gate the ladder with no clamp at lambda, and
 /// otherwise the sentinel `never`.
-constexpr std::int32_t kNever = -32512;
+constexpr std::int32_t kNever = aquifer::kNeverLevel; // Q1.4, derived in lattice.hpp
 
 std::int32_t specLevelOf(const aquifer::CellIndex& centre, const double floodedness,
-                         const double spread, const std::int32_t seaLevel,
-                         const std::int32_t psl) {
+                         const double spread, const std::int32_t seaLevel, const std::int32_t psl) {
     const std::int32_t lambda = aquifer::lambdaLevel(seaLevel);
     if (floodedness > aquifer::kFloodedSeaThreshold) {
         return centre.y < lambda ? aquifer::kLavaLevel : seaLevel;
@@ -217,8 +223,7 @@ bool hasMixedPair(const aquifer::BarrierAt& at) {
     }
     const double s13 = similarity(at.nearest.distanceSq, at.third.distanceSq);
     const double s23 = similarity(at.second.distanceSq, at.third.distanceSq);
-    return at.nearest.type != at.second.type ||
-           (s13 > 0.0 && at.nearest.type != at.third.type) ||
+    return at.nearest.type != at.second.type || (s13 > 0.0 && at.nearest.type != at.third.type) ||
            (s23 > 0.0 && at.second.type != at.third.type);
 }
 
@@ -310,7 +315,7 @@ void report(const std::string& dim, std::int32_t y, std::int32_t lambda, const R
         levels += " level=" + lvl + ":" + std::to_string(n);
     }
     const auto pct = [](long long a, long long b) {
-        return b ? 100.0 * static_cast<double>(a) / static_cast<double>(b) : 0.0;
+        return b != 0 ? 100.0 * static_cast<double>(a) / static_cast<double>(b) : 0.0;
     };
     std::printf("  %s y=%d (lambda%+d): n=%lld other=%lld  stone: server=%lld bare=%lld now=%lld"
                 "  category: bare=%.4f%% now=%.4f%%  type: bare=%lld/%lld now=%lld/%lld\n",
@@ -375,7 +380,9 @@ std::vector<Dimension> readSpec(const std::filesystem::path& specPath) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+
+int run(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: aquifer-waterlava-analyze <probe-dir>\n");
         return 2;
@@ -449,8 +456,8 @@ int main(int argc, char** argv) {
         // itself (Q6.3's), three above (a control where the two clauses must
         // be inert) — and -55..-53 on every arm, so the low-sea arm shows
         // -54 as an ordinary row.
-        std::set<std::int32_t> rows{lambda - 1, lambda, lambda + 1, lambda + 2,
-                                    lambda + 3, -55,    -54,        -53};
+        const std::set<std::int32_t> rows{lambda - 1, lambda, lambda + 1, lambda + 2,
+                                          lambda + 3, -55,    -54,        -53};
         std::map<std::int32_t, RowTally> tallies;
 
         std::printf("=== %s (D=%.2f, sea_level=%d, lambda=%d, min_y=%d) ===\n", dim.name.c_str(),
@@ -598,7 +605,7 @@ int main(int argc, char** argv) {
                                                     above->name == "minecraft:water" &&
                                                     below != nullptr &&
                                                     below->name == "minecraft:obsidian";
-                                t.belowSeaWaterUnexplained += !fellIn;
+                                t.belowSeaWaterUnexplained += one(!fellIn);
                                 dumpThis = !fellIn;
                             }
                             if (dumpThis && dumped < 16) {
@@ -606,10 +613,11 @@ int main(int argc, char** argv) {
                                 std::string column;
                                 for (std::int32_t yy = y - 2; yy <= y + 4; ++yy) {
                                     const auto* bb = ch.blockAt(lx, yy, lz);
-                                    std::string nm = bb ? bb->name : "<none>";
-                                    if (bb) {
+                                    std::string nm = bb != nullptr ? bb->name : "<none>";
+                                    if (bb != nullptr) {
                                         for (const auto& [k, v] : bb->properties) {
-                                            nm += "[" + k + "=" + v + "]";
+                                            nm.append("[").append(k).append("=").append(v).append(
+                                                "]");
                                         }
                                     }
                                     column += " " + std::to_string(yy) + ":" + nm;
@@ -645,20 +653,20 @@ int main(int argc, char** argv) {
                                             x, y, z, column.c_str(), model.c_str());
                             }
                             const bool obsStone = observed == Observed::Stone;
-                            t.observedStone += obsStone;
-                            t.bareStone += isStone(bare);
-                            t.nowStone += isStone(now);
-                            t.bareCategoryMatch += categoryMatches(observed, bare);
-                            t.nowCategoryMatch += categoryMatches(observed, now);
+                            t.observedStone += one(obsStone);
+                            t.bareStone += one(isStone(bare));
+                            t.nowStone += one(isStone(now));
+                            t.bareCategoryMatch += one(categoryMatches(observed, bare));
+                            t.nowCategoryMatch += one(categoryMatches(observed, now));
                             const bool obsFluid =
                                 observed == Observed::Water || observed == Observed::Lava;
                             if (obsFluid && bare.substance == aquifer::Substance::Fluid) {
                                 ++t.bareBothFluid;
-                                t.bareTypeMatch += typeMatches(observed, bare);
+                                t.bareTypeMatch += one(typeMatches(observed, bare));
                             }
                             if (obsFluid && now.substance == aquifer::Substance::Fluid) {
                                 ++t.nowBothFluid;
-                                t.nowTypeMatch += typeMatches(observed, now);
+                                t.nowTypeMatch += one(typeMatches(observed, now));
                             }
 
                             const bool nearestWater =
@@ -666,20 +674,20 @@ int main(int argc, char** argv) {
                             const bool globalLavaBelow = (y - 1) < lambda;
                             if (nearestWater && globalLavaBelow) {
                                 ++t.fires;
-                                t.firesBareStone += isStone(bare);
-                                t.firesObservedStone += obsStone;
-                                t.firesRescued += (isStone(bare) && !obsStone);
-                                t.firesOther += (observed == Observed::Other);
+                                t.firesBareStone += one(isStone(bare));
+                                t.firesObservedStone += one(obsStone);
+                                t.firesRescued += one((isStone(bare) && !obsStone));
+                                t.firesOther += one((observed == Observed::Other));
                             }
                             if (!nearestFluid) {
                                 ++t.nearestAir;
-                                t.nearestAirBareStone += isStone(bare);
-                                t.nearestAirObservedStone += obsStone;
-                                t.nearestAirCategoryMatch += categoryMatches(observed, bare);
+                                t.nearestAirBareStone += one(isStone(bare));
+                                t.nearestAirObservedStone += one(obsStone);
+                                t.nearestAirCategoryMatch += one(categoryMatches(observed, bare));
                             }
                             if (nearestFluid && nearestType == aquifer::FluidType::Lava) {
                                 ++t.nearestLava;
-                                t.nearestLavaObservedStone += obsStone;
+                                t.nearestLavaObservedStone += one(obsStone);
                             }
 
                             // Q6.4: scored on the rows the lattice owns
@@ -687,42 +695,41 @@ int main(int argc, char** argv) {
                             // a barrier), and off the one row Q6.3 pre-empts
                             // the predicate on — where the predicate's own
                             // answer is not what the server was asked.
-                            const bool q63Row =
-                                y == lambda && nearestWater; // the exception fires
+                            const bool q63Row = y == lambda && nearestWater; // the exception fires
                             if (y >= lambda && !q63Row && observed != Observed::Other) {
                                 if (hasMixedPair(at)) {
                                     ++t.mixedBlocks;
-                                    t.mixedServerStone += obsStone;
-                                    t.mixedOldMiss += (obsStone && !oldStone);
-                                    t.mixedNewMiss += (obsStone && !typedStone);
-                                    t.mixedOldFalse += (!obsStone && oldStone);
-                                    t.mixedNewFalse += (!obsStone && typedStone);
-                                    t.mixedSpecOldMiss += (obsStone && !specOldStone);
-                                    t.mixedSpecNewMiss += (obsStone && !specNewStone);
-                                    t.mixedSpecOldFalse += (!obsStone && specOldStone);
-                                    t.mixedSpecNewFalse += (!obsStone && specNewStone);
+                                    t.mixedServerStone += one(obsStone);
+                                    t.mixedOldMiss += one((obsStone && !oldStone));
+                                    t.mixedNewMiss += one((obsStone && !typedStone));
+                                    t.mixedOldFalse += one((!obsStone && oldStone));
+                                    t.mixedNewFalse += one((!obsStone && typedStone));
+                                    t.mixedSpecOldMiss += one((obsStone && !specOldStone));
+                                    t.mixedSpecNewMiss += one((obsStone && !specNewStone));
+                                    t.mixedSpecOldFalse += one((!obsStone && specOldStone));
+                                    t.mixedSpecNewFalse += one((!obsStone && specNewStone));
                                 } else {
-                                    t.pureServerStone += obsStone;
-                                    t.pureNewMiss += (obsStone && !typedStone);
-                                    t.pureNewFalse += (!obsStone && typedStone);
-                                    t.pureSpecNewMiss += (obsStone && !specNewStone);
-                                    t.pureSpecNewFalse += (!obsStone && specNewStone);
+                                    t.pureServerStone += one(obsStone);
+                                    t.pureNewMiss += one((obsStone && !typedStone));
+                                    t.pureNewFalse += one((!obsStone && typedStone));
+                                    t.pureSpecNewMiss += one((obsStone && !specNewStone));
+                                    t.pureSpecNewFalse += one((!obsStone && specNewStone));
                                 }
                                 const NearestPairMixedDisagreeing tf = nearestPairTypeField(at);
                                 if (tf.applies) {
                                     ++t.tfBlocks;
                                     if (tf.constantFires && !oldStone) {
                                         ++t.tfConstantOnly;
-                                        t.tfConstantOnlyServerStone += obsStone;
+                                        t.tfConstantOnlyServerStone += one(obsStone);
                                     }
                                     if (!tf.constantFires && oldStone) {
                                         ++t.tfFormulaOnly;
-                                        t.tfFormulaOnlyServerStone += obsStone;
+                                        t.tfFormulaOnlyServerStone += one(obsStone);
                                     }
                                 }
                                 if (!typedStone && bothAirMixedWouldFire(at)) {
                                     ++t.altBothAir;
-                                    t.altBothAirServerStone += obsStone;
+                                    t.altBothAirServerStone += one(obsStone);
                                 }
                             }
                         }
@@ -741,4 +748,17 @@ int main(int argc, char** argv) {
         }
     }
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // A missing fixture or a malformed region surfaces as an exception;
+    // report it and fail rather than terminate.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
 }

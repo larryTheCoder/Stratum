@@ -116,9 +116,9 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
         std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::pair<long, long>> owned;
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {

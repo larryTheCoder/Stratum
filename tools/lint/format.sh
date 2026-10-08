@@ -52,6 +52,12 @@ analysis_targets=(
     tools/analysis/legacy-goldens-biome-analyze.cpp
     tools/analysis/legacy-goldens-surface-analyze.cpp
     tools/analysis/legacy-goldens-surface-decoder.hpp
+    tools/analysis/aquifer-barrier-analyze.cpp
+    tools/analysis/aquifer-cells.cpp
+    tools/analysis/aquifer-deepfloor-analyze.cpp
+    tools/analysis/aquifer-fluidtype-analyze.cpp
+    tools/analysis/aquifer-nearsurface-analyze.cpp
+    tools/analysis/aquifer-waterlava-analyze.cpp
 )
 
 # A read loop rather than mapfile: macOS still ships bash 3.2, where

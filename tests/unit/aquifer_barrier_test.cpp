@@ -154,7 +154,7 @@ TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reache
     // t = -9.5, `3 + t = -6.5`, so `u = -6.5/10 = -0.65` and Π = 2·(b −
     // 0.65), firing at weight 1 and D = -1 for b > 1.15. The divisor is
     // what the case pins: on `/3` the same block gives u = -2.1667, which
-    // is outside `kBarrierReachAbove` so the router value is zeroed
+    // is outside `kBarrierNoiseReach` (|u| <= 2) so the router value is zeroed
     // entirely and NO value of `barrier` can fire it. 10 is the measured
     // one — it beats 3 on 65 231 of 65 231 server blocks where they differ.
     BarrierAt floor;
@@ -358,4 +358,48 @@ TEST_CASE("a third source rescues a block the nearest two alone would miss", "[a
 
     // With the third source, the A2-A3 disagreement rescues it.
     CHECK(placesBarrier(at));
+}
+
+TEST_CASE("retyping every source alike changes no barrier", "[aquifer]") {
+    // The property the waterlava case used to assert against the server,
+    // where it was true by construction and so measured nothing: Π reads
+    // the TYPES only through a pair that both read fluid and differ, so a
+    // junction whose sources all share one type answers the same whichever
+    // type that is. Swept here over levels on both sides of the block, the
+    // three distance gaps either side of the similarity range, densities
+    // and barrier values.
+    std::size_t compared = 0;
+    std::size_t placed = 0;
+    for (const std::int32_t first : {-30, -2, 0, 3, 12}) {
+        for (const std::int32_t second : {-20, -1, 1, 4, 40}) {
+            for (const std::int32_t third : {-8, 2, 25}) {
+                for (const std::int64_t gap12 : {0, 6, 13, 24, 26}) {
+                    for (const std::int64_t gap23 : {0, 10, 30}) {
+                        for (const double density : {-1.0, -0.2}) {
+                            for (const double barrier : {-1.0, 0.0, 1.5}) {
+                                BarrierAt at;
+                                at.y = 0;
+                                at.density = density;
+                                at.barrier = barrier;
+                                at.nearest = {.level = first, .distanceSq = 100};
+                                at.second = {.level = second, .distanceSq = 100 + gap12};
+                                at.third = {.level = third, .distanceSq = 100 + gap12 + gap23};
+                                const bool water = placesBarrier(at);
+                                at.nearest.type = FluidType::Lava;
+                                at.second.type = FluidType::Lava;
+                                at.third.type = FluidType::Lava;
+                                CHECK(placesBarrier(at) == water);
+                                ++compared;
+                                placed += water ? 1U : 0U;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared == 5U * 5U * 3U * 5U * 3U * 2U * 3U);
+    // Not vacuous: the sweep reaches both answers.
+    CHECK(placed > 0U);
+    CHECK(placed < compared);
 }

@@ -242,6 +242,7 @@ struct Score {
     long long pureServerStone = 0; // no mixed pair
     long long pureOldMiss = 0;
     long long pureNewMiss = 0;
+    long long pureNewMissOffLambda = 0;
     long long pureFalse = 0;               // old == new here by construction; either
     long long constantAdds = 0;            // new fires, old does not ...
     long long constantAddsServerStone = 0; // ... and the server has stone
@@ -330,9 +331,9 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
         const auto file = region::RegionFile::open(regionPath);
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto ch = chunk::Chunk::decode(nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {
                     for (std::int32_t lx = 0; lx < 16; ++lx) {
@@ -443,6 +444,8 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                     total.pureServerStone += serverStone;
                                     total.pureOldMiss += (serverStone && !oldStone);
                                     total.pureNewMiss += (serverStone && !newStone);
+                                    total.pureNewMissOffLambda +=
+                                        (serverStone && !newStone && y != lambda);
                                     total.pureFalse += (!serverStone && (oldStone || newStone));
                                 }
                                 if (newStone && !oldStone) {
@@ -642,14 +645,22 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
     // dry sentinel and the unclamped ladder now in `cellFluidLevel`, the same
     // pooled reading is 1100 -> 4, all four of them on row lambda itself.
     CHECK(total.mixedNewMiss * 2 < total.mixedOldMiss);
-    // ... and touches nothing where no pair is mixed.
-    CHECK(total.pureNewMiss == total.pureOldMiss);
+    // Where no pair is mixed the two predicates are one computation, so
+    // comparing them measured nothing (the unit case "retyping every source
+    // alike changes no barrier" pins that property instead). What the
+    // server CAN say about those junctions: every barrier the predicate
+    // misses there sits on row lambda itself, the row Q6.3 shares.
+    CHECK(total.pureNewMissOffLambda == 0);
 
     // The type-field reading, refuted: where the formula fires and the
     // constant would not, every block is a real barrier (252 of 252); where
-    // the constant alone would fire, none is (0 of 33).
+    // the constant alone would fire, none is (0 of 33, re-measured unchanged
+    // after the dry sentinel and the unclamped ladder). The floor on that
+    // population is what stops an empty one passing as 0 <= 0; it is set
+    // just under the pooled count, so a missing seed fails too.
     REQUIRE(total.tfFormulaOnly >= 50);
     CHECK(total.tfFormulaOnlyServerStone == total.tfFormulaOnly);
+    REQUIRE(total.tfConstantOnly >= 30);
     CHECK(total.tfConstantOnlyServerStone * 10 <= total.tfConstantOnly);
 
     // The types-regardless reading, refuted: stone between two drained

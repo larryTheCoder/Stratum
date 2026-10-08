@@ -12,8 +12,10 @@
 // this is an end-to-end check of the shipped code, not a parallel
 // reimplementation of it.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-barrier-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-barrier-analyze
-//   build/aquifer-barrier-analyze .fixtures/1.21.11/probes/barrier3way <seed>
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I
+//   build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-barrier-analyze.cpp -L
+//   build/dev/lib -lstratum_core -lz -o build/aquifer-barrier-analyze build/aquifer-barrier-analyze
+//   .fixtures/1.21.11/probes/barrier3way <seed>
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -27,13 +29,15 @@
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -65,13 +69,13 @@ double densityForDimension(const std::string& name) {
 }
 
 aquifer::BarrierSource sourceOf(const aquifer::Source& ranked, double floodedness, double spread) {
-    aquifer::CellFluid cell{.centreY = ranked.centre.y,
-                             .surface = kSurface,
-                             .seaLevel = kSeaLevel,
-                             .floodedness = floodedness,
-                             .spread = spread};
+    aquifer::CellFluid const cell{.centreY = ranked.centre.y,
+                                  .surface = kSurface,
+                                  .seaLevel = kSeaLevel,
+                                  .floodedness = floodedness,
+                                  .spread = spread};
     return aquifer::BarrierSource{.level = aquifer::cellFluidLevel(cell),
-                                   .distanceSq = ranked.distanceSq};
+                                  .distanceSq = ranked.distanceSq};
 }
 
 struct Tally {
@@ -123,21 +127,22 @@ void record(Tally& t, bool observedSolid, bool twoSourceSolid, bool threeSourceS
 
 void report(const Tally& t) {
     const double p2 =
-        t.total ? static_cast<double>(t.matchTwoSource) / static_cast<double>(t.total) : 0.0;
-    const double p3 =
-        t.total ? static_cast<double>(t.matchThreeSource) / static_cast<double>(t.total) : 0.0;
+        (t.total != 0) ? static_cast<double>(t.matchTwoSource) / static_cast<double>(t.total) : 0.0;
+    const double p3 = (t.total != 0)
+                          ? static_cast<double>(t.matchThreeSource) / static_cast<double>(t.total)
+                          : 0.0;
     std::printf("  total=%-8lld two-source=%-7lld (%.5f)  three-source=%-7lld (%.5f)  "
                 "both=%-7lld  neither=%-7lld  rescued=%-7lld\n",
-                t.total, t.matchTwoSource, p2, t.matchThreeSource, p3, t.matchBoth,
-                t.matchNeither, t.thirdSourceRescues);
-    const double missRate2 = t.realBarriers ? 100.0 *
-                                                   static_cast<double>(t.realBarriersTwoSourceMisses) /
-                                                   static_cast<double>(t.realBarriers)
-                                             : 0.0;
-    const double missRate3 = t.realBarriers
-                                  ? 100.0 * static_cast<double>(t.realBarriersThreeSourceMisses) /
-                                        static_cast<double>(t.realBarriers)
-                                  : 0.0;
+                t.total, t.matchTwoSource, p2, t.matchThreeSource, p3, t.matchBoth, t.matchNeither,
+                t.thirdSourceRescues);
+    const double missRate2 = (t.realBarriers != 0)
+                                 ? 100.0 * static_cast<double>(t.realBarriersTwoSourceMisses) /
+                                       static_cast<double>(t.realBarriers)
+                                 : 0.0;
+    const double missRate3 = (t.realBarriers != 0)
+                                 ? 100.0 * static_cast<double>(t.realBarriersThreeSourceMisses) /
+                                       static_cast<double>(t.realBarriers)
+                                 : 0.0;
     std::printf("  real barriers=%-8lld two-source misses=%-6lld (%.3f%%)  "
                 "three-source misses=%-6lld (%.3f%%)\n",
                 t.realBarriers, t.realBarriersTwoSourceMisses, missRate2,
@@ -146,7 +151,9 @@ void report(const Tally& t) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+
+int run(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "usage: aquifer-barrier-analyze <probe-dir> <seed>\n");
         return 2;
@@ -162,17 +169,17 @@ int main(int argc, char** argv) {
 
     density::Graph::Builder builder(pack);
     const nlohmann::json barrierJson = {{"type", "minecraft:noise"},
-                                         {"noise", "minecraft:aquifer_barrier"},
-                                         {"xz_scale", 1.0},
-                                         {"y_scale", 0.5}};
-    const nlohmann::json floodJson = {{"type", "minecraft:noise"},
-                                       {"noise", "minecraft:aquifer_fluid_level_floodedness"},
-                                       {"xz_scale", 1.0},
-                                       {"y_scale", 0.67}};
-    const nlohmann::json spreadJson = {{"type", "minecraft:noise"},
-                                        {"noise", "minecraft:aquifer_fluid_level_spread"},
+                                        {"noise", "minecraft:aquifer_barrier"},
                                         {"xz_scale", 1.0},
-                                        {"y_scale", 0.7142857142857143}};
+                                        {"y_scale", 0.5}};
+    const nlohmann::json floodJson = {{"type", "minecraft:noise"},
+                                      {"noise", "minecraft:aquifer_fluid_level_floodedness"},
+                                      {"xz_scale", 1.0},
+                                      {"y_scale", 0.67}};
+    const nlohmann::json spreadJson = {{"type", "minecraft:noise"},
+                                       {"noise", "minecraft:aquifer_fluid_level_spread"},
+                                       {"xz_scale", 1.0},
+                                       {"y_scale", 0.7142857142857143}};
     const density::NodeIndex barrierNode = builder.add(barrierJson);
     const density::NodeIndex floodNode = builder.add(floodJson);
     const density::NodeIndex spreadNode = builder.add(spreadJson);
@@ -225,9 +232,8 @@ int main(int argc, char** argv) {
                         for (int y = -48; y <= kMaxY; ++y) {
                             const auto* b = ch.blockAt(lx, y, lz);
                             bool observedSolid;
-                            if (b && b->name == "minecraft:water") {
-                                observedSolid = false;
-                            } else if (b && b->name == "minecraft:air") {
+                            if (b != nullptr &&
+                                (b->name == "minecraft:water" || b->name == "minecraft:air")) {
                                 observedSolid = false;
                             } else if (b && b->name == "minecraft:stone") {
                                 observedSolid = true;
@@ -240,15 +246,14 @@ int main(int argc, char** argv) {
                                 aquifer::selectSources(centres, x, y, z);
                             const auto floodednessAt = [&](const aquifer::CellIndex& c) {
                                 return interp.evaluate(
-                                    floodNode, density::Point{.x = c.x, .y = c.y, .z = c.z},
-                                    cache);
+                                    floodNode, density::Point{.x = c.x, .y = c.y, .z = c.z}, cache);
                             };
                             const auto spreadAt = [&](const aquifer::CellIndex& cell,
-                                                       const aquifer::CellIndex& c) {
+                                                      const aquifer::CellIndex& c) {
                                 const aquifer::SamplePos pos = aquifer::spreadSample(cell, c);
                                 return interp.evaluate(
-                                    spreadNode,
-                                    density::Point{.x = pos.x, .y = pos.y, .z = pos.z}, cache);
+                                    spreadNode, density::Point{.x = pos.x, .y = pos.y, .z = pos.z},
+                                    cache);
                             };
 
                             std::array<aquifer::BarrierSource, 3> ranked{};
@@ -297,4 +302,17 @@ int main(int argc, char** argv) {
     std::printf("=== overall ===\n");
     report(overall);
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // A missing fixture or a malformed region surfaces as an exception;
+    // report it and fail rather than terminate.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
 }

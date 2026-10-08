@@ -14,7 +14,8 @@
 # and tidy.sh name it explicitly -- they list the analysis sources that are
 # build targets rather than sweeping tools/analysis, the rest of which is
 # one-shot investigation code nothing compiles. Adding another target here
-# means adding it to those two lists.
+# means adding it to those two lists (and to the lint job's own copy of
+# tidy's list in .github/workflows/ci.yml).
 #
 # The test below is the other half: it RUNS the analyzer's --control, which is
 # where the hand-rolled forward model and its valueFactor are compared against
@@ -52,6 +53,25 @@ target_link_libraries(stratum_legacy_goldens_surface_analyze PRIVATE stratum::co
 target_include_directories(stratum_legacy_goldens_surface_analyze PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
 stratum_configure_target(stratum_legacy_goldens_surface_analyze)
+
+# The aquifer analyzers, for the same reason as the three above: each scores
+# a probe world through the library's own aquifer code, and a file nothing
+# builds can stop agreeing with the library it calls without a gate noticing.
+# They are investigation tools rather than tests (each prints its own
+# figures), so building them is the gate; tests/conformance holds the
+# assertions.
+foreach(tool IN ITEMS
+        aquifer-barrier-analyze
+        aquifer-cells
+        aquifer-deepfloor-analyze
+        aquifer-fluidtype-analyze
+        aquifer-nearsurface-analyze
+        aquifer-waterlava-analyze)
+    string(REPLACE "-" "_" target "stratum_${tool}")
+    add_executable(${target} ${tool}.cpp)
+    target_link_libraries(${target} PRIVATE stratum::core ZLIB::ZLIB)
+    stratum_configure_target(${target})
+endforeach()
 
 if(NOT STRATUM_BUILD_TESTS)
     return()

@@ -1049,3 +1049,31 @@ TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
     CHECK(negative.minZ == -32);
     CHECK(negative.maxZ == -13);
 }
+
+TEST_CASE("a legacy random source refuses aquifers and ore veins by name",
+          "[terrain][filler][aquifer]") {
+    // Both are positional randoms drawn from the dimension's declared source,
+    // and no vanilla legacy dimension enables either, so nothing on disk says
+    // what they should be. No vanilla pack reaches these throws — which is
+    // exactly why they need a test: a regression would quietly generate
+    // with the modern derivation instead of failing.
+    for (const bool aquifers : {true, false}) {
+        const bool oreVeins = !aquifers;
+        INFO("aquifers " << aquifers << ", ore veins " << oreVeins);
+        nlohmann::json settings = flatSettings(aquifers, oreVeins);
+        settings["legacy_random_source"] = true;
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        // The flat router names no noise, so the legacy registry is empty
+        // and builds: the filler's own refusal is the one that fires.
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 0,
+                                                    stratum::density::RandomSource::Legacy);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        CHECK_THROWS_WITH(ChunkFiller::compile(loaded.graph, noises, dimension),
+                          ContainsSubstring(aquifers ? "aquifers_enabled" : "ore_veins_enabled") &&
+                              ContainsSubstring("legacy_random_source"));
+    }
+}

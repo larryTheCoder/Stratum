@@ -35,8 +35,13 @@ namespace stratum::test {
 
 enum class Category : std::uint8_t { Air, Water, Lava, Solid };
 
+/// By the block's NAME, exactly — never a substring of its state string,
+/// where `waterlogged=false` reads as water and every `*_stairs` as air.
+/// `void_air` is air (the world's own below-floor air); a `bubble_column`
+/// is water that moved, which only fluid ticks make, so it stays Solid here
+/// and `explainedByFlow` does not cover it — none appears in any golden.
 [[nodiscard]] inline Category categoryOf(const std::string& name) {
-    if (name == "minecraft:air" || name == "minecraft:cave_air") {
+    if (name == "minecraft:air" || name == "minecraft:cave_air" || name == "minecraft:void_air") {
         return Category::Air;
     }
     if (name == "minecraft:water") {
