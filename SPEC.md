@@ -265,6 +265,7 @@ to bump the version and be called out; this is that call-out.
 | 6 | **Q5.9's deep-dark override does not reach an aborted scan** (§11, "Sub-lambda levels and the near-surface sea"). v5 returned the override's dry sentinel before an aborted scan's lambda; the spec's order puts the abort's status first, and over an aborting surface under the override (`aquifer-ddfloor-probe.sh`) the sentinel built 10 577 blocks of barrier the server does not — every block where the two orders part. No golden block changes. v5 had reached only this development branch; bumped rather than amended because a v5 blob could exist. |
 | 7 | **Lava is fluid to the surface pass, and the bottom-up stone-depth run resets on every fluid** (§11, "Lava in the surface pass's runs"). Aquifer lava now holds the top-down run and latches the water height as water does; the bottom-up run (`stone_depth` ceiling) resets on water and lava where it used to skip water and count lava. On the lava-run probe the old filler wrote 2 392 064 of 74 973 184 blocks wrong and the new one none; on the golden overworld grid 102 blocks over water become exact (gravel to stone, sand to sandstone) and none get worse (12 582 372 to 12 582 474). v6 had reached only this development branch; bumped rather than amended because a v6 blob could exist. |
 | 8 | **y_skip's sampling rectangle reaches every candidate source centre** (§11, "`y_skip` against the server"). The per-chunk cutoff's psl maximum was read over x and z from -16 to +16 of the chunk at stride 4; the server's rectangle runs to +25, the full extent where a candidate source centre can sit (`16 * (i_max + 1) + (kJitterBoundX - 1)`), so its samples reach +24 (any end in +24..+27 reads the same samples, a permanent tie). On a two-valued psl field (`aquifer-yskip-probe.sh`) the old rectangle was refuted on 8 646 blocks in 71 chunks; the new one is exact on 22 968 000 blocks and 123 588 fluid-update marks. Changes only worlds whose psl varies within a rectangle's reach of the cutoff; no golden block changes. v7 had reached only this development branch; bumped rather than amended because a v7 blob could exist. |
+| 9 | **Q5.8's lava override does not reach a short-circuit sea** (§11, "Nor the lava override: a short-circuit sea is the default fluid"). The near-surface return and an aborted scan's sea are the global picker's status at or above lambda, so the default fluid; v8 typed them lava at `sea_level` <= -10 with `|lava|` > 0.3. Over two seeds of `aquifer-fluidnear-probe.sh` the server holds water on all 1 027 693 contested sources, and lava on all 241 896 of the positive control's. Changes blocks and fluid-update flags only where `sea_level` <= -10; no golden block changes. v8 had reached only this development branch; bumped rather than amended because a v8 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -3019,7 +3020,8 @@ Open:
   centred below lambda whose ladder reaches above it is lava up to its
   level, 14 494 blocks.
 
-  *Nor the lava override: a short-circuit sea is the default fluid.* Both
+  *Nor the lava override: a short-circuit sea is the default fluid
+  (pipeline engine v9).* Both
   sea outcomes of the near-surface path — the near-surface return, and an
   aborted scan's sea for a cell more than twenty blocks above its surface —
   are the global picker's status at or above lambda in the clean-room spec

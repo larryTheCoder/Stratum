@@ -39,7 +39,7 @@ set(STRATUM_PACK_FORMAT_MINOR 1  CACHE STRING "Pinned data pack format minor")
 # directory configured before a bump went on stamping the old version onto
 # the new engine's output, which is the one seam the freeze refusal exists
 # to prevent.
-set(STRATUM_PIPELINE_ENGINE_VERSION 8)
+set(STRATUM_PIPELINE_ENGINE_VERSION 9)
 
 # --------------------------------------------------------------------------
 # Options
