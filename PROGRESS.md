@@ -111,6 +111,16 @@ Open:
       type's 0.3 strictness and -10 ceiling are replayed block for block on
       the fluid-type probe; deep-floor needs all three seeds; depth-gate's
       ties are set apart and the rest held exact. SPEC §11.
+- [ ] **The centre jitter in CI — partly.** deepslate was meant to be the
+      CI oracle and measures as only a partial one: its aquifer disagrees
+      with the frozen server on 19-25% of blocks on the five open-void
+      worlds (`fill` does not run it at all), and its `PositionalRandom.at`
+      does not wrap the mix (the server's jitter readout: 256/256 for the
+      wrapped mix, 193/255 for deepslate's). What it gets right now runs in
+      CI: 72 vectors on the y axis, the base and the mix's y term exact, and
+      every base ablation missing all 72. Still pinned only by cases that
+      skip in CI: the mix's x and z terms and wraps, arithmetic against
+      logical shift, the bounds and the draw order. SPEC §11.
 - [x] **The probe residuals were flow, or attribution.** Varying surface
       (34 878 blocks) and selection readout two (999) are every block fluid
       that moved after generating. The fluid type's "4% mixed" and its four

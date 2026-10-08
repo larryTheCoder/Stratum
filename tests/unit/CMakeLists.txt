@@ -5,6 +5,7 @@ add_executable(stratum_unit_tests
     chunk_test.cpp
     chunk_writer_test.cpp
     cli_test.cpp
+    deepslate_aquifer_oracle_test.cpp
     deepslate_oracle_test.cpp
     density_graph_test.cpp
     density_interpreter_test.cpp

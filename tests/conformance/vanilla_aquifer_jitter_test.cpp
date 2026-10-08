@@ -2,9 +2,13 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // The unit vectors for `CentreSource` are self-consistent by construction:
-// they pin the algorithm, not its correctness. This is what ties it to
-// vanilla, and it does so through an observable with no fitted quantity
-// anywhere in it.
+// they pin the algorithm, not its correctness. deepslate's vectors
+// (deepslate_aquifer_oracle_test.cpp) check the base and the mix's y term
+// independently, in CI, but its at() does not wrap the mix and so cannot
+// speak for any cell off the y axis: on this case's readout its draws place
+// 193 of 255 cells (tools/analysis/deepslate-aquifer-trust.sh). This is
+// what ties the whole derivation to vanilla, and it does so through an
+// observable with no fitted quantity anywhere in it.
 //
 // In the open-void probe a cell at layer -4 spans y -48..-37 and takes the
 // -20 fluid level rather than the lava floor exactly when its centre clears

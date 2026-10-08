@@ -170,6 +170,9 @@ TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
     // Known answers from the derivation recovered against the server. They are
     // self-consistent by construction; what ties them to vanilla is the
     // conformance case, which scores this same code on the server's own blocks.
+    // In CI, deepslate_aquifer_oracle_test.cpp checks the base and the mix's y
+    // term against an independent implementation; the x and z terms, the
+    // bounds and the draw order have no CI oracle but these answers.
     const CentreSource s42{42};
     CHECK(s42.jitterOf(0, 0, 0) == Jitter{7, 7, 9});
     CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 4, 6});
