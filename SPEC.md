@@ -314,6 +314,8 @@ cannot keep stamping the old number.
   fourth — every differing block air, water, lava or obsidian. So a probe case bounds the flow it sees and
   requires every disagreement to take a shape flow leaves
   (`tests/support/fluid_flow.hpp`); it never pins a count of it.
+  `tools/analysis/aquifer-probes.sh --accept-eula` regenerates every aquifer
+  corpus the conformance cases read, with the seeds they expect.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
   engine output block-for-block in Java block space (before Bedrock
   mapping), reporting first divergence with coordinates and pipeline node
@@ -2587,6 +2589,33 @@ Open:
   would place a vein block at 21 positions, and the server kept the fluid at
   all 21. Few, but deterministic — under the other reading every one would
   be a vein block. Pinned in `golden_overworld_test.cpp`.
+
+- **The aborting near-surface floor is lambda — and the barrier over it is
+  not yet exact (MA).** No output changes. `cellFluidLevel` floors an
+  aborting near-surface cell at lambda where the other dry outcomes take the
+  sentinel. No block readout separates the two (both are dry above lambda,
+  and the lava sea takes everything below), and every world that reached the
+  branch held `barrier` at -2.0, so the choice had never been tested.
+  `tools/analysis/aquifer-nsfloor-probe.sh` is the near-surface probe's
+  three-valued field with vanilla's barrier noise and a readout dimension per
+  scale. Over three seeds the two floors give different barrier verdicts on
+  1 666 blocks, and the server sides with lambda on all 1 666.
+
+  The same corpus shows something nothing earlier could: the barrier writes
+  stone the server does not, 7 718 blocks (of 196 127 server stone), and
+  misses none. Every one sits at a pair of sources one of which reads a level
+  BELOW lambda — a ladder capped by an aborted scan's -70, or a deep ladder
+  rung — against a cell flooded to the sea, most at separation 24, where the
+  pair's similarity is 0.04 and only a level gap this large can carry Q6.4's
+  pressure past the density. Weighing every sub-lambda level as lambda makes
+  the corpus exact; flooring only the ladder's cap does not (1 881 left), nor
+  does the sentinel, lambda - 8 or -60. That clashes with the water/lava
+  worlds, where the unfloored ladder is exact — which no reading fits unless
+  the floor depends on something those worlds never have. The obvious
+  difference is the abort: every sub-lambda level here comes from an
+  aborted scan, and no scan aborts on the water/lava worlds. Open, held as a
+  ceiling in `vanilla_aquifer_nsfloor_test.cpp`; the discriminating probe is
+  `aquifer-capfloor-probe.sh` (a cap below lambda without an abort).
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
