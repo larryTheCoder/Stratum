@@ -111,7 +111,8 @@ constexpr auto kSurface96 = [](std::int32_t, std::int32_t, std::int32_t) { retur
 [[nodiscard]] SubstanceAt decide(const CentreSource& centres, const AquiferQuery& query,
                                  const FloodOne& flood) {
     StatusCache cache;
-    return computeSubstance(centres, query, cache, kZero, flood, kZero, kZero, kSurface96);
+    return computeSubstance(centres, query, cache, kZero, flood, kZero, kZero, kSurface96,
+                            stratum::aquifer::NoDeepDark{});
 }
 
 /// A block on the row y = -21 whose nearest source is centred in the
@@ -175,7 +176,7 @@ struct FloodTwo {
     const auto lavaAt = [lava](std::int32_t, std::int32_t, std::int32_t) { return lava; };
     const auto barrierAt = [barrier](std::int32_t, std::int32_t, std::int32_t) { return barrier; };
     return computeSubstance(centres, query, cache, barrierAt, FloodTwo{junction}, kZero, lavaAt,
-                            kSurface96);
+                            kSurface96, stratum::aquifer::NoDeepDark{});
 }
 
 } // namespace
@@ -345,4 +346,83 @@ TEST_CASE("the lava sampler alone turns a junction inside two fluid bodies to st
     CHECK(lavaWins.substance == Substance::Fluid);
     CHECK(lavaWins.fluidType == FluidType::Lava);
     CHECK(decideMixed(centres, *apart, 0.0, 0.0).substance == Substance::Fluid);
+}
+
+namespace {
+/// A deterministic stand-in for a noise read in [-1, 1): a stub FIELD, not a
+/// world RNG, so any fixed mix will do — this one is splitmix64's finaliser.
+[[nodiscard]] double stubField(const std::uint64_t salt, const std::int32_t x, const std::int32_t y,
+                               const std::int32_t z) {
+    std::uint64_t h = salt;
+    for (const std::int32_t v : {x, y, z}) {
+        h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(v));
+        h += 0x9e3779b97f4a7c15ULL;
+        h = (h ^ (h >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+        h = (h ^ (h >> 27U)) * 0x94d049bb133111ebULL;
+        h ^= h >> 31U;
+    }
+    return (static_cast<double>(h >> 11U) / 4503599627370496.0) - 1.0; // [-1, 1)
+}
+} // namespace
+
+namespace {
+/// How many blocks in the thirty rows above `ySkip` the full local decision
+/// answers differently from the global picker, over a flat
+/// `preliminary_surface_level` at @p surface and three stub noise fields.
+[[nodiscard]] std::size_t disagreementsAboveSkip(const double surface) {
+    const CentreSource centres{42};
+    const std::int32_t skip = stratum::aquifer::ySkip(static_cast<std::int32_t>(surface));
+    const auto psl = [surface](std::int32_t, std::int32_t, std::int32_t) { return surface; };
+    std::size_t differ = 0;
+    for (std::uint64_t salt = 1; salt <= 3; ++salt) {
+        const auto field = [salt](std::uint64_t which) {
+            return [salt, which](std::int32_t x, std::int32_t y, std::int32_t z) {
+                return stubField((salt * 8) + which, x, y, z);
+            };
+        };
+        StatusCache cache;
+        for (std::int32_t z = -40; z < 40; z += 3) {
+            for (std::int32_t x = -40; x < 40; x += 3) {
+                for (std::int32_t y = skip + 1; y <= skip + 30; ++y) {
+                    const AquiferQuery query{
+                        .x = x, .y = y, .z = z, .density = -1.0, .seaLevel = kSea};
+                    const SubstanceAt local =
+                        computeSubstance(centres, query, cache, field(0), field(1), field(2),
+                                         field(3), psl, stratum::aquifer::NoDeepDark{});
+                    const bool globalFluid = y < kSea; // y_skip >= -62 > lambda here
+                    const bool agrees = globalFluid ? (local.substance == Substance::Fluid &&
+                                                       local.fluidType == FluidType::Default)
+                                                    : local.substance == Substance::Air;
+                    differ += agrees ? 0 : 1;
+                }
+            }
+        }
+    }
+    return differ;
+}
+} // namespace
+
+TEST_CASE("above y_skip the lattice agrees with the global picker down to a surface of -80",
+          "[aquifer]") {
+    // Why the cutoff is invisible in every vanilla preset, pinned rather than
+    // argued: over a flat `preliminary_surface_level` anywhere from 96 down
+    // to -80, the full local decision above `ySkip` returns exactly what the
+    // global picker does, whatever the four aquifer noises say. `y_skip` is
+    // at least S_max + 31, so every candidate centre for a block above it
+    // sits clear of the surface and takes the near-surface return — and that
+    // holds through the scan's abort (psl below -62), because the aborting
+    // floor gives way to the sea for a centre more than twenty blocks above
+    // the scan's minimum.
+    for (const double surface : {96.0, 63.0, 40.0, -20.0, -61.0, -63.0, -75.0, -80.0}) {
+        INFO("surface " << surface);
+        CHECK(disagreementsAboveSkip(surface) == 0);
+    }
+    // One block lower and the step drops `y_skip` from -38 to -50: centres
+    // in the band it uncovers sit within twenty blocks of an aborting scan's
+    // minimum, take the floor at lambda, and read air where the global
+    // picker reads water. So the cutoff is NOT a pure optimisation — a world
+    // whose surface sits at -81..-92 would show it — and ChunkFiller applies
+    // it for that reason, not only to save the lattice work.
+    CHECK(disagreementsAboveSkip(-81.0) > 0);
+    CHECK(disagreementsAboveSkip(-92.0) > 0);
 }

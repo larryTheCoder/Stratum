@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -279,7 +280,11 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
         for (const settings::RouterEntry entry :
              {settings::RouterEntry::Barrier, settings::RouterEntry::FluidLevelFloodedness,
               settings::RouterEntry::FluidLevelSpread, settings::RouterEntry::Lava,
-              settings::RouterEntry::PreliminarySurfaceLevel}) {
+              settings::RouterEntry::PreliminarySurfaceLevel, settings::RouterEntry::Erosion,
+              settings::RouterEntry::Depth}) {
+            // Erosion and depth for Q5.9's deep-dark override, read at every
+            // source centre — required whenever aquifers are, not only when a
+            // surface tree happens to read the biome.
             filler.interpreter_.requireEvaluable(settings.router.at(entry));
         }
     }
@@ -444,22 +449,62 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
         settings_->aquifersEnabled
             ? settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel)
             : density::NodeIndex{};
+    // Every aquifer read goes through THIS chunk's flat_cache window: a
+    // source centre in a neighbouring chunk reads its router values at the
+    // column itself, not at a 4x4 corner this chunk's grid does not hold.
+    // Measured through Q5.9 (`deepDarkAt` below), the one read in the
+    // vanilla presets that can tell; see `flatCacheWindow`.
+    const density::FlatCacheWindow window = flatCacheWindow(chunkX, chunkZ);
+    const auto aquiferRead = [&](density::NodeIndex node, std::int32_t x, std::int32_t y,
+                                 std::int32_t z) {
+        return interpreter_.evaluate(node, density::Point{.x = x, .y = y, .z = z}, cache, window);
+    };
     const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(barrierNode, x, y, z);
     };
     const auto floodednessAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(floodednessNode, density::Point{.x = x, .y = y, .z = z},
-                                     cache);
+        return aquiferRead(floodednessNode, x, y, z);
     };
     const auto spreadAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(spreadNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(spreadNode, x, y, z);
     };
     const auto lavaAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(lavaNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(lavaNode, x, y, z);
     };
     const auto pslAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(pslNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(pslNode, x, y, z);
     };
+    const density::NodeIndex erosionNode =
+        settings_->aquifersEnabled ? settings_->router.at(settings::RouterEntry::Erosion)
+                                   : density::NodeIndex{};
+    const density::NodeIndex depthNode = settings_->aquifersEnabled
+                                             ? settings_->router.at(settings::RouterEntry::Depth)
+                                             : density::NodeIndex{};
+    const auto deepDarkAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return aquifer::isDeepDark(aquiferRead(erosionNode, x, y, z),
+                                   aquiferRead(depthNode, x, y, z));
+    };
+
+    // Q2.3/Q2.5: above `y_skip` the local aquifer is never consulted and the
+    // global picker decides. One height per chunk, from the highest floored
+    // `preliminary_surface_level` over the chunk's lattice rectangle, sampled
+    // every four blocks with both endpoints included.
+    std::int32_t ySkipLevel = std::numeric_limits<std::int32_t>::max();
+    if (settings_->aquifersEnabled) {
+        const aquifer::YSkipRectangle rectangle = aquifer::ySkipRectangle(baseX, baseZ);
+        std::int32_t maxSurface = std::numeric_limits<std::int32_t>::min();
+        for (std::int32_t z = rectangle.minZ; z <= rectangle.maxZ;
+             z += aquifer::kYSkipSampleStride) {
+            for (std::int32_t x = rectangle.minX; x <= rectangle.maxX;
+                 x += aquifer::kYSkipSampleStride) {
+                // Java's `(int) Math.floor`: a datapack's psl may be NaN or
+                // out of range, and a bare cast of either is undefined.
+                maxSurface = std::max(maxSurface, javamath::floorToInt(pslAt(
+                                                      x, aquifer::kPreliminarySurfaceSampleY, z)));
+            }
+        }
+        ySkipLevel = aquifer::ySkip(maxSurface);
+    }
 
     // Only ever read when oreVeins_ holds a source, same as the aquifer's
     // five above, and looked up once per fill() rather than per block.
@@ -510,6 +555,16 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // replaces what would otherwise be
                                 // non-solid, or adds solid via the barrier.
                                 block = &settings_->defaultBlock;
+                            } else if (aquiferCentres_.has_value() && y > ySkipLevel) {
+                                // Q2.3: the global picker, as with aquifers
+                                // off (below) — lava under min(-54,
+                                // sea_level), default_fluid under sea_level,
+                                // air above.
+                                if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+                                    block = &lava();
+                                } else if (y < settings_->seaLevel) {
+                                    block = &settings_->defaultFluid;
+                                }
                             } else if (aquiferCentres_.has_value()) {
                                 const aquifer::AquiferQuery query{.x = blockX,
                                                                   .y = y,
@@ -518,7 +573,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                                                   .seaLevel = settings_->seaLevel};
                                 const aquifer::SubstanceAt result = aquifer::computeSubstance(
                                     *aquiferCentres_, query, aquiferStatusCache, barrierAt,
-                                    floodednessAt, spreadAt, lavaAt, pslAt);
+                                    floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt);
                                 switch (result.substance) {
                                     case aquifer::Substance::Solid:
                                         block = &settings_->defaultBlock;

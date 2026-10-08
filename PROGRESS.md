@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-08 (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-08 (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA/M4, pipeline engine v2: the shipped overworld run aga
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — every constant pinned; a 192-block fluid-extent residual (of 6291456) unattributed, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v3: Q5.9 through the chunk's flat_cache window, y_skip). Open: Q8's fluid-update flag, the window's extent, probe cases that do not run in CI, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -52,6 +52,36 @@ Open:
       1005 positions at y -58..-55 of the aquifer-free probe were written
       water where the server has lava; invisible to category-only goldens.
       Fixed in v2, held by `golden_fill_test.cpp` by name.
+- [x] **Q5.9's deep-dark override — implemented, and read through the
+      chunk's `flat_cache` window (pipeline engine v3).** 440 golden blocks
+      on seed 9223372036854775807 were aquifer the server does not have.
+      Erosion and depth sit behind `flat_cache`; relocating every read to
+      its 4x4 corner leaves 16 wrong, reading every column exactly leaves 2,
+      and relocating only inside the generating chunk's window leaves 0 —
+      one source centre reads wet for the chunk it lies off and dry for the
+      chunk it lies in, and the server agrees on both. SPEC §11.
+- [x] **The `y_skip` cutoff (spec Q2.3/Q2.5) — implemented.** Invisible on
+      every golden block, and pinned as invisible on any flat surface from
+      96 to -80; visible from -81 down (244 of 21870 blocks under one stub
+      field), which a unit case also pins.
+- [x] **The "192-block fluid-extent residual" — attributed: it is not the
+      aquifer.** Every one of the 192 is FLOWING water (`level` 1+), left by
+      the server's own fluid ticks after generation. Across all eight golden
+      overworld regions the raw first pass's 871 remaining disagreements are
+      all fluid that moved — flowing water and lava, rebuilt water sources,
+      obsidian where water met the lava sea — and
+      `tests/support/fluid_flow.hpp` now attributes them block by block in
+      `golden_overworld_test.cpp` and in `golden_fill_aquifer_test.cpp`'s new
+      64-chunk case (6291264 of 6291456 pinned, 192 flowing).
+- [ ] **The `flat_cache` window's extent.** 16, 20 and 24 columns score the
+      same on every golden block; 20 is taken (the chunk's own read
+      footprint) and flagged. SPEC §11 names the probe that separates them.
+- [ ] **`y_skip` against the server.** Only the arithmetic and the
+      invariance are pinned; a world whose surface sits at -81..-92 is where
+      the server would show it.
+- [ ] **Q8's fluid-update flag.** Unimplemented, so Stratum's output has no
+      post-processing positions and no fluid ever ticks after generation —
+      the whole of the golden residual above. Rank 4 is computed and unused.
 
 - [x] **Q6.3's water-over-lava exception — closed, and smaller than it
       read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,

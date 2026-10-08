@@ -357,7 +357,10 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                                               .seaLevel = dim.seaLevel};
                             const aquifer::SubstanceAt now =
                                 aquifer::computeSubstance(centres, query, statusCache, barrierAt,
-                                                          floodednessAt, spreadAt, lavaAt, pslAt);
+                                                          floodednessAt, spreadAt, lavaAt, pslAt,
+                                                          // Probe router: erosion and depth
+                                                          // are 0, Q5.9 cannot fire.
+                                                          aquifer::NoDeepDark{});
 
                             // The bare fall-through, from the same pieces.
                             const aquifer::Selection selection =

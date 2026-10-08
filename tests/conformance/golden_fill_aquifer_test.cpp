@@ -69,16 +69,22 @@
 // deepslate, 17 water -> dirt, 6 air -> deepslate.
 //
 // The 192 that remain are ALL of one kind: this build says air where the
-// server has water. That is a fluid EXTENT question, not a barrier one, and
-// it is where the next pass should start.
+// server has water. It looked like a fluid EXTENT question; it is not an
+// aquifer question at all. Every one of the 192 is FLOWING water — `level`
+// 1 or more, never a source — which the server's fluid ticks put there
+// after generating (spec Q8.1; this probe force-loads its chunks, and they
+// tick). The second case below pins the sweep and that attribution, block
+// by block, through `support/fluid_flow.hpp`.
 //
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
+#include "support/fluid_flow.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -89,6 +95,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -251,4 +258,69 @@ TEST_CASE("the aquifer wiring places the blocks the server placed, before any su
     // describes reopened.
     CHECK(sameCategory == 393216U);
     CHECK(exact == 393216U);
+}
+
+TEST_CASE("the aquifer-on probe's 64-chunk sweep: every raw disagreement is water that flowed",
+          "[conformance][terrain][aquifer]") {
+    const std::filesystem::path tree = fixtures() / "worldgen";
+    const std::filesystem::path region =
+        fixtures() / "probes" / "aquifer-on" / ("seed-" + std::to_string(kSeed)) / "r.0.0.mca";
+    if (!std::filesystem::is_directory(tree) || !std::filesystem::is_regular_file(region)) {
+        SKIP("no aquifer-on probe at " << region << "; generate it with "
+                                       << "tools/analysis/aquifer-on-probe.sh --accept-eula");
+    }
+    const auto pack = stratum::data::Pack::open(tree);
+    const auto loaded = stratum::settings::loadAll(pack);
+    auto overworld =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:overworld"));
+    overworld.oreVeinsEnabled = false; // as the probe world has them (first case)
+    const auto noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), kSeed, stratum::density::RandomSource::Xoroshiro);
+    const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld);
+    stratum::test::GoldenRegion golden(region);
+
+    std::size_t blocks = 0;
+    std::size_t agree = 0;
+    std::size_t flowing = 0;
+    std::size_t otherFlow = 0;
+    std::size_t unexplained = 0;
+    for (std::int32_t chunkZ = 0; chunkZ < 8; ++chunkZ) {
+        for (std::int32_t chunkX = 0; chunkX < 8; ++chunkX) {
+            REQUIRE(golden.hasChunk(chunkX, chunkZ));
+            stratum::terrain::ChunkBuffer first(overworld.geometry);
+            raw.fill(chunkX, chunkZ, first);
+            for (std::int32_t y = overworld.geometry.minY;
+                 y < overworld.geometry.minY + overworld.geometry.height; ++y) {
+                for (int localZ = 0; localZ < 16; ++localZ) {
+                    for (int localX = 0; localX < 16; ++localX) {
+                        const std::int32_t x = (chunkX * 16) + localX;
+                        const std::int32_t z = (chunkZ * 16) + localZ;
+                        const auto* theirs = golden.blockAt(x, y, z);
+                        const auto g = stratum::test::categoryOf(
+                            theirs != nullptr ? theirs->name : std::string("minecraft:air"));
+                        const auto r =
+                            stratum::test::categoryOf(first.at(localX, y, localZ).name.toString());
+                        ++blocks;
+                        if (g == r) {
+                            ++agree;
+                        } else if (!stratum::test::explainedByFlow(golden, x, y, z, g, r)) {
+                            ++unexplained;
+                            UNSCOPED_INFO("unexplained at " << x << " " << y << " " << z);
+                        } else if (stratum::test::fluidLevel(theirs) > 0) {
+                            ++flowing;
+                        } else {
+                            ++otherFlow;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    REQUIRE(blocks == 6291456U);
+    // The sweep SPEC §11 and PROGRESS quote, now pinned rather than recalled.
+    CHECK(agree == 6291264U);
+    // And the whole of its residual: flowing water, every block.
+    CHECK(flowing == 192U);
+    CHECK(otherFlow == 0U);
+    CHECK(unexplained == 0U);
 }

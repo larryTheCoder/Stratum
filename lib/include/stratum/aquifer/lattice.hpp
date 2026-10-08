@@ -34,6 +34,7 @@
 //     moves 27% of columns with all four router inputs held constant.
 #pragma once
 
+#include <stratum/javamath.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <cstdint>
@@ -426,6 +427,62 @@ inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
     return kLavaLevel < seaLevel ? kLavaLevel : seaLevel;
 }
 
+/// Q5.9, the deep-dark override's thresholds, read as router values at a
+/// source's centre (spec/aquifer-constants.json `deep_dark_override`). Both
+/// comparisons strict.
+inline constexpr double kDeepDarkErosionBelow = -0.225;
+inline constexpr double kDeepDarkDepthAbove = 0.9;
+
+[[nodiscard]] constexpr bool isDeepDark(const double erosion, const double depth) noexcept {
+    return erosion < kDeepDarkErosionBelow && depth > kDeepDarkDepthAbove;
+}
+
+/// Q2.5: above this height a chunk never consults its local aquifer — the
+/// global picker decides (Q2.3). @p maxSurface is the maximum FLOORED
+/// `preliminary_surface_level` over the chunk's lattice rectangle
+/// (`ySkipRectangle`); the `+ 8` is Q2.6's surface adjustment.
+[[nodiscard]] constexpr std::int32_t ySkip(const std::int32_t maxSurface) noexcept {
+    constexpr std::int32_t kCellHeight = 12;
+    constexpr std::int32_t kSurfaceAdjustment = 8;
+    constexpr std::int32_t kOne = 1;
+    constexpr std::int32_t kTen = 10;
+    // floorDiv, not `/`: a surface below -20 makes the dividend negative.
+    // Wrapping, not `+`: a datapack's psl saturates at the int range, and
+    // signed overflow is undefined where Java's int wraps.
+    const std::int32_t quotient = javamath::floorDiv(
+        javamath::wrappingAdd(maxSurface, kSurfaceAdjustment + kCellHeight), kCellHeight);
+    return javamath::wrappingAdd(
+        javamath::wrappingMul(kCellHeight, javamath::wrappingAdd(quotient, kOne)), kTen);
+}
+
+/// The horizontal rectangle `ySkip`'s maximum is taken over, for the chunk
+/// whose minimum block corner is (@p baseX, @p baseZ): Q3.5's lattice extent
+/// in cell indices — `i` from `floorDiv(xMin - 5, 16)` to
+/// `floorDiv(xMax - 5, 16) + 1` — read in BLOCK coordinates at the cells'
+/// origins, `16 * i`, both endpoints included. Sampled every
+/// `kYSkipSampleStride` blocks on both axes.
+struct YSkipRectangle {
+    std::int32_t minX = 0;
+    std::int32_t maxX = 0;
+    std::int32_t minZ = 0;
+    std::int32_t maxZ = 0;
+};
+
+inline constexpr std::int32_t kYSkipSampleStride = 4;
+
+[[nodiscard]] constexpr YSkipRectangle ySkipRectangle(const std::int32_t baseX,
+                                                      const std::int32_t baseZ) noexcept {
+    constexpr std::int32_t kCell = 16;
+    constexpr std::int32_t kShift = 5;
+    constexpr std::int32_t kChunk = 16;
+    return YSkipRectangle{
+        .minX = kCell * javamath::floorDiv(baseX - kShift, kCell),
+        .maxX = kCell * (javamath::floorDiv(baseX + kChunk - 1 - kShift, kCell) + 1),
+        .minZ = kCell * javamath::floorDiv(baseZ - kShift, kCell),
+        .maxZ = kCell * (javamath::floorDiv(baseZ + kChunk - 1 - kShift, kCell) + 1),
+    };
+}
+
 /// What one scan of `preliminary_surface_level` yields. Four values, because
 /// the ocean branch has four consumers and they do not agree on which to read
 /// (see `sampling.hpp` for how the scan produces them, and for why it is a
@@ -494,6 +551,12 @@ struct CellFluid {
 
     /// `fluid_level_spread`.
     double spread = 0.0;
+
+    /// Q5.9's deep-dark override, read at the centre: `erosion < -0.225` AND
+    /// `depth > 0.9` (`isDeepDark`). When set, both floodedness comparisons
+    /// fail and the cell is dry — off the near-surface early return only,
+    /// which compares no floodedness at all.
+    bool deepDark = false;
 };
 
 /// The level a cell's fluid body tops out at: fluid occupies `y < level`, so

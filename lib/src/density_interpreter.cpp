@@ -74,11 +74,17 @@ public:
     Scope(Point at, std::size_t nodeCount, CornerCache* cache)
         : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache) {}
 
+    Scope(Point at, std::size_t nodeCount, CornerCache* cache, const FlatCacheWindow* window)
+        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache), window_(window) {}
+
     [[nodiscard]] Point at() const noexcept { return at_; }
 
     /// Where `interpolated` keeps its cell corners, or null when the caller
     /// supplied nowhere and every point pays for its own eight.
     [[nodiscard]] CornerCache* cache() const noexcept { return cache_; }
+
+    /// Where `flat_cache` may relocate a read, or null for everywhere.
+    [[nodiscard]] const FlatCacheWindow* window() const noexcept { return window_; }
 
     [[nodiscard]] bool has(NodeIndex index) const noexcept {
         return computed_[static_cast<std::size_t>(index)] != 0;
@@ -99,6 +105,7 @@ private:
     std::vector<double> values_;
     std::vector<char> computed_;
     CornerCache* cache_ = nullptr;
+    const FlatCacheWindow* window_ = nullptr;
 };
 
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
@@ -496,6 +503,12 @@ double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache) const
     return evaluateNode(scope, root);
 }
 
+double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache,
+                             const FlatCacheWindow& window) const {
+    Scope scope(at, graph_->nodeCount(), &cache, &window);
+    return evaluateNode(scope, root);
+}
+
 double Interpreter::evaluate(NodeIndex root, Point at) const {
     if (root >= graph_->nodeCount()) {
         throw EvalError("node index " + std::to_string(root) + " is out of range");
@@ -717,7 +730,8 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
 
             value = lowerBound;
             for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
-                Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount());
+                Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
+                             scope.window());
                 if (evaluateNode(column, node.arguments[0]) > 0.0) {
                     value = scanY;
                     break;
@@ -757,12 +771,21 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         case NodeType::FlatCache: {
             // Relocated, not merely remembered: vanilla fills this cache
             // once per 4x4 column at y = 0, so every block in that column
-            // reads the corner's value.
-            const Point corner{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)};
+            // reads the corner's value — inside the window that grid covers.
+            // Outside it there is no grid point to read, and the argument is
+            // read at the column itself, still at y = 0: the vanilla presets
+            // only ever wrap column-invariant functions, so the y of an
+            // off-grid read is unobservable there, and pinning it to the same
+            // 0 keeps this node column-invariant either way (SPEC §11).
+            const FlatCacheWindow* window = scope.window();
+            const bool relocates = window == nullptr || window->covers(at.x, at.z);
+            const Point corner =
+                relocates ? Point{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)}
+                          : Point{.x = at.x, .y = 0, .z = at.z};
             if (corner == at) {
                 value = argument(0);
             } else {
-                Scope cornerScope(corner, graph_->nodeCount());
+                Scope cornerScope(corner, graph_->nodeCount(), nullptr, window);
                 value = evaluateNode(cornerScope, node.arguments[0]);
             }
             break;
@@ -837,7 +860,7 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
         Scope inner(Point{.x = x0 + (dx * cells.width),
                           .y = y0 + (dy * cells.height),
                           .z = z0 + (dz * cells.width)},
-                    graph_->nodeCount(), scope.cache());
+                    graph_->nodeCount(), scope.cache(), scope.window());
         return evaluateNode(inner, argument);
     };
 

@@ -135,6 +135,16 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     // blocks on rows lambda-1..+40 of three probe worlds — and to 6 of 11 923
     // real barriers, from 121, on the independent `barrier3way` world. No
     // model in that sweep writes one block of stone the server does not.
+    // Q5.9, the deep-dark override: both floodedness comparands forced to -1.
+    // Neither branch below can then clear its threshold (0.4 and 0.8, with a
+    // depth bonus of at most 52 * 3/160 on the ocean branch), so the level is
+    // the dry sentinel. It cannot reach the near-surface return above, which
+    // compares no floodedness at all — the spec's override is on the
+    // comparands, and that branch has none.
+    if (cell.deepDark) {
+        return kNeverLevel;
+    }
+
     std::int32_t level = kNeverLevel;
     bool tookSea = false;
     // The DEPTH path gates on the ANCHOR while everything above gates on the

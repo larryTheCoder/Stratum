@@ -12,7 +12,9 @@
 
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 using stratum::aquifer::fluidLevel;
 using stratum::aquifer::spreadOffset;
@@ -753,4 +755,87 @@ TEST_CASE("the ladder's cap reads the scan's own minimum", "[aquifer]") {
     // the ladder rather than turning to lava. Spread 3.0 offsets it by 30.
     CHECK(cellFluidLevel(cellWith(constantSurface(150), 240, 90, 0.5, 3.0)) == 130);
     CHECK(stratum::aquifer::spreadOffset(3.0) == 30);
+}
+
+TEST_CASE("y_skip steps every twelve blocks and floors a negative surface", "[aquifer]") {
+    using stratum::aquifer::ySkip;
+    // Spec Q2.5: 12 * (floordiv(S_max + 8 + 12, 12) + 1) + 10.
+    CHECK(ySkip(96) == 130);
+    CHECK(ySkip(-20) == 22);
+    CHECK(ySkip(-9) == 22); // the top of the same twelve-block step
+    CHECK(ySkip(-8) == 34);
+    // A negative dividend: floorDiv(-1, 12) is -1, where truncation would
+    // give 0 and put the skip a whole step too high.
+    CHECK(ySkip(-21) == 10);
+    CHECK(ySkip(-80) == -38);
+    CHECK(ySkip(-92) == -50);
+    CHECK(ySkip(-93) == -62);
+    // A datapack's psl saturates at the int range (javamath::floorToInt);
+    // the arithmetic wraps as Java's int does. Evaluated at compile time,
+    // where undefined behaviour would not compile.
+    STATIC_REQUIRE(ySkip(std::numeric_limits<std::int32_t>::max()) == -2147483618);
+    STATIC_REQUIRE(ySkip(std::numeric_limits<std::int32_t>::min()) == -2147483606);
+}
+
+TEST_CASE("y_skip's rectangle is the chunk's lattice extent, at the cells' origins", "[aquifer]") {
+    using stratum::aquifer::ySkipRectangle;
+    // Spec Q3.5: i from floorDiv(xMin - 5, 16) to floorDiv(xMax - 5, 16) + 1,
+    // read at 16 * i. The shift of 5 puts the low edge one cell below the
+    // chunk on BOTH signs of coordinate, which is where a truncating division
+    // would part company with floorDiv.
+    const auto origin = ySkipRectangle(0, 0);
+    CHECK(origin.minX == -16);
+    CHECK(origin.maxX == 16);
+    CHECK(origin.minZ == -16);
+    CHECK(origin.maxZ == 16);
+
+    const auto east = ySkipRectangle(16, 32);
+    CHECK(east.minX == 0);
+    CHECK(east.maxX == 32);
+    CHECK(east.minZ == 16);
+    CHECK(east.maxZ == 48);
+
+    const auto west = ySkipRectangle(-16, -32);
+    CHECK(west.minX == -32);
+    CHECK(west.maxX == 0);
+    CHECK(west.minZ == -48);
+    CHECK(west.maxZ == -16);
+
+    // Inclusive of both endpoints at a stride of four: nine samples a side.
+    CHECK((origin.maxX - origin.minX) / stratum::aquifer::kYSkipSampleStride + 1 == 9);
+}
+
+TEST_CASE("the deep-dark override needs both thresholds, both strict", "[aquifer]") {
+    using stratum::aquifer::isDeepDark;
+    CHECK(isDeepDark(-0.3, 1.0));
+    CHECK_FALSE(isDeepDark(-0.225, 1.0)); // erosion AT the threshold is not below it
+    CHECK_FALSE(isDeepDark(-0.3, 0.9));   // depth AT the threshold is not above it
+    CHECK_FALSE(isDeepDark(0.0, 1.0));
+    CHECK_FALSE(isDeepDark(-0.3, 0.0));
+    CHECK(isDeepDark(std::nextafter(-0.225, -1.0), std::nextafter(0.9, 2.0)));
+}
+
+TEST_CASE("a deep-dark cell is dry, except on the near-surface return", "[aquifer]") {
+    // Q5.9 forces both floodedness comparands to -1. The ladder below floods
+    // at floodedness 0.5 and would flood the same at 1.0; with the override
+    // neither reading clears a threshold, so the cell is the dry sentinel.
+    CellFluid ladder = cellWith(constantSurface(150), 240, 90, 0.5, 3.0);
+    REQUIRE(cellFluidLevel(ladder) == 130);
+    ladder.deepDark = true;
+    CHECK(cellFluidLevel(ladder) == kNeverLevel);
+    ladder.floodedness = 1.0;
+    CHECK(cellFluidLevel(ladder) == kNeverLevel);
+
+    // The ocean branch's sea outcome goes the same way.
+    CellFluid sea = cellWith(constantSurface(40), 68, 20, 1.0);
+    REQUIRE(cellFluidLevel(sea) == 68);
+    sea.deepDark = true;
+    CHECK(cellFluidLevel(sea) == kNeverLevel);
+
+    // The near-surface return compares no floodedness, so there is no
+    // comparand to force: a deep-dark cell three blocks under the surface
+    // still takes the sea.
+    CellFluid shallow = cellWith(constantSurface(150), 200, 147, -2.0);
+    shallow.deepDark = true;
+    CHECK(cellFluidLevel(shallow) == 200);
 }

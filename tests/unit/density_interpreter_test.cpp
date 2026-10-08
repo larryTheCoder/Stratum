@@ -284,6 +284,57 @@ TEST_CASE("flat_cache samples at the corner of its column, not where it is asked
     CHECK(bits(flat(-5, 0, -5)) == bits(raw(-8, 0, -8)));
 }
 
+TEST_CASE("flat_cache relocates only inside its chunk's window", "[density][interpreter]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0,1.0]})");
+    tree.define("raw", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("flat", R"({"type":"minecraft:flat_cache","argument":"raw"})");
+    // Nested: an outer flat_cache over a sum that reads an inner one. Off the
+    // window, NEITHER relocates — the window rides into nested scopes.
+    tree.define("nested", R"({"type":"minecraft:flat_cache","argument":
+        {"type":"minecraft:add","argument1":"flat","argument2":1.0}})");
+
+    const Pipeline pipeline(tree.pack(), 12345);
+    const Interpreter& interpreter = pipeline.interpreter();
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    const auto raw = [&pipeline](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return pipeline.at("raw", Point{.x = x, .y = y, .z = z});
+    };
+    const auto read = [&](std::string_view function, Point at,
+                          const stratum::density::FlatCacheWindow& window) {
+        return interpreter.evaluate(pipeline.root(function), at, cache, window);
+    };
+
+    // The chunk at (16, 32): its window is that chunk's own sixteen columns.
+    const stratum::density::FlatCacheWindow chunk{.minX = 16, .maxX = 31, .minZ = 32, .maxZ = 47};
+
+    // Inside: relocated exactly as with no window at all.
+    for (const Point at : {Point{.x = 17, .y = -30, .z = 33}, Point{.x = 31, .y = 5, .z = 47}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(read("flat", at, chunk)) == bits(pipeline.at("flat", at)));
+        CHECK(bits(read("flat", at, chunk)) == bits(raw((at.x / 4) * 4, 0, (at.z / 4) * 4)));
+    }
+
+    // Outside, by one column on each side: the column itself, at y = 0.
+    for (const Point at : {Point{.x = 33, .y = -30, .z = 34}, Point{.x = 18, .y = 7, .z = 49},
+                           Point{.x = 13, .y = 0, .z = 35}, Point{.x = 19, .y = 0, .z = 30}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(read("flat", at, chunk)) == bits(raw(at.x, 0, at.z)));
+        CHECK(bits(read("flat", at, chunk)) != bits(pipeline.at("flat", at)));
+        CHECK(bits(read("nested", at, chunk)) == bits(raw(at.x, 0, at.z) + 1.0));
+    }
+
+    // `none()` covers nothing: every read is at its own column.
+    const Point inside{.x = 17, .y = 0, .z = 33};
+    CHECK(bits(read("flat", inside, stratum::density::FlatCacheWindow::none())) ==
+          bits(raw(17, 0, 33)));
+    // An aligned column is the same either way — which is why the aquifer's
+    // 4-aligned `preliminary_surface_level` reads never see the window.
+    const Point aligned{.x = 36, .y = 0, .z = 52};
+    CHECK(bits(read("flat", aligned, chunk)) == bits(pipeline.at("flat", aligned)));
+}
+
 TEST_CASE("cache_2d over a column-varying function is refused", "[density][interpreter]") {
     const TempTree tree;
     tree.define("gradient", R"({"type":"minecraft:y_clamped_gradient",

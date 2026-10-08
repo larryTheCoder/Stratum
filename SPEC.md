@@ -250,10 +250,12 @@ to bump the version and be called out; this is that call-out.
 |---|---|
 | 1 | the initial engine |
 | 2 | **The surface pass writes over `default_block` only**: aquifer lava and open water in the overworld are no longer repainted (§11, "The surface pass wrote over the aquifer"). **`above_preliminary_surface` reads the 16-block psl lattice**, not the column. **Aquifers-off dimensions keep the global lava sea** below `min(-54, sea_level)`. And, recorded here because they were never bumped when they landed after freeze format 3 made blobs generate: the aquifer's fluid-type ceiling at -10 (5799e6c), the dry sentinel and unclamped ladder (9fbaa17, ae5ab17), and the barrier's `/10` floor with its agree-guard removed (aa26e4a). The legacy climate noises (§11) changed no output a v1 blob could produce: v1 refused them. |
+| 3 | **The aquifer's Q5.9 deep-dark override**: a source whose centre reads `erosion < -0.225` and `depth > 0.9` is dry — read through the generating chunk's **`flat_cache` window**, so an off-chunk centre reads its own column rather than a 4x4 corner (§11, "The deep-dark override"). Changes blocks only where deep-dark volume meets an aquifer: 440 golden blocks on one of the eight seeds. **The `y_skip` cutoff** (spec Q2.3/Q2.5): above it the global picker decides without the lattice — identical output on every golden block, and on every flat surface from 96 down to -80, but not below that. v2 had reached only this development branch; it is bumped rather than amended because a v2 blob could exist. |
 
-A v1 blob is refused by a v2 build through the existing engine-version
-check, which is the point: a world frozen under v1 would otherwise grow seams
-at every chunk generated after the upgrade. The version is a plain CMake
+A blob frozen under an earlier version is refused by a later build through
+the existing engine-version check, which is the point: a world frozen under
+v1 or v2 would otherwise grow seams at every chunk generated after the
+upgrade. The version is a plain CMake
 variable, not a cache entry, so a build directory configured before a bump
 cannot keep stamping the old number.
 
@@ -2267,6 +2269,89 @@ Open:
   `vanilla_compiled_dimension_test.cpp`, which needs only the fetched worldgen
   data and so runs in CI's conformance job on x86-64 AND ARM64: the first
   cross-architecture check of aquifer-on output.
+
+- **The deep-dark override, read through the chunk's `flat_cache` window —
+  and the aquifer's golden residual is all fluid that moved (MA, pipeline
+  engine v3).** Three things, measured on the eight golden overworld regions
+  (805306368 blocks) with the raw first pass, where the slice before left
+  1311 category disagreements.
+
+  *Q5.9 is implemented.* A source whose centre reads `erosion < -0.225` and
+  `depth > 0.9` is dry; the near-surface return, which compares no
+  floodedness, is untouched. Only one golden seed decides blocks with it
+  (9223372036854775807; seeds 1, 2891948927356891 and -9223372036854775808
+  hold deep-dark volume too, with no aquifer it changes): 440 blocks of
+  aquifer the server does not have — lava and barrier stone at y -49..-28 —
+  go.
+
+  *Where the two router values are read is not where the spec's "router
+  values at Q" suggests, and the difference is a cache.* Both are behind
+  `flat_cache`, and a source centre is on an unaligned column, often in a
+  neighbouring chunk. Three readings, each run over the whole region:
+
+  | reading | disagreements left |
+  |---|---|
+  | no override | 440 |
+  | relocate every read to its 4x4 corner (the interpreter's `flat_cache` until now) | 16 |
+  | read every column exactly | 2 |
+  | relocate inside the generating chunk's window, exact outside | **0** |
+
+  The deciding source is (57, -33, 70): depth 0.9092 at its corner, 0.8620
+  at its own column. The server keeps it WET when generating chunk (3, 3),
+  which it lies off — a lava pool at y -32 and the barrier around it, 16
+  blocks — and DRY when generating chunk (3, 4), which it lies in — air at
+  (51..52, -32, 64). One source, two statuses, by chunk: only the window
+  gives that. `density::FlatCacheWindow` carries it, and `ChunkFiller` reads
+  every aquifer router entry through its own chunk's window (identical for
+  the other four in every vanilla preset, which are bare noises or read on
+  aligned columns). Outside a window the argument is read at the column
+  itself at y = 0 — vanilla's arguments under `flat_cache` are all
+  column-invariant, so that y is unobservable there; keeping it 0 keeps the
+  node column-invariant either way. **Flagged, not measured: the window's
+  extent.** The chunk's own 16 columns, 20 (one quart beyond, the reading
+  taken: the chunk's own reads reach the corner column at +16, so a grid
+  serving them holds the quart past it) and 24 (a quart further on the low
+  side too) score identically on every golden block. The probe that would
+  separate them: a dimension whose `erosion` is `flat_cache` over a noise
+  fast enough to cross -0.225 within four blocks, `depth` constant 1.0,
+  floodedness constant high — every source wet unless its own read is
+  deep-dark — with source centres placed by the seed in the four columns
+  that differ.
+
+  *The `y_skip` cutoff (spec Q2.3/Q2.5) is implemented*, with known-answer
+  vectors for both the step and its rectangle, and changes no golden block —
+  which a unit case pins rather than argues: over a flat surface anywhere
+  from 96 down to -80 the full local decision above `y_skip` equals the
+  global picker on all 65610 blocks it reads, over three stub noise fields.
+  It is not merely an optimisation: one block lower, at -81, the step drops
+  `y_skip` from -38 to -50, uncovering centres within twenty blocks of an
+  aborting scan's minimum that the floor puts at lambda, and blocks read air
+  where the global picker reads water (244 of 21870 under one stub field). A world with a surface between
+  -81 and -92 would show it against the server.
+
+  *Every remaining raw disagreement is fluid the server moved after
+  generating*, and is now attributed block by block rather than counted:
+  871 blocks over the eight regions (805305497 of 805306368 agree), which
+  are 494 flowing water and 169 flowing lava where the first pass has air,
+  150 water sources the infinite-source rule rebuilt out of that flow, 54
+  obsidian where water reached the lava sea's top row, and 4 water beside
+  that obsidian — and nothing else, on any seed. Stratum generates no fluid
+  ticks (spec Q8's post-processing flag is unimplemented), so a first pass
+  that is right leaves exactly this. It closes the **192-block "fluid
+  extent" residual** of the aquifer-on probe's 64-chunk sweep outright:
+  re-read the same way, all 192 are flowing water (`level` 1+), not one a
+  source. Not an aquifer question at all.
+
+  Held by `golden_overworld_test.cpp` — `explainedByFlow`
+  (`tests/support/fluid_flow.hpp`) with nothing unexplained, per seed, and a
+  second case on the six chunks around the deciding source, where every one of 589824 categories agrees (the three
+  rejected readings leave 440, 16 and 2 there) — by unit cases for
+  `FlatCacheWindow` (inside, outside, nested, aligned), the chunk window's
+  extent, `ySkip` and its rectangle, `isDeepDark`'s strict thresholds, the
+  deep-dark cell going dry everywhere but the near-surface return, and the
+  `y_skip` invariance with its -81 counterexample; and by
+  `golden_fill_aquifer_test.cpp`'s new 64-chunk case, which pins the sweep
+  (6291264 of 6291456) and its 192 as flowing water, block by block.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
@@ -6431,7 +6516,9 @@ Open:
   exact for vanilla's data and a loud error for anything else. `flat_cache`
   is a different matter and is implemented literally: it relocates the
   sample to the corner of the 4x4 column at y = 0, which changes the value
-  at every block that is not on a corner.
+  at every block that is not on a corner. (Refined since: only inside the
+  generating chunk's window, when the reader supplies one — off it there is
+  no corner to relocate to; §11, "The deep-dark override".)
 
 - **M5 started: biome mapping landed, block state mapping's source is the
   open question.** `lib/mapping/` was empty by design until this; it is now
