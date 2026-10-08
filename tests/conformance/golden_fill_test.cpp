@@ -74,6 +74,7 @@
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -266,4 +267,89 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
     // once solid had already been crossed above it. Anything short of
     // 393216 here means the filler changed.
     CHECK(exact == 393216U);
+}
+
+TEST_CASE("aquifers off still keeps a global lava sea below min(-54, sea_level)",
+          "[conformance][terrain][aquifer]") {
+    // Spec Q1.2/Q2.1: with `aquifers_enabled` false a non-solid position is
+    // the global picker's — lava below min(-54, sea_level), default_fluid
+    // below sea_level, air above. The fill path used to skip the lava half
+    // and write default_fluid all the way down. The case above could not see
+    // it: its four chunks hold no lava, and a category comparison calls water
+    // and lava both "fluid". Measured on this probe before the fix: 1005
+    // positions at y -58..-55 the server filled with lava, every one of them
+    // written as water.
+    //
+    // Only the chunks whose golden holds lava are filled: that is every
+    // position the rule decides, at a fraction of the whole region's cost in
+    // the Debug build this preset runs.
+    const std::filesystem::path tree = fixtures() / "worldgen";
+    const std::filesystem::path region =
+        fixtures() / "probes" / "no-aquifer" / ("seed-" + std::to_string(kSeed)) / "r.0.0.mca";
+    if (!std::filesystem::is_directory(tree) || !std::filesystem::is_regular_file(region)) {
+        SKIP("no aquifer-free probe at " << region << "; generate it with "
+                                         << "tools/analysis/aquifer-free-probe.sh --accept-eula");
+    }
+    const auto pack = stratum::data::Pack::open(tree);
+    const auto loaded = stratum::settings::loadAll(pack);
+    auto overworld =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:overworld"));
+    overworld.aquifersEnabled = false;
+    overworld.oreVeinsEnabled = false;
+    const auto noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), kSeed, stratum::density::RandomSource::Xoroshiro);
+    const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld);
+    const auto file = stratum::region::RegionFile::open(region);
+
+    std::size_t chunksWithLava = 0;
+    std::size_t goldenLava = 0;
+    std::size_t oursLavaThere = 0;
+    std::size_t fluidTypeMismatches = 0;
+    for (std::int32_t chunkZ = 0; chunkZ < stratum::region::kChunksPerAxis; ++chunkZ) {
+        for (std::int32_t chunkX = 0; chunkX < stratum::region::kChunksPerAxis; ++chunkX) {
+            if (!file.hasChunk(chunkX, chunkZ)) {
+                continue;
+            }
+            const auto golden = stratum::chunk::Chunk::decode(
+                stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
+            bool holdsLava = false;
+            for (const auto& section : golden.sections()) {
+                for (const auto& state : section.palette) {
+                    holdsLava = holdsLava || state.name == "minecraft:lava";
+                }
+            }
+            if (!holdsLava) {
+                continue;
+            }
+            ++chunksWithLava;
+            stratum::terrain::ChunkBuffer buffer(overworld.geometry);
+            filler.fill(golden.x(), golden.z(), buffer);
+            for (std::int32_t y = overworld.geometry.minY;
+                 y < overworld.geometry.minY + overworld.geometry.height; ++y) {
+                for (int localZ = 0; localZ < 16; ++localZ) {
+                    for (int localX = 0; localX < 16; ++localX) {
+                        const auto* theirs = golden.blockAt(localX, y, localZ);
+                        if (theirs == nullptr) {
+                            continue;
+                        }
+                        const std::string ours = buffer.at(localX, y, localZ).name.toString();
+                        const bool theirsFluid = categoryOf(theirs->name) == "fluid";
+                        const bool oursFluid = categoryOf(ours) == "fluid";
+                        if (theirs->name == "minecraft:lava") {
+                            ++goldenLava;
+                            oursLavaThere += static_cast<std::size_t>(ours == "minecraft:lava");
+                        }
+                        if (theirsFluid && oursFluid && theirs->name != ours) {
+                            ++fluidTypeMismatches;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    CHECK(chunksWithLava > 0U);
+    CHECK(goldenLava == 1005U);
+    CHECK(oursLavaThere == goldenLava);
+    CHECK(fluidTypeMismatches == 0U);
 }

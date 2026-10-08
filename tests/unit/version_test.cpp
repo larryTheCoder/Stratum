@@ -39,7 +39,8 @@ TEST_CASE("version banner reports engine version and pin", "[version]") {
 
     REQUIRE(banner.find("stratum ") == 0U);
     REQUIRE(banner.find(std::string(stratum::kVersion)) != std::string::npos);
-    REQUIRE(banner.find("pipeline engine v1") != std::string::npos);
+    REQUIRE(banner.find("pipeline engine v" + std::to_string(stratum::kPipelineEngineVersion)) !=
+            std::string::npos);
     REQUIRE(banner.find("schema pin MC 1.21.11") != std::string::npos);
     REQUIRE(banner.find("pack format 94.1") != std::string::npos);
 }

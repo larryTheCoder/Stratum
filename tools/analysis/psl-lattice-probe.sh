@@ -210,4 +210,4 @@ eula=()
 tools/analysis/density-probe.sh "${eula[@]}" --spec "${work}/psllat.json" --seed "${seed}"
 tools/analysis/density-probe.sh "${eula[@]}" --spec "${work}/psllat2.json" --seed "${second_seed}"
 tools/analysis/density-probe.sh "${eula[@]}" --spec "${work}/psllat3.json" --seed "${seed}" \
-    --origin -12
+    --origin-chunk -12 -12

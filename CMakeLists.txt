@@ -30,9 +30,16 @@ set(STRATUM_PACK_FORMAT_MINOR 1  CACHE STRING "Pinned data pack format minor")
 
 # Bumped whenever a change can alter generated output for an existing stored
 # pipeline (SPEC 6). Worlds record this; a mismatch the engine cannot
-# reproduce is a hard refusal, never best-effort generation.
-set(STRATUM_PIPELINE_ENGINE_VERSION 1 CACHE STRING
-    "Pipeline execution engine version stamped into per-world freeze blobs")
+# reproduce is a hard refusal, never best-effort generation. The history of
+# what each bump changed is SPEC §6's "Pipeline engine versions".
+#
+# A plain variable, NOT a cache entry: it describes the code, so a build
+# directory must not be able to keep an old value. As a CACHE STRING it did
+# exactly that — set() does not overwrite an existing cache entry, so a
+# directory configured before a bump went on stamping the old version onto
+# the new engine's output, which is the one seam the freeze refusal exists
+# to prevent.
+set(STRATUM_PIPELINE_ENGINE_VERSION 2)
 
 # --------------------------------------------------------------------------
 # Options

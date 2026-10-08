@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -214,4 +215,68 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
                                                  ResourceLocation::parse("minecraft:not_a_list"),
                                                  1),
                       ContainsSubstring("no biome parameter list 'minecraft:not_a_list'"));
+}
+
+TEST_CASE("the shipped overworld's output is pinned, on every architecture CI builds",
+          "[conformance][world][aquifer]") {
+    // SPEC §5.5: the same (pipeline, seed, chunk) generates the same chunk on
+    // every platform. The golden suites hold that against the server, but
+    // they need region files, which CI never generates — so until this case,
+    // nothing in CI compared aquifer-on, vein-on, surface-on output across
+    // x86-64 and ARM64 at all. This needs only the fetched worldgen data,
+    // which CI's conformance job has on both, and pins an FNV-1a hash of the
+    // blocks and quart biomes CompiledDimension writes. A change in the hash
+    // is either an intentional output change — which bumps the pipeline
+    // engine version (SPEC §5.6, §6) — or a cross-platform divergence.
+    //
+    // The chunks: seed 0's (0, 0); (22, 24) and (31, 28), the two chunks of
+    // its golden r.0.0 holding the most aquifer lava (296 and 238 blocks), so
+    // the lava path is in the hash; and (-1, -1), for negative coordinates.
+    if (!haveFixtures()) {
+        SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR
+                                                               << "; run tools/fetch-vanilla");
+    }
+    const auto overworld = ResourceLocation::parse("minecraft:overworld");
+    const auto dimension = CompiledDimension::compile(thawedVanilla(), overworld, overworld, 0);
+
+    std::uint64_t hash = 0xcbf29ce484222325ULL;
+    const auto mix = [&hash](const std::string& text) {
+        for (const char c : text) {
+            hash ^= static_cast<std::uint8_t>(c);
+            hash *= 0x100000001b3ULL;
+        }
+        hash ^= 0xffU;
+        hash *= 0x100000001b3ULL;
+    };
+    std::size_t lava = 0;
+    for (const auto& [chunkX, chunkZ] : std::array<std::pair<std::int32_t, std::int32_t>, 4>{
+             {{0, 0}, {22, 24}, {31, 28}, {-1, -1}}}) {
+        stratum::terrain::ChunkBuffer blocks(dimension->geometry());
+        dimension->fillBlocks(chunkX, chunkZ, blocks);
+        for (std::int32_t y = blocks.minY(); y < blocks.minY() + blocks.height(); ++y) {
+            for (int z = 0; z < 16; ++z) {
+                for (int x = 0; x < 16; ++x) {
+                    const auto& state = blocks.at(x, y, z);
+                    std::string text = state.name.toString();
+                    for (const auto& [key, value] : state.properties) {
+                        text += "," + key + "=" + value;
+                    }
+                    lava += static_cast<std::size_t>(text.starts_with("minecraft:lava"));
+                    mix(text);
+                }
+            }
+        }
+        const std::int32_t quartsHigh = dimension->geometry().height / 4;
+        std::vector<const ResourceLocation*> biomes(16U * static_cast<std::size_t>(quartsHigh));
+        dimension->fillBiomes(chunkX, chunkZ, biomes);
+        for (const ResourceLocation* biome : biomes) {
+            REQUIRE(biome != nullptr);
+            mix(biome->toString());
+        }
+    }
+    // The lava path is actually in the hash: the two lava chunks' aquifer lava
+    // survives to the output (golden_overworld_test.cpp holds it against the
+    // server).
+    CHECK(lava > 400U);
+    CHECK(hash == 0x6511bbe8c4428bcdULL);
 }

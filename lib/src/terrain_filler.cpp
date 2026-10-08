@@ -78,22 +78,6 @@ constexpr int kChunkWidth = 16;
     throw FillError("veinBlock asked for a block for a position the vein system did not place");
 }
 
-/// Whether the first pass put this block here as part of an ore vein.
-///
-/// Asked by the surface pass, which must not repaint one. Identified by the
-/// block itself rather than by remembering the positions: a chunk holds at
-/// most six of these and the comparison is against a six-entry table, which
-/// is cheaper than a parallel 98304-entry mask and cannot fall out of step
-/// with what `fill()` actually wrote.
-///
-/// A dimension whose own `default_block` is one of the six would make this
-/// ambiguous — it would shield that dimension's plain terrain from its own
-/// surface rules. Vanilla's is `minecraft:stone`, which is not in the table,
-/// and the caller checks `default_block` first regardless.
-[[nodiscard]] bool isVeinBlock(const settings::BlockState& block) {
-    return std::ranges::find(veinBlocks(), block) != veinBlocks().end();
-}
-
 /// Solid, fluid or air — what the FIRST pass decided, read back for the
 /// second. Not stored anywhere: rederived from the block a position already
 /// holds, which is exact because only these three ever come out of it.
@@ -547,6 +531,18 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                     case aquifer::Substance::Air:
                                         break;
                                 }
+                            } else if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+                                // Aquifers off still has a global lava sea:
+                                // non-solid ground below min(-54, sea_level)
+                                // is lava, not default_fluid (spec Q1.2,
+                                // Q2.1). Measured on the aquifer-free probe
+                                // (tools/analysis/aquifer-free-probe.sh):
+                                // 1005 positions at y -58..-55 the server
+                                // filled with lava, all of which this branch
+                                // used to write as water — invisible to every
+                                // category-only comparison, where both are
+                                // "fluid".
+                                block = &lava();
                             } else if (y < settings_->seaLevel) {
                                 block = &settings_->defaultFluid;
                             }
@@ -655,6 +651,31 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // chunk rather than one cell.
     density::Interpreter::CornerCache surfaceCache(interpreter_.cacheSize());
 
+    // `preliminary_surface_level` reaches `above_preliminary_surface` through
+    // a 16-block lattice, not per column: sampled at the lattice corners,
+    // each sample floored, blended linearly, floored again — measured, SPEC
+    // §11. The lattice is anchored at the world origin through floorDiv and
+    // its pitch is a chunk's width, so a chunk is exactly one cell and its
+    // four samples are the chunk's own corner and its three +16 neighbours.
+    // Four evaluations a chunk where the per-column read made 256 — and the
+    // per-column read was the WRONG value: `ChunkFiller::preliminarySurfaceIn`
+    // existed and was measured on 1871872 columns (vanilla_psl_lattice_test)
+    // while this pass still read the raw entry at every column, so the
+    // engine itself never reproduced what that test credited it with.
+    static_assert(kPreliminarySurfacePitch == kChunkWidth,
+                  "one lattice cell per chunk is what makes four samples enough");
+    std::array<double, 4> pslCorners{};
+    if (surfaceNeedsPreliminarySurface_) {
+        const auto pslSample = [&](const std::int32_t dx, const std::int32_t dz) {
+            return interpreter_.evaluate(
+                settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
+                density::Point{.x = baseX + dx, .y = 0, .z = baseZ + dz}, surfaceCache);
+        };
+        pslCorners = {pslSample(0, 0), pslSample(kPreliminarySurfacePitch, 0),
+                      pslSample(0, kPreliminarySurfacePitch),
+                      pslSample(kPreliminarySurfacePitch, kPreliminarySurfacePitch)};
+    }
+
     // Cached across the WHOLE chunk, not just down one column: a chunk is
     // only 4 quart-cells wide, so up to 16 of its 256 columns share the same
     // one — and without this, each repeated a from-scratch linear search
@@ -677,16 +698,12 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 surface::fillSteepNeighbours(context, heightAt);
             }
             if (surfaceNeedsPreliminarySurface_) {
-                // FLOOR, not a `static_cast` — measured, and the two are only
-                // separable on a router that hands this entry a negative
-                // fraction. Vanilla's own `find_top_surface` never does, so
-                // this never bites in a vanilla world; a datapack whose
-                // `preliminary_surface_level` is -0.5 gets -1 from the server
-                // and used to get 0 from here (SPEC §11).
-                context.preliminarySurface =
-                    static_cast<std::int32_t>(std::floor(interpreter_.evaluate(
-                        settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
-                        density::Point{.x = x, .y = 0, .z = z}, surfaceCache)));
+                // FLOORED at each sample and after the blend, not truncated:
+                // the two are only separable on a router that hands this
+                // entry a negative fraction, which vanilla's own
+                // `find_top_surface` never does, so it is a data-pack-only
+                // distinction — and a measured one (preliminarySurfaceIn).
+                context.preliminarySurface = preliminarySurfaceIn(pslCorners, localX, localZ);
             }
 
             // Top-down: the stone-depth run counting from the world's top,
@@ -739,61 +756,38 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
-            // Monotonic, NOT the resetting stone-depth run: once solid has
-            // been crossed anywhere above the current position in this
-            // column, every non-solid (fluid OR air) position from there on
-            // down stays out of surface rules' reach, no matter how many
-            // more solid runs and non-solid gaps follow — real vanilla only
-            // ever rewrites the column's FIRST (topmost, reached straight
-            // from the sky) non-solid stretch, plus whatever solid it
-            // crosses at any depth. `stoneDepthAbove` cannot stand in for
-            // this: air resets IT on purpose (Context's own doc), which is
-            // exactly what a deep cave's own air needs to NOT look like open
-            // sky here.
+            // ONLY THE DEFAULT BLOCK IS A SURFACE-RULE POSITION. A rule's
+            // block replaces `default_block` and nothing else: not fluid, not
+            // air, not lava the aquifer placed, not a vein block. Measured on
+            // the eight golden overworld regions (every second chunk, 6619641
+            // positions where the first pass holds water and 31491 where it
+            // holds lava): vanilla changes NONE of the water — not the open
+            // water reached straight from the sky, which an earlier reading
+            // here left in reach of the rules, and not water below solid rock.
+            // The same predicate is what the ore-vein placement probe measured
+            // first, from the other side: an unconditional rule left all 12934
+            // vein blocks untouched and repainted all 5548 default-block
+            // positions (SPEC §11).
             //
-            // Confirmed against the real server (tools/analysis, see SPEC
-            // §11): a datapack whose ENTIRE surface_rule is the overworld's
-            // own bare, unconditioned `deepslate` vertical_gradient — no
-            // above_preliminary_surface, no bedrock floor, nothing else
-            // gating it — still leaves exactly the same 475 fluid blocks
-            // untouched that vanilla's full 287-rule tree does, in the same
-            // aquifer-free probe golden_fill_test.cpp reads, every one of
-            // them inside a fluid-filled cave-void with solid rock already
-            // crossed above it. With a real aquifer's own air pockets in
-            // play (golden_fill_aquifer_test.cpp), most of that same gap is
-            // air, not fluid — solid crossed above a drained cell, painted
-            // over the same way. The topmost/open case (real ocean straight
-            // from the sky, nothing solid crossed yet) stays reachable,
-            // which is what a rule keyed on `water` — freezing ice onto a
-            // lake's own surface — needs.
+            // What this replaced, and what it cost. The pass used to rewrite
+            // every position of the column's first non-solid stretch plus
+            // every Solid one, exempting only the six vein blocks — and
+            // `categorize` calls the aquifer's lava Solid, because lava is not
+            // the overworld's `default_fluid`. So the overworld's own
+            // unconditioned `deepslate` gradient (true at y <= 0) turned every
+            // aquifer lava block into deepslate, 127531 of the goldens' 127700
+            // lava blocks, and painted the bottom of open water in the
+            // gradient's band, 4215 blocks; the first pass had all of those
+            // right. Nothing caught it, because every aquifer probe ran with
+            // surface rules off and the one surface-on aquifer case held no
+            // lava (golden_overworld_test.cpp now holds both).
             //
-            // AND THE SCAN DOES NOT START AT THE SKY. It starts at the
-            // column's topmost NON-AIR block — fluid counting as non-air, so
-            // an ocean column still starts at its water surface and the ice
-            // case above is untouched. The open air above the terrain is
-            // never a surface-rule position at all.
-            //
-            // Invisible in every overworld fixture, because vanilla's own
-            // overworld tree is gated top to bottom and fires nothing up
-            // there; catastrophic the moment a tree is NOT gated. Vanilla's
-            // End is exactly that tree — its entire `surface_rule` is one
-            // unconditioned `block` placing end_stone — and without this
-            // bound it paints end_stone from the island's surface to y 127
-            // in every column. Measured as such: golden_end_test.cpp scored
-            // 441481 of 2097152 blocks at seed 0 with the scan starting at
-            // the sky, and 2097152 of 2097152 with it starting here.
-            //
-            // THE TOPMOST NON-AIR BLOCK, not the one above it. The obvious
-            // rival reading — start one higher, at the first air — is
-            // REFUTED rather than merely unchosen: that position is air with
-            // no solid crossed above it, so an unconditioned rule would fire
-            // there, and the End's tree is unconditioned. Under that reading
-            // every island in the End would carry one extra end_stone block
-            // on top, and the eight golden regions say it does not.
-            //
+            // THE SCAN STILL STARTS AT THE COLUMN'S TOPMOST NON-AIR BLOCK. Air
+            // is never the default block, so this is a bound on work rather
+            // than on correctness now; the End's unconditioned end_stone rule
+            // (golden_end_test.cpp, 2097152 of 2097152) is safe under either.
             // A column of nothing but air leaves `scanFrom` below `minY` and
-            // the loop below runs zero times, which is the right answer for
-            // it: the End's void is most of the dimension.
+            // the loop runs zero times.
             std::int32_t scanFrom = minY - 1;
             for (std::int32_t y = topY - 1; y >= minY; --y) {
                 if (categorize(into.at(localX, y, localZ), *settings_) != Category::Air) {
@@ -801,34 +795,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     break;
                 }
             }
-            bool crossedSolid = false;
             for (std::int32_t y = scanFrom; y >= minY; --y) {
-                const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                if (category != Category::Solid) {
-                    if (crossedSolid) {
-                        continue;
-                    }
-                } else {
-                    crossedSolid = true;
-                    // A block the VEIN system placed is solid but is not the
-                    // default block, and the surface system does not repaint
-                    // it. Measured, because it had to be: a probe with ore
-                    // veins on and an unconditional surface rule painting
-                    // every repaintable block left all 12934 vein blocks
-                    // untouched while repainting all 5548 non-vein candidate
-                    // positions. Without this the overworld's own `deepslate`
-                    // rule — unconditionally true below y = -8 — would erase
-                    // every iron vein in the world, iron's whole range being
-                    // [-60, -8].
-                    //
-                    // Keyed on the vein blocks themselves, not on "anything
-                    // that is not the default block": `categorize` counts
-                    // lava as solid too, and shielding THAT from the surface
-                    // rules would quietly move the aquifer results this file
-                    // already has exact.
-                    if (oreVeins_.has_value() && isVeinBlock(into.at(localX, y, localZ))) {
-                        continue;
-                    }
+                if (!(into.at(localX, y, localZ) == settings_->defaultBlock)) {
+                    continue;
                 }
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);
