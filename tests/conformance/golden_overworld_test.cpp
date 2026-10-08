@@ -46,9 +46,11 @@
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/nbt/reader.hpp>
+#include <stratum/ore/vein.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/terrain/filler.hpp>
@@ -105,6 +107,12 @@ struct Score {
     /// server's post-generation fluid flow, and the ones it cannot.
     std::size_t rawFlow = 0;
     std::size_t rawUnexplained = 0;
+    /// Positions where the first pass placed fluid and the vein chain, run
+    /// there anyway, would place a vein block; and of those, the ones where
+    /// the server holds fluid, and the ones where it holds anything solid.
+    std::size_t veinOverFluid = 0;
+    std::size_t veinOverFluidServerFluid = 0;
+    std::size_t veinOverFluidServerSolid = 0;
 
     void absorb(const Score& other) {
         blocks += other.blocks;
@@ -116,6 +124,9 @@ struct Score {
         fluidOverwritten += other.fluidOverwritten;
         rawFlow += other.rawFlow;
         rawUnexplained += other.rawUnexplained;
+        veinOverFluid += other.veinOverFluid;
+        veinOverFluidServerFluid += other.veinOverFluidServerFluid;
+        veinOverFluidServerSolid += other.veinOverFluidServerSolid;
     }
 };
 
@@ -155,6 +166,17 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
             pack, loaded.graph.referencedNoises(), seed, stratum::density::RandomSource::Xoroshiro);
         const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, settings);
         GoldenRegion goldenRegion(region);
+        // The vein chain on its own, for positions the filler never offers
+        // it: the filler runs a vein only over `default_block`.
+        stratum::density::Interpreter veinReader(
+            loaded.graph, noises,
+            stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                           .height = settings.geometry.cellHeight()});
+        stratum::density::Interpreter::CornerCache veinCache(veinReader.cacheSize());
+        const stratum::ore::VeinSource veins(seed);
+        const auto toggleNode = settings.router.at(stratum::settings::RouterEntry::VeinToggle);
+        const auto ridgedNode = settings.router.at(stratum::settings::RouterEntry::VeinRidged);
+        const auto gapNode = settings.router.at(stratum::settings::RouterEntry::VeinGap);
 
         Score score;
         for (const std::int32_t cz : kChunkGrid) {
@@ -204,6 +226,31 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
                             if (isFluid(rawCategory) && shippedName != rawName) {
                                 ++score.fluidOverwritten;
                             }
+                            if (isFluid(rawCategory) && y >= stratum::ore::kLowestVeinY &&
+                                y <= stratum::ore::kHighestVeinY) {
+                                const stratum::density::Point point{
+                                    .x = (cx * 16) + x, .y = y, .z = (cz * 16) + z};
+                                const double toggle =
+                                    veinReader.evaluate(toggleNode, point, veinCache);
+                                if (stratum::ore::clearsRichness(y, toggle)) {
+                                    const double ridged =
+                                        veinReader.evaluate(ridgedNode, point, veinCache);
+                                    if (ridged < 0.0 && veins
+                                                            .at(point.x, y, point.z,
+                                                                stratum::ore::VeinInputs{
+                                                                    .toggle = toggle,
+                                                                    .ridged = ridged,
+                                                                    .gap = veinReader.evaluate(
+                                                                        gapNode, point, veinCache)})
+                                                            .placed()) {
+                                        ++score.veinOverFluid;
+                                        score.veinOverFluidServerFluid +=
+                                            static_cast<std::size_t>(isFluid(goldenCategory));
+                                        score.veinOverFluidServerSolid += static_cast<std::size_t>(
+                                            goldenCategory == Category::Solid);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -237,6 +284,20 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
     // The shipped residual, 540 blocks, is mostly surface MATERIAL near biome
     // borders (sand/dirt, sandstone/stone) — M4, not the aquifer.
     CHECK(total.exact == 12582372U);
+
+    // A vein never replaces the aquifer's fluid. The filler runs the vein
+    // chain only over `default_block`, which was a choice (ore/vein.hpp):
+    // the placement probe held no fluid at all. Here the chain is run at
+    // every position the first pass made fluid inside the vein ranges, and
+    // wherever it would place a vein block the server kept the fluid — 21
+    // of 21 on this grid. Few, but not a sample: placement is deterministic,
+    // so under the other reading every one of them would be a vein block.
+    // The floor sits just under the count, so a lost seed fails it.
+    INFO("vein over fluid " << total.veinOverFluid << ", server fluid "
+                            << total.veinOverFluidServerFluid << ", server solid "
+                            << total.veinOverFluidServerSolid);
+    REQUIRE(total.veinOverFluid >= 20U);
+    CHECK(total.veinOverFluidServerSolid == 0U);
 }
 
 TEST_CASE("the deep-dark override reads erosion and depth through the chunk's flat_cache window",

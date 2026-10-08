@@ -58,10 +58,9 @@
 // themselves clearing their gates on a measurable fraction of positions.
 // `veinsPlaceBlocks` is that observation, not a guess about why.
 //
-// WHAT THIS DELIBERATELY DOES NOT DECIDE. Three things, recorded rather than
-// guessed (SPEC §11). The first two are provably unobservable on any probe run
-// so far; the THIRD is not — it can change real blocks and rests on no
-// measurement at all:
+// WHAT THIS DELIBERATELY DOES NOT DECIDE. Two things, recorded rather than
+// guessed (SPEC §11), both provably unobservable on any probe run so far —
+// and a third that was chosen first and measured since:
 //   * `nextFloat()` vs `nextDouble()`. One `nextLong()` backs both and no row
 //     of the 79790 lands between the two precisions, so both read 100.000%.
 //     Separating them needs a probe that takes a FOURTH draw.
@@ -69,17 +68,15 @@
 //     reads the stream at this position, so both variants also read 100.000%.
 //     `decide` takes the draw unconditionally, which is the simpler reading;
 //     no observable depends on it.
-//   * WHETHER A VEIN MAY REPLACE A FLUID. `ChunkFiller` gates the vein call on
-//     `block == &settings_->defaultBlock`, so a vein never replaces a block the
-//     aquifer placed as water or lava. NOTHING MEASURED THIS. The placement
-//     probe contained zero fluid candidates — provable from its own pass, since
-//     a single one would have broken its `solidAgree == solid` assertion — so
-//     the guard was chosen, not observed. Unlike the two above, this one CAN
-//     change blocks: in a real veins-on overworld the aquifer places fluid
-//     inside the vein ranges routinely. Settling it needs a placement probe
-//     whose aquifer actually produces water or lava inside y in [-60, 50].
-//     Note that `categorize()` counts lava as SOLID, so "solid" in the probe's
-//     sense and "replaceable" in this guard's sense are not the same predicate.
+//   * WHETHER A VEIN MAY REPLACE A FLUID — it may not, now measured.
+//     `ChunkFiller` gates the vein call on `block == &settings_->defaultBlock`,
+//     so a vein never replaces a block the aquifer placed as water or lava.
+//     That was chosen first: the placement probe contained zero fluid
+//     candidates (a single one would have broken its `solidAgree == solid`
+//     assertion). The golden overworld regions settle it: wherever the first
+//     pass places fluid inside the vein ranges and this chain would place a
+//     vein block, the server kept the fluid, 21 of 21
+//     (tests/conformance/golden_overworld_test.cpp).
 #pragma once
 
 #include <stratum/rng/xoroshiro128.hpp>

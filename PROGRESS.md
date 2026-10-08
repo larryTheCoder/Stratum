@@ -109,6 +109,10 @@ Open:
       apart, all fluid products), so flow is bounded, never pinned; every
       disagreement must still be flow-shaped. A corpus of another seed is
       refused too, and no longer silently overwritten. SPEC §7, §11.
+- [x] **A vein never replaces aquifer fluid — measured on the goldens.**
+      21 of 21 positions where the chain would place a vein over the first
+      pass's fluid hold fluid in the server; the filler's guard was chosen,
+      and is now observed. SPEC §11.
 - [x] **Aquifers over a `default_fluid` other than water are refused by
       name** (`ChunkFiller::compile`; `stratum validate` warns). Q6.3 and
       Q6.4 are written for water, and no vanilla dimension that enables
