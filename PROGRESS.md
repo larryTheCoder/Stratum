@@ -92,6 +92,12 @@ Open:
       type's 0.3 strictness and -10 ceiling are replayed block for block on
       the fluid-type probe; deep-floor needs all three seeds; depth-gate's
       ties are set apart and the rest held exact. SPEC §11.
+- [x] **The probe residuals were flow, or attribution.** Varying surface
+      (34 878 blocks) and selection readout two (999) are every block fluid
+      that moved after generating — both cases exact now. The fluid type's
+      "4% mixed" and its four misses were the case crediting flowing water
+      and other bodies' fluid to a source: on its own source blocks the rule
+      is 3162 of 3162. 8 water blocks inside lava bodies stay named. SPEC §11.
 - [ ] **The row-lambda barrier residual.** Server stone on row lambda that
       the predicate misses: 35 pure + 4 mixed on the water/lava worlds, and
       7 in each lava-sourced arm of the fluid-type probe (pinned at 42).
