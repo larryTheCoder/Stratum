@@ -185,7 +185,9 @@ struct FluidTypeAt {
     /// Whether the level is the near-surface sea outcome
     /// (`LevelOrigin::NearSurfaceSea`): the sea taken from a submerged
     /// surface rather than from the cell's own centre, so the centre's
-    /// height does not make it lava.
+    /// height does not make it lava. Defaulted, so a hand-built status that
+    /// forgets it types a near-surface sea below lambda as lava; build
+    /// statuses with `sourceStatus` (substance.hpp) instead.
     bool fromNearSurface = false;
 };
 
@@ -200,8 +202,10 @@ struct FluidTypeAt {
     // A centre below the lava sea makes a source lava — except the
     // near-surface sea, which is the sea of the surface the cell sits under,
     // not of its centre (cf58: 20 462 blocks of false barrier otherwise). The
-    // lava override below still applies to it as before: nothing has
-    // measured a near-surface sea at or under the -10 ceiling.
+    // lava override below still applies to it as before, and that is the
+    // documented reading, NOT a measurement: no conformance case isolates a
+    // near-surface sea at or under the -10 ceiling with `lava` past its
+    // threshold, so whether Q5.8's override reaches this outcome is open.
     if (!at.fromNearSurface && at.centreY < lambdaLevel(at.seaLevel)) {
         return FluidType::Lava;
     }

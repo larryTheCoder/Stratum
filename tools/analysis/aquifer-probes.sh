@@ -42,6 +42,7 @@ for seed in 42 31337 8675309; do
     run tools/analysis/aquifer-deepfloor-probe.sh "${seed}"
     run tools/analysis/aquifer-waterlava-probe.sh "${seed}"
     run tools/analysis/aquifer-nsfloor-probe.sh "${seed}"
+    run tools/analysis/aquifer-ddfloor-probe.sh "${seed}"
 done
 run tools/analysis/aquifer-depthgate-probe.sh 42
 run tools/analysis/aquifer-fluidtype-probe.sh 42

@@ -39,6 +39,7 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -439,15 +440,11 @@ int run(int argc, char** argv) {
                                                               .seaLevel = dim.seaLevel,
                                                               .floodedness = flood,
                                                               .spread = spread};
-                                const std::int32_t level = aquifer::cellFluidLevel(cell);
-                                src[r] = aquifer::BarrierSource{
-                                    .level = level,
-                                    .distanceSq = s.distanceSq,
-                                    .type = aquifer::fluidTypeOf(
-                                        aquifer::FluidTypeAt{.centreY = s.centre.y,
-                                                             .level = level,
-                                                             .seaLevel = dim.seaLevel,
-                                                             .lava = dim.lava})};
+                                const aquifer::SourceStatus status =
+                                    aquifer::sourceStatus(cell, dim.lava);
+                                src[r] = aquifer::BarrierSource{.level = status.level,
+                                                                .distanceSq = s.distanceSq,
+                                                                .type = status.type};
                             }
 
                             aquifer::BarrierAt at;

@@ -490,6 +490,7 @@ TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "
 namespace {
 using stratum::aquifer::CellIndex;
 using stratum::aquifer::constantSurface;
+using stratum::aquifer::ladderLevel;
 using stratum::aquifer::lambdaLevel;
 using stratum::aquifer::PslRead;
 using stratum::aquifer::readPreliminarySurface;
@@ -853,6 +854,18 @@ TEST_CASE("a deep-dark cell is dry, except on the near-surface return", "[aquife
     CellFluid shallow = cellWith(constantSurface(150), 200, 147, -2.0);
     shallow.deepDark = true;
     CHECK(cellFluidLevel(shallow) == 200);
+
+    // Nor an aborted scan: its lambda status precedes the level rule, and so
+    // the override (aquifer-ddfloor-probe.sh; over three seeds the sentinel
+    // built 10 577 blocks of barrier the server does not). Wet or dry without
+    // the override, it reads lambda with it.
+    const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    for (const double floodedness : {-2.0, 0.6, 0.9}) {
+        CellFluid deep = cellWith(aborted, 63, -150, floodedness);
+        REQUIRE(cellFluidLevel(deep) == lambdaLevel(63));
+        deep.deepDark = true;
+        CHECK(cellFluidLevel(deep) == lambdaLevel(63));
+    }
 }
 
 TEST_CASE("a datapack's NaN or out-of-range router value is defined, as Java's int makes it",
@@ -930,22 +943,45 @@ TEST_CASE("an aborted scan floors its level at lambda, and nothing else is floor
     // lambda: over an aborting surface with vanilla's barrier on
     // (aquifer-nsfloor-probe.sh) the unfloored levels build 7 690 blocks of
     // stone the server does not, and the floor builds none; on worlds whose
-    // scans do not abort (water/lava, deep-floor, capfloor's cf58 and cf200)
+    // scans never reach below lambda (water/lava, deep-floor, capfloor's cf200)
     // the ladder stays unclamped, and a floor there breaks them.
     const std::int32_t lambda = lambdaLevel(63);
     const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
     // Off the near-surface path (depth 16), refused the sea, ladder capped at
-    // -70: floored.
+    // -70: floored. The cap binds here, so this alone cannot tell a floor on
+    // the abort from a floor on the cap.
     CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9)) == lambda);
-    // The ladder's own rung below lambda, under the same abort: floored too.
-    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9, -1.0)) == lambda);
+    // The cell that can: 130 blocks down, the ladder's own rung (-140) sits
+    // below the cap, so raising the cap to lambda would leave it at -140.
+    // The abort floors it anyway.
+    const std::int32_t rung = ladderLevel(-150, aborted.cap, 0.0);
+    REQUIRE(rung < aborted.cap);
+    const PslRead notAborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(notAborted, 63, -150, 0.6)) == rung);
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -150, 0.6)) == lambda);
     // And an aborted cell that nothing floods reads lambda too, not the dry
     // sentinel: at floodedness 0 the server sides with lambda on all 3 770
     // blocks where the two part.
     CHECK(cellFluidLevel(cellWith(aborted, 63, -36, -2.0)) == lambda);
+    // So every aborted cell off the near-surface path reads exactly lambda:
+    // the cap is below the abort threshold and the sea is refused, so
+    // nothing above lambda is left to it (the deep-dark override relies on
+    // this, returning lambda directly).
+    for (std::int32_t centreY = -200; centreY <= -24; centreY += 7) {
+        for (const double floodedness : {-2.0, 0.0, 0.3, 0.5, 0.9, 2.0}) {
+            for (const double spread : {-1.0, 0.0, 1.0}) {
+                CHECK(cellFluidLevel(cellWith(aborted, 63, centreY, floodedness, spread)) ==
+                      lambda);
+            }
+        }
+    }
 
-    // Without the abort the same low cap is NOT floored: psl -58 sits below
-    // lambda without reaching the -62 that aborts the scan (capfloor's cf58).
+    // Without the abort a cap below lambda is NOT floored: psl -58 sits below
+    // lambda without reaching the -62 that aborts the scan. This is the
+    // documented reading (spec Q5.3(b) ties the lambda status to the abort),
+    // and capfloor's cf58l arm bears it out, thinly: on the 4 blocks over two
+    // seeds where it and a floor on the cap part, the server takes this one
+    // (vanilla_aquifer_nsfloor_test.cpp).
     // A cell deep enough that no sea bonus reaches it takes the ladder.
     const PslRead low{.gate = -58, .cap = -58, .anchor = -58, .aborted = false};
     const std::int32_t unfloored = cellFluidLevel(cellWith(low, 63, -150, 0.6));

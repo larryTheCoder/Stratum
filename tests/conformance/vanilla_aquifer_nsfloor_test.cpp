@@ -22,6 +22,13 @@
 // ONE SEED PER PROBE DIRECTORY, read from its manifest; every `nsfloor_s*`
 // directory present is scored, and the case SKIPs when there is none. The
 // fixtures are Mojang-derived and never committed (SPEC §12).
+//
+// Two more cases share the scoring. `aquifer-ddfloor-probe.sh` is the same
+// field under Q5.9's deep-dark override, where the override's sentinel and an
+// aborted scan's lambda both claim a cell; `aquifer-capfloor-probe.sh` holds
+// psl constant to separate a floor on the abort from a floor on a cap below
+// lambda.
+#include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
@@ -53,6 +60,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -122,6 +130,14 @@ private:
     std::vector<double> values_;
 };
 
+/// Whether a cell takes `cellLevel`'s near-surface early return, from the
+/// branch's own documented condition.
+[[nodiscard]] bool onNearSurfacePath(const aquifer::CellFluid& cell) {
+    const std::int32_t oceanGate = javamath::wrappingSub(cell.seaLevel, aquifer::kOceanGateOffset);
+    return cell.surface.gate < oceanGate &&
+           javamath::wrappingSub(cell.surface.gate, cell.centreY) < aquifer::kNearSurfaceDepth;
+}
+
 /// Whether a cell takes the aborting near-surface floor: the early return of
 /// `cellFluidLevel` whose value is `lambda`. Spelled out here, from the
 /// branch's own documented condition, so the rival can replace that one
@@ -129,11 +145,7 @@ private:
 /// `lambda` on every cell this picks.
 [[nodiscard]] bool takesFloor(const aquifer::CellFluid& cell) {
     const std::int32_t lambda = aquifer::lambdaLevel(cell.seaLevel);
-    const std::int32_t oceanGate = javamath::wrappingSub(cell.seaLevel, aquifer::kOceanGateOffset);
-    const bool nearSurface =
-        cell.surface.gate < oceanGate &&
-        javamath::wrappingSub(cell.surface.gate, cell.centreY) < aquifer::kNearSurfaceDepth;
-    if (!nearSurface || !cell.surface.aborted) {
+    if (!onNearSurfacePath(cell) || !cell.surface.aborted) {
         return false;
     }
     return !(cell.centreY >= lambda &&
@@ -166,13 +178,13 @@ struct Score {
     long long serverStone = 0;
     long long misses = 0;     ///< server stone the built floor does not write
     long long falseStone = 0; ///< stone the built floor writes and the server does not
-    long long floorCells = 0; ///< distinct sources that take the floor
+    long long rivalCells = 0; ///< distinct sources the rival reading gives another level
     long long floorNotLambda = 0;
-    /// Blocks where the two floors give different verdicts, and which one
-    /// the server's block agrees with there.
+    /// Blocks where the built reading and its rival give different verdicts,
+    /// and which one the server's block agrees with there.
     long long contested = 0;
-    long long lambdaRight = 0;
-    long long sentinelRight = 0;
+    long long builtRight = 0;
+    long long rivalRight = 0;
 };
 
 /// One aquifer arm of the probe, and the readout that names its field.
@@ -182,8 +194,14 @@ struct NsArm {
     double floodedness;
 };
 
-void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
-    stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-nsfloor-probe.sh");
+/// Scores @p arms of one probe directory: the barrier as built on every block
+/// above lambda, and again with each source that @p rival gives another level
+/// (`rival(cell, builtLevel)` returns it, or nothing) at that level instead.
+/// @p deepDark is Q5.9's override, constant over the whole probe.
+template<typename Rival>
+void scoreProbe(const std::filesystem::path& probeDir, const char* script,
+                const std::vector<NsArm>& arms, const bool deepDark, Rival&& rival, Score& total) {
+    stratum::test::requireFrozen(probeDir, script);
     std::ifstream manifestFile(probeDir / "manifest.json");
     const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
 
@@ -203,9 +221,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
     const aquifer::CentreSource centres(seed);
     const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
 
-    for (const NsArm& arm :
-         {NsArm{"nsb_8", "nsr_8", kFloodedness}, NsArm{"nsb_16", "nsr_16", kFloodedness},
-          NsArm{"nsd_8", "nsr_8", 0.0}, NsArm{"nsd_16", "nsr_16", 0.0}}) {
+    for (const NsArm& arm : arms) {
         INFO("probe " << probeDir.filename().string() << ", arm " << arm.world);
         const std::filesystem::path world = probeDir / arm.world / "r.0.0.mca";
         const std::filesystem::path readout = probeDir / arm.readout / "r.0.0.mca";
@@ -213,7 +229,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
         REQUIRE(std::filesystem::is_regular_file(readout));
         const Field field{readout};
         const auto file = region::RegionFile::open(world);
-        std::vector<aquifer::CellIndex> floorSeen;
+        std::vector<aquifer::CellIndex> rivalSeen;
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
@@ -248,8 +264,8 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             const aquifer::Selection sel = aquifer::selectSources(centres, x, y, z);
                             bool reachable = true;
                             std::array<aquifer::BarrierSource, 3> built{};
-                            std::array<aquifer::BarrierSource, 3> rival{};
-                            bool anyFloor = false;
+                            std::array<aquifer::BarrierSource, 3> alt{};
+                            bool anyRival = false;
                             for (std::size_t r = 0; r < 3 && reachable; ++r) {
                                 const auto& src = sel.ranked[r];
                                 const auto sampler = [&](const std::int32_t sx, std::int32_t,
@@ -266,25 +282,25 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                                               .surface = read,
                                                               .seaLevel = kSeaLevel,
                                                               .floodedness = arm.floodedness,
-                                                              .spread = 0.0};
+                                                              .spread = 0.0,
+                                                              .deepDark = deepDark};
                                 const aquifer::SourceStatus status =
                                     aquifer::sourceStatus(cell, 0.0);
                                 const std::int32_t level = status.level;
-                                const bool floor = takesFloor(cell);
-                                if (floor) {
-                                    anyFloor = true;
-                                    total.floorNotLambda += static_cast<long long>(level != lambda);
-                                    if (std::find(floorSeen.begin(), floorSeen.end(), src.cell) ==
-                                        floorSeen.end()) {
-                                        floorSeen.push_back(src.cell);
+                                const std::optional<std::int32_t> other = rival(cell, level);
+                                if (other.has_value()) {
+                                    anyRival = true;
+                                    if (std::find(rivalSeen.begin(), rivalSeen.end(), src.cell) ==
+                                        rivalSeen.end()) {
+                                        rivalSeen.push_back(src.cell);
                                     }
                                 }
                                 const aquifer::FluidType type = status.type;
                                 built[r] = aquifer::BarrierSource{
                                     .level = level, .distanceSq = src.distanceSq, .type = type};
-                                rival[r] = built[r];
-                                if (floor) {
-                                    rival[r].level = aquifer::kNeverLevel;
+                                alt[r] = built[r];
+                                if (other.has_value()) {
+                                    alt[r].level = *other;
                                 }
                             }
                             if (!reachable) {
@@ -310,13 +326,13 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             total.serverStone += static_cast<long long>(serverStone);
                             total.misses += static_cast<long long>(serverStone && !builtStone);
                             total.falseStone += static_cast<long long>(!serverStone && builtStone);
-                            if (anyFloor) {
-                                const bool rivalStone = verdict(rival);
+                            if (anyRival) {
+                                const bool rivalStone = verdict(alt);
                                 if (rivalStone != builtStone) {
                                     ++total.contested;
-                                    total.lambdaRight +=
+                                    total.builtRight +=
                                         static_cast<long long>(builtStone == serverStone);
-                                    total.sentinelRight +=
+                                    total.rivalRight +=
                                         static_cast<long long>(rivalStone == serverStone);
                                 }
                             }
@@ -325,7 +341,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                 }
             }
         }
-        total.floorCells += static_cast<long long>(floorSeen.size());
+        total.rivalCells += static_cast<long long>(rivalSeen.size());
     }
 }
 
@@ -348,19 +364,33 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
     }
     std::ranges::sort(probes);
 
+    const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
     Score total;
+    // The rival: the aborting near-surface floor returns the sentinel.
+    const auto floorAsSentinel = [&](const aquifer::CellFluid& cell,
+                                     const std::int32_t level) -> std::optional<std::int32_t> {
+        if (!takesFloor(cell)) {
+            return std::nullopt;
+        }
+        total.floorNotLambda += static_cast<long long>(level != lambda);
+        return aquifer::kNeverLevel;
+    };
+    const std::vector<NsArm> arms{NsArm{"nsb_8", "nsr_8", kFloodedness},
+                                  NsArm{"nsb_16", "nsr_16", kFloodedness},
+                                  NsArm{"nsd_8", "nsr_8", 0.0}, NsArm{"nsd_16", "nsr_16", 0.0}};
     for (const auto& probe : probes) {
-        scoreProbe(probe, total);
+        scoreProbe(probe, "tools/analysis/aquifer-nsfloor-probe.sh", arms, false, floorAsSentinel,
+                   total);
     }
     INFO("probes " << probes.size() << ": blocks " << total.blocks << ", server stone "
                    << total.serverStone << ", misses " << total.misses << ", false stone "
-                   << total.falseStone << "; floor cells " << total.floorCells << " (not at lambda "
+                   << total.falseStone << "; floor cells " << total.rivalCells << " (not at lambda "
                    << total.floorNotLambda << "); contested " << total.contested
-                   << ", lambda right " << total.lambdaRight << ", sentinel right "
-                   << total.sentinelRight);
+                   << ", lambda right " << total.builtRight << ", sentinel right "
+                   << total.rivalRight);
 
     // The corpus has to reach the branch, or nothing below means anything.
-    REQUIRE(total.floorCells > 0);
+    REQUIRE(total.rivalCells > 0);
     // The branch picked out here is the shipped one: it returns lambda.
     REQUIRE(total.floorNotLambda == 0);
     REQUIRE(total.serverStone > 0);
@@ -370,8 +400,8 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
     // over three seeds when first run, 1830 of 1830 once the scoring applied
     // y_skip and the abort floor.
     REQUIRE(total.contested >= 1000);
-    CHECK(total.lambdaRight == total.contested);
-    CHECK(total.sentinelRight == 0);
+    CHECK(total.builtRight == total.contested);
+    CHECK(total.rivalRight == 0);
 
     // And the barrier is exact here. It was not before pipeline engine v4:
     // it wrote 7 690 blocks of stone the server does not, every one at a pair
@@ -384,6 +414,80 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
     // floods reads lambda rather than the dry sentinel: built dry, the
     // barrier wrote 3 770 blocks of stone the server does not on them, and
     // on every block where the two readings part the server took lambda's.
+}
+
+namespace {
+
+/// Every probe directory under the fixtures whose name starts with @p prefix,
+/// sorted.
+[[nodiscard]] std::vector<std::filesystem::path> corpora(const std::string& prefix) {
+    const std::filesystem::path root = fixtures() / "probes";
+    std::vector<std::filesystem::path> found;
+    if (std::filesystem::is_directory(root)) {
+        for (const auto& entry : std::filesystem::directory_iterator(root)) {
+            if (entry.is_directory() && entry.path().filename().string().rfind(prefix, 0) == 0) {
+                found.push_back(entry.path());
+            }
+        }
+    }
+    std::ranges::sort(found);
+    return found;
+}
+
+/// Whether Q5.9's override and an aborted scan's floor both claim @p cell:
+/// its scan aborted, and it is off the near-surface path — which compares no
+/// floodedness, so the override cannot reach it.
+[[nodiscard]] bool overrideMeetsAbort(const aquifer::CellFluid& cell) {
+    return cell.deepDark && cell.surface.aborted && !onNearSurfacePath(cell);
+}
+
+} // namespace
+
+TEST_CASE("the deep-dark override over an aborted scan", "[conformance][aquifer]") {
+    const std::vector<std::filesystem::path> probes = corpora("ddfloor_s");
+    if (probes.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
+        SKIP("no ddfloor_s* aquifer probe under "
+             << fixtures() / "probes"
+             << "; generate one with tools/analysis/aquifer-ddfloor-probe.sh");
+    }
+
+    // The two orders: the override's sentinel first, or the abort's lambda
+    // first. Whichever the build returns, the rival is the other.
+    const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
+    const auto otherOrder = [&](const aquifer::CellFluid& cell,
+                                const std::int32_t level) -> std::optional<std::int32_t> {
+        if (!overrideMeetsAbort(cell)) {
+            return std::nullopt;
+        }
+        return level == aquifer::kNeverLevel ? lambda : aquifer::kNeverLevel;
+    };
+    const std::vector<NsArm> arms{NsArm{"ddk_8", "ddr_8", kFloodedness},
+                                  NsArm{"ddk_16", "ddr_16", kFloodedness}};
+    Score total;
+    for (const auto& probe : probes) {
+        scoreProbe(probe, "tools/analysis/aquifer-ddfloor-probe.sh", arms, true, otherOrder, total);
+    }
+    INFO("probes " << probes.size() << ": blocks " << total.blocks << ", server stone "
+                   << total.serverStone << ", misses " << total.misses << ", false stone "
+                   << total.falseStone << "; aborted cells under the override " << total.rivalCells
+                   << "; contested " << total.contested << ", built order right "
+                   << total.builtRight << ", other order right " << total.rivalRight);
+
+    REQUIRE(total.rivalCells > 0);
+    REQUIRE(total.serverStone > 0);
+    // The abort comes first: over three seeds, on all 10 577 blocks where the
+    // two orders give the barrier different verdicts, the server takes
+    // lambda's. The sentinel-first order (pipeline engine v5) wrote every one
+    // of them as stone the server does not have.
+    REQUIRE(total.contested >= 5000);
+    CHECK(total.builtRight == total.contested);
+    CHECK(total.rivalRight == 0);
+    // And the barrier is exact under the override. That is also what shows
+    // the override is in force on the server at all: without it every cell
+    // that did not abort would flood to the sea here, and the barrier would
+    // part from the model's dry cells wherever they meet a near-surface sea.
+    CHECK(total.misses == 0);
+    CHECK(total.falseStone == 0);
 }
 
 namespace {
@@ -408,6 +512,16 @@ struct CapScore {
     long long capContested = 0;
     long long abortRight = 0;
     long long capRight = 0;
+    /// Server water or lava where the model fills from the nearest source:
+    /// how many, how many of a different fluid, and how many of the model's
+    /// water a centre below lambda would have typed lava (engine v3's rule,
+    /// before a near-surface sea kept the type of its surface).
+    long long typeBlocks = 0;
+    long long typeLava = 0; ///< of which the model fills lava
+    long long typeMismatch = 0;
+    long long typeMismatchFlowing = 0;    ///< of which the server's block is flowing (level > 0)
+    long long typeMismatchServerLava = 0; ///< of which the server's block is lava
+    long long centreTypedLava = 0;
 };
 
 void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, CapScore& score) {
@@ -464,7 +578,9 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
                             continue;
                         }
                         const bool serverStone = block->name == "minecraft:stone";
-                        if (!serverStone && block->name != "minecraft:water" &&
+                        const bool serverLava = block->name == "minecraft:lava";
+                        const bool serverWater = block->name == "minecraft:water";
+                        if (!serverStone && !serverLava && !serverWater &&
                             block->name != "minecraft:air") {
                             continue;
                         }
@@ -505,6 +621,32 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
                         at.barrier = interp.evaluate(barrierNode,
                                                      density::Point{.x = x, .y = y, .z = z}, cache);
                         const bool ours = aquifer::placesBarrier(at);
+                        if ((serverWater || serverLava) && !ours && y < src[0].level) {
+                            ++score.typeBlocks;
+                            const bool mismatch =
+                                (src[0].type == aquifer::FluidType::Lava) != serverLava;
+                            score.typeMismatch += static_cast<long long>(mismatch);
+                            score.typeMismatchFlowing += static_cast<long long>(
+                                mismatch && stratum::test::fluidLevel(block) > 0);
+                            score.typeMismatchServerLava +=
+                                static_cast<long long>(mismatch && serverLava);
+                            score.typeLava +=
+                                static_cast<long long>(src[0].type == aquifer::FluidType::Lava);
+                            const aquifer::FluidType byCentre = aquifer::fluidTypeOf(
+                                aquifer::FluidTypeAt{.centreY = sel.ranked[0].centre.y,
+                                                     .level = src[0].level,
+                                                     .seaLevel = kSeaLevel,
+                                                     .lava = 0.0,
+                                                     .fromNearSurface = false});
+                            score.centreTypedLava +=
+                                static_cast<long long>(byCentre == aquifer::FluidType::Lava &&
+                                                       src[0].type != aquifer::FluidType::Lava);
+                        }
+                        // Lava is scored for its type only: the barrier
+                        // tallies keep the block set they were measured on.
+                        if (serverLava) {
+                            continue;
+                        }
                         if (anyCapFloor) {
                             aquifer::BarrierAt rivalAt = at;
                             rivalAt.nearest = capRival[0];
@@ -531,21 +673,7 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
 } // namespace
 
 TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aquifer]") {
-    // Every corpus directory that starts with @p prefix, sorted.
     const std::filesystem::path root = fixtures() / "probes";
-    const auto corpora = [&](const std::string& prefix) {
-        std::vector<std::filesystem::path> found;
-        if (std::filesystem::is_directory(root)) {
-            for (const auto& entry : std::filesystem::directory_iterator(root)) {
-                if (entry.is_directory() &&
-                    entry.path().filename().string().rfind(prefix, 0) == 0) {
-                    found.push_back(entry.path());
-                }
-            }
-        }
-        std::ranges::sort(found);
-        return found;
-    };
     // The script writes two corpora per seed, one server run each (a frozen
     // world holds every fluid tick it schedules): the first four arms, and
     // cf58l alone.
@@ -588,11 +716,48 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
                     << score.serverStone << ", misses " << score.misses << ", false stone "
                     << score.falseStone << ", sub-lambda source readings " << score.subLambdaSources
                     << "; cap-floor contested " << score.capContested << ", abort right "
-                    << score.abortRight << ", cap right " << score.capRight);
+                    << score.abortRight << ", cap right " << score.capRight << "; fluid blocks "
+                    << score.typeBlocks << " (" << score.typeLava << " lava), wrong fluid "
+                    << score.typeMismatch << " (" << score.typeMismatchFlowing << " flowing, "
+                    << score.typeMismatchServerLava << " server lava)"
+                    << ", water a centre below lambda would type lava " << score.centreTypedLava);
         REQUIRE(score.blocks > 100000);
         REQUIRE(score.serverStone > 0);
         CHECK(score.misses == 0);
         CHECK(score.falseStone == 0);
         CHECK(score.abortRight == score.capContested);
+        // The fluid, where the model fills one above lambda: right on every
+        // SOURCE block. The only disagreements are flowing water at lava
+        // bodies' tops, over the obsidian their contact leaves — the frozen
+        // world's remnant of fluid ticks (SPEC §7), 382 blocks of cf200's
+        // 2.9M when first run, and none in any other arm.
+        REQUIRE(score.typeBlocks > 0);
+        CHECK(score.typeMismatch == score.typeMismatchFlowing);
+        CHECK(score.typeMismatchServerLava == 0);
+        CHECK(score.typeMismatchFlowing * 1000 < score.typeBlocks);
+        const std::string_view name{arm.name};
+        if (name == "cf58") {
+            // The near-surface type shows in blocks, not only through the
+            // barrier: where such a sea is the nearest source the model
+            // fills water, as the server does, and v3 filled lava.
+            CHECK(score.centreTypedLava > 0);
+            CHECK(score.typeMismatch == 0);
+        }
+        if (name == "cf58l") {
+            // The arm that separates a floor on the abort from a floor on a
+            // cap below lambda — on few blocks (4 over two seeds when first
+            // run, every one the abort's), since lifting a ladder from about
+            // -60 to lambda rarely moves a pressure against a sea at 63. Few,
+            // but each is decisive on an arm that is otherwise exact; this
+            // keeps the arm from going blind unnoticed.
+            CHECK(score.capContested > 0);
+        }
+        if (name == "cf200") {
+            // A cell centred below lambda whose ladder reaches above it is
+            // lava up to its level — the type rule's centre test, seen in
+            // blocks here and nowhere else (the fluid-type corpus scores no
+            // centre below the lava sea).
+            CHECK(score.typeLava > 10000);
+        }
     }
 }

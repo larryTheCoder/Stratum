@@ -41,6 +41,7 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -337,15 +338,11 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                                                       .floodedness =
                                                                           kLadderFloodedness,
                                                                       .spread = spread};
-                                        const std::int32_t level = aquifer::cellFluidLevel(cell);
-                                        src[r] = aquifer::BarrierSource{
-                                            .level = level,
-                                            .distanceSq = s.distanceSq,
-                                            .type = aquifer::fluidTypeOf(
-                                                aquifer::FluidTypeAt{.centreY = s.centre.y,
-                                                                     .level = level,
-                                                                     .seaLevel = kSeaLevel,
-                                                                     .lava = 0.0})};
+                                        const aquifer::SourceStatus status =
+                                            aquifer::sourceStatus(cell, 0.0);
+                                        src[r] = aquifer::BarrierSource{.level = status.level,
+                                                                        .distanceSq = s.distanceSq,
+                                                                        .type = status.type};
                                     }
                                     aquifer::BarrierAt at;
                                     at.y = y;

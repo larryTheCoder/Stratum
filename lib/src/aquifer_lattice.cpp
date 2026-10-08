@@ -143,8 +143,19 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // the dry sentinel. It cannot reach the near-surface return above, which
     // compares no floodedness at all — the spec's override is on the
     // comparands, and that branch has none.
+    //
+    // Nor does it reach an aborted scan, whose lambda status (the floor at
+    // the end of this function) comes before any floodedness is weighed:
+    // spec Q5.3's short-circuits precede the level rule. Measured, not only
+    // read: `aquifer-ddfloor-probe.sh` puts the near-surface probe's
+    // aborting field under the override, and where the sentinel and lambda
+    // give the barrier different verdicts the server sides with lambda on
+    // every block (vanilla_aquifer_nsfloor_test.cpp). Every aborted cell off
+    // the near-surface path reads exactly lambda — its cap is the whole
+    // window's minimum, below the abort threshold, and the sea is refused —
+    // so this returns that level directly.
     if (cell.deepDark) {
-        return CellLevel{.level = kNeverLevel};
+        return CellLevel{.level = cell.surface.aborted ? lambda : kNeverLevel};
     }
 
     std::int32_t level = kNeverLevel;
