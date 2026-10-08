@@ -10,6 +10,11 @@
 #   3. lib/ never includes PHP or zend headers
 #   4. no Mojang-derived artefacts sitting in the tree (SPEC §12)
 #   5. the determinism flags themselves are still applied
+#   6. vendored license notices are preserved
+#   7. every Catch2 test name is ASCII: ctest hands the name back to the
+#      test binary as a filter, and through the Windows codepage a non-ASCII
+#      character arrives mangled, so the case matches nothing and fails on
+#      both Windows legs alone
 #
 # NOT enforced here, on purpose: "no raw % or >> on possibly-negative
 # values". Detecting that textually produces false positives on streams and
@@ -159,6 +164,24 @@ if [[ -f lib/src/fdlibm_log.cpp ]]; then
     fi
 fi
 [[ ${vendored_notice_ok} -eq 1 ]] && echo "  ok"
+
+echo "== 7. test names are ASCII =="
+# catch_discover_tests registers each case under its own name and runs it
+# with that name as the filter. On Windows the name crosses the console
+# codepage on the way back, so a non-ASCII character (an em dash, measured)
+# reaches the binary mangled: "No test cases matched", a failure on both
+# Windows legs and a pass everywhere else.
+# A byte range in the C locale, not grep -P: BSD grep (the macOS legs) has no
+# -P, and an unsupported flag would make this check pass by erroring out.
+non_ascii_names="$(LC_ALL=C grep -rnE --include='*.cpp' --include='*.hpp' \
+    '(TEST_CASE|TEMPLATE_TEST_CASE|SCENARIO)[[:space:]]*\([[:space:]]*"[^"]*'$'[\x80-\xff]' \
+    tests ext/tests)"
+if [[ -n "${non_ascii_names}" ]]; then
+    fail "test names must be ASCII (ctest filters cross the Windows codepage):"
+    printf '%s\n' "${non_ascii_names}" >&2
+else
+    echo "  ok"
+fi
 
 if [[ ${failures} -gt 0 ]]; then
     printf '\n%d determinism/policy check(s) failed.\n' "${failures}" >&2

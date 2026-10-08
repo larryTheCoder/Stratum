@@ -1028,7 +1028,7 @@ TEST_CASE("above_preliminary_surface's edge carries surfaceDepth - 8 under a con
     }
 }
 
-TEST_CASE("the psl lattice: each sample floored, blended, floored again — known answers",
+TEST_CASE("the psl lattice: each sample floored, blended, floored again (known answers)",
           "[terrain][filler][surface]") {
     // ChunkFiller::preliminarySurfaceIn on its own, against SPEC §11's
     // formula worked by hand. The filler case below proves the WIRING (where
