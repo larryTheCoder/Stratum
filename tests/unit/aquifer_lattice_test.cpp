@@ -688,6 +688,33 @@ TEST_CASE("the near-surface path is an early return that the guard cannot reach"
     CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 146, -2.0)) == kNeverLevel);
 }
 
+TEST_CASE("both short-circuit seas carry the near-surface origin", "[aquifer]") {
+    // The near-surface return and an aborted scan's sea are the global
+    // picker's status, typed by neither the centre nor the `lava` override
+    // (fluid_type.hpp); the origin is how `sourceStatus` tells. Measured on
+    // aquifer-fluidnear-probe.sh's worlds at sea -20.
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    // Non-aborted, centred within the near-surface window.
+    const auto nearSea = cellLevel(cellWith(constantSurface(-40), -20, -30, -2.0));
+    CHECK(nearSea.level == -20);
+    CHECK(nearSea.origin == LevelOrigin::NearSurfaceSea);
+    // Aborted (psl -64 under the -62 threshold), centred more than twenty
+    // above the scan's minimum: the sea, from the same early return.
+    const PslRead aborting{.gate = -64, .cap = -64, .anchor = -64, .aborted = true};
+    const auto abortedSea = cellLevel(cellWith(aborting, -20, -40, -2.0));
+    CHECK(abortedSea.level == -20);
+    CHECK(abortedSea.origin == LevelOrigin::NearSurfaceSea);
+    // Twenty or fewer above it: the floor, a level of the cell's own.
+    const auto floored = cellLevel(cellWith(aborting, -20, -44, -2.0));
+    CHECK(floored.level == lambdaLevel(-20));
+    CHECK(floored.origin == LevelOrigin::Cell);
+    // And the cell's own sea branch is the cell's.
+    const auto ownSea = cellLevel(cellWith(constantSurface(96), -20, -30, 0.9));
+    CHECK(ownSea.level == -20);
+    CHECK(ownSea.origin == LevelOrigin::Cell);
+}
+
 TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // The whole explanation of a failure this project first read as the slopes
     // being wrong in the middle of the floodedness band. A cell whose scan

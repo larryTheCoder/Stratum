@@ -595,12 +595,15 @@ enum class LevelOrigin : std::uint8_t {
     /// Everything but the case below: the cell's own lattice, floodedness and
     /// guards, or one of the dry outcomes.
     Cell,
-    /// The near-surface early return's sea outcome: a cell close under a
-    /// submerged surface takes the sea from THAT surface, not from its own
-    /// centre (spec Q5.3(b)). A centre below the lava sea therefore does not
-    /// make it lava (`fluidTypeOf`) — measured on
-    /// `aquifer-capfloor-probe.sh`'s cf58 arm, where typing those cells lava
-    /// built 20 462 blocks of barrier the server does not have.
+    /// Either sea outcome of the near-surface early return: a cell close under
+    /// a submerged surface takes the sea from THAT surface (spec Q5.3(b)),
+    /// and a cell more than twenty blocks above an aborting surface takes the
+    /// global picker's sea at its own centre (Q5.3(a)). Both are the global
+    /// picker's status at or above lambda, so `fluidTypeOf` types them the
+    /// default fluid: neither a centre below the lava sea (cf58 of
+    /// `aquifer-capfloor-probe.sh`, 20 462 blocks of false barrier
+    /// otherwise) nor the `lava` override (`aquifer-fluidnear-probe.sh`)
+    /// makes them lava.
     NearSurfaceSea,
 };
 

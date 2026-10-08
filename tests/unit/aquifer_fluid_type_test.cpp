@@ -186,3 +186,42 @@ TEST_CASE("a near-surface sea is not lava for its centre sitting below the lava 
     CHECK(guarded.level == stratum::aquifer::kLavaLevel);
     CHECK(guarded.type == FluidType::Lava);
 }
+
+TEST_CASE("the lava override does not reach a short-circuit sea", "[aquifer]") {
+    // Both of the near-surface path's seas are the global picker's status at
+    // or above lambda, typed before Q5.8 is reached (spec Q5.3), and the
+    // server agrees: on aquifer-fluidnear-probe.sh's worlds, at sea levels
+    // -40, -20, -12 and -10 with `lava` 0.5 or -0.5, every source such a sea
+    // owns is water. The cell's own sea at the same level is lava.
+    using stratum::aquifer::CellFluid;
+    using stratum::aquifer::constantSurface;
+    using stratum::aquifer::PslRead;
+    using stratum::aquifer::sourceStatus;
+    const auto typed = [](const CellFluid& cell, const double lava) {
+        const auto status = sourceStatus(cell, lava);
+        CHECK(status.level == -20);
+        return status.type;
+    };
+    // The near-surface return, centred within twenty of the surface and above.
+    const CellFluid within{.centreY = -30, .surface = constantSurface(-40), .seaLevel = -20};
+    const CellFluid above{.centreY = -18, .surface = constantSurface(-40), .seaLevel = -20};
+    CHECK(typed(within, 0.5) == FluidType::Default);
+    CHECK(typed(within, -0.5) == FluidType::Default);
+    CHECK(typed(above, 0.5) == FluidType::Default);
+    // An aborted scan's sea, more than twenty above an aborting surface.
+    const PslRead aborting{.gate = -64, .cap = -64, .anchor = -64, .aborted = true};
+    const CellFluid abortedSea{.centreY = -40, .surface = aborting, .seaLevel = -20};
+    CHECK(typed(abortedSea, 0.5) == FluidType::Default);
+    // The cell's own sea branch (floodedness past 0.8) is not a short-circuit.
+    const CellFluid ownSea{
+        .centreY = -30, .surface = constantSurface(96), .seaLevel = -20, .floodedness = 0.9};
+    CHECK(typed(ownSea, 0.5) == FluidType::Lava);
+
+    // The type rule alone: the origin decides it, not the level.
+    CHECK(
+        fluidTypeOf(FluidTypeAt{
+            .centreY = -30, .level = -20, .seaLevel = -20, .lava = 0.5, .fromNearSurface = true}) ==
+        FluidType::Default);
+    CHECK(fluidTypeOf(FluidTypeAt{.centreY = -30, .level = -20, .seaLevel = -20, .lava = 0.5}) ==
+          FluidType::Lava);
+}

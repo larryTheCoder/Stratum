@@ -200,6 +200,15 @@ Open:
       water blocks the v3 rule would type lava), with 382 flowing blocks at
       lava-water contact the only disagreements; cf200 shows a centre below
       lambda typing its ladder lava above lambda on 14 494 blocks. SPEC §11.
+- [x] **Q5.8's lava override does not reach a short-circuit sea.** Both
+      seas of the near-surface path (the near-surface return, and an
+      aborted scan's sea) are the default fluid, as the spec's Q5.3 says;
+      the build had typed them lava at a sea at or under -10 with `|lava| >
+      0.3`. `aquifer-fluidnear-probe.sh`, two seeds: 742 856 / 155 533 /
+      129 304 contested server sources (within twenty of the surface / above
+      it / aborted sea), water on every one; the cell's own sea control is
+      lava on all 241 896. Changes output only where `sea_level <= -10`; no
+      golden block moves. SPEC §11.
 - [x] **A vein never replaces aquifer fluid — measured on the goldens.**
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,
