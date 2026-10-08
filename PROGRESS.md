@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA, pipeline engine v3: Q5.9's deep-dark override, read 
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v3: Q5.9 through the chunk's flat_cache window, y_skip). Open: Q8's fluid-update flag, the window's extent, probe cases that do not run in CI, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the row-lambda barrier residual, the window's extent, probe cases that do not run in CI, fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -101,9 +101,17 @@ Open:
       neither counts nor breaks the run. Water's behaviour is measured;
       lava's is not, and no golden block has been attributed to it either
       way. Needs a probe with a `stone_depth` rule under an aquifer lava pool.
-- [ ] **Q8's fluid-update flag.** Unimplemented, so Stratum's output has no
-      post-processing positions and no fluid ever ticks after generation —
-      the whole of the golden residual above. Rank 4 is computed and unused.
+- [x] **Q8's fluid-update flag — implemented, exact against the server's
+      own post-processing lists.** Un-ticked probe chunks keep vanilla's
+      `PostProcessing` lists, which in a probe are the aquifer's flag alone:
+      255 457 of 255 457 marks on the comb worlds, 213 552 of 213 552 on
+      the water/lava rows, 1964 of 1964 through `ChunkFiller` on real
+      overworld settings. Q6.3's exit, which the spec does not cover,
+      measured: past Q6.2 it always marks. Rank 4 is now read, by the flag's
+      last clause. Exposed as `ChunkBuffer::fluidUpdates()`. SPEC §11.
+- [ ] **Fluid updates to PocketMine.** The positions are computed; the PHP
+      binding does not carry them yet, so PMMP never ticks the fluid that
+      vanilla would (M5).
 
 - [x] **Q6.3's water-over-lava exception — closed, and smaller than it
       read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,

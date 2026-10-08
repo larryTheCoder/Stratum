@@ -9,12 +9,6 @@ namespace stratum::aquifer {
 
 namespace {
 
-/// Q6.1's similarity, on squared distances: 1 at equality, decreasing as the
-/// pair separates, zero at `kSimilarityRange`.
-double similarity(const std::int64_t di, const std::int64_t dj) noexcept {
-    return 1.0 - static_cast<double>(dj - di) / static_cast<double>(kSimilarityRange);
-}
-
 /// Q6.4's pressure function Π, level-difference branch: what two sources
 /// push with whenever their levels differ — whatever they read at `y` and
 /// whatever their types, the one exception being the mixed-type pair that

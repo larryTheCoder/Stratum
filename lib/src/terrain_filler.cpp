@@ -198,6 +198,13 @@ void ChunkBuffer::set(int localX, std::int32_t y, int localZ, const settings::Bl
     blocks_[index] = intern(block);
 }
 
+void ChunkBuffer::markFluidUpdate(int localX, std::int32_t y, int localZ) {
+    static_cast<void>(indexOf(localX, y, localZ)); // the bounds check, nothing more
+    fluidUpdates_.push_back(FluidUpdate{.localX = static_cast<std::uint8_t>(localX),
+                                        .y = y,
+                                        .localZ = static_cast<std::uint8_t>(localZ)});
+}
+
 ChunkFiller::ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                          const settings::NoiseSettings& settings)
     : settings_(&settings),
@@ -587,6 +594,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                         block = (result.fluidType == aquifer::FluidType::Lava)
                                                     ? &lava()
                                                     : &settings_->defaultFluid;
+                                        if (result.fluidUpdate) {
+                                            into.markFluidUpdate(localX, y, localZ);
+                                        }
                                         break;
                                     case aquifer::Substance::Air:
                                         break;

@@ -26,6 +26,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -425,4 +426,96 @@ TEST_CASE("above y_skip the lattice agrees with the global picker down to a surf
     // it for that reason, not only to save the lattice work.
     CHECK(disagreementsAboveSkip(-81.0) > 0);
     CHECK(disagreementsAboveSkip(-92.0) > 0);
+}
+
+namespace {
+using stratum::aquifer::FluidExit;
+using stratum::aquifer::fluidUpdateFlag;
+using stratum::aquifer::SourceStatus;
+
+/// Squared distances whose similarities to the nearest come out as asked:
+/// `sim(d1, dj) = 1 - (dj - d1)/25`, so a gap of 25 * (1 - s).
+[[nodiscard]] std::array<std::int64_t, 4> distancesFor(std::int64_t gap12, std::int64_t gap13,
+                                                       std::int64_t gap14) {
+    return {100, 100 + gap12, 100 + gap13, 100 + gap14};
+}
+
+constexpr SourceStatus kWaterAt20{.level = 20, .type = FluidType::Default};
+constexpr SourceStatus kWaterAt60{.level = 60, .type = FluidType::Default};
+constexpr SourceStatus kLavaAt20{.level = 20, .type = FluidType::Lava};
+} // namespace
+
+TEST_CASE("the fluid-update flag where Q6.2's nearest source wins", "[aquifer]") {
+    // s12 <= 0 (a gap of 25 or more): the nearest pair's difference, but only
+    // while the pair is within the flow similarity, -0.76 — a gap of 44.
+    const auto never = [] {
+        FAIL("the fourth source is read only by the full path's last clause");
+        return SourceStatus{};
+    };
+    for (const FluidExit exit : {FluidExit::BarrierFellThrough, FluidExit::WaterOverLava}) {
+        INFO("exit " << static_cast<int>(exit));
+        // Gap 25 (s12 = 0) and gap 44 (s12 = -0.76, exactly the threshold).
+        for (const std::int64_t gap : {25, 30, 44}) {
+            INFO("gap " << gap);
+            CHECK(fluidUpdateFlag(distancesFor(gap, 60, 70), {kWaterAt20, kWaterAt60, kWaterAt60},
+                                  exit, never));
+            CHECK_FALSE(fluidUpdateFlag(distancesFor(gap, 60, 70),
+                                        {kWaterAt20, kWaterAt20, kWaterAt60}, exit, never));
+            // A type alone differs too: statuses compare level AND type.
+            CHECK(fluidUpdateFlag(distancesFor(gap, 60, 70), {kWaterAt20, kLavaAt20, kWaterAt20},
+                                  exit, never));
+        }
+        // Past the flow similarity the pair is too far apart to matter.
+        CHECK_FALSE(fluidUpdateFlag(distancesFor(45, 60, 70), {kWaterAt20, kWaterAt60, kWaterAt60},
+                                    exit, never));
+    }
+}
+
+TEST_CASE("the fluid-update flag on water resting on lava, past Q6.2", "[aquifer]") {
+    // Always set — measured, and not in the clean-room spec — whatever the
+    // statuses say, all four equal included.
+    const auto never = [] {
+        FAIL("the Q6.3 exit reads no fourth source");
+        return SourceStatus{};
+    };
+    for (const std::int64_t gap12 : {0, 5, 24}) {
+        CHECK(fluidUpdateFlag(distancesFor(gap12, 60, 70), {kWaterAt20, kWaterAt20, kWaterAt20},
+                              FluidExit::WaterOverLava, never));
+    }
+}
+
+TEST_CASE("the fluid-update flag on the full path, the fourth source last", "[aquifer]") {
+    int fourthReads = 0;
+    const auto fourthIs = [&fourthReads](SourceStatus status) {
+        return [&fourthReads, status] {
+            ++fourthReads;
+            return status;
+        };
+    };
+    const auto flag = [&](std::array<std::int64_t, 4> d, std::array<SourceStatus, 3> s,
+                          SourceStatus fourth) {
+        return fluidUpdateFlag(d, s, FluidExit::BarrierFellThrough, fourthIs(fourth));
+    };
+    // The nearest pair differs: set, whatever the rest.
+    CHECK(flag(distancesFor(10, 100, 100), {kWaterAt20, kWaterAt60, kWaterAt20}, kWaterAt20));
+    // Pair 2-3 within the flow similarity and differing: set. s23 = 1 -
+    // (d3 - d2)/25; gap13 54 and gap12 10 give d3 - d2 = 44, exactly -0.76.
+    CHECK(flag(distancesFor(10, 54, 100), {kWaterAt20, kWaterAt20, kWaterAt60}, kWaterAt20));
+    // ... and just past it, not — while 1-3 is also past it.
+    CHECK_FALSE(flag(distancesFor(10, 55, 100), {kWaterAt20, kWaterAt20, kWaterAt60}, kWaterAt20));
+    // Pair 1-3 within it and differing: set. (Never ALONE, once 1-2 agree:
+    // then 1-3 differ exactly when 2-3 do, and s13 <= s23 always, so the
+    // 2-3 clause has fired first. The spec keeps both; so does the code.)
+    CHECK(flag(distancesFor(0, 44, 100), {kWaterAt20, kWaterAt20, kWaterAt60}, kWaterAt20));
+    CHECK(fourthReads == 0);
+
+    // Only when nothing among the three differs is the fourth read — and
+    // only when both 1-3 and 1-4 are within the flow similarity.
+    CHECK(flag(distancesFor(0, 10, 44), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt60));
+    CHECK(fourthReads == 1);
+    CHECK_FALSE(flag(distancesFor(0, 10, 44), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt20));
+    CHECK(fourthReads == 2);
+    CHECK_FALSE(flag(distancesFor(0, 10, 45), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt60));
+    CHECK_FALSE(flag(distancesFor(0, 45, 46), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt60));
+    CHECK(fourthReads == 2);
 }

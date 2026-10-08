@@ -39,6 +39,7 @@ add_executable(stratum_conformance_tests
     vanilla_ore_vein_placement_test.cpp
     vanilla_aquifer_fluid_boundaries_test.cpp
     vanilla_aquifer_fluid_type_test.cpp
+    vanilla_aquifer_fluid_update_test.cpp
     vanilla_aquifer_depthgate_test.cpp
     vanilla_aquifer_jitter_test.cpp
     vanilla_aquifer_lowsea_test.cpp

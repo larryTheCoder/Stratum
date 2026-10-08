@@ -2435,6 +2435,54 @@ Open:
     predicted level equals their own centre — and holds the other 202 exact,
     where a 90% bound used to admit any eight misses.
 
+- **The aquifer's fluid-update flag (spec Q8), measured against the
+  server's own post-processing lists — and one exit the spec does not cover
+  (MA).** Block output is unchanged, so the engine stays at v3; the flag is
+  a new output beside the blocks: `ChunkBuffer::fluidUpdates()`, the
+  positions vanilla stores in a chunk's `PostProcessing` list so that their
+  fluid ticks — and flows — once the chunk loads. That flow is the whole of
+  the goldens' remaining residual (the entry above), and a caller that
+  wants vanilla's settled terrain schedules a fluid update at each.
+
+  *An oracle nobody had used.* A chunk keeps its `PostProcessing` list
+  until it ticks. A probe force-loads an 8x8 window, and the window plus
+  its ring tick and empty their lists (checked: every one of 81 per world
+  is empty); every other chunk that reached the noise stage keeps its list
+  exactly as generation left it. In a probe no carver or feature runs, so
+  those lists are the aquifer's flag and nothing else. The packing is
+  measured too: `x | y << 4 | z << 8` within a section puts all 66 156
+  entries of two probes on a fluid block, where the y/z swap puts a third
+  of them on air or stone.
+
+  *The spec's Q8.2-Q8.4, exact.* On the comb worlds' `jv` arm (four seeds,
+  252 untouched chunks) the flag as the spec states it predicts all
+  255 457 of the server's marks and none it does not: Q6.2's
+  `s12 <= 0` case marks iff `s12 >= θ_flow` and the nearest pair's
+  statuses differ; the full path marks iff the nearest pair differs, or a
+  pair within `θ_flow` does, or — only then — the fourth source differs
+  from the nearest, its sole use. `θ_flow` is carried as its derivation,
+  `similarity(10², 12²)`, so a pair at exactly that distance compares
+  equal. Through `ChunkFiller` on real overworld settings (the aquifer-on
+  probe, 63 untouched chunks) it is 1964 of 1964.
+
+  *The exit the spec is silent on.* Q8 says nothing about Q6.3, water
+  resting on the global lava sea. Reading it as the full path, or as never
+  marking, gets 956 and 1718 of 2419 such exits on one water/lava seed.
+  Tabulated against the server over 6557 exits on two seeds, the rule is
+  clean: where `s12 <= 0` the server marks exactly Q6.2's pairs (592, and
+  none of the other 4461) — so Q6.2 precedes Q6.3 for the flag, the one
+  thing that can show their order, since both give the same substance —
+  and past it the server marks every one, 1504 of 1504, whatever the four
+  statuses say (41 with all four equal). With that, the water/lava probes'
+  rows lambda-1..+40 are 213 552 of 213 552 on three seeds. Flagged per
+  CLAUDE.md as a reading the spec did not supply; the conformance case
+  that holds it would fail on either wrong reading.
+
+  Held by `vanilla_aquifer_fluid_update_test.cpp` (all three oracles,
+  exact, with the ticked-chunk premise asserted) and by unit cases for
+  each exit of `fluidUpdateFlag`, built from distances and statuses
+  directly. The PHP binding does not carry the positions yet; that is M5's.
+
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
   round-trip tested against a real chunk's own bytes), `chunk::encode` (the

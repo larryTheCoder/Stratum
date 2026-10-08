@@ -79,6 +79,11 @@ enum class Substance : std::uint8_t { Air, Fluid, Solid };
 struct SubstanceAt {
     Substance substance = Substance::Air;
     FluidType fluidType = FluidType::Default;
+    /// Spec Q8.1's schedule-fluid-update flag, already narrowed to where it
+    /// is observable: true only for a FLUID result whose position the server
+    /// marks for post-processing, so that the fluid there ticks — and flows —
+    /// once the chunk loads. Never set on air or solid.
+    bool fluidUpdate = false;
 };
 
 /// Everything this decision needs beyond the position and the router reads
@@ -234,6 +239,69 @@ private:
     return nearestReadsWater && globalReadsLava(y - 1, seaLevel);
 }
 
+/// Which exit of the substance decision placed a fluid: the fluid-update
+/// flag differs by exit, where the substance does not.
+enum class FluidExit : std::uint8_t {
+    /// Q6.3, water resting on the global lava sea.
+    WaterOverLava,
+    /// The barrier weighed (or short-circuited by Q6.2) and fell through to
+    /// the nearest source's own reading.
+    BarrierFellThrough,
+};
+
+/// Spec Q8's schedule-fluid-update flag for a block whose result is FLUID:
+/// whether the server marks it for post-processing, so that the fluid there
+/// ticks — and flows — once the chunk loads. @p distanceSq are the four
+/// ranked sources' squared distances and @p status the nearest three's;
+/// @p fourth yields the fourth's status and is called only when Q8.4's last
+/// clause is reached, its sole use. Statuses compare level and type together.
+///
+/// Q8.2 first: where Q6.2's `s12 <= 0` decides — the nearest source alone,
+/// no barrier weighed — the flag is the nearest pair's difference, and only
+/// while that pair is still close enough to flow (`s12 >= kFlowSimilarity`).
+/// That holds on BOTH exits: Q6.2 precedes Q6.3 for the flag, which is the
+/// only thing that can show their order, since they give the same substance.
+///
+/// Past Q6.2, the Q6.3 exit ALWAYS sets the flag. The clean-room spec does
+/// not say so — Q8 is silent on that exit — and the server does: on the
+/// water/lava probes' row lambda, 6557 exits over two seeds, it marks 1504
+/// of the 1504 with `s12 > 0` whatever the four statuses say (41 with all
+/// four equal), and of the rest exactly Q6.2's 592 pairs. Water resting on
+/// lava always has a neighbour to react with.
+///
+/// Otherwise Q8.4, the full path: the nearest pair differs, or a further
+/// pair close enough to flow does — and, only when none of those holds, the
+/// fourth source against the nearest.
+///
+/// Exact against the server's own post-processing lists: 255 457 positions
+/// on the four comb probes, 213 552 on the water/lava probes and 1964 on the
+/// aquifer-on probe, every one predicted and none extra (SPEC §11).
+template<typename FourthStatus>
+[[nodiscard]] bool fluidUpdateFlag(const std::array<std::int64_t, kRankCount>& distanceSq,
+                                   const std::array<SourceStatus, 3>& status, const FluidExit exit,
+                                   FourthStatus&& fourth) {
+    const auto differ = [](const SourceStatus& a, const SourceStatus& b) {
+        return a.level != b.level || a.type != b.type;
+    };
+    const double s12 = similarity(distanceSq[0], distanceSq[1]);
+    if (s12 <= 0.0) {
+        return s12 >= kFlowSimilarity && differ(status[0], status[1]);
+    }
+    if (exit == FluidExit::WaterOverLava) {
+        return true;
+    }
+    const double s13 = similarity(distanceSq[0], distanceSq[2]);
+    const double s23 = similarity(distanceSq[1], distanceSq[2]);
+    if (differ(status[0], status[1]) || (s23 >= kFlowSimilarity && differ(status[1], status[2])) ||
+        (s13 >= kFlowSimilarity && differ(status[0], status[2]))) {
+        return true;
+    }
+    if (s13 >= kFlowSimilarity && similarity(distanceSq[0], distanceSq[3]) >= kFlowSimilarity) {
+        return differ(status[0], fourth());
+    }
+    return false;
+}
+
 /// The full aquifer substance decision for one block (spec Q2.2-Q6.7,
 /// clean-room spec/aquifer-spec.md, and SPEC §11's own measurements of each
 /// piece), in the spec's own order: the global lava sea first (Q2.4), then
@@ -279,11 +347,23 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
                                    lava, deepDark);
     }
 
+    std::array<std::int64_t, kRankCount> distanceSq{};
+    for (std::size_t r = 0; r < kRankCount; ++r) {
+        distanceSq[r] = selection.ranked[r].distanceSq;
+    }
+    const auto fourth = [&] {
+        return cache.statusOf(selection.ranked[3], query.seaLevel, psl, floodedness, spread, lava,
+                              deepDark);
+    };
+
     // Q6.3: water resting on the global lava sea is water, and no barrier
     // is even considered — the `barrier` noise is not read.
     const bool nearestReadsFluid = query.y < status[0].level;
     if (waterOverLava(query.y, query.seaLevel, status[0].level, status[0].type)) {
-        return SubstanceAt{.substance = Substance::Fluid, .fluidType = status[0].type};
+        return SubstanceAt{
+            .substance = Substance::Fluid,
+            .fluidType = status[0].type,
+            .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::WaterOverLava, fourth)};
     }
 
     const double barrierNoise = barrier(query.x, query.y, query.z);
@@ -309,7 +389,10 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
     if (!nearestReadsFluid) {
         return SubstanceAt{.substance = Substance::Air};
     }
-    return SubstanceAt{.substance = Substance::Fluid, .fluidType = status[0].type};
+    return SubstanceAt{
+        .substance = Substance::Fluid,
+        .fluidType = status[0].type,
+        .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
 }
 
 } // namespace stratum::aquifer
