@@ -64,6 +64,7 @@ done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
                    tools/analysis/aquifer-deepfloor-analyze.cpp \
                    tools/analysis/aquifer-fluidtype-analyze.cpp \
                    tools/analysis/aquifer-nearsurface-analyze.cpp \
+                   tools/analysis/aquifer-presets-scout.cpp \
                    tools/analysis/aquifer-waterlava-analyze.cpp)
 
 if [[ ${#sources[@]} -eq 0 ]]; then

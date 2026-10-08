@@ -198,6 +198,10 @@ deep-dark override and the `y_skip` cutoff. On all eight golden regions, every
 raw block disagrees with the server only where the server's own fluid moved
 after generating: flowing water and lava, rebuilt sources, and obsidian where
 water met lava. A test credits each such block by its shape, never by a count.
+The `amplified` and `large_biomes` presets match the server the same way, on
+probe windows chosen for what the goldens lack: aquifer fluid above the sea,
+cells under a preliminary surface above 141, and the deep-dark override on
+large_biomes' own erosion and depth.
 Vanilla also marks some fluid positions to tick once a chunk loads. That flag
 is computed too, and it is exact against the server's own lists
 (255457 of 255457 marks on one probe set). Still open: how far the

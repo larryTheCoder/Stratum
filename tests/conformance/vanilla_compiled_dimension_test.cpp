@@ -13,6 +13,9 @@
 // Mojang-derived fixtures are never committed (SPEC §12); without them this
 // SKIPs, naming the command that produces them.
 
+#include "support/aquifer_footprint.hpp"
+#include "support/fluid_flow.hpp"
+
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
@@ -32,10 +35,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -286,4 +291,199 @@ TEST_CASE("the shipped overworld's output is pinned, on every architecture CI bu
     // server).
     CHECK(lava > 400U);
     CHECK(hash == 0x6511bbe8c4428bcdULL);
+}
+
+TEST_CASE("amplified and large_biomes compile from a thawed blob and fill what their packs fill",
+          "[conformance][world][aquifer]") {
+    // The PocketMine-MP plugin generates a preset world by naming its noise
+    // settings and the overworld's biome list (ext/plugin/src/
+    // GeneratorOptions.php) — vanilla's own world presets pair them the same
+    // way. Neither preset had ever been compiled or filled. Their router
+    // entries are in vanilla_settings_test.cpp; whether the server places what
+    // they fill is vanilla_aquifer_presets_test.cpp's question. This one is
+    // the freeze path's: the blob, thawed, fills what the pack fills, block
+    // for block and quart for quart — on large_biomes that exercises its own
+    // continents, erosion, depth and the two `*_large` climate noises through
+    // the biome search — and the aquifer and the veins demonstrably run.
+    //
+    // The aquifer's footprint and the vein count are Stratum's own output,
+    // pinned like the hash above: a change in either is an output change,
+    // which bumps the pipeline engine version (SPEC §6).
+    if (!haveFixtures()) {
+        SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR
+                                                               << "; run tools/fetch-vanilla");
+    }
+    const auto overworld = ResourceLocation::parse("minecraft:overworld");
+
+    struct Pinned {
+        std::size_t barrier;
+        std::size_t dry;
+        std::size_t localLava;
+        std::size_t aboveSea;
+        std::size_t veins;
+    };
+
+    struct Case {
+        const char* preset;
+        std::int64_t seed;
+        std::vector<std::pair<std::int32_t, std::int32_t>> chunks;
+        Pinned pinned;
+        /// A chunk the scout picked for aquifer blocks above sea level.
+        bool aboveSea = false;
+    };
+
+    const std::vector<std::pair<std::int32_t, std::int32_t>> spread{{0, 0}, {-3, 2}, {5, -7}};
+    // And, at the probe's own seeds, one chunk each where the scout
+    // (tools/analysis/aquifer-presets-scout.cpp) found the regime
+    // vanilla_aquifer_presets_test.cpp scores: amplified's at seed 163 holds
+    // the most aquifer fluid and barrier above sea level of its window,
+    // large_biomes' at seed 322 the most blocks Q5.9 decides.
+    const std::vector<Case> cases{
+        // {barrier, dry, local lava, above sea, vein blocks}
+        {"minecraft:amplified", 0, spread, {552, 155, 0, 0, 0}},
+        {"minecraft:amplified", -4172144997902289642, spread, {15, 4173, 0, 0, 0}},
+        {"minecraft:amplified", 163, {{17, 27}}, {260, 15725, 0, 3598, 89}, true},
+        {"minecraft:large_biomes", 0, spread, {343, 1041, 0, 0, 0}},
+        {"minecraft:large_biomes", -4172144997902289642, spread, {31, 5237, 0, 0, 0}},
+        {"minecraft:large_biomes", 322, {{2, 26}}, {1455, 14164, 0, 0, 31}},
+    };
+
+    const Pack pack = Pack::open(versionDir() / "worldgen");
+    const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
+    std::ifstream parametersFile(versionDir() / "biome_parameters" / "minecraft" /
+                                 "overworld.json");
+    const auto parameters =
+        stratum::biome::ParameterList::fromJson(nlohmann::json::parse(parametersFile), overworld);
+    const auto temperatures = stratum::biome::TemperatureTable::fromPack(pack);
+
+    std::map<std::string, std::size_t> veinsByPreset;
+    for (const Case& c : cases) {
+        const auto preset = ResourceLocation::parse(c.preset);
+        CAPTURE(c.preset, c.seed);
+        const stratum::settings::NoiseSettings& settings = loaded.settings.at(preset);
+        // What makes these two worth a case of their own: the overworld's
+        // aquifers and veins, at the overworld's sea and height.
+        REQUIRE(settings.aquifersEnabled);
+        REQUIRE(settings.oreVeinsEnabled);
+        REQUIRE(settings.seaLevel == 63);
+        REQUIRE(settings.geometry.minY == -64);
+        REQUIRE(settings.geometry.height == 384);
+
+        const auto dimension =
+            CompiledDimension::compile(thawedVanilla(), preset, overworld, c.seed);
+        REQUIRE(dimension->geometry() == settings.geometry);
+
+        const auto rules = stratum::surface::RuleGraph::resolve(settings.surfaceRule, preset);
+        std::vector<ResourceLocation> wanted = loaded.graph.referencedNoises();
+        for (const ResourceLocation& id : rules.referencedNoises()) {
+            wanted.push_back(id);
+        }
+        for (const char* id :
+             {"minecraft:surface", "minecraft:surface_secondary", "minecraft:clay_bands_offset"}) {
+            wanted.push_back(ResourceLocation::parse(id));
+        }
+        const auto noises = stratum::density::NoiseRegistry::create(
+            pack, wanted, c.seed, stratum::density::RandomSource::Xoroshiro);
+        const auto filler = stratum::terrain::ChunkFiller::compile(
+            loaded.graph, noises, settings, &rules, &parameters, &temperatures);
+        REQUIRE(filler.runsSurfaceRules());
+        // The first pass alone: as shipped, without veins, and without the
+        // aquifer (the global picker decides every non-solid block).
+        const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, settings);
+        stratum::settings::NoiseSettings noVeinSettings = settings;
+        noVeinSettings.oreVeinsEnabled = false;
+        const auto noVeins =
+            stratum::terrain::ChunkFiller::compile(loaded.graph, noises, noVeinSettings);
+        stratum::settings::NoiseSettings pickerSettings = settings;
+        pickerSettings.aquifersEnabled = false;
+        const auto picker =
+            stratum::terrain::ChunkFiller::compile(loaded.graph, noises, pickerSettings);
+        const stratum::density::Interpreter interpreter(
+            loaded.graph, noises,
+            stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                           .height = settings.geometry.cellHeight()});
+
+        stratum::test::AquiferFootprint footprint;
+        std::size_t veins = 0;
+        const std::int32_t quartsHigh = stratum::javamath::floorDiv(settings.geometry.height, 4);
+        for (const auto& [chunkX, chunkZ] : c.chunks) {
+            CAPTURE(chunkX, chunkZ);
+            stratum::terrain::ChunkBuffer fromBlob(dimension->geometry());
+            dimension->fillBlocks(chunkX, chunkZ, fromBlob);
+            stratum::terrain::ChunkBuffer fromPack(settings.geometry);
+            filler.fill(chunkX, chunkZ, fromPack);
+            stratum::terrain::ChunkBuffer first(settings.geometry);
+            raw.fill(chunkX, chunkZ, first);
+            stratum::terrain::ChunkBuffer firstNoVeins(settings.geometry);
+            noVeins.fill(chunkX, chunkZ, firstNoVeins);
+            stratum::terrain::ChunkBuffer firstPicker(settings.geometry);
+            picker.fill(chunkX, chunkZ, firstPicker);
+            std::size_t differing = 0;
+            stratum::test::AquiferFootprint chunkFootprint;
+            for (std::int32_t y = settings.geometry.minY; y < settings.geometry.maxY(); ++y) {
+                for (int z = 0; z < 16; ++z) {
+                    for (int x = 0; x < 16; ++x) {
+                        differing += fromBlob.at(x, y, z) == fromPack.at(x, y, z) ? 0U : 1U;
+                        veins += first.at(x, y, z) == firstNoVeins.at(x, y, z) ? 0U : 1U;
+                        chunkFootprint.add(
+                            stratum::test::categoryOf(firstPicker.at(x, y, z).name.toString()),
+                            stratum::test::categoryOf(first.at(x, y, z).name.toString()), y,
+                            settings.seaLevel);
+                    }
+                }
+            }
+            CHECK(differing == 0U);
+            CHECK(fromPack.paletteSize() > 4U);
+            if (c.aboveSea) {
+                // The regime this chunk was picked for is really in it.
+                REQUIRE(chunkFootprint.aboveSea > 0U);
+            }
+            footprint.add(chunkFootprint);
+
+            std::vector<const ResourceLocation*> biomes(16U * static_cast<std::size_t>(quartsHigh));
+            dimension->fillBiomes(chunkX, chunkZ, biomes);
+            stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
+            std::size_t index = 0;
+            std::size_t biomesDiffering = 0;
+            for (std::int32_t qy = 0; qy < quartsHigh; ++qy) {
+                for (std::int32_t qz = 0; qz < 4; ++qz) {
+                    for (std::int32_t qx = 0; qx < 4; ++qx) {
+                        const stratum::density::Point at{
+                            .x = (chunkX * 4 + qx) * 4,
+                            .y = (stratum::javamath::floorDiv(settings.geometry.minY, 4) + qy) * 4,
+                            .z = (chunkZ * 4 + qz) * 4};
+                        using stratum::settings::RouterEntry;
+                        const auto sample = [&](RouterEntry entry) {
+                            return interpreter.evaluate(settings.router.at(entry), at, cache);
+                        };
+                        const stratum::biome::ClimateSample climate{
+                            .temperature = sample(RouterEntry::Temperature),
+                            .humidity = sample(RouterEntry::Vegetation),
+                            .continentalness = sample(RouterEntry::Continents),
+                            .erosion = sample(RouterEntry::Erosion),
+                            .depth = sample(RouterEntry::Depth),
+                            .weirdness = sample(RouterEntry::Ridges)};
+                        biomesDiffering += *biomes[index++] == parameters.find(climate) ? 0U : 1U;
+                    }
+                }
+            }
+            CHECK(biomesDiffering == 0U);
+        }
+        WARN(c.preset << " seed " << c.seed << ": aquifer footprint " << footprint.total
+                      << " (barrier " << footprint.barrier << ", dry " << footprint.dry
+                      << ", local lava " << footprint.localLava << ", above sea "
+                      << footprint.aboveSea << "), vein blocks " << veins);
+        // The aquifer runs on every case; veins are sparse, so they are
+        // required per preset below rather than per handful of chunks.
+        REQUIRE(footprint.total > 0U);
+        veinsByPreset[c.preset] += veins;
+        CHECK(footprint.other == 0U);
+        CHECK(footprint.barrier == c.pinned.barrier);
+        CHECK(footprint.dry == c.pinned.dry);
+        CHECK(footprint.localLava == c.pinned.localLava);
+        CHECK(footprint.aboveSea == c.pinned.aboveSea);
+        CHECK(veins == c.pinned.veins);
+    }
+    CHECK(veinsByPreset["minecraft:amplified"] > 0U);
+    CHECK(veinsByPreset["minecraft:large_biomes"] > 0U);
 }

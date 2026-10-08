@@ -86,6 +86,7 @@ def unit(name, shard, argv, outputs):
 
 FROZEN_MANIFEST = {'file': 'manifest.json', 'seed': -1, 'frozen': True}
 END_REGIONS = ['r.-1.-1.mca', 'r.64.0.mca']
+PRESET_REGIONS = ['amplified/r.0.0.mca', 'large_biomes/r.0.0.mca', 'overworld/r.0.0.mca']
 
 UNITS = [
     # aquifer: aquifer-probes.sh's corpora that are not the 10 GB families.
@@ -152,9 +153,19 @@ UNITS = [
          own('blended-noise/seed-42', ['r.0.0.mca'])),
     unit('inline-noise', 'legacy', ['inline-noise-probe.sh', '42'],
          own('inline-noise', [], {'file': 'verdicts.json', 'seed': 42, 'variants': 11})),
-    # end: the End's outer islands, 3200 chunks per seed.
+    # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
+    # runner), and the amplified / large_biomes presets beside an overworld
+    # control, one server start per seed.
     unit('end-islands', 'end', ['end-islands-probe.sh', '--seeds', '0,42', '--regions', '-1,-1 64,0'],
          own('end-islands/seed-0', END_REGIONS) + own('end-islands/seed-42', END_REGIONS)),
+    unit('aquifer-presets_s322', 'end', ['aquifer-presets-probe.sh', '322'],
+         own('aquifer-presets/seed-322', PRESET_REGIONS,
+             {'file': 'manifest.json', 'seed': 322, 'frozen': True})),
+    unit('aquifer-presets_s163', 'end',
+         ['aquifer-presets-probe.sh', '163', '--amplified-origin', '14', '23',
+          '--large-biomes-origin', '14', '21'],
+         own('aquifer-presets/seed-163', PRESET_REGIONS,
+             {'file': 'manifest.json', 'seed': 163, 'frozen': True})),
 ]
 
 # Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`

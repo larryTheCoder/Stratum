@@ -57,6 +57,7 @@ analysis_targets=(
     tools/analysis/aquifer-deepfloor-analyze.cpp
     tools/analysis/aquifer-fluidtype-analyze.cpp
     tools/analysis/aquifer-nearsurface-analyze.cpp
+    tools/analysis/aquifer-presets-scout.cpp
     tools/analysis/aquifer-waterlava-analyze.cpp
 )
 
