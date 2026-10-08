@@ -1837,8 +1837,10 @@ Open:
 
 
   SETTLED, and it was the last thing open about the boundary's own FORMULA —
-  the sampling question above is about `preliminary_surface_level`, and only
-  its aquifer half stays open. The depth carries **no bottom clamp AT 0**:
+  the sampling question above is about `preliminary_surface_level`, and its
+  aquifer half is now measured too (per column, not the lattice; "Where a
+  varying preliminary_surface_level is SAMPLED"). The depth carries **no
+  bottom clamp AT 0**:
   `max(0, surfaceDepth)` is REFUTED, and the boundary is `y >= floor(psl) + surfaceDepth - 8` with the
   depth as returned, negative values included.
 
