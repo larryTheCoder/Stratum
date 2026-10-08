@@ -112,7 +112,8 @@ void defineWorkingPack(const TempTree& tree) {
 
 /// A valid settings file whose `final_density` points at @p finalDensity.
 void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity,
-                    bool legacyRandomSource = false) {
+                    bool legacyRandomSource = false,
+                    std::string_view defaultFluid = "minecraft:water") {
     nlohmann::json router = nlohmann::json::object();
     for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
         router[std::string(stratum::settings::routerEntryName(
@@ -122,7 +123,7 @@ void defineSettings(const TempTree& tree, std::string_view name, std::string_vie
 
     const nlohmann::json json{
         {"default_block", {{"Name", "minecraft:stone"}}},
-        {"default_fluid", {{"Name", "minecraft:water"}}},
+        {"default_fluid", {{"Name", std::string(defaultFluid)}}},
         {"sea_level", 63},
         {"disable_mob_generation", false},
         {"aquifers_enabled", true},
@@ -499,5 +500,24 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
     CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
 
     // And nothing was said about the dimension that is fine.
+    CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
+}
+
+TEST_CASE("aquifers over a default fluid other than water are a warning, named", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    defineSettings(tree, "overworld", "field");
+    defineSettings(tree, "lava_sea", "field", /*legacyRandomSource=*/false, "minecraft:lava");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    // The pack loads and its router evaluates; it is the filler that will
+    // refuse the dimension, so this is said up front rather than at the
+    // first chunk.
+    CHECK(report.count(Severity::Error) == 0U);
+    const Finding* finding = findingAbout(report, "minecraft:lava_sea");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Warning);
+    CHECK_THAT(finding->message, ContainsSubstring("default_fluid minecraft:lava"));
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
 }

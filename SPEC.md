@@ -334,6 +334,15 @@ multi-noise biome source, and the minimum of
 `dimension` / `world_preset` needed to select settings. Tags and
 namespaced references within these.
 
+Aquifers (`aquifers_enabled` and the router entries they read) are supported
+at Tier A wherever the dimension's random source is Xoroshiro128++ and its
+`default_fluid` is water. Both other cases are refused by name, because no
+vanilla dimension that enables aquifers has either, so nothing can say what
+they should be: under `legacy_random_source` the cell centres are a
+positional random drawn from that source, and with any other default fluid
+the water-over-lava exception (Q6.3) and the lava-against-water pressure
+(Q6.4) part from "the default fluid". `stratum validate` warns on both.
+
 Unsupported in v1 (hard error at load, listed by name in the error):
 `configured_feature`, `placed_feature`, `configured_carver`, `structure`,
 `structure_set`, `template_pool`, `processor_list`,

@@ -109,6 +109,11 @@ Open:
       apart, all fluid products), so flow is bounded, never pinned; every
       disagreement must still be flow-shaped. A corpus of another seed is
       refused too, and no longer silently overwritten. SPEC §7, §11.
+- [x] **Aquifers over a `default_fluid` other than water are refused by
+      name** (`ChunkFiller::compile`; `stratum validate` warns). Q6.3 and
+      Q6.4 are written for water, and no vanilla dimension that enables
+      aquifers has another default fluid, so nothing measures what the
+      server does there. SPEC §8.
 - [x] **Q4.1's window, against the symmetric 27-cell set — the server
       picks the spec's.** On the frozen deep-floor corpora the rival changes
       39 barrier verdicts, and the server sides with the twelve-cell window
@@ -1472,8 +1477,6 @@ escape hatch.
 - The loader's strict-rejection-by-default policy for user-supplied
   datapacks is an explicitly open question in SPEC.md — not blocking
   anything, just undecided.
-- `README.md` is stale relative to this session's work: it still describes
-  aquifers as unwired and most surface rules as refused. Worth a pass.
 - **Whether the `dev` test preset should pass `-j` is still open, and is a
   separate decision from the fix above.** It never has, so nothing regresses
   by leaving it; the change only means `-j` is now *available*. For: the
