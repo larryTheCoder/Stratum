@@ -500,6 +500,11 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     const auto lavaAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
         return aquiferRead(lavaNode, x, y, z);
     };
+    // The raw entry at each scan sample's own column — NOT through the
+    // 16-block lattice the surface rule reads this same entry through
+    // (`preliminarySurfaceIn`, below). Two readings of one entry, on purpose:
+    // head to head, the server sides with the lattice on no block where the
+    // two part (aquifer::readPreliminarySurface, SPEC §11).
     const auto pslAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
         return aquiferRead(pslNode, x, y, z);
     };

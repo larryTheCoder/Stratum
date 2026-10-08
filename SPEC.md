@@ -1763,17 +1763,38 @@ Open:
   (`aquifer::readPreliminarySurface`: `floorDiv(centre, 4) * 4` plus a fixed
   window, as an aborting minimum) for its four surface consumers. The lattice half is measured, through
   `above_preliminary_surface`, over everything in this section. **The aquifer
-  half is UNMEASURED** — nothing in this sweep touches it, and the aquifer's
-  own probes scoring well under a per-column read is not evidence either way,
-  because a three-valued field on a 16-lattice and the same field per column
-  agree on most columns. Whichever reading is wrong there is a parity bug
-  waiting to be found; PROGRESS.md's M4 entry carries the probe that would
-  settle it.
+  half is MEASURED too, and it is per column** — the lattice is the surface
+  rule's alone. `vanilla_aquifer_varying_surface_test.cpp` scores the two
+  readings of the aquifer's scan head to head: the raw entry at each of its
+  thirteen samples (shipped), and the same samples put through the lattice
+  above (`preliminarySurfaceIn` on the four 16-aligned corners), with the
+  anchor, window, scan order and abort unchanged. On `probes/pslvar`'s six
+  aquifer worlds, over the blocks the local aquifer decides (from the lava
+  sea's top to the lower of the two readings' `y_skip`), the readings
+  predict a different category on **778125** blocks: the server sides with
+  the per-column reading on **658371** and with the lattice on **0**. The
+  rest are 104596 solid blocks, which neither predicts, and 15158 fluid
+  blocks `explainedByFlow` cannot rule out as moved: 1580 flowing and 13578
+  still sources beside two more — the infinite-source shape, which every
+  interior block of a pool the lattice would leave dry satisfies (on 13302
+  of the 15158 it is the lattice that predicted air). The barrier-on nsfloor
+  corpus repeats it at seeds 42, 31337 and 8675309, floodedness 0.9 and 0:
+  1529200 blocks, 1309596 to the per-column reading, 0 to the lattice. The
+  lattice taken at the unquantised centre, the one way it could stand in for
+  the 4-quantum, loses the same way (898686 blocks on pslvar, 746543 to 0).
+  A source anchored on the lattice on both axes reads the same under either
+  for every field — 378 of the 2446 scored, and none of the 778125 blocks —
+  so the evidence is the other 2068. What is not tested is a lattice reading
+  with a window refitted to it. Against that there is only an argument, from
+  analyser runs no test pins: the sieves below derived the thirteen offsets,
+  under the per-column reading, from fields down to half-block scale with no
+  cell unexplained — hard to square with a read that depends only on the
+  16-aligned corners.
 
   Three things this does NOT say. It does not say the pitch is 16 for any
-  consumer other than this condition — the AQUIFER reads the same router entry
-  and its own reading is not measured here (see the paragraph above, and
-  PROGRESS.md's M4 entry). Every field in the sweep is y-independent, so this
+  consumer other than this condition — for the aquifer's scan it is measured
+  NOT to be (the paragraph above), and `y_skip`'s own read of the entry is a
+  third consumer that neither case separates. Every field in the sweep is y-independent, so this
   is the HORIZONTAL sampling only; that the entry is read at absolute y = 0
   was settled separately and is unchanged. And it does not separate `a + (b - a) * t` from other
   algebraically equal spellings of a linear blend: it is exact on every column
@@ -4174,6 +4195,16 @@ Open:
   feature size. The corpus is not degenerate and the test checks so rather
   than assuming it: 3150 of 3258 sources abort, and 72-83% have `gate != cap`
   — a configuration no constant-surface dimension can produce at all.
+
+  *Per column, not through the surface rule's lattice.* The same corpus
+  scores the scan's samples read per column against the same samples put
+  through the 16-block lattice `above_preliminary_surface` reads the entry
+  through: 778125 blocks where the two predict different categories, 658371
+  to the per-column reading and 0 to the lattice — 0 of 1529200 again on the
+  nsfloor corpus at three seeds with the barrier on. Every feature size
+  discriminates on its own (221019 blocks at 16, the scan's own pitch). The
+  figures and their population are in "Where a varying
+  `preliminary_surface_level` is SAMPLED" above.
 
   *The comparison with the clean-room spec's Q5.3/Q5.6 is a TIE, and the tie
   is structural rather than lucky.* Implemented side by side, the spec's

@@ -1214,28 +1214,34 @@ Open:
       is copied.
       `tools/analysis/density-probe.sh` gained `--origin`, without which the
       negative-coordinate half could not have been generated at all.
-- [ ] **Whether the AQUIFER reads the same entry through the same lattice —
-      open, and untouched by the item above.** SPEC §11 now says this in the
-      specification itself rather than only here: the shipped engine reads
-      this one router entry two different ways on purpose, and the aquifer
-      half is unmeasured. `above_preliminary_surface` is
-      where the lattice was measured; `aquifer::` reads
-      `preliminary_surface_level` at its own cell centres and still reads it
-      per column here. Nothing in this sweep says whether that is right, and
-      the two readings are NOT close: on the three-valued field the
-      per-column reading matches the server on 3600 of 36864 columns, so the
-      aquifer is reading a different number from the surface rule on about
-      nine columns in ten. That figure is an ANALYZER measurement, not one a
-      conformance case holds — reproduce it with
-      `build/psl-lattice-analyze fit .fixtures/1.21.11/worldgen 42
-      .fixtures/1.21.11/probes/apsb v_psl` and read the pitch-1 rows, which
-      are the per-column reading. That the aquifer's own conformance cases pass under it is
-      therefore worth something — but those cases were fitted under it, and
-      the aquifer's four surface consumers are gates and caps that quantise
-      hard, so passing is weak evidence rather than none. What would settle
-      it: re-score `probes/pslvar`'s six aquifer dimensions under BOTH
-      readings and report the two counts. The readout dimensions naming each
-      column's arm are already on disk beside them.
+- [x] **Whether the AQUIFER reads the same entry through the same lattice —
+      closed: it does not, it reads per column.** The shipped engine reads
+      this one router entry two different ways on purpose (SPEC §11), and
+      the aquifer half is now measured rather than assumed, by the re-score
+      this item asked for and no server run:
+      `vanilla_aquifer_varying_surface_test.cpp` puts each of the scan's
+      thirteen samples through the surface rule's lattice
+      (`preliminarySurfaceIn`, anchor, window, order and abort unchanged) and
+      scores both readings on every block where they predict different
+      categories, from the lava sea's top to the lower of the two readings'
+      `y_skip`. On `probes/pslvar` (seed 42): 778125 such blocks, 658371 to
+      the per-column reading, 0 to the lattice, 104596 solid and 15158 that
+      flow may have moved — 13578 of those still sources beside two more,
+      the infinite-source shape the interior of any pool the lattice would
+      leave dry satisfies, so the case bounds them at 5% of the per-column
+      reading's blocks rather than 1%. On the barrier-on nsfloor corpus at
+      seeds 42, 31337 and 8675309: 1529200 blocks, 1309596 to the per-column
+      reading, 0 to the lattice — and no other case asserts that corpus's
+      air and fluid, so that 0 is not implied by anything else in the
+      suite. The lattice at the unquantised centre loses the same way (0 of
+      898686 on pslvar). A source anchored on the lattice on both axes
+      cannot separate the two
+      (378 of 2446 sources, none of the blocks), so the evidence is the
+      other 2068. The analyzer figure this item used to quote — the
+      surface rule's per-column reading matching the server on 3600 of 36864
+      `apsb` columns — stands, and is about the surface rule, not this.
+      `y_skip`'s own read of the entry is a third consumer the case sidesteps
+      (it scores only below both readings' cutoffs) rather than settles.
 - [x] **Surface-rule mcdoc schema generation debt — closed.** All 10 of the
       types mcdoc declares are now generated (`tools/mcdoc/surface.py`,
       `lib/src/surface_schema.inc`), and the loader reads them through the

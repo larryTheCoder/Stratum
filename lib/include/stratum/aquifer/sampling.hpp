@@ -260,6 +260,19 @@ static_assert(std::ranges::all_of(kPslWindow, [](const PslOffset offset) {
 /// controls at -70, -64, -63, -62, -58, -54, -40, 0, 40 and 100 all flood
 /// those same cells, so it is the spike and not the value that empties them.
 ///
+/// EACH SAMPLE IS THE RAW ENTRY AT ITS OWN COLUMN — not the value the surface
+/// rule gets, which reads this same entry through a 16-block lattice, blended
+/// and floored twice (`terrain::ChunkFiller::preliminarySurfaceIn`). Scored
+/// head to head with the anchor, window, order and abort unchanged, on the
+/// blocks where the two readings predict different categories: 778 125 on
+/// the varying-surface probe, where the server sides with the per-column
+/// reading on 658 371 and with the lattice on none, and 1 529 200 over three
+/// seeds with the barrier on, 1 309 596 to none; every other block is solid
+/// or fluid flow may have moved. The lattice taken at the unquantised centre
+/// loses the same way. A source whose anchor is 16-aligned on both axes
+/// reads the same under either, for every field, so all of the evidence is
+/// from the others (`vanilla_aquifer_varying_surface_test.cpp`).
+///
 /// @param psl      anything callable as `double(std::int32_t x,
 ///                 std::int32_t y, std::int32_t z)` — the router entry, or a
 ///                 stub in a test.
