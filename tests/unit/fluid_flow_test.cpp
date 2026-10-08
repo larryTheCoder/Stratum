@@ -94,6 +94,7 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     CHECK(explained(2, 2, Category::Water, Category::Air));
     CHECK(explained(5, 5, Category::Water, Category::Air));
     CHECK(explained(12, 12, Category::Solid, Category::Lava));
+    CHECK(explained(12, 12, Category::Solid, Category::Air)); // fluid flowed in first
     CHECK(explained(12, 13, Category::Water, Category::Lava));
 
     // Refused: a source with ONE source beside it; stone where the first
@@ -102,6 +103,7 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     // and a LAVA source between two — lava rebuilds no sources.
     CHECK_FALSE(explained(9, 9, Category::Water, Category::Air));
     CHECK_FALSE(explained(2, 12, Category::Solid, Category::Lava));
+    CHECK_FALSE(explained(2, 12, Category::Solid, Category::Air));
     CHECK_FALSE(explained(8, 2, Category::Air, Category::Lava));
     CHECK_FALSE(explained(14, 6, Category::Lava, Category::Air));
     // And water beside nothing that water left behind.

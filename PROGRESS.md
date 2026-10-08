@@ -86,6 +86,16 @@ Open:
       removed; the vacuous waterlava and lattice assertions replaced; the
       legacy-source refusals tested; probe chunks REQUIREd; the six aquifer
       analyzers built, formatted and tidied, their output unchanged. SPEC §11.
+- [x] **Every aquifer probe case runs.** The comb worlds have a committed
+      generator (`aquifer-comb-probe.sh`), reproducing the jitter (256/256,
+      34/34) and selection (637 252 barriers) records exactly; the fluid
+      type's 0.3 strictness and -10 ceiling are replayed block for block on
+      the fluid-type probe; deep-floor needs all three seeds; depth-gate's
+      ties are set apart and the rest held exact. SPEC §11.
+- [ ] **The row-lambda barrier residual.** Server stone on row lambda that
+      the predicate misses: 35 pure + 4 mixed on the water/lava worlds, and
+      7 in each lava-sourced arm of the fluid-type probe (pinned at 42).
+      Never off row lambda. Unattributed.
 - [ ] **Lava in the surface pass's stone-depth run.** `categorize` calls the
       aquifer's lava Solid, so it counts toward `stone_depth` where water
       neither counts nor breaks the run. Water's behaviour is measured;
