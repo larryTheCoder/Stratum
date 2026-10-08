@@ -232,6 +232,13 @@ TEST_CASE("the shipped overworld's output is pinned, on every architecture CI bu
     // The chunks: seed 0's (0, 0); (22, 24) and (31, 28), the two chunks of
     // its golden r.0.0 holding the most aquifer lava (296 and 238 blocks), so
     // the lava path is in the hash; and (-1, -1), for negative coordinates.
+    //
+    // What it does NOT guard: the psl lattice's wiring (SPEC §11). Measured
+    // by substituting the pre-v2 per-column read into ChunkFiller: this hash
+    // does not move — on these four chunks both readings place the same
+    // blocks — while golden_overworld_test.cpp's exact count falls from
+    // 12582372 to 12582029. The CI guard for that wiring is
+    // terrain_filler_test.cpp's varying-psl case, which needs no fixture.
     if (!haveFixtures()) {
         SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR
                                                                << "; run tools/fetch-vanilla");

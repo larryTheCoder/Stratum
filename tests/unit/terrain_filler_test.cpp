@@ -6,6 +6,7 @@
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
@@ -18,11 +19,18 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <array>
 #include <bit>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -82,6 +90,16 @@ public:
         surface << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
         std::ofstream secondary(path_ / "noise" / "surface_secondary.json");
         secondary << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
+        return *this;
+    }
+
+    /// Writes `worldgen/noise/<name>.json`, for a router entry that reads a
+    /// noise of its own (density_interpreter_test.cpp's helper of the same
+    /// name).
+    const TempTree& defineNoise(std::string_view name, std::string_view json) const {
+        std::filesystem::create_directories(path_ / "noise");
+        std::ofstream out(path_ / "noise" / (std::string(name) + ".json"));
+        out << json;
         return *this;
     }
 
@@ -151,6 +169,31 @@ private:
                        {"to_y", -59},
                        {"from_value", 1.0},
                        {"to_value", -1.0}};
+    return settings;
+}
+
+/// `lavaSeaSettings()`'s depth with `flatSettings()`'s plane — solid stone
+/// from y -64 to -1, water above it to sea level — and a
+/// `preliminary_surface_level` that VARIES from column to column:
+/// `-28 + 12 * psl_field`, a two-octave noise on 8- and 4-block octaves
+/// against the lattice's 16, read with `y_scale` 0 so the entry is
+/// y-independent. Nothing below the plane is open, so no lava sea forms and
+/// every block from -64 to -1 is the default block a surface rule may write.
+[[nodiscard]] nlohmann::json varyingPslSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 1}};
+    settings["noise_router"]["preliminary_surface_level"] =
+        nlohmann::json{{"type", "minecraft:add"},
+                       {"argument1", -28.0},
+                       {"argument2",
+                        {{"type", "minecraft:mul"},
+                         {"argument1", 12.0},
+                         {"argument2",
+                          {{"type", "minecraft:noise"},
+                           {"noise", "minecraft:psl_field"},
+                           {"xz_scale", 1.0},
+                           {"y_scale", 0.0}}}}}};
     return settings;
 }
 
@@ -290,6 +333,40 @@ private:
 [[nodiscard]] TemperatureTable plainsTemperature(const TempTree& tree, double temperature) {
     tree.defineBiomeTemperature("plains", temperature);
     return TemperatureTable::fromPack(tree.pack());
+}
+
+/// `a + (b - a) * t` in x, then in z, over four samples ordered (x0,z0),
+/// (x1,z0), (x0,z1), (x1,z1) — the blend `ChunkFiller::preliminarySurfaceIn`
+/// uses, with every floor left to the caller. Test-only, and it exists to
+/// spell the readings the engine must NOT implement next to the one it must;
+/// the known-answer case below ties it back to the engine's own helper.
+[[nodiscard]] double bilerp(const std::array<double, 4>& samples, double u, double v) {
+    const double low = samples[0] + ((samples[1] - samples[0]) * u);
+    const double high = samples[2] + ((samples[3] - samples[2]) * u);
+    return low + ((high - low) * v);
+}
+
+[[nodiscard]] std::array<double, 4> floored(const std::array<double, 4>& samples) {
+    return {std::floor(samples[0]), std::floor(samples[1]), std::floor(samples[2]),
+            std::floor(samples[3])};
+}
+
+/// Each sample through Java's `(int)` cast, which truncates toward zero.
+[[nodiscard]] std::array<double, 4> truncated(const std::array<double, 4>& samples) {
+    return {static_cast<double>(stratum::javamath::doubleToInt(samples[0])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[1])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[2])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[3]))};
+}
+
+/// SPEC §11's psl lattice at an arbitrary @p pitch: each sample floored,
+/// blended, floored again. At 16 it must be `preliminarySurfaceIn` exactly.
+[[nodiscard]] std::int32_t latticeAtPitch(const std::array<double, 4>& samples,
+                                          std::int32_t offsetX, std::int32_t offsetZ,
+                                          std::int32_t pitch) {
+    return stratum::javamath::floorToInt(bilerp(floored(samples),
+                                                static_cast<double>(offsetX) / pitch,
+                                                static_cast<double>(offsetZ) / pitch));
 }
 
 } // namespace
@@ -903,7 +980,7 @@ TEST_CASE("temperature reads the biome's own declared value, not a made-up one",
     CHECK(buffer.at(15, -1, 9).name.toString() == "minecraft:packed_ice");
 }
 
-TEST_CASE("above_preliminary_surface reads the column's own level, not a per-block guess",
+TEST_CASE("above_preliminary_surface's edge carries surfaceDepth - 8 under a constant level",
           "[terrain][filler][surface]") {
     // Built directly rather than through compileFrom()'s shared registry for
     // the same reason the bandlands case above is: this condition reads a
@@ -936,6 +1013,9 @@ TEST_CASE("above_preliminary_surface reads the column's own level, not a per-blo
     // condition is named after, and different from column to column. The
     // Executor computes the same depth the filler's own does, so this asks
     // it rather than hard-coding a number the noise parameters would move.
+    // A constant level makes the 16-block lattice and the column the same
+    // number, so this case is blind to WHERE the level is sampled; the next
+    // two cases hold that.
     const auto executor = stratum::surface::Executor::compile(
         surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
     for (const auto& [x, z] : {std::pair{0, 0}, std::pair{7, 3}, std::pair{15, 15}}) {
@@ -946,6 +1026,288 @@ TEST_CASE("above_preliminary_surface reads the column's own level, not a per-blo
         // And well above it, where the old reading and this one agree.
         CHECK(buffer.at(x, -1, z).name.toString() == "minecraft:glowstone");
     }
+}
+
+TEST_CASE("the psl lattice: each sample floored, blended, floored again — known answers",
+          "[terrain][filler][surface]") {
+    // ChunkFiller::preliminarySurfaceIn on its own, against SPEC §11's
+    // formula worked by hand. The filler case below proves the WIRING (where
+    // the four samples are taken, in what order, and that the result reaches
+    // the condition); this one proves the arithmetic the wiring hands them to.
+    const auto at = [](const std::array<double, 4>& samples, std::int32_t offsetX,
+                       std::int32_t offsetZ) {
+        return ChunkFiller::preliminarySurfaceIn(samples, offsetX, offsetZ);
+    };
+
+    // The sample order is (x0,z0), (x1,z0), (x0,z1), (x1,z1): a sample in the
+    // wrong slot blends along the wrong axis.
+    CHECK(at({0.0, 16.0, 0.0, 0.0}, 5, 0) == 5);
+    CHECK(at({0.0, 16.0, 0.0, 0.0}, 0, 5) == 0);
+    CHECK(at({0.0, 0.0, 16.0, 0.0}, 5, 0) == 0);
+    CHECK(at({0.0, 0.0, 16.0, 0.0}, 0, 5) == 5);
+
+    // At the cell's own corner the value is that sample, floored.
+    CHECK(at({-3.5, 9.0, 9.0, 9.0}, 0, 0) == -4);
+
+    // Where the floor falls. Floors -> 0, -1, 0, -1; blended at u = 1/4 that
+    // is -0.25, floored -1. Every alternative filler.hpp lists as refused by
+    // the server (`f_half` / `f_quart`) gives 0 on this one vector, so the
+    // vector alone separates the measured reading from all six.
+    const std::array<double, 4> halves{0.5, -0.5, 0.5, -0.5};
+    CHECK(at(halves, 4, 0) == -1);
+    // Floored only after the blend: 0.25.
+    CHECK(stratum::javamath::floorToInt(bilerp(halves, 0.25, 0.0)) == 0);
+    // Truncated at the sample (both halves truncate to 0), then after.
+    CHECK(stratum::javamath::doubleToInt(bilerp(truncated(halves), 0.25, 0.0)) == 0);
+    // Truncated, or rounded, only after the blend.
+    CHECK(stratum::javamath::doubleToInt(bilerp(halves, 0.25, 0.0)) == 0);
+    CHECK(std::lround(bilerp(halves, 0.25, 0.0)) == 0L);
+    // The cell's lower corner, which at offset 4 of 16 is also the nearest.
+    CHECK(stratum::javamath::floorToInt(halves[0]) == 0);
+
+    // Mixed signs and both axes at once. Floors -2, -18, -34, -9; u = 3/16
+    // gives low -5 and high -29.3125; v = 11/16 gives -21.71484375.
+    CHECK(at({-1.25, -17.75, -33.5, -9.0}, 3, 11) == -22);
+
+    // The census SPEC §11 quotes. Every assignment of the three arms
+    // {-40, 0, 60} of `probes/apsb/v_psl`'s range_choice to the four samples,
+    // at every offset inside a cell: pitch 16 reaches every integer from -40
+    // to 60, which is the 101 the server's own band shows, while pitch 4 and
+    // 2 leave gaps — and 8 and 32 do not, which is why the pitch was
+    // measured by translation (vanilla_psl_lattice_test.cpp) rather than by
+    // this count. At 16 the formula is held equal to the engine's helper on
+    // every one of those inputs.
+    struct Census {
+        std::int32_t pitch;
+        std::size_t values;
+        std::size_t gaps;
+    };
+
+    const std::array<double, 3> arms{-40.0, 0.0, 60.0};
+    for (const Census& expected :
+         {Census{2, 15, 86}, Census{4, 57, 44}, Census{8, 101, 0},
+          Census{ChunkFiller::kPreliminarySurfacePitch, 101, 0}, Census{32, 101, 0}}) {
+        CAPTURE(expected.pitch);
+        std::set<std::int32_t> reached;
+        std::size_t helperDisagrees = 0;
+        for (std::size_t assignment = 0; assignment < 81; ++assignment) {
+            std::array<double, 4> samples{};
+            std::size_t digits = assignment;
+            for (double& sample : samples) {
+                sample = arms.at(digits % 3);
+                digits /= 3;
+            }
+            for (std::int32_t offsetZ = 0; offsetZ < expected.pitch; ++offsetZ) {
+                for (std::int32_t offsetX = 0; offsetX < expected.pitch; ++offsetX) {
+                    const std::int32_t value =
+                        latticeAtPitch(samples, offsetX, offsetZ, expected.pitch);
+                    if (expected.pitch == ChunkFiller::kPreliminarySurfacePitch) {
+                        helperDisagrees += static_cast<std::size_t>(
+                            ChunkFiller::preliminarySurfaceIn(samples, offsetX, offsetZ) != value);
+                    }
+                    reached.insert(value);
+                }
+            }
+        }
+        CHECK(helperDisagrees == 0U);
+        REQUIRE_FALSE(reached.empty());
+        CHECK(reached.size() == expected.values);
+        CHECK(*reached.begin() == -40);
+        CHECK(*reached.rbegin() == 60);
+        CHECK(101U - reached.size() == expected.gaps);
+    }
+}
+
+TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whole filler, not "
+          "the column",
+          "[terrain][filler][surface]") {
+    // The fixture-free guard on the WIRING of SPEC §11's psl lattice. The
+    // server measurement lives in vanilla_psl_lattice_test.cpp and the
+    // engine's own reproduction of it in golden_overworld_test.cpp, and both
+    // need probe worlds or region files CI never generates; the
+    // constant-level case above is blind to it by construction. Here the
+    // entry varies by at least 8 blocks inside every chunk (required below),
+    // so a filler that samples it anywhere else, in any other order, or
+    // floors it anywhere else, moves the band's lower edge in a counted
+    // share of the columns — and the plane being solid stone from -64 to -1,
+    // a moved edge is a different block.
+    //
+    // The reference is computed beside the engine, not by it: a separate
+    // Interpreter for the raw entry at y = 0, the surface Executor for the
+    // depth, and the lattice cell found per column through floorDiv rather
+    // than from the chunk = cell shortcut the filler takes. It shares
+    // preliminarySurfaceIn and the interpreter with the engine, so it proves
+    // where the samples go, not that the arithmetic is right — the case
+    // above does that.
+    const TempTree tree;
+    tree.defineSettings("test", varyingPslSettings());
+    tree.defineSurfaceNoises();
+    tree.defineNoise("psl_field", R"({"firstOctave": -3, "amplitudes": [1.0, 1.0]})");
+    const LoadedSettings loaded = tree.load();
+    const auto& settings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    auto wanted = loaded.graph.referencedNoises();
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface"));
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface_secondary"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+                                 block("minecraft:glowstone")));
+    const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings, &surface);
+    REQUIRE(filler.surfaceRulesBlockedBy().empty());
+    REQUIRE(filler.runsSurfaceRules());
+
+    const auto executor = stratum::surface::Executor::compile(
+        surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
+    const stratum::density::Interpreter reference(loaded.graph, noises);
+    const auto entry = settings.router.at(RouterEntry::PreliminarySurfaceLevel);
+    const auto raw = [&](std::int32_t x, std::int32_t z) {
+        return reference.evaluate(entry, stratum::density::Point{.x = x, .y = 0, .z = z});
+    };
+    // The four samples of the cell whose low corner is (x0, z0), @p span
+    // blocks on a side, in preliminarySurfaceIn's order.
+    const auto cell = [&](std::int32_t x0, std::int32_t z0, std::int32_t span) {
+        return std::array<double, 4>{raw(x0, z0), raw(x0 + span, z0), raw(x0, z0 + span),
+                                     raw(x0 + span, z0 + span)};
+    };
+
+    // Readings a regression could bring back, each scored by how many
+    // columns it would have put the edge somewhere else. The per-column read
+    // is what the engine did before pipeline engine v2.
+    enum Reading : std::size_t {
+        kPerColumn,      // floor(R(x, 0, z))
+        kTransposed,     // the (16, 0) and (0, 16) samples swapped
+        kFarCornerAt15,  // the chunk's own last column as the far sample, /15
+        kSingleFloor,    // floored only after the blend
+        kTruncated,      // truncated at the sample and after the blend
+        kTruncatingCell, // the cell found by truncating division, (x / 16) * 16
+        kReadings
+    };
+
+    constexpr std::int32_t kPitch = ChunkFiller::kPreliminarySurfacePitch;
+    const std::int32_t minY = settings.geometry.minY;
+    std::array<std::int32_t, kReadings> separates{};
+    std::int32_t columns = 0;
+    std::int32_t negativeColumns = 0;
+    std::int32_t exact = 0;
+    std::int32_t steps = 0;
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{-1, -1}, std::pair{3, -2}}) {
+        CAPTURE(chunkX, chunkZ);
+        ChunkBuffer buffer(settings.geometry);
+        filler.fill(chunkX, chunkZ, buffer);
+        const bool negative = chunkX < 0 || chunkZ < 0;
+
+        std::int32_t lowestColumn = std::numeric_limits<std::int32_t>::max();
+        std::int32_t highestColumn = std::numeric_limits<std::int32_t>::min();
+        for (int localZ = 0; localZ < kPitch; ++localZ) {
+            for (int localX = 0; localX < kPitch; ++localX) {
+                const std::int32_t x = (chunkX * kPitch) + localX;
+                const std::int32_t z = (chunkZ * kPitch) + localZ;
+                CAPTURE(x, z);
+                const std::int32_t depth = executor.surfaceDepth(x, z);
+                const auto edge = [depth](std::int32_t psl) { return psl + depth - 8; };
+
+                const std::int32_t x0 = stratum::javamath::floorDiv(x, kPitch) * kPitch;
+                const std::int32_t z0 = stratum::javamath::floorDiv(z, kPitch) * kPitch;
+                const auto samples = cell(x0, z0, kPitch);
+                const std::int32_t expected =
+                    edge(ChunkFiller::preliminarySurfaceIn(samples, x - x0, z - z0));
+                // The edge must land inside the plane, or this column could
+                // not show it.
+                REQUIRE(minY < expected);
+                REQUIRE(expected <= -1);
+
+                // The lowest glowstone, and whether the column is a clean
+                // step: stone below it, glowstone from it up to the plane's
+                // top.
+                std::int32_t observed = 0;
+                for (std::int32_t y = minY; y <= -1; ++y) {
+                    if (buffer.at(localX, y, localZ).name.toString() == "minecraft:glowstone") {
+                        observed = y;
+                        break;
+                    }
+                }
+                bool step = observed != 0;
+                for (std::int32_t y = minY; y <= -1 && step; ++y) {
+                    step = buffer.at(localX, y, localZ).name.toString() ==
+                           (y < observed ? "minecraft:stone" : "minecraft:glowstone");
+                }
+                ++columns;
+                negativeColumns += static_cast<std::int32_t>(negative);
+                exact += static_cast<std::int32_t>(observed == expected);
+                steps += static_cast<std::int32_t>(step);
+
+                const std::int32_t perColumn = stratum::javamath::floorToInt(raw(x, z));
+                lowestColumn = std::min(lowestColumn, perColumn);
+                highestColumn = std::max(highestColumn, perColumn);
+                if (localX == 0 && localZ == 0) {
+                    // At the cell's own corner the two readings are one.
+                    CHECK(edge(perColumn) == expected);
+                }
+
+                const double u = static_cast<double>(x - x0) / kPitch;
+                const double v = static_cast<double>(z - z0) / kPitch;
+                std::array<std::int32_t, kReadings> predicted{};
+                predicted[kPerColumn] = edge(perColumn);
+                predicted[kTransposed] = edge(ChunkFiller::preliminarySurfaceIn(
+                    {samples[0], samples[2], samples[1], samples[3]}, x - x0, z - z0));
+                predicted[kFarCornerAt15] = edge(stratum::javamath::floorToInt(bilerp(
+                    floored(cell(x0, z0, kPitch - 1)), static_cast<double>(x - x0) / (kPitch - 1),
+                    static_cast<double>(z - z0) / (kPitch - 1))));
+                predicted[kSingleFloor] =
+                    edge(stratum::javamath::floorToInt(bilerp(samples, u, v)));
+                predicted[kTruncated] =
+                    edge(stratum::javamath::doubleToInt(bilerp(truncated(samples), u, v)));
+                // Deliberately the WRONG division: the regression this
+                // reading stands for is exactly a truncating cell index.
+                const std::int32_t xt = stratum::javamath::truncDiv(x, kPitch) * kPitch;
+                const std::int32_t zt = stratum::javamath::truncDiv(z, kPitch) * kPitch;
+                predicted[kTruncatingCell] =
+                    edge(ChunkFiller::preliminarySurfaceIn(cell(xt, zt, kPitch), x - xt, z - zt));
+                for (std::size_t reading = 0; reading < kReadings; ++reading) {
+                    // A truncating division is floorDiv at x, z >= 0.
+                    if (reading == kTruncatingCell && !negative) {
+                        continue;
+                    }
+                    separates.at(reading) +=
+                        static_cast<std::int32_t>(predicted.at(reading) != observed);
+                }
+            }
+        }
+        // The field must actually vary inside the chunk, or every reading
+        // would agree and this case would pass on any of them.
+        REQUIRE(highestColumn - lowestColumn >= 8);
+    }
+
+    // The semantic claim: every column's edge is where the lattice puts it.
+    CHECK(columns == 768);
+    CHECK(exact == columns);
+    CHECK(steps == columns);
+
+    // And how many columns each rejected reading would have moved: the
+    // power of this case, kept separate from the claim above. The floors are
+    // what keep it from going vacuous under a smoother field: every reading
+    // must move some column, and the per-column read most of them.
+    CHECK(negativeColumns == 512);
+    CHECK(separates[kPerColumn] >= 512);
+    for (std::size_t reading = 0; reading < kReadings; ++reading) {
+        CAPTURE(reading);
+        CHECK(separates.at(reading) > 0);
+    }
+    // The exact counts are pure engine arithmetic over a fixed noise and a
+    // fixed surface depth, so they double as a cross-architecture check: a
+    // change to either noise moves them, and nothing else should. Truncation
+    // moves every column because the field is negative throughout, where
+    // truncating rounds up; the truncating cell index is scored on the 512
+    // columns of the two chunks with a negative coordinate only, since it is
+    // floorDiv everywhere else.
+    CHECK(separates[kPerColumn] == 672);
+    CHECK(separates[kTransposed] == 304);
+    CHECK(separates[kFarCornerAt15] == 369);
+    CHECK(separates[kSingleFloor] == 363);
+    CHECK(separates[kTruncated] == 768);
+    CHECK(separates[kTruncatingCell] == 488);
 }
 
 TEST_CASE("a tree reading a surface depth without minecraft:surface built is blocked, not crashed",
