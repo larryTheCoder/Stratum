@@ -161,11 +161,15 @@ Open:
       predicate misses no server barrier (mixed 1096 -> 0, pure 0), and the
       unfrozen fluid-type probe's 42 row-lambda stones were lava that fell
       onto water (`explainedByFlow`'s fifth shape). SPEC §11.
-- [ ] **Lava in the surface pass's stone-depth run.** `categorize` calls the
-      aquifer's lava Solid, so it counts toward `stone_depth` where water
-      neither counts nor breaks the run. Water's behaviour is measured;
-      lava's is not, and no golden block has been attributed to it either
-      way. Needs a probe with a `stone_depth` rule under an aquifer lava pool.
+- [x] **Lava in the surface pass's stone-depth run — measured, and the
+      bottom-up run was wrong for water too.** `aquifer-lavarun-probe.sh`
+      (12 frozen dimensions of marker ladders over flat pools, 16 384
+      columns each, 0 flow): top down every fluid holds the run, lava of the
+      lattice and of the sea exactly as water; bottom up every fluid resets
+      it, water included, where the filler skipped water; lava latches the
+      water height. The old filler wrote 2 392 064 of 74 973 184 probe blocks
+      wrong, the new one none. Golden overworld exact 12 582 372 -> 12 582 474:
+      102 blocks over water fixed, none lost. SPEC §11.
 - [x] **Q8's fluid-update flag — implemented, exact against the server's
       own post-processing lists.** Un-ticked probe chunks keep vanilla's
       `PostProcessing` lists, which in a probe are the aquifer's flag alone:

@@ -1472,3 +1472,201 @@ TEST_CASE("aquifers over a default fluid other than water are refused by name",
         loaded.graph, noises,
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"))));
 }
+
+namespace {
+
+/// `tools/analysis/aquifer-lavarun-probe.sh`'s terrain G1, corner for corner:
+/// stone 319..4, an open pool 3..-24 (air to -12, fluid below), stone
+/// -25..-32, an enclosed pool -33..-40, stone -41..-58, the lava sea
+/// -59..-64. A constant plus one `y_clamped_gradient` per 8-block cell, each
+/// boundary at a half-integer y; the script derives these values and checks
+/// its own layout before it writes them.
+[[nodiscard]] nlohmann::json lavaRunTerrain() {
+    nlohmann::json node{{"type", "minecraft:constant"}, {"argument", -5.5}};
+    const std::array<std::pair<int, double>, 9> steps{{{-64, 8.0},
+                                                       {-56, 1685.0},
+                                                       {-48, -1800.0},
+                                                       {-40, 120.0},
+                                                       {-32, -8.0},
+                                                       {-24, -7.5},
+                                                       {-8, 4.5},
+                                                       {0, 8.0},
+                                                       {8, 3.5}}};
+    for (const auto& [fromY, step] : steps) {
+        node = nlohmann::json{{"type", "minecraft:add"},
+                              {"argument1", node},
+                              {"argument2",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", fromY},
+                                {"to_y", fromY + 8},
+                                {"from_value", 0.0},
+                                {"to_value", step}}}};
+    }
+    return node;
+}
+
+/// The probe's aquifer: the fluid-type probe's arm P, so every source's
+/// level is -12 and no barrier is ever placed; `lava` 0.5 types every source
+/// lava, 0.0 water.
+[[nodiscard]] nlohmann::json lavaRunSettings(bool lavaPools, const nlohmann::json& surfaceRule) {
+    nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    settings["sea_level"] = -16;
+    settings["default_fluid"] = {{"Name", "minecraft:water"}, {"Properties", {{"level", "0"}}}};
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}};
+    settings["noise_router"]["barrier"] = -2.0;
+    settings["noise_router"]["lava"] = lavaPools ? 0.5 : 0.0;
+    settings["noise_router"]["preliminary_surface_level"] = -12.0;
+    settings["noise_router"]["fluid_level_floodedness"] = 0.5;
+    settings["noise_router"]["fluid_level_spread"] = 6.0;
+    settings["noise_router"]["final_density"] = lavaRunTerrain();
+    settings["surface_rule"] = surfaceRule;
+    return settings;
+}
+
+constexpr std::array<const char*, 16> kWool{
+    "white",      "orange", "magenta", "light_blue", "yellow", "lime",  "pink", "gray",
+    "light_gray", "cyan",   "purple",  "blue",       "brown",  "green", "red",  "black"};
+
+[[nodiscard]] std::string wool(std::size_t k) {
+    return std::string("minecraft:") + kWool.at(k) + "_wool";
+}
+
+/// The probe's ladders: sixteen rungs, the k-th placing the k-th wool, so a
+/// stone block shows its 0-based depth in the run (`floor`, `ceiling`) or how
+/// far below the water height it sits (`water`), and stays stone past 15.
+[[nodiscard]] nlohmann::json woolLadder(const std::string& kind) {
+    nlohmann::json rungs = nlohmann::json::array();
+    for (std::size_t k = 0; k < kWool.size(); ++k) {
+        const auto offset = static_cast<int>(k);
+        const nlohmann::json test = kind == "water"
+                                        ? nlohmann::json{{"type", "minecraft:water"},
+                                                         {"offset", -offset},
+                                                         {"surface_depth_multiplier", 0},
+                                                         {"add_stone_depth", false}}
+                                        : nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                         {"offset", offset},
+                                                         {"add_surface_depth", false},
+                                                         {"secondary_depth_range", 0},
+                                                         {"surface_type", kind}};
+        rungs.push_back(condition(test, block(wool(k))));
+    }
+    return nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", rungs}};
+}
+
+/// One chunk of the lava-run terrain under @p ladder, column (0, 0).
+[[nodiscard]] std::vector<std::string> lavaRunColumn(bool lavaPools, const std::string& ladder) {
+    const TempTree tree;
+    tree.defineSettings("test", lavaRunSettings(lavaPools, woolLadder(ladder)));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(woolLadder(ladder));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    std::vector<std::string> column;
+    for (std::int32_t y = -64; y < 320; ++y) {
+        column.push_back(buffer.at(0, y, 0).name.toString());
+    }
+    return column;
+}
+
+[[nodiscard]] const std::string& at(const std::vector<std::string>& column, std::int32_t y) {
+    return column.at(static_cast<std::size_t>(y + 64));
+}
+
+} // namespace
+
+TEST_CASE("the lava-run probe's terrain fills as its script records it",
+          "[terrain][filler][aquifer][surface]") {
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const TempTree tree;
+        tree.defineSettings("test", lavaRunSettings(lavaPools, block("minecraft:stone")));
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        ChunkBuffer buffer(
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+        filler.fill(0, 0, buffer);
+        const std::string pool = lavaPools ? "minecraft:lava" : "minecraft:water";
+        long long wrong = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = -64; y < 320; ++y) {
+                    std::string expected = "minecraft:stone";
+                    if (y <= -59) {
+                        expected = "minecraft:lava";
+                    } else if ((y >= -40 && y <= -33) || (y >= -24 && y <= -13)) {
+                        expected = pool;
+                    } else if (y >= -12 && y <= 3) {
+                        expected = "minecraft:air";
+                    }
+                    if (buffer.at(x, y, z).name.toString() != expected && ++wrong <= 10) {
+                        UNSCOPED_INFO("x " << x << " y " << y << " z " << z << ": "
+                                           << buffer.at(x, y, z).name.toString());
+                    }
+                }
+            }
+        }
+        CHECK(wrong == 0);
+    }
+}
+
+TEST_CASE("the top-down stone-depth run holds through lava as through water",
+          "[terrain][filler][aquifer][surface]") {
+    // The fixture-free guard for what aquifer-lavarun-probe.sh measured
+    // (SPEC §11): top down, lava neither counts toward the run nor breaks it,
+    // exactly as water. Cave A's 12 blocks of pool sit under air, so the
+    // stone below them starts at depth 0 whatever the pool does — unless the
+    // pool COUNTS, which is what the filler did while it called lava Solid
+    // (depth 12 there). Cave B's enclosed pool then carries the run on
+    // (depth 8 at its floor) where a reset would restart it at 0.
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "floor");
+        CHECK(at(column, 319) == wool(0));
+        CHECK(at(column, -25) == wool(0));
+        CHECK(at(column, -32) == wool(7));
+        CHECK(at(column, -41) == wool(8));
+        CHECK(at(column, -48) == wool(15));
+        CHECK(at(column, -49) == "minecraft:stone");
+        CHECK(at(column, -58) == "minecraft:stone");
+    }
+}
+
+TEST_CASE("the bottom-up stone-depth run resets on every fluid, water included",
+          "[terrain][filler][aquifer][surface]") {
+    // Bottom up, fluid resets the run as air does — lava of the sea, lava of
+    // the lattice and water alike (SPEC §11). The lava sea at the world's
+    // floor would put depth 6 at y -58 had it counted; cave B's enclosed pool
+    // would leave y -32 stone had it held (the run there would be past 16).
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "ceiling");
+        CHECK(at(column, -58) == wool(0));
+        CHECK(at(column, -43) == wool(15));
+        CHECK(at(column, -42) == "minecraft:stone");
+        CHECK(at(column, -32) == wool(0));
+        CHECK(at(column, -25) == wool(7));
+        CHECK(at(column, 4) == wool(0));
+        CHECK(at(column, 19) == wool(15));
+        CHECK(at(column, 20) == "minecraft:stone");
+    }
+}
+
+TEST_CASE("lava latches the water height as water does", "[terrain][filler][aquifer][surface]") {
+    // A column whose only fluid is lava has a water height, one above its
+    // topmost lava block (-13), exactly as with water (SPEC §11). While the
+    // filler called lava Solid the column had none, and `water` was true
+    // everywhere: rung 0 on every stone block.
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "water");
+        CHECK(at(column, 4) == wool(0));
+        CHECK(at(column, -25) == wool(13));
+        CHECK(at(column, -27) == wool(15));
+        CHECK(at(column, -28) == "minecraft:stone");
+        CHECK(at(column, -41) == "minecraft:stone");
+    }
+}
