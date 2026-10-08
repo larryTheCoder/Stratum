@@ -531,21 +531,34 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
 } // namespace
 
 TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aquifer]") {
-    std::vector<std::filesystem::path> probes;
+    // Every corpus directory that starts with @p prefix, sorted.
     const std::filesystem::path root = fixtures() / "probes";
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() &&
-                entry.path().filename().string().rfind("capfloor_s", 0) == 0) {
-                probes.push_back(entry.path());
+    const auto corpora = [&](const std::string& prefix) {
+        std::vector<std::filesystem::path> found;
+        if (std::filesystem::is_directory(root)) {
+            for (const auto& entry : std::filesystem::directory_iterator(root)) {
+                if (entry.is_directory() &&
+                    entry.path().filename().string().rfind(prefix, 0) == 0) {
+                    found.push_back(entry.path());
+                }
             }
         }
-    }
-    if (probes.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
+        std::ranges::sort(found);
+        return found;
+    };
+    // The script writes two corpora per seed, one server run each (a frozen
+    // world holds every fluid tick it schedules): the first four arms, and
+    // cf58l alone.
+    const std::vector<std::filesystem::path> main = corpora("capfloor_s");
+    const std::vector<std::filesystem::path> low = corpora("capfloorl_s");
+    if (main.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
         SKIP("no capfloor_s* aquifer probe under "
              << root << "; generate one with tools/analysis/aquifer-capfloor-probe.sh");
     }
-    std::ranges::sort(probes);
+    INFO("capfloorl_s* corpora are written by the same script; regenerate with "
+         "tools/analysis/aquifer-capfloor-probe.sh");
+    REQUIRE(low.size() == main.size());
+
     // Each arm is exact: the barrier writes every block of stone the server
     // does and no other. cf58 is the near-surface type's arm (20 462 blocks of
     // false barrier before that fix), cf66 the aborted floor's control and
@@ -556,11 +569,19 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
     // to the sea. cf58d was meant to and is blind — at floodedness 0.6 no
     // source the scored rows reach sits below lambda (0 readings) — and is
     // kept as the control that says so.
-    for (const CapArm& arm : {CapArm{"cf58", -58.0, -1.0, 0.6}, CapArm{"cf66", -66.0, -1.0, 0.6},
-                              CapArm{"cf200", 200.0, -1.0, 0.6}, CapArm{"cf58d", -58.0, -0.05, 0.6},
-                              CapArm{"cf58l", -58.0, -0.05, -0.3}}) {
+    struct Placed {
+        CapArm arm;
+        const std::vector<std::filesystem::path>* in;
+    };
+
+    for (const Placed& placed : {Placed{CapArm{"cf58", -58.0, -1.0, 0.6}, &main},
+                                 Placed{CapArm{"cf66", -66.0, -1.0, 0.6}, &main},
+                                 Placed{CapArm{"cf200", 200.0, -1.0, 0.6}, &main},
+                                 Placed{CapArm{"cf58d", -58.0, -0.05, 0.6}, &main},
+                                 Placed{CapArm{"cf58l", -58.0, -0.05, -0.3}, &low}}) {
+        const CapArm& arm = placed.arm;
         CapScore score;
-        for (const auto& probe : probes) {
+        for (const auto& probe : *placed.in) {
             scoreCapProbe(probe, arm, score);
         }
         INFO("arm " << arm.name << ": blocks " << score.blocks << ", server stone "
