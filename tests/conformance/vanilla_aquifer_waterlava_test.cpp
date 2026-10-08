@@ -289,7 +289,23 @@ struct Score {
     long long belowServerWater = 0;
     long long belowServerWaterUnexplained = 0;
     long long belowBareWrongType = 0;
+
+    /// Where a server barrier this build misses sits, with its neighbourhood,
+    /// so a miss on a corpus this machine never saw (CI generates its own)
+    /// says what it is.
+    std::string missSamples;
 };
+
+/// One server block's name and fluid level, compactly.
+[[nodiscard]] std::string described(const chunk::BlockState* block) {
+    if (block == nullptr) {
+        return "off";
+    }
+    std::string name =
+        block->name.rfind("minecraft:", 0) == 0 ? block->name.substr(10) : block->name;
+    const int level = stratum::test::fluidLevel(block);
+    return level >= 0 ? name + ":" + std::to_string(level) : name;
+}
 
 void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
     // Every count below is exact on a frozen corpus and timing-dependent on
@@ -468,6 +484,20 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             if (y >= lambda && !(y == lambda && nearestWaterHere) && plainBlock) {
                                 const bool flowStone = flowShaped && !newStone;
                                 total.flowStone += flowStone;
+                                if (serverStone && !newStone && !flowStone &&
+                                    total.missSamples.size() < 4000) {
+                                    total.missSamples +=
+                                        " [" + probeDir.filename().string() + "/" + dim.name + " " +
+                                        std::to_string(x) + "," + std::to_string(y) + "," +
+                                        std::to_string(z) +
+                                        (hasMixedPair(at) ? " mixed" : " pure") + "; up " +
+                                        described(golden.blockAt(x, y + 1, z)) + " down " +
+                                        described(golden.blockAt(x, y - 1, z)) + " +x " +
+                                        described(golden.blockAt(x + 1, y, z)) + " -x " +
+                                        described(golden.blockAt(x - 1, y, z)) + " +z " +
+                                        described(golden.blockAt(x, y, z + 1)) + " -z " +
+                                        described(golden.blockAt(x, y, z - 1)) + "]";
+                                }
                                 if (hasMixedPair(at)) {
                                     total.mixedServerStone += serverStone;
                                     total.mixedOldMiss += (serverStone && !oldStone);
@@ -660,7 +690,8 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
                    << total.tfFormulaOnly << " (stone " << total.tfFormulaOnlyServerStone
                    << ") constant-only " << total.tfConstantOnly << " (stone "
                    << total.tfConstantOnlyServerStone << "); both-air " << total.bothAir
-                   << " (stone " << total.bothAirServerStone << ")");
+                   << " (stone " << total.bothAirServerStone << "); misses not credited to flow:"
+                   << (total.missSamples.empty() ? std::string(" none") : total.missSamples));
 
     // The control: the corpus has to hold lava bodies meeting water bodies
     // at a separation the constant carries, or nothing below can tell the
