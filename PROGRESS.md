@@ -1309,13 +1309,14 @@ Open:
       (`preliminarySurfaceIn`, anchor, window, order and abort unchanged) and
       scores both readings on every block where they predict different
       categories, from the lava sea's top to the lower of the two readings'
-      `y_skip`. On `probes/pslvar` (seed 42): 778125 such blocks, 658371 to
-      the per-column reading, 0 to the lattice, 104596 solid and 15158 that
+      `y_skip`. On `probes/pslvar` (seed 42): 781897 such blocks (778125
+      before engine v8's `y_skip` rectangle), 661223 to the per-column
+      reading, 0 to the lattice, 105516 solid and 15158 that
       flow may have moved — 13578 of those still sources beside two more,
       the infinite-source shape the interior of any pool the lattice would
       leave dry satisfies, so the case bounds them at 5% of the per-column
       reading's blocks rather than 1%. On the barrier-on nsfloor corpus at
-      seeds 42, 31337 and 8675309: 1529200 blocks, 1309596 to the per-column
+      seeds 42, 31337 and 8675309: 1542768 blocks, 1320468 to the per-column
       reading, 0 to the lattice — and no other case asserts that corpus's
       air and fluid, so that 0 is not implied by anything else in the
       suite. The lattice at the unquantised centre loses the same way (0 of

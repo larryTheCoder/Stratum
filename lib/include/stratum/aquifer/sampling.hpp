@@ -289,10 +289,10 @@ static_assert(std::ranges::all_of(kPslWindow, [](const PslOffset offset) {
 /// rule gets, which reads this same entry through a 16-block lattice, blended
 /// and floored twice (`terrain::ChunkFiller::preliminarySurfaceIn`). Scored
 /// head to head with the anchor, window, order and abort unchanged, on the
-/// blocks where the two readings predict different categories: 778 125 on
+/// blocks where the two readings predict different categories: 781 897 on
 /// the varying-surface probe, where the server sides with the per-column
-/// reading on 658 371 and with the lattice on none, and 1 529 200 over three
-/// seeds with the barrier on, 1 309 596 to none; every other block is solid
+/// reading on 661 223 and with the lattice on none, and 1 542 768 over three
+/// seeds with the barrier on, 1 320 468 to none; every other block is solid
 /// or fluid flow may have moved. The lattice taken at the unquantised centre
 /// loses the same way. A source whose anchor is 16-aligned on both axes
 /// reads the same under either, for every field, so all of the evidence is

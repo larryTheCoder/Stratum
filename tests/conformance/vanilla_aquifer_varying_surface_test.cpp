@@ -741,7 +741,7 @@ TEST_CASE("the aquifer reads the surface per column and not through the 16-block
     INFO("total: " << total << perArm.str());
 
     // Power first: a handful of discriminating blocks would close nothing.
-    // Measured 778 125, every feature size above 100 000 on its own.
+    // Measured 781 897, every feature size above 100 000 on its own.
     REQUIRE(lattice.differ >= 10000);
     for (const auto& [size, h] : bySize) {
         INFO("feature size " << size);
@@ -754,11 +754,13 @@ TEST_CASE("the aquifer reads the surface per column and not through the 16-block
     CHECK(total.differByClass[0] == 0);
 
     // Model-only, so pinned exactly: no aquifer world is read to get them,
-    // and fluid flow cannot move them.
-    CHECK(lattice.differ == 778125);
+    // and fluid flow cannot move them. The population is bounded by each
+    // chunk's y_skip, so a change to y_skip moves it: 778 125 under engine v7,
+    // 781 897 since v8 widened y_skip's rectangle (SPEC §6).
+    CHECK(lattice.differ == 781897);
     CHECK(total.sourcesLevelDiffer == 350);
 
-    // The verdict. The lattice wins no block, the per-column reading 658 371.
+    // The verdict. The lattice wins no block, the per-column reading 661 223.
     CHECK(lattice.rivalWins == 0);
     CHECK(lattice.perColumnWins + lattice.rivalWins + lattice.ambiguous + lattice.solid ==
           lattice.differ);
@@ -806,9 +808,11 @@ TEST_CASE("the per-column surface reading holds on three seeds with the barrier 
         long long sourcesLevelDiffer; ///< pinned: model-only
     };
 
-    constexpr std::array<Probe, 3> kProbes{{{"nsfloor_s42", 42, 530231, 246},
-                                            {"nsfloor_s31337", 31337, 458886, 206},
-                                            {"nsfloor_s8675309", 8675309, 540083, 273}}};
+    // Since engine v8's y_skip rectangle (530 231, 458 886 and 540 083
+    // under v7).
+    constexpr std::array<Probe, 3> kProbes{{{"nsfloor_s42", 42, 530567, 246},
+                                            {"nsfloor_s31337", 31337, 459476, 206},
+                                            {"nsfloor_s8675309", 8675309, 552725, 273}}};
 
     const std::filesystem::path root = fixtures() / "probes";
     if (std::ranges::none_of(kProbes, [&](const Probe& probe) {
