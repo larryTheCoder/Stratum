@@ -216,10 +216,13 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
         const std::filesystem::path probeDir = fixtures() / "probes" / probeName;
         const std::filesystem::path manifestPath = probeDir / "manifest.json";
         const std::filesystem::path specPath = probeDir / "spec.json";
-        if (!std::filesystem::is_regular_file(manifestPath) ||
-            !std::filesystem::is_regular_file(specPath)) {
-            continue;
-        }
+        // Any probe present means all three must be: one seed agreeing with
+        // an RNG-driven model is not evidence, so a partial corpus fails here
+        // rather than passing on whichever seed happens to exist.
+        INFO("probe " << probeName << " — generate it with "
+                      << "tools/analysis/aquifer-deepfloor-probe.sh --accept-eula <seed>");
+        REQUIRE(std::filesystem::is_regular_file(manifestPath));
+        REQUIRE(std::filesystem::is_regular_file(specPath));
         std::ifstream manifestFile(manifestPath);
         const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
         const auto seed = manifest.at("seed").get<std::int64_t>();
@@ -228,9 +231,8 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
 
         for (const Dimension& dim : kDimensions) {
             const std::filesystem::path regionPath = probeDir / dim.name / "r.0.0.mca";
-            if (!std::filesystem::is_regular_file(regionPath)) {
-                continue;
-            }
+            INFO("dimension " << dim.name);
+            REQUIRE(std::filesystem::is_regular_file(regionPath));
             // The world on disk must be the world this test believes it is.
             // A spec that has drifted from `kDimensions` would score real
             // blocks against the wrong density and quietly pass or fail for
@@ -372,10 +374,9 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
         }
     }
 
-    // A probe directory that exists but holds none of the dimensions this
-    // case reads is a broken corpus, not an absent one — fail loudly rather
-    // than passing on an empty tally (SPEC §8).
-    REQUIRE(dimensionsScored > 0);
+    // Every seed, every dimension: a partial corpus failed above already,
+    // and this is the count that says so in one place (SPEC §8).
+    REQUIRE(dimensionsScored == kProbeDirs.size() * kDimensions.size());
 
     INFO("blocks " << pooled.blocks << ", server stone " << pooled.serverStone << ", /10-decided "
                    << pooled.decidedByTen << ", contested " << pooled.contested);

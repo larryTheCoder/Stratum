@@ -124,8 +124,9 @@ private:
 ///   - golden water SOURCE where the first pass has air, between at least two
 ///     horizontal water sources — flow the infinite-source rule converted
 ///     back into a source;
-///   - golden obsidian or cobblestone where the first pass has fluid — water
-///     met lava;
+///   - golden obsidian or cobblestone where the first pass has fluid or air —
+///     water met lava, where one of them was or had flowed (plain stone is
+///     NOT let through: it is also what a missed barrier looks like);
 ///   - golden water where the first pass has lava, beside such a block.
 [[nodiscard]] inline bool explainedByFlow(GoldenRegion& golden, std::int32_t x, std::int32_t y,
                                           std::int32_t z, Category goldenCategory,
@@ -146,7 +147,8 @@ private:
         return fluidLevel(here) > 0 || (goldenCategory == Category::Water &&
                                         fluidLevel(here) == 0 && horizontalWaterSources >= 2);
     }
-    if (goldenCategory == Category::Solid && isFluid(rawCategory)) {
+    if (goldenCategory == Category::Solid &&
+        (isFluid(rawCategory) || rawCategory == Category::Air)) {
         return fluidContactBlock(here);
     }
     if (goldenCategory == Category::Water && rawCategory == Category::Lava) {

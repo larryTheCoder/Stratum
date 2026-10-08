@@ -2397,6 +2397,44 @@ Open:
     set, clang-format and clang-tidy, and in CI's lint list. Their output on
     their own probe worlds is byte-identical to before the cleanup.
 
+- **Every aquifer probe case runs, and the ones that could pass on a partial
+  corpus cannot (MA).** No output changes.
+
+  * *The comb worlds have a generator again.* Three cases — the centre
+    jitter, source selection and fluid type — read
+    `probes/comb_{42,7,12345,999}/{jv,elava}`, and the spec that made those
+    worlds predates this repository. `tools/analysis/aquifer-comb-probe.sh`
+    rebuilds it from what the three cases themselves assume (open void,
+    floodedness 0.5, psl 96, vanilla's own `barrier`; `jv` with spread 0
+    and lava -1.0, `elava` with vanilla's own spread and lava, copied from
+    the fetched router at generation time). The regenerated worlds
+    reproduce the record exactly where the record is independent of later
+    code: the jitter's 256 of 256 cells with 34 of 34 positives, and
+    selection's 637 252 server barrier blocks with none where a barrier is
+    impossible. The fluid type reads 3118 of 3122 sources against the 3121
+    of 3125 recorded before the dry sentinel and the unclamped ladder
+    changed which sources hold fluid; with the original worlds gone, which
+    of the two moved the count cannot be separated.
+  * *The fluid type's two boundaries are replayed block for block.* A new
+    case reads the fluid-type probe — every arm's router a constant, so each
+    world is `computeSubstance`'s decision alone — at every fourth column:
+    `lava` exactly 0.3 makes no lava and the next double up does; a ladder
+    level of exactly -10 is lava. Until now only the analyzer had read that
+    world, and the real-noise case is blind to both boundaries. Everything
+    else agrees or is fluid that moved, with one exception, pinned rather
+    than hidden: 7 blocks of server stone on row lambda itself in each of
+    the six arms whose sources are lava — the row-lambda barrier residual
+    still open (PROGRESS, MA). Two shapes joined the flow classifier while
+    building it: cobblestone or obsidian where the first pass has AIR (lava
+    and water met in a space one of them flowed into), and our lava sources
+    the server's water quenched to obsidian (65 on the 0.3-above arm, all on
+    the pools' top row).
+  * *A partial corpus fails.* The deep-floor case REQUIREs all three seeds
+    and both dimensions (it used to pass on any one); the depth-gate case
+    sets its 8 known exceptions apart by their stated cause — cells whose
+    predicted level equals their own centre — and holds the other 202 exact,
+    where a 90% bound used to admit any eight misses.
+
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
   round-trip tested against a real chunk's own bytes), `chunk::encode` (the
