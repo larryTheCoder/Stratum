@@ -285,6 +285,22 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                 "no vanilla legacy dimension enables aquifers, so nothing on disk can say what "
                 "it should be"));
         }
+        // The aquifer types a source as the dimension's default fluid or as
+        // lava, and two of its rules are written for WATER specifically:
+        // Q6.3's exception is water resting on the lava sea, and Q6.4's
+        // mixed-type constant is lava against water. With any other default
+        // fluid those two readings part from "default fluid", and no
+        // world has ever been measured to say which the server takes —
+        // every vanilla dimension that enables aquifers uses water. Refused
+        // by name rather than guessed (SPEC §8).
+        if (settings.defaultFluid.name != data::ResourceLocation::parse("minecraft:water")) {
+            throw FillError("aquifers_enabled with default_fluid " +
+                            settings.defaultFluid.name.toString() +
+                            " is refused: the aquifer's water-over-lava exception and its "
+                            "lava-against-water pressure are measured only for a water "
+                            "default fluid, and no vanilla dimension enables aquifers with "
+                            "any other");
+        }
         // The salted positional source (SPEC §4) is per-world, not per-block
         // — built once here from the registry's own seed rather than
         // re-derived on every call to fill().

@@ -1077,3 +1077,36 @@ TEST_CASE("a legacy random source refuses aquifers and ore veins by name",
                               ContainsSubstring("legacy_random_source"));
     }
 }
+
+TEST_CASE("aquifers over a default fluid other than water are refused by name",
+          "[terrain][filler][aquifer]") {
+    // Q6.3's exception is written for WATER over the lava sea and Q6.4's
+    // mixed-type constant for lava against WATER; with any other default
+    // fluid those part from "the dimension's default fluid", and nothing has
+    // measured which the server takes. Refused, not guessed.
+    for (const char* fluid : {"minecraft:lava", "minecraft:air"}) {
+        INFO("default_fluid " << fluid);
+        nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+        settings["default_fluid"] = nlohmann::json{{"Name", fluid}};
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 0,
+                                                    stratum::density::RandomSource::Xoroshiro);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        CHECK_THROWS_WITH(ChunkFiller::compile(loaded.graph, noises, dimension),
+                          ContainsSubstring("aquifers_enabled") &&
+                              ContainsSubstring(std::string("default_fluid ") + fluid));
+    }
+    // The control: the same settings with water compile.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(/*aquifers=*/true, /*oreVeins=*/false));
+    const LoadedSettings loaded = tree.load();
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
+    CHECK_NOTHROW(ChunkFiller::compile(
+        loaded.graph, noises,
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"))));
+}

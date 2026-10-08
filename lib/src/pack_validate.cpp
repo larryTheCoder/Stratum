@@ -205,6 +205,15 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // Xoroshiro in the overworld and by the Java LCG in the Nether.
         const auto source = dimension.legacyRandomSource ? density::RandomSource::Legacy
                                                          : density::RandomSource::Xoroshiro;
+        // Refused where it is built (ChunkFiller::compile), whatever the
+        // random source and whether or not the surface rules load.
+        if (dimension.aquifersEnabled &&
+            dimension.defaultFluid.name != data::ResourceLocation::parse("minecraft:water")) {
+            add(report, Severity::Warning, id.toString(),
+                "aquifers_enabled with default_fluid " + dimension.defaultFluid.name.toString() +
+                    " cannot be generated: the aquifer is measured only for a water default "
+                    "fluid");
+        }
         // WHAT A ROUTER CHECK DOES NOT COVER, reported rather than left for
         // the first chunk to discover, and reported BEFORE the router
         // registry is built on purpose: a dimension whose router registry is
