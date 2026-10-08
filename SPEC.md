@@ -258,6 +258,7 @@ to bump the version and be called out; this is that call-out.
 | 5 | **An aborted scan floors the dry sentinel at lambda too** (§11, "Sub-lambda levels and the near-surface sea"). v4 floored only a wet level; an aborted cell that nothing floods kept `kNeverLevel`. At floodedness 0 over an aborting surface that built 3 770 blocks of barrier the server does not, and the server took lambda's verdict on every block where the two part. No golden block changes. v4 had reached only this development branch; bumped rather than amended because a v4 blob could exist. |
 | 6 | **Q5.9's deep-dark override does not reach an aborted scan** (§11, "Sub-lambda levels and the near-surface sea"). v5 returned the override's dry sentinel before an aborted scan's lambda; the spec's order puts the abort's status first, and over an aborting surface under the override (`aquifer-ddfloor-probe.sh`) the sentinel built 10 577 blocks of barrier the server does not — every block where the two orders part. No golden block changes. v5 had reached only this development branch; bumped rather than amended because a v5 blob could exist. |
 | 7 | **Lava is fluid to the surface pass, and the bottom-up stone-depth run resets on every fluid** (§11, "Lava in the surface pass's runs"). Aquifer lava now holds the top-down run and latches the water height as water does; the bottom-up run (`stone_depth` ceiling) resets on water and lava where it used to skip water and count lava. On the lava-run probe the old filler wrote 2 392 064 of 74 973 184 blocks wrong and the new one none; on the golden overworld grid 102 blocks over water become exact (gravel to stone, sand to sandstone) and none get worse (12 582 372 to 12 582 474). v6 had reached only this development branch; bumped rather than amended because a v6 blob could exist. |
+| 8 | **y_skip's sampling rectangle reaches every candidate source centre** (§11, "`y_skip` against the server"). The per-chunk cutoff's psl maximum was read over x and z from -16 to +16 of the chunk at stride 4; the server's rectangle runs to +25, the full extent where a candidate source centre can sit (`16 * (i_max + 1) + (kJitterBoundX - 1)`), so its samples reach +24 (any end in +24..+27 reads the same samples, a permanent tie). On a two-valued psl field (`aquifer-yskip-probe.sh`) the old rectangle was refuted on 8 646 blocks in 71 chunks; the new one is exact on 22 968 000 blocks and 123 588 fluid-update marks. Changes only worlds whose psl varies within a rectangle's reach of the cutoff; no golden block changes. v7 had reached only this development branch; bumped rather than amended because a v7 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2549,7 +2550,7 @@ Open:
   where the global picker reads water (244 of 21870 under one stub field).
 
   *`y_skip` against the server: the closed form holds, the rectangle did
-  not.* `tools/analysis/aquifer-yskip-probe.sh` builds worlds where the
+  not (pipeline engine v8).* `tools/analysis/aquifer-yskip-probe.sh` builds worlds where the
   cutoff is the only thing that moves: psl at or below -80 everywhere, so
   every scan aborts and a source's status is its centre's alone (wet to the
   sea at or above -54, dry at lambda below — unit-pinned, and tight: at -74
