@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace stratum::aquifer {
 
@@ -131,6 +132,30 @@ struct SamplePos {
 /// ladder brackets it to [-0.5, +0.5), which is exactly 0 for an integer.
 /// Excluded: `min_y`, `min_y + 64`, `sea_level`, and the cell's own centre y.
 inline constexpr std::int32_t kPreliminarySurfaceSampleY = 0;
+
+/// Q2.5's cutoff for the chunk whose minimum block corner is (@p baseX,
+/// @p baseZ): `ySkip` of the highest FLOORED `preliminary_surface_level` over
+/// `ySkipRectangle`, every `kYSkipSampleStride` blocks on both axes with both
+/// endpoints included, each read at `kPreliminarySurfaceSampleY`. The one
+/// spelling of the loop: `ChunkFiller` and the conformance cases call it.
+///
+/// @param psl anything callable as `double(std::int32_t x, std::int32_t y,
+///            std::int32_t z)`, as for `readPreliminarySurface`.
+template<typename Sampler>
+[[nodiscard]] std::int32_t chunkYSkip(const Sampler& psl, const std::int32_t baseX,
+                                      const std::int32_t baseZ) {
+    const YSkipRectangle rectangle = ySkipRectangle(baseX, baseZ);
+    std::int32_t maxSurface = std::numeric_limits<std::int32_t>::min();
+    for (std::int32_t z = rectangle.minZ; z <= rectangle.maxZ; z += kYSkipSampleStride) {
+        for (std::int32_t x = rectangle.minX; x <= rectangle.maxX; x += kYSkipSampleStride) {
+            // Java's `(int) Math.floor`: a datapack's psl may be NaN or out
+            // of range, and a bare cast of either is undefined.
+            maxSurface =
+                std::max(maxSurface, javamath::floorToInt(psl(x, kPreliminarySurfaceSampleY, z)));
+        }
+    }
+    return ySkip(maxSurface);
+}
 
 /// How `preliminary_surface_level`'s read is anchored: the cell's own jittered
 /// centre, quantised down to a multiple of four. `floorDiv`, never `/` — the

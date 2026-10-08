@@ -57,7 +57,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -153,24 +152,21 @@ private:
                  javamath::wrappingAdd(cell.surface.cap, aquifer::kNearSurfaceFloorOffset));
 }
 
-/// Q2.3/Q2.5's per-chunk cutoff, as the filler computes it: above it the
-/// global picker decides and no barrier forms. Empty when the chunk's
+/// Q2.3/Q2.5's per-chunk cutoff — the filler's own `chunkYSkip`: above it
+/// the global picker decides and no barrier forms. Empty when the chunk's
 /// lattice rectangle leaves the readout footprint, where it is unknown.
 template<typename SurfaceAt>
 [[nodiscard]] std::optional<std::int32_t> ySkipLevelOf(std::int32_t chunkX, std::int32_t chunkZ,
                                                        SurfaceAt&& surfaceAt) {
-    const aquifer::YSkipRectangle rect = aquifer::ySkipRectangle(chunkX * 16, chunkZ * 16);
-    std::int32_t maxSurface = std::numeric_limits<std::int32_t>::min();
-    for (std::int32_t z = rect.minZ; z <= rect.maxZ; z += aquifer::kYSkipSampleStride) {
-        for (std::int32_t x = rect.minX; x <= rect.maxX; x += aquifer::kYSkipSampleStride) {
+    bool reachable = true;
+    const std::int32_t level = aquifer::chunkYSkip(
+        [&](const std::int32_t x, std::int32_t, const std::int32_t z) {
             const std::optional<double> psl = surfaceAt(x, z);
-            if (!psl.has_value()) {
-                return std::nullopt;
-            }
-            maxSurface = std::max(maxSurface, javamath::floorToInt(*psl));
-        }
-    }
-    return aquifer::ySkip(maxSurface);
+            reachable = reachable && psl.has_value();
+            return psl.value_or(0.0);
+        },
+        chunkX * 16, chunkZ * 16);
+    return reachable ? std::optional<std::int32_t>(level) : std::nullopt;
 }
 
 struct Score {

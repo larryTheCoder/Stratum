@@ -523,22 +523,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // global picker decides. One height per chunk, from the highest floored
     // `preliminary_surface_level` over the chunk's lattice rectangle, sampled
     // every four blocks with both endpoints included.
-    std::int32_t ySkipLevel = std::numeric_limits<std::int32_t>::max();
-    if (settings_->aquifersEnabled) {
-        const aquifer::YSkipRectangle rectangle = aquifer::ySkipRectangle(baseX, baseZ);
-        std::int32_t maxSurface = std::numeric_limits<std::int32_t>::min();
-        for (std::int32_t z = rectangle.minZ; z <= rectangle.maxZ;
-             z += aquifer::kYSkipSampleStride) {
-            for (std::int32_t x = rectangle.minX; x <= rectangle.maxX;
-                 x += aquifer::kYSkipSampleStride) {
-                // Java's `(int) Math.floor`: a datapack's psl may be NaN or
-                // out of range, and a bare cast of either is undefined.
-                maxSurface = std::max(maxSurface, javamath::floorToInt(pslAt(
-                                                      x, aquifer::kPreliminarySurfaceSampleY, z)));
-            }
-        }
-        ySkipLevel = aquifer::ySkip(maxSurface);
-    }
+    const std::int32_t ySkipLevel = settings_->aquifersEnabled
+                                        ? aquifer::chunkYSkip(pslAt, baseX, baseZ)
+                                        : std::numeric_limits<std::int32_t>::max();
 
     // Only ever read when oreVeins_ holds a source, same as the aquifer's
     // five above, and looked up once per fill() rather than per block.
@@ -589,7 +576,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // replaces what would otherwise be
                                 // non-solid, or adds solid via the barrier.
                                 block = &settings_->defaultBlock;
-                            } else if (aquiferCentres_.has_value() && y > ySkipLevel) {
+                            } else if (aquiferCentres_.has_value() &&
+                                       !aquifer::consultsLattice(y, ySkipLevel)) {
                                 // Q2.3: the global picker, as with aquifers
                                 // off (below) — lava under min(-54,
                                 // sea_level), default_fluid under sea_level,

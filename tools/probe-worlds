@@ -154,8 +154,10 @@ UNITS = [
     unit('inline-noise', 'legacy', ['inline-noise-probe.sh', '42'],
          own('inline-noise', [], {'file': 'verdicts.json', 'seed': 42, 'variants': 11})),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
-    # runner), and the amplified / large_biomes presets beside an overworld
-    # control, one server start per seed.
+    # runner), the amplified / large_biomes presets beside an overworld
+    # control, one server start per seed, and y_skip's six 10 GB runs (about
+    # two minutes each locally). The name predates the last two; the shard
+    # holds them because it was the lightest.
     unit('end-islands', 'end', ['end-islands-probe.sh', '--seeds', '0,42', '--regions', '-1,-1 64,0'],
          own('end-islands/seed-0', END_REGIONS) + own('end-islands/seed-42', END_REGIONS)),
     unit('aquifer-presets_s322', 'end', ['aquifer-presets-probe.sh', '322'],
@@ -166,6 +168,11 @@ UNITS = [
           '--large-biomes-origin', '14', '21'],
          own('aquifer-presets/seed-163', PRESET_REGIONS,
              {'file': 'manifest.json', 'seed': 163, 'frozen': True})),
+] + [
+    unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
+         density((f'{corpus}_s{seed}', seed)))
+    for seed in (42, 31337)
+    for group, corpus in (('step', 'yskip'), ('step2', 'yskip2'), ('rect', 'yskiprect'))
 ]
 
 # Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`

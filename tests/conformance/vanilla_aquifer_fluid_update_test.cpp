@@ -18,6 +18,7 @@
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/probe_corpus.hpp"
+#include "support/probe_region.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
@@ -26,7 +27,6 @@
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
-#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -46,44 +46,13 @@
 
 namespace {
 
-using Position = std::tuple<int, int, int>; // localX, y, localZ
+using Position = stratum::test::LocalPosition;
+using stratum::test::ticked;
+using stratum::test::untouched;
 namespace aquifer = stratum::aquifer;
 
 [[nodiscard]] std::filesystem::path fixtures() {
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
-}
-
-/// The window the probe force-loaded (chunks 0..7) and the ring around it:
-/// every chunk here ticked and emptied its list.
-[[nodiscard]] bool ticked(std::int32_t cx, std::int32_t cz) {
-    return cx < 9 && cz < 9;
-}
-
-/// A chunk whose noise stage ran and whose list was never consumed.
-[[nodiscard]] bool untouched(std::int32_t cx, std::int32_t cz, const std::string& status) {
-    return !ticked(cx, cz) && (status == "minecraft:full" || status == "minecraft:carvers" ||
-                               status == "minecraft:initialize_light");
-}
-
-/// The server's marks for one chunk, as (localX, y, localZ).
-[[nodiscard]] std::set<Position> serverMarks(const stratum::nbt::Tag& root, std::int32_t minY) {
-    std::set<Position> marks;
-    const stratum::nbt::Tag* list = root.find("PostProcessing");
-    if (list == nullptr) {
-        return marks;
-    }
-    std::int32_t sectionY = stratum::javamath::floorDiv(minY, 16);
-    for (const stratum::nbt::Tag& section : list->asList().elements) {
-        for (const stratum::nbt::Tag& entry : section.asList().elements) {
-            const auto packed = static_cast<std::uint16_t>(entry.asShort());
-            const auto field = [packed](unsigned shift) {
-                return static_cast<int>((packed >> shift) & 15U);
-            };
-            marks.emplace(field(0U), (sectionY * 16) + field(4U), field(8U));
-        }
-        ++sectionY;
-    }
-    return marks;
 }
 
 struct Score {
@@ -108,7 +77,7 @@ void scoreRegion(const std::filesystem::path& region, std::int32_t minY, OursFor
             }
             const auto doc = stratum::nbt::read(file.readChunk(cx, cz));
             const std::string status = doc.root.at("Status").asString();
-            const std::set<Position> server = serverMarks(doc.root, minY);
+            const std::set<Position> server = stratum::test::postProcessingMarks(doc.root, minY);
             if (ticked(cx, cz)) {
                 if (status == "minecraft:full") {
                     INFO("chunk " << cx << ", " << cz);
@@ -324,7 +293,7 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
                     if (!untouched(cx, cz, doc.root.at("Status").asString())) {
                         continue;
                     }
-                    for (const Position& p : serverMarks(doc.root, minY)) {
+                    for (const Position& p : stratum::test::postProcessingMarks(doc.root, minY)) {
                         const int y = std::get<1>(p);
                         serverOutsideRows += (y < lambda - 1 || y > lambda + 40) ? 1 : 0;
                     }

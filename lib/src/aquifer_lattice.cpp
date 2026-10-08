@@ -96,19 +96,21 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         // against `gate`'s 0.9266-0.9358 on 7.8M+ discriminating blocks
         // across two seeds.
         //
-        // BOTH the comparand and the floor are `lambda`, not the bare
-        // `kLavaLevel` this line used to read. Measured at `sea_level` -70,
-        // where the two part company: 251229 blocks the old comparand calls
-        // wet up to y=-55 are observed dry at every one, 0/251229. The
-        // comparand cannot be separated from the floor the same way — lambda
-        // equals `sea_level` on every `sea_level < -54` world by definition,
-        // so a cell that takes the "true" branch and a cell that takes the
-        // "false" branch under a lambda-based comparand are indistinguishable
-        // downstream, whatever comparand put them there. That is a PERMANENT
-        // TIE, not an open measurement: no world can separate them, and using
-        // `lambda` in both places is adopted because it is a no-op at every
-        // `sea_level` this project had already verified (lambda equals
-        // `kLavaLevel` there), not because the comparand itself was isolated.
+        // The comparand is `lambda`, not the bare `kLavaLevel` this line used
+        // to read: at `sea_level` -70 (lowsea's a_lo, psl -85, where the
+        // lattice is consulted up to y_skip -50) cells centred from -64 to
+        // -55 take the sea and are dry, where a `kLavaLevel` comparand
+        // floors them. THE FLOOR'S VALUE IS OPEN, and `lambda` is refuted
+        // there: every one of 135 716 blocks whose nearest cell takes this
+        // floor is lava up to y = -55 or barrier stone, not one air — spec
+        // Q1.1's A_lava, (-54, lava), which is what Q5.3(b) hands an aborted
+        // scan; lambda is dry above the lava sea. The 0/251229 once cited
+        // for `lambda` here was b_floor's, every row of which lies above its
+        // own y_skip (-158): the global picker's air, not this floor
+        // (vanilla_aquifer_lowsea_test.cpp, SPEC §11). At every
+        // `sea_level >= -54` the two are the same number; the floor's TYPE
+        // also reaches the fluid-update flag, so the change waits for its own
+        // measurements.
         //
         // AND THIS FLOOR IS NOT `kNeverLevel`, unlike the two dry outcomes
         // further down — measured, not assumed. No block readout can tell

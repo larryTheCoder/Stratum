@@ -462,12 +462,32 @@ inline constexpr double kDeepDarkDepthAbove = 0.9;
         javamath::wrappingMul(kCellHeight, javamath::wrappingAdd(quotient, kOne)), kTen);
 }
 
+/// Q2.3: whether the local aquifer is consulted at height @p y in a chunk
+/// whose cutoff is @p ySkipLevel (`chunkYSkip`, sampling.hpp) — at and below
+/// it, inclusive. Above it the global picker decides.
+[[nodiscard]] constexpr bool consultsLattice(const std::int32_t y,
+                                             const std::int32_t ySkipLevel) noexcept {
+    return y <= ySkipLevel;
+}
+
 /// The horizontal rectangle `ySkip`'s maximum is taken over, for the chunk
-/// whose minimum block corner is (@p baseX, @p baseZ): Q3.5's lattice extent
-/// in cell indices — `i` from `floorDiv(xMin - 5, 16)` to
-/// `floorDiv(xMax - 5, 16) + 1` — read in BLOCK coordinates at the cells'
-/// origins, `16 * i`, both endpoints included. Sampled every
-/// `kYSkipSampleStride` blocks on both axes.
+/// whose minimum block corner is (@p baseX, @p baseZ): every point a source
+/// centre of Q3.5's lattice extent can occupy. The extent runs over cells `i`
+/// from `floorDiv(xMin - 5, 16)` to `floorDiv(xMax - 5, 16) + 1`, so the
+/// rectangle runs from the first cell's origin, `16 * i`, to the last cell's
+/// origin plus the centre jitter's reach, `16 * i + 9` — offsets -16 to +25
+/// from a chunk's corner. Both endpoints included, sampled every
+/// `kYSkipSampleStride` blocks from the low corner: eleven samples a side.
+///
+/// MEASURED (`aquifer-yskip-probe.sh --group rect`, SPEC §11): this used to
+/// stop at the last cell's ORIGIN (+16, nine samples a side), and the server
+/// reads the two sample rows beyond it — that reading is refuted on 8646
+/// blocks in 71 chunks over two seeds, and among every square from -28..-4
+/// to +12..+36 at strides 1, 2, 4 and 8, and each axis alone at stride 4,
+/// only a low end of -16 and a high end of +24..+27 at stride 4 leaves no
+/// chunk wrong. Any
+/// high end in +24..+27 reads the same samples, so the jitter's +25 is one
+/// spelling of a permanent tie, not a measured constant.
 struct YSkipRectangle {
     std::int32_t minX = 0;
     std::int32_t maxX = 0;
@@ -484,9 +504,11 @@ inline constexpr std::int32_t kYSkipSampleStride = 4;
     constexpr std::int32_t kChunk = 16;
     return YSkipRectangle{
         .minX = kCell * javamath::floorDiv(baseX - kShift, kCell),
-        .maxX = kCell * (javamath::floorDiv(baseX + kChunk - 1 - kShift, kCell) + 1),
+        .maxX = (kCell * (javamath::floorDiv(baseX + kChunk - 1 - kShift, kCell) + 1)) +
+                (kJitterBoundX - 1),
         .minZ = kCell * javamath::floorDiv(baseZ - kShift, kCell),
-        .maxZ = kCell * (javamath::floorDiv(baseZ + kChunk - 1 - kShift, kCell) + 1),
+        .maxZ = (kCell * (javamath::floorDiv(baseZ + kChunk - 1 - kShift, kCell) + 1)) +
+                (kJitterBoundZ - 1),
     };
 }
 

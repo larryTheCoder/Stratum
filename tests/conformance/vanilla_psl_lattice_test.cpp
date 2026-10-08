@@ -80,6 +80,8 @@
 //   direction is decisive alone, which is why both are run.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/probe_region.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -87,7 +89,6 @@
 #include <stratum/nbt/reader.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/region/region_file.hpp>
-#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -114,6 +115,7 @@ namespace {
 
 using stratum::data::ResourceLocation;
 using stratum::terrain::ChunkFiller;
+using stratum::test::probeNoise;
 
 constexpr std::int32_t kPitch = ChunkFiller::kPreliminarySurfacePitch;
 
@@ -377,18 +379,6 @@ struct Field {
                        readField(entry.at("router").at("preliminary_surface_level")));
     }
     return fields;
-}
-
-/// The probe's own noise, rebuilt from the manifest the probe wrote — one
-/// octave, so nothing about the replica is in doubt.
-[[nodiscard]] stratum::noise::NormalNoise probeNoise(const std::filesystem::path& root) {
-    const auto manifest = nlohmann::json::parse(std::ifstream(root / "manifest.json"));
-    const auto& declared = manifest.at("probe_noise");
-    auto random = stratum::rng::XoroshiroPositionalFactory(manifest.at("seed").get<std::int64_t>())
-                      .fromHashOf(declared.at("id").get<std::string>());
-    return stratum::noise::NormalNoise::create(
-        random, declared.at("first_octave").get<int>(),
-        declared.at("amplitudes").get<std::vector<double>>());
 }
 
 /// How a candidate turns four lattice samples into a column's integer. The
