@@ -109,6 +109,15 @@ Open:
       apart, all fluid products), so flow is bounded, never pinned; every
       disagreement must still be flow-shaped. A corpus of another seed is
       refused too, and no longer silently overwritten. SPEC §7, §11.
+- [x] **The aborting near-surface floor is lambda, not the sentinel.**
+      Measured through the barrier, the only place the two differ: 1666 of
+      1666 contested blocks on three seeds side with lambda. SPEC §11.
+- [ ] **Sub-lambda source levels in the barrier.** Over an aborting surface
+      with the real barrier on, Π writes 7718 blocks of stone the server
+      does not; weighing every sub-lambda level as lambda makes it exact, but
+      the water/lava worlds are exact unfloored. Leading reading: the floor
+      follows an aborted scan. `aquifer-capfloor-probe.sh` separates it from
+      "the cap is below lambda". SPEC §11.
 - [x] **A vein never replaces aquifer fluid — measured on the goldens.**
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,

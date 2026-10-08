@@ -48,6 +48,7 @@ add_executable(stratum_conformance_tests
     vanilla_aquifer_barrier3source_test.cpp
     vanilla_aquifer_deepfloor_test.cpp
     vanilla_aquifer_waterlava_test.cpp
+    vanilla_aquifer_nsfloor_test.cpp
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_biome_tie_break_test.cpp

@@ -110,15 +110,15 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // `sea_level` this project had already verified (lambda equals
         // `kLavaLevel` there), not because the comparand itself was isolated.
         //
-        // AND THIS FLOOR IS DELIBERATELY NOT `kNeverLevel`, unlike the two
-        // dry outcomes further down. The sweep that moved those is blind to
-        // this branch: every world in it holds `preliminary_surface_level`
-        // constant at 96, far above the near-surface gate, so this early
-        // return never runs there, and the one conformance world that does
-        // reach it reads only `y >= lambda`, where a floor at lambda and a
-        // sentinel are again indistinguishable. Leaving it alone is a choice,
-        // not an oversight — `aquifer-nearsurface-probe.sh`'s varying psl is
-        // where a future pass would separate them.
+        // AND THIS FLOOR IS NOT `kNeverLevel`, unlike the two dry outcomes
+        // further down — measured, not assumed. No block readout can tell
+        // them apart (both are dry at every y >= lambda), and every world
+        // that reached this branch held the barrier off, so for a while it
+        // was a choice. They part only in the barrier's pressure term:
+        // `aquifer-nsfloor-probe.sh` turns the barrier on over this branch,
+        // and on the 1666 blocks where the two floors give different
+        // verdicts the server sides with lambda on all 1666
+        // (vanilla_aquifer_nsfloor_test.cpp).
         return (cell.centreY >= lambda &&
                 cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset))
                    ? cell.seaLevel
