@@ -125,6 +125,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -264,6 +265,10 @@ struct Score {
     long long constantAdds = 0;            // new fires, old does not ...
     long long constantAddsServerStone = 0; // ... and the server has stone
     long long flowStone = 0;               // server stone lava fallen onto water left
+    /// Server stone on row lambda itself, under lava, beside or over what
+    /// water meeting lava leaves: the lava sea's contact remnant (counted
+    /// apart from the shared flow shapes, which ask for FLOWING lava above).
+    long long contactRemnant = 0;
     // The refuted readings, on the rows ABOVE lambda.
     long long tfFormulaOnly = 0;
     long long tfFormulaOnlyServerStone = 0;
@@ -476,10 +481,38 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             // (support/probe_corpus.hpp). It is credited by
                             // its shape, never by a count, and only where
                             // this build did not decide stone itself.
-                            const bool flowShaped =
+                            const bool sharedFlowShape =
                                 serverStone && stratum::test::explainedByFlow(
                                                    golden, x, y, z, stratum::test::Category::Solid,
                                                    rawCategory(now));
+                            // Row lambda is where the aquifer's water rests on
+                            // the lava sea, and where a lava source above can
+                            // fall into that water after the save, leaving
+                            // stone ringed by the obsidian the water left on
+                            // the sea. The same corpus generated twice puts
+                            // obsidian at one such position and stone at the
+                            // other (waterlava_s8675309, sea70_d_neg1_0,
+                            // (47, -70, 90): local and CI run 37852567773), so
+                            // the block is flow's either way. Narrower than
+                            // the shared shapes on purpose: a lava SOURCE
+                            // above water beside is also what a real
+                            // lava-over-water barrier looks like, so the
+                            // contact block is required and the count is
+                            // bounded below.
+                            bool besideContact = false;
+                            for (const auto& [dx, dy, dz] :
+                                 {std::tuple{1, 0, 0}, std::tuple{-1, 0, 0}, std::tuple{0, 0, 1},
+                                  std::tuple{0, 0, -1}, std::tuple{0, -1, 0}}) {
+                                besideContact =
+                                    besideContact || stratum::test::fluidContactBlock(
+                                                         golden.blockAt(x + dx, y + dy, z + dz));
+                            }
+                            const bool contactRemnant =
+                                serverStone && !sharedFlowShape && y == lambda && besideContact &&
+                                stratum::test::named(golden.blockAt(x, y + 1, z), "minecraft:lava");
+                            total.contactRemnant +=
+                                static_cast<long long>(contactRemnant && !newStone);
+                            const bool flowShaped = sharedFlowShape || contactRemnant;
                             const bool realStone = serverStone && !flowShaped;
                             if (y >= lambda && !(y == lambda && nearestWaterHere) && plainBlock) {
                                 const bool flowStone = flowShaped && !newStone;
@@ -690,7 +723,8 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
                    << total.tfFormulaOnly << " (stone " << total.tfFormulaOnlyServerStone
                    << ") constant-only " << total.tfConstantOnly << " (stone "
                    << total.tfConstantOnlyServerStone << "); both-air " << total.bothAir
-                   << " (stone " << total.bothAirServerStone << "); misses not credited to flow:"
+                   << " (stone " << total.bothAirServerStone << "); contact remnant on row lambda "
+                   << total.contactRemnant << "; misses not credited to flow:"
                    << (total.missSamples.empty() ? std::string(" none") : total.missSamples));
 
     // The control: the corpus has to hold lava bodies meeting water bodies
@@ -721,6 +755,9 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
     // its barriers there either (35 on row lambda before the corpora were
     // frozen, every one lava fallen onto water; 0 frozen).
     CHECK(total.pureNewMiss == 0);
+    // The lava sea's contact remnant is credited above only while it stays a
+    // remnant: none on any local generation, 1 on CI's first.
+    CHECK(total.contactRemnant <= 8);
 
     // The type-field reading, refuted: where the formula fires and the
     // constant would not, every block is a real barrier (464 of 464); where
