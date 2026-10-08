@@ -107,6 +107,22 @@ struct SourceStatus {
     FluidType type = FluidType::Default;
 };
 
+/// A source's status from its fluid inputs and its `lava` reading: the level
+/// and where it came from (`cellLevel`), and the type that follows from both
+/// (`fluidTypeOf`). The one place the two are put together, so a caller that
+/// scores sources outside `computeSubstance` cannot get the type of a
+/// near-surface sea wrong where the filler gets it right.
+[[nodiscard]] inline SourceStatus sourceStatus(const CellFluid& cell, const double lava) noexcept {
+    const CellLevel level = cellLevel(cell);
+    return SourceStatus{.level = level.level,
+                        .type = fluidTypeOf(FluidTypeAt{
+                            .centreY = cell.centreY,
+                            .level = level.level,
+                            .seaLevel = cell.seaLevel,
+                            .lava = lava,
+                            .fromNearSurface = level.origin == LevelOrigin::NearSurfaceSea})};
+}
+
 namespace detail {
 
 /// One ranked candidate's own status. The LEVEL is its own
@@ -150,12 +166,8 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
                          // Q5.9 reads its two router values at the centre
                          // itself, the same point the floodedness is read at.
                          .deepDark = deepDark(floodPos.x, floodPos.y, floodPos.z)};
-    const std::int32_t level = cellFluidLevel(cell);
     const SamplePos lavaPos = lavaSample(ranked.centre);
-    const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
-    const FluidType type = fluidTypeOf(FluidTypeAt{
-        .centreY = ranked.centre.y, .level = level, .seaLevel = seaLevel, .lava = lavaValue});
-    return SourceStatus{.level = level, .type = type};
+    return sourceStatus(cell, lava(lavaPos.x, lavaPos.y, lavaPos.z));
 }
 
 } // namespace detail

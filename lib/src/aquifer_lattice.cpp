@@ -64,7 +64,7 @@ std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
     return std::min(javamath::wrappingAdd(onLattice, spreadOffset(spread)), cap);
 }
 
-std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
+CellLevel cellLevel(const CellFluid& cell) noexcept {
     const std::int32_t lambda = lambdaLevel(cell.seaLevel);
     const std::int32_t ladder = ladderLevel(cell.centreY, cell.surface.cap, cell.spread);
     // Every int operation on a psl reading wraps, as Java's int does: the
@@ -79,7 +79,7 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     if (cell.surface.gate < oceanGate &&
         javamath::wrappingSub(cell.surface.gate, cell.centreY) < kNearSurfaceDepth) {
         if (!cell.surface.aborted) {
-            return cell.seaLevel;
+            return CellLevel{.level = cell.seaLevel, .origin = LevelOrigin::NearSurfaceSea};
         }
         // An aborting cell is floored instead, unless it sits clear of the
         // scan's own low sample by more than twenty blocks. Both terms read
@@ -119,10 +119,11 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // and on the 1666 blocks where the two floors give different
         // verdicts the server sides with lambda on all 1666
         // (vanilla_aquifer_nsfloor_test.cpp).
-        return (cell.centreY >= lambda &&
-                cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset))
-                   ? cell.seaLevel
-                   : lambda;
+        return CellLevel{.level = (cell.centreY >= lambda &&
+                                   cell.centreY > javamath::wrappingAdd(cell.surface.cap,
+                                                                        kNearSurfaceFloorOffset))
+                                      ? cell.seaLevel
+                                      : lambda};
     }
 
     // The DRY level is the spec's sentinel, not `lambda`. Q2.4 hands every
@@ -143,7 +144,7 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     // compares no floodedness at all — the spec's override is on the
     // comparands, and that branch has none.
     if (cell.deepDark) {
-        return kNeverLevel;
+        return CellLevel{.level = kNeverLevel};
     }
 
     std::int32_t level = kNeverLevel;
@@ -206,7 +207,17 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     if (cell.centreY < lambda && tookSea) {
         level = kLavaLevel;
     }
-    return level;
+    // An aborted scan met a surface submerged in the lava sea, whose level
+    // is lambda (spec Q5.3(b)); a wet level below it reads as lambda. Only
+    // the barrier can see this — the cell is dry above lambda either way —
+    // and over an aborting surface the unfloored ladder builds 7 690 blocks
+    // of barrier the server does not (aquifer-nsfloor-probe.sh). A cell that
+    // did not abort keeps its unclamped ladder: the water/lava and
+    // deep-floor worlds measured that, and a floor there breaks them.
+    if (cell.surface.aborted && level != kNeverLevel && level < lambda) {
+        level = lambda;
+    }
+    return CellLevel{.level = level};
 }
 
 CentreSource::CentreSource(const std::int64_t worldSeed) noexcept

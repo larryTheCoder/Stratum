@@ -181,6 +181,12 @@ struct FluidTypeAt {
     /// The `lava` router entry, evaluated at `lavaSample(centre)` — the
     /// contracted indices, NOT the block position. See `sampling.hpp`.
     double lava = 0.0;
+
+    /// Whether the level is the near-surface sea outcome
+    /// (`LevelOrigin::NearSurfaceSea`): the sea taken from a submerged
+    /// surface rather than from the cell's own centre, so the centre's
+    /// height does not make it lava.
+    bool fromNearSurface = false;
 };
 
 /// The fluid a source places.
@@ -191,7 +197,12 @@ struct FluidTypeAt {
 /// measurement rather than from this corpus, which cannot see below the lava
 /// sea at all.
 [[nodiscard]] constexpr FluidType fluidTypeOf(const FluidTypeAt& at) noexcept {
-    if (at.centreY < lambdaLevel(at.seaLevel)) {
+    // A centre below the lava sea makes a source lava — except the
+    // near-surface sea, which is the sea of the surface the cell sits under,
+    // not of its centre (cf58: 20 462 blocks of false barrier otherwise). The
+    // lava override below still applies to it as before: nothing has
+    // measured a near-surface sea at or under the -10 ceiling.
+    if (!at.fromNearSurface && at.centreY < lambdaLevel(at.seaLevel)) {
         return FluidType::Lava;
     }
     // Strict, and on the absolute value. `std::abs` is not constexpr for

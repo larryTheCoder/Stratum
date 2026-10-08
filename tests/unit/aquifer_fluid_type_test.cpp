@@ -8,6 +8,7 @@
 // a magnitude, and which gate comes first.
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/sampling.hpp>
+#include <stratum/aquifer/substance.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -158,4 +159,30 @@ TEST_CASE("lava is read on a sixty-four block lattice, and the spread is not", "
     // They agree on y, which is the same 40-block band, and that agreement is
     // measured rather than assumed: 20 and 80 both lose.
     CHECK(spreadSample(cell, centre).y == lavaSample(centre).y);
+}
+
+TEST_CASE("a near-surface sea is not lava for its centre sitting below the lava sea", "[aquifer]") {
+    // A cell close under a submerged surface takes the sea from that surface
+    // (spec Q5.3(b)), so its centre's height does not type it. On
+    // aquifer-capfloor-probe.sh's cf58 arm (psl -58, centres between -62
+    // and lambda flooding from the near surface) typing those cells lava
+    // built 20 462 blocks of barrier against their water neighbours that the
+    // server does not have.
+    using stratum::aquifer::CellFluid;
+    using stratum::aquifer::PslRead;
+    using stratum::aquifer::sourceStatus;
+    const PslRead surface{.gate = -58, .cap = -58, .anchor = -58, .aborted = false};
+    const CellFluid nearSurface{
+        .centreY = -57, .surface = surface, .seaLevel = 63, .floodedness = 0.6};
+    const auto status = sourceStatus(nearSurface, 0.0);
+    CHECK(status.level == 63);
+    CHECK(status.type == FluidType::Default);
+
+    // The trailing guard's sea is the other way round: a cell centred below
+    // the lava sea that floods through its own floodedness is the lava sea.
+    const PslRead high{.gate = 200, .cap = 200, .anchor = 200, .aborted = false};
+    const CellFluid deep{.centreY = -60, .surface = high, .seaLevel = 63, .floodedness = 0.95};
+    const auto guarded = sourceStatus(deep, 0.0);
+    CHECK(guarded.level == stratum::aquifer::kLavaLevel);
+    CHECK(guarded.type == FluidType::Lava);
 }

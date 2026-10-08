@@ -251,6 +251,7 @@ to bump the version and be called out; this is that call-out.
 | 1 | the initial engine |
 | 2 | **The surface pass writes over `default_block` only**: aquifer lava and open water in the overworld are no longer repainted (§11, "The surface pass wrote over the aquifer"). **`above_preliminary_surface` reads the 16-block psl lattice**, not the column. **Aquifers-off dimensions keep the global lava sea** below `min(-54, sea_level)`. And, recorded here because they were never bumped when they landed after freeze format 3 made blobs generate: the aquifer's fluid-type ceiling at -10 (5799e6c), the dry sentinel and unclamped ladder (9fbaa17, ae5ab17), and the barrier's `/10` floor with its agree-guard removed (aa26e4a). The legacy climate noises (§11) changed no output a v1 blob could produce: v1 refused them. |
 | 3 | **The aquifer's Q5.9 deep-dark override**: a source whose centre reads `erosion < -0.225` and `depth > 0.9` is dry — read through the generating chunk's **`flat_cache` window**, so an off-chunk centre reads its own column rather than a 4x4 corner (§11, "The deep-dark override"). Changes blocks only where deep-dark volume meets an aquifer: 440 golden blocks on one of the eight seeds. **The `y_skip` cutoff** (spec Q2.3/Q2.5): above it the global picker decides without the lattice — identical output on every golden block, and on every flat surface from 96 down to -80, but not below that. v2 had reached only this development branch; it is bumped rather than amended because a v2 blob could exist. |
+| 4 | **Two aquifer status corrections, measured through the barrier** (§11, "Sub-lambda levels and the near-surface sea"). An aborted psl scan's wet level never sits below lambda: it reads lambda. A near-surface sea is not typed lava for its centre sitting below the lava sea. Neither is visible to a block readout — both cells are dry above lambda, or take the sea either way — but the barrier weighs both: 7 690 blocks of stone over an aborting surface, 20 462 under a psl between -62 and -54, where v3 built barrier the server does not. No golden block changes. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2613,9 +2614,44 @@ Open:
   worlds, where the unfloored ladder is exact — which no reading fits unless
   the floor depends on something those worlds never have. The obvious
   difference is the abort: every sub-lambda level here comes from an
-  aborted scan, and no scan aborts on the water/lava worlds. Open, held as a
-  ceiling in `vanilla_aquifer_nsfloor_test.cpp`; the discriminating probe is
-  `aquifer-capfloor-probe.sh` (a cap below lambda without an abort).
+  aborted scan, and no scan aborts on the water/lava worlds. Resolved in the
+  next entry.
+
+- **Sub-lambda levels and the near-surface sea (MA, pipeline engine v4).**
+  Two corrections, both found through the barrier and both invisible to any
+  block readout. `aquifer-capfloor-probe.sh` holds psl constant at -58 (a cap
+  below lambda that does not abort the scan), -66 (aborts) and 200, with the
+  deep-floor probe's ladder floodedness and fast spread.
+
+  *An aborted scan's wet level reads lambda.* A cell whose scan aborted and
+  whose level would sit below lambda reports lambda; nothing else is floored.
+  Over the near-surface corpus the unfloored levels built 7 690 blocks of
+  stone the server does not, and the floor builds none. Flooring every
+  sub-lambda level instead is wrong: it breaks the psl-200 arm (1 017
+  barriers missed) as it would the water/lava worlds, whose ladders do not
+  abort. Whether the floor follows the abort or a cap below lambda, the
+  corpora so far cannot say — every cap below lambda in them comes with an
+  abort, or changes no verdict — and the abort is what the clean-room spec's
+  Q5.3(b) describes: a scan that meets a surface submerged in the lava sea
+  takes that sea's status, whose level is lambda. A cell that aborted and
+  that nothing floods is left dry; that, too, is unmeasured.
+
+  *A near-surface sea is not lava for its centre.* `fluidTypeOf` typed every
+  source centred below lambda lava — carried from the trailing guard, where a
+  cell that floods through its own floodedness below lambda becomes the lava
+  sea. A near-surface sea takes its sea from the surface it sits under (Q5.3(b)
+  again), and at psl -58 the cells centred between -62 and lambda that do so
+  are water: typing them lava built 20 462 blocks of mixed-type barrier against
+  their water neighbours, and the corrected type builds none. The -10 lava
+  ceiling's override still applies to such a sea, unmeasured either way.
+
+  `cellLevel` now reports where a level came from (`LevelOrigin`), and
+  `aquifer::sourceStatus` is the one place level and type are put together —
+  the filler's path and the conformance cases both call it. With both
+  corrections the near-surface corpus and all three capfloor arms are exact,
+  every other aquifer case is unchanged, and no golden block moves: vanilla's
+  psl reads -64 or at least -40, so its near-surface band never reaches below
+  lambda, and the aborted cells it does have are dry above lambda either way.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

@@ -701,11 +701,11 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // blocks across two seeds.
     const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
     // The cell is refused the sea and falls to its LADDER, which a cap of -70
-    // pulls to -70. This line used to read -54: the old lower clamp lifted it
-    // to lambda, incidental to what the case is testing (that the abort
-    // refuses the sea at all, which the contrast with `quiet` below is what
-    // actually establishes).
-    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -70);
+    // pulls to -70 — and an aborted scan's wet level never sits below lambda,
+    // so it reads lambda (see the case on that floor below). What this case
+    // tests is that the abort refuses the sea at all, which the contrast with
+    // `quiet` establishes.
+    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == lambdaLevel(200));
     // Without the abort the same cell floods.
     const PslRead quiet{.gate = 100, .cap = 100, .anchor = 100, .aborted = false};
     CHECK(cellFluidLevel(cellWith(quiet, 200, 0, 0.9)) == 200);
@@ -923,4 +923,32 @@ TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
         }
     }
     CHECK(compared == 10U * 2U * 2U * 65U);
+}
+
+TEST_CASE("an aborted scan floors a wet level at lambda, and nothing else is floored",
+          "[aquifer]") {
+    // Measured through the barrier, the only consumer that sees a level below
+    // lambda: over an aborting surface with vanilla's barrier on
+    // (aquifer-nsfloor-probe.sh) the unfloored levels build 7 690 blocks of
+    // stone the server does not, and the floor builds none; on worlds whose
+    // scans do not abort (water/lava, deep-floor, capfloor's cf58 and cf200)
+    // the ladder stays unclamped, and a floor there breaks them.
+    const std::int32_t lambda = lambdaLevel(63);
+    const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    // Off the near-surface path (depth 16), refused the sea, ladder capped at
+    // -70: floored.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9)) == lambda);
+    // The ladder's own rung below lambda, under the same abort: floored too.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9, -1.0)) == lambda);
+    // An aborted cell that nothing floods stays dry: the floor is for a WET
+    // level, and the sentinel is not one.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, -2.0)) == kNeverLevel);
+
+    // Without the abort the same low cap is NOT floored: psl -58 sits below
+    // lambda without reaching the -62 that aborts the scan (capfloor's cf58).
+    // A cell deep enough that no sea bonus reaches it takes the ladder.
+    const PslRead low{.gate = -58, .cap = -58, .anchor = -58, .aborted = false};
+    const std::int32_t unfloored = cellFluidLevel(cellWith(low, 63, -150, 0.6));
+    CHECK(unfloored < lambda);
+    CHECK(unfloored != kNeverLevel);
 }
