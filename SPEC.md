@@ -1099,9 +1099,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      blocks, 243887 server stone) order the same way at 161 / 46 / 154 / 39.
      The abort condition set before the run — "the un-gated reading writes
      stone the guarded one does not" — never fired anywhere. The control
-     dimension, real floodedness with nothing rescaled, reproduces
-     `barrier3way` exactly, so the recipe distorts only the level diversity
-     it was built for.
+     dimension, real floodedness with nothing rescaled, IS `barrier3way`'s
+     `d_neg0_3`: at seed 42 the server wrote the two identically (0 of
+     5242880 blocks differ), and the predicate is exact on it on all three
+     seeds (62642 server stone), so the recipe distorts only the level
+     diversity it was built for.
 
      *The divisor itself, bracketed from both sides.* The `/10` arm decides
      96292 blocks; on the 65231 where divisor 10 and divisor 3 disagree the
@@ -1112,16 +1114,27 @@ mapping has two halves, split at a platform-neutral midpoint:
      0/17177, 20 0/79432. Monotone, one-sided on each side, so 10 is pinned
      to within 1%. The `/2.5` arm, dead under the same guard, brackets the
      same way: 2.4 leaves 1104 misses, 2.5 is exact, 2.6 writes 1111 false
-     stone. Both arms can now be named — `/2.5` is the barrier's LID a few
-     blocks above the higher of two levels, `/10` its FLOOR four or more
-     below the lower.
+     stone; on the control's real noise the wider rungs agree (2.0 leaves 33
+     misses, 3.0 and 10 write 28 and 386 false stone). Both arms can now be
+     named — `/2.5` is the barrier's LID a few blocks above the higher of
+     two levels, `/10` its FLOOR four or more below the lower. These pooled
+     figures are the analyzer's; re-run on the frozen corpora it reproduces
+     every one.
 
      *What it cost elsewhere.* 425 of the 64-chunk golden-fill residual
      (item 5), which had become unattributed. Pinned by
      `vanilla_aquifer_deepfloor_test.cpp`, which asserts exactness, that the
      arm still decides blocks, and that divisor 3 loses the head-to-head —
      the first of those is what the guard failed, and the second is what
-     would go red if the arm ever fell out of reach again.
+     would go red if the arm ever fell out of reach again — and, on its own
+     window (two dimensions x 4x4 chunks x three seeds), both brackets from
+     both sides on every seed (9.9 160/0, 10.1 0/159, 2.4 194/0, 2.6 0/193),
+     the `/3` constant losing in the LID's slot (0/931), and the guard
+     reinstated on either kind of pair only ever missing (3824 both-air,
+     69811 both-fluid). A second case pins the control's identity with
+     `barrier3way` and its exactness. `aquifer_barrier_test.cpp` brackets
+     each divisor arithmetically inside the server's interval, (2.459,
+     2.542] and (9.924, 10.078] (§11).
 
   The golden set's one standing requirement is **MET**: a conformance case
   with a spatially varying `preliminary_surface_level` now exists
@@ -2744,6 +2757,44 @@ Open:
   twelve cells on all 39. `kWindowIsUntested` is gone, and the finding is
   pinned in `vanilla_aquifer_deepfloor_test.cpp`. Only that rival is
   refuted: a different asymmetric set has not been tried.
+
+- **Both once-dead divisors are bracketed by a test now, and the deepfloor
+  control is `barrier3way`'s own world (MA).** No output changes. §10's MA
+  item 7 carried the `/2.5` and `/10` brackets and the guard ablation as
+  analyzer figures that no test repeated: the conformance case pinned
+  exactness and `/10` against `/3`, but no rung on either side of either
+  divisor and no guard model, and the unit cases accepted any LID divisor in
+  (2.143, 3.0] — the `/3` arm's own constant, on the boundary — and any
+  FLOOR divisor in (9.286, 10.833]. Re-run on the frozen corpora, the
+  analyzer reproduces every one of item 7's seven-dimension figures.
+  `vanilla_aquifer_deepfloor_test.cpp` now repeats the brackets on its own
+  window (three seeds x `deep_d005`/`deep_d03` x 4x4 chunks, 7864316 blocks,
+  558126 server stone): 9.9 leaves 160 server barriers unwritten and 10.1
+  writes 159 blocks of false stone; 2.4 and 2.6 are 194 and 193; 3.0 in the
+  LID's slot writes 931. Each moves in one direction only, and each side is
+  non-empty on every seed (44 to 71 blocks). The predicate is monotone in
+  each divisor — a larger one raises `u` toward 0, and a term can fire only
+  inside `|u| <= 2` — so that one-sidedness is what an exact shipped value
+  implies, and the case asserts it. The guard, reinstated on both-air pairs,
+  misses 3824; on both-fluid pairs 69811; on both 73635; never false stone.
+  The `/2.5` arm decides 4032 blocks there. Floors are about a third of each
+  count.
+
+  *The control, checked rather than assumed.* `ctlreal_d03` and `d_neg0_3`
+  are one JSON object but for the name, and at seed 42 the server wrote them
+  identically: 0 of 5242880 blocks differ, stone or otherwise, so nothing
+  that shapes these blocks is seeded from the dimension's name. Over all
+  three seeds the predicate is exact on the control (15728640 blocks, 62642
+  server stone); the both-air guard misses 104; and the LID's slot points
+  the way the ladder worlds do — 2.0 leaves 33 misses, 3.0 and 10 write 28
+  and 386 false stone — while 2.4 and 2.6 move 1 and 5 blocks, too few to
+  weigh. The control cannot weigh `/10`: 3 in that slot changes no verdict
+  there. Pinned in a second case of the same file.
+
+  The unit cases now bracket each divisor inside the server's interval,
+  (2.459, 2.542] and (9.924, 10.078], rejecting 2.4, 2.6, 3.0, 9.9 and 10.1.
+  They re-derive the shipped arithmetic rather than measure anything, but
+  they are the part of this that runs where no probe worlds exist.
 
 - **A vein never replaces the aquifer's fluid — measured now, not chosen
   (MA/M3).** No output changes. The ore-vein entry above records the guard

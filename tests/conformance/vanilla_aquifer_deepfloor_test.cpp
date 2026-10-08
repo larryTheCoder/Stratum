@@ -1,4 +1,5 @@
-// Stratum — Q6.4's `/10` arm, the barrier's FLOOR, against real server blocks.
+// Stratum — Q6.4's `/10` and `/2.5` arms, the barrier's FLOOR and LID,
+// against real server blocks.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // `vanilla_aquifer_barrier3source_test.cpp` scores the barrier on worlds
@@ -15,23 +16,35 @@
 //
 //   * The predicate is EXACT there — no server barrier unwritten, and no
 //     block of stone written that the server does not have. That is the
-//     assertion the agree-guard used to fail, by 480 354 blocks of the
-//     server's 4 982 316 (barrier.hpp's header has the full ablation).
+//     assertion the agree-guard used to fail (barrier.hpp's header has the
+//     full ablation), and the guard is scored here too: reinstated on
+//     both-air pairs, on both-fluid pairs, or on both, it only ever leaves
+//     server barriers unwritten — most of them on the both-fluid side.
 //
 //   * The `/10` arm actually DECIDES blocks, rather than merely being
-//     entered. Without this the arm could silently go dead again — which is
-//     exactly how it stayed unmeasured — and every other assertion here
-//     would still pass.
+//     entered, and so does the `/2.5` arm. Without this either arm could
+//     silently go dead again — which is exactly how both stayed unmeasured
+//     — and every other assertion here would still pass.
 //
-//   * Divisor 3 in the `/10` slot is strictly WORSE, on blocks where the two
-//     disagree and the server has already answered. This is the ablation
-//     spec/aquifer-spec.md's Q6.4 asks for ("ablation on each of the four
-//     divisors independently"), run against the server rather than against
-//     another model.
+//   * Each of the two divisors is BRACKETED by the server from both sides:
+//     9.9 and 2.4 leave server barriers unwritten and write no stone the
+//     server lacks, 10.1 and 2.6 the reverse, on every seed. Divisor 3 in
+//     the `/10` slot is strictly worse on the blocks where it and 10
+//     disagree, and in the `/2.5` slot (the `/3` arm's own constant, which
+//     the unit case used to accept on its boundary) it writes false stone.
+//     This is the ablation spec/aquifer-spec.md's Q6.4 asks for ("ablation
+//     on each of the four divisors independently"), run against the server
+//     rather than against another model.
 //
 //   * Q4.1's twelve-cell window beats the symmetric 27-cell set: different
 //     levels on neighbouring sources are what let the rival's rank 3 change a
 //     verdict at all, so this corpus is the first that can tell them apart.
+//
+// The second case checks the recipe itself: the probe's control dimension,
+// real floodedness and spread with nothing rescaled, IS `barrier3way`'s
+// `d_neg0_3` block for block, and the predicate is exact on it on all three
+// seeds — so what the deep dimensions measure is not an artefact of the
+// constant floodedness that creates them.
 //
 // Nothing this reads is committed: the worlds are Mojang-derived (SPEC §12).
 #include "support/probe_corpus.hpp"
@@ -58,11 +71,15 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -99,19 +116,32 @@ constexpr std::array<const char*, 3> kProbeDirs{{"aqdeep", "aqdeep2", "aqdeep3"}
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
 }
 
-/// `aquifer::placesBarrier` with ONE divisor opened up, so Q6.4's fourth arm
-/// can be ablated against the server. At `tenDivisor = 10` this must be the
-/// committed function exactly, and the test asserts that on every block
-/// before it trusts any comparison.
+/// Which of Q6.4's four arms a term took. `None` is everything else: an
+/// equal-level pair (`Δ = 0`), the mixed-type constant, or a guarded pair.
+enum class Arm : std::uint8_t { None, OnePointFive, TwoPointFive, Three, Ten };
+
+/// `aquifer::placesBarrier` with the two divisors that were dead under the
+/// agree-guard opened up, and that guard reconstructable, so each can be
+/// ablated against the server. At the defaults this must be the committed
+/// function exactly, and both cases assert that on every block before they
+/// trust any comparison.
 struct Ablation {
+    /// The FLOOR's divisor: `h <= 0` with `3 + t <= 0`.
     double tenDivisor = 10.0;
-    /// Set when the block's verdict was decided by the `3 + t <= 0` arm.
-    bool decidedByTen = false;
+    /// The LID's divisor: `h > 0` with `t <= 0`.
+    double twoFiveDivisor = 2.5;
+    /// The refuted agree-guard (`aFluid == bFluid -> no term`), reinstated
+    /// on pairs that both read air, both read fluid, or — both set — as it
+    /// once stood.
+    bool guardBothAir = false;
+    bool guardBothFluid = false;
+    /// The arm of the term that fired, or `None` when none did.
+    Arm decidedBy = Arm::None;
 
     [[nodiscard]] double pressure(const std::int32_t levelA, const std::int32_t levelB,
-                                  const std::int32_t y, const double barrierNoise, bool& fromTen) {
+                                  const std::int32_t y, const double barrierNoise, Arm& arm) const {
         const std::int32_t deltaInt = levelA < levelB ? levelB - levelA : levelA - levelB;
-        fromTen = false;
+        arm = Arm::None;
         if (deltaInt == 0) {
             return 0.0;
         }
@@ -121,14 +151,21 @@ struct Ablation {
         const double t = (delta / 2.0) - std::abs(h);
         double u = std::numeric_limits<double>::quiet_NaN();
         if (h > 0) {
-            u = (t > 0) ? (t / 1.5) : (t / 2.5);
+            if (t > 0) {
+                u = t / 1.5;
+                arm = Arm::OnePointFive;
+            } else {
+                u = t / twoFiveDivisor;
+                arm = Arm::TwoPointFive;
+            }
         } else {
             const double threeT = 3.0 + t;
             if (threeT > 0) {
                 u = threeT / 3.0;
+                arm = Arm::Three;
             } else {
                 u = threeT / tenDivisor;
-                fromTen = true;
+                arm = Arm::Ten;
             }
         }
         const double noiseTerm = (std::abs(u) <= 2.0) ? barrierNoise : 0.0;
@@ -137,18 +174,21 @@ struct Ablation {
 
     [[nodiscard]] bool term(const double density, const double weight,
                             const aquifer::BarrierSource& a, const aquifer::BarrierSource& b,
-                            const std::int32_t y, const double barrierNoise, bool& fromTen) {
-        fromTen = false;
+                            const std::int32_t y, const double barrierNoise, Arm& arm) const {
+        arm = Arm::None;
         const bool aFluid = y < a.level;
         const bool bFluid = y < b.level;
         if (aFluid && bFluid && a.type != b.type) {
             return (density + (weight * aquifer::kMixedTypePressure)) > 0.0;
         }
-        return (density + (weight * pressure(a.level, b.level, y, barrierNoise, fromTen))) > 0.0;
+        if (aFluid == bFluid && (aFluid ? guardBothFluid : guardBothAir)) {
+            return false;
+        }
+        return (density + (weight * pressure(a.level, b.level, y, barrierNoise, arm))) > 0.0;
     }
 
     [[nodiscard]] bool places(const aquifer::BarrierAt& at) {
-        decidedByTen = false;
+        decidedBy = Arm::None;
         const auto sim = [](const std::int64_t di, const std::int64_t dj) {
             return 1.0 -
                    static_cast<double>(dj - di) / static_cast<double>(aquifer::kSimilarityRange);
@@ -157,25 +197,47 @@ struct Ablation {
         if (s12 <= 0.0) {
             return false;
         }
-        bool fromTen = false;
-        if (term(at.density, s12, at.nearest, at.second, at.y, at.barrier, fromTen)) {
-            decidedByTen = fromTen;
+        Arm arm = Arm::None;
+        if (term(at.density, s12, at.nearest, at.second, at.y, at.barrier, arm)) {
+            decidedBy = arm;
             return true;
         }
         const double s13 = sim(at.nearest.distanceSq, at.third.distanceSq);
-        if (s13 > 0.0 &&
-            term(at.density, s12 * s13, at.nearest, at.third, at.y, at.barrier, fromTen)) {
-            decidedByTen = fromTen;
+        if (s13 > 0.0 && term(at.density, s12 * s13, at.nearest, at.third, at.y, at.barrier, arm)) {
+            decidedBy = arm;
             return true;
         }
         const double s23 = sim(at.second.distanceSq, at.third.distanceSq);
-        if (s23 > 0.0 &&
-            term(at.density, s12 * s23, at.second, at.third, at.y, at.barrier, fromTen)) {
-            decidedByTen = fromTen;
+        if (s23 > 0.0 && term(at.density, s12 * s23, at.second, at.third, at.y, at.barrier, arm)) {
+            decidedBy = arm;
             return true;
         }
         return false;
     }
+};
+
+/// One model's disagreements with the server, on stone/water/air blocks.
+struct Tally {
+    /// Server stone the model leaves open.
+    long long misses = 0;
+    /// Stone the model writes where the server has water or air.
+    long long falseStone = 0;
+
+    void add(const bool observedStone, const bool modelStone) {
+        misses += static_cast<long long>(observedStone && !modelStone);
+        falseStone += static_cast<long long>(!observedStone && modelStone);
+    }
+};
+
+/// Each once-dead divisor moved to either side of its measured value. The
+/// predicate is monotone in each (a larger divisor raises `u` toward 0, and
+/// a term only fires with `|u| <= 2`), so given an exact shipped value the
+/// low side can only miss and the high side can only write false stone.
+struct Brackets {
+    Tally tenLow;  // 9.9 in the FLOOR's slot
+    Tally tenHigh; // 10.1
+    Tally lidLow;  // 2.4 in the LID's slot
+    Tally lidHigh; // 2.6
 };
 
 struct Score {
@@ -184,12 +246,20 @@ struct Score {
     long long misses = 0;
     long long falseStone = 0;
     long long decidedByTen = 0;
+    long long decidedByTwoFive = 0;
     /// Blocks where divisor 10 and divisor 3 give different verdicts.
     long long contested = 0;
     /// Of those, the ones each divisor gets RIGHT.
     long long tenCorrect = 0;
     long long threeCorrect = 0;
     long long committedMismatches = 0;
+    Brackets brackets;
+    /// 3.0 in the LID's slot: the `/3` arm's constant.
+    Tally lidAdjacent;
+    /// The agree-guard, reinstated on both-air pairs, both-fluid pairs, both.
+    Tally guardAir;
+    Tally guardFluid;
+    Tally guardBoth;
     /// Q4.1's rival window, the symmetric 27 cells around the home cell:
     /// blocks where its first three ranks differ from the shipped window's,
     /// the ones where that changes the verdict, and which window the server
@@ -225,9 +295,13 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
         data::ResourceLocation::parse("minecraft:aquifer_fluid_level_spread")};
 
     Score pooled;
+    // The brackets once more per seed: one seed agreeing with an RNG-driven
+    // model is not evidence, and neither is a pooled count one seed carries.
+    std::array<Brackets, kProbeDirs.size()> perSeed{};
     std::size_t dimensionsScored = 0;
 
-    for (const char* probeName : kProbeDirs) {
+    for (std::size_t seedIndex = 0; seedIndex < kProbeDirs.size(); ++seedIndex) {
+        const char* probeName = kProbeDirs[seedIndex];
         const std::filesystem::path probeDir = fixtures() / "probes" / probeName;
         const std::filesystem::path manifestPath = probeDir / "manifest.json";
         const std::filesystem::path specPath = probeDir / "spec.json";
@@ -299,6 +373,14 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
             std::array<aquifer::Candidate, 27> rivalWindow{};
             Ablation asTen{.tenDivisor = 10.0};
             Ablation asThree{.tenDivisor = 3.0};
+            Ablation tenLow{.tenDivisor = 9.9};
+            Ablation tenHigh{.tenDivisor = 10.1};
+            Ablation lidLow{.twoFiveDivisor = 2.4};
+            Ablation lidHigh{.twoFiveDivisor = 2.6};
+            Ablation lidAdjacent{.twoFiveDivisor = 3.0};
+            Ablation guardAir{.guardBothAir = true};
+            Ablation guardFluid{.guardBothFluid = true};
+            Ablation guardBoth{.guardBothAir = true, .guardBothFluid = true};
 
             for (std::int32_t cz = 0; cz < kChunks; ++cz) {
                 for (std::int32_t cx = 0; cx < kChunks; ++cx) {
@@ -373,8 +455,11 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                 } else if (shipped) {
                                     ++pooled.falseStone;
                                 }
-                                if (asTen.decidedByTen) {
+                                if (asTen.decidedBy == Arm::Ten) {
                                     ++pooled.decidedByTen;
+                                }
+                                if (asTen.decidedBy == Arm::TwoPointFive) {
+                                    ++pooled.decidedByTwoFive;
                                 }
                                 if (ten != three) {
                                     ++pooled.contested;
@@ -385,6 +470,22 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                         ++pooled.threeCorrect;
                                     }
                                 }
+
+                                // Both brackets, pooled and for this seed.
+                                const bool tenLowStone = tenLow.places(at);
+                                const bool tenHighStone = tenHigh.places(at);
+                                const bool lidLowStone = lidLow.places(at);
+                                const bool lidHighStone = lidHigh.places(at);
+                                for (Brackets* into : {&pooled.brackets, &perSeed[seedIndex]}) {
+                                    into->tenLow.add(observedStone, tenLowStone);
+                                    into->tenHigh.add(observedStone, tenHighStone);
+                                    into->lidLow.add(observedStone, lidLowStone);
+                                    into->lidHigh.add(observedStone, lidHighStone);
+                                }
+                                pooled.lidAdjacent.add(observedStone, lidAdjacent.places(at));
+                                pooled.guardAir.add(observedStone, guardAir.places(at));
+                                pooled.guardFluid.add(observedStone, guardFluid.places(at));
+                                pooled.guardBoth.add(observedStone, guardBoth.places(at));
 
                                 // Q4.1: the same block through the symmetric
                                 // 27-cell window, in x, y, z order.
@@ -439,21 +540,33 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     // and this is the count that says so in one place (SPEC §8).
     REQUIRE(dimensionsScored == kProbeDirs.size() * kDimensions.size());
 
+    const Brackets& b = pooled.brackets;
     INFO("blocks " << pooled.blocks << ", server stone " << pooled.serverStone << ", /10-decided "
-                   << pooled.decidedByTen << ", contested " << pooled.contested
+                   << pooled.decidedByTen << ", /2.5-decided " << pooled.decidedByTwoFive
+                   << ", contested " << pooled.contested
                    << "; the 27-cell window differs in its first three ranks on "
                    << pooled.windowDiffers << ", changes the verdict on " << pooled.windowDecides
                    << " (12-cell right " << pooled.twelveCorrect << ", 27-cell right "
                    << pooled.rivalCorrect << ")");
+    INFO("misses/false stone: /10 slot 9.9 "
+         << b.tenLow.misses << "/" << b.tenLow.falseStone << ", 10.1 " << b.tenHigh.misses << "/"
+         << b.tenHigh.falseStone << "; /2.5 slot 2.4 " << b.lidLow.misses << "/"
+         << b.lidLow.falseStone << ", 2.6 " << b.lidHigh.misses << "/" << b.lidHigh.falseStone
+         << ", 3.0 " << pooled.lidAdjacent.misses << "/" << pooled.lidAdjacent.falseStone);
+    INFO("agree-guard on both-air "
+         << pooled.guardAir.misses << "/" << pooled.guardAir.falseStone << ", on both-fluid "
+         << pooled.guardFluid.misses << "/" << pooled.guardFluid.falseStone << ", on both "
+         << pooled.guardBoth.misses << "/" << pooled.guardBoth.falseStone);
 
-    // The ablation at divisor 10 IS the committed predicate. Nothing below
-    // means anything if this fails.
+    // The ablation at the default divisors IS the committed predicate.
+    // Nothing below means anything if this fails.
     REQUIRE(pooled.committedMismatches == 0);
 
-    // The arm must actually be doing work — this is the assertion that goes
-    // red if it ever falls back out of reach, which is how it stayed
-    // unmeasured for four campaigns.
+    // Both arms must actually be doing work — these are the assertions that
+    // go red if either ever falls back out of reach, which is how both
+    // stayed unmeasured for four campaigns. Measured 16263 and 4032.
     CHECK(pooled.decidedByTen > 1000);
+    CHECK(pooled.decidedByTwoFive > 1300);
     CHECK(pooled.contested > 100);
 
     // Exact against the server: nothing unwritten, nothing invented.
@@ -465,6 +578,48 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     CHECK(pooled.tenCorrect == pooled.contested);
     CHECK(pooled.threeCorrect == 0);
 
+    // Both divisors, bracketed from both sides by the server. Monotonicity
+    // (see `Brackets`) makes each side one-directional, so the `== 0` half
+    // is what an exact shipped value implies and the floor is what the
+    // server shows: a divisor 1% (FLOOR) or 4% (LID) off is visible.
+    // Measured 160, 159, 194 and 193 (SPEC §11); the floors are about a
+    // third of that, never the counts themselves.
+    CHECK(b.tenLow.misses >= 50);
+    CHECK(b.tenLow.falseStone == 0);
+    CHECK(b.tenHigh.falseStone >= 50);
+    CHECK(b.tenHigh.misses == 0);
+    CHECK(b.lidLow.misses >= 60);
+    CHECK(b.lidLow.falseStone == 0);
+    CHECK(b.lidHigh.falseStone >= 60);
+    CHECK(b.lidHigh.misses == 0);
+    // The `/3` arm's constant in the LID's slot: what the old unit bracket
+    // accepted on its boundary, and what the server refuses. Measured 931.
+    CHECK(pooled.lidAdjacent.falseStone >= 300);
+    CHECK(pooled.lidAdjacent.misses == 0);
+    for (std::size_t s = 0; s < kProbeDirs.size(); ++s) {
+        INFO("seed corpus " << kProbeDirs[s] << ": 9.9 " << perSeed[s].tenLow.misses << "/"
+                            << perSeed[s].tenLow.falseStone << ", 10.1 "
+                            << perSeed[s].tenHigh.misses << "/" << perSeed[s].tenHigh.falseStone
+                            << ", 2.4 " << perSeed[s].lidLow.misses << "/"
+                            << perSeed[s].lidLow.falseStone << ", 2.6 " << perSeed[s].lidHigh.misses
+                            << "/" << perSeed[s].lidHigh.falseStone);
+        CHECK(perSeed[s].tenLow.misses > 0);
+        CHECK(perSeed[s].tenHigh.falseStone > 0);
+        CHECK(perSeed[s].lidLow.misses > 0);
+        CHECK(perSeed[s].lidHigh.falseStone > 0);
+    }
+
+    // The agree-guard, reinstated three ways: each only ever leaves server
+    // barriers unwritten, and the both-fluid half — where the FLOOR the
+    // guard hid lives — is by far the larger. Measured 3824 (both-air), 69811 (both-fluid)
+    // and 73635 (both).
+    CHECK(pooled.guardAir.falseStone == 0);
+    CHECK(pooled.guardFluid.falseStone == 0);
+    CHECK(pooled.guardBoth.falseStone == 0);
+    CHECK(pooled.guardAir.misses >= 1200);
+    CHECK(pooled.guardFluid.misses > pooled.guardAir.misses);
+    CHECK(pooled.guardBoth.misses >= pooled.guardFluid.misses);
+
     // Q4.1's window, against the symmetric 27-cell rival. Here, and not on
     // the two-source corpora, the rival changes verdicts: neighbouring cells
     // hold different levels, so the three-source barrier reaches rank 3,
@@ -475,4 +630,332 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     REQUIRE(pooled.windowDecides >= 30);
     CHECK(pooled.twelveCorrect == pooled.windowDecides);
     CHECK(pooled.rivalCorrect == 0);
+}
+
+TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact on its real noise",
+          "[conformance][aquifer]") {
+    // `ctlreal_d03` restores vanilla's own floodedness and spread and moves
+    // nothing else, so the deep dimensions' exactness carries over to real
+    // noise only if that one change is the whole of what the recipe does.
+    // Two checks: the server's control world IS `barrier3way`'s `d_neg0_3`,
+    // block for block; and the predicate is exact on the control on every
+    // seed the probe was run for.
+    const std::filesystem::path barrier3way = fixtures() / "probes" / "barrier3way";
+    bool anyProbe = std::filesystem::is_regular_file(barrier3way / "manifest.json");
+    for (const char* probeName : kProbeDirs) {
+        anyProbe = anyProbe || std::filesystem::is_regular_file(fixtures() / "probes" / probeName /
+                                                                "manifest.json");
+    }
+    if (!std::filesystem::is_directory(fixtures() / "worldgen") || !anyProbe) {
+        SKIP("no aquifer-deepfloor or barrier3way probe under "
+             << (fixtures() / "probes")
+             << "; generate them with tools/analysis/aquifer-probes.sh --accept-eula");
+    }
+
+    constexpr const char* kControl = "ctlreal_d03";
+    constexpr const char* kTwin = "d_neg0_3";
+    constexpr double kControlDensity = -0.3;
+    constexpr std::int32_t kControlPsl = 96;
+    constexpr std::int32_t kWindowChunks = 8;
+    constexpr std::int32_t kMinY = -48;
+    constexpr std::int32_t kMaxY = 271;
+
+    // The named entry of a corpus's spec.json, with its name removed so two
+    // corpora's entries compare on content alone.
+    const auto specEntry = [](const std::filesystem::path& probeDir, const std::string& name) {
+        std::ifstream in(probeDir / "spec.json");
+        {
+            INFO((probeDir / "spec.json") << " is unreadable; regenerate the corpus");
+            REQUIRE(in.good());
+        }
+        const nlohmann::json spec = nlohmann::json::parse(in);
+        for (const auto& entry : spec) {
+            if (entry.at("name").get<std::string>() == name) {
+                nlohmann::json unnamed = entry;
+                unnamed.erase("name");
+                return unnamed;
+            }
+        }
+        FAIL((probeDir / "spec.json") << " has no dimension " << name);
+        return nlohmann::json{};
+    };
+
+    // (A) The server against the server. Both corpora are seed 42 and
+    // frozen, and their two dimensions are one JSON object but for the
+    // name, so if the dimension's name does not enter the server's seeding
+    // they are one world.
+    const std::filesystem::path aqdeep = fixtures() / "probes" / kProbeDirs[0];
+    for (const std::filesystem::path& dir : {aqdeep, barrier3way}) {
+        INFO("probe " << dir << " — generate it with tools/analysis/aquifer-probes.sh "
+                      << "--accept-eula");
+        REQUIRE(std::filesystem::is_regular_file(dir / "manifest.json"));
+        stratum::test::requireFrozen(dir, "tools/analysis/aquifer-probes.sh");
+        stratum::test::requireSeed(dir, 42);
+    }
+    const nlohmann::json control = specEntry(aqdeep, kControl);
+    const nlohmann::json twin = specEntry(barrier3way, kTwin);
+    CHECK(control.at("raw_final_density").at("argument").get<double>() ==
+          Catch::Approx(kControlDensity));
+    CHECK(control.at("router").at("preliminary_surface_level").get<double>() ==
+          Catch::Approx(static_cast<double>(kControlPsl)));
+    CHECK(control.at("router").at("lava").get<double>() == Catch::Approx(0.0));
+    CHECK(control.at("sea_level").get<std::int32_t>() == kSeaLevel);
+    CHECK(control.at("min_y").get<std::int32_t>() == kMinY);
+    CHECK(control.at("min_y").get<std::int32_t>() + control.at("height").get<std::int32_t>() - 1 ==
+          kMaxY);
+    REQUIRE(control == twin);
+
+    long long compared = 0;
+    long long controlStone = 0;
+    long long stoneDiffs = 0;
+    long long otherDiffs = 0;
+    {
+        const auto controlFile = region::RegionFile::open(aqdeep / kControl / "r.0.0.mca");
+        const auto twinFile = region::RegionFile::open(barrier3way / kTwin / "r.0.0.mca");
+        for (std::int32_t cz = 0; cz < kWindowChunks; ++cz) {
+            for (std::int32_t cx = 0; cx < kWindowChunks; ++cx) {
+                REQUIRE(controlFile.hasChunk(cx, cz));
+                REQUIRE(twinFile.hasChunk(cx, cz));
+                const auto a = chunk::Chunk::decode(nbt::read(controlFile.readChunk(cx, cz)).root);
+                const auto b = chunk::Chunk::decode(nbt::read(twinFile.readChunk(cx, cz)).root);
+                for (int lz = 0; lz < 16; ++lz) {
+                    for (int lx = 0; lx < 16; ++lx) {
+                        for (std::int32_t y = kMinY; y <= kMaxY; ++y) {
+                            const auto* pa = a.blockAt(lx, y, lz);
+                            const auto* pb = b.blockAt(lx, y, lz);
+                            const std::string_view na =
+                                pa == nullptr ? std::string_view{} : std::string_view{pa->name};
+                            const std::string_view nb =
+                                pb == nullptr ? std::string_view{} : std::string_view{pb->name};
+                            ++compared;
+                            const bool aStone = na == "minecraft:stone";
+                            const bool bStone = nb == "minecraft:stone";
+                            controlStone += static_cast<long long>(aStone);
+                            if (aStone != bStone) {
+                                ++stoneDiffs;
+                            } else if (na != nb) {
+                                ++otherDiffs;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Any other difference would be fluid that moved before the freeze
+    // (SPEC §7) — water and air, run-dependent, so reported and never
+    // pinned (measured 0). Neither world holds lava, so flow writes no
+    // stone in either.
+    INFO("compared " << compared << " blocks: control stone " << controlStone
+                     << ", stone differing from " << kTwin << " " << stoneDiffs
+                     << ", other differences (flow) " << otherDiffs);
+    REQUIRE(compared ==
+            static_cast<long long>(kWindowChunks) * kWindowChunks * 256 * (kMaxY - kMinY + 1));
+    REQUIRE(controlStone > 1000);
+    CHECK(stoneDiffs == 0);
+
+    // (B) The predicate on the control, every seed, real noise throughout:
+    // the graph is the corpus's own router JSON, as the analyzer builds it.
+    const auto pack = data::Pack::open(fixtures() / "worldgen");
+    const std::vector<data::ResourceLocation> wanted{
+        data::ResourceLocation::parse("minecraft:aquifer_barrier"),
+        data::ResourceLocation::parse("minecraft:aquifer_fluid_level_floodedness"),
+        data::ResourceLocation::parse("minecraft:aquifer_fluid_level_spread")};
+
+    struct ControlScore {
+        long long blocks = 0;
+        long long serverStone = 0;
+        long long committedMismatches = 0;
+        Tally shipped;
+        Tally guardAir;
+        /// Each rung of `kLidLadder` in the LID's slot.
+        std::array<Tally, 6> lid{};
+        /// Blocks where 3 in the FLOOR's slot gives a different verdict.
+        long long tenVersusThree = 0;
+    };
+
+    constexpr std::array<double, 6> kLidLadder{{1.5, 2.0, 2.4, 2.6, 3.0, 10.0}};
+    // The rungs the assertions read, by name.
+    constexpr std::size_t kLid20 = 1;
+    constexpr std::size_t kLid24 = 2;
+    constexpr std::size_t kLid26 = 3;
+    constexpr std::size_t kLid30 = 4;
+    constexpr std::size_t kLid100 = 5;
+    ControlScore pooled;
+
+    for (const char* probeName : kProbeDirs) {
+        const std::filesystem::path probeDir = fixtures() / "probes" / probeName;
+        INFO("probe " << probeName << " — generate it with "
+                      << "tools/analysis/aquifer-deepfloor-probe.sh --accept-eula <seed>");
+        REQUIRE(std::filesystem::is_regular_file(probeDir / "manifest.json"));
+        stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-deepfloor-probe.sh");
+        std::ifstream manifestFile(probeDir / "manifest.json");
+        const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
+        const nlohmann::json entry = specEntry(probeDir, kControl);
+        // Every seed's control must be the same recipe as seed 42's.
+        REQUIRE(entry == control);
+        const nlohmann::json& router = entry.at("router");
+        // A `lava` node would need the contracted lava sample positions;
+        // this reads it as a constant only, and refuses anything else rather
+        // than scoring the wrong thing (SPEC §8).
+        {
+            INFO("dimension " << kControl << " drives `lava` through a node");
+            REQUIRE(router.at("lava").is_number());
+        }
+        const double lava = router.at("lava").get<double>();
+
+        density::Graph::Builder builder(pack);
+        const density::NodeIndex barrierNode = builder.add(router.at("barrier"));
+        const density::NodeIndex floodNode = builder.add(router.at("fluid_level_floodedness"));
+        const density::NodeIndex spreadNode = builder.add(router.at("fluid_level_spread"));
+        const density::Graph graph = builder.release();
+        const auto noises =
+            density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
+        const density::Interpreter interp(graph, noises);
+        density::Interpreter::CornerCache cache(interp.cacheSize());
+        const aquifer::CentreSource centres(seed);
+        const aquifer::PslRead surface = aquifer::constantSurface(kControlPsl);
+
+        // A source's status is a function of its cell alone — floodedness at
+        // the cell's centre, spread at its lattice indices, a constant
+        // surface and lava — so it is computed once per cell. The three
+        // sources of a block are still ranked per block.
+        std::map<std::array<std::int32_t, 3>, aquifer::SourceStatus> statusOf;
+        const auto status = [&](const aquifer::Source& s) {
+            const std::array<std::int32_t, 3> key{s.cell.x, s.cell.y, s.cell.z};
+            if (const auto it = statusOf.find(key); it != statusOf.end()) {
+                return it->second;
+            }
+            const aquifer::SamplePos fp = aquifer::floodednessSample(s.centre);
+            const aquifer::SamplePos sp = aquifer::spreadSample(s.cell, s.centre);
+            const aquifer::CellFluid cell{
+                .centreY = s.centre.y,
+                .surface = surface,
+                .seaLevel = kSeaLevel,
+                .floodedness = interp.evaluate(
+                    floodNode, density::Point{.x = fp.x, .y = fp.y, .z = fp.z}, cache),
+                .spread = interp.evaluate(spreadNode,
+                                          density::Point{.x = sp.x, .y = sp.y, .z = sp.z}, cache)};
+            const aquifer::SourceStatus computed = aquifer::sourceStatus(cell, lava);
+            statusOf.emplace(key, computed);
+            return computed;
+        };
+
+        Ablation asShipped;
+        Ablation asThree{.tenDivisor = 3.0};
+        Ablation guardAir{.guardBothAir = true};
+        std::array<Ablation, kLidLadder.size()> lid{};
+        for (std::size_t i = 0; i < kLidLadder.size(); ++i) {
+            lid[i].twoFiveDivisor = kLidLadder[i];
+        }
+
+        // `selectSources` is `rankCandidates` over `candidatesFor` the home
+        // cell; walking a column, the window is rebuilt only when the home
+        // cell changes.
+        aquifer::CellIndex home{.x = std::numeric_limits<std::int32_t>::min(), .y = 0, .z = 0};
+        std::array<aquifer::Candidate, aquifer::kCandidateCount> window{};
+        const auto file = region::RegionFile::open(probeDir / kControl / "r.0.0.mca");
+        for (std::int32_t cz = 0; cz < kWindowChunks; ++cz) {
+            for (std::int32_t cx = 0; cx < kWindowChunks; ++cx) {
+                REQUIRE(file.hasChunk(cx, cz));
+                const auto ch = chunk::Chunk::decode(nbt::read(file.readChunk(cx, cz)).root);
+                for (int lz = 0; lz < 16; ++lz) {
+                    for (int lx = 0; lx < 16; ++lx) {
+                        const std::int32_t x = (cx * 16) + lx;
+                        const std::int32_t z = (cz * 16) + lz;
+                        for (std::int32_t y = kMinY; y <= kMaxY; ++y) {
+                            const auto* block = ch.blockAt(lx, y, lz);
+                            if (block == nullptr) {
+                                continue;
+                            }
+                            const bool observedStone = block->name == "minecraft:stone";
+                            if (!observedStone && block->name != "minecraft:water" &&
+                                block->name != "minecraft:air") {
+                                continue;
+                            }
+                            if (const aquifer::CellIndex cell = aquifer::cellOf(x, y, z);
+                                !(cell == home)) {
+                                home = cell;
+                                window = aquifer::candidatesFor(centres, home);
+                            }
+                            const aquifer::Selection sel = aquifer::rankCandidates(x, y, z, window);
+                            std::array<aquifer::BarrierSource, 3> src{};
+                            for (std::size_t r = 0; r < 3; ++r) {
+                                const aquifer::SourceStatus st = status(sel.ranked[r]);
+                                src[r] =
+                                    aquifer::BarrierSource{.level = st.level,
+                                                           .distanceSq = sel.ranked[r].distanceSq,
+                                                           .type = st.type};
+                            }
+                            aquifer::BarrierAt at;
+                            at.y = y;
+                            at.density = kControlDensity;
+                            at.nearest = src[0];
+                            at.second = src[1];
+                            at.third = src[2];
+                            // Every model here, the committed one included,
+                            // returns false outright at `s12 <= 0` (Q6.2)
+                            // whatever `barrier` reads, so the noise is read
+                            // only where it can matter.
+                            if (aquifer::similarity(at.nearest.distanceSq, at.second.distanceSq) >
+                                0.0) {
+                                at.barrier = interp.evaluate(
+                                    barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+                            }
+
+                            const bool shipped = aquifer::placesBarrier(at);
+                            ++pooled.blocks;
+                            pooled.serverStone += static_cast<long long>(observedStone);
+                            pooled.committedMismatches +=
+                                static_cast<long long>(asShipped.places(at) != shipped);
+                            pooled.shipped.add(observedStone, shipped);
+                            pooled.guardAir.add(observedStone, guardAir.places(at));
+                            for (std::size_t i = 0; i < lid.size(); ++i) {
+                                pooled.lid[i].add(observedStone, lid[i].places(at));
+                            }
+                            pooled.tenVersusThree +=
+                                static_cast<long long>(asThree.places(at) != shipped);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    INFO("control, three seeds: blocks "
+         << pooled.blocks << ", server stone " << pooled.serverStone << ", shipped "
+         << pooled.shipped.misses << "/" << pooled.shipped.falseStone << ", agree-guard on "
+         << "both-air " << pooled.guardAir.misses << "/" << pooled.guardAir.falseStone);
+    std::ostringstream ladder;
+    for (std::size_t i = 0; i < kLidLadder.size(); ++i) {
+        ladder << " " << kLidLadder[i] << " " << pooled.lid[i].misses << "/"
+               << pooled.lid[i].falseStone;
+    }
+    INFO("/2.5 slot (misses/false stone):"
+         << ladder.str() << "; /3 in the /10 slot changes " << pooled.tenVersusThree
+         << " verdicts (where that is 0, this world cannot weigh /10 at all)");
+
+    REQUIRE(pooled.committedMismatches == 0);
+    REQUIRE(pooled.serverStone > 1000);
+    // Exact on real noise, on every seed.
+    CHECK(pooled.shipped.misses == 0);
+    CHECK(pooled.shipped.falseStone == 0);
+    // The agree-guard is visible on real noise too: it is what `barrier3way`'s
+    // last six misses were. Measured 104 over the three seeds.
+    CHECK(pooled.guardAir.misses >= 30);
+    CHECK(pooled.guardAir.falseStone == 0);
+    // Corroboration of the LID's divisor on a world not built for it. Real
+    // noise reaches the arm far more rarely than the ladder does — 2.4 and
+    // 2.6 move 1 and 5 blocks here, too few to pin, so only the deep
+    // dimensions above bracket 2.5 tightly — but the wider rungs point the
+    // same way: 2.0 leaves server barriers unwritten (33), 3.0 and 10 write
+    // stone the server does not (28, 386). Floors are a third of those.
+    CHECK(pooled.lid[kLid20].misses >= 10);
+    CHECK(pooled.lid[kLid20].falseStone == 0);
+    CHECK(pooled.lid[kLid24].falseStone == 0);
+    CHECK(pooled.lid[kLid26].misses == 0);
+    CHECK(pooled.lid[kLid30].falseStone >= 9);
+    CHECK(pooled.lid[kLid30].misses == 0);
+    CHECK(pooled.lid[kLid100].falseStone >= 120);
+    CHECK(pooled.lid[kLid100].misses == 0);
 }

@@ -63,7 +63,9 @@ double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const
         // every one of them server stone — and the bracket around it is
         // two-sided and monotone: 9.9 leaves 937 of the server's barriers
         // unwritten, 10.1 writes 872 blocks of stone the server does not,
-        // and 10 itself is exact. See barrier.hpp's own header.
+        // and 10 itself is exact. See barrier.hpp's own header. Both sides,
+        // and the `/2.5` bracket above, are asserted on every seed by
+        // vanilla_aquifer_deepfloor_test.cpp.
         u = (threeT > 0) ? (threeT / 3.0) : (threeT / 10.0);
     }
     const double noiseTerm = (std::abs(u) <= kBarrierNoiseReach) ? barrierNoise : 0.0;
