@@ -46,6 +46,18 @@ echo '{}' > "${fake}/.fixtures/1.21.11/worldgen/noise_settings/overworld.json"
 for tool in java jq; do printf '#!/bin/sh\nexit 0\n' > "${work}/bin/${tool}"; chmod +x "${work}/bin/${tool}"; done
 export PATH="${work}/bin:${PATH}"
 "${pw}" inventory > "${work}/inventory.json"
+# Counted off the table rather than written in, so a new unit does not break
+# the checks that it is generated: every unit, the aquifer shard's, and the
+# ones aquifer-probes.sh's --only 'aquifer-*' selects (unit name or generator
+# basename, as the tool matches them).
+counts="$(python3 -c '
+import fnmatch, json, os, sys
+units = json.load(open(sys.argv[1]))["units"]
+aquifer = [u for u in units if fnmatch.fnmatch(u["name"], "aquifer-*")
+           or fnmatch.fnmatch(os.path.basename(u["argv"][0]), "aquifer-*")]
+print(len(units), len(aquifer), sum(u["shard"] == "aquifer" for u in units))
+' "${work}/inventory.json")"
+read -r all_units aquifer_units aquifer_shard_units <<< "${counts}"
 
 # What every stub runs: finds its unit by script and arguments and writes
 # what the table says that unit writes. FAKE_FAIL=<unit> makes the unit exit
@@ -120,7 +132,7 @@ expect 1 "a probe script in neither list fails lint" "new-thing-probe.sh is neit
 rm "${fake}/tools/analysis/new-thing-probe.sh"
 
 # --- generate
-expect 0 "generates one shard, then checks it" "probe corpora of 9 unit(s) present" \
+expect 0 "generates one shard, then checks it" "probe corpora of ${aquifer_shard_units} unit(s) present" \
     "${pw}" generate --shard aquifer --accept-eula
 test -s "${probes}/comb_999/two/r.0.0.mca"
 test ! -e "${probes}/capfloor_s42"
@@ -129,7 +141,7 @@ expect 0 "replaces a unit's corpus whole" "of 1 unit(s) present" "${pw}" generat
 test ! -e "${probes}/pslvar/stale"
 rm -r "${probes}/lowsea"
 echo old > "${probes}/fluidtype/old"
-expect 1 "names a failed unit, after running the rest" "1 of 9 unit(s) failed: fluidtype" \
+expect 1 "names a failed unit, after running the rest" "1 of ${aquifer_shard_units} unit(s) failed: fluidtype" \
     env FAKE_FAIL=fluidtype "${pw}" generate --shard aquifer --accept-eula
 test -s "${probes}/lowsea/manifest.json"
 if ! { test -s "${probes}/fluidtype/old" && test -s "${probes}/fluidtype/one/r.0.0.mca"; }; then
@@ -166,18 +178,6 @@ if ! { test ! -e "${probes}/lowsea/old" && test ! -e "${probes}.previous"; }; th
 fi
 expect 1 "refuses what it generated unfrozen" "lowsea/manifest.json: ticks_frozen is False" \
     env FAKE_THAWED=lowsea "${pw}" generate --only lowsea --accept-eula
-# Counted off the table rather than written in, so a new unit does not break
-# the checks that it is generated: every unit, and the ones aquifer-probes.sh's
-# --only 'aquifer-*' selects (unit name or generator basename, as the tool
-# matches them).
-counts="$(python3 -c '
-import fnmatch, json, os, sys
-units = json.load(open(sys.argv[1]))["units"]
-aquifer = [u for u in units if fnmatch.fnmatch(u["name"], "aquifer-*")
-           or fnmatch.fnmatch(os.path.basename(u["argv"][0]), "aquifer-*")]
-print(len(units), len(aquifer))
-' "${work}/inventory.json")"
-read -r all_units aquifer_units <<< "${counts}"
 expect 0 "generates every shard" "probe corpora of ${all_units} unit(s) present" "${pw}" generate --accept-eula
 cp "${repo_root}/tools/analysis/aquifer-probes.sh" "${fake}/tools/analysis/aquifer-probes.sh"
 expect 0 "aquifer-probes.sh runs the table's aquifer units" "of ${aquifer_units} unit(s) present" \
