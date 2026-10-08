@@ -74,6 +74,9 @@ for out in unit['outputs']:
              'ticks_frozen': os.environ.get('FAKE_THAWED') != out['dir']}))
         continue
     for name in out['files']:
+        # A unit's files may sit in subdirectories (aquifer-presets' three
+        # dimensions), as the real generators write them.
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_bytes(b'\0')
     if 'record' in out:
         spec = out['record']
@@ -163,9 +166,21 @@ if ! { test ! -e "${probes}/lowsea/old" && test ! -e "${probes}.previous"; }; th
 fi
 expect 1 "refuses what it generated unfrozen" "lowsea/manifest.json: ticks_frozen is False" \
     env FAKE_THAWED=lowsea "${pw}" generate --only lowsea --accept-eula
-expect 0 "generates every shard" "probe corpora of 35 unit(s) present" "${pw}" generate --accept-eula
+# Counted off the table rather than written in, so a new unit does not break
+# the checks that it is generated: every unit, and the ones aquifer-probes.sh's
+# --only 'aquifer-*' selects (unit name or generator basename, as the tool
+# matches them).
+counts="$(python3 -c '
+import fnmatch, json, os, sys
+units = json.load(open(sys.argv[1]))["units"]
+aquifer = [u for u in units if fnmatch.fnmatch(u["name"], "aquifer-*")
+           or fnmatch.fnmatch(os.path.basename(u["argv"][0]), "aquifer-*")]
+print(len(units), len(aquifer))
+' "${work}/inventory.json")"
+read -r all_units aquifer_units <<< "${counts}"
+expect 0 "generates every shard" "probe corpora of ${all_units} unit(s) present" "${pw}" generate --accept-eula
 cp "${repo_root}/tools/analysis/aquifer-probes.sh" "${fake}/tools/analysis/aquifer-probes.sh"
-expect 0 "aquifer-probes.sh runs the table's aquifer units" "of 23 unit(s) present" \
+expect 0 "aquifer-probes.sh runs the table's aquifer units" "of ${aquifer_units} unit(s) present" \
     "${fake}/tools/analysis/aquifer-probes.sh" --accept-eula
 expect 0 "in Actions, groups each unit's log" "::group::legseed_s42: tools/analysis/legacy-seed-probe.sh 42 --accept-eula" \
     env GITHUB_ACTIONS=true GITHUB_STEP_SUMMARY="${work}/summary" "${pw}" generate --shard legacy --accept-eula
@@ -214,10 +229,20 @@ grep -q '^> aquifer=' <(diff "${work}/keys.before" "${work}/keys.after")
 echo "ok: editing one generator changes only its shard's key"
 echo "# one more line" >> "${fake}/tools/analysis/density-probe.sh"
 "${pw}" keys > "${work}/keys.harness"
-grep -q "^end=$(sed -n 's/^end=//p' "${work}/keys.after")\$" "${work}/keys.harness"
-changed="$(diff "${work}/keys.after" "${work}/keys.harness" | grep -c '^>' || true)"
-[[ "${changed}" -eq 5 ]] || { echo "FAIL: a harness edit changed ${changed} keys, wanted 5"; exit 1; }
-echo "ok: editing density-probe.sh changes every shard that runs it, and not end"
+# Exactly the shards with a unit that density-probe.sh writes for, read off
+# the table: the set moves when units do, the property does not.
+want="$(python3 -c '
+import json, sys
+units = json.load(open(sys.argv[1]))["units"]
+print(" ".join(sorted({u["shard"] for u in units
+                       if any(o.get("density") for o in u["outputs"])})))
+' "${work}/inventory.json")"
+got="$({ diff "${work}/keys.after" "${work}/keys.harness" || true; } \
+       | sed -n 's/^> \([^=]*\)=.*/\1/p' \
+       | sort | tr '\n' ' ' | sed 's/ $//')"
+[[ "${got}" == "${want}" ]] || {
+    echo "FAIL: a harness edit changed the keys of [${got}], wanted [${want}]"; exit 1; }
+echo "ok: editing density-probe.sh changes exactly the shards that run it (${want})"
 expect 0 "the epoch is in every key" "aquifer=probe-worlds-e2-" env PROBE_CACHE_EPOCH=2 "${pw}" keys
 
 echo "probe-worlds: all cases passed"
