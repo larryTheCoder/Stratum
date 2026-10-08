@@ -179,6 +179,18 @@ Open:
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,
       and is now observed. SPEC §11.
+- [x] **amplified and large_biomes, against the server.** Neither preset
+      had been compiled or filled. The frozen blob fills and assigns what the
+      pack does on both (14 chunks, 0 blocks or quart biomes apart), and
+      `aquifer-presets-probe.sh` runs each beside an overworld control at
+      windows `aquifer-presets-scout` chose: seed 322 (76 cells gated above
+      psl 141 change 15 231 blocks and decide 48 521 above the sea; Q5.9
+      decides 47 151) and seed 163 (9 043 aquifer blocks above the sea on
+      amplified, 20 214 on large_biomes). Over 6 x 6 291 456 blocks every raw
+      disagreement is flow-shaped (0-86 per arm, bounded over two runs),
+      every surfaced name agrees where the category does, and the server
+      takes the override's side on every Q5.9 block not flow-shaped. SPEC
+      §8, §11.
 - [x] **Aquifers over a `default_fluid` other than water are refused by
       name** (`ChunkFiller::compile`; `stratum validate` warns). Q6.3 and
       Q6.4 are written for water, and no vanilla dimension that enables
@@ -1337,6 +1349,13 @@ Open:
       table and may not be taken from the source. 20 cells in 131072 are
       attributed and unfixed, and `[biome]`'s "exact" now reads "exact over
       the 98304-cell corner".
+- [ ] **Full-biome goldens for amplified and large_biomes.** Their probe
+      fixes the biome, so large_biomes' biome assignment (`temperature_large`,
+      `vegetation_large` through the search) and either preset's surface over
+      its real biomes are checked against the pack path only
+      (`vanilla_compiled_dimension_test.cpp`). Needs a `tools/fetch-vanilla
+      --world-preset` that sets server.properties' `level-type`; the aquifer
+      does not (SPEC §11).
 
 ## M5 — Integration
 

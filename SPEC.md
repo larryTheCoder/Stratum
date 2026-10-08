@@ -307,9 +307,11 @@ cannot keep stamping the old number.
      ordering and compression all vary. A byte-level harness would report
      failure on every run.
 - **Probe worlds** (`tools/analysis/*-probe.sh`: everything built on
-  `density-probe.sh`, plus `aquifer-on-probe.sh` and
-  `aquifer-free-probe.sh`) are frozen the same way, and each corpus's
-  `manifest.json` records `ticks_frozen` and the seed. An aquifer case
+  `density-probe.sh`, plus `aquifer-on-probe.sh`, `aquifer-free-probe.sh`
+  and `aquifer-presets-probe.sh`, which names vanilla's `amplified`,
+  `large_biomes` and `overworld` settings by reference) are frozen the same
+  way, and each corpus's `manifest.json` records `ticks_frozen` and the
+  seed. An aquifer case
   refuses a corpus that was not frozen, and one from another seed where the
   case knows its seed; `density-probe.sh` refuses to replace a corpus of
   another seed unless `STRATUM_PROBE_OVERWRITE=1`, because its output is
@@ -390,6 +392,16 @@ they should be: under `legacy_random_source` the cell centres are a
 positional random drawn from that source, and with any other default fluid
 the water-over-lava exception (Q6.3) and the lava-against-water pressure
 (Q6.4) part from "the default fluid". `stratum validate` warns on both.
+
+The overworld's two other presets, `minecraft:amplified` and
+`minecraft:large_biomes`, are the overworld's settings with other terrain and
+climate entries, and are measured at Tier A against the server for terrain,
+the aquifer, ore veins and the surface rules over a fixed biome
+(`tools/analysis/aquifer-presets-probe.sh`, §11). Not measured against the
+server: large_biomes' biome assignment (its `*_large` climate noises through
+the biome search) and either preset's surface over its real biomes. For
+those, `vanilla_compiled_dimension_test.cpp` shows only that the frozen blob
+fills and assigns what the pack does.
 
 Unsupported in v1 (hard error at load, listed by name in the error):
 `configured_feature`, `placed_feature`, `configured_carver`, `structure`,
@@ -2920,6 +2932,63 @@ Open:
   fluid-type corpus cannot (it scores no centre below the lava sea): a cell
   centred below lambda whose ladder reaches above it is lava up to its
   level, 14 494 blocks.
+
+- **amplified and large_biomes, against the server (MA).** No output
+  changes. Vanilla's two other overworld presets are the overworld's
+  settings with other entries: amplified has its own `depth`,
+  `final_density` and `preliminary_surface_level`; large_biomes its own
+  `continents`, `erosion`, `depth`, `final_density`,
+  `preliminary_surface_level` and the `*_large` climate noises. The
+  aquifer's and the veins' entries are identical text in all three
+  (`vanilla_settings_test.cpp`). Neither preset had been compiled or filled.
+  Thawed from a frozen blob and compiled with the overworld's biome list, as
+  the plugin and vanilla's world presets pair them, each fills what the pack
+  fills on seven chunks over three seeds, with no block and no quart biome
+  different (`vanilla_compiled_dimension_test.cpp`, which also pins each
+  preset's aquifer footprint and vein count).
+
+  *The probe.* `tools/analysis/aquifer-presets-probe.sh` hosts three
+  dimensions in one frozen server start, each naming `minecraft:amplified`,
+  `minecraft:large_biomes` or `minecraft:overworld` by reference, with the
+  biome fixed to an empty one. The overworld is the control, at amplified's
+  window. A window chosen blind tests nothing new: amplified's psl over r.0.0
+  peaks at 64-88 on seven of the eight golden seeds, and only one of them
+  has a large_biomes cell there that Q5.9 dries above lambda. So
+  `tools/analysis/aquifer-presets-scout.cpp` chose the seeds and windows from
+  Stratum alone, over seeds 2-400 and the golden seeds: seed 322 for
+  amplified under a high surface and for Q5.9, and seed 163 for aquifer fluid
+  above the sea. In the scout's census of both seeds' r.0.0 the two regimes
+  do not meet: the windows with the most aquifer blocks above the sea (553
+  at seed 322, 9 043 at seed 163) have no deciding cell gated above 141, and
+  such cells leave almost every above-sea block they decide as the global
+  picker would: air. Q5.9's blocks are counted against a filler whose
+  `depth` entry reads `erosion`, which the override can never satisfy; every
+  other read is the shipped one.
+
+  | seed | arm | raw categories exact | flow-shaped (run 1, run 2) | the regime |
+  |---|---|---|---|---|
+  | 322 | amplified (1, 7) | 6 291 456 | 0, 0 | 76 cells gated above 141 change 15 231 blocks; above the sea they decide 48 521 and change 3 |
+  | 322 | large_biomes (0, 19) | 6 291 393 | 63, 63 | Q5.9 decides 47 151 blocks |
+  | 322 | overworld (1, 7) | 6 291 456 | 0, 0 | control |
+  | 163 | amplified (14, 23) | 6 291 418 | 38, 38 | 9 043 aquifer blocks above the sea |
+  | 163 | large_biomes (14, 21) | 6 291 412 | 44, 44 | 20 214 above the sea; Q5.9 decides 8 968 |
+  | 163 | overworld (14, 23) | 6 291 370 | 86, 86 | control; 17 321 above the sea |
+
+  Every raw disagreement on every arm is flow-shaped, and the surfaced fill
+  names every block whose category agrees exactly as the server does: the
+  surface rules over amplified relief, `above_preliminary_surface`'s lattice
+  included, and the veins. On large_biomes the server takes the override's
+  side on every block Q5.9 decides but 30 at seed 322, and those 30 are
+  flow-shaped. The two seed-322 runs are identical; the seed-163 runs differ
+  in 4 water blocks of large_biomes, source against flowing.
+  `vanilla_aquifer_presets_test.cpp` holds all six arms, with floors on the
+  regime each was chosen for and flow bounded at four times the larger run.
+
+  Not measured against the server: large_biomes' biome assignment and either
+  preset's surface over its real biomes, which need goldens generated with a
+  `level-type` (PROGRESS, M4). Nor is the per-column psl read the aquifer
+  takes scored against the 16-block lattice the surface rule takes (PROGRESS,
+  M4), though amplified's steep surface is where the two would part most.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

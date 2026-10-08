@@ -66,6 +66,7 @@ foreach(tool IN ITEMS
         aquifer-deepfloor-analyze
         aquifer-fluidtype-analyze
         aquifer-nearsurface-analyze
+        aquifer-presets-scout
         aquifer-waterlava-analyze)
     string(REPLACE "-" "_" target "stratum_${tool}")
     add_executable(${target} ${tool}.cpp)
