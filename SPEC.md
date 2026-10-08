@@ -2578,6 +2578,16 @@ Open:
   pinned in `vanilla_aquifer_deepfloor_test.cpp`. Only that rival is
   refuted: a different asymmetric set has not been tried.
 
+- **A vein never replaces the aquifer's fluid — measured now, not chosen
+  (MA/M3).** No output changes. The ore-vein entry above records the guard
+  (`ChunkFiller` runs the vein chain only over `default_block`) as chosen,
+  because the placement probe held no fluid. The golden overworld regions
+  settle it: running the chain at every position the first pass makes
+  fluid inside the vein ranges, on the golden case's grid of eight seeds, it
+  would place a vein block at 21 positions, and the server kept the fluid at
+  all 21. Few, but deterministic — under the other reading every one would
+  be a vein block. Pinned in `golden_overworld_test.cpp`.
+
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
   round-trip tested against a real chunk's own bytes), `chunk::encode` (the
