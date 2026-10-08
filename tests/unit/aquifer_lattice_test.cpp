@@ -925,8 +925,7 @@ TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
     CHECK(compared == 10U * 2U * 2U * 65U);
 }
 
-TEST_CASE("an aborted scan floors a wet level at lambda, and nothing else is floored",
-          "[aquifer]") {
+TEST_CASE("an aborted scan floors its level at lambda, and nothing else is floored", "[aquifer]") {
     // Measured through the barrier, the only consumer that sees a level below
     // lambda: over an aborting surface with vanilla's barrier on
     // (aquifer-nsfloor-probe.sh) the unfloored levels build 7 690 blocks of
@@ -940,9 +939,10 @@ TEST_CASE("an aborted scan floors a wet level at lambda, and nothing else is flo
     CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9)) == lambda);
     // The ladder's own rung below lambda, under the same abort: floored too.
     CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9, -1.0)) == lambda);
-    // An aborted cell that nothing floods stays dry: the floor is for a WET
-    // level, and the sentinel is not one.
-    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, -2.0)) == kNeverLevel);
+    // And an aborted cell that nothing floods reads lambda too, not the dry
+    // sentinel: at floodedness 0 the server sides with lambda on all 3 770
+    // blocks where the two part.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, -2.0)) == lambda);
 
     // Without the abort the same low cap is NOT floored: psl -58 sits below
     // lambda without reaching the -62 that aborts the scan (capfloor's cf58).
@@ -951,4 +951,6 @@ TEST_CASE("an aborted scan floors a wet level at lambda, and nothing else is flo
     const std::int32_t unfloored = cellFluidLevel(cellWith(low, 63, -150, 0.6));
     CHECK(unfloored < lambda);
     CHECK(unfloored != kNeverLevel);
+    // ... and its dry outcome stays the sentinel.
+    CHECK(cellFluidLevel(cellWith(low, 63, -150, -2.0)) == kNeverLevel);
 }

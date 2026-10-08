@@ -24,7 +24,11 @@
 #   cf66   psl -66: aborted, so both readings floor (control).
 #   cf200  psl 200: neither floors (control, the deep-floor probe's own).
 #   cf58d  psl -58 again, at density -0.05: where a small level change flips
-#          a verdict, so the two readings' few-block difference shows.
+#          a verdict. Measured blind: at floodedness 0.6 no source the scored
+#          rows reach sits below lambda.
+#   cf58l  psl -58, density -0.05, floodedness -0.3: the arm that can see it —
+#          ladder cells below lambda from a scan that did not abort, beside
+#          near-surface cells flooded to the sea.
 #
 # Floodedness is 0.6, strictly between the level rule's two gates, so cells
 # below the near-surface band take the LADDER; the spread is the deep-floor
@@ -77,7 +81,7 @@ NO_SURFACE = {"type": "minecraft:condition",
               "then_run": {"type": "minecraft:block",
                            "result_state": {"Name": "minecraft:stone"}}}
 
-def aquifer(name, psl, density=-1.0):
+def aquifer(name, psl, density=-1.0, floodedness=LADDER_FLOODEDNESS):
     return {"name": name, "min_y": MIN_Y, "height": HEIGHT,
             "raw_final_density": {"type": "minecraft:constant", "argument": density},
             "aquifers_enabled": True, "sea_level": SEA,
@@ -85,14 +89,22 @@ def aquifer(name, psl, density=-1.0):
             "size_vertical": 2, "surface_rule": NO_SURFACE,
             "router": {"barrier": REAL_BARRIER, "lava": 0.0,
                        "preliminary_surface_level": psl,
-                       "fluid_level_floodedness": LADDER_FLOODEDNESS,
+                       "fluid_level_floodedness": floodedness,
                        "fluid_level_spread": FAST_SPREAD}}
 
 spec = [aquifer("cf58", -58.0), aquifer("cf66", -66.0), aquifer("cf200", 200.0),
         # The same surface at a density barely below zero, as the deep-floor
         # probe's d005 arm: there a small change in either level of a pair
         # flips the barrier's verdict, which at -1.0 it almost never does.
-        aquifer("cf58d", -58.0, -0.05)]
+        aquifer("cf58d", -58.0, -0.05),
+        # At 0.6 a cell just under the -58 surface takes the sea bonus and
+        # the trailing guard, so it reads exactly lambda and no source the
+        # scored rows reach ever sits below it: cf58/cf58d cannot separate
+        # the readings at all. At -0.3 the sea never opens, cells 4-18 blocks
+        # under the surface take the LADDER (about -60, below lambda, from a
+        # scan that did not abort), and the near-surface cells above them
+        # flood to the sea — the pairs where the two readings differ.
+        aquifer("cf58l", -58.0, -0.05, -0.3)]
 
 json.dump(spec, open(sys.argv[1], "w"))
 print(len(spec), "dimensions", file=sys.stderr)

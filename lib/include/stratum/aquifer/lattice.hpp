@@ -614,17 +614,20 @@ struct CellLevel {
 /// crossing, where they differ because the crossing floodedness is not itself
 /// representable.
 ///
-/// AN ABORTED SCAN NEVER LEAVES A WET CELL BELOW LAMBDA. A cell whose
-/// surface scan aborted (a sample below `abortThreshold`) and whose level
-/// would otherwise sit below lambda reports lambda: such a cell has met a
-/// surface submerged in the lava sea, whose level is lambda (spec Q5.3(b)).
-/// No block readout sees it — the cell is dry above lambda either way, and
-/// the lava sea takes everything below — but the barrier weighs the level:
-/// over an aborting surface with vanilla's barrier on
-/// (`aquifer-nsfloor-probe.sh`) the unfloored levels write 7 690 blocks of
-/// stone the server does not, and the floor writes none. The unclamped
-/// ladder of a cell that did NOT abort stays unclamped, which is what the
-/// water/lava and deep-floor worlds measured.
+/// AN ABORTED SCAN NEVER LEAVES A CELL BELOW LAMBDA. A cell whose surface
+/// scan aborted (a sample below `abortThreshold`) and whose level would
+/// otherwise sit below lambda — a capped or deep ladder, or the dry sentinel
+/// — reports lambda: such a cell has met a surface submerged in the lava
+/// sea, whose level is lambda, and takes that status before its floodedness
+/// is weighed (spec Q5.3(b)). No block readout sees it — the cell is dry
+/// above lambda either way, and the lava sea takes everything below — but the
+/// barrier weighs the level: over an aborting surface with vanilla's barrier
+/// on (`aquifer-nsfloor-probe.sh`) the unfloored ladder writes 7 690 blocks
+/// of stone the server does not, and at floodedness 0 the sentinel 3 770
+/// more; the floor writes none. A cell that did NOT abort keeps its
+/// unclamped ladder and its sentinel, which is what the water/lava and
+/// deep-floor worlds measured. The deep-dark override's sentinel returns
+/// before the floor is reached.
 [[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
 
 /// `cellLevel(cell).level`, for the callers that need nothing else.

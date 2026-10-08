@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA, pipeline engine v3: Q5.9's deep-dark override, read 
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v4: an aborted scan floors a wet level at lambda, a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the window's extent, probe cases that do not run in CI, fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the window's extent, probe cases that do not run in CI, fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -118,11 +118,14 @@ Open:
       sea is not typed lava for its centre (20 462 closed at psl -58). The
       near-surface and capfloor corpora are exact; no golden block moves.
       SPEC §11.
-- [ ] **Two choices the corpora cannot yet see:** whether the floor follows
-      the abort or a cap below lambda (the spec says the abort), and whether
-      an aborted cell nothing floods is dry or lambda. The capfloor probe's
-      density -0.05 arm and the near-surface probe's floodedness-0 arms are
-      built to separate them.
+- [x] **An aborted cell that nothing floods reads lambda, not dry (engine
+      v5).** The near-surface probe's floodedness-0 arms: 3 770 of 3 770
+      contested blocks side with lambda. SPEC §11.
+- [ ] **Whether the floor follows the abort or a cap below lambda.** The
+      spec says the abort, and that is built; capfloor's density -0.05 arm
+      at floodedness 0.6 turned out blind (no source below lambda reaches the
+      scored rows), and its floodedness -0.3 arm (cf58l) is the one that can
+      see it.
 - [x] **A vein never replaces aquifer fluid — measured on the goldens.**
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,

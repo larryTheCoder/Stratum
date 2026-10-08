@@ -252,6 +252,7 @@ to bump the version and be called out; this is that call-out.
 | 2 | **The surface pass writes over `default_block` only**: aquifer lava and open water in the overworld are no longer repainted (§11, "The surface pass wrote over the aquifer"). **`above_preliminary_surface` reads the 16-block psl lattice**, not the column. **Aquifers-off dimensions keep the global lava sea** below `min(-54, sea_level)`. And, recorded here because they were never bumped when they landed after freeze format 3 made blobs generate: the aquifer's fluid-type ceiling at -10 (5799e6c), the dry sentinel and unclamped ladder (9fbaa17, ae5ab17), and the barrier's `/10` floor with its agree-guard removed (aa26e4a). The legacy climate noises (§11) changed no output a v1 blob could produce: v1 refused them. |
 | 3 | **The aquifer's Q5.9 deep-dark override**: a source whose centre reads `erosion < -0.225` and `depth > 0.9` is dry — read through the generating chunk's **`flat_cache` window**, so an off-chunk centre reads its own column rather than a 4x4 corner (§11, "The deep-dark override"). Changes blocks only where deep-dark volume meets an aquifer: 440 golden blocks on one of the eight seeds. **The `y_skip` cutoff** (spec Q2.3/Q2.5): above it the global picker decides without the lattice — identical output on every golden block, and on every flat surface from 96 down to -80, but not below that. v2 had reached only this development branch; it is bumped rather than amended because a v2 blob could exist. |
 | 4 | **Two aquifer status corrections, measured through the barrier** (§11, "Sub-lambda levels and the near-surface sea"). An aborted psl scan's wet level never sits below lambda: it reads lambda. A near-surface sea is not typed lava for its centre sitting below the lava sea. Neither is visible to a block readout — both cells are dry above lambda, or take the sea either way — but the barrier weighs both: 7 690 blocks of stone over an aborting surface, 20 462 under a psl between -62 and -54, where v3 built barrier the server does not. No golden block changes. |
+| 5 | **An aborted scan floors the dry sentinel at lambda too** (§11, "Sub-lambda levels and the near-surface sea"). v4 floored only a wet level; an aborted cell that nothing floods kept `kNeverLevel`. At floodedness 0 over an aborting surface that built 3 770 blocks of barrier the server does not, and the server took lambda's verdict on every block where the two part. No golden block changes. v4 had reached only this development branch; bumped rather than amended because a v4 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2633,8 +2634,12 @@ Open:
   corpora so far cannot say — every cap below lambda in them comes with an
   abort, or changes no verdict — and the abort is what the clean-room spec's
   Q5.3(b) describes: a scan that meets a surface submerged in the lava sea
-  takes that sea's status, whose level is lambda. A cell that aborted and
-  that nothing floods is left dry; that, too, is unmeasured.
+  takes that sea's status, whose level is lambda. That status comes before
+  any floodedness is weighed, and the near-surface probe's floodedness-0
+  arms show it: an aborted cell that nothing floods reads lambda, not the
+  dry sentinel — built dry (v4), the barrier wrote 3 770 blocks of stone the
+  server does not there, and the server took lambda's verdict on all 3 770
+  blocks where the two part (v5).
 
   *A near-surface sea is not lava for its centre.* `fluidTypeOf` typed every
   source centred below lambda lava — carried from the trailing guard, where a

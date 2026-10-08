@@ -173,11 +173,6 @@ struct Score {
     long long contested = 0;
     long long lambdaRight = 0;
     long long sentinelRight = 0;
-    /// The other unmeasured choice, on the floodedness-0 arms: an aborted
-    /// cell nothing floods stays dry (as built) or reads lambda (the rival).
-    long long dryContested = 0;
-    long long dryStaysDryRight = 0;
-    long long dryLambdaRight = 0;
 };
 
 /// One aquifer arm of the probe, and the readout that names its field.
@@ -254,8 +249,6 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             bool reachable = true;
                             std::array<aquifer::BarrierSource, 3> built{};
                             std::array<aquifer::BarrierSource, 3> rival{};
-                            std::array<aquifer::BarrierSource, 3> dryRival{};
-                            bool anyAbortedDry = false;
                             bool anyFloor = false;
                             for (std::size_t r = 0; r < 3 && reachable; ++r) {
                                 const auto& src = sel.ranked[r];
@@ -293,11 +286,6 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                 if (floor) {
                                     rival[r].level = aquifer::kNeverLevel;
                                 }
-                                dryRival[r] = built[r];
-                                if (read.aborted && level == aquifer::kNeverLevel) {
-                                    dryRival[r].level = lambda;
-                                    anyAbortedDry = true;
-                                }
                             }
                             if (!reachable) {
                                 continue;
@@ -322,16 +310,6 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                             total.serverStone += static_cast<long long>(serverStone);
                             total.misses += static_cast<long long>(serverStone && !builtStone);
                             total.falseStone += static_cast<long long>(!serverStone && builtStone);
-                            if (anyAbortedDry) {
-                                const bool rivalStone = verdict(dryRival);
-                                if (rivalStone != builtStone) {
-                                    ++total.dryContested;
-                                    total.dryStaysDryRight +=
-                                        static_cast<long long>(builtStone == serverStone);
-                                    total.dryLambdaRight +=
-                                        static_cast<long long>(rivalStone == serverStone);
-                                }
-                            }
                             if (anyFloor) {
                                 const bool rivalStone = verdict(rival);
                                 if (rivalStone != builtStone) {
@@ -379,9 +357,7 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
                    << total.falseStone << "; floor cells " << total.floorCells << " (not at lambda "
                    << total.floorNotLambda << "); contested " << total.contested
                    << ", lambda right " << total.lambdaRight << ", sentinel right "
-                   << total.sentinelRight << "; aborted-dry contested " << total.dryContested
-                   << ", stays dry right " << total.dryStaysDryRight << ", lambda right "
-                   << total.dryLambdaRight);
+                   << total.sentinelRight);
 
     // The corpus has to reach the branch, or nothing below means anything.
     REQUIRE(total.floorCells > 0);
@@ -404,9 +380,10 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
     // near-surface sea").
     CHECK(total.misses == 0);
     CHECK(total.falseStone == 0);
-    // The floodedness-0 arms: an aborted cell nothing floods stays dry (as
-    // built, unmeasured before these arms) — exactness above covers it; the
-    // contested count in the message says how much the arms could see.
+    // That includes the floodedness-0 arms, where an aborted cell nothing
+    // floods reads lambda rather than the dry sentinel: built dry, the
+    // barrier wrote 3 770 blocks of stone the server does not on them, and
+    // on every block where the two readings part the server took lambda's.
 }
 
 namespace {
@@ -416,6 +393,7 @@ struct CapArm {
     const char* name;
     double psl;
     double density;
+    double floodedness;
 };
 
 struct CapScore {
@@ -499,13 +477,13 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
                             const aquifer::SamplePos sp = aquifer::spreadSample(s.cell, s.centre);
                             const double spread = interp.evaluate(
                                 spreadNode, density::Point{.x = sp.x, .y = sp.y, .z = sp.z}, cache);
-                            const aquifer::SourceStatus status =
-                                aquifer::sourceStatus(aquifer::CellFluid{.centreY = s.centre.y,
-                                                                         .surface = surface,
-                                                                         .seaLevel = kSeaLevel,
-                                                                         .floodedness = 0.6,
-                                                                         .spread = spread},
-                                                      0.0);
+                            const aquifer::SourceStatus status = aquifer::sourceStatus(
+                                aquifer::CellFluid{.centreY = s.centre.y,
+                                                   .surface = surface,
+                                                   .seaLevel = kSeaLevel,
+                                                   .floodedness = arm.floodedness,
+                                                   .spread = spread},
+                                0.0);
                             const std::int32_t level = status.level;
                             score.subLambdaSources += static_cast<long long>(
                                 level < lambda && level != aquifer::kNeverLevel);
@@ -572,11 +550,15 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
     // does and no other. cf58 is the near-surface type's arm (20 462 blocks of
     // false barrier before that fix), cf66 the aborted floor's control and
     // cf200 the unclamped ladder's (a blanket floor misses 1 017 there).
-    // cf58d is the arm that would expose the floor following a cap below
-    // lambda rather than the abort, which is the spec's reading and the one
-    // built: its contested count says how much it could see.
-    for (const CapArm& arm : {CapArm{"cf58", -58.0, -1.0}, CapArm{"cf66", -66.0, -1.0},
-                              CapArm{"cf200", 200.0, -1.0}, CapArm{"cf58d", -58.0, -0.05}}) {
+    // cf58l is the arm that can expose the floor following a cap below lambda
+    // rather than the abort (the spec's reading, and the one built): ladder
+    // cells below lambda from a scan that did not abort, beside cells flooded
+    // to the sea. cf58d was meant to and is blind — at floodedness 0.6 no
+    // source the scored rows reach sits below lambda (0 readings) — and is
+    // kept as the control that says so.
+    for (const CapArm& arm : {CapArm{"cf58", -58.0, -1.0, 0.6}, CapArm{"cf66", -66.0, -1.0, 0.6},
+                              CapArm{"cf200", 200.0, -1.0, 0.6}, CapArm{"cf58d", -58.0, -0.05, 0.6},
+                              CapArm{"cf58l", -58.0, -0.05, -0.3}}) {
         CapScore score;
         for (const auto& probe : probes) {
             scoreCapProbe(probe, arm, score);
