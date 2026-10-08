@@ -448,8 +448,13 @@ constexpr SourceStatus kLavaAt20{.level = 20, .type = FluidType::Lava};
 TEST_CASE("the fluid-update flag where Q6.2's nearest source wins", "[aquifer]") {
     // s12 <= 0 (a gap of 25 or more): the nearest pair's difference, but only
     // while the pair is within the flow similarity, -0.76 — a gap of 44.
-    const auto never = [] {
-        FAIL("the fourth source is read only by the full path's last clause");
+    // The fourth source is read only by the full path's last clause. Recorded
+    // rather than FAILed inside the reader: a reader that cannot return is
+    // unreachable code to MSVC, and one that does not is a missing return to
+    // GCC.
+    bool fourthRead = false;
+    const auto never = [&fourthRead] {
+        fourthRead = true;
         return SourceStatus{};
     };
     for (const FluidExit exit : {FluidExit::BarrierFellThrough, FluidExit::WaterOverLava}) {
@@ -469,19 +474,23 @@ TEST_CASE("the fluid-update flag where Q6.2's nearest source wins", "[aquifer]")
         CHECK_FALSE(fluidUpdateFlag(distancesFor(45, 60, 70), {kWaterAt20, kWaterAt60, kWaterAt60},
                                     exit, never));
     }
+    CHECK_FALSE(fourthRead);
 }
 
 TEST_CASE("the fluid-update flag on water resting on lava, past Q6.2", "[aquifer]") {
     // Always set — measured, and not in the clean-room spec — whatever the
     // statuses say, all four equal included.
-    const auto never = [] {
-        FAIL("the Q6.3 exit reads no fourth source");
+    // The Q6.3 exit reads no fourth source.
+    bool fourthRead = false;
+    const auto never = [&fourthRead] {
+        fourthRead = true;
         return SourceStatus{};
     };
     for (const std::int64_t gap12 : {0, 5, 24}) {
         CHECK(fluidUpdateFlag(distancesFor(gap12, 60, 70), {kWaterAt20, kWaterAt20, kWaterAt20},
                               FluidExit::WaterOverLava, never));
     }
+    CHECK_FALSE(fourthRead);
 }
 
 TEST_CASE("the fluid-update flag on the full path, the fourth source last", "[aquifer]") {

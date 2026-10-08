@@ -97,6 +97,11 @@ inline constexpr std::int32_t kLavaLevel = -54;
 /// -2032 and -32512 against this, rather than the literal against itself.
 namespace detail {
 inline constexpr std::uint32_t kHorizontalLimit = 30000000U;
+// `std::bit_width` returns `int` since LWG 3656 (libstdc++ 14, MSVC) and the
+// argument's own unsigned type before it (libstdc++ 13): the cast is needed
+// on one and redundant on the other, so the check that flags it is silenced
+// here rather than the code made to depend on the library version.
+// NOLINTNEXTLINE(readability-redundant-casting)
 inline constexpr int kHorizontalBits = 1 + static_cast<int>(std::bit_width(kHorizontalLimit - 1U));
 inline constexpr int kYBits = 64 - (2 * kHorizontalBits);
 inline constexpr std::int32_t kYSpan = (std::int32_t{1} << kYBits) - 32;
