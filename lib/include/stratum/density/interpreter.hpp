@@ -133,6 +133,35 @@ struct Point {
     [[nodiscard]] bool operator==(const Point& other) const noexcept = default;
 };
 
+/// The columns one chunk's `flat_cache` grid holds, in block coordinates,
+/// both ends inclusive.
+///
+/// A `flat_cache` read INSIDE the window is relocated to its 4x4 column
+/// corner — the grid point that holds it. A read OUTSIDE has no grid point to
+/// be relocated to and reads its argument at the column itself. Every
+/// in-chunk density read sits inside its own chunk's window, so the
+/// distinction is invisible to terrain; it surfaces only for a read the
+/// chunk makes off its own footprint at an unaligned column, which in the
+/// vanilla presets means one thing — the aquifer's Q5.9 erosion and depth at
+/// a source centre in a neighbouring chunk (SPEC §11). Its extent is
+/// measured, not assumed: see `ChunkFiller`.
+///
+/// `none()` covers nothing: every read is at the column itself. Evaluating
+/// without a window at all relocates every read, which is what a caller
+/// with no chunk in hand (a probe, a test, `stratum render`) has always got.
+struct FlatCacheWindow {
+    std::int32_t minX = 0;
+    std::int32_t maxX = -1;
+    std::int32_t minZ = 0;
+    std::int32_t maxZ = -1;
+
+    [[nodiscard]] static constexpr FlatCacheWindow none() noexcept { return FlatCacheWindow{}; }
+
+    [[nodiscard]] constexpr bool covers(const std::int32_t x, const std::int32_t z) const noexcept {
+        return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+    }
+};
+
 /// Values for the node types SPEC §11 leaves unsettled, supplied by an
 /// experiment that is trying to settle them.
 ///
@@ -242,6 +271,12 @@ public:
     /// Bit-for-bit identical to the two-argument form; only faster, and only
     /// when consecutive calls stay inside a cell.
     [[nodiscard]] double evaluate(NodeIndex root, Point at, CornerCache& cache) const;
+
+    /// The same, with `flat_cache` relocating only inside @p window (see
+    /// FlatCacheWindow). Identical to the form above at every point whose
+    /// column the window covers.
+    [[nodiscard]] double evaluate(NodeIndex root, Point at, CornerCache& cache,
+                                  const FlatCacheWindow& window) const;
 
     /// How many entries a CornerCache for this interpreter needs.
     [[nodiscard]] std::size_t cacheSize() const noexcept;

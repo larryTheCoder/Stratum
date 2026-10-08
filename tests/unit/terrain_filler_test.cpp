@@ -1024,3 +1024,28 @@ TEST_CASE("a surface rule writes over the default block and nothing else",
         CHECK(buffer.at(x, 8, x).name.toString() == "minecraft:air");
     }
 }
+
+TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
+          "[terrain][aquifer]") {
+    // Twenty columns a side from the chunk's own corner — the extent is a
+    // choice among three the goldens cannot separate (filler.hpp); pinned so
+    // that changing it is a decision, not a drift.
+    constexpr auto window = ChunkFiller::flatCacheWindow(3, 3);
+    CHECK(window.minX == 48);
+    CHECK(window.maxX == 67);
+    CHECK(window.minZ == 48);
+    CHECK(window.maxZ == 67);
+
+    // The measurement turned on one source centre: off chunk (3, 3)'s
+    // window, where the server read it wet, and inside chunk (3, 4)'s, where
+    // it read it dry.
+    CHECK_FALSE(ChunkFiller::flatCacheWindow(3, 3).covers(57, 70));
+    CHECK(ChunkFiller::flatCacheWindow(3, 4).covers(57, 70));
+
+    // Below zero the window still starts at the chunk's own corner.
+    constexpr auto negative = ChunkFiller::flatCacheWindow(-1, -2);
+    CHECK(negative.minX == -16);
+    CHECK(negative.maxX == 3);
+    CHECK(negative.minZ == -32);
+    CHECK(negative.maxZ == -13);
+}

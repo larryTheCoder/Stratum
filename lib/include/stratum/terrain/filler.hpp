@@ -239,7 +239,45 @@ public:
         return static_cast<std::int32_t>(std::floor(low + ((high - low) * v)));
     }
 
+    /// The columns chunk (@p chunkX, @p chunkZ)'s `flat_cache` grid holds,
+    /// which is where the aquifer's router reads relocate to a 4x4 corner;
+    /// anywhere else they read the column itself (density::FlatCacheWindow).
+    ///
+    /// MEASURED, through Q5.9's deep-dark override — the one aquifer read in
+    /// the vanilla presets that lands on an unaligned column off the chunk:
+    /// erosion and depth at a source centre, both behind `flat_cache`. On
+    /// golden seed 9223372036854775807 one centre, (57, -33, 70), is
+    /// deep-dark at its corner (depth 0.9092) and not at its own column
+    /// (0.8620). The server keeps it WET for chunk (3, 3), which it lies off
+    /// — lava at y -32 and the barrier around it, 16 blocks — and DRY for
+    /// chunk (3, 4), which it lies in — air at (51..52, -32, 64). Relocating
+    /// every read misses the first 16; reading every column exactly misses
+    /// the second two; this window gets all 18, and over all eight golden
+    /// overworld regions (805306368 blocks) leaves no disagreement that is
+    /// not fluid moving after generation.
+    ///
+    /// THE EXTENT IS A CHOICE, NOT A MEASUREMENT. The chunk's own sixteen
+    /// columns, these twenty (five quart columns: the chunk's own reads reach
+    /// the corner column at +16, so a grid serving them holds the quart
+    /// beyond it), and twenty-four (one quart further on the low side too)
+    /// score identically on every golden block — no deep-dark verdict on
+    /// those regions flips within the four columns that separate them.
+    /// Twenty is the reading that follows from the chunk's own read
+    /// footprint; SPEC §11 carries the probe that would settle it.
+    [[nodiscard]] static constexpr density::FlatCacheWindow
+    flatCacheWindow(const std::int32_t chunkX, const std::int32_t chunkZ) noexcept {
+        constexpr std::int32_t kGridColumns = kChunkWidthBlocks + 4;
+        const std::int32_t baseX = chunkX * kChunkWidthBlocks;
+        const std::int32_t baseZ = chunkZ * kChunkWidthBlocks;
+        return density::FlatCacheWindow{.minX = baseX,
+                                        .maxX = baseX + kGridColumns - 1,
+                                        .minZ = baseZ,
+                                        .maxZ = baseZ + kGridColumns - 1};
+    }
+
 private:
+    static constexpr std::int32_t kChunkWidthBlocks = 16;
+
     ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                 const settings::NoiseSettings& settings);
 

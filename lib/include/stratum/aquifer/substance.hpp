@@ -127,10 +127,11 @@ namespace detail {
 /// block's output can depend on it. See fluid_type.hpp's header for why the
 /// corpus is blind to it — not merely that it is.
 template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
-         typename LavaSampler>
+         typename LavaSampler, typename DeepDarkSampler>
 [[nodiscard]] SourceStatus rankedStatusOf(const Source& ranked, const std::int32_t seaLevel,
                                           PslSampler&& psl, FloodednessSampler&& floodedness,
-                                          SpreadSampler&& spread, LavaSampler&& lava) {
+                                          SpreadSampler&& spread, LavaSampler&& lava,
+                                          DeepDarkSampler&& deepDark) {
     const PslRead surface = readPreliminarySurface(psl, ranked.centre, seaLevel);
     const SamplePos floodPos = floodednessSample(ranked.centre);
     const double f = floodedness(floodPos.x, floodPos.y, floodPos.z);
@@ -140,7 +141,10 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
                          .surface = surface,
                          .seaLevel = seaLevel,
                          .floodedness = f,
-                         .spread = s};
+                         .spread = s,
+                         // Q5.9 reads its two router values at the centre
+                         // itself, the same point the floodedness is read at.
+                         .deepDark = deepDark(floodPos.x, floodPos.y, floodPos.z)};
     const std::int32_t level = cellFluidLevel(cell);
     const SamplePos lavaPos = lavaSample(ranked.centre);
     const double lavaValue = lava(lavaPos.x, lavaPos.y, lavaPos.z);
@@ -150,6 +154,19 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
 }
 
 } // namespace detail
+
+/// The deep-dark sampler for a router whose `erosion` and `depth` cannot
+/// satisfy Q5.9's override — a probe world's constants, typically (probe
+/// dimensions hold both at 0). Named rather than defaulted: a caller with a
+/// real router must pass a real sampler (ChunkFiller does), and leaving the
+/// argument off is how a spec rule goes missing without anyone deciding it
+/// should.
+struct NoDeepDark {
+    [[nodiscard]] constexpr bool operator()(std::int32_t /*x*/, std::int32_t /*y*/,
+                                            std::int32_t /*z*/) const noexcept {
+        return false;
+    }
+};
 
 /// Memoizes a cell centre's own status across one `fill()` call.
 /// `detail::rankedStatusOf`'s expensive part — a `preliminary_surface_level`
@@ -165,17 +182,18 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
 class StatusCache {
 public:
     template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
-             typename LavaSampler>
+             typename LavaSampler, typename DeepDarkSampler>
     [[nodiscard]] SourceStatus statusOf(const Source& ranked, const std::int32_t seaLevel,
                                         PslSampler&& psl, FloodednessSampler&& floodedness,
-                                        SpreadSampler&& spread, LavaSampler&& lava) {
+                                        SpreadSampler&& spread, LavaSampler&& lava,
+                                        DeepDarkSampler&& deepDark) {
         const auto key = std::make_tuple(ranked.centre.x, ranked.centre.y, ranked.centre.z);
         const auto found = cache_.find(key);
         if (found != cache_.end()) {
             return found->second;
         }
         const SourceStatus status =
-            detail::rankedStatusOf(ranked, seaLevel, psl, floodedness, spread, lava);
+            detail::rankedStatusOf(ranked, seaLevel, psl, floodedness, spread, lava, deepDark);
         cache_.emplace(key, status);
         return status;
     }
@@ -229,17 +247,20 @@ private:
 /// (sampling.hpp): `barrier` and `floodedness` at true block/point
 /// coordinates, `spread`, `lava` and `psl` at the CONTRACTED positions this
 /// function itself computes and passes in — a caller supplies the router
-/// READ, not the position.
+/// READ, not the position. @p deepDark is the exception in shape: it returns
+/// `bool`, Q5.9's `isDeepDark(erosion, depth)` read at a source's centre, so
+/// that one caller-side sampler carries both router reads (`NoDeepDark` for
+/// a router that cannot satisfy it).
 ///
 /// @p cache belongs to the caller, the same way `CornerCache` does — reused
 /// across an entire `fill()` call (or more), never across a different world
 /// or seed. See `StatusCache`'s own doc for why one is needed at all.
 template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSampler,
-         typename LavaSampler, typename PslSampler>
-[[nodiscard]] SubstanceAt computeSubstance(const CentreSource& centres, const AquiferQuery& query,
-                                           StatusCache& cache, BarrierSampler&& barrier,
-                                           FloodednessSampler&& floodedness, SpreadSampler&& spread,
-                                           LavaSampler&& lava, PslSampler&& psl) {
+         typename LavaSampler, typename PslSampler, typename DeepDarkSampler>
+[[nodiscard]] SubstanceAt
+computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusCache& cache,
+                 BarrierSampler&& barrier, FloodednessSampler&& floodedness, SpreadSampler&& spread,
+                 LavaSampler&& lava, PslSampler&& psl, DeepDarkSampler&& deepDark) {
     // Q2.4: below the global lava sea the lattice is never consulted — the
     // sea is lava whatever any source says, and it is literal lava, not the
     // dimension's default fluid.
@@ -254,8 +275,8 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
     // (barrier.hpp).
     std::array<SourceStatus, 3> status{};
     for (std::size_t r = 0; r < 3; ++r) {
-        status[r] =
-            cache.statusOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread, lava);
+        status[r] = cache.statusOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread,
+                                   lava, deepDark);
     }
 
     // Q6.3: water resting on the global lava sea is water, and no barrier

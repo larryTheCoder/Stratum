@@ -489,7 +489,10 @@ int main(int argc, char** argv) {
                                                               .seaLevel = dim.seaLevel};
                             const aquifer::SubstanceAt now =
                                 aquifer::computeSubstance(centres, query, statusCache, barrierAt,
-                                                          floodednessAt, spreadAt, lavaAt, pslAt);
+                                                          floodednessAt, spreadAt, lavaAt, pslAt,
+                                                          // Probe router: erosion and depth
+                                                          // are 0, Q5.9 cannot fire.
+                                                          aquifer::NoDeepDark{});
 
                             // THE BARE FALL-THROUGH: rank, status, barrier,
                             // nearest reading — the same pieces, no Q6.3 and
