@@ -48,7 +48,20 @@ jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | h
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+# The trap takes the server down with the work directory: an interrupted run
+# otherwise leaves a JVM holding its heap (density-probe.sh, same trap).
+cleanup() {
+    if [[ -n "${server_pid:-}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
+        kill "${server_pid}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "${server_pid}" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "${server_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${work}"
+}
+trap cleanup EXIT INT TERM
 server="${work}/server"
 pack="${server}/world/datapacks/stratum-aquifer-on/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome"
@@ -100,7 +113,8 @@ PROPERTIES
 pipe="${work}/console"
 mkfifo "${pipe}"
 log "starting the server (seed ${seed})"
-( cd "${server}" && java -Xmx4G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
+# `exec` so $! is the JVM itself, which is what the trap has to stop.
+( cd "${server}" && exec java -Xmx4G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
 server_pid=$!
 exec 3> "${pipe}"
 
@@ -111,6 +125,15 @@ while (( waited < 180 )); do
     sleep 5; waited=$((waited + 5))
 done
 grep -q 'Done (' "${work}/server.log" || { tail -30 "${work}/server.log" >&2; die "server did not start"; }
+
+# Frozen before any chunk generates, as tools/fetch-vanilla freezes the
+# goldens (SPEC §7, property 1): otherwise the region records generation plus
+# however far the fluids flowed before the save, which varies run to run.
+log "freezing the world before generating"
+printf 'tick freeze\n' >&3
+sleep 2
+grep -q -i 'frozen' "${work}/server.log" \
+    || { printf 'stop\n' >&3; die "'tick freeze' was not acknowledged"; }
 
 log "forceloading ${CHUNKS}x${CHUNKS} chunks"
 printf 'execute in stratum:aquifer_on run forceload add 0 0 %d %d\n' \
@@ -139,4 +162,10 @@ wait "${server_pid}" 2>/dev/null || true
 out="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/aquifer-on/seed-${seed}"
 mkdir -p "${out}"
 cp "${region}" "${out}/r.0.0.mca"
+# What produced the region, read by the conformance cases: a corpus generated
+# before the world was frozen records a different, timing-dependent amount of
+# fluid flow and is refused rather than scored.
+cat > "${out}/manifest.json" <<MANIFEST
+{"seed": ${seed}, "chunks": ${CHUNKS}, "version": "${MINECRAFT_VERSION}", "ticks_frozen": true}
+MANIFEST
 log "wrote ${out}/r.0.0.mca"

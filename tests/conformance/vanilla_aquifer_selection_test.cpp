@@ -37,6 +37,7 @@
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -119,8 +120,10 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
         const std::filesystem::path region = fixtures() / "probes" / world.dir / "jv" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no open-void aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
         const CentreSource centres{world.seed};
         const auto file = stratum::region::RegionFile::open(region);
@@ -238,10 +241,11 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
 
     // Readout two, over y >= lambda only (see the loop): exact. It used to
     // sit at 0.99993-0.99996 per seed under a 0.9999 bound, and its 999-block
-    // residual, "about 5e-5 and NOT the selection", is every block of it
-    // fluid the server's ticks moved after generating (the comb probes are
-    // not tick-frozen; support/fluid_flow.hpp).
+    // residual, "about 5e-5 and NOT the selection", was every block of it
+    // fluid the server's ticks moved before the save (support/fluid_flow.hpp).
+    // Frozen, 25 such blocks remain, a run-dependent remnant
+    // (support/probe_corpus.hpp): bounded at 1 in 100 000, not pinned.
     CHECK(total.unexplained == 0);
-    CHECK(total.flow == 999);
     CHECK(total.agree + total.flow == total.fluidOrAir);
+    CHECK(total.flow * 100000 < total.fluidOrAir);
 }

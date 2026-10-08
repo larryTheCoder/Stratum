@@ -31,6 +31,8 @@
 // here reads only y >= sea_level.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -151,6 +153,9 @@ TEST_CASE("the abort threshold is lambda(sea_level) - 8, not a bare -62",
         SKIP("no low-sea aquifer probe at "
              << reference << "; generate it with tools/analysis/aquifer-lowsea-probe.sh");
     }
+    stratum::test::requireFrozen(fixtures() / "probes" / "lowsea",
+                                 "tools/analysis/aquifer-lowsea-probe.sh");
+    stratum::test::requireSeed(fixtures() / "probes" / "lowsea", 42);
     const auto referenceHistogram = transitionHistogram(reference);
     REQUIRE(referenceHistogram.size() > 1); // the reference itself must show variation
 
@@ -179,6 +184,9 @@ TEST_CASE("the aborting near-surface floor is lambda, not kLavaLevel, at sea_lev
         SKIP("no low-sea aquifer probe at "
              << region << "; generate it with tools/analysis/aquifer-lowsea-probe.sh");
     }
+    stratum::test::requireFrozen(fixtures() / "probes" / "lowsea",
+                                 "tools/analysis/aquifer-lowsea-probe.sh");
+    stratum::test::requireSeed(fixtures() / "probes" / "lowsea", 42);
 
     const stratum::aquifer::CentreSource centres{42};
     const auto file = stratum::region::RegionFile::open(region);

@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA, pipeline engine v3: Q5.9's deep-dark override, read 
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the row-lambda barrier residual, the window's extent, probe cases that do not run in CI, fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the window's extent, probe cases that do not run in CI, fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -72,7 +72,8 @@ Open:
       obsidian where water met the lava sea — and
       `tests/support/fluid_flow.hpp` now attributes them block by block in
       `golden_overworld_test.cpp` and in `golden_fill_aquifer_test.cpp`'s new
-      64-chunk case (6291264 of 6291456 pinned, 192 flowing).
+      64-chunk case (6291264 of 6291456, 192 flowing; on the probe frozen,
+      6291454 and 2 — bounded now, since the remnant varies by run).
 - [ ] **The `flat_cache` window's extent.** 16, 20 and 24 columns score the
       same on every golden block; 20 is taken (the chunk's own read
       footprint) and flagged. SPEC §11 names the probe that separates them.
@@ -94,14 +95,32 @@ Open:
       ties are set apart and the rest held exact. SPEC §11.
 - [x] **The probe residuals were flow, or attribution.** Varying surface
       (34 878 blocks) and selection readout two (999) are every block fluid
-      that moved after generating — both cases exact now. The fluid type's
-      "4% mixed" and its four misses were the case crediting flowing water
-      and other bodies' fluid to a source: on its own source blocks the rule
-      is 3162 of 3162. 8 water blocks inside lava bodies stay named. SPEC §11.
-- [ ] **The row-lambda barrier residual.** Server stone on row lambda that
-      the predicate misses: 35 pure + 4 mixed on the water/lava worlds, and
-      7 in each lava-sourced arm of the fluid-type probe (pinned at 42).
-      Never off row lambda. Unattributed.
+      that moved after generating. The fluid type's "4% mixed" and its four
+      misses were the case crediting flowing water and other bodies' fluid
+      to a source: on its own source blocks the rule is 3160 of 3160. 8
+      water blocks inside lava bodies stay named. SPEC §11.
+- [x] **Probe worlds are frozen.** Every probe harness now runs
+      `/tick freeze` before any chunk generates, as `fetch-vanilla` does, and
+      records `ticks_frozen` in the corpus manifest; fluid-scoring cases
+      refuse an unfrozen corpus. Flow falls by 97-99% (varying surface 34 878
+      -> 3 586, selection 999 -> 25, the aquifer-on sweep 192 -> 2), but a
+      remnant survives that differs between two frozen runs of one seed (7 of
+      the varying-surface probe's 12 arms identical, the rest 5-918 blocks
+      apart, all fluid products), so flow is bounded, never pinned; every
+      disagreement must still be flow-shaped. A corpus of another seed is
+      refused too, and no longer silently overwritten. SPEC §7, §11.
+- [x] **Q4.1's window, against the symmetric 27-cell set — the server
+      picks the spec's.** On the frozen deep-floor corpora the rival changes
+      39 barrier verdicts, and the server sides with the twelve-cell window
+      on all 39. SPEC §11.
+- [x] **The varying-surface probe's constant controls are scored.** c96,
+      cm20 and cm70 run through the varying arms' own path: exact but for
+      flow, one gate value each, prefix minimum equal to the window's. SPEC
+      §11.
+- [x] **The row-lambda barrier residual was flow.** Frozen, the water/lava
+      predicate misses no server barrier (mixed 1096 -> 0, pure 0), and the
+      unfrozen fluid-type probe's 42 row-lambda stones were lava that fell
+      onto water (`explainedByFlow`'s fifth shape). SPEC §11.
 - [ ] **Lava in the surface pass's stone-depth run.** `categorize` calls the
       aquifer's lava Solid, so it counts toward `stone_depth` where water
       neither counts nor breaks the run. Water's behaviour is measured;

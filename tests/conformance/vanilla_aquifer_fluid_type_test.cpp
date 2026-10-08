@@ -21,6 +21,7 @@
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -109,8 +110,10 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             fixtures() / "probes" / world.dir / "elava" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no lava-noise aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, loaded.graph.referencedNoises(), world.seed,
@@ -269,18 +272,26 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
     // The type IS a property of the source. The "4% of sources hold both
     // fluids" this case once carried was attribution, not the rule: count a
     // source's own SOURCE blocks below its own level, and set aside flowing
-    // blocks (9583) and blocks above that level (799, another body's fluid
-    // in this territory), and 15 of 3177 sources still mix — every one a
-    // lava body holding 1-4 water sources, 22 blocks in all, 14 of them
-    // beside the obsidian or cobblestone water leaves on meeting lava. The
-    // other 8 are named, not explained (SPEC §11).
-    CHECK(total.mixed == 15);
-    CHECK(total.minorityAtContact == 14);
+    // blocks and blocks above that level (another body's fluid in this
+    // territory), and on the frozen corpora 17 of 3177 sources still mix —
+    // every one a lava body holding a few water sources, 12 of those blocks
+    // beside the obsidian or cobblestone water leaves on meeting lava. That
+    // part is flow, and a run-dependent amount of it survives freezing
+    // (support/probe_corpus.hpp), so it is bounded rather than pinned (it
+    // read 15 sources and 14 blocks before the corpora were frozen): under
+    // 2% of sources, with room for the run-to-run movement of that remnant.
+    CHECK(total.mixed * 50 < total.sources);
+    // The other 8 are named, not explained (SPEC §11): all in comb_999, each
+    // a water source with two or more horizontal water-source neighbours and
+    // flowing water beside it. That is the shape of water that spread in —
+    // and equally of any water body's interior, so it is not credited. The
+    // count is the same frozen and unfrozen, which is what pins it.
     CHECK(total.minorityElsewhere == 8);
 
-    // And every pure source is typed as the rule says: 3162 of 3162, where
-    // the old attribution read 0.99873 — its four misses were two sources'
-    // worth of another body's water, which the rule was never asked about.
+    // And every pure source is typed as the rule says: 3160 of 3160 frozen
+    // (3162 of 3162 before), where the old attribution read 0.99873 — its
+    // four misses were two sources' worth of another body's water, which the
+    // rule was never asked about.
     CHECK(total.agree == total.sources);
     CHECK(total.agree > total.nullAllDefault);
 
