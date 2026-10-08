@@ -25,9 +25,13 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # A pull request's new push cancels its superseded run. Nothing else is
-  # cancelled, only queued: a main run that is generating probe worlds must
-  # get to save them, or the next one starts again from nothing.
+  # A pull request's new push cancels its superseded run, running or not.
+  # Any other run in progress is never cancelled: a main run that is
+  # generating probe worlds must get to save them, or the next one starts
+  # again from nothing. A pending one is still replaced by a newer run in
+  # the same group, as GitHub does for every concurrency group (at most one
+  # pending), so a push to main can take the place of a queued main,
+  # scheduled or dispatched run, which then never runs.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -243,8 +247,12 @@ jobs:
     # artifact (tools/lint/check-determinism.sh refuses one).
     if: github.repository == 'larryTheCoder/Stratum'
     runs-on: ubuntu-24.04
-    # The slowest shard is about 35 minutes cold. Past this a generator has
-    # hung; the last log group the job opened names it.
+    # An estimate. The only recorded timing is aquifer-probes.sh's, run
+    # locally: about 70 minutes on 4 cores, nearly half of it capfloor's two
+    # seeds, so about 35 minutes cold for that shard. No other generator
+    # (end, legacy, aps-clamp among them) has a recorded timing, and no
+    # shard has run on a GitHub runner yet. Past this, take a generator to
+    # have hung; the last log group the job opened names it.
     timeout-minutes: 90
     defaults:
       run:
@@ -530,10 +538,15 @@ jobs:
           echo "                local generation (SPEC §7). Locally:"
           echo "                  tools/fetch-vanilla --generate-regions --accept-eula"
           echo "  no-generator  cases whose probe corpus no committed script produces"
-          if [[ "${{ steps.probe-keys.outcome }}" == skipped ]]; then
+          # The repository, not the key step's outcome: that step is skipped
+          # here too whenever a step before it failed.
+          if [[ "${GITHUB_REPOSITORY}" != larryTheCoder/Stratum ]]; then
             echo "No probe worlds here: outside larryTheCoder/Stratum nobody has accepted"
             echo "Mojang's EULA for this CI (SPEC §12), so every probe-backed case skipped"
             echo "too, unchecked. Locally: tools/probe-worlds generate --accept-eula"
+          elif [[ "${{ steps.probe-keys.outcome }}" != success ]]; then
+            echo "No probe worlds were restored: a step before them failed, so no"
+            echo "probe-backed case was checked in this run."
           fi
 
   ext-pmmp:

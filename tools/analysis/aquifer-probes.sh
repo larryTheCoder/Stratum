@@ -12,8 +12,9 @@
 # at a time, about seventy minutes on a 4-core machine, nearly half of it the
 # two capfloor seeds. Each corpus is replaced whole and comes out frozen
 # (density-probe.sh, SPEC §7), recording its seed, which the cases check. A
-# failed generator is named and the rest still run; then every corpus is
-# checked (tools/probe-worlds verify).
+# failed generator is named, its corpora are left as they were before it
+# ran, and the rest still run; then every corpus is checked
+# (tools/probe-worlds verify).
 #
 # probes/nearsurface is not among them: no conformance case reads it. For
 # aquifer-nearsurface-analyze, run tools/analysis/aquifer-nearsurface-probe.sh

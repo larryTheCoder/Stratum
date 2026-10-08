@@ -54,6 +54,30 @@ report "${work}/extra.xml" 'conformance.a|run' 'conformance.new|notrun' \
 expect 1 "an unlisted skip fails, quoting its reason" "reason for conformance.new" \
     "${check}" "${work}/extra.xml" "${work}/list"
 
+# A real Catch2 skip, as ctest records it: the reason is wrapped over
+# several lines and followed by the run totals, which say nothing.
+{
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="t" tests="3">\n'
+    printf '<testcase name="conformance.golden one" status="notrun"><system-out>x</system-out></testcase>\n'
+    printf '<testcase name="%s" status="notrun"><system-out>x</system-out></testcase>\n' "${escaped}"
+    printf '<testcase name="conformance.ladders" status="notrun">\n<skipped message="SKIP_RETURN_CODE=4"/>\n'
+    printf '<system-out>Filters: "ladders"\nRandomness seeded to: 1\n\n'
+    printf -- '----------\nladders\n----------\n/src/t.cpp:54\n..........\n\n'
+    printf '/src/t.cpp:58: SKIPPED:\nexplicitly with message:\n'
+    printf '  no probe fixture at "/fx/1.21.11/probes/wss-edges";\n'
+    printf '  generate it with tools/analysis/density-probe.sh --accept-eula --spec &lt;wss-\n'
+    printf '  edges.json&gt;\n\n'
+    printf '================\ntest cases: 1 | 1 skipped\nassertions: - none -\n\n'
+    printf '</system-out>\n</testcase>\n</testsuite>\n'
+} > "${work}/catch2.xml"
+expect 1 "an unlisted skip quotes Catch2's whole reason" 'no probe fixture at "/fx/1.21.11/probes/wss-edges";' \
+    "${check}" "${work}/catch2.xml" "${work}/list"
+if ! { grep -qF '| /src/t.cpp:58: SKIPPED:' "${work}/out" && grep -qF '|   edges.json>' "${work}/out" \
+        && ! grep -qE 'test cases:|assertions:|====' "${work}/out"; }; then
+    echo "FAIL: the reason is not quoted whole, or the totals are:"; cat "${work}/out"; exit 1
+fi
+echo "ok: ... from its SKIPPED: line, without the run totals"
+
 report "${work}/disabled.xml" 'conformance.a|disabled' \
     'conformance.golden one|notrun' "${escaped}|notrun"
 expect 1 "an unlisted disabled test fails" "unexpected skip: conformance.a" \

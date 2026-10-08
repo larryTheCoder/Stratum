@@ -328,21 +328,26 @@ cannot keep stamping the old number.
   and a CI shard; `aquifer-probes.sh` is that table's aquifer units, and a
   `tools/analysis/*-probe.sh` that is neither a unit nor exempted with a
   reason fails `unit.tools.probe_worlds`. `tools/probe-worlds generate
-  --accept-eula` replaces each corpus whole and then runs `verify`, which
-  starts no server: every corpus present, recorded under the seed its cases
-  expect, frozen, with a non-empty region for every entry its spec names —
-  the check several cases cannot make, since they score whatever subset of
-  seeds or entries they find. **CI generates the probe worlds**: one x86-64
-  runner per shard, one server at a time, each shard cached in the Actions
-  cache only once `verify` passes, under a key that hashes the shard's rows
-  and every script they run (never the engine, which does not change what
-  the server writes), so editing one generator regenerates one shard. Both
-  conformance legs, x86-64 and ARM64, restore every shard and score the same
-  worlds, so both architectures meet the same flow remnant; a missing shard
-  fails the job by name. ctest counts a skip as a pass, so
-  `tools/check-skips` fails it on any case that skipped without a line in
-  `tests/conformance/expected-skips.txt`, and on any listed case that ran:
-  the list names every case CI does not check, and why.
+  --accept-eula` replaces each corpus whole and then runs `verify`. Each
+  unit's corpora are set aside while its generator runs and put back if it
+  fails, so a failed regeneration leaves what was there; and since nothing
+  is in the way when the generator starts, `density-probe.sh`'s other-seed
+  refusal does not arise through it: the table names each corpus's seed.
+  `verify` starts no server: every corpus present, recorded under the seed
+  its cases expect, frozen, with a non-empty region for every entry its
+  spec names — the check several cases cannot make, since they score
+  whatever subset of seeds or entries they find. **CI generates the probe
+  worlds**: one x86-64 runner per shard, one server at a time, each shard
+  cached in the Actions cache only once `verify` passes, under a key that
+  hashes the shard's rows and every script they run (never the engine,
+  which does not change what the server writes), so editing one generator
+  regenerates one shard. Both conformance legs, x86-64 and ARM64, restore
+  every shard and score the same worlds, so both architectures meet the
+  same flow remnant; a missing shard fails the job by name. ctest counts a
+  skip as a pass, so `tools/check-skips` fails it on any case that skipped
+  without a line in `tests/conformance/expected-skips.txt`, and on any
+  listed case that ran: the list names every case CI does not check, and
+  why.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
   engine output block-for-block in Java block space (before Bedrock
   mapping), reporting first divergence with coordinates and pipeline node
@@ -351,16 +356,21 @@ cannot keep stamping the old number.
   a spread of chunk regions including y-extremes and biome borders.
 - Fixtures are **generated, never committed** (they are derived from Mojang
   data); the repo ships scripts, not fixtures. CI generates the probe worlds
-  (above). The region goldens are generated locally only, for now: a fresh
-  generation keeps a run-dependent flow remnant (871 moved blocks on the
-  current set, PROGRESS.md), and `golden_overworld_test.cpp` still pins
-  flow-dependent counts measured on one local set. Before CI generates
-  goldens, in order: a second set generated locally with CI's exact commands
-  is scored; those pins become bounds plus flow-shape checks, as the probe
-  cases' did; and `fetch-vanilla --with-structures`, which today also turns
-  structures on in any regions it generates, stops doing so. Nothing
-  generated in CI leaves the runner except through the repository-scoped
-  Actions cache (§12).
+  (above). The region goldens are generated locally only, for now: the
+  current set holds an 871-block flow remnant (fluid the server moved after
+  generating, §11) and frozen probe reruns differ by 5-918 blocks (above),
+  so a fresh golden generation may not reproduce the flow-dependent counts
+  `golden_overworld_test.cpp` pins from the current set. Whether it does is
+  unmeasured: property 1's two frozen runs agreed exactly, and a remnant
+  that came out the same in every run would not contradict that. Before CI
+  generates goldens, in order: a second set generated locally with CI's
+  exact commands is scored, which measures it; if the two sets differ,
+  those pins become bounds plus flow-shape checks, as the probe cases' did;
+  and `fetch-vanilla --with-structures`, which today also turns structures
+  on in any regions it generates, stops doing so. No file generated in CI
+  leaves this repository's runners except through its repository-scoped
+  Actions cache, though the job logs carry some observed server output
+  (§12).
 
 ---
 
@@ -7804,15 +7814,26 @@ Open:
   workflow passes `--accept-eula` only in the job guarded by
   `github.repository == 'larryTheCoder/Stratum'`, so a fork's own CI never
   accepts it on its owner's behalf, and no script accepts it for anyone who
-  did not pass the flag. Everything Mojang-derived that CI handles — the
-  jar, extracted JSON and reports, probe worlds, server work directories —
-  stays on the runner or in the Actions cache: never committed, and never
-  published as a workflow artifact, release, Pages site or package
-  (`tools/lint/check-determinism.sh` rule 8 refuses any `upload-artifact`
-  step). The cache is repository-scoped, not private: this repository's own
-  workflow runs restore it, pull-request runs from forks included once they
-  are approved to run, so outside contributors' pull-request runs must stay
-  behind that approval.
+  did not pass the flag. Every Mojang-derived file CI handles — the jar,
+  extracted JSON and reports, probe worlds, server work directories — stays
+  on this repository's runners or in its Actions cache: never committed,
+  and never published as a workflow artifact, release, Pages site or
+  package. `tools/lint/check-determinism.sh` rule 8 refuses any
+  non-comment line under `.github`, or in any `action.yml`, that names
+  `upload-artifact` or `upload-pages-artifact`, in any case or YAML
+  spelling; what a third-party action does inside itself is beyond it,
+  which is why `ci.yml` uses `actions/*` only. The job logs, public on a
+  public repository, are not files but do carry observed server output:
+  the last lines of the server's log when a generator fails, and the
+  exception text the inline-noise probe records on every run. The cache is
+  repository-scoped, not private: this repository's own workflow runs
+  restore it, pull-request runs from forks included once they are approved
+  to run, and such a run executes the pull request's own `ci.yml`. So
+  outside contributors' pull-request runs must stay behind that approval
+  for every run, not only a first-time contributor's, which is GitHub's
+  default: Settings → Actions → General → "Approval for running fork pull
+  request workflows from contributors" must be "Require approval for all
+  external contributors". PROGRESS.md records whether it has been set.
 - No Mojang source code — decompiled or unobfuscated — is read, pasted,
   transcribed, or paraphrased in this repository or by Implementer
   sessions. Since commit 7f8a5ebe, behavior may additionally derive from
