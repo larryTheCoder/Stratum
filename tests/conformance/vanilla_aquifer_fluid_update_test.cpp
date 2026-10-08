@@ -17,6 +17,8 @@
 // server's own answer, position by position.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
 #include <stratum/data/pack.hpp>
@@ -163,6 +165,8 @@ TEST_CASE("the fluid-update flag is the server's own, on the comb worlds",
         const std::filesystem::path region =
             fixtures() / "probes" / ("comb_" + std::to_string(seed)) / "jv" / "r.0.0.mca";
         REQUIRE(std::filesystem::is_regular_file(region));
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, loaded.graph.referencedNoises(), seed, stratum::density::RandomSource::Xoroshiro);
         const stratum::density::Interpreter interpreter(loaded.graph, noises);
@@ -246,6 +250,7 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
     for (const char* probeName : {"waterlava_s42", "waterlava_s8675309"}) {
         INFO("probe " << probeName);
         const std::filesystem::path probe = fixtures() / "probes" / probeName;
+        stratum::test::requireFrozen(probe, "tools/analysis/aquifer-waterlava-probe.sh");
         std::ifstream manifestFile(probe / "manifest.json");
         const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
         std::ifstream specFile(probe / "spec.json");
@@ -354,6 +359,7 @@ TEST_CASE("the filler marks exactly the fluid updates the server does, on real o
                                        << "; generate it with "
                                           "tools/analysis/aquifer-on-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-on-probe.sh");
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
     auto overworld =

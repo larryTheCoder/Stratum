@@ -45,13 +45,15 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
                                            "minecraft:water[level=0]",
                                            "minecraft:water[level=1]",
                                            "minecraft:lava[level=0]",
-                                           "minecraft:obsidian"};
+                                           "minecraft:obsidian",
+                                           "minecraft:lava[level=8]"};
     constexpr std::uint16_t kAir = 0;
     constexpr std::uint16_t kStone = 1;
     constexpr std::uint16_t kWater = 2;
     constexpr std::uint16_t kFlowing = 3;
     constexpr std::uint16_t kLava = 4;
     constexpr std::uint16_t kObsidian = 5;
+    constexpr std::uint16_t kFallingLava = 6;
     std::vector<std::uint16_t> blocks(4096, kAir);
     const auto put = [&blocks](int x, int y, int z, std::uint16_t block) {
         blocks[static_cast<std::size_t>((((y * 16) + z) * 16) + x)] = block;
@@ -70,6 +72,13 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     put(12, 5, 13, kWater);
     // A plain stone.
     put(2, 5, 12, kStone);
+    // Lava fell onto water: stone, falling lava above, obsidian below.
+    put(8, 5, 12, kStone);
+    put(8, 6, 12, kFallingLava);
+    put(8, 4, 12, kObsidian);
+    // Stone under falling lava with nothing of water's beside it.
+    put(14, 5, 12, kStone);
+    put(14, 6, 12, kFallingLava);
     // A lava source between two others.
     for (const int x : {13, 14, 15}) {
         put(x, 5, 6, kLava);
@@ -96,6 +105,7 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     CHECK(explained(12, 12, Category::Solid, Category::Lava));
     CHECK(explained(12, 12, Category::Solid, Category::Air)); // fluid flowed in first
     CHECK(explained(12, 13, Category::Water, Category::Lava));
+    CHECK(explained(8, 12, Category::Solid, Category::Air));
 
     // Refused: a source with ONE source beside it; stone where the first
     // pass has lava (a barrier the aquifer missed is the aquifer's); golden
@@ -104,6 +114,7 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     CHECK_FALSE(explained(9, 9, Category::Water, Category::Air));
     CHECK_FALSE(explained(2, 12, Category::Solid, Category::Lava));
     CHECK_FALSE(explained(2, 12, Category::Solid, Category::Air));
+    CHECK_FALSE(explained(14, 12, Category::Solid, Category::Air)); // no water ever met it
     CHECK_FALSE(explained(8, 2, Category::Air, Category::Lava));
     CHECK_FALSE(explained(14, 6, Category::Lava, Category::Air));
     // And water beside nothing that water left behind.

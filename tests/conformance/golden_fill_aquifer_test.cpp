@@ -73,11 +73,14 @@
 // aquifer question at all. Every one of the 192 is FLOWING water — `level`
 // 1 or more, never a source — which the server's fluid ticks put there
 // after generating (spec Q8.1; this probe force-loads its chunks, and they
-// tick). The second case below pins the sweep and that attribution, block
-// by block, through `support/fluid_flow.hpp`.
+// tick). Frozen before generating (support/probe_corpus.hpp), the same
+// probe keeps 2 of them: the raw sweep is 6291454 of 6291456. The second
+// case below holds that, and the attribution block by block, through
+// `support/fluid_flow.hpp`.
 //
 // Nothing this reads is committed: the fixture is Mojang-derived (SPEC §12).
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/biome/parameter_list.hpp>
@@ -131,6 +134,7 @@ TEST_CASE("the aquifer wiring places the blocks the server placed, before any su
         SKIP("no aquifer-on probe at " << region << "; generate it with "
                                        << "tools/analysis/aquifer-on-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-on-probe.sh");
 
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
@@ -269,6 +273,7 @@ TEST_CASE("the aquifer-on probe's 64-chunk sweep: every raw disagreement is wate
         SKIP("no aquifer-on probe at " << region << "; generate it with "
                                        << "tools/analysis/aquifer-on-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-on-probe.sh");
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
     auto overworld =
@@ -317,10 +322,12 @@ TEST_CASE("the aquifer-on probe's 64-chunk sweep: every raw disagreement is wate
         }
     }
     REQUIRE(blocks == 6291456U);
-    // The sweep SPEC §11 and PROGRESS quote, now pinned rather than recalled.
-    CHECK(agree == 6291264U);
-    // And the whole of its residual: flowing water, every block.
-    CHECK(flowing == 192U);
+    // The sweep SPEC §11 and PROGRESS quote. Its whole residual is flowing
+    // water: 192 blocks before the probe was frozen, 2 after — a remnant that
+    // differs between frozen runs (support/probe_corpus.hpp), so it is bounded
+    // at under 1 in 100 000 blocks, which the unfrozen corpus failed.
+    CHECK(agree + flowing == blocks);
+    CHECK(flowing * 100000 < blocks);
     CHECK(otherFlow == 0U);
     CHECK(unexplained == 0U);
 }

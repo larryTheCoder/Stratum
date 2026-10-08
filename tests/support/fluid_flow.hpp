@@ -1,15 +1,18 @@
 // Stratum — telling an aquifer that decided wrong from fluid that moved.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// A golden region is what the server SAVED, and by then its fluids have
-// ticked: spec Q8.1's post-processing flag schedules a fluid tick for every
-// flagged position when a chunk is loaded, and water and lava flow before
-// the region reaches disk. Stratum schedules no fluid ticks (Q8 is not
-// implemented), so a first pass that is exactly right still disagrees with
-// a golden region wherever fluid moved — and the bare category counts these
+// A golden region is what the server SAVED, and by then some of its fluids
+// have moved: spec Q8.1's post-processing flag schedules a fluid tick for
+// every flagged position when a chunk is loaded, and water and lava flow
+// before the region reaches disk. Freezing the world first (fetch-vanilla
+// does, and so do the probe harnesses: support/probe_corpus.hpp) stops the
+// ticks but not all of the movement — a small remnant, different from one
+// frozen run to the next, survives. Stratum carries the flag but runs no
+// fluid ticks, so a first pass that is exactly right still disagrees with a
+// saved region wherever fluid moved — and the bare category counts these
 // files used to pin could not tell that from an aquifer decision going wrong.
 //
-// `explainedByFlow` attributes one raw-category disagreement to the four
+// `explainedByFlow` attributes one raw-category disagreement to the five
 // shapes fluid movement leaves, and to nothing else. Measured, not chosen: on
 // all eight golden overworld regions and the aquifer-on probe's 64-chunk
 // sweep it accounts for every disagreement the raw first pass leaves (SPEC
@@ -118,16 +121,20 @@ private:
 
 /// Whether a raw-category disagreement at (x, y, z) is the server's fluid
 /// moving AFTER generation rather than the aquifer deciding differently.
-/// Four shapes, and nothing else is let through:
+/// Five shapes, and nothing else is let through:
 ///
 ///   - golden fluid FLOWING (level > 0) where the first pass has air;
 ///   - golden water SOURCE where the first pass has air, between at least two
 ///     horizontal water sources — flow the infinite-source rule converted
 ///     back into a source;
 ///   - golden obsidian or cobblestone where the first pass has fluid or air —
-///     water met lava, where one of them was or had flowed (plain stone is
-///     NOT let through: it is also what a missed barrier looks like);
-///   - golden water where the first pass has lava, beside such a block.
+///     water met lava, where one of them was or had flowed (stone is let
+///     through only in the last shape, below);
+///   - golden water where the first pass has lava, beside such a block;
+///   - golden STONE where the first pass has air or fluid, with flowing lava
+///     directly above it and water's meeting with lava beside it (obsidian,
+///     cobblestone or flowing water) — lava fell onto water there. Stone
+///     alone is never enough: it is also what a missed barrier looks like.
 [[nodiscard]] inline bool explainedByFlow(GoldenRegion& golden, std::int32_t x, std::int32_t y,
                                           std::int32_t z, Category goldenCategory,
                                           Category rawCategory) {
@@ -136,12 +143,15 @@ private:
         {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}, {0, -1, 0}}};
     int horizontalWaterSources = 0;
     bool besideContact = false;
+    bool besideFlowingWater = false;
     for (const auto& [dx, dy, dz] : kNeighbours) {
         const chunk::BlockState* next = golden.blockAt(x + dx, y + dy, z + dz);
         if (dy == 0 && named(next, "minecraft:water") && fluidLevel(next) == 0) {
             ++horizontalWaterSources;
         }
         besideContact = besideContact || fluidContactBlock(next);
+        besideFlowingWater =
+            besideFlowingWater || (named(next, "minecraft:water") && fluidLevel(next) > 0);
     }
     if (isFluid(goldenCategory) && rawCategory == Category::Air) {
         return fluidLevel(here) > 0 || (goldenCategory == Category::Water &&
@@ -149,7 +159,12 @@ private:
     }
     if (goldenCategory == Category::Solid &&
         (isFluid(rawCategory) || rawCategory == Category::Air)) {
-        return fluidContactBlock(here);
+        if (fluidContactBlock(here)) {
+            return true;
+        }
+        const chunk::BlockState* above = golden.blockAt(x, y + 1, z);
+        return named(here, "minecraft:stone") && named(above, "minecraft:lava") &&
+               fluidLevel(above) > 0 && (besideContact || besideFlowingWater);
     }
     if (goldenCategory == Category::Water && rawCategory == Category::Lava) {
         return besideContact;

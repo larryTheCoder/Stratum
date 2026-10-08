@@ -30,6 +30,8 @@
 // boundary actually produces rather than one lucky configuration.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -164,6 +166,9 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
         SKIP("no depth-gate aquifer probe at "
              << readout << "; generate it with tools/analysis/aquifer-depthgate-probe.sh");
     }
+    stratum::test::requireFrozen(fixtures() / "probes" / "depthgate",
+                                 "tools/analysis/aquifer-depthgate-probe.sh");
+    stratum::test::requireSeed(fixtures() / "probes" / "depthgate", 42);
     const Field field{readout};
     const CentreSource centres{42};
 

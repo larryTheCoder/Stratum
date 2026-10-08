@@ -299,6 +299,21 @@ cannot keep stamping the old number.
      identical block content: chunk timestamps, `InhabitedTime`, sector
      ordering and compression all vary. A byte-level harness would report
      failure on every run.
+- **Probe worlds** (`tools/analysis/*-probe.sh`: everything built on
+  `density-probe.sh`, plus `aquifer-on-probe.sh` and
+  `aquifer-free-probe.sh`) are frozen the same way, and each corpus's
+  `manifest.json` records `ticks_frozen` and the seed. An aquifer case
+  refuses a corpus that was not frozen, and one from another seed where the
+  case knows its seed; `density-probe.sh` refuses to replace a corpus of
+  another seed unless `STRATUM_PROBE_OVERWRITE=1`, because its output is
+  named after the spec alone. Freezing removes 97-99% of a probe's fluid
+  movement, but not all of it, and what survives depends on the run: two
+  frozen runs of the varying-surface probe are identical on 7 of its 12
+  arms and differ by 5-918 blocks on the other five, and two of one
+  water/lava seed on 3 of 4 arms with 331 blocks between them on the
+  fourth — every differing block air, water, lava or obsidian. So a probe case bounds the flow it sees and
+  requires every disagreement to take a shape flow leaves
+  (`tests/support/fluid_flow.hpp`); it never pins a count of it.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
   engine output block-for-block in Java block space (before Bedrock
   mapping), reporting first divergence with coordinates and pipeline node
@@ -2504,6 +2519,55 @@ Open:
     still mix, every one a lava body holding 1-4 water sources: 22 blocks,
     14 of them beside the obsidian or cobblestone that water leaves on
     meeting lava. The other 8 are pinned and named, not explained.
+
+- **Probe worlds are frozen now, and the exact counts above were timing
+  (MA).** No output changes. The previous entry's figures were measured on
+  probes generated without `/tick freeze`, and its exact counts — 34 878,
+  999, 15 mixed sources — were how far fluid had moved by the save, which
+  a second run would not reproduce. Every probe harness now freezes first
+  (§7). Frozen, the varying surface keeps 3 586 flow blocks, selection 25,
+  and the aquifer-on sweep 2 where it had 192: the raw first pass is
+  6 291 454 of 6 291 456 blocks on vanilla's own overworld settings. The
+  fluid type types 3 160 of 3 160 sources, 17 of 3 177 mixing — 12 of their
+  minority blocks at a contact block, and the same 8 named ones. What flow
+  survives differs between frozen runs, so those counts are bounds now, and
+  each case still requires every disagreement to be flow-shaped.
+
+  *The varying-surface probe's controls are read.* Its three constant-surface
+  dimensions (c96, cm20, cm70, psl 96 / -20 / -70 at floodedness 0.5) were
+  generated from the start as the harness's self-check and never scored.
+  Through the varying arms' own path, each is exact but for flow (4, 1 215
+  and 788 of about 1.5 million blocks), holds one gate value, and has no
+  source whose prefix minimum differs from the whole window's — the
+  degeneracy the varying arms exist to escape, shown rather than assumed.
+
+  *The row-lambda barrier residual was flow too.* On the water/lava probes
+  the predicate missed 35 server barriers in pure junctions and 4 in mixed
+  ones, all on row lambda; frozen, it misses none (1 096 found by Q6.4's
+  constant, 0 missed), and the type-field and types-regardless readings,
+  which unfrozen runs let 0-4 stones per row through, see none at all. The
+  42 stones on row lambda that the unfrozen fluid-type probe carried were
+  the same thing:
+  `explainedByFlow` gains a fifth shape — stone with flowing lava directly
+  above and obsidian, cobblestone or flowing water beside: lava that fell
+  onto water — and it accounts for all 42. Stone on its own is still never
+  credited; it is also what a missed barrier looks like. Below the sea -70
+  arm's lava sea, one frozen run kept 311 blocks of falling water, each with
+  its own fluid tick still pending.
+
+- **Q4.1's window beats the symmetric 27-cell set, on the server's own
+  deep barriers (MA).** No output changes. The two entries below that keep
+  Q4.1 "untested" were right about the corpora they had: on the two-source
+  barrier worlds neighbouring sources held one level, Q6.2's short-circuit
+  hid every place the two windows part, and nothing could tell them apart.
+  The deep-floor corpora hold neighbours at DIFFERENT levels, so the
+  three-source barrier reaches rank 3, which is where the windows part. Read
+  through the same frozen worlds the `/10` ablation uses (three seeds, 7.9
+  million blocks), the 27-cell rival's first three ranks differ on 118 980
+  blocks and its barrier verdict on 39; the server sides with the spec's
+  twelve cells on all 39. `kWindowIsUntested` is gone, and the finding is
+  pinned in `vanilla_aquifer_deepfloor_test.cpp`. Only that rival is
+  refuted: a different asymmetric set has not been tried.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

@@ -20,6 +20,8 @@
 // readout tests the vertical one.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>
@@ -69,8 +71,10 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
         const std::filesystem::path region = fixtures() / "probes" / world.dir / "jv" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no open-void aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
         const stratum::aquifer::CentreSource centres{world.seed};
         std::vector grid(kCells, std::vector<Tally>(kCells));

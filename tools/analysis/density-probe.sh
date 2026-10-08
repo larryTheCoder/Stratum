@@ -4,6 +4,17 @@
 #
 #   tools/analysis/density-probe.sh --accept-eula --spec <spec.json> [--seed N]
 #                                   [--origin-chunk <chunkX> <chunkZ>]
+#                                   [--no-freeze-ticks]
+#
+# The world is frozen (`/tick freeze`) before any chunk is generated, exactly
+# as tools/fetch-vanilla freezes the goldens (SPEC §7, property 1). A probe
+# dimension that holds fluid otherwise keeps flowing between generation and
+# save, so the region records generation PLUS a wall-clock-dependent amount
+# of flow: lava falling onto water turns it to stone, water reaching lava
+# leaves obsidian, and a count pinned against one run is not the count the
+# next run produces. Frozen, almost all of that stops — not quite all: SPEC §7
+# records what survives. --no-freeze-ticks restores the old behaviour, for a
+# question that is about the ticking world itself. The manifest records which.
 #
 # --origin-chunk moves the CHUNKSxCHUNKS block this forceloads away from the
 # world origin, and with it the region file collected. It exists because some
@@ -16,6 +27,9 @@
 # at all. The default is 0 0, i.e. exactly what every existing spec
 # already got, and the forceloaded block must lie inside ONE region so the
 # collected file is the whole of it.
+#
+# STRATUM_PROBE_OVERWRITE=1 lets a run replace a corpus that was generated
+# from a DIFFERENT seed (the output directory is named after the spec alone).
 #
 # STRATUM_PROBE_KEEP_WORK=1 in the environment keeps the work directory
 # (server, world, generated datapack) instead of deleting it on exit —
@@ -78,6 +92,7 @@ spec=""
 seed=42
 origin_chunk_x=0
 origin_chunk_z=0
+freeze_ticks=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --accept-eula) accept_eula=1; shift ;;
@@ -85,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         --seed)        seed="${2:?--seed needs a number}"; shift 2 ;;
         --origin-chunk) origin_chunk_x="${2:?--origin-chunk needs chunkX chunkZ}"
                         origin_chunk_z="${3:?--origin-chunk needs chunkX chunkZ}"; shift 3 ;;
+        --no-freeze-ticks) freeze_ticks=0; shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -106,6 +122,19 @@ command -v java >/dev/null 2>&1 || die "java is needed"
 command -v python3 >/dev/null 2>&1 || die "python3 is needed"
 
 spec_name="$(basename "${spec}" .json)"
+# The output directory is named after the spec, not the seed, so a run with a
+# second seed would silently replace the first seed's corpus — and a test
+# pinned against the first would then fail as if the code had regressed.
+# Regenerating the SAME seed is the normal case and goes ahead; a different
+# seed has to be asked for, with STRATUM_PROBE_OVERWRITE=1.
+existing_manifest="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/${spec_name}/manifest.json"
+if [[ -f "${existing_manifest}" && -z "${STRATUM_PROBE_OVERWRITE:-}" ]]; then
+    existing_seed="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["seed"])' \
+        "${existing_manifest}")"
+    [[ "${existing_seed}" == "${seed}" ]] \
+        || die "probes/${spec_name} holds seed ${existing_seed}, not ${seed}; this run would replace it.
+       Give the spec a seed-specific name, or set STRATUM_PROBE_OVERWRITE=1 to replace it"
+fi
 jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
 [[ -n "${jar}" ]] || die "no server jar under .fixtures/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
@@ -351,6 +380,15 @@ while (( waited < 180 )); do
 done
 grep -q 'Done (' "${work}/server.log" || { tail -30 "${work}/server.log" >&2; die "server did not start"; }
 
+if [[ ${freeze_ticks} -eq 1 ]]; then
+    log "freezing the world before generating"
+    printf 'tick freeze\n' >&3
+    sleep 2
+    grep -q -i 'frozen' "${work}/server.log" \
+        || { printf 'stop\n' >&3; die "'tick freeze' was not acknowledged; re-run with --no-freeze-ticks
+       only if the question is about the ticking world"; }
+fi
+
 mapfile -t names < <(python3 -c "
 import json,sys
 for e in json.load(open('${spec}')): print(e['name'])
@@ -425,6 +463,7 @@ cat > "${out_root}/manifest.json" <<MANIFEST
 {"seed": ${seed}, "k": ${K}, "min_y": ${MIN_Y}, "height": ${HEIGHT},
  "chunks": ${CHUNKS}, "version": "${MINECRAFT_VERSION}",
  "origin_chunk": [${origin_chunk_x}, ${origin_chunk_z}], "region": "${region_file}",
+ "ticks_frozen": $([[ ${freeze_ticks} -eq 1 ]] && echo true || echo false),
  "probe_noise": {"id": "stratum:probe_noise", "first_octave": -3, "amplitudes": [1.0]}}
 MANIFEST
 cp "${spec}" "${out_root}/spec.json"

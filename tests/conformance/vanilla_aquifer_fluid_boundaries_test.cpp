@@ -14,13 +14,15 @@
 // `aquifer::computeSubstance` — the call the filler makes — at every block of
 // every fourth column, against the block the server wrote. The probe
 // force-loads its chunks without freezing ticks, so water the server's fluid
-// ticks moved is allowed through `support/fluid_flow.hpp`'s four shapes and
-// nothing else. Then the two boundaries are pinned by name: `lava` exactly
-// 0.3 makes no lava and the next double up does, and a level of exactly -10
-// is lava while -9 is not.
+// ticks moved is allowed through `support/fluid_flow.hpp`'s shapes and
+// nothing else — the 42 blocks of stone on row lambda it once set apart as a
+// barrier residual included: lava fell onto water there. Then the two boundaries are pinned by
+// name: `lava` exactly 0.3 makes no lava and the next double up does, and a level of exactly -10 is
+// lava while -9 is not.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
@@ -85,10 +87,6 @@ struct Tally {
     long long oursLava = 0;
     /// Our lava source where the server has obsidian: water flowed onto it.
     long long oursLavaQuenched = 0;
-    /// Server stone on row lambda itself where this build has air — the
-    /// barrier residual PROGRESS.md carries open for row lambda (the
-    /// waterlava case's "every pure miss sits on row lambda").
-    long long rowLambdaStone = 0;
 };
 
 } // namespace
@@ -102,6 +100,7 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
              << "; generate it with "
                 "tools/analysis/aquifer-fluidtype-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(probe, "tools/analysis/aquifer-fluidtype-probe.sh");
     std::ifstream manifestFile(probe / "manifest.json");
     REQUIRE(nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>() == kSeed);
     std::ifstream specFile(probe / "spec.json");
@@ -163,8 +162,6 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
                     }
                     if (g == r) {
                         ++tally.agree;
-                    } else if (y == lambda && g == Category::Solid && r == Category::Air) {
-                        ++tally.rowLambdaStone;
                     } else if (stratum::test::explainedByFlow(golden, x, y, z, g, r)) {
                         ++tally.flow;
                     } else {
@@ -188,14 +185,6 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
 
     // Every arm the probe declares, read: a missing one failed above.
     REQUIRE(byDimension.size() == spec.size());
-
-    // The row-lambda residual, pinned rather than hidden: 7 blocks in each
-    // of the six arms whose sources are lava, none anywhere else.
-    long long rowLambdaStone = 0;
-    for (const auto& [name, tally] : byDimension) {
-        rowLambdaStone += tally.rowLambdaStone;
-    }
-    CHECK(rowLambdaStone == 42);
 
     // Strict at 0.3: exactly 0.3 makes no lava, the next double up makes it.
     REQUIRE(byDimension.contains("a_exact"));

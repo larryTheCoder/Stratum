@@ -29,7 +29,13 @@
 //     divisors independently"), run against the server rather than against
 //     another model.
 //
+//   * Q4.1's twelve-cell window beats the symmetric 27-cell set: different
+//     levels on neighbouring sources are what let the rival's rank 3 change a
+//     verdict at all, so this corpus is the first that can tell them apart.
+//
 // Nothing this reads is committed: the worlds are Mojang-derived (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -183,6 +189,14 @@ struct Score {
     long long tenCorrect = 0;
     long long threeCorrect = 0;
     long long committedMismatches = 0;
+    /// Q4.1's rival window, the symmetric 27 cells around the home cell:
+    /// blocks where its first three ranks differ from the shipped window's,
+    /// the ones where that changes the verdict, and which window the server
+    /// sides with there.
+    long long windowDiffers = 0;
+    long long windowDecides = 0;
+    long long twelveCorrect = 0;
+    long long rivalCorrect = 0;
 };
 
 } // namespace
@@ -223,6 +237,7 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                       << "tools/analysis/aquifer-deepfloor-probe.sh --accept-eula <seed>");
         REQUIRE(std::filesystem::is_regular_file(manifestPath));
         REQUIRE(std::filesystem::is_regular_file(specPath));
+        stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-deepfloor-probe.sh");
         std::ifstream manifestFile(manifestPath);
         const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
         const auto seed = manifest.at("seed").get<std::int64_t>();
@@ -278,6 +293,9 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
             const aquifer::PslRead surface = aquifer::constantSurface(dim.psl);
 
             const auto file = region::RegionFile::open(regionPath);
+            aquifer::CellIndex rivalHome{
+                .x = std::numeric_limits<std::int32_t>::min(), .y = 0, .z = 0};
+            std::array<aquifer::Candidate, 27> rivalWindow{};
             Ablation asTen{.tenDivisor = 10.0};
             Ablation asThree{.tenDivisor = 3.0};
 
@@ -302,40 +320,45 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                     continue;
                                 }
 
+                                const double barrierNoise = interp.evaluate(
+                                    barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+                                const auto barrierFor = [&](const aquifer::Selection& sel) {
+                                    std::array<aquifer::BarrierSource, 3> src{};
+                                    for (std::size_t r = 0; r < 3; ++r) {
+                                        const auto& s = sel.ranked[r];
+                                        const aquifer::SamplePos sp =
+                                            aquifer::spreadSample(s.cell, s.centre);
+                                        const double spread = interp.evaluate(
+                                            spreadNode,
+                                            density::Point{.x = sp.x, .y = sp.y, .z = sp.z}, cache);
+                                        const aquifer::CellFluid cell{.centreY = s.centre.y,
+                                                                      .surface = surface,
+                                                                      .seaLevel = kSeaLevel,
+                                                                      .floodedness =
+                                                                          kLadderFloodedness,
+                                                                      .spread = spread};
+                                        const std::int32_t level = aquifer::cellFluidLevel(cell);
+                                        src[r] = aquifer::BarrierSource{
+                                            .level = level,
+                                            .distanceSq = s.distanceSq,
+                                            .type = aquifer::fluidTypeOf(
+                                                aquifer::FluidTypeAt{.centreY = s.centre.y,
+                                                                     .level = level,
+                                                                     .seaLevel = kSeaLevel,
+                                                                     .lava = 0.0})};
+                                    }
+                                    aquifer::BarrierAt at;
+                                    at.y = y;
+                                    at.density = dim.density;
+                                    at.nearest = src[0];
+                                    at.second = src[1];
+                                    at.third = src[2];
+                                    at.barrier = barrierNoise;
+                                    return at;
+                                };
                                 const aquifer::Selection sel =
                                     aquifer::selectSources(centres, x, y, z);
-                                std::array<aquifer::BarrierSource, 3> src{};
-                                for (std::size_t r = 0; r < 3; ++r) {
-                                    const auto& s = sel.ranked[r];
-                                    const aquifer::SamplePos sp =
-                                        aquifer::spreadSample(s.cell, s.centre);
-                                    const double spread = interp.evaluate(
-                                        spreadNode, density::Point{.x = sp.x, .y = sp.y, .z = sp.z},
-                                        cache);
-                                    const aquifer::CellFluid cell{.centreY = s.centre.y,
-                                                                  .surface = surface,
-                                                                  .seaLevel = kSeaLevel,
-                                                                  .floodedness = kLadderFloodedness,
-                                                                  .spread = spread};
-                                    const std::int32_t level = aquifer::cellFluidLevel(cell);
-                                    src[r] = aquifer::BarrierSource{
-                                        .level = level,
-                                        .distanceSq = s.distanceSq,
-                                        .type = aquifer::fluidTypeOf(
-                                            aquifer::FluidTypeAt{.centreY = s.centre.y,
-                                                                 .level = level,
-                                                                 .seaLevel = kSeaLevel,
-                                                                 .lava = 0.0})};
-                                }
-
-                                aquifer::BarrierAt at;
-                                at.y = y;
-                                at.density = dim.density;
-                                at.nearest = src[0];
-                                at.second = src[1];
-                                at.third = src[2];
-                                at.barrier = interp.evaluate(
-                                    barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+                                const aquifer::BarrierAt at = barrierFor(sel);
 
                                 const bool shipped = aquifer::placesBarrier(at);
                                 const bool ten = asTen.places(at);
@@ -365,6 +388,47 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                         ++pooled.threeCorrect;
                                     }
                                 }
+
+                                // Q4.1: the same block through the symmetric
+                                // 27-cell window, in x, y, z order.
+                                const aquifer::CellIndex home = aquifer::cellOf(x, y, z);
+                                if (!(home == rivalHome)) {
+                                    rivalHome = home;
+                                    std::size_t i = 0;
+                                    for (std::int32_t dx = -1; dx <= 1; ++dx) {
+                                        for (std::int32_t dy = -1; dy <= 1; ++dy) {
+                                            for (std::int32_t dz = -1; dz <= 1; ++dz) {
+                                                const aquifer::CellIndex cell{.x = home.x + dx,
+                                                                              .y = home.y + dy,
+                                                                              .z = home.z + dz};
+                                                rivalWindow[i++] =
+                                                    aquifer::Candidate{.cell = cell,
+                                                                       .centre = centres.centreOf(
+                                                                           cell.x, cell.y, cell.z)};
+                                            }
+                                        }
+                                    }
+                                }
+                                const aquifer::Selection rival =
+                                    aquifer::rankCandidates(x, y, z, rivalWindow);
+                                bool sameRanks = true;
+                                for (std::size_t r = 0; r < 3; ++r) {
+                                    sameRanks =
+                                        sameRanks && rival.ranked[r].cell == sel.ranked[r].cell &&
+                                        rival.ranked[r].distanceSq == sel.ranked[r].distanceSq;
+                                }
+                                if (!sameRanks) {
+                                    ++pooled.windowDiffers;
+                                    const bool rivalStone =
+                                        aquifer::placesBarrier(barrierFor(rival));
+                                    if (rivalStone != shipped) {
+                                        ++pooled.windowDecides;
+                                        pooled.twelveCorrect +=
+                                            static_cast<long long>(shipped == observedStone);
+                                        pooled.rivalCorrect +=
+                                            static_cast<long long>(rivalStone == observedStone);
+                                    }
+                                }
                             }
                         }
                     }
@@ -379,7 +443,11 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     REQUIRE(dimensionsScored == kProbeDirs.size() * kDimensions.size());
 
     INFO("blocks " << pooled.blocks << ", server stone " << pooled.serverStone << ", /10-decided "
-                   << pooled.decidedByTen << ", contested " << pooled.contested);
+                   << pooled.decidedByTen << ", contested " << pooled.contested
+                   << "; the 27-cell window differs in its first three ranks on "
+                   << pooled.windowDiffers << ", changes the verdict on " << pooled.windowDecides
+                   << " (12-cell right " << pooled.twelveCorrect << ", 27-cell right "
+                   << pooled.rivalCorrect << ")");
 
     // The ablation at divisor 10 IS the committed predicate. Nothing below
     // means anything if this fails.
@@ -399,4 +467,15 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     // disagree, the server sides with 10.
     CHECK(pooled.tenCorrect == pooled.contested);
     CHECK(pooled.threeCorrect == 0);
+
+    // Q4.1's window, against the symmetric 27-cell rival. Here, and not on
+    // the two-source corpora, the rival changes verdicts: neighbouring cells
+    // hold different levels, so the three-source barrier reaches rank 3,
+    // where the two windows part. Measured 118980 blocks with different first
+    // three ranks and 39 different verdicts, every one of them the server's
+    // way for the spec's window. The floor keeps the population from passing
+    // empty.
+    REQUIRE(pooled.windowDecides >= 30);
+    CHECK(pooled.twelveCorrect == pooled.windowDecides);
+    CHECK(pooled.rivalCorrect == 0);
 }

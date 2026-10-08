@@ -31,6 +31,8 @@
 // scoring the wrong world against the right seed's math.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -107,6 +109,7 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
                                                 << "; generate it with "
                                                    "tools/analysis/aquifer-barrier-probe.sh");
     }
+    stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-barrier-probe.sh");
     std::ifstream manifestFile(manifestPath);
     const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
     const std::int64_t seed = manifest.at("seed").get<std::int64_t>();

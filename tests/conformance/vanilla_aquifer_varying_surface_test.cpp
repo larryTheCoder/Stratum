@@ -24,6 +24,7 @@
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -140,6 +141,94 @@ struct Score {
     std::set<std::int32_t> gateValues;
 };
 
+/// Scores one aquifer world against the level rule, the surface read through
+/// @p surfaceAt(x, z) — the readout field for a varying arm, a constant for a
+/// control. One path for both, so a control that fails is the harness
+/// failing, not a second implementation of it.
+template<typename SurfaceAt>
+void scoreWorld(const std::filesystem::path& world, SurfaceAt&& surfaceAt, double floodedness,
+                Score& total) {
+    const CentreSource centres{42};
+    const auto file = stratum::region::RegionFile::open(world);
+    stratum::test::GoldenRegion golden(world);
+    std::set<std::tuple<std::int32_t, std::int32_t, std::int32_t>> counted;
+
+    for (std::int32_t cz = 0; cz < kChunks; ++cz) {
+        for (std::int32_t cx = 0; cx < kChunks; ++cx) {
+            // A probe region holds every chunk of its window: a missing one is
+            // a broken corpus, not a smaller sample.
+            REQUIRE(file.hasChunk(cx, cz));
+            const auto chunk =
+                stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
+            for (std::int32_t lz = 0; lz < 16; ++lz) {
+                for (std::int32_t lx = 0; lx < 16; ++lx) {
+                    // At or above the global lava sea only: below it the
+                    // picker overrides the lattice outright.
+                    for (std::int32_t y = stratum::aquifer::lambdaLevel(kSeaLevel); y < 200; ++y) {
+                        const auto* block = chunk.blockAt(lx, y, lz);
+                        if (block == nullptr) {
+                            continue;
+                        }
+                        const bool fluid =
+                            block->name == "minecraft:water" || block->name == "minecraft:lava";
+                        if (!fluid && block->name != "minecraft:air") {
+                            continue; // barrier stone
+                        }
+                        const std::int32_t x = (cx * 16) + lx;
+                        const std::int32_t z = (cz * 16) + lz;
+                        const CellIndex centre =
+                            stratum::aquifer::selectSources(centres, x, y, z).nearest().centre;
+
+                        // The scan reaches 48 blocks west and 16 east,
+                        // north and south. A source whose window leaves
+                        // the probe footprint is not measurable here.
+                        bool reachable = true;
+                        const auto sampler = [&](const std::int32_t sx, std::int32_t,
+                                                 const std::int32_t sz) {
+                            if (!Field::inside(sx, sz)) {
+                                reachable = false;
+                                return 0.0;
+                            }
+                            return surfaceAt(sx, sz);
+                        };
+                        const PslRead read =
+                            stratum::aquifer::readPreliminarySurface(sampler, centre, kSeaLevel);
+                        if (!reachable) {
+                            continue;
+                        }
+
+                        const std::int32_t level = stratum::aquifer::cellFluidLevel(
+                            stratum::aquifer::CellFluid{.centreY = centre.y,
+                                                        .surface = read,
+                                                        .seaLevel = kSeaLevel,
+                                                        .floodedness = floodedness,
+                                                        .spread = 0.0});
+                        ++total.blocks;
+                        const bool oursFluid = y < level;
+                        if (oursFluid == fluid) {
+                            ++total.agree;
+                        } else if (fluid &&
+                                   stratum::test::explainedByFlow(
+                                       golden, x, y, z, stratum::test::categoryOf(block->name),
+                                       stratum::test::Category::Air)) {
+                            ++total.flow;
+                        } else {
+                            ++(fluid ? total.serverFluidOursAir : total.serverAirOursFluid);
+                        }
+
+                        if (counted.insert({centre.x, centre.y, centre.z}).second) {
+                            ++total.sources;
+                            total.aborted += static_cast<int>(read.aborted);
+                            total.prefixDiffersFromWhole += static_cast<int>(read.gate != read.cap);
+                            total.gateValues.insert(read.gate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 } // namespace
 
 TEST_CASE("the aquifer's level rule holds where the surface varies", "[conformance][aquifer]") {
@@ -155,89 +244,14 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
             SKIP("no varying-surface aquifer probe at "
                  << world << "; generate it with tools/analysis/aquifer-psl-probe.sh");
         }
+        stratum::test::requireFrozen(world.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-psl-probe.sh");
+        stratum::test::requireSeed(world.parent_path().parent_path(), 42);
 
         const Field field{readout};
-        const CentreSource centres{42};
-        const auto file = stratum::region::RegionFile::open(world);
-        stratum::test::GoldenRegion golden(world);
-        std::set<std::tuple<std::int32_t, std::int32_t, std::int32_t>> counted;
-
-        for (std::int32_t cz = 0; cz < kChunks; ++cz) {
-            for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                // A probe region holds every chunk of its window: a missing one is
-                // a broken corpus, not a smaller sample.
-                REQUIRE(file.hasChunk(cx, cz));
-                const auto chunk =
-                    stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
-                for (std::int32_t lz = 0; lz < 16; ++lz) {
-                    for (std::int32_t lx = 0; lx < 16; ++lx) {
-                        // At or above the global lava sea only: below it the
-                        // picker overrides the lattice outright.
-                        for (std::int32_t y = stratum::aquifer::lambdaLevel(kSeaLevel); y < 200;
-                             ++y) {
-                            const auto* block = chunk.blockAt(lx, y, lz);
-                            if (block == nullptr) {
-                                continue;
-                            }
-                            const bool fluid =
-                                block->name == "minecraft:water" || block->name == "minecraft:lava";
-                            if (!fluid && block->name != "minecraft:air") {
-                                continue; // barrier stone
-                            }
-                            const std::int32_t x = (cx * 16) + lx;
-                            const std::int32_t z = (cz * 16) + lz;
-                            const CellIndex centre =
-                                stratum::aquifer::selectSources(centres, x, y, z).nearest().centre;
-
-                            // The scan reaches 48 blocks west and 16 east,
-                            // north and south. A source whose window leaves
-                            // the probe footprint is not measurable here.
-                            bool reachable = true;
-                            const auto sampler = [&](const std::int32_t sx, std::int32_t,
-                                                     const std::int32_t sz) {
-                                if (!Field::inside(sx, sz)) {
-                                    reachable = false;
-                                    return 0.0;
-                                }
-                                return field.at(sx, sz);
-                            };
-                            const PslRead read = stratum::aquifer::readPreliminarySurface(
-                                sampler, centre, kSeaLevel);
-                            if (!reachable) {
-                                continue;
-                            }
-
-                            const std::int32_t level = stratum::aquifer::cellFluidLevel(
-                                stratum::aquifer::CellFluid{.centreY = centre.y,
-                                                            .surface = read,
-                                                            .seaLevel = kSeaLevel,
-                                                            .floodedness = arm.floodedness,
-                                                            .spread = 0.0});
-                            ++total.blocks;
-                            const bool oursFluid = y < level;
-                            if (oursFluid == fluid) {
-                                ++total.agree;
-                            } else if (fluid &&
-                                       stratum::test::explainedByFlow(
-                                           golden, x, y, z, stratum::test::categoryOf(block->name),
-                                           stratum::test::Category::Air)) {
-                                ++total.flow;
-                            } else {
-                                ++(fluid ? total.serverFluidOursAir : total.serverAirOursFluid);
-                            }
-
-                            if (counted.insert({centre.x, centre.y, centre.z}).second) {
-                                ++total.sources;
-                                total.aborted += static_cast<int>(read.aborted);
-                                total.prefixDiffersFromWhole +=
-                                    static_cast<int>(read.gate != read.cap);
-                                total.gateValues.insert(read.gate);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        scoreWorld(
+            world, [&](std::int32_t x, std::int32_t z) { return field.at(x, z); }, arm.floodedness,
+            total);
     }
 
     REQUIRE(total.blocks > 5000000);
@@ -258,11 +272,62 @@ TEST_CASE("the aquifer's level rule holds where the surface varies", "[conforman
 
     // Exact. The residual this case used to hold to a 99.0% bound — 34 878
     // blocks, all fluid this build calls air, piled at the lava sea's top
-    // and just under `sea_level` — is every block of it fluid the server's
-    // ticks moved after generating (support/fluid_flow.hpp): this probe is
-    // not tick-frozen, and the level rule was right throughout.
+    // and just under `sea_level` — was fluid the server's ticks moved
+    // before the save (support/fluid_flow.hpp), and the level rule was right
+    // throughout. Frozen, the same corpus keeps 3 586 such blocks — a
+    // remnant that differs between two frozen runs of one seed
+    // (support/probe_corpus.hpp) — so that count is bounded, not pinned:
+    // under 1 in 1000 blocks, where the unfrozen corpus stood at 4 in 1000.
     CHECK(total.serverFluidOursAir == 0);
     CHECK(total.serverAirOursFluid == 0);
-    CHECK(total.flow == 34878);
     CHECK(total.agree + total.flow == total.blocks);
+    CHECK(total.flow * 1000 < total.blocks);
+}
+
+TEST_CASE("the varying-surface harness reproduces the constant-surface law on its controls",
+          "[conformance][aquifer]") {
+    // The probe's three constant-surface controls, one at each arm value and
+    // at the ladder's floodedness. They reproduce what about 1370 earlier
+    // constant-surface dimensions showed, through the very path the varying
+    // arms take — so a failure here is the harness measuring itself, not the
+    // level rule. And they show the degeneracy the varying corpus exists to
+    // escape: a constant surface yields one gate value and no prefix minimum
+    // that differs from the whole window's.
+    struct Control {
+        const char* world;
+        double surface;
+    };
+
+    for (const Control& control :
+         {Control{"c96", kHigh}, Control{"cm20", kMid}, Control{"cm70", kLow}}) {
+        INFO("control " << control.world);
+        const std::filesystem::path world =
+            fixtures() / "probes" / "pslvar" / control.world / "r.0.0.mca";
+        if (!std::filesystem::is_regular_file(world)) {
+            SKIP("no varying-surface aquifer probe at "
+                 << world << "; generate it with tools/analysis/aquifer-psl-probe.sh");
+        }
+        stratum::test::requireFrozen(world.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-psl-probe.sh");
+        stratum::test::requireSeed(world.parent_path().parent_path(), 42);
+
+        Score score;
+        scoreWorld(world, [&](std::int32_t, std::int32_t) { return control.surface; }, 0.5, score);
+        INFO("blocks " << score.blocks << ", agree " << score.agree << ", flow " << score.flow
+                       << ", server fluid ours air " << score.serverFluidOursAir
+                       << ", server air ours fluid " << score.serverAirOursFluid << "; sources "
+                       << score.sources << ", aborted " << score.aborted << ", prefix != whole "
+                       << score.prefixDiffersFromWhole);
+
+        REQUIRE(score.blocks > 1000000);
+        CHECK(score.serverFluidOursAir == 0);
+        CHECK(score.serverAirOursFluid == 0);
+        CHECK(score.agree + score.flow == score.blocks);
+        // Measured 4, 1215 and 788 frozen; cm20 alone moved by 918 blocks
+        // between two frozen runs, so this bound is loose on purpose — an
+        // unfrozen corpus is refused above, not caught here.
+        CHECK(score.flow * 100 < score.blocks);
+        CHECK(score.gateValues.size() == 1);
+        CHECK(score.prefixDiffersFromWhole == 0);
+    }
 }

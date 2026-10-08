@@ -45,6 +45,7 @@
 // The fixture is Mojang-derived and never committed (SPEC §12). Without it
 // this skips.
 #include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
 
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
@@ -87,6 +88,7 @@ TEST_CASE("the terrain chain, compared without aquifers in the way", "[conforman
         SKIP("no aquifer-free probe at " << region << "; generate it with "
                                          << "tools/analysis/aquifer-free-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-free-probe.sh");
 
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
@@ -196,6 +198,7 @@ TEST_CASE("the terrain chain agrees with the server at every block, not just eve
     if (!std::filesystem::is_directory(tree) || !std::filesystem::is_regular_file(region)) {
         SKIP("no aquifer-free probe at " << region);
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-free-probe.sh");
 
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);

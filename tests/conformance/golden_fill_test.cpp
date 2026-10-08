@@ -68,6 +68,7 @@
 // too, not in the rule tree but in the pass around it.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/biome/parameter_list.hpp>
@@ -126,6 +127,7 @@ TEST_CASE("the filler places the blocks the server placed, up to surface rules",
         SKIP("no aquifer-free probe at " << region << "; generate it with "
                                          << "tools/analysis/aquifer-free-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-free-probe.sh");
 
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
@@ -290,6 +292,7 @@ TEST_CASE("aquifers off still keeps a global lava sea below min(-54, sea_level)"
         SKIP("no aquifer-free probe at " << region << "; generate it with "
                                          << "tools/analysis/aquifer-free-probe.sh --accept-eula");
     }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-free-probe.sh");
     const auto pack = stratum::data::Pack::open(tree);
     const auto loaded = stratum::settings::loadAll(pack);
     auto overworld =

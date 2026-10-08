@@ -96,6 +96,9 @@
 // ONE SEED PER PROBE DIRECTORY, read from its manifest; every
 // `waterlava_s*` directory present is scored, and the case SKIPs when there
 // is none. The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -181,6 +184,21 @@ struct Dimension {
     return 1.0 - static_cast<double>(dj - di) / static_cast<double>(aquifer::kSimilarityRange);
 }
 
+/// The raw category of what this build decided, in support/fluid_flow.hpp's
+/// terms.
+[[nodiscard]] stratum::test::Category rawCategory(const aquifer::SubstanceAt& at) {
+    switch (at.substance) {
+        case aquifer::Substance::Air:
+            return stratum::test::Category::Air;
+        case aquifer::Substance::Solid:
+            return stratum::test::Category::Solid;
+        case aquifer::Substance::Fluid:
+            break;
+    }
+    return at.fluidType == aquifer::FluidType::Lava ? stratum::test::Category::Lava
+                                                    : stratum::test::Category::Water;
+}
+
 /// Whether any competing pair on this block is of mixed type.
 [[nodiscard]] bool hasMixedPair(const aquifer::BarrierAt& at) {
     const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
@@ -242,10 +260,10 @@ struct Score {
     long long pureServerStone = 0; // no mixed pair
     long long pureOldMiss = 0;
     long long pureNewMiss = 0;
-    long long pureNewMissOffLambda = 0;
     long long pureFalse = 0;               // old == new here by construction; either
     long long constantAdds = 0;            // new fires, old does not ...
     long long constantAddsServerStone = 0; // ... and the server has stone
+    long long flowStone = 0;               // server stone lava fallen onto water left
     // The refuted readings, on the rows ABOVE lambda.
     long long tfFormulaOnly = 0;
     long long tfFormulaOnlyServerStone = 0;
@@ -274,6 +292,9 @@ struct Score {
 };
 
 void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
+    // Every count below is exact on a frozen corpus and timing-dependent on
+    // one that was not (support/probe_corpus.hpp).
+    stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-waterlava-probe.sh");
     std::ifstream manifestFile(probeDir / "manifest.json");
     const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
     const std::int64_t seed = manifest.at("seed").get<std::int64_t>();
@@ -329,6 +350,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
         aquifer::StatusCache statusCache;
 
         const auto file = region::RegionFile::open(regionPath);
+        stratum::test::GoldenRegion golden(regionPath);
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
                 // A probe region holds every chunk of its window: a missing one is
@@ -433,19 +455,30 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                 nearestFluid && nearestType == aquifer::FluidType::Default;
                             const bool plainBlock = serverStone || serverLava || serverWater ||
                                                     b->name == "minecraft:air";
+                            // Server stone can be lava that fell onto
+                            // water before the save: a frozen probe still
+                            // carries a small, run-dependent remnant of flow
+                            // (support/probe_corpus.hpp). It is credited by
+                            // its shape, never by a count, and only where
+                            // this build did not decide stone itself.
+                            const bool flowShaped =
+                                serverStone && stratum::test::explainedByFlow(
+                                                   golden, x, y, z, stratum::test::Category::Solid,
+                                                   rawCategory(now));
+                            const bool realStone = serverStone && !flowShaped;
                             if (y >= lambda && !(y == lambda && nearestWaterHere) && plainBlock) {
+                                const bool flowStone = flowShaped && !newStone;
+                                total.flowStone += flowStone;
                                 if (hasMixedPair(at)) {
                                     total.mixedServerStone += serverStone;
                                     total.mixedOldMiss += (serverStone && !oldStone);
-                                    total.mixedNewMiss += (serverStone && !newStone);
+                                    total.mixedNewMiss += (serverStone && !newStone && !flowStone);
                                     total.mixedOldFalse += (!serverStone && oldStone);
                                     total.mixedNewFalse += (!serverStone && newStone);
                                 } else {
                                     total.pureServerStone += serverStone;
                                     total.pureOldMiss += (serverStone && !oldStone);
-                                    total.pureNewMiss += (serverStone && !newStone);
-                                    total.pureNewMissOffLambda +=
-                                        (serverStone && !newStone && y != lambda);
+                                    total.pureNewMiss += (serverStone && !newStone && !flowStone);
                                     total.pureFalse += (!serverStone && (oldStone || newStone));
                                 }
                                 if (newStone && !oldStone) {
@@ -456,7 +489,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                     const TypeFieldReading tf = typeFieldReading(at);
                                     if (tf.applies && tf.constantFires && !oldStone) {
                                         ++total.tfConstantOnly;
-                                        total.tfConstantOnlyServerStone += serverStone;
+                                        total.tfConstantOnlyServerStone += realStone;
                                     }
                                     if (tf.applies && !tf.constantFires && oldStone) {
                                         ++total.tfFormulaOnly;
@@ -464,7 +497,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                     }
                                     if (!newStone && bothAirMixedWouldFire(at)) {
                                         ++total.bothAir;
-                                        total.bothAirServerStone += serverStone;
+                                        total.bothAirServerStone += realStone;
                                     }
                                 }
                             }
@@ -494,7 +527,7 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                 if (nearestWater) {
                                     ++total.fires;
                                     total.firesBareStone += bareStone;
-                                    total.firesServerStone += serverStone;
+                                    total.firesServerStone += realStone;
                                     total.firesNowFluid +=
                                         (now.substance == aquifer::Substance::Fluid);
                                 } else if (!nearestFluid) {
@@ -584,7 +617,7 @@ TEST_CASE("water resting on the global lava sea is water, not a barrier",
     CHECK(total.firesNowFluid == total.fires);
 
     // The asymmetry: a nearest source reading AIR on the same row still
-    // gets barriers from the server (measured 93 / 239 / 244).
+    // gets barriers from the server (measured 540, pooled over three seeds).
     CHECK(total.nearestAirServerStone > 0);
 
     // One row up and beyond, the exception is inert: the two decisions are
@@ -593,8 +626,11 @@ TEST_CASE("water resting on the global lava sea is water, not a barrier",
 
     // Q2.4: below the sea this build is lava on every block; the server is
     // lava (or the obsidian it became) on all but the water that fell into
-    // it after generation — every such block is FALLING water, directly
-    // under water, with the obsidian that lava became beneath it.
+    // it before the save — every such block is FALLING water, directly
+    // under water, with the obsidian that lava became beneath it. Frozen,
+    // one run kept 311 of 196 608 such blocks, all on the sea -70 arm, each
+    // with its own fluid tick still pending: the remnant of flow a frozen
+    // probe keeps, which differs from run to run (support/probe_corpus.hpp).
     CHECK(total.belowNowLava == total.belowTotal);
     CHECK(total.belowServerLava + total.belowServerWater == total.belowTotal);
     CHECK(total.belowServerWaterUnexplained == 0);
@@ -619,12 +655,13 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
                    << total.mixedNewMiss << ", false old " << total.mixedOldFalse << " new "
                    << total.mixedNewFalse << "; pure server stone " << total.pureServerStone
                    << " misses old " << total.pureOldMiss << " new " << total.pureNewMiss
-                   << " false " << total.pureFalse << "; the constant adds " << total.constantAdds
-                   << " (server stone " << total.constantAddsServerStone
-                   << "); type-field formula-only " << total.tfFormulaOnly << " (stone "
-                   << total.tfFormulaOnlyServerStone << ") constant-only " << total.tfConstantOnly
-                   << " (stone " << total.tfConstantOnlyServerStone << "); both-air "
-                   << total.bothAir << " (stone " << total.bothAirServerStone << ")");
+                   << " false " << total.pureFalse << "; flow stone " << total.flowStone
+                   << "; the constant adds " << total.constantAdds << " (server stone "
+                   << total.constantAddsServerStone << "); type-field formula-only "
+                   << total.tfFormulaOnly << " (stone " << total.tfFormulaOnlyServerStone
+                   << ") constant-only " << total.tfConstantOnly << " (stone "
+                   << total.tfConstantOnlyServerStone << "); both-air " << total.bothAir
+                   << " (stone " << total.bothAirServerStone << ")");
 
     // The control: the corpus has to hold lava bodies meeting water bodies
     // at a separation the constant carries, or nothing below can tell the
@@ -640,32 +677,35 @@ TEST_CASE("a lava body meeting a water body is walled off, and nothing else chan
     CHECK(total.mixedOldFalse == 0);
     CHECK(total.mixedNewFalse == 0);
     CHECK(total.pureFalse == 0);
-    // The branch cuts the real barriers missed in mixed junctions by more
-    // than half. Measured 1698 -> 590 pooled when this case landed; with the
-    // dry sentinel and the unclamped ladder now in `cellFluidLevel`, the same
-    // pooled reading is 1100 -> 4, all four of them on row lambda itself.
-    CHECK(total.mixedNewMiss * 2 < total.mixedOldMiss);
+    // The branch finds every real barrier in a mixed junction. Measured
+    // 1698 -> 590 pooled when this case landed, and 1100 -> 4 after the dry
+    // sentinel and the unclamped ladder — those four, all on row lambda,
+    // were lava that fell onto water before the save. On frozen corpora it
+    // is 1096 -> 0 with no flow stone at all; any a later run's remnant of
+    // flow leaves is credited by its shape, never by a count.
+    CHECK(total.mixedNewMiss == 0);
     // Where no pair is mixed the two predicates are one computation, so
     // comparing them measured nothing (the unit case "retyping every source
     // alike changes no barrier" pins that property instead). What the
-    // server CAN say about those junctions: every barrier the predicate
-    // misses there sits on row lambda itself, the row Q6.3 shares.
-    CHECK(total.pureNewMissOffLambda == 0);
+    // server CAN say about those junctions: the predicate misses none of
+    // its barriers there either (35 on row lambda before the corpora were
+    // frozen, every one lava fallen onto water; 0 frozen).
+    CHECK(total.pureNewMiss == 0);
 
     // The type-field reading, refuted: where the formula fires and the
-    // constant would not, every block is a real barrier (252 of 252); where
-    // the constant alone would fire, none is (0 of 33, re-measured unchanged
-    // after the dry sentinel and the unclamped ladder). The floor on that
-    // population is what stops an empty one passing as 0 <= 0; it is set
+    // constant would not, every block is a real barrier (464 of 464); where
+    // the constant alone would fire, none is (0 of 34). The floor on that
+    // population is what stops an empty one passing as 0 == 0; it is set
     // just under the pooled count, so a missing seed fails too.
     REQUIRE(total.tfFormulaOnly >= 50);
     CHECK(total.tfFormulaOnlyServerStone == total.tfFormulaOnly);
     REQUIRE(total.tfConstantOnly >= 30);
-    CHECK(total.tfConstantOnlyServerStone * 10 <= total.tfConstantOnly);
+    CHECK(total.tfConstantOnlyServerStone == 0);
 
-    // The types-regardless reading, refuted: stone between two drained
-    // cells of different type on 0.0-0.5% of the blocks it would fill
-    // (0-4 of 424-1145 per row above the sea).
+    // The types-regardless reading, refuted: no stone at all between two
+    // drained cells of different type (0 of 54 331 blocks it would fill).
+    // Before the corpora were frozen the server showed 0-4 per row there;
+    // that was lava that had flowed, and it is gone from a frozen world.
     REQUIRE(total.bothAir >= 1000);
-    CHECK(total.bothAirServerStone * 50 < total.bothAir);
+    CHECK(total.bothAirServerStone == 0);
 }

@@ -22,22 +22,23 @@
 //     own position — not from its centre (spec Q4.2). 1742/1742 and 1690/1690
 //     against 0/n for a `+0.5` variant.
 //   * Four ranks are kept, and the fourth never reaches the substance
-//     decision (spec Q4.3). 2582 blocks chosen because two models disagree on
-//     rank 4 alone.
+//     decision (spec Q4.3): 2582 blocks chosen because two models disagree on
+//     rank 4 alone. Only Q8's fluid-update flag reads it (substance.hpp).
 //   * Ties displace toward the LATER candidate, at every rank (spec Q4.4).
 //     228/228 and 334/334, where this project's own earlier "first wins"
 //     scores 12.3%.
 //
-// WHAT IS NOT, and is marked rather than passed through:
-//
-//   * The WINDOW itself (spec Q4.1). The asymmetric set below and the
-//     symmetric 27-cell set agree on the NEAREST source on all but about two
-//     blocks in a million, and where they part at rank 2 the nearest pair has
-//     already stopped competing — so Q6.2's short-circuit hides the difference
-//     in every block the server writes. That is why 6291456-block barrier
-//     corpora scored the two identically, and it is reproduced here from this
-//     build's own centres. It is adopted as the spec's hypothesis, and
-//     `kWindowIsUntested` says so at the call site.
+//   * The WINDOW (spec Q4.1), against its obvious rival, the symmetric 27
+//     cells. The two agree on the NEAREST source on all but about two blocks
+//     in a million, and where they part at rank 2 the nearest pair has
+//     usually stopped competing — so on the two-source barrier corpora, where
+//     neighbouring sources held one level, Q6.2's short-circuit hid every
+//     difference and 6291456 blocks scored the two identically. The deep-floor
+//     corpora hold neighbours at DIFFERENT levels, and there the three-source
+//     barrier reaches rank 3: over 7.9 million blocks on three seeds the
+//     rival's first three ranks differ on 118980, its verdict on 39, and the
+//     server sides with this window on all 39 (vanilla_aquifer_deepfloor_test).
+//     Only that rival is refuted; another asymmetric set has not been tried.
 //
 // WHAT THE WHOLE LAYER SCORES AGAINST THE SERVER, which is the part no unit
 // vector can supply. Two readouts of the open-void probe, neither of them
@@ -80,13 +81,6 @@ struct CandidateOffset {
 };
 
 inline constexpr std::size_t kCandidateCount = 12;
-
-/// UNTESTED, deliberately flagged. The window is the one part of the selection
-/// layer no instrument in this project has separated from its rivals: the
-/// asymmetric set and the symmetric 27-cell set produce the same first two
-/// ranks everywhere a barrier can form, so every barrier measurement scores
-/// them identically. It is here as the spec's claim, not as a finding.
-inline constexpr bool kWindowIsUntested = true;
 
 /// The candidate cells, as offsets from the home cell, IN ITERATION ORDER.
 ///
