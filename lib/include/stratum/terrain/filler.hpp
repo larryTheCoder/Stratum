@@ -125,6 +125,28 @@ public:
     /// ...)]` is `at(...)`. Throws FillError like `at`.
     [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const;
 
+    /// A position whose fluid the server ticks once the chunk loads — what
+    /// vanilla records in a chunk's `PostProcessing` list (spec Q8.1). Ticks
+    /// are what make aquifer water and lava flow after generation; a caller
+    /// that wants vanilla's settled terrain schedules a fluid update at each.
+    struct FluidUpdate {
+        std::uint8_t localX = 0;
+        std::int32_t y = 0;
+        std::uint8_t localZ = 0;
+
+        [[nodiscard]] bool operator==(const FluidUpdate&) const noexcept = default;
+    };
+
+    /// Records @p localX, @p y, @p localZ as a fluid update. Throws FillError
+    /// like `at` for a position outside the chunk.
+    void markFluidUpdate(int localX, std::int32_t y, int localZ);
+
+    /// Every position marked, each once, in the order the first pass reached
+    /// them.
+    [[nodiscard]] const std::vector<FluidUpdate>& fluidUpdates() const noexcept {
+        return fluidUpdates_;
+    }
+
 private:
     [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const;
     [[nodiscard]] std::uint16_t intern(const settings::BlockState& block);
@@ -133,6 +155,7 @@ private:
     std::int32_t height_ = 0;
     std::vector<settings::BlockState> palette_;
     std::vector<std::uint16_t> blocks_;
+    std::vector<FluidUpdate> fluidUpdates_;
 };
 
 /// A dimension's terrain, ready to fill chunks from.

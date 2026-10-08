@@ -189,6 +189,18 @@ namespace stratum::aquifer {
 /// `barrier` input of -1.0.
 inline constexpr std::int32_t kSimilarityRange = 25;
 
+/// Q6.1's similarity, on squared distances: 1 at equality, decreasing as the
+/// pair separates, zero at `kSimilarityRange`. Shared by the barrier and the
+/// fluid-update flag (substance.hpp), which must compare the same doubles.
+[[nodiscard]] constexpr double similarity(const std::int64_t di, const std::int64_t dj) noexcept {
+    return 1.0 - (static_cast<double>(dj - di) / static_cast<double>(kSimilarityRange));
+}
+
+/// Q8.3's `θ_flow`: the similarity of a pair at distances 10 and 12, carried
+/// as that derivation rather than as its value (-0.76) so that a comparison
+/// against a similarity computed the same way is exact at the boundary.
+inline constexpr double kFlowSimilarity = similarity(std::int64_t{10} * 10, std::int64_t{12} * 12);
+
 /// How near the pair's boundary, in Π's own `u`, a block must sit for the
 /// `barrier` router value to enter Π at all: `|u| <= 2`, on both sides.
 /// Beyond it the router value is zeroed, and thirteen barrier constants from
