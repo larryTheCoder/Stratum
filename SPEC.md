@@ -823,6 +823,10 @@ mapping has two halves, split at a platform-neutral midpoint:
      A second, independent instrument (the `sea_level < -54` world below)
      confirms it directly: 251229 blocks the old reading called wet up to
      y=-55 are observed dry at every one, 0/251229, over 1966080 blocks.
+     *Superseded in part* ("y_skip against the server", below): those rows
+     are all above that world's `y_skip`, so the 0/251229 is the global
+     picker's; where the lattice is consulted the comparand holds and the
+     return VALUE is refuted — the floor is A_lava, (-54, lava). Open.
      The comparand itself is a PERMANENT TIE, not a further measurement —
      `lambda` equals `sea_level` on every world that can even ask the
      question, so no corpus can separate "the comparand" from "the return
@@ -2542,8 +2546,78 @@ Open:
   It is not merely an optimisation: one block lower, at -81, the step drops
   `y_skip` from -38 to -50, uncovering centres within twenty blocks of an
   aborting scan's minimum that the floor puts at lambda, and blocks read air
-  where the global picker reads water (244 of 21870 under one stub field). A world with a surface between
-  -81 and -92 would show it against the server.
+  where the global picker reads water (244 of 21870 under one stub field).
+
+  *`y_skip` against the server: the closed form holds, the rectangle did
+  not.* `tools/analysis/aquifer-yskip-probe.sh` builds worlds where the
+  cutoff is the only thing that moves: psl at or below -80 everywhere, so
+  every scan aborts and a source's status is its centre's alone (wet to the
+  sea at or above -54, dry at lambda below — unit-pinned, and tight: at -74
+  the centre at -54 turns dry), and the POCKETS (nearest source dry) are the
+  same blocks in every dimension of a seed, from -54 up to about -44. At or
+  below `y_skip` a pocket is air or barrier stone, above it the global
+  picker's water. Eight dimensions per seed, all but one flat (seeds 42 and
+  31337), `vanilla_aquifer_yskip_test.cpp`:
+
+  * Read off the server with no model of `y_skip` — the uniform cutoffs no
+    block refutes — it is at or below -55 for psl -93, -92.5 and -200,
+    exactly -50 for -92, -85, -81 and for a psl that is -85 at y = 0 and -80
+    at every other y, and anywhere from -42/-43 up for -80: the closed form's
+    -62, -62, -158, -50, -50, -50, -50 and -38, to the row. So the `+20`, the
+    twelve-block pitch with its edges at -92/-93 and -80/-81, the floor (not
+    truncation: -92.5 is -62), the read at y = 0 and the inclusive boundary
+    (the lattice at `y_skip` itself) are all the server's. Rivals, summed over
+    both seeds: no cutoff refuted on 319 102 blocks, `S_max + 12` on 491 478,
+    `+ 28` on 191 058, `+ 8` on 645 447, a strict boundary on 87 880,
+    truncation on 76 020, a read at y = 1, `min_y` or `sea_level` on 13 006
+    each; the build on none.
+  * The rectangle was wrong, and is now measured. A two-valued psl (-85, or
+    -80 on about one column in a hundred, two scales) makes each chunk's
+    cutoff -50 or -38 by WHICH columns it reads. The build read Q3.5's
+    extent at the cells' origins, offsets -16..+16 from the chunk corner,
+    and the server refutes it on 8 646 blocks in 71 chunks: it reads two
+    more sample rows. Of every square from -28..-4 to +12..+36 at strides 1,
+    2, 4 and 8, and each axis alone at stride 4, only a low end of -16 and a
+    high end of +24..+27 at stride 4 leaves no chunk the server shows wrong.
+    The build now reads -16..+25 — the first cell's origin to the last
+    cell's origin plus the centre jitter's reach, every point a source
+    centre of the extent can occupy. That changes pipeline output for a
+    datapack world, and no golden block: the goldens read the same with no
+    cutoff at all. Two permanent ties are recorded rather
+    than chosen: any high end in +24..+27 reads the same samples (the stride
+    starts on a multiple of sixteen), and Q7.2's vertical extent, which can
+    only clamp `y_skip` below `min_y` or above the top. Rivals: the old
+    rectangle 71 chunks, a far end at +20 23, the cells' full extent (+31)
+    16, a low end at -20 12 or -12 28, the shifted origins 124, the chunk
+    alone 267, strides 1, 2 and 8 50, 46 and 190.
+  * Block for block the build is exact on every untouched chunk (2 296 800
+    blocks per dimension, twenty dimensions) and the server's own
+    post-processing lists are its marks to the position — none above the
+    cutoff, which the early return never marks (spec Q8.2). End to end,
+    `ChunkFiller` on the probes' own noise settings writes the server's
+    block on all 22 968 000 untouched blocks of ten dimensions and its
+    123 588 marks; with the old rectangle, 3 881 blocks and 3 337 marks
+    wrong. Two things the frozen worlds still move, both recorded rather
+    than modelled: the column of an untouched chunk beside a ticked one
+    takes the neighbour's flow (x or z exactly 144, never further in), and
+    on an untouched chunk promoted to FULL the lava sea's top row turns to
+    obsidian under the lattice's water (2 052 and 5 616 blocks a dimension
+    for the two seeds, pending fluid ticks beside them) — never under the
+    global picker's.
+
+  *A side finding: the aborting near-surface floor at `sea_level` -70 is
+  not lambda.* The low-sea probe's `b_floor` (psl -200), cited for lambda's
+  floor, reads only rows above its own `y_skip` (-158): its 0/251229 is the
+  global picker's air, not the floor. Its `a_lo` (psl -85, `y_skip` -50)
+  does reach the lattice, and there every one of 135 716 blocks whose
+  nearest cell takes the floor is lava up to y = -55 (120 991) or barrier
+  stone (14 725) — not one air, and no lava from -54 up. That is spec
+  Q1.1's A_lava, (-54, lava), which Q5.3(b) gives an aborted scan; the
+  build's lambda is dry there. The comparand holds (cells centred -64..-55
+  take the sea, dry). Identical at every `sea_level >= -54`, so no vanilla
+  block moves; OPEN, because the floor's lava type also reaches the
+  fluid-update flag at every sea level and the aborted off-near-surface and
+  deep-dark floors share the reading unmeasured.
 
   *Every remaining raw disagreement is fluid the server moved after
   generating*, and is now attributed block by block rather than counted:
@@ -4210,7 +4284,11 @@ Open:
   downstream once both are lambda-based. That is a PERMANENT TIE, not a
   further measurement — using `lambda` in both places is adopted because it
   is a no-op everywhere already verified, not because the comparand was
-  isolated on its own.
+  isolated on its own. *Superseded in part:* every row that dimension reads
+  is above its own `y_skip` (-158), so its 0/251229 is the global picker's;
+  the psl -85 dimension, where the lattice is consulted, keeps the
+  comparand and refutes lambda as the floor's value — the server writes
+  A_lava, (-54, lava), there (§11, "y_skip against the server"). Open.
 
   *A methodological correction recorded rather than silently fixed.* The
   first version of the near-surface analysis found a smooth, centreY-varying

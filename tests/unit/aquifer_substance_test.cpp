@@ -422,10 +422,55 @@ TEST_CASE("above y_skip the lattice agrees with the global picker down to a surf
     // in the band it uncovers sit within twenty blocks of an aborting scan's
     // minimum, take the floor at lambda, and read air where the global
     // picker reads water. So the cutoff is NOT a pure optimisation — a world
-    // whose surface sits at -81..-92 would show it — and ChunkFiller applies
-    // it for that reason, not only to save the lattice work.
+    // whose surface sits at -81..-92 shows it, and the server's agrees with
+    // it to the row (vanilla_aquifer_yskip_test.cpp) — and ChunkFiller
+    // applies it for that reason, not only to save the lattice work.
     CHECK(disagreementsAboveSkip(-81.0) > 0);
     CHECK(disagreementsAboveSkip(-92.0) > 0);
+}
+
+namespace {
+/// A source's status over a flat surface, at the y_skip probe's constants
+/// (floodedness 0.5, spread 0, lava 0).
+[[nodiscard]] stratum::aquifer::SourceStatus statusOver(const double surface,
+                                                        const std::int32_t centreY) {
+    const auto flat = [surface](std::int32_t, std::int32_t, std::int32_t) { return surface; };
+    return stratum::aquifer::sourceStatus(
+        stratum::aquifer::CellFluid{.centreY = centreY,
+                                    .surface = stratum::aquifer::readPreliminarySurface(
+                                        flat, CellIndex{.x = 0, .y = centreY, .z = 0}, kSea),
+                                    .seaLevel = kSea,
+                                    .floodedness = 0.5,
+                                    .spread = 0.0},
+        0.0);
+}
+} // namespace
+
+TEST_CASE("under a surface of -75 or lower a source's status is its centre's alone", "[aquifer]") {
+    // The y_skip probe's instrument (vanilla_aquifer_yskip_test.cpp), pinned
+    // without a server: every scan aborts, so a centre at or above lambda
+    // takes the sea (it sits more than twenty blocks above the scan's
+    // minimum) and every centre below it reads lambda. Which blocks are
+    // pockets — the nearest source dry — is then the same at every such
+    // surface, and only y_skip moves between the probe's dimensions.
+    const std::int32_t lambda = lambdaLevel(kSea);
+    for (const double surface : {-200.0, -93.0, -92.5, -92.0, -85.0, -81.0, -80.0, -75.0}) {
+        INFO("surface " << surface);
+        int wrong = 0;
+        for (std::int32_t centreY = -130; centreY <= 60; ++centreY) {
+            const stratum::aquifer::SourceStatus status = statusOver(surface, centreY);
+            const bool expected = centreY >= lambda
+                                      ? (status.level == kSea && status.type == FluidType::Default)
+                                      : status.level == lambda;
+            wrong += expected ? 0 : 1;
+        }
+        CHECK(wrong == 0);
+    }
+    // And -75 is the bound: one block higher and the centre at lambda itself
+    // is no longer twenty blocks clear of the scan's minimum, and reads lambda.
+    CHECK(statusOver(-74.0, lambda).level == lambda);
+    CHECK(statusOver(-74.0, lambda + 1).level == kSea);
+    CHECK(statusOver(-75.0, lambda).level == kSea);
 }
 
 namespace {

@@ -793,32 +793,74 @@ TEST_CASE("y_skip steps every twelve blocks and floors a negative surface", "[aq
     STATIC_REQUIRE(ySkip(std::numeric_limits<std::int32_t>::min()) == -2147483606);
 }
 
-TEST_CASE("y_skip's rectangle is the chunk's lattice extent, at the cells' origins", "[aquifer]") {
+TEST_CASE("y_skip's rectangle is where the chunk's lattice extent puts source centres",
+          "[aquifer]") {
     using stratum::aquifer::ySkipRectangle;
-    // Spec Q3.5: i from floorDiv(xMin - 5, 16) to floorDiv(xMax - 5, 16) + 1,
-    // read at 16 * i. The shift of 5 puts the low edge one cell below the
-    // chunk on BOTH signs of coordinate, which is where a truncating division
-    // would part company with floorDiv.
+    // Spec Q3.5: i from floorDiv(xMin - 5, 16) to floorDiv(xMax - 5, 16) + 1;
+    // the rectangle runs from the first cell's origin, 16 * i, to the last
+    // cell's origin plus the jitter's reach, + 9 (measured: SPEC §11). The
+    // shift of 5 puts the low edge one cell below the chunk on BOTH signs of
+    // coordinate, which is where a truncating division would part company
+    // with floorDiv.
     const auto origin = ySkipRectangle(0, 0);
     CHECK(origin.minX == -16);
-    CHECK(origin.maxX == 16);
+    CHECK(origin.maxX == 25);
     CHECK(origin.minZ == -16);
-    CHECK(origin.maxZ == 16);
+    CHECK(origin.maxZ == 25);
 
     const auto east = ySkipRectangle(16, 32);
     CHECK(east.minX == 0);
-    CHECK(east.maxX == 32);
+    CHECK(east.maxX == 41);
     CHECK(east.minZ == 16);
-    CHECK(east.maxZ == 48);
+    CHECK(east.maxZ == 57);
 
     const auto west = ySkipRectangle(-16, -32);
     CHECK(west.minX == -32);
-    CHECK(west.maxX == 0);
+    CHECK(west.maxX == 9);
     CHECK(west.minZ == -48);
-    CHECK(west.maxZ == -16);
+    CHECK(west.maxZ == -7);
 
-    // Inclusive of both endpoints at a stride of four: nine samples a side.
-    CHECK((origin.maxX - origin.minX) / stratum::aquifer::kYSkipSampleStride + 1 == 9);
+    // Inclusive of both endpoints at a stride of four from the low corner:
+    // eleven samples a side, the last at +24.
+    CHECK((origin.maxX - origin.minX) / stratum::aquifer::kYSkipSampleStride + 1 == 11);
+}
+
+TEST_CASE("a chunk's y_skip reads its whole rectangle at y = 0 and no other column", "[aquifer]") {
+    using stratum::aquifer::chunkYSkip;
+    // A flat -92 everywhere, and one column raised to -80: the step from -50
+    // to -38 says whether that column is read.
+    const auto spike = [](std::int32_t atX, std::int32_t atZ) {
+        return [atX, atZ](std::int32_t x, std::int32_t y, std::int32_t z) {
+            CHECK(y == stratum::aquifer::kPreliminarySurfaceSampleY);
+            return (x == atX && z == atZ) ? -80.0 : -92.0;
+        };
+    };
+    CHECK(chunkYSkip(spike(1000, 1000), 0, 0) == -50);
+    // Both corners of the rectangle, and its far sample row.
+    CHECK(chunkYSkip(spike(-16, -16), 0, 0) == -38);
+    CHECK(chunkYSkip(spike(24, 24), 0, 0) == -38);
+    CHECK(chunkYSkip(spike(24, -16), 0, 0) == -38);
+    // One stride past either end, and a column between two samples.
+    CHECK(chunkYSkip(spike(-20, 0), 0, 0) == -50);
+    CHECK(chunkYSkip(spike(28, 0), 0, 0) == -50);
+    CHECK(chunkYSkip(spike(2, 2), 0, 0) == -50);
+    // A chunk off the origin, on the negative side: the same offsets.
+    CHECK(chunkYSkip(spike(-48 + 24, -48 - 16), -48, -48) == -38);
+    CHECK(chunkYSkip(spike(-48 + 28, -48), -48, -48) == -50);
+
+    // Floored, not truncated: -92.5 is -93, a step below -92.
+    const auto flat = [](double value) {
+        return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+    };
+    CHECK(chunkYSkip(flat(-92.0), 0, 0) == -50);
+    CHECK(chunkYSkip(flat(-92.5), 0, 0) == -62);
+}
+
+TEST_CASE("the lattice is consulted at y_skip itself and not above it", "[aquifer]") {
+    using stratum::aquifer::consultsLattice;
+    CHECK(consultsLattice(-50, -50));
+    CHECK(consultsLattice(-51, -50));
+    CHECK_FALSE(consultsLattice(-49, -50));
 }
 
 TEST_CASE("the deep-dark override needs both thresholds, both strict", "[aquifer]") {
