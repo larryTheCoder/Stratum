@@ -10,18 +10,25 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
-using stratum::aquifer::fluidLevel;
 using stratum::aquifer::spreadOffset;
 
 namespace {
 constexpr std::int32_t kMeasuredBase = -20;
+
+/// The level a cell at the measured base takes for @p spread: centred in
+/// the band whose lattice point is -20, under a surface too high to cap it.
+[[nodiscard]] std::int32_t fluidLevel(const std::int32_t base, const double spread) {
+    REQUIRE(base == kMeasuredBase);
+    return stratum::aquifer::ladderLevel(/*centreY=*/-20, /*cap=*/96, spread);
 }
+} // namespace
 
 TEST_CASE("the fluid level follows the spread the server was given", "[aquifer]") {
     // The coarse sweep: nine values a quarter apart. Steps of three, with the
@@ -107,7 +114,10 @@ TEST_CASE("the lattice divides toward negative infinity on every axis", "[aquife
 }
 
 TEST_CASE("the base sits on its own lattice, capped by the surface", "[aquifer]") {
-    using stratum::aquifer::baseLevel;
+    // The ladder with the spread at zero: its lattice point, capped.
+    const auto baseLevel = [](std::int32_t y, std::int32_t surface) {
+        return stratum::aquifer::ladderLevel(y, surface, 0.0);
+    };
 
     // The ladder read out of a spread-pinned world at psl 96: -20, 20, 60, 96.
     CHECK(baseLevel(-30, 96) == -20);
@@ -149,9 +159,8 @@ TEST_CASE("the measured aquifer constants are recorded as measured", "[aquifer]"
     CHECK(stratum::aquifer::kLavaLevel == -54);
     CHECK(stratum::aquifer::kVerticalLatticeIsAbsolute);
 
-    // The base lattice is clamped below by the lava level wherever it would
-    // otherwise fall through it.
-    CHECK(stratum::aquifer::baseLevel(-64, 96) < stratum::aquifer::kLavaLevel + 12);
+    // There is no floor under the lattice: `the preliminary surface caps
+    // the ladder after the spread moves it` pins it sinking below the lava.
 }
 
 TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
@@ -450,7 +459,9 @@ TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "
     // Capping first and then adding the offset gives 69 for the first of
     // those, which is two blocks above the surface the server was given and
     // two above where the server put it.
-    CHECK(stratum::aquifer::baseLevel(50, 67) + stratum::aquifer::spreadOffset(0.9) == 69);
+    CHECK(std::min(stratum::aquifer::ladderLevel(50, 200, 0.0), 67) +
+              stratum::aquifer::spreadOffset(0.9) ==
+          69);
     CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) != 69);
     // And the ladder DOES sink below the lava sea — this line used to assert
     // the opposite, pinning a `max(lambda, ...)` that Q5.7 does not have.
@@ -547,10 +558,14 @@ TEST_CASE("every level below the lava sea moves with sea_level", "[aquifer]") {
     // level sits at least 32 below lambda — sweeping it as `lambda - K` over
     // the three water/lava worlds, K = 32, 64, 256 and this sentinel score
     // byte-identically while K = 16 does not — so the value itself is
-    // arithmetic, and is asserted as arithmetic.
-    CHECK(stratum::aquifer::kMinYLimit == -2032);
-    CHECK(kNeverLevel == 16 * stratum::aquifer::kMinYLimit);
-    CHECK(kNeverLevel == -32512);
+    // arithmetic. lattice.hpp carries Q1.4's derivation; these are the
+    // spec's transcribed products, checked against it at compile time.
+    STATIC_REQUIRE(stratum::aquifer::detail::kHorizontalBits == 26);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYBits == 12);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYSpan == 4064);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYUpper == 2031);
+    STATIC_REQUIRE(stratum::aquifer::kMinYLimit == -2032);
+    STATIC_REQUIRE(kNeverLevel == -32512);
     CHECK(kNeverLevel < lambdaLevel(-100) - 32);
 
     // The third outcome is AT OR BELOW Λ, and that bound is what the
@@ -838,4 +853,74 @@ TEST_CASE("a deep-dark cell is dry, except on the near-surface return", "[aquife
     CellFluid shallow = cellWith(constantSurface(150), 200, 147, -2.0);
     shallow.deepDark = true;
     CHECK(cellFluidLevel(shallow) == 200);
+}
+
+TEST_CASE("a datapack's NaN or out-of-range router value is defined, as Java's int makes it",
+          "[aquifer]") {
+    // No vanilla router comes near these; the point is that no input is
+    // undefined behaviour. Java's `(int) Math.floor` maps NaN to 0 and
+    // saturates out-of-range values, and its int arithmetic wraps.
+    using stratum::aquifer::spreadOffset;
+    constexpr std::int32_t kMax = std::numeric_limits<std::int32_t>::max();
+    constexpr std::int32_t kMin = std::numeric_limits<std::int32_t>::min();
+    CHECK(spreadOffset(std::numeric_limits<double>::quiet_NaN()) == 0);
+    CHECK(spreadOffset(1e300) == 3 * (kMax / 3)); // 2147483646
+    // floorDiv(INT_MIN, 3) * 3 is one below INT_MIN, and wraps to INT_MAX.
+    CHECK(spreadOffset(-1e300) == kMax);
+
+    // The scan's three readings saturate, and a NaN field reads 0.
+    const CellIndex centre{.x = 10, .y = 0, .z = 10};
+    const auto flat = [](double value) {
+        return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+    };
+    const PslRead huge = readPreliminarySurface(flat(1e300), centre, 63);
+    CHECK(huge.gate == kMax);
+    CHECK(huge.cap == kMax);
+    CHECK(huge.anchor == kMax);
+    CHECK_FALSE(huge.aborted);
+    const PslRead nan =
+        readPreliminarySurface(flat(std::numeric_limits<double>::quiet_NaN()), centre, 63);
+    CHECK(nan.gate == 0);
+    CHECK(nan.cap == 0);
+    CHECK(nan.anchor == 0);
+    CHECK_FALSE(nan.aborted);
+
+    // And the level rule's own arithmetic on a saturated reading wraps
+    // rather than trapping: a surface at INT_MAX is land, so floodedness 0.5
+    // takes the ladder, capped by nothing it can reach.
+    CHECK(cellFluidLevel(cellWith(huge, 63, 0, 0.5)) == 20);
+    // A surface at INT_MIN is an ocean cell; one block above it the depth
+    // INT_MIN - 1 wraps to INT_MAX, exactly as Java's would.
+    const PslRead floor{.gate = kMin, .cap = kMin, .anchor = kMin, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(floor, 63, 0, -1.0)) == 63);
+    CHECK(cellFluidLevel(cellWith(floor, 63, 1, -1.0)) == kNeverLevel);
+}
+
+TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
+    // The code does not clamp (lattice.hpp, by the thresholds). This is the
+    // proof that it need not: every out-of-range floodedness gives the same
+    // level as its clamp, over every depth the ocean branch can see, both
+    // gating sides of `sea_level - 8`, and an aborting scan or not.
+    const double outside[] = {
+        std::nextafter(1.0, 2.0),   1.5,  2.0,  1e6,  std::numeric_limits<double>::infinity(),
+        std::nextafter(-1.0, -2.0), -1.5, -2.0, -1e6, -std::numeric_limits<double>::infinity()};
+    std::size_t compared = 0;
+    for (const double floodedness : outside) {
+        const double clamped = std::clamp(floodedness, -1.0, 1.0);
+        for (const std::int32_t anchor : {40, 60}) { // sea 68: gate at 60
+            for (const bool aborted : {false, true}) {
+                for (std::int32_t depth = 0; depth <= 64; ++depth) {
+                    const PslRead surface{
+                        .gate = 40, .cap = 40, .anchor = anchor, .aborted = aborted};
+                    const std::int32_t centreY = 40 - depth;
+                    INFO("floodedness " << floodedness << " anchor " << anchor << " aborted "
+                                        << aborted << " depth " << depth);
+                    CHECK(cellFluidLevel(cellWith(surface, 68, centreY, floodedness)) ==
+                          cellFluidLevel(cellWith(surface, 68, centreY, clamped)));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared == 10U * 2U * 2U * 65U);
 }

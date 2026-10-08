@@ -24,19 +24,19 @@
 //     the centre at `16k + j` with `E[j]` about 4.4 — in the LOWER HALF of its
 //     own cell — which places the grid itself on multiples of sixteen.
 //
-// WHAT IS NOT SETTLED, and is deliberately absent rather than guessed:
-//
-//   * The jitter's distribution and the random source behind it. Only its
-//     mean is measured, and `cellOf` below is the grid, not the centre.
-//   * What sets the `base` the level is measured from. It tracks
-//     `preliminary_surface_level` and does so non-linearly.
-//   * The floodedness gate, the barrier rule, and the per-cell randomness that
-//     moves 27% of columns with all four router inputs held constant.
+// SINCE SETTLED, each below and in SPEC §11, where this header used to list
+// them as open: the jitter's draw and its random source (`CentreSource`), the
+// ladder the level is measured from (`ladderLevel`, capped by the scan of
+// `preliminary_surface_level` in sampling.hpp), the floodedness gates and the
+// ocean branch (`cellFluidLevel`), and the barrier rule (barrier.hpp). The
+// per-cell randomness that moved 27% of columns with all four router inputs
+// held constant was the jitter.
 #pragma once
 
 #include <stratum/javamath.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <bit>
 #include <cstdint>
 
 namespace stratum::aquifer {
@@ -87,7 +87,23 @@ inline constexpr std::int32_t kLavaLevel = -54;
 /// saturates at K = 32: K = 32 through K = 256 and this sentinel are
 /// byte-identical, K = 16 is not. So the corpus MEASURES "at least 32 below
 /// lambda"; the specific -32512 is Q1.4's arithmetic and is carried as such.
-inline constexpr std::int32_t kMinYLimit = -2032;
+///
+/// Carried as Q1.4's DERIVATION, not its product — the spec's own open
+/// question 4 asks for exactly that, since the value is composed from four
+/// separately-read definitions: a position encoding that gives each
+/// horizontal axis `1 + ceil(log2 30000000)` bits leaves 12 for `y`; the y
+/// span is `2^12 - 32`; its upper bound half that less one; and the limit
+/// the bottom of the span. The unit test checks the spec's transcribed
+/// -2032 and -32512 against this, rather than the literal against itself.
+namespace detail {
+inline constexpr std::uint32_t kHorizontalLimit = 30000000U;
+inline constexpr int kHorizontalBits = 1 + static_cast<int>(std::bit_width(kHorizontalLimit - 1U));
+inline constexpr int kYBits = 64 - (2 * kHorizontalBits);
+inline constexpr std::int32_t kYSpan = (std::int32_t{1} << kYBits) - 32;
+inline constexpr std::int32_t kYUpper = (kYSpan / 2) - 1;
+} // namespace detail
+
+inline constexpr std::int32_t kMinYLimit = detail::kYUpper - detail::kYSpan + 1;
 inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
 
 /// `fluid_level_floodedness` gates which level a cell takes, against two
@@ -97,6 +113,16 @@ inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
 /// Both comparisons are strict, and the gate is DETERMINISTIC — every cell in
 /// a world flips across that ten-thousandth, so no per-cell threshold wider
 /// than 1e-4 can exist.
+///
+/// NOT CLAMPED, and deliberately: spec Q5.6 clamps floodedness to [-1, 1]
+/// before comparing, and here that clamp is a permanent tie — inert by
+/// construction, so nothing can measure it. Every effective threshold this
+/// rule compares against lies strictly inside (-1, 1): 0.4 and 0.8 off the
+/// ocean branch, and on it the bonus is `reach * 3/160` or `reach * 11/640`
+/// with `reach <= 52` (the near-surface return takes every depth under 4),
+/// which moves the thresholds no lower than -0.575 and -0.09375. A value
+/// outside [-1, 1] therefore lands on the same side of every comparison as
+/// its clamp. "the Q5.6 floodedness clamp is inert" sweeps that.
 inline constexpr double kFloodedLocalThreshold = 0.4;
 inline constexpr double kFloodedSeaThreshold = 0.8;
 
@@ -118,11 +144,6 @@ inline constexpr double kFloodedSeaThreshold = 0.8;
 /// is the failure §5's `floorDiv` rule exists to prevent — hence the helper
 /// rather than the operator.
 [[nodiscard]] std::int32_t spreadOffset(double spread) noexcept;
-
-/// `base + spreadOffset(spread)`, which is the whole level once the base is
-/// known. Spelled separately so that the part which IS derived can be tested
-/// on its own while the base is still open.
-[[nodiscard]] std::int32_t fluidLevel(std::int32_t base, double spread) noexcept;
 
 /// Which lattice cell a block belongs to.
 struct CellIndex {
@@ -184,8 +205,8 @@ inline constexpr std::int32_t kCellShiftZ = -5;
 /// world seeds**, with 34 predicted positive and the same 34 observed. Block
 /// level, with no fitted table anywhere in the loop, it reproduces 78.4% of
 /// the probe's barrier slabs exactly and places 99.3% of Voronoi boundaries
-/// inside the observed slab; the shortfall is the barrier threshold, which is
-/// still unrecovered, not the centres. Every ablation collapses to a 3-5% null
+/// inside the observed slab; the shortfall was the barrier threshold — since
+/// recovered (barrier.hpp) — not the centres. Every ablation collapses to a 3-5% null
 /// band: a different salt, dropping either fork, swapping the MD5 halves,
 /// adding a third fork, or shifting by 15 or 17 instead of 16.
 inline constexpr std::int32_t kJitterBoundX = 10;
@@ -249,36 +270,17 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// what an implementer writes by mistake.
 [[nodiscard]] std::int32_t levelBand(std::int32_t centreY) noexcept;
 
-/// The base a cell's fluid level is measured from, before the spread moves it.
-///
-/// Measured by pinning the spread to zero — which makes the offset exactly
-/// zero, so the level read out of a chunk IS the base — and reading every cell
-/// rather than one number per world. The levels then land on a lattice of
-/// pitch 40 anchored at `y = 20 (mod 40)`: -20, 20, 60, 100, 140. The
-/// preliminary surface caps it, and does so exactly: across psl 56, 80, 96,
-/// 128 and 160 the topmost level was 56, 80, 96, 128 and 160.
-///
-/// The lattice is the aquifer's own. It does not move with `sea_level` (32 and
-/// 96 give an identical ladder), and raising the sea through it merges bodies
-/// rather than shifting them.
-///
-/// APPROXIMATE IN ONE RESPECT, deliberately. A cell takes the lattice point
-/// nearest its own CENTRE, and centres are jittered, so the transition between
-/// two lattice points is smeared rather than sharp. Taking @p y as the centre
-/// predicts 96.1% of blocks over 6.1 million, and every disagreement is within
-/// about ten blocks of a lattice boundary — 78% wrong at y = -40, 0, 40 and 80
-/// and under 2% by ten blocks away.
-///
-/// That residual is now ACCOUNTED FOR rather than merely bounded: it is the
-/// vertical centre jitter (see `kJitterValues`) plus the aquifer's own stone
-/// floor, about 2.4 blocks thick. Spending it needs the centre, which needs
-/// the jitter DRAW — the one part of the geometry still unrecovered.
-[[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
-
 /// The complete ladder level a cell takes when the floodedness gate sends it
 /// there: the lattice point below the cell's own centre, moved by the spread,
 /// capped by the preliminary surface. NOT floored anywhere — Q5.7 is a `min`
 /// with the surface and nothing else.
+///
+/// The lattice was measured by pinning the spread to zero, which makes the
+/// offset exactly zero, so the level read out of a chunk IS the lattice point:
+/// pitch 40, anchored at `y = 20 (mod 40)` — -20, 20, 60, 100, 140 — and the
+/// aquifer's own, not moving with `sea_level` (32 and 96 give an identical
+/// ladder). The cap is exact: across psl 56, 80, 96, 128 and 160 the topmost
+/// level was 56, 80, 96, 128 and 160.
 ///
 /// The order is measured, not assumed. The cap is applied AFTER the spread
 /// offset: at psl 67 a cell whose lattice point plus offset came to 69 was
@@ -499,12 +501,14 @@ struct PslRead {
     /// The anchor sample alone — the first read, before the window. Read by
     /// the DEPTH PATH's gate, and by nothing else.
     ///
-    /// SINGLE-SOURCED. One agent, one instrument family, and an asymmetry
-    /// (near-surface on the minimum, depth path on the anchor) of exactly the
-    /// shape that has been wrong twice in this codebase. Its controls are good
-    /// — worlds where the two models coincide score 1.0000 for both, and the
-    /// effect moves one-for-one with `sea_level` — but it needs a second
-    /// instrument before the filler leans on it.
+    /// CONFIRMED BY A SECOND INSTRUMENT. The asymmetry (near-surface on the
+    /// minimum, depth path on the anchor) is exactly the shape that had been
+    /// wrong twice in this codebase, so it stayed open on one instrument's
+    /// word until `aquifer-depthgate-probe.sh` built the separating
+    /// configuration independently: 202 of 210 discriminating cells back the
+    /// anchor, the other eight being two cells whose ladder level exactly
+    /// equals their own centre — a readout tie, not a rival pattern (SPEC
+    /// §11, "A second instrument for the depth path's gate").
     std::int32_t anchor = 0;
 
     /// Whether a window sample fell below the scan's threshold. When it did,

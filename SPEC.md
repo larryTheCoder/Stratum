@@ -2353,6 +2353,50 @@ Open:
   `golden_fill_aquifer_test.cpp`'s new 64-chunk case, which pins the sweep
   (6291264 of 6291456) and its 192 as flowing water, block by block.
 
+- **Aquifer hygiene: no input is undefined, no assertion is vacuous, every
+  aquifer analyzer is built (MA).** No vanilla output changes; the engine
+  stays at v3.
+
+  * *Java's int semantics wherever the aquifer narrows or does arithmetic on
+    a router reading* — `spreadOffset`, the psl scan's three readings,
+    `y_skip`, and every level and depth sum in `cellFluidLevel`. A
+    datapack's NaN reads 0 and an out-of-range value saturates, as Java's
+    `(int) Math.floor` does, and the sums wrap as Java's int does; before,
+    each was undefined behaviour in C++. Pinned by unit vectors at NaN and
+    at +-1e300.
+  * *Q1.4's sentinel is derived, not transcribed* — the spec's own open
+    question 4. `lattice.hpp` carries the arithmetic (12 bits of y from two
+    26-bit horizontal fields, a span of 4064) and the unit case checks the
+    spec's -2032 and -32512 against it at compile time.
+  * *Q5.6's floodedness clamp stays unimplemented, and is now proven inert*
+    rather than argued: every threshold `cellFluidLevel` compares against
+    lies strictly inside (-1, 1) — no lower than -0.575 with the ocean
+    branch's bonus at its reach of 52 — so a value outside [-1, 1] lands
+    where its clamp would. A sweep over out-of-range floodedness, every
+    depth, both gating sides and the abort pins it. Implementing the clamp
+    and then comparing would have compared the clamp with itself.
+  * *Dead API removed*: `baseLevel` and `fluidLevel` (their measured vectors
+    run through `ladderLevel` now), and the old two-source rule's
+    `kBarrierReachAbove/Below` (the live `|u| <= 2` is `kBarrierNoiseReach`).
+    `kPslStride` stays, tied to `kPslWindow` by a `static_assert`.
+  * *Tests that could not fail, fixed.* The waterlava case's pure-junction
+    equality was true by construction; it is now a unit property ("retyping
+    every source alike changes no barrier") plus a server-scored bound
+    (every pure-junction miss sits on row lambda). The type-field reading's
+    constant-only population — 33, unchanged since the dry sentinel — has a
+    floor, so an empty one cannot pass. `barrier3way`'s three-source case
+    held a 0.5% miss bound over a reading of 0 of 11 923 — now exact, with
+    the corpus size pinned and, for the first time, false stone checked: 0
+    on all 19 601 open blocks within two of a real barrier. The baseLevel "clamp" assertion
+    that held either way is gone. The legacy-source refusals for aquifers
+    and ore veins have a test. Eight aquifer conformance files REQUIRE every
+    chunk of their probe window instead of skipping a missing one, and the
+    aquifer-free per-block case classifies by exact block name, not by a
+    substring of the state string (where `waterlogged=false` read as water).
+  * *The six aquifer analyzers are build targets*, under the project warning
+    set, clang-format and clang-tidy, and in CI's lint list. Their output on
+    their own probe worlds is byte-identical to before the cleanup.
+
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
   round-trip tested against a real chunk's own bytes), `chunk::encode` (the
@@ -2882,7 +2926,8 @@ Open:
   `stratum::aquifer::baseLevel` carries the rule with that approximation stated
   in its own comment, and its tests pin the ladder measured at psl 96 together
   with the sub-zero cases where a truncating division would fold two bands into
-  one.
+  one. (Since removed: the jitter was recovered and `ladderLevel` took over the
+  whole rule; the same vectors now run through it.)
 
   **The grid origin, from centres instead of boundaries (M3).** Boundaries
   could not settle the anchor because a boundary's position is the grid origin
@@ -2931,7 +2976,8 @@ Open:
   with the ten discriminating values as known-answer vectors and the
   negative-operand cases spelled out separately, because a `/ 3` truncating
   toward zero agrees on every non-negative spread and is one step high on
-  every negative one.
+  every negative one. (`fluidLevel` has since been removed as dead API; the
+  vectors run through `ladderLevel` and `spreadOffset`.)
 
   `cellOf` now goes with them, since the origin is measured: it floors on
   every axis, and its tests pin the cases a truncating division gets wrong —

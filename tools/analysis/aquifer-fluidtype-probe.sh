@@ -17,7 +17,7 @@
 #   (b) The level ceiling: bracketed to [-14, -5] and no tighter, because at
 #       `preliminary_surface_level` 96 the corpus's own levels skip that
 #       range entirely — the SAME psl this probe also uses, deliberately,
-#       so `baseLevel`'s own doc (psl 56/80/96/128/160 give topmost levels
+#       so `ladderLevel`'s own doc (psl 56/80/96/128/160 give topmost levels
 #       56/80/96/128/160) is known to apply cleanly here.
 #
 # A FIRST ATTEMPT AT THIS PROBE GOT THE SHAPE WRONG, and it is worth keeping
@@ -148,7 +148,7 @@ python3 - "${spec}" "${group}" <<'PY'
 import json, math, sys
 
 SEA = 63
-PSL = 96.0     # matches baseLevel's own doc; comfortably clear of the ocean
+PSL = 96.0     # matches ladderLevel's own doc; comfortably clear of the ocean
                # branch (psl - sea_level = 33 > -kOceanGateOffset).
 MIN_Y = -64
 HEIGHT = 384

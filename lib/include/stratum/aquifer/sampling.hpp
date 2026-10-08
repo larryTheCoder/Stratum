@@ -175,7 +175,7 @@ inline constexpr std::int32_t kPslStride = 16;
 /// "world floor plus two" reading outright — at `min_y` -128 that would put
 /// the constant at -126, so a -70 arm would not abort, and it does.
 [[nodiscard]] constexpr double abortThreshold(const std::int32_t seaLevel) noexcept {
-    return static_cast<double>(lambdaLevel(seaLevel) - kOceanGateOffset);
+    return static_cast<double>(javamath::wrappingSub(lambdaLevel(seaLevel), kOceanGateOffset));
 }
 
 /// The window, as offsets from the anchor, IN SCAN ORDER. The anchor itself is
@@ -222,6 +222,13 @@ inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
     {.dx = 0, .dz = 16},
     {.dx = 16, .dz = 16},
 }};
+
+// Every offset sits on the measured pitch — the table is written out for
+// readability, and this is what ties it to `kPslStride`.
+static_assert(std::ranges::all_of(kPslWindow, [](const PslOffset offset) {
+    return javamath::floorMod(offset.dx, kPslStride) == 0 &&
+           javamath::floorMod(offset.dz, kPslStride) == 0;
+}));
 
 // `PslRead` — the four values one scan yields — lives in `lattice.hpp`,
 // because it is what the level rule consumes.
@@ -310,9 +317,11 @@ template<typename Sampler>
 
     // Floor toward negative infinity, on the double, once. Not round (0.4855),
     // not truncation toward zero (0.9209 — failing exactly on the negatives).
-    return PslRead{.gate = static_cast<std::int32_t>(std::floor(prefix)),
-                   .cap = static_cast<std::int32_t>(std::floor(aborted ? whole : prefix)),
-                   .anchor = static_cast<std::int32_t>(std::floor(seed)),
+    // Java's `(int) Math.floor`, saturating and NaN -> 0: a datapack's psl can
+    // be either, and a bare cast of them is undefined.
+    return PslRead{.gate = javamath::floorToInt(prefix),
+                   .cap = javamath::floorToInt(aborted ? whole : prefix),
+                   .anchor = javamath::floorToInt(seed),
                    .aborted = aborted};
 }
 

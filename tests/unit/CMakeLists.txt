@@ -8,6 +8,7 @@ add_executable(stratum_unit_tests
     deepslate_oracle_test.cpp
     density_graph_test.cpp
     density_interpreter_test.cpp
+    fluid_flow_test.cpp
     surface_executor_test.cpp
     surface_rule_test.cpp
     surface_schema_test.cpp

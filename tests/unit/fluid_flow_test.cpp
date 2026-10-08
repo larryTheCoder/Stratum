@@ -1,0 +1,111 @@
+// Stratum — the conformance suite's flow classifier, held without fixtures.
+// Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// `tests/support/fluid_flow.hpp` decides which golden disagreements are fluid
+// that moved after generation, and the golden cases trust it to let nothing
+// else through. Those cases need Mojang-derived fixtures CI never has, so the
+// classifier's own rules are pinned here on a synthetic region instead: every
+// shape it accepts, and the near misses it must not.
+#include "support/chunk_builder.hpp"
+#include "support/fluid_flow.hpp"
+#include "support/region_builder.hpp"
+#include "support/temp_path.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+using stratum::test::Category;
+using stratum::test::categoryOf;
+using stratum::test::explainedByFlow;
+using stratum::test::GoldenRegion;
+
+TEST_CASE("the flow classifier reads a block's exact name", "[test-support]") {
+    // The substring classifier this replaced called these two non-solid.
+    CHECK(categoryOf("minecraft:oak_stairs") == Category::Solid);
+    CHECK(categoryOf("minecraft:water_cauldron") == Category::Solid);
+    CHECK(categoryOf("minecraft:lava_cauldron") == Category::Solid);
+    CHECK(categoryOf("minecraft:air") == Category::Air);
+    CHECK(categoryOf("minecraft:cave_air") == Category::Air);
+    CHECK(categoryOf("minecraft:void_air") == Category::Air);
+    CHECK(categoryOf("minecraft:water") == Category::Water);
+    CHECK(categoryOf("minecraft:lava") == Category::Lava);
+}
+
+TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing else",
+          "[test-support]") {
+    // One section, y 0..15, of chunk (0, 0); everything at y = 5.
+    const std::vector<std::string> palette{"minecraft:air",
+                                           "minecraft:stone",
+                                           "minecraft:water[level=0]",
+                                           "minecraft:water[level=1]",
+                                           "minecraft:lava[level=0]",
+                                           "minecraft:obsidian"};
+    constexpr std::uint16_t kAir = 0;
+    constexpr std::uint16_t kStone = 1;
+    constexpr std::uint16_t kWater = 2;
+    constexpr std::uint16_t kFlowing = 3;
+    constexpr std::uint16_t kLava = 4;
+    constexpr std::uint16_t kObsidian = 5;
+    std::vector<std::uint16_t> blocks(4096, kAir);
+    const auto put = [&blocks](int x, int y, int z, std::uint16_t block) {
+        blocks[static_cast<std::size_t>((((y * 16) + z) * 16) + x)] = block;
+    };
+    // Flowing water.
+    put(2, 5, 2, kFlowing);
+    // A water source between two others: the infinite-source rule's shape.
+    for (const int x : {4, 5, 6}) {
+        put(x, 5, 5, kWater);
+    }
+    // A water source with one source beside it, which no rule rebuilds.
+    put(9, 5, 9, kWater);
+    put(10, 5, 9, kWater);
+    // Water met lava: obsidian, and water beside it.
+    put(12, 5, 12, kObsidian);
+    put(12, 5, 13, kWater);
+    // A plain stone.
+    put(2, 5, 12, kStone);
+    // A lava source between two others.
+    for (const int x : {13, 14, 15}) {
+        put(x, 5, 6, kLava);
+    }
+
+    stratum::test::RegionBuilder builder;
+    builder.addChunk(0, 0, {stratum::test::SectionSpec{0, palette, blocks, {}, {}}});
+    const std::filesystem::path path = stratum::test::tempPath("stratum-fluid-flow", ".mca");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(builder.bytes().data()),
+                  static_cast<std::streamsize>(builder.bytes().size()));
+    }
+    GoldenRegion golden(path);
+    const auto explained = [&golden](int x, int z, Category goldenCategory, Category raw) {
+        return explainedByFlow(golden, x, 5, z, goldenCategory, raw);
+    };
+
+    // Accepted: flowing water where the first pass has air; a water source
+    // between two sources (the infinite-source rule); obsidian where the
+    // first pass has lava; water where the first pass has lava, beside it.
+    CHECK(explained(2, 2, Category::Water, Category::Air));
+    CHECK(explained(5, 5, Category::Water, Category::Air));
+    CHECK(explained(12, 12, Category::Solid, Category::Lava));
+    CHECK(explained(12, 13, Category::Water, Category::Lava));
+
+    // Refused: a source with ONE source beside it; stone where the first
+    // pass has lava (a barrier the aquifer missed is the aquifer's); golden
+    // air where the first pass has fluid (fluid never vanishes by flowing);
+    // and a LAVA source between two — lava rebuilds no sources.
+    CHECK_FALSE(explained(9, 9, Category::Water, Category::Air));
+    CHECK_FALSE(explained(2, 12, Category::Solid, Category::Lava));
+    CHECK_FALSE(explained(8, 2, Category::Air, Category::Lava));
+    CHECK_FALSE(explained(14, 6, Category::Lava, Category::Air));
+    // And water beside nothing that water left behind.
+    CHECK_FALSE(explained(10, 9, Category::Water, Category::Lava));
+
+    std::filesystem::remove(path);
+}

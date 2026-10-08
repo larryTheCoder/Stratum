@@ -189,12 +189,13 @@ namespace stratum::aquifer {
 /// `barrier` input of -1.0.
 inline constexpr std::int32_t kSimilarityRange = 25;
 
-/// How near the nearer plane a block must sit for the `barrier` router value
-/// to enter Π at all — the old two-source rule's own reach, still exact at
-/// D=-1 (see this file's own header): thirteen barrier constants from -1.0 to
-/// +4.0 give byte-identical output beyond it.
-inline constexpr std::int32_t kBarrierReachAbove = 2; ///< on the air side, u <= 2
-inline constexpr std::int32_t kBarrierReachBelow = 3; ///< on the fluid side, v <= 3
+/// How near the pair's boundary, in Π's own `u`, a block must sit for the
+/// `barrier` router value to enter Π at all: `|u| <= 2`, on both sides.
+/// Beyond it the router value is zeroed, and thirteen barrier constants from
+/// -1.0 to +4.0 give byte-identical output there (see this file's header).
+/// The old two-source rule's asymmetric reach — 2 on the air side, 3 on the
+/// fluid side — went with that rule; nothing in the current Π reads a 3.
+inline constexpr double kBarrierNoiseReach = 2.0;
 
 /// Q6.4's pressure where two sources BOTH read fluid at the block and the
 /// two fluids differ — a lava body against a water body: a constant, with
@@ -254,11 +255,13 @@ struct BarrierAt {
 /// with `s_ij = 1 - (dj-di)/25` on squared distances and `Π` per Q6.4. `s12
 /// <= 0` short-circuits to false outright (Q6.2: the nearest point wins,
 /// no barrier evaluation at all) before any term is tried. What a term
-/// does then depends on what its pair READS at `y`: one fluid and one air
-/// takes the level formula, whatever the two types; both fluid of
-/// DIFFERENT types takes the constant `kMixedTypePressure`; both air, or
-/// both the same fluid, does not fire at all. Each of those is measured
-/// separately against the server (this file's own header).
+/// does then depends on what its pair READS at `y`: both fluid of DIFFERENT
+/// types takes the constant `kMixedTypePressure`; every other pair — one
+/// fluid and one air whatever the two types, both air, or both the same
+/// fluid — takes the level formula, which is where the `/10` floor below a
+/// pair of fluids and the `/2.5` lid above them live. The guard that once
+/// refused a pair reading the same thing is gone: the server refutes it
+/// (this file's own header). Each of those is measured separately.
 [[nodiscard]] bool placesBarrier(const BarrierAt& at) noexcept;
 
 } // namespace stratum::aquifer

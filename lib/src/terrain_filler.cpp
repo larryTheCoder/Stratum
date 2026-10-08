@@ -81,7 +81,12 @@ constexpr int kChunkWidth = 16;
 
 /// Solid, fluid or air — what the FIRST pass decided, read back for the
 /// second. Not stored anywhere: rederived from the block a position already
-/// holds, which is exact because only these three ever come out of it.
+/// holds. Coarse: the aquifer's lava and the ore veins' blocks come out as
+/// Solid. The surface pass's WRITE does not rely on this — it writes over
+/// `default_block` only (`applySurfaceRules`) — but its stone-depth run does,
+/// so a lava block counts toward the run where a water block neither counts
+/// nor breaks it. Water's behaviour is measured; lava's is not, and is
+/// carried as an open item (PROGRESS.md, MA).
 enum class Category : std::uint8_t { Air, Fluid, Solid };
 
 [[nodiscard]] Category categorize(const settings::BlockState& block,

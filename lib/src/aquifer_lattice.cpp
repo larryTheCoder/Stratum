@@ -12,12 +12,13 @@ std::int32_t spreadOffset(const double spread) noexcept {
     // Two floors, both toward negative infinity: std::floor for the scaling,
     // then floorDiv for the grouping into threes. Writing the second as `/ 3`
     // would truncate toward zero and put every negative spread one step high.
-    const auto scaled = static_cast<std::int32_t>(std::floor(spread * 10.0));
-    return 3 * javamath::floorDiv(scaled, 3);
-}
-
-std::int32_t fluidLevel(const std::int32_t base, const double spread) noexcept {
-    return base + spreadOffset(spread);
+    //
+    // Java's `(int) Math.floor` and Java's wrapping `*`: a datapack's spread
+    // can be NaN (-> 0) or far outside the int range (-> saturated), where a
+    // bare cast is undefined, and `3 * floorDiv(INT_MIN, 3)` overflows by one.
+    // No vanilla router comes near either; the point is that no input is UB.
+    const std::int32_t scaled = javamath::floorToInt(spread * 10.0);
+    return javamath::wrappingMul(3, javamath::floorDiv(scaled, 3));
 }
 
 CellIndex cellOf(const std::int32_t x, const std::int32_t y, const std::int32_t z) noexcept {
@@ -35,11 +36,6 @@ std::int32_t levelBand(const std::int32_t centreY) noexcept {
     // puts it in band 0, which moves its ladder by forty blocks and reads the
     // spread from the wrong place.
     return javamath::floorDiv(centreY, kBasePitch);
-}
-
-std::int32_t baseLevel(const std::int32_t y, const std::int32_t preliminarySurface) noexcept {
-    const std::int32_t onLattice = (kBasePitch * levelBand(y)) + kBasePhase;
-    return std::min(onLattice, preliminarySurface);
 }
 
 std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
@@ -65,19 +61,23 @@ std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
     // The `seaLevel` parameter went with the clamp: nothing else in Q5.7
     // reads it, and leaving it would suggest the sea still enters a ladder
     // level, which it does not.
-    return std::min(onLattice + spreadOffset(spread), cap);
+    return std::min(javamath::wrappingAdd(onLattice, spreadOffset(spread)), cap);
 }
 
 std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
     const std::int32_t lambda = lambdaLevel(cell.seaLevel);
     const std::int32_t ladder = ladderLevel(cell.centreY, cell.surface.cap, cell.spread);
-    const std::int32_t oceanGate = cell.seaLevel - kOceanGateOffset;
+    // Every int operation on a psl reading wraps, as Java's int does: the
+    // reading itself saturates (`readPreliminarySurface`), and a saturated
+    // value minus a centre is exactly where a bare `-` would be undefined.
+    const std::int32_t oceanGate = javamath::wrappingSub(cell.seaLevel, kOceanGateOffset);
 
     // The near-surface path, gated and measured on the scan's PREFIX minimum.
     // It is an early return and it bypasses the trailing guard — two
     // purpose-built campaigns put cells centred below the lava level wet to
     // the top of their territory, where an assignment would have floored them.
-    if (cell.surface.gate < oceanGate && cell.surface.gate - cell.centreY < kNearSurfaceDepth) {
+    if (cell.surface.gate < oceanGate &&
+        javamath::wrappingSub(cell.surface.gate, cell.centreY) < kNearSurfaceDepth) {
         if (!cell.surface.aborted) {
             return cell.seaLevel;
         }
@@ -119,7 +119,8 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // sentinel are again indistinguishable. Leaving it alone is a choice,
         // not an oversight — `aquifer-nearsurface-probe.sh`'s varying psl is
         // where a future pass would separate them.
-        return (cell.centreY >= lambda && cell.centreY > cell.surface.cap + kNearSurfaceFloorOffset)
+        return (cell.centreY >= lambda &&
+                cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset))
                    ? cell.seaLevel
                    : lambda;
     }
@@ -155,11 +156,12 @@ std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
         // `depth` is a plain signed subtraction and may be negative; it never
         // divides, so no floorDiv arises. The only division in the whole
         // decision is the floorDiv inside `ladderLevel`.
-        const std::int32_t depth = cell.surface.gate - cell.centreY;
+        const std::int32_t depth = javamath::wrappingSub(cell.surface.gate, cell.centreY);
         // Clamped at zero and only at zero. Without the clamp a cell with
         // floodedness just above 0.4 would turn to lava past depth 61, where
         // the server was observed keeping the ladder out to depth 160.
-        const auto reach = static_cast<double>(std::max(0, kZeroBonusDepth - depth));
+        const auto reach =
+            static_cast<double>(std::max(0, javamath::wrappingSub(kZeroBonusDepth, depth)));
 
         // Product over divisor, never a pre-divided constant — see the slope
         // constants in the header. The abort refuses the sea outcome

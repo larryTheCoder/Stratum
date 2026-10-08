@@ -243,12 +243,13 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
             }
             const std::int32_t chunkX = stratum::javamath::floorDiv(centre.x, 16);
             const std::int32_t chunkZ = stratum::javamath::floorDiv(centre.z, 16);
-            if (chunkX < 0 || chunkX >= 8 || chunkZ < 0 || chunkZ >= 8 ||
-                !file.hasChunk(chunkX, chunkZ)) {
-                continue;
+            if (chunkX < 0 || chunkX >= 8 || chunkZ < 0 || chunkZ >= 8) {
+                continue; // a centre off the probe's window is out of scope
             }
-            const std::int32_t localX = centre.x >= 0 ? centre.x % 16 : ((centre.x % 16) + 16) % 16;
-            const std::int32_t localZ = centre.z >= 0 ? centre.z % 16 : ((centre.z % 16) + 16) % 16;
+            // Inside it, a missing chunk is a broken corpus.
+            REQUIRE(file.hasChunk(chunkX, chunkZ));
+            const std::int32_t localX = stratum::javamath::floorMod(centre.x, 16);
+            const std::int32_t localZ = stratum::javamath::floorMod(centre.z, 16);
             const auto chunk = stratum::chunk::Chunk::decode(
                 stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
             const auto* block = chunk.blockAt(localX, centre.y, localZ);

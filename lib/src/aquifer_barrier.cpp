@@ -72,7 +72,7 @@ double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const
         // and 10 itself is exact. See barrier.hpp's own header.
         u = (threeT > 0) ? (threeT / 3.0) : (threeT / 10.0);
     }
-    const double noiseTerm = (std::abs(u) <= 2.0) ? barrierNoise : 0.0;
+    const double noiseTerm = (std::abs(u) <= kBarrierNoiseReach) ? barrierNoise : 0.0;
     return 2.0 * (noiseTerm + u);
 }
 

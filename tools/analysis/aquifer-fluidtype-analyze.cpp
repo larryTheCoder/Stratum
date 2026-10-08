@@ -22,8 +22,10 @@
 // informative reading of the last pass — a 68-cell level -10 — behind a
 // threshold that had no measurement behind it.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-fluidtype-analyze
-//   build/aquifer-fluidtype-analyze .fixtures/1.21.11/probes/fluidtype
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//   tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz -o
+//   build/aquifer-fluidtype-analyze build/aquifer-fluidtype-analyze
+//   .fixtures/1.21.11/probes/fluidtype
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
@@ -104,8 +106,8 @@ int main(int argc, char** argv) {
                                     ++counts.highObsidian;
                                 }
                             }
-                            const bool fluid =
-                                b && (b->name == "minecraft:water" || b->name == "minecraft:lava");
+                            const bool fluid = (b != nullptr) && (b->name == "minecraft:water" ||
+                                                                  b->name == "minecraft:lava");
                             if (fluid && top == INT32_MIN) {
                                 top = y;
                                 lava = b->name == "minecraft:lava";
@@ -130,13 +132,18 @@ int main(int argc, char** argv) {
         std::printf("%-12s total=%lld water=%lld lava=%lld", name.c_str(), total, counts.water,
                     counts.lava);
         if (total > 0) {
-            std::printf(" (%.2f%% lava)", 100.0 * static_cast<double>(counts.lava) /
-                                              static_cast<double>(total));
+            std::printf(" (%.2f%% lava)",
+                        100.0 * static_cast<double>(counts.lava) / static_cast<double>(total));
         }
         std::printf(" hiLava=%lld hiObs=%lld", counts.highLava, counts.highObsidian);
         std::printf(" levels:");
         for (const auto& [level, at] : counts.byLevel) {
-            const char* verdict = at.lava == 0 ? "water" : (at.water == 0 ? "LAVA" : "MIXED");
+            const char* verdict = "MIXED";
+            if (at.lava == 0) {
+                verdict = "water";
+            } else if (at.water == 0) {
+                verdict = "LAVA";
+            }
             std::printf(" %d:%s(w%lld/l%lld)", level, verdict, at.water, at.lava);
         }
         std::printf("\n");
