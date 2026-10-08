@@ -624,10 +624,23 @@ struct CellLevel {
 /// barrier weighs the level: over an aborting surface with vanilla's barrier
 /// on (`aquifer-nsfloor-probe.sh`) the unfloored ladder writes 7 690 blocks
 /// of stone the server does not, and at floodedness 0 the sentinel 3 770
-/// more; the floor writes none. A cell that did NOT abort keeps its
-/// unclamped ladder and its sentinel, which is what the water/lava and
-/// deep-floor worlds measured. The deep-dark override's sentinel returns
-/// before the floor is reached.
+/// more; the floor writes none. Since an aborted scan's cap is the whole
+/// window's minimum, below the abort threshold, every aborted cell off the
+/// near-surface path reads exactly lambda.
+///
+/// A cell that did NOT abort keeps its unclamped ladder and its sentinel.
+/// Where its cap is above lambda that is measured (the water/lava and
+/// deep-floor worlds). Where its cap is below lambda without an abort
+/// (psl in [lambda - 8, lambda)) it is the documented reading — the spec
+/// ties the lambda status to the submerged surface, not to the cap — and
+/// `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the only 4
+/// blocks over two seeds where the two readings part.
+///
+/// The deep-dark override does not reach an aborted cell either: spec Q5.3's
+/// short-circuits precede the level rule, and Q5.9 forces only that rule's
+/// comparands, so an aborted deep-dark cell reads lambda, not the sentinel.
+/// Measured through the barrier by `aquifer-ddfloor-probe.sh`, which puts the
+/// aborting field under the override (pipeline engine v6).
 [[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
 
 /// `cellLevel(cell).level`, for the callers that need nothing else.

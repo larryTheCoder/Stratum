@@ -178,12 +178,13 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                 stratum::aquifer::spreadSample(CellIndex{.x = ix, .y = iy, .z = iz}, centre);
             const double spread = interpreter.evaluate(
                 spreadNode, Point{.x = spreadAt.x, .y = spreadAt.y, .z = spreadAt.z});
-            const std::int32_t level = stratum::aquifer::cellFluidLevel(
+            const stratum::aquifer::CellLevel cellLevel = stratum::aquifer::cellLevel(
                 stratum::aquifer::CellFluid{.centreY = centre.y,
                                             .surface = stratum::aquifer::constantSurface(kSurface),
                                             .seaLevel = kSeaLevel,
                                             .floodedness = kFloodedness,
                                             .spread = spread});
+            const std::int32_t level = cellLevel.level;
             // Only the blocks this source itself holds — below its own level.
             // A source block at or above it is another body's fluid that
             // reached this territory, which no type rule can be scored on.
@@ -231,7 +232,12 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             const bool observed = tally.first > 0;
             const bool predicted =
                 stratum::aquifer::fluidTypeOf(stratum::aquifer::FluidTypeAt{
-                    .centreY = centre.y, .level = level, .seaLevel = kSeaLevel, .lava = lava}) ==
+                    .centreY = centre.y,
+                    .level = level,
+                    .seaLevel = kSeaLevel,
+                    .lava = lava,
+                    .fromNearSurface =
+                        cellLevel.origin == stratum::aquifer::LevelOrigin::NearSurfaceSea}) ==
                 FluidType::Lava;
 
             // The null that matters, in the same loop: the identical rule

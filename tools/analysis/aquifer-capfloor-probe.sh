@@ -36,8 +36,8 @@
 # pairs with different levels — the only kind the pressure term weighs —
 # are common. The barrier is vanilla's own noise; `lava` is 0.0.
 #
-# Its conformance case lands with the change it decides (SPEC §11, "The
-# aborting near-surface floor is lambda"). Nothing this writes is committed:
+# Read by tests/conformance/vanilla_aquifer_nsfloor_test.cpp ("which source
+# levels the barrier weighs at lambda"). Nothing this writes is committed:
 # worlds are Mojang-derived (SPEC §12).
 set -euo pipefail
 

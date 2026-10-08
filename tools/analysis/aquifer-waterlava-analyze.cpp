@@ -522,16 +522,14 @@ int run(int argc, char** argv) {
                                                               .seaLevel = dim.seaLevel,
                                                               .floodedness = f,
                                                               .spread = s};
-                                level[r] = aquifer::cellFluidLevel(cell);
+                                const aquifer::SamplePos lp = aquifer::lavaSample(src.centre);
+                                const aquifer::SourceStatus status =
+                                    aquifer::sourceStatus(cell, lavaAt(lp.x, lp.y, lp.z));
+                                level[r] = status.level;
+                                type[r] = status.type;
                                 specLevel[r] =
                                     specLevelOf(src.centre, f, s, dim.seaLevel,
                                                 static_cast<std::int32_t>(std::floor(dim.psl)));
-                                const aquifer::SamplePos lp = aquifer::lavaSample(src.centre);
-                                type[r] = aquifer::fluidTypeOf(
-                                    aquifer::FluidTypeAt{.centreY = src.centre.y,
-                                                         .level = level[r],
-                                                         .seaLevel = dim.seaLevel,
-                                                         .lava = lavaAt(lp.x, lp.y, lp.z)});
                             }
                             aquifer::BarrierAt at;
                             at.y = y;

@@ -109,9 +109,11 @@ struct SourceStatus {
 
 /// A source's status from its fluid inputs and its `lava` reading: the level
 /// and where it came from (`cellLevel`), and the type that follows from both
-/// (`fluidTypeOf`). The one place the two are put together, so a caller that
-/// scores sources outside `computeSubstance` cannot get the type of a
-/// near-surface sea wrong where the filler gets it right.
+/// (`fluidTypeOf`). The filler, the conformance cases and the analyzers all
+/// take a source's status from here rather than pairing the two by hand, so
+/// none of them can get the type of a near-surface sea wrong where the
+/// filler gets it right. A caller that builds a `FluidTypeAt` itself (only
+/// the type rule's own tests should) must carry the origin over too.
 [[nodiscard]] inline SourceStatus sourceStatus(const CellFluid& cell, const double lava) noexcept {
     const CellLevel level = cellLevel(cell);
     return SourceStatus{.level = level.level,

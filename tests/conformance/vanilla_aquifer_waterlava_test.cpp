@@ -396,18 +396,17 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
                                     aquifer::floodednessSample(src.centre);
                                 const aquifer::SamplePos sp =
                                     aquifer::spreadSample(src.cell, src.centre);
-                                level[r] = aquifer::cellFluidLevel(aquifer::CellFluid{
-                                    .centreY = src.centre.y,
-                                    .surface = surface,
-                                    .seaLevel = dim.seaLevel,
-                                    .floodedness = floodednessAt(fp.x, fp.y, fp.z),
-                                    .spread = spreadAt(sp.x, sp.y, sp.z)});
                                 const aquifer::SamplePos lp = aquifer::lavaSample(src.centre);
-                                type[r] = aquifer::fluidTypeOf(
-                                    aquifer::FluidTypeAt{.centreY = src.centre.y,
-                                                         .level = level[r],
-                                                         .seaLevel = dim.seaLevel,
-                                                         .lava = lavaAt(lp.x, lp.y, lp.z)});
+                                const aquifer::SourceStatus status = aquifer::sourceStatus(
+                                    aquifer::CellFluid{.centreY = src.centre.y,
+                                                       .surface = surface,
+                                                       .seaLevel = dim.seaLevel,
+                                                       .floodedness =
+                                                           floodednessAt(fp.x, fp.y, fp.z),
+                                                       .spread = spreadAt(sp.x, sp.y, sp.z)},
+                                    lavaAt(lp.x, lp.y, lp.z));
+                                level[r] = status.level;
+                                type[r] = status.type;
                             }
                             aquifer::BarrierAt at;
                             at.y = y;
