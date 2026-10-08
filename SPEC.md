@@ -1609,6 +1609,24 @@ Open:
   the eight golden overworld regions the wiring alone takes exact blocks
   from 99.9915% to 99.9942% (every second chunk).
 
+  CI holds the wiring without any fixture, which the golden case cannot:
+  `tests/unit/terrain_filler_test.cpp`'s "above_preliminary_surface reads
+  the 16-block lattice through the whole filler, not the column" drives the
+  entry with a noise field spanning at least 8 blocks inside each of three
+  chunks (two of them at a negative coordinate) and finds the band's lower
+  edge where the lattice puts it in 768 of 768 columns, against a reference
+  that locates each column's cell through floorDiv rather than the filler's
+  chunk = cell shortcut. The readings a regression would bring back each
+  move a pinned number of those columns: the per-column read 672, the two
+  off-diagonal samples swapped 304, the far sample at +15 369, a single
+  floor after the blend 363, truncation 768, and a truncating cell index
+  488 of the 512 columns at a negative coordinate. Substituted into the
+  engine, the per-column read leaves 96 of 768 exact and the swap 464. The
+  pinned cross-architecture fill hash in `vanilla_compiled_dimension_test.cpp`
+  is NOT a guard here: under the per-column substitution it does not move
+  (its four seed-0 chunks come out identical either way), while the golden
+  case's exact count falls from 12582372 to 12582029.
+
   Each part was measured separately rather than fitted together, and the
   lattice is then re-derived without any of them — which matters here because
   this question had already collected two wrong universal claims from
@@ -1779,7 +1797,11 @@ Open:
   57 values with 44 gaps, 2 gives 15 with 86) and says nothing against 8 or
   32, which also predict 101. Those two are refused by the translation test,
   not by this count — which is exactly why the pitch was measured by
-  translation instead. Asserted in `tests/unit/terrain_filler_test.cpp`.
+  translation instead. Asserted, every pitch named here, in
+  `tests/unit/terrain_filler_test.cpp`'s "the psl lattice: each sample
+  floored, blended, floored again — known answers": pitch 16 through the
+  engine's own `preliminarySurfaceIn`, which the case holds equal on all
+  20736 inputs to the formula the other pitches are counted with.
 
   Measured by `tools/analysis/psl-lattice-probe.sh` (43 probe dimensions
   across three specs, two seeds and both signs of the world origin), read back
@@ -1789,9 +1811,9 @@ Open:
 
 
   SETTLED, and it was the last thing open about the boundary's own FORMULA —
-  the sampling question above is about `preliminary_surface_level` and stays
-  open. The depth carries **no bottom clamp AT 0**: `max(0, surfaceDepth)` is
-  REFUTED, and the boundary is `y >= floor(psl) + surfaceDepth - 8` with the
+  the sampling question above is about `preliminary_surface_level`, and only
+  its aquifer half stays open. The depth carries **no bottom clamp AT 0**:
+  `max(0, surfaceDepth)` is REFUTED, and the boundary is `y >= floor(psl) + surfaceDepth - 8` with the
   depth as returned, negative values included.
 
   **Narrowed deliberately to "at 0", because that is all 49 columns can
@@ -2274,7 +2296,8 @@ Open:
   * **The psl lattice is wired.** `above_preliminary_surface` now reads
     `preliminary_surface_level` through the measured 16-block lattice
     (above). Before v2 the helper existed and was tested only as a replica;
-    the engine read per column. Exact blocks 99.9915% -> 99.9942%.
+    the engine read per column. Exact blocks 99.9915% -> 99.9942%. Held in
+    CI, fixture-free, by `terrain_filler_test.cpp`'s varying-psl case.
   * **Aquifers off still keeps a global lava sea** (spec Q1.2/Q2.1): a
     non-solid position below `min(-54, sea_level)` is lava, not
     `default_fluid`. Measured on the aquifer-free probe: 1005 positions at

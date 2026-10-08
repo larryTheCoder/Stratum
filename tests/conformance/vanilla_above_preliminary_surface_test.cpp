@@ -1392,8 +1392,9 @@ TEST_CASE("a spatially varying preliminary surface level reaches the condition i
     // and PROGRESS.md's M4 entry cannot drift from the fixture again. The
     // entry drives `preliminary_surface_level` with a three-valued
     // `range_choice` (-40 / 0 / 60). Were it read per column, as
-    // `terrain::ChunkFiller` reads it, the condition would see three values
-    // and the band's lower edge could take at most 3 * 7 of them.
+    // `terrain::ChunkFiller` read it before pipeline engine v2, the condition
+    // would see three values and the band's lower edge could take at most
+    // 3 * 7 of them.
     //
     // Two counts, and they are NOT the same number — which is exactly what
     // the documentation had left ambiguous:

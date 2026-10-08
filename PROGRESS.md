@@ -46,8 +46,11 @@ Open:
       writes over `default_block` and nothing else (vanilla changes none of
       6619641 raw water positions). Now: lava kept, exact blocks 99.9942%
       (every second chunk). Held by `golden_overworld_test.cpp`, a
-      fixture-free unit case that fails on the old pass, and a pinned
-      cross-architecture fill hash that runs in CI. SPEC §11.
+      fixture-free unit case that fails on the old pass
+      (`terrain_filler_test.cpp`, "a surface rule writes over the default
+      block and nothing else"; the psl lattice wired in the same version has
+      its own, under M4), and a pinned cross-architecture fill hash that runs
+      in CI. SPEC §11.
 - [x] **Aquifers-off dimensions keep the global lava sea** (spec Q1.2/Q2.1):
       1005 positions at y -58..-55 of the aquifer-free probe were written
       water where the server has lava; invisible to category-only goldens.
@@ -1095,7 +1098,17 @@ Open:
       still read the raw entry per column — so the engine never produced what
       the cases credited it with. Wired now: four samples a chunk, and on the
       eight golden overworld regions exact blocks go 99.9915% -> 99.9942%
-      (`golden_overworld_test.cpp`). The original finding: `terrain::ChunkFiller` evaluated
+      (`golden_overworld_test.cpp`). Held in CI with no fixture by
+      `terrain_filler_test.cpp`, "above_preliminary_surface reads the
+      16-block lattice through the whole filler, not the column": a varying
+      entry, 768 of 768 columns exact, against pinned counts of the columns
+      each regression would move (per column 672, swapped samples 304, far
+      sample at +15 369, single floor 363, truncation 768, truncating cell
+      index 488 of 512). Substituting the per-column read into the engine
+      fails it (96 of 768) and moves the golden count 12582372 -> 12582029,
+      but leaves the CI fill hash in `vanilla_compiled_dimension_test.cpp`
+      unchanged: that hash is blind to this wiring, and the unit case is its
+      only CI guard. The original finding: `terrain::ChunkFiller` evaluated
       the entry per column. The server does not: driven by a three-valued
       `range_choice` (-40 / 0 / 60), the value that reaches the condition
       takes 101 distinct integer values — every integer from -40 to 60, both
@@ -1181,7 +1194,9 @@ Open:
       {-40, 0, 60} — no fixture — and pitch 16 gives exactly 101, -40 to 60,
       contiguous. As a bound it refuses pitch 4 (57 values, 44 gaps) and 2
       (15, 86 gaps) and says nothing against 8 or 32; those die to the
-      translation family, which is why the pitch was measured that way.
+      translation family, which is why the pitch was measured that way. All
+      five counts are asserted in `terrain_filler_test.cpp`'s known-answer
+      case for `preliminarySurfaceIn`, pitch 16 through the helper itself.
 
       `tools/analysis/psl-lattice-probe.sh` + `psl-lattice-analyze.cpp`
       (43 dimensions, 3 specs, 2 seeds, both signs of the origin);
