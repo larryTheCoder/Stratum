@@ -248,6 +248,14 @@ void ChunkBuffer::set(int localX, std::int32_t y, int localZ, const settings::Bl
     blocks_[index] = intern(block);
 }
 
+void ChunkBuffer::clear() {
+    // Entry 0 is air in every buffer (the constructor's), so zeroing the
+    // indices is "every block air" whatever else the palette held.
+    palette_.erase(palette_.begin() + 1, palette_.end());
+    std::ranges::fill(blocks_, std::uint16_t{0});
+    fluidUpdates_.clear();
+}
+
 void ChunkBuffer::markFluidUpdate(int localX, std::int32_t y, int localZ) {
     static_cast<void>(indexOf(localX, y, localZ)); // the bounds check, nothing more
     fluidUpdates_.push_back(FluidUpdate{.localX = static_cast<std::uint8_t>(localX),
@@ -495,6 +503,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                         std::to_string(into.minY()) + ", and the dimension is " +
                         std::to_string(geometry.height) + " from " + std::to_string(geometry.minY));
     }
+    // The pass below writes every block, but only appends to the palette and
+    // to the fluid updates: a reused buffer would otherwise carry an earlier
+    // chunk's marks into this one's list.
+    into.clear();
 
     const std::int32_t baseX = chunkX * kChunkWidth;
     const std::int32_t baseZ = chunkZ * kChunkWidth;

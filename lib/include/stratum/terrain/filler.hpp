@@ -141,11 +141,17 @@ public:
     /// like `at` for a position outside the chunk.
     void markFluidUpdate(int localX, std::int32_t y, int localZ);
 
-    /// Every position marked, each once, in the order the first pass reached
-    /// them.
+    /// Every position marked since the buffer was built or last cleared, each
+    /// once, in the order the first pass reached them.
     [[nodiscard]] const std::vector<FluidUpdate>& fluidUpdates() const noexcept {
         return fluidUpdates_;
     }
+
+    /// Puts the buffer back as the constructor leaves it: every block air,
+    /// the palette air alone, no fluid updates. `ChunkFiller::fill` starts
+    /// with this, so a buffer reused from chunk to chunk holds the last
+    /// chunk's palette and marks only, never an earlier one's.
+    void clear();
 
 private:
     [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const;
@@ -190,6 +196,8 @@ public:
             const biome::TemperatureTable* biomeTemperatures = nullptr);
 
     /// Fills @p into with the chunk at chunk coordinates @p chunkX, @p chunkZ.
+    /// @p into is cleared first (`ChunkBuffer::clear`): what it held before,
+    /// blocks, palette and fluid updates alike, does not survive the call.
     ///
     /// Blocks are visited cell by cell rather than column by column, so the
     /// eight cell corners `interpolated` needs are computed once and reused

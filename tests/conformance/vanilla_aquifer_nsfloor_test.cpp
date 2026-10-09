@@ -19,9 +19,11 @@
 // floor as built, and with that one branch returning the sentinel instead.
 // Where the two verdicts differ, the server's block says which floor it used.
 //
-// ONE SEED PER PROBE DIRECTORY, read from its manifest; every `nsfloor_s*`
-// directory present is scored, and the case SKIPs when there is none. The
-// fixtures are Mojang-derived and never committed (SPEC §12).
+// ONE SEED PER PROBE DIRECTORY, checked against its manifest: the seeds
+// tools/probe-worlds generates (42, 31337 and 8675309; capfloor 42 and
+// 31337), every one of them, and each case SKIPs only when its family has
+// no corpus at all. The fixtures are Mojang-derived and never committed
+// (SPEC §12).
 //
 // Two more cases share the scoring. `aquifer-ddfloor-probe.sh` is the same
 // field under Q5.9's deep-dark override, where the override's sentinel and an
@@ -58,6 +60,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,6 +85,19 @@ constexpr double kHigh = 96.0;
 
 [[nodiscard]] std::filesystem::path fixtures() {
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
+}
+
+/// The seeds tools/probe-worlds generates the nsfloor and ddfloor families at.
+constexpr std::array<std::int64_t, 3> kFloorSeeds{42, 31337, 8675309};
+/// And the capfloor families.
+constexpr std::array<std::int64_t, 2> kCapSeeds{42, 31337};
+
+/// A family's corpora `<prefix><seed>`, one per seed of @p seeds: none, or
+/// every one (support/probe_corpus.hpp). @p script generates them.
+[[nodiscard]] std::vector<std::filesystem::path>
+corpora(const std::string& prefix, std::span<const std::int64_t> seeds, const std::string& script) {
+    return test::seededCorpora(fixtures() / "probes", prefix, seeds,
+                               "tools/probe-worlds generate --only " + script + " --accept-eula");
 }
 
 /// The surface field, one value per column, from a readout dimension — the
@@ -344,21 +360,13 @@ void scoreProbe(const std::filesystem::path& probeDir, const char* script,
 } // namespace
 
 TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conformance][aquifer]") {
-    std::vector<std::filesystem::path> probes;
-    const std::filesystem::path root = fixtures() / "probes";
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() &&
-                entry.path().filename().string().rfind("nsfloor_s", 0) == 0) {
-                probes.push_back(entry.path());
-            }
-        }
-    }
+    const std::vector<std::filesystem::path> probes =
+        corpora("nsfloor_s", kFloorSeeds, "aquifer-nsfloor-probe.sh");
     if (probes.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
         SKIP("no nsfloor_s* aquifer probe under "
-             << root << "; generate one with tools/analysis/aquifer-nsfloor-probe.sh");
+             << fixtures() / "probes"
+             << "; generate them with tools/analysis/aquifer-nsfloor-probe.sh");
     }
-    std::ranges::sort(probes);
 
     const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
     Score total;
@@ -414,22 +422,6 @@ TEST_CASE("the aborting near-surface floor as the barrier weighs it", "[conforma
 
 namespace {
 
-/// Every probe directory under the fixtures whose name starts with @p prefix,
-/// sorted.
-[[nodiscard]] std::vector<std::filesystem::path> corpora(const std::string& prefix) {
-    const std::filesystem::path root = fixtures() / "probes";
-    std::vector<std::filesystem::path> found;
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind(prefix, 0) == 0) {
-                found.push_back(entry.path());
-            }
-        }
-    }
-    std::ranges::sort(found);
-    return found;
-}
-
 /// Whether Q5.9's override and an aborted scan's floor both claim @p cell:
 /// its scan aborted, and it is off the near-surface path — which compares no
 /// floodedness, so the override cannot reach it.
@@ -440,7 +432,8 @@ namespace {
 } // namespace
 
 TEST_CASE("the deep-dark override over an aborted scan", "[conformance][aquifer]") {
-    const std::vector<std::filesystem::path> probes = corpora("ddfloor_s");
+    const std::vector<std::filesystem::path> probes =
+        corpora("ddfloor_s", kFloorSeeds, "aquifer-ddfloor-probe.sh");
     if (probes.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
         SKIP("no ddfloor_s* aquifer probe under "
              << fixtures() / "probes"
@@ -672,8 +665,10 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
     // The script writes two corpora per seed, one server run each (a frozen
     // world holds every fluid tick it schedules): the first four arms, and
     // cf58l alone.
-    const std::vector<std::filesystem::path> main = corpora("capfloor_s");
-    const std::vector<std::filesystem::path> low = corpora("capfloorl_s");
+    const std::vector<std::filesystem::path> main =
+        corpora("capfloor_s", kCapSeeds, "aquifer-capfloor-probe.sh");
+    const std::vector<std::filesystem::path> low =
+        corpora("capfloorl_s", kCapSeeds, "aquifer-capfloor-probe.sh");
     if (main.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
         SKIP("no capfloor_s* aquifer probe under "
              << root << "; generate one with tools/analysis/aquifer-capfloor-probe.sh");

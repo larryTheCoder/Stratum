@@ -524,6 +524,95 @@ TEST_CASE("an aquifer's source reads are detached: an interpolated floodedness r
     CHECK(straddling > 0);
 }
 
+TEST_CASE("a buffer reused across chunks holds only the last chunk and its fluid updates",
+          "[terrain][filler][aquifer]") {
+    // fill() writes every block but only ever appends to the palette and to
+    // the fluid-update list, so it clears the buffer first: one buffer filled
+    // chunk after chunk is, after each, exactly a fresh buffer filled with
+    // that chunk. Without the clear the second chunk's list carried the
+    // first chunk's marks (and the palette the first chunk's states).
+    // Floodedness steps from dry to past the sea gate at y = 1, so wet and
+    // dry sources meet and the aquifer marks where they do.
+    const nlohmann::json step{{"type", "minecraft:range_choice"},
+                              {"input",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", -2048},
+                                {"to_y", 2048},
+                                {"from_value", -2048.0},
+                                {"to_value", 2048.0}}},
+                              {"min_inclusive", 0.5},
+                              {"max_exclusive", 1000.0},
+                              {"when_in_range", 0.9},
+                              {"when_out_of_range", 0.0}};
+    nlohmann::json wet = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    wet["noise_router"]["fluid_level_floodedness"] = step;
+    // The same geometry with another default block: a palette entry the
+    // later fills never write, there to leak if the palette is kept.
+    nlohmann::json deepslate = wet;
+    deepslate["default_block"] = {{"Name", "minecraft:deepslate"}};
+
+    const TempTree tree;
+    tree.defineSettings("test", wet).defineSettings("other", deepslate);
+    const LoadedSettings loaded = tree.load();
+    const auto& wetSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    const auto& deepslateSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:other"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
+    const ChunkFiller wetFiller = ChunkFiller::compile(loaded.graph, noises, wetSettings);
+    const ChunkFiller deepslateFiller =
+        ChunkFiller::compile(loaded.graph, noises, deepslateSettings);
+    const auto& geometry = wetSettings.geometry;
+
+    const auto fresh = [&](const std::int32_t chunkX, const std::int32_t chunkZ) {
+        ChunkBuffer buffer(geometry);
+        wetFiller.fill(chunkX, chunkZ, buffer);
+        return buffer;
+    };
+    const auto differing = [](const ChunkBuffer& a, const ChunkBuffer& b) {
+        long long count = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = a.minY(); y < a.minY() + a.height(); ++y) {
+                    count += static_cast<long long>(!(a.at(x, y, z) == b.at(x, y, z)));
+                }
+            }
+        }
+        return count;
+    };
+    const ChunkBuffer first = fresh(0, 0);
+    const ChunkBuffer second = fresh(1, -1);
+    // Not vacuous: the first chunk has marks a kept list would carry over,
+    // and the two chunks' lists differ.
+    REQUIRE(!first.fluidUpdates().empty());
+    REQUIRE(!(first.fluidUpdates() == second.fluidUpdates()));
+
+    ChunkBuffer reused(geometry);
+    deepslateFiller.fill(0, 0, reused);
+    REQUIRE(std::ranges::any_of(reused.palette(), [](const auto& state) {
+        return state.name.toString() == "minecraft:deepslate";
+    }));
+    wetFiller.fill(0, 0, reused);
+    CHECK(reused.fluidUpdates() == first.fluidUpdates());
+    CHECK(reused.palette() == first.palette());
+    CHECK(differing(reused, first) == 0);
+    wetFiller.fill(1, -1, reused);
+    CHECK(reused.fluidUpdates() == second.fluidUpdates());
+    CHECK(reused.palette() == second.palette());
+    CHECK(differing(reused, second) == 0);
+    // The same chunk twice: each position still marked once.
+    wetFiller.fill(1, -1, reused);
+    CHECK(reused.fluidUpdates() == second.fluidUpdates());
+
+    // And clear() on its own is the constructor's state.
+    reused.clear();
+    const ChunkBuffer untouched(geometry);
+    CHECK(reused.fluidUpdates().empty());
+    CHECK(reused.palette() == untouched.palette());
+    CHECK(differing(reused, untouched) == 0);
+}
+
 TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
     // Measured coupling, not a refusal: a probe with veins on and aquifers
     // off came back 6291456 of 6291456 plain stone (SPEC §11). Reproducing

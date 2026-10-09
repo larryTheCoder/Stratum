@@ -5,10 +5,11 @@
 // window from chunk (0, 0). The window and the ring of chunks around it tick:
 // their fluids flow (frozen, a small remnant still does — SPEC §7) and their
 // post-processing lists empty. Every other chunk of r.0.0 that got as far as
-// the noise stage — 63 of them, out to chunk 11 — never ticked, so its blocks
-// and its `PostProcessing` list are exactly what generation left. The aquifer
-// cases score those exactly and the ticked ones with fluid flow allowed for
-// (support/fluid_flow.hpp).
+// the noise stage — the 63 out to chunk 11, and on some worlds more beyond
+// them (the water/lava probes' sea -70 arms hold 84 and 91 in all) — never
+// ticked, so its blocks and its `PostProcessing` list are exactly what
+// generation left. The aquifer cases score those exactly and the ticked ones
+// with fluid flow allowed for (support/fluid_flow.hpp).
 //
 // And the probe's own noise, rebuilt from the manifest the probe wrote, for a
 // case that needs a field's value where no readout reaches.

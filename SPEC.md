@@ -2809,7 +2809,23 @@ Open:
     and both dimensions (it used to pass on any one); the depth-gate case
     sets its 8 known exceptions apart by their stated cause — cells whose
     predicted level equals their own centre — and holds the other 202 exact,
-    where a 90% bound used to admit any eight misses.
+    where a 90% bound used to admit any eight misses. Later, the same for
+    the rest: every case that scored whichever corpora of its family were on
+    disk (`waterlava`, `yskip`, `yskip2`, `yskiprect`, `lowfloor`,
+    `fluidnear`, `fluidnearb`, `nsfloor`, `ddfloor`, `capfloor`, `capfloorl`)
+    now asks for the seeds `tools/probe-worlds` generates and fails on a
+    partial set, naming each missing corpus (`support/probe_corpus.hpp`'s
+    `seededCorpora`). The water/lava and three-source cases fail on a
+    dimension with no region, where they used to skip it, and the water/lava
+    fluid-update case pins the 63 untouched chunks of every dimension's band
+    out to chunk 11, where a pooled floor of 400 let any one missing
+    dimension pass (553 untouched chunks here: generation reached past the
+    band on both sea -70 arms, 84 and 91, so a region's total is not a
+    pin). Every case reads
+    its corpus's `spec.json` through one helper (`support/probe_spec.hpp`),
+    which REQUIREs exactly one entry of the name it scores, in place of the
+    seven private lookups six cases carried, some of which once FAILed and
+    then returned, which MSVC rejects as unreachable code.
 
 - **The aquifer's fluid-update flag (spec Q8), measured against the
   server's own post-processing lists — and one exit the spec does not cover
@@ -2858,6 +2874,16 @@ Open:
   exact, with the ticked-chunk premise asserted) and by unit cases for
   each exit of `fluidUpdateFlag`, built from distances and statuses
   directly. The PHP binding does not carry the positions yet; that is M5's.
+
+  `ChunkFiller::fill` clears the buffer it is given (`ChunkBuffer::clear`)
+  before writing. It always rewrote every block, but it only appended to the
+  palette and to this list, so a buffer reused across chunks carried the
+  earlier chunks' marks and block states into the next chunk's list and
+  palette. The unit case "a buffer reused across chunks holds only the last
+  chunk and its fluid updates" fails 5 of its 13 assertions without the
+  clear. Every production caller (`ext/`, `ext-nukkit/`, the analysis
+  tools) allocates one buffer per chunk, and none of the three conformance
+  cases that reuse one reads the list, so no output changed.
 
 - **Three probe residuals this project carried as unexplained were fluid
   that moved, or attribution (MA).** No output changes. The probe worlds are
@@ -3666,7 +3692,11 @@ Open:
   repaint every non-stone default block. The specs of all 55 corpora on
   disk here write byte-identical datapacks. Every density unit's cache key
   hashes the script, so CI regenerates every probe corpus once.
-  `tests/support/probe_settings.hpp` mirrors both.
+  `tests/support/probe_settings.hpp` mirrors both. It is the only mirror
+  now: the y_skip and cache-marker cases each kept their own copy with
+  stone, the ore-vein flag and the legacy flag hard-coded, and now build
+  through it, so a field the script reads and a case does not fails by name
+  instead of being dropped.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

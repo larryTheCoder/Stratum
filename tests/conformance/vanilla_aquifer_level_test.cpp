@@ -44,6 +44,7 @@
 #include "aquifer-level-rivals.hpp"
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -172,14 +173,12 @@ struct Corpus {
 [[nodiscard]] Corpus openCorpus(const std::string& name, const std::int64_t seed) {
     Corpus corpus{.dir = probes() / name, .seed = seed, .dims = {}};
     INFO("probe corpus " << corpus.dir);
-    REQUIRE(std::filesystem::is_regular_file(corpus.dir / "spec.json"));
     stratum::test::requireFrozen(corpus.dir, kScript);
     stratum::test::requireSeed(corpus.dir, seed);
-    std::ifstream specFile(corpus.dir / "spec.json");
-    const nlohmann::json spec = nlohmann::json::parse(specFile);
-    REQUIRE(spec.is_array());
+    const nlohmann::json spec = stratum::test::readSpec(corpus.dir);
     for (const auto& entry : spec) {
         corpus.dims.push_back(parseDim(entry));
+        INFO("dimension " << corpus.dims.back().name << " has no region");
         REQUIRE(
             std::filesystem::is_regular_file(corpus.dir / corpus.dims.back().name / "r.0.0.mca"));
     }

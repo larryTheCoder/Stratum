@@ -23,6 +23,7 @@
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
@@ -103,8 +104,7 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
     stratum::test::requireFrozen(probe, "tools/analysis/aquifer-fluidtype-probe.sh");
     std::ifstream manifestFile(probe / "manifest.json");
     REQUIRE(nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>() == kSeed);
-    std::ifstream specFile(probe / "spec.json");
-    const nlohmann::json spec = nlohmann::json::parse(specFile);
+    const nlohmann::json spec = stratum::test::readSpec(probe);
     const stratum::aquifer::CentreSource centres{kSeed, stratum::density::RandomSource::Xoroshiro};
 
     std::map<std::string, Tally> byDimension;

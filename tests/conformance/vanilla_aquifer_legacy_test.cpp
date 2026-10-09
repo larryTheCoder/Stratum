@@ -32,6 +32,7 @@
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 #include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
@@ -86,26 +87,16 @@ constexpr std::int32_t kLavaBandTo = -37;
 }
 
 [[nodiscard]] std::optional<nlohmann::json> loadSpec(const std::int64_t seed) {
-    std::ifstream in(probeDir(seed) / "spec.json");
-    if (!in) {
+    if (!std::filesystem::exists(probeDir(seed) / "spec.json")) {
         return std::nullopt;
     }
-    return nlohmann::json::parse(in);
+    return stratum::test::readSpec(probeDir(seed));
 }
 
-[[nodiscard]] const nlohmann::json& entryNamed(const nlohmann::json& spec, const char* name) {
-    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
-    // unconditional FAIL as unreachable (C4702), and warnings are errors.
-    const nlohmann::json* named = nullptr;
-    for (const auto& entry : spec) {
-        if (entry.at("name") == name) {
-            named = &entry;
-            break;
-        }
-    }
-    INFO("the probe's spec has no arm " << name);
-    REQUIRE(named != nullptr);
-    return *named;
+/// The arm named @p name of @p seed's corpus, whose spec is @p spec.
+[[nodiscard]] const nlohmann::json& entryNamed(const nlohmann::json& spec, const std::int64_t seed,
+                                               const char* name) {
+    return stratum::test::specEntry(spec, probeDir(seed), name);
 }
 
 /// The arms' declared constants, which this case requires to be constants:
@@ -226,8 +217,8 @@ struct Tally {
     stratum::test::requireSeed(probeDir(seed), seed);
 
     // The two aquifer arms are one dimension but for the flag.
-    const nlohmann::json& lj = entryNamed(*spec, "lj");
-    const nlohmann::json& mj = entryNamed(*spec, "mj");
+    const nlohmann::json& lj = entryNamed(*spec, seed, "lj");
+    const nlohmann::json& mj = entryNamed(*spec, seed, "mj");
     REQUIRE(lj.at("legacy_random_source") == true);
     REQUIRE(mj.at("legacy_random_source") == false);
     REQUIRE(lj.at("aquifers_enabled") == true);
@@ -239,8 +230,8 @@ struct Tally {
         arm->erase("legacy_random_source");
     }
     REQUIRE(a == b);
-    REQUIRE(entryNamed(*spec, "lc").at("legacy_random_source") == true);
-    REQUIRE(entryNamed(*spec, "mc").at("legacy_random_source") == false);
+    REQUIRE(entryNamed(*spec, seed, "lc").at("legacy_random_source") == true);
+    REQUIRE(entryNamed(*spec, seed, "mc").at("legacy_random_source") == false);
     return spec;
 }
 
@@ -300,8 +291,8 @@ TEST_CASE("the aquifer's centres under the legacy source are the ones the server
             CHECK(differ > (kWindow * kWindow * 9) / 10);
         }
 
-        const Arm lj = armOf(entryNamed(*spec, "lj"));
-        const Arm mj = armOf(entryNamed(*spec, "mj"));
+        const Arm lj = armOf(entryNamed(*spec, seed, "lj"));
+        const Arm mj = armOf(entryNamed(*spec, seed, "mj"));
         const std::filesystem::path ljRegion = probeDir(seed) / "lj" / "r.0.0.mca";
         const std::filesystem::path mjRegion = probeDir(seed) / "mj" / "r.0.0.mca";
         const stratum::aquifer::CentreSource legacy{seed, RandomSource::Legacy};
@@ -373,7 +364,7 @@ TEST_CASE("the shipped filler generates the legacy aquifer probe block for block
         const ScratchTree scratch;
         for (const char* name : {"lj", "mj"}) {
             std::ofstream out(scratch.path() / "noise_settings" / (std::string(name) + ".json"));
-            out << stratum::test::probeNoiseSettings(entryNamed(*spec, name)).dump();
+            out << stratum::test::probeNoiseSettings(entryNamed(*spec, seed, name)).dump();
         }
         const stratum::data::Pack pack = stratum::data::Pack::open(scratch.path());
         const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);

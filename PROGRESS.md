@@ -128,7 +128,11 @@ Open:
       34/34) and selection (637 252 barriers) records exactly; the fluid
       type's 0.3 strictness and -10 ceiling are replayed block for block on
       the fluid-type probe; deep-floor needs all three seeds; depth-gate's
-      ties are set apart and the rest held exact. SPEC §11.
+      ties are set apart and the rest held exact. Every other case that
+      scored whichever seeds were on disk now needs the seeds
+      `tools/probe-worlds` generates, a spec dimension with no region fails
+      (water/lava, three-source), and every case reads `spec.json` and builds
+      a probe's settings through one shared helper each. SPEC §11.
 - [x] **The centre jitter in CI.** deepslate was meant to be the CI oracle
       and measures as only a partial one: its aquifer disagrees with the
       frozen server on 19-25% of blocks on the five open-void worlds
@@ -374,7 +378,9 @@ Open:
       the water/lava rows, 1964 of 1964 through `ChunkFiller` on real
       overworld settings. Q6.3's exit, which the spec does not cover,
       measured: past Q6.2 it always marks. Rank 4 is now read, by the flag's
-      last clause. Exposed as `ChunkBuffer::fluidUpdates()`. SPEC §11.
+      last clause. Exposed as `ChunkBuffer::fluidUpdates()`, which
+      `ChunkFiller::fill` clears first, so a reused buffer no longer carries
+      an earlier chunk's marks. SPEC §11.
 - [ ] **Fluid updates to PocketMine.** The positions are computed; the PHP
       binding does not carry them yet, so PMMP never ticks the fluid that
       vanilla would (M5).

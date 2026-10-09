@@ -48,6 +48,7 @@
 //
 // Nothing this reads is committed: the worlds are Mojang-derived (SPEC §12).
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
@@ -304,20 +305,17 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
         const char* probeName = kProbeDirs[seedIndex];
         const std::filesystem::path probeDir = fixtures() / "probes" / probeName;
         const std::filesystem::path manifestPath = probeDir / "manifest.json";
-        const std::filesystem::path specPath = probeDir / "spec.json";
         // Any probe present means all three must be: one seed agreeing with
         // an RNG-driven model is not evidence, so a partial corpus fails here
         // rather than passing on whichever seed happens to exist.
         INFO("probe " << probeName << " — generate it with "
                       << "tools/analysis/aquifer-deepfloor-probe.sh --accept-eula <seed>");
         REQUIRE(std::filesystem::is_regular_file(manifestPath));
-        REQUIRE(std::filesystem::is_regular_file(specPath));
         stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-deepfloor-probe.sh");
         std::ifstream manifestFile(manifestPath);
         const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
         const auto seed = manifest.at("seed").get<std::int64_t>();
-        std::ifstream specFile(specPath);
-        const nlohmann::json spec = nlohmann::json::parse(specFile);
+        const nlohmann::json spec = stratum::test::readSpec(probeDir);
 
         for (const Dimension& dim : kDimensions) {
             const std::filesystem::path regionPath = probeDir / dim.name / "r.0.0.mca";
@@ -327,21 +325,14 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
             // A spec that has drifted from `kDimensions` would score real
             // blocks against the wrong density and quietly pass or fail for
             // the wrong reason (SPEC §8: no silent best-effort).
-            bool found = false;
-            for (const auto& entry : spec) {
-                if (entry.at("name").get<std::string>() != dim.name) {
-                    continue;
-                }
-                found = true;
-                CHECK(entry.at("raw_final_density").at("argument").get<double>() ==
-                      Catch::Approx(dim.density));
-                CHECK(entry.at("router").at("preliminary_surface_level").get<double>() ==
-                      Catch::Approx(static_cast<double>(dim.psl)));
-                CHECK(entry.at("router").at("fluid_level_floodedness").get<double>() ==
-                      Catch::Approx(kLadderFloodedness));
-                CHECK(entry.at("sea_level").get<std::int32_t>() == kSeaLevel);
-            }
-            REQUIRE(found);
+            const nlohmann::json& entry = stratum::test::specEntry(spec, probeDir, dim.name);
+            CHECK(entry.at("raw_final_density").at("argument").get<double>() ==
+                  Catch::Approx(dim.density));
+            CHECK(entry.at("router").at("preliminary_surface_level").get<double>() ==
+                  Catch::Approx(static_cast<double>(dim.psl)));
+            CHECK(entry.at("router").at("fluid_level_floodedness").get<double>() ==
+                  Catch::Approx(kLadderFloodedness));
+            CHECK(entry.at("sea_level").get<std::int32_t>() == kSeaLevel);
 
             const nlohmann::json barrierJson = {{"type", "minecraft:noise"},
                                                 {"noise", "minecraft:aquifer_barrier"},
@@ -662,26 +653,8 @@ TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact o
 
     // The named entry of a corpus's spec.json, with its name removed so two
     // corpora's entries compare on content alone.
-    const auto specEntry = [](const std::filesystem::path& probeDir, const std::string& name) {
-        std::ifstream in(probeDir / "spec.json");
-        {
-            INFO((probeDir / "spec.json") << " is unreadable; regenerate the corpus");
-            REQUIRE(in.good());
-        }
-        const nlohmann::json spec = nlohmann::json::parse(in);
-        // REQUIRE rather than FAIL-then-return: MSVC sees the return after
-        // an unconditional FAIL as unreachable (C4702), and warnings are
-        // errors.
-        const nlohmann::json* named = nullptr;
-        for (const auto& entry : spec) {
-            if (entry.at("name").get<std::string>() == name) {
-                named = &entry;
-                break;
-            }
-        }
-        INFO((probeDir / "spec.json") << " has no dimension " << name);
-        REQUIRE(named != nullptr);
-        nlohmann::json unnamed = *named;
+    const auto unnamedEntry = [](const std::filesystem::path& probeDir, const std::string& name) {
+        nlohmann::json unnamed = stratum::test::specEntry(probeDir, name);
         unnamed.erase("name");
         return unnamed;
     };
@@ -698,8 +671,8 @@ TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact o
         stratum::test::requireFrozen(dir, "tools/analysis/aquifer-probes.sh");
         stratum::test::requireSeed(dir, 42);
     }
-    const nlohmann::json control = specEntry(aqdeep, kControl);
-    const nlohmann::json twin = specEntry(barrier3way, kTwin);
+    const nlohmann::json control = unnamedEntry(aqdeep, kControl);
+    const nlohmann::json twin = unnamedEntry(barrier3way, kTwin);
     CHECK(control.at("raw_final_density").at("argument").get<double>() ==
           Catch::Approx(kControlDensity));
     CHECK(control.at("router").at("preliminary_surface_level").get<double>() ==
@@ -797,7 +770,7 @@ TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact o
         stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-deepfloor-probe.sh");
         std::ifstream manifestFile(probeDir / "manifest.json");
         const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
-        const nlohmann::json entry = specEntry(probeDir, kControl);
+        const nlohmann::json entry = unnamedEntry(probeDir, kControl);
         // Every seed's control must be the same recipe as seed 42's.
         REQUIRE(entry == control);
         const nlohmann::json& router = entry.at("router");

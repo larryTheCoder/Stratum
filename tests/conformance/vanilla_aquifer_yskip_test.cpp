@@ -34,12 +34,15 @@
 // and the rectangle was not — the server reads offsets -16..+24 from the
 // chunk's corner, where the build read -16..+16.
 //
-// ONE SEED PER PROBE DIRECTORY, read from its manifest and its name; every
-// directory present is scored, and the cases SKIP when there is none. The
-// fixtures are Mojang-derived and never committed (SPEC §12).
+// ONE SEED PER PROBE DIRECTORY, read from its manifest and its name: the
+// seeds tools/probe-worlds generates (42 and 31337), every one of them, and
+// the cases SKIP only when none is there. The fixtures are Mojang-derived
+// and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 #include "support/probe_region.hpp"
+#include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
@@ -117,20 +120,15 @@ constexpr double kModelSurface = -85.0;
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
 }
 
-/// Every probe directory under the fixtures whose name starts with @p prefix,
-/// sorted.
+/// The seeds tools/probe-worlds generates each y_skip family at.
+constexpr std::array<std::int64_t, 2> kSeeds{42, 31337};
+
+/// A y_skip family's corpora (`yskip_s`, `yskip2_s`, `yskiprect_s`), one per
+/// seed of kSeeds: none, or every one (support/probe_corpus.hpp).
 [[nodiscard]] std::vector<std::filesystem::path> corpora(const std::string& prefix) {
-    const std::filesystem::path root = fixtures() / "probes";
-    std::vector<std::filesystem::path> found;
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind(prefix, 0) == 0) {
-                found.push_back(entry.path());
-            }
-        }
-    }
-    std::ranges::sort(found);
-    return found;
+    return stratum::test::seededCorpora(
+        fixtures() / "probes", prefix, kSeeds,
+        "tools/probe-worlds generate --only aquifer-yskip-probe.sh --accept-eula");
 }
 
 /// The seed a corpus carries in its name ("..._s<seed>"), checked against the
@@ -692,24 +690,6 @@ struct StepArm {
     std::int32_t cutoff; ///< the build's, from the table in the probe script
 };
 
-/// Reads the spec entry named @p name out of a corpus's spec.json.
-[[nodiscard]] nlohmann::json specEntry(const std::filesystem::path& dir, const std::string& name) {
-    std::ifstream in(dir / "spec.json");
-    const nlohmann::json spec = nlohmann::json::parse(in);
-    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
-    // unconditional FAIL as unreachable (C4702), and warnings are errors.
-    const nlohmann::json* named = nullptr;
-    for (const auto& entry : spec) {
-        if (entry.at("name").get<std::string>() == name) {
-            named = &entry;
-            break;
-        }
-    }
-    INFO("no dimension " << name << " in " << (dir / "spec.json"));
-    REQUIRE(named != nullptr);
-    return *named;
-}
-
 } // namespace
 
 TEST_CASE("y_skip's cutoff row against the server on flat surfaces from -200 to -80",
@@ -779,7 +759,7 @@ TEST_CASE("y_skip's cutoff row against the server on flat surfaces from -200 to 
             const stratum::noise::NormalNoise probe = stratum::test::probeNoise(dir);
             for (const StepArm& arm : arms) {
                 INFO("dimension " << arm.name);
-                const nlohmann::json entry = specEntry(dir, arm.name);
+                const nlohmann::json entry = stratum::test::specEntry(dir, arm.name);
                 requireProbeConstants(entry);
                 const PslField psl(entry.at("router").at("preliminary_surface_level"), probe);
                 // The lattice is the model's, whatever this dimension's psl.
@@ -1000,7 +980,7 @@ TEST_CASE("y_skip's rectangle and stride against the server on a two-valued surf
         requireTopRowsAllWet(model);
         for (const auto& [world, readout] : {std::pair{"ysf_a", "ysr_a"}, {"ysf_b", "ysr_b"}}) {
             INFO("dimension " << world);
-            const nlohmann::json entry = specEntry(dir, world);
+            const nlohmann::json entry = stratum::test::specEntry(dir, world);
             requireProbeConstants(entry);
             const PslField psl(entry.at("router").at("preliminary_surface_level"), probe);
             REQUIRE(premiseViolations(model, psl) == 0);
@@ -1009,7 +989,7 @@ TEST_CASE("y_skip's rectangle and stride against the server on a two-valued surf
             // readout dimension's terrain names the arm at every column the
             // probe pins (multiples of four, flat_cache's corners) — which
             // are all the columns any stride-4 reading here reads.
-            const PslField indicator(specEntry(dir, readout).at("function"), probe);
+            const PslField indicator(stratum::test::specEntry(dir, readout).at("function"), probe);
             const auto file = stratum::region::RegionFile::open(dir / readout / "r.0.0.mca");
             long long columns = 0;
             long long agree = 0;
@@ -1161,8 +1141,10 @@ TEST_CASE("y_skip's rectangle and stride against the server on a two-valued surf
 namespace {
 
 /// One probe dimension's own noise settings as a data pack on disk — the
-/// entry density-probe.sh writes from the same spec entry — so the shipped
-/// `ChunkFiller` can generate it. Pack opens a directory, nothing else.
+/// entry density-probe.sh writes from the same spec entry, through the one
+/// mirror of the script (support/probe_settings.hpp), which refuses a key it
+/// does not know rather than dropping it — so the shipped `ChunkFiller` can
+/// generate it. Pack opens a directory, nothing else.
 class ProbePack {
 public:
     ProbePack(const nlohmann::json& entry, const std::filesystem::path& corpus)
@@ -1171,35 +1153,7 @@ public:
         std::filesystem::create_directories(path_);
         std::ofstream(path_ / "pack.mcmeta") << R"({"pack":{"description":"stratum y_skip replay",)"
                                                 R"("min_format":[94,1],"max_format":94}})";
-        // The router's fourteen other entries are 0, as density-probe.sh
-        // writes them; the probe's own carry over.
-        nlohmann::json router = nlohmann::json::object();
-        for (const char* key :
-             {"barrier", "fluid_level_floodedness", "fluid_level_spread", "lava", "temperature",
-              "vegetation", "continents", "erosion", "depth", "ridges", "preliminary_surface_level",
-              "vein_toggle", "vein_ridged", "vein_gap"}) {
-            router[key] = 0;
-        }
-        for (const auto& [key, value] : entry.at("router").items()) {
-            router[key] = value;
-        }
-        router["final_density"] = entry.at("raw_final_density");
-        const nlohmann::json settings{{"sea_level", entry.at("sea_level")},
-                                      {"disable_mob_generation", true},
-                                      {"aquifers_enabled", entry.at("aquifers_enabled")},
-                                      {"ore_veins_enabled", false},
-                                      {"legacy_random_source", false},
-                                      {"default_block", {{"Name", "minecraft:stone"}}},
-                                      {"default_fluid", entry.at("default_fluid")},
-                                      {"noise",
-                                       {{"min_y", entry.at("min_y")},
-                                        {"height", entry.at("height")},
-                                        {"size_horizontal", 1},
-                                        {"size_vertical", entry.at("size_vertical")}}},
-                                      {"spawn_target", nlohmann::json::array()},
-                                      {"surface_rule", entry.at("surface_rule")},
-                                      {"noise_router", router}};
-        write("noise_settings", name_, settings);
+        write("noise_settings", name_, stratum::test::probeNoiseSettings(entry));
         // The probe's noise, as its manifest records it.
         const nlohmann::json manifest =
             nlohmann::json::parse(std::ifstream(corpus / "manifest.json"));
@@ -1251,21 +1205,30 @@ TEST_CASE("the filler writes the server's block on every untouched chunk of the 
     // blocks and post-processing lists are generation's own. One dimension
     // per y_skip it can show: -62 (the lattice never above the lava sea), -50,
     // -38, and the two-valued fields where it varies by chunk.
+    const std::vector<std::filesystem::path> step = corpora("yskip_s");
+    const std::vector<std::filesystem::path> rect = corpora("yskiprect_s");
+    if ((step.empty() && rect.empty()) || !std::filesystem::is_directory(fixtures() / "worldgen")) {
+        SKIP("no yskip_s* or yskiprect_s* aquifer probe under "
+             << (fixtures() / "probes")
+             << "; generate them with tools/analysis/aquifer-yskip-probe.sh");
+    }
+    // Both families or neither: one alone would score some of the cutoffs
+    // and pass on the rest unseen.
+    {
+        INFO("yskip_s* and yskiprect_s* are written by the same script; regenerate with "
+             "tools/probe-worlds generate --only aquifer-yskip-probe.sh --accept-eula");
+        REQUIRE(step.size() == rect.size());
+    }
     std::vector<std::pair<std::filesystem::path, std::string>> arms;
-    for (const auto& dir : corpora("yskip_s")) {
+    for (const auto& dir : step) {
         for (const char* name : {"ys93", "ys92", "ys80"}) {
             arms.emplace_back(dir, name);
         }
     }
-    for (const auto& dir : corpora("yskiprect_s")) {
+    for (const auto& dir : rect) {
         for (const char* name : {"ysf_a", "ysf_b"}) {
             arms.emplace_back(dir, name);
         }
-    }
-    if (arms.empty() || !std::filesystem::is_directory(fixtures() / "worldgen")) {
-        SKIP("no yskip_s* or yskiprect_s* aquifer probe under "
-             << (fixtures() / "probes")
-             << "; generate them with tools/analysis/aquifer-yskip-probe.sh");
     }
 
     long long blocks = 0;
@@ -1279,7 +1242,7 @@ TEST_CASE("the filler writes the server's block on every untouched chunk of the 
         INFO("probe " << dir.filename().string() << ", dimension " << name);
         const std::int64_t seed = corpusSeed(dir);
         stratum::test::requireFrozen(dir, "tools/analysis/aquifer-yskip-probe.sh");
-        const ProbePack probe(specEntry(dir, name), dir);
+        const ProbePack probe(stratum::test::specEntry(dir, name), dir);
         const stratum::data::Pack pack = probe.pack();
         const auto loaded = stratum::settings::loadAll(pack);
         const auto& settings = loaded.settings.at(probe.settingsId());
