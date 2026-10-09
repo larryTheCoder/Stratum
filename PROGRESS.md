@@ -820,8 +820,8 @@ Open:
       bits, so `0`/`Long.MIN_VALUE` and `-1`/`Long.MAX_VALUE` are one world
       each, and **a fifth to two fifths of every pooled column count below is
       a second copy of a column already in it** (measured per noise at stride
-      4: `netherrack` 21.73%, `nether_state_selector` 25.58%, `patch`
-      31.27%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%) (measured: the two members of
+      4: `netherrack` 21.73%, `nether_state_selector` 25.41%, `patch`
+      32.14%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%) (measured: the two members of
       a pair agree on the category of all 67108864 block positions and on
       every biome, and differ in 11914 block names, 0.0178%, all
       feature-placed). Every one of them painted by the real legacy seeding
@@ -837,18 +837,18 @@ Open:
 
       *The control passes, and it was the hard part.* The identical decoder
       over the golden OVERWORLD regions, whose surface-rule noises are
-      modern-seeded and exact here: at stride 1, **262581476 positions**,
-      the library's own `surface::Executor` reproduces **262406910 /
-      262581476 = 99.9335%** of golden blocks from the RECONSTRUCTED Context
+      modern-seeded and exact here: at stride 1, **239040392 positions**,
+      the library's own `surface::Executor` reproduces **239002099 /
+      239040392 = 99.9840%** of golden blocks from the RECONSTRUCTED Context
       (an independent check on the reconstruction, added because the first
       control failed at 99.77%), **0** of those positions are unexplained by
-      the tree, and the decoded bits recover the true seeding at **30104 /
-      30104 = 100.0000%** against a trivial-predictor null of 86.37%, with
-      worldSeed + 1 at **78.97% — below the trivial predictor**. That arm is
+      the tree, and the decoded bits recover the true seeding at **30077 /
+      30077 = 100.0000%** against a trivial-predictor null of 86.36%, with
+      worldSeed + 1 at **78.95% — below the trivial predictor**. That arm is
       HANDED each column's surface depth, though, and the Nether run cannot
       be; the arm that ENUMERATES it, as the Nether run must, is the one the
-      Nether numbers lean on and is now run too: at stride 4, **16470418
-      positions**, replay 99.9316%, 0 unexplained, recovery **1766 / 1766 =
+      Nether numbers lean on and is now run too: at stride 4, **14994348
+      positions**, replay 99.9836%, 0 unexplained, recovery **1766 / 1766 =
       100.0000%** against a trivial predictor of 77.41%, worldSeed + 1 at
       **73.39%**. Both arms are asserted in the conformance case.
 
@@ -866,10 +866,10 @@ Open:
       measurement of it. Independent confirmation of `--twin`, on the
       server's own regions.
 
-      *And no candidate survives.* **176537818 positions decoded**, 0.1489%
+      *And no candidate survives.* **176537818 positions decoded**, 0.0314%
       of them unexplained by the tree; the readback decides **688833**
-      columns for `netherrack`, **545395** for `nether_state_selector`,
-      **56330** for `patch`, **41448** for `soul_sand_layer`, **5182** for
+      columns for `netherrack`, **550906** for `nether_state_selector`,
+      **50991** for `patch`, **41448** for `soul_sand_layer`, **5182** for
       `gravel_layer` — and **674596** for `nether_wart`, whose bit is
       CONSTANT (its 1.17 threshold is reached by no column of any golden
       region), so its null equals its signal and it is reported rather than
@@ -878,11 +878,11 @@ Open:
       columns are spatially clustered and a candidate noise is spatially
       smooth, so `sqrt(n)` would call every leader an impossible outlier. On
       the two big ones nothing in the space clears the null's own observed
-      maximum: `nether_state_selector` best **51.36%** against a null of
-      50.02% ± 0.61 (max 52.21%) and a trivial predictor of 50.63%;
+      maximum: `nether_state_selector` best **51.86%** against a null of
+      50.02% ± 0.61 (max 52.15%) and a trivial predictor of 50.48%;
       `netherrack` best **96.02%** against 95.66% ± 0.32 (max 96.66%) and a
       trivial predictor of 97.77%. A planted candidate comes back **rank 1
-      at 100.0000% on every decoded column** against a runner-up at 66.1% —
+      at 100.0000% on every decoded column** against a runner-up at 67.1% —
       RANK in the same sweep, which is the claim, rather than recovery of
       bits the plant just wrote — so the null result is a measurement. And
       `--scan` now refuses to print a headline unless a `--control` ran and
@@ -890,6 +890,30 @@ Open:
       readback does and does not exclude, in SPEC §11; asserted in
       `tests/conformance/vanilla_legacy_goldens_surface_test.cpp`, which
       INCLUDES the analyzer's decoder rather than copying it.
+
+      *The decoder now runs the filler's own run counting, and no verdict
+      moved.* It had kept a copy of the surface pass's rules from before
+      pipeline engine v2 and v7. The copy called overworld lava solid, held
+      the bottom-up run (`stone_depth` ceiling) through fluid, and visited a
+      column's first non-solid stretch. It now calls `terrain::categorize`
+      and `terrain::SurfaceColumn`, which the filler runs (the refactor
+      leaves the filler's output unchanged on every case that pins it: the
+      FNV-1a hash of four shipped chunks, 12582474 golden-exact blocks, the
+      lava-run probe). It visits only positions the first pass left as
+      `default_block`, and reads fluid that moved after generation as air.
+      Every figure above is re-measured on the same fixtures; the old
+      decoder reproduces its old control, census, identity and calibration
+      figures exactly. Overworld: 23541084 fewer positions (23413197 water,
+      all 127700 lava, 187 moved fluid and air), and the replay rises from
+      99.9335% to 99.9840%. Nether: the same positions, and the bottom-up
+      run now restarts over the lava ocean. Unexplained positions fall from
+      262795 to 55353. One `nether_state_selector` condition's 8514
+      contradicting columns fall to 0, so the `hole`-lava cause SPEC §11 had
+      named for them was mostly wrong. The identity table, and the censuses
+      and scans of `netherrack`, `soul_sand_layer` and `gravel_layer`, are
+      unchanged. Fixture-free cases for the reconstruction are in
+      `tests/unit/legacy_goldens_decoder_test.cpp` and
+      `surface_column_test.cpp`.
 - [x] **The half of it that is settled: legacy `old_blended_noise`.** A
       dimension declaring the flag seeds it with
       `new java.util.Random(worldSeed)` — no fork, no name salt — read the

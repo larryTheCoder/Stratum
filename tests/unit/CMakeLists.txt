@@ -13,6 +13,8 @@ add_executable(stratum_unit_tests
     surface_executor_test.cpp
     surface_rule_test.cpp
     surface_schema_test.cpp
+    surface_column_test.cpp
+    legacy_goldens_decoder_test.cpp
     aquifer_barrier_test.cpp
     aquifer_fluid_type_test.cpp
     aquifer_lattice_test.cpp
@@ -52,6 +54,10 @@ add_executable(stratum_unit_tests
 target_include_directories(stratum_unit_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    # legacy_goldens_decoder_test.cpp holds the golden decoder's column
+    # reconstruction without fixtures; it includes the analyzer's own header,
+    # as the conformance case does, rather than a copy.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/analysis"
 )
 
 target_link_libraries(stratum_unit_tests PRIVATE
