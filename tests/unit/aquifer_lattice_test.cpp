@@ -781,7 +781,10 @@ TEST_CASE("the near-surface floor also reads the scan's cap, not its gate", "[aq
     // body-boundary reading is corrupted here by water/lava contact turning
     // to obsidian mid-column, which a first version of the analyzer learned
     // the hard way): `cap` scores a perfect 1.0000 against `gate`'s
-    // 0.9266-0.9358 on 7.8M+ discriminating blocks across two seeds.
+    // 0.9351-0.9358 on the 7.6-7.8M blocks the subset's sources own, per
+    // seed of two, and on the 287 237 sampled blocks where the two readings
+    // place different blocks the server holds `cap`'s on every one
+    // (vanilla_aquifer_nearsurface_test.cpp).
     const PslRead split{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
     // gate - centreY = 2, inside the near-surface window. cap+20 = -50,
     // gate+20 = 0: a centreY of -22 sits strictly between them, so the two
@@ -841,17 +844,18 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // probe that could exercise it held psl CONSTANT, so `aborted` was never
     // true while floodedness alone would otherwise cross the gate in a world
     // that could also vary. `aquifer-nearsurface-probe.sh` builds that
-    // configuration directly and reads block-by-block: reading `!aborted` as
-    // written scores 0.9911-0.9941 against 0.0564-0.0924 for ignoring it on
-    // the depth path, and 0.9812-0.9829 against 0.6612-0.6872 on the ocean
-    // branch's own copy of the same guard, on 469575-913229 discriminating
-    // blocks across two seeds.
+    // configuration directly and reads block-by-block: refusing the sea
+    // scores 0.9992-0.9996 against 0.066-0.089 for ignoring the abort with
+    // the anchor below `sea_level - 8`, and 0.9979-0.9987 against
+    // 0.645-0.651 at or above it, per seed of two on a frozen corpus, every
+    // block it misses fluid that moved (vanilla_aquifer_nearsurface_test.cpp;
+    // the unfrozen corpus's 0.9911-0.9941 and 0.9812-0.9829 were that flow).
     const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
-    // The cell is refused the sea and falls to its LADDER, which a cap of -70
-    // pulls to -70 — and an aborted scan's wet level never sits below lambda,
-    // so it reads lambda (see the case on that floor below). What this case
-    // tests is that the abort refuses the sea at all, which the contrast with
-    // `quiet` establishes.
+    // The cell is refused the sea and takes A_lava, -54 — lambda at this sea
+    // (see the case on that floor below). What this case tests is that the
+    // abort refuses the sea at all, which the contrast with `quiet`
+    // establishes; the anchor (100) is below the ocean gate (192), so this is
+    // the depth path, and the next case has the other branch.
     CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == lambdaLevel(200));
     // Without the abort the same cell floods.
     const PslRead quiet{.gate = 100, .cap = 100, .anchor = 100, .aborted = false};
@@ -867,6 +871,35 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     CHECK(cellFluidLevel(cellWith(low, 200, -55, 0.0)) == -54);
     // And the near-surface flip still sits at gate - 4.
     CHECK(cellFluidLevel(cellWith(aborted, 200, 97, 0.9)) == 200);
+}
+
+TEST_CASE("an aborted scan is refused the sea with its anchor at or above sea_level - 8",
+          "[aquifer]") {
+    // The other branch of the same refusal. Before pipeline engine v11 each
+    // branch of the level rule carried its own `!aborted` guard, and nothing
+    // reached this one aborted while floodedness alone would have granted the
+    // sea; since then one early return refuses both, and this pins it here
+    // too, on a read the scan itself produces rather than one written out.
+    // One window sample at -70 (below the -62 abort) and 96 everywhere else:
+    // the anchor and the gate stay 96, at or above the ocean gate (55), and
+    // the whole window's minimum is -70.
+    const auto oneLowSample = [](const std::int32_t x, std::int32_t, const std::int32_t z) {
+        return (x == 16 && z == 16) ? -70.0 : 96.0;
+    };
+    const PslRead read = readPreliminarySurface(oneLowSample, CellIndex{0, 0, 0}, 63);
+    REQUIRE(read == PslRead{.gate = 96, .cap = -70, .anchor = 96, .aborted = true});
+    REQUIRE(read.anchor >= 63 - stratum::aquifer::kOceanGateOffset);
+    // Floodedness 0.9 clears the sea gate on this branch; the abort refuses
+    // it, and the cell takes A_lava.
+    const auto refused = stratum::aquifer::cellLevel(cellWith(read, 63, 0, 0.9));
+    CHECK(refused.level == stratum::aquifer::kLavaLevel);
+    CHECK(refused.origin == stratum::aquifer::LevelOrigin::GlobalLava);
+    // The same window without the low sample floods, and the gate is strict.
+    const PslRead quiet = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return 96.0; }, CellIndex{0, 0, 0}, 63);
+    REQUIRE(quiet == constantSurface(96));
+    CHECK(cellFluidLevel(cellWith(quiet, 63, 0, 0.9)) == 63);
+    CHECK(cellFluidLevel(cellWith(quiet, 63, 0, 0.8)) != 63);
 }
 
 TEST_CASE("the depth path gates on the anchor while the rest gate on the minimum", "[aquifer]") {

@@ -894,11 +894,21 @@ mapping has two halves, split at a platform-neutral midpoint:
      body-boundary reading is corrupted here by water/lava contact turning
      to obsidian mid-column, which is why the analyzer's own first version
      scored 0.51 before that fix. The near-surface floor's comparand reads
-     `cap`, not `gate`: a perfect 1.0000 against 0.9266-0.9358 on 7.8M+
-     discriminating blocks across two seeds. The `aborted` guard on the sea
-     outcome is correct as written on both its copies: 0.9911-0.9941 against
-     0.0564-0.0924 on the depth path, 0.9812-0.9829 against 0.6612-0.6872 on
-     the ocean branch, on 469575-913229 discriminating blocks each.
+     `cap`, not `gate`: per seed, a perfect 1.0000 against 0.9351-0.9358 on
+     the 7.6-7.8 million blocks the subset's sources own. The abort refuses
+     the sea on both branches (one early return since engine v11, two
+     `!aborted` guards before): 0.9992-0.9996 against 0.066-0.089 for
+     ignoring the abort with the anchor under `sea_level - 8`, 0.9979-0.9987
+     against 0.645-0.651 at or above it. Those are the analyzer's own
+     readout on frozen corpora of seeds 42 and 31337, which CI generates and
+     `vanilla_aquifer_nearsurface_test.cpp` scores, where the server holds
+     the build's block wherever the two readings part but for fluid that
+     moved. The figures first recorded here (0.9266-0.9358; 0.9911-0.9941 and
+     0.9812-0.9829 for the refusal, a 0.6-1.9% shortfall, on "469575-913229
+     discriminating blocks" that were in fact every block the subsets own)
+     came off a corpus generated before probe worlds were frozen; the
+     shortfall is retired as flow (§11, "The near-surface probe,
+     regenerated").
 
   3. **CLOSED for (a)-(c). Which sources compete, and how hard.** About
      13-16% of the server's real barriers come from a third source the old
@@ -3386,6 +3396,89 @@ Open:
   and water. That is the mixed-type pressure and Q6.3 with a non-water
   default fluid, which the filler refuses by name (§8); this corpus is a
   reading of it, not a measurement of the rule.
+
+- **The near-surface probe, regenerated: its two readings re-derived, and its
+  0.6-1.9% residual retired as flow (MA).** No output changes. MA blocker
+  2's last two findings (§10) — the aborting near-surface floor compares
+  the centre with `cap`, not `gate`, and an aborted scan is refused the sea
+  floodedness would grant it — lived in `aquifer-nearsurface-analyze` on a
+  corpus nothing regenerated, and the refusal's 0.9911-0.9941 and
+  0.9812-0.9829 left a 0.6-1.9% shortfall nobody had explained.
+  `aquifer-nearsurface-probe.sh` now writes `nearsurface_s<seed>` (the seed
+  in the name) with a readout dimension per scale, and is two units of
+  `tools/probe-worlds`' end shard, seeds 42 and 31337, about a minute of
+  server each locally; CI generates both and
+  `vanilla_aquifer_nearsurface_test.cpp` scores them, about a minute in a
+  Debug build. The case rebuilds the field from the manifest's probe noise
+  and requires it to equal the readout at every quart corner, the only
+  columns the aquifer reads.
+
+  *The analyzer's figures, re-derived.* The case reproduces the analyzer's
+  readout block for block (the nearest source's bare `y < level`, water or
+  lava against air, anything else skipped), and the analyzer gives the same
+  counts on the same worlds. Seed 42's are also identical on a frozen
+  corpus generated the day before. Per seed, 42 / 31337:
+
+  | subset (rival) | blocks its sources own | build | rival |
+  |---|---|---|---|
+  | aborting near-surface floor, `gate != cap` (`gate`) | 7 825 765 / 7 602 688 | 1.0000 / 1.0000 | 0.9358 / 0.9351 |
+  | aborted, anchor at or above `sea_level - 8` (ignore the abort: the sea) | 900 318 / 888 248 | 0.9979 / 0.9987 | 0.6449 / 0.6505 |
+  | aborted, anchor below `sea_level - 8` (the same) | 543 639 / 459 635 | 0.9992 / 0.9996 | 0.0886 / 0.0657 |
+
+  The denominators were recorded as "discriminating blocks"; they are every
+  block the subset's sources own, most of which the two readings agree on.
+
+  *Where the readings part, decided the filler's way* — the global picker
+  above the chunk's `y_skip`, `computeSubstance` at and below it, each
+  rival's statuses through `computeSubstanceWith`, on rows -54 to 70 of
+  every second column on each axis, two in from the edge. Both seeds:
+
+  | subset | blocks the two decisions part on | server holds the build's | the rival's |
+  |---|---|---|---|
+  | aborting near-surface floor | 287 237 | 287 237 | 0 |
+  | aborted, anchor at or above `sea_level - 8` | 227 421 | 226 718 | 701 |
+  | aborted, anchor below `sea_level - 8` | 270 587 | 270 427 | 158 |
+
+  *The residual is flow.* Of the 3 033 and 644 blocks the readout misses in
+  the two abort subsets, 2 838 and 616 lie where the decision is scored, and
+  at every one the filler's decision is wrong too and `explainedByFlow`
+  accepts the block; none is a block the decision gets right, so neither
+  `y_skip`, the barrier nor water over the lava sea is in it. The other 195
+  and 28 sit in the edge margin, whose neighbours the region does not hold.
+  Where the decisions part, every block the build has wrong (703 and 160)
+  is one `explainedByFlow` accepts, as is every block of the whole sample
+  the decision has wrong (1 735 of 1 922 000). The 859 of them the server
+  holds the rival's way, water where the build has air, are 636 flowing
+  water and the rest sources between sources, and 854 sit on the four rows
+  under the sea's top or over lambda.
+  Those are the rows where a sea source and an A_lava one meet with no wall
+  or the thinnest: their levels are 117 apart, and the pair's `u` is within
+  2 on the three rows inside each level, where barrier -2.0 cancels the
+  pressure (on the fourth it is 2.33 and 2.17, and fires only where the
+  pair's similarity passes about 0.21 and 0.23). No source's own blocks go the
+  rival's way: of the 685 abort-subset sources with 64 or more sampled
+  contested blocks, the largest share any gives the rival is 0.37, where a
+  wrong refusal would lose whole territories.
+
+  The old corpus is gone, so its 0.6-1.9% is attributed by comparison, not
+  re-read: it was generated before probe worlds were frozen (freezing
+  removes 97-99% of a probe's flow, §7); the readout's predictions on these
+  subsets have not changed since (the refused cell's ladder, clamped at
+  lambda then, read the -54 that A_lava reads now); and seed 42's floor
+  figure, which flow barely reaches, is the recorded 0.9358 to four places,
+  while the two refusal subsets, which flow does reach, are what moved.
+  The figure is retired; the case bounds the frozen remnant (refusal
+  readout at least 0.993 and 0.997 per seed, which the old figures fail)
+  and requires its shape.
+
+  *Not Q5.3(a) off the ocean branch* (pipeline engine v12, which left this
+  open). That clause reads a scan that did not abort, every source the
+  residual belongs to aborted, and on this field the clause reaches no
+  source at all, 0 on both seeds: a scan that does not abort reads no -70,
+  so off the near-surface path its window is all 96, which no source's is.
+  A unit case now also pins the refusal with the anchor at or above
+  `sea_level - 8`, on a read the scan itself produces
+  (`aquifer_lattice_test.cpp`).
 
 - **amplified and large_biomes, against the server (MA).** No output
   changes. Vanilla's two other overworld presets are the overworld's

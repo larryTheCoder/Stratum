@@ -180,6 +180,19 @@ Open:
       misses were the case crediting flowing water and other bodies' fluid
       to a source: on its own source blocks the rule is 3160 of 3160. 8
       water blocks inside lava bodies stay named. SPEC §11.
+- [x] **The near-surface probe is a CI corpus and a case; its 0.6-1.9%
+      residual was flow.** MA blocker 2's last two findings (the floor reads
+      `cap`; an aborted scan is refused the sea) lived in an analyzer.
+      `nearsurface_s42` / `_s31337` are now `tools/probe-worlds` units (end
+      shard) and `vanilla_aquifer_nearsurface_test.cpp` re-derives them on
+      the frozen worlds: cap 1.0000 against gate's 0.9351-0.9358, refusing
+      the sea 0.9979-0.9996 against 0.066-0.651 for ignoring the abort, and
+      on 785 245 sampled blocks where the readings part the server holds the
+      build's on all but 863, every one fluid that moved (859 the rival's,
+      854 of them on the four unwalled contact rows). The old 0.9812-0.9941
+      came off an unfrozen
+      corpus; retired. Q5.3(a) off the ocean branch reaches no source there.
+      SPEC §11.
 - [x] **Probe worlds are frozen.** Every probe harness now runs
       `/tick freeze` before any chunk generates, as `fetch-vanilla` does, and
       records `ticks_frozen` in the corpus manifest; fluid-scoring cases
