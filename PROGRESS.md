@@ -127,7 +127,8 @@ Open:
       generator (`aquifer-comb-probe.sh`), reproducing the jitter (256/256,
       34/34) and selection (637 252 barriers) records exactly; the fluid
       type's 0.3 strictness and -10 ceiling are replayed block for block on
-      the fluid-type probe; deep-floor needs all three seeds; depth-gate's
+      the fluid-type probe, and -9 and the ceiling's absoluteness on the
+      fluid-ceiling probe; deep-floor needs all three seeds; depth-gate's
       ties are set apart and the rest held exact. Every other case that
       scored whichever seeds were on disk now needs the seeds
       `tools/probe-worlds` generates, a spec dimension with no region fails
@@ -482,7 +483,8 @@ Open:
       below), leaving 192.
 - [x] **The fluid-type level ceiling.** PINNED at `-10`, inclusive — the
       value the code already carried, now measured rather than assumed, and
-      no source change. `aquifer-fluidtype-probe.sh --group d` reaches level
+      no source change. `aquifer-fluidceiling-probe.sh` (once
+      `aquifer-fluidtype-probe.sh --group d`) reaches level
       `-9` by the two routes the ladder's mod-3 lattice does not constrain
       (the sea branch; the psl cap at two different sea levels) and reads
       `-12/-11/-10` lava and `-9/-8/-7` water on the two six-dimension arms
@@ -498,7 +500,12 @@ Open:
       nothing and only the global lava sea was left (SPEC §11). Pinned in
       `aquifer_fluid_type_test.cpp` by a literal `-9` assertion, the one the
       old suite lacked: every other assertion there is phrased relative to
-      `kLavaLevelCeiling` and so survived either value.
+      `kLavaLevelCeiling` and so survived either value. Replayed in CI since
+      by `vanilla_aquifer_fluid_ceiling_test.cpp` on seed 42 (unit
+      `fluidceiling_s42`, shard `end`): 0 unexplained blocks, every
+      dimension again 16384 of 16384 columns at its level in one fluid, and
+      the -9, strict -10, sea-relative and lambda-relative rivals each wrong
+      by name.
 - [x] **Q6.4's fourth divisor (the "/10" branch).** CONFIRMED at 10 on real
       server data, bracketed to within 1%. The "0 uses" was never a
       world-shape problem, which is why any number of further probe seeds

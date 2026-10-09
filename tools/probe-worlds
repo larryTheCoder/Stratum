@@ -259,6 +259,11 @@ UNITS = [
          density(('nearsurface_s42', 42))),
     unit('nearsurface_s31337', 'end', ['aquifer-nearsurface-probe.sh', '31337'],
          density(('nearsurface_s31337', 31337))),
+    # The lava override's level ceiling at three sea levels: three server
+    # starts of six, six and four dimensions, none with more than three of
+    # water. Here because this shard was among the lightest.
+    unit('fluidceiling_s42', 'end', ['aquifer-fluidceiling-probe.sh', '42'],
+         density(('fluidceiling_s42', 42), ('fluidceilingp_s42', 42), ('fluidceilingl_s42', 42))),
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))

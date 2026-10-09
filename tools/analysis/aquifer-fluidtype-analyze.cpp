@@ -8,7 +8,9 @@
 // agree once boundary noise (the barrier predicate's own per-cell draw)
 // is averaged out.
 //
-// TWO READOUTS, because group D's arm S cannot be read by the first one.
+// TWO READOUTS, because the old group D's arm S (aquifer-fluidtype-probe.sh's,
+// since retired; its other arms are aquifer-fluidceiling-probe.sh now) could
+// not be read by the first one.
 // A source whose level sits far ABOVE its own cell floods its entire
 // territory, so the column has no body top at the level and the per-level
 // histogram sees nothing to key on. For those dimensions the discriminator is
@@ -88,9 +90,10 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 const auto ch = chunk::Chunk::decode(nbt::read(file.readChunk(cx, cz)).root);
-                // The chunk's own extent, not a constant: group D's arm P'
-                // runs at `sea_level` -70 and therefore at `min_y` -192, and
-                // a hard-coded -64 would read none of it.
+                // The chunk's own extent, not a constant: the ceiling
+                // probe's arm P' (fluidceilingl_s<seed>) runs at `sea_level`
+                // -70 and therefore at `min_y` -192, and a hard-coded -64
+                // would read none of it.
                 const int minY = ch.minY();
                 const int maxY = ch.maxY();
                 for (int lz = 0; lz < 16; ++lz) {

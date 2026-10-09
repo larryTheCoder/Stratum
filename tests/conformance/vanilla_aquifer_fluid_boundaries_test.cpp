@@ -18,7 +18,9 @@
 // nothing else — the 42 blocks of stone on row lambda it once set apart as a
 // barrier residual included: lava fell onto water there. Then the two boundaries are pinned by
 // name: `lava` exactly 0.3 makes no lava and the next double up does, and a level of exactly -10 is
-// lava while -9 is not.
+// lava. No -9 source in this world places fluid — `c_neg9`'s are centred a band above their own
+// level (the script's header has the arithmetic) — so the -9 side, and the ceiling being absolute,
+// are vanilla_aquifer_fluid_ceiling_test.cpp's, on worlds that reach -9.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
@@ -197,7 +199,8 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
     CHECK(byDimension.at("a_above").oursLava ==
           byDimension.at("a_above").serverLava + byDimension.at("a_above").oursLavaQuenched);
 
-    // Inclusive at -10: a ladder level of exactly -10 is lava, -9 is not.
+    // Inclusive at -10: a ladder level of exactly -10 is lava. No -9 source
+    // in `c_neg9` places fluid, so it is held only to agree with the server.
     REQUIRE(byDimension.contains("c_neg10"));
     REQUIRE(byDimension.contains("c_neg9"));
     CHECK(byDimension.at("c_neg10").serverLava > 0);
