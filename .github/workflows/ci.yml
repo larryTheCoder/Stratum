@@ -257,12 +257,10 @@ jobs:
     # artifact (tools/lint/check-determinism.sh refuses one).
     if: github.repository == 'larryTheCoder/Stratum'
     runs-on: ubuntu-24.04
-    # Measured cold on runners (October 2026): capfloor about 24 minutes,
-    # water 15, aquifer 14 before the fluidnear units and 33 with them,
-    # surface 13.5, legacy 11, end 2 before the presets and y_skip units.
-    # markers (ten server starts) has no runner timing yet, nor have the
-    # goldens shards (about 15 minutes for goldens-nether and 27 for
-    # goldens-overworld locally, on 4 busy cores). Past this, take a
+    # Measured cold on runners (run 37890579708, 2026-10-09, every shard
+    # regenerated): aquifer 33 minutes, capfloor 24, surface 16, legacy 15,
+    # water 15, goldens-overworld 14, end 12, markers 12, goldens-nether 9.
+    # Units added since then grow the shard they joined. Past this, take a
     # generator to have hung; the last log group the job opened names it.
     timeout-minutes: 90
     defaults:
@@ -372,6 +370,9 @@ jobs:
     # larryTheCoder/Stratum the probes job is skipped and this runs on
     # extracted data alone, as it did before.
     if: ${{ !cancelled() && needs.build.result == 'success' }}
+    # Run 37890579708 (150 cases, goldens included): the suite took 96
+    # minutes on x86-64 (21420 s of Debug test time four wide) and 55 on
+    # ARM64. The x86-64 leg is the one this bounds.
     timeout-minutes: 150
     defaults:
       run:
