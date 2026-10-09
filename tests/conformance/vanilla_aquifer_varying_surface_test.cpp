@@ -741,7 +741,7 @@ TEST_CASE("the aquifer reads the surface per column and not through the 16-block
     INFO("total: " << total << perArm.str());
 
     // Power first: a handful of discriminating blocks would close nothing.
-    // Measured 781 897, every feature size above 100 000 on its own.
+    // Measured 802 159, every feature size above 100 000 on its own.
     REQUIRE(lattice.differ >= 10000);
     for (const auto& [size, h] : bySize) {
         INFO("feature size " << size);
@@ -756,23 +756,29 @@ TEST_CASE("the aquifer reads the surface per column and not through the 16-block
     // Model-only, so pinned exactly: no aquifer world is read to get them,
     // and fluid flow cannot move them. The population is bounded by each
     // chunk's y_skip, so a change to y_skip moves it: 778 125 under engine v7,
-    // 781 897 since v8 widened y_skip's rectangle (SPEC §6).
-    CHECK(lattice.differ == 781897);
-    CHECK(total.sourcesLevelDiffer == 350);
+    // 781 897 since v8 widened y_skip's rectangle (SPEC §6), and a change to
+    // the status rule moves it too: 802 159 (and 354 sources whose level
+    // the two readings part, from 350) since the clean-room Q5.3 replaced
+    // engine v12's reading of the scan (SPEC §11, "The surface scan, sample
+    // by sample").
+    CHECK(lattice.differ == 802159);
+    CHECK(total.sourcesLevelDiffer == 354);
 
-    // The verdict. The lattice wins no block, the per-column reading 661 223.
+    // The verdict. The lattice wins no block, the per-column reading 679 973
+    // (661 223 under engine v12).
     CHECK(lattice.rivalWins == 0);
     CHECK(lattice.perColumnWins + lattice.rivalWins + lattice.ambiguous + lattice.solid ==
           lattice.differ);
-    // Bounded, never pinned (SPEC §7). Measured 15 158 (2.3%): 1 580 flowing
+    // Bounded, never pinned (SPEC §7). Measured 15 350 (2.3%): 1 772 flowing
     // and the rest still sources beside two more — `explainedByFlow`'s
     // infinite-source shape, which every interior block of a pool the
-    // lattice would leave dry satisfies. On 1 856 of them it is the
+    // lattice would leave dry satisfies. On 2 048 of them it is the
     // per-column reading that predicted air: its own flow remnant, the one
     // the first case excuses.
     CHECK(lattice.ambiguous * 20 < lattice.perColumnWins);
 
-    // B' loses the same way: 898 686 blocks differ, and the server sides
+    // B' loses the same way: 906 228 blocks differ (898 686 under engine
+    // v12), and the server sides
     // with it on none. Implied by the first case's exactness, and asserted
     // so the figure SPEC quotes is one a test holds.
     CHECK(latticeAtCentre.rivalWins == 0);
@@ -808,11 +814,12 @@ TEST_CASE("the per-column surface reading holds on three seeds with the barrier 
         long long sourcesLevelDiffer; ///< pinned: model-only
     };
 
-    // Since engine v8's y_skip rectangle (530 231, 458 886 and 540 083
-    // under v7).
-    constexpr std::array<Probe, 3> kProbes{{{"nsfloor_s42", 42, 530567, 246},
-                                            {"nsfloor_s31337", 31337, 459476, 206},
-                                            {"nsfloor_s8675309", 8675309, 552725, 273}}};
+    // Since the clean-room Q5.3 replaced engine v12's reading of the scan
+    // (530 567 / 246, 459 476 / 206 and 552 725 / 273 under v8-v12; 530 231,
+    // 458 886 and 540 083 blocks under v7, before y_skip's rectangle).
+    constexpr std::array<Probe, 3> kProbes{{{"nsfloor_s42", 42, 539455, 244},
+                                            {"nsfloor_s31337", 31337, 472764, 214},
+                                            {"nsfloor_s8675309", 8675309, 552725, 261}}};
 
     const std::filesystem::path root = fixtures() / "probes";
     if (std::ranges::none_of(kProbes, [&](const Probe& probe) {
@@ -854,12 +861,12 @@ TEST_CASE("the per-column surface reading holds on three seeds with the barrier 
         CHECK(lattice.differ == probe.latticeDiffer);
         CHECK(total.sourcesLevelDiffer == probe.sourcesLevelDiffer);
 
-        // Measured per column 450 893, 382 386 and 476 317; lattice 0 on all
+        // Measured per column 459 377, 394 558 and 486 681; lattice 0 on all
         // three.
         CHECK(lattice.rivalWins == 0);
         CHECK(lattice.perColumnWins + lattice.rivalWins + lattice.ambiguous + lattice.solid ==
               lattice.differ);
-        // Measured 2 325, 25 388 and 443. Seed 31337's is the infinite-source
+        // Measured 2 325, 25 392 and 443. Seed 31337's is the infinite-source
         // shape again: 10 651 on each of its two 16-block arms, only 42
         // flowing and all but 49 where the lattice predicted air — pools it
         // would leave dry.

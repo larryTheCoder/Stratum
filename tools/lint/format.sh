@@ -60,6 +60,9 @@ analysis_targets=(
     tools/analysis/aquifer-level-rivals.hpp
     tools/analysis/aquifer-nearsurface-analyze.cpp
     tools/analysis/aquifer-presets-scout.cpp
+    tools/analysis/aquifer-ties-analyze.cpp
+    tools/analysis/aquifer-ties-rivals.hpp
+    tools/analysis/aquifer-ties-score.hpp
     tools/analysis/aquifer-waterlava-analyze.cpp
     tools/analysis/legacy-aquifer-analyze.cpp
 )

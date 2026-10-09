@@ -271,6 +271,7 @@ to bump the version and be called out; this is that call-out.
 | 10 | **Cache markers in a datapack's aquifer entries** (§11, "Cache markers in a datapack's aquifer entries"). Every aquifer read but the barrier's is detached (`density::ReadContext::Detached`): an `interpolated` there is its argument at the read point, not the blend over a cell (refuted on 5 139 104 blocks over two seeds of `aquifer-markers-probe.sh`), and a `flat_cache` read off the chunk's [16c, 16c + 19] window is its argument at the read's own y, not y = 0 (refuted on 1 437 270). `flat_cache`'s column invariance now follows its argument, so `cache_2d` over a `flat_cache` of something y-varying is refused by name. Changes output only for datapacks that wrap a non-barrier aquifer entry in `interpolated` or put a y-varying argument under an aquifer `flat_cache`; no vanilla preset does, no golden block changes and the pinned overworld hash holds. |
 | 11 | **An aborted scan's status is A_lava, -54 and lava** (§11, "An aborted scan's status is A_lava"). The aborting near-surface floor, an aborted cell off the near-surface path (v5) and one under Q5.9's override (v6) read lambda, typed as the cell's own fluid; the server holds Q1.1's A_lava there, the literal -54 and lava, on all three (`aquifer-lowfloor-probe.sh`, two seeds: the build exact on every sampled block and mark, v10's reading refuted on 8 938 to 18 209 blocks an arm). Changes blocks and fluid-update flags only where `sea_level` < -54; at or above it the floor's type is unobservable. No golden block changes. v10 had reached only this development branch; bumped rather than amended because a v10 blob could exist. |
 | 12 | **Q5.3(a) off the ocean branch** (§11, "The level rule on a constant surface, block for block"). A cell whose scan did not abort and whose centre sits more than twenty above the scan's `cap` takes the sea before any floodedness is weighed, on land as on the ocean branch; v11 applied the clause only on the near-surface path. Replayed through the filler at every column of `aquifer-level-probe.sh`'s 255 constant-surface worlds (three seeds, 556 964 848 blocks from y -51 up) the build is exact, and v11's reading parts from the server on 3 324 blocks, every one held the new way. Changes blocks where a land surface sits more than twenty below a source centre; no golden block changes. `cap` against the anchor (the spec's a0) is carried, not measured: a constant surface makes them one number. v11 had reached only this development branch; bumped rather than amended because a v11 blob could exist. |
+| 13 | **The surface scan, read sample by sample: the clean-room Q5.3 as written** (§11, "The surface scan, sample by sample"). Q5.3(a) compares a source's centre with the ANCHOR's surface (v12: the scan's `cap`); otherwise the first sample in scan order that is submerged and that the centre clears by less than four decides, the sea for a clean sample and A_lava for an aborting one, whether or not a later sample aborts (v12: an aborted scan took the sea only at or above lambda and more than twenty above `cap`, else A_lava); a scan where no sample fires takes the level rule on `cap` even when it aborted. `aquifer-ties-probe.sh` builds surfaces that part each v12 choice from the spec's: on both seeds the build is exact on every scored block and fluid-update mark, and v12's reading is wrong wherever it parts (106 393, 64 913, 24 761 + 6 472 marks, 1 628, 1 780 and 14 blocks by kind). Changes blocks only over varying surfaces with an aborting or submerged scan window; no golden block changes. v12 had reached only this development branch; bumped rather than amended because a v12 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -881,6 +882,9 @@ mapping has two halves, split at a platform-neutral midpoint:
      question, so no corpus can separate "the comparand" from "the return
      value" once both are lambda-based; using `lambda` in both places is a
      no-op at every already-verified sea_level, not an isolated finding.
+     *Superseded:* with the value A_lava's -54 the two part below a sea of
+     -54, and the comparand is measured — lowsea's `a_lo` and the ties
+     probe's `tc` hold `lambda` (§11, "The surface scan, sample by sample").
 
      *Now confirmed, both without a code change.* Both were open because
      every probe that could reach them held `preliminary_surface_level`
@@ -895,7 +899,10 @@ mapping has two halves, split at a platform-neutral midpoint:
      to obsidian mid-column, which is why the analyzer's own first version
      scored 0.51 before that fix. The near-surface floor's comparand reads
      `cap`, not `gate`: per seed, a perfect 1.0000 against 0.9351-0.9358 on
-     the 7.6-7.8 million blocks the subset's sources own. The abort refuses
+     the 7.6-7.8 million blocks the subset's sources own. *Superseded:* on that field
+     the cells `cap` won take the sea from their own clean sample firing
+     first; the comparand is Q5.3(a)'s anchor, which a surface built to
+     part it from `cap` shows (§11, "The surface scan, sample by sample"). The abort refuses
      the sea on both branches (one early return since engine v11, two
      `!aborted` guards before): 0.9992-0.9996 against 0.066-0.089 for
      ignoring the abort with the anchor under `sea_level - 8`, 0.9979-0.9987
@@ -1918,21 +1925,23 @@ Open:
   anchor, window, scan order and abort unchanged. On `probes/pslvar`'s six
   aquifer worlds, over the blocks the local aquifer decides (from the lava
   sea's top to the lower of the two readings' `y_skip`), the readings
-  predict a different category on **781897** blocks: the server sides with
-  the per-column reading on **661223** and with the lattice on **0** (778125
+  predict a different category on **802159** blocks: the server sides with
+  the per-column reading on **679973** and with the lattice on **0** (778125
   and 658371 before pipeline engine v8 widened `y_skip`'s rectangle, which
-  moves the lower cutoff and so the population). The rest are 105516 solid
-  blocks, which neither predicts, and 15158 fluid
-  blocks `explainedByFlow` cannot rule out as moved: 1580 flowing and 13578
-  still sources beside two more — the infinite-source shape, which every
-  interior block of a pool the lattice would leave dry satisfies (on 13302
-  of the 15158 it is the lattice that predicted air). The barrier-on nsfloor
+  moves the lower cutoff and so the population; 781897 and 661223 under
+  engine v12's reading of the scan, before the clean-room Q5.3 — §11, "The
+  surface scan, sample by sample"). The rest are 106836 solid blocks, which
+  neither predicts, and 15350 fluid blocks `explainedByFlow` cannot rule out
+  as moved: 1772 flowing and 13578 still sources beside two more — the
+  infinite-source shape, which every interior block of a pool the lattice
+  would leave dry satisfies (on 13302 of the 15350 it is the lattice that
+  predicted air). The barrier-on nsfloor
   corpus repeats it at seeds 42, 31337 and 8675309, floodedness 0.9 and 0:
-  1542768 blocks, 1320468 to the per-column reading, 0 to the lattice. The
+  1564944 blocks, 1340616 to the per-column reading, 0 to the lattice. The
   lattice taken at the unquantised centre, the one way it could stand in for
-  the 4-quantum, loses the same way (902458 blocks on pslvar, 749395 to 0).
+  the 4-quantum, loses the same way (906228 blocks on pslvar, 760297 to 0).
   A source anchored on the lattice on both axes reads the same under either
-  for every field — 378 of the 2446 scored, and none of the 781897 blocks —
+  for every field — 378 of the 2446 scored, and none of the 802159 blocks —
   so the evidence is the other 2068. What is not tested is a lattice reading
   with a window refitted to it. Against that there is only an argument, from
   analyser runs no test pins: the sieves below derived the thirteen offsets,
@@ -3220,7 +3229,13 @@ Open:
   lava sea: Q1.1's A_lava, the literal -54 and lava. At a sea at or above
   -54 those are one level; below it lambda is `sea_level`, and lowsea's
   `a_lo` (above, "`y_skip` against the server") had shown the near-surface
-  floor holding lava to -55 at sea -70.
+  floor holding lava to -55 at sea -70. *Refined* (below, "The surface scan,
+  sample by sample"): A_lava is the status of an aborting sample that is the
+  first to fire; an aborted scan whose clean submerged sample fires first
+  takes the sea, one centred more than twenty above a land anchor takes
+  Q5.3(a)'s sea, and one no sample fires on takes the level rule. On the
+  worlds below no block parts the two readings (`lf_v5`'s land-prefix
+  sources sit twenty above a -20 anchor, far from any row read).
 
   *The type reaches nothing at a sea at or above -54, and that is pinned,
   not argued.* There the floor reads fluid nowhere the lattice is
@@ -3367,11 +3382,11 @@ Open:
   separate is the clause's comparand. The spec writes the anchor (a0); the
   aborted near-surface floor, the same clause, was measured on `cap` over
   the anchor; for a scan that did not abort `cap` and the gate are one
-  number, and a constant surface makes the anchor that number too. The
-  build reads `cap`, carried from that measurement, and a surface that
-  varies across a land window is what would show a wrong choice. An aborted
-  scan off the near-surface path keeps the abort's floor: the near-surface
-  probe refuses such cells the sea where floodedness would grant it.
+  number, and a constant surface makes the anchor that number too. Engine
+  v12 read `cap`, carried from that measurement, and kept an aborted scan
+  off the near-surface path on the abort's floor. *Superseded* (the next
+  entry): on a surface that varies across the window the comparand is the
+  anchor, for a scan that aborted as for one that did not.
 
   Vanilla's land is where the clause lives, and no golden block moves:
   `golden_overworld_test.cpp`'s exact pins (12 582 474 exact blocks, 23
@@ -3505,6 +3520,108 @@ Open:
   A unit case now also pins the refusal with the anchor at or above
   `sea_level - 8`, on a read the scan itself produces
   (`aquifer_lattice_test.cpp`).
+
+- **The surface scan, sample by sample: the clean-room Q5.3 as written (MA;
+  pipeline engine v13).** Engine v12 reduced a source's scan to four
+  values — the prefix minimum before the first abort (`gate`), the whole
+  minimum (`cap`), the anchor and the abort flag — and decided from them:
+  the near-surface path on `gate`; on it, an aborted scan took the sea only
+  at or above lambda and more than twenty above `cap`; every other aborted
+  scan took A_lava; and Q5.3(a) for a scan that did not abort read `cap`.
+  The clean-room spec decides from the thirteen samples in scan order: (a) a
+  centre more than twenty above the ANCHOR's surface takes the global
+  picker's status at the centre; (b) otherwise the FIRST sample that is
+  submerged (under `sea_level - 8`) and that the centre sits above less four
+  decides — A_lava if that sample aborts, the sea if not; and if none fires,
+  the level rule runs on the minimum of all thirteen. The two agreed on
+  every world measured until now, and three choices in between were carried
+  rather than measured ("Permanent ties", below, has the history): the
+  exemption's comparand (`cap` or the aborting sample), Q5.3(a)'s comparand
+  for a scan that did not abort (`cap` or the anchor), and whether the first
+  submerged sample decides.
+
+  They part on five kinds of source, and `tools/analysis/aquifer-ties-probe.sh`
+  builds each: fourteen dimensions a seed, density -1, `lava` 0, spread 0,
+  packed ice as the default fluid (thirteen of them; `td` is water), surfaces
+  cut from `stratum:probe_noise` by `range_choice`, frozen, generated in CI
+  (`ties_s42`, `ties_s31337`). *Abort-anchor*: the anchor aborts and the
+  centre sits in (cap + 20, anchor + 20] at or above lambda — v12 the sea,
+  the spec A_lava (`ta`, `tar`: -63 with -100 in the window, sea 63).
+  *Submerged-first*: a clean submerged sample fires before the abort — the
+  spec the sea, v12 A_lava below lambda or within twenty of `cap` (`tb`,
+  `tbr`: -60 before -64). `tab` stacks both (-60, -64, then -100), where the
+  aborting sample's own exemption parts from the spec as well. *Land-prefix*:
+  every sample before the abort is land (at or above `sea_level - 8`) and
+  the centre sits more than twenty above the anchor — the spec's Q5.3(a)
+  the sea, v12 A_lava (`tc`, `tcr` at sea -70 in blocks: lava to -55
+  against air; `tp35`, `tp43` at seas 43 and 51 through the sea's lid).
+  *Land-anchor*: no abort, land, the centre in (cap + 20, anchor + 20] —
+  v12 the sea, the spec the level rule (`tl35`, `tl43`, the lid).
+  *None-fires*: an aborted scan whose centre sits four or more below every
+  sample — the spec's level rule, v12 A_lava (`td`). A source parting on
+  the land kinds sits thirteen or more above the sea, so at a sea from -54
+  up only the barrier's lid at the sea's level shows it (below that, v12's
+  A_lava at -54 stands above the sea and shows in blocks); the lid
+  dimensions put the land surface at the ocean gate's edge (sea = W + 8), at
+  the two lattice phases (W 35 and 43) that put the most such sources within
+  reach of the lid rows on both seeds (scanned with the analyzer's
+  `--model`), and hold the barrier at +8 and +20, which widens the lid to
+  every pair whose squared distances differ by up to about 24: five to nine
+  times the blocks of +2 in the model's own count.
+  A none-fires source sits at least thirteen below lambda, so only Π just
+  above lambda can show it — on the model's scans, row lambda alone, which
+  Q6.3 makes a water world's: `td` is the one constant surface of -63..-75
+  where any block parts at all.
+
+  Scored on each dimension's 63 untouched chunks through the substance
+  decision the filler runs (`vanilla_aquifer_ties_test.cpp`, sharing
+  `aquifer-ties-rivals.hpp` and `aquifer-ties-score.hpp` with
+  `stratum_aquifer_ties_analyze`): every second column of the rows the
+  lattice decides where the kinds part in bulk, every column of rows sea - 3
+  to sea + 8 for the lids, and every column of row lambda for `td`; packed
+  ice's row lambda is not scored (Q6.3 with a non-water fluid, above). Each
+  v12 reading applied to one kind of source only, the spec's everywhere
+  else; blocks where it parts from the spec's on scored blocks, the server
+  holding the spec's block on every one, both seeds summed:
+
+  | v12's reading, on the sources of | dimensions | blocks it parts on (server: the spec's) |
+  |---|---|---|
+  | abort-anchor (the exemption on `cap`) | ta, tar, tab | 106 393 |
+  | submerged-first (the abort flag over a clean sample) | tb, tbr, tab | 64 913 |
+  | land-prefix | tc, tcr / tp35, tp43 | 24 761 and 6 472 marks / 1 628 |
+  | land-anchor (Q5.3(a) on `cap`) | tl35, tl43 | 1 780 |
+  | none-fires | td | 14 |
+  | the exemption on the aborting sample instead of `cap` | tab / tb, tbr | 7 285 / 62 650 |
+
+  The spec's reading, which the library now is, writes the server's block on
+  every scored block and its mark on every scored position of all 24
+  dimension-seeds, and the shipped filler is exact end to end on five whole
+  chunks of each (the replay places water where the ice worlds hold packed
+  ice). The aborting sample's exemption ties with the spec on `ta` and `tar`,
+  where the aborting sample is the anchor. The lid dimensions are also the
+  first to hold the barrier router entry at +8 and +20, and the build's Π
+  (the entry unclamped, inside `|u| <= 2`) is exact there.
+
+  *Implemented* (`cellLevel`): Q5.3(a) on the anchor; then the first sample
+  to fire, which the four values answer without the samples — `gate` fires
+  exactly when a clean sample before the abort does (both conditions bound a
+  sample from above, so the minimum fires when any does; an aborting anchor
+  leaves `gate` at the anchor, below the threshold, and no clean sample);
+  past the abort only an aborting sample can fire (a clean one there sits
+  above the aborting one), so some sample fires exactly when `cap` does;
+  then the level rule on `cap`, Q5.4's minimum, with the depth path's ocean
+  test on the anchor. A unit case checks the reduction against the thirteen
+  samples on 20 000 random scans straddling every threshold at six seas. No
+  separate exemption remains: the margin of twenty is Q5.3(a)'s, measured
+  exact on constant surfaces (19 and 21 refuted), and its comparand is the
+  anchor. No golden block changes: `golden_overworld_test.cpp`'s exact pins
+  hold, as do the aquifer-on probe's and the amplified and large_biomes
+  cases (vanilla's psl is a multiple of eight or -64, so an aborting anchor
+  never has a lower sample after it, and the land kinds show only through
+  the sea's lid). What moves is the model-only population of the
+  varying-surface case, 781 897 blocks to 802 159 (§11, "Where a varying
+  `preliminary_surface_level` is SAMPLED"). Changes output (the next engine
+  version).
 
 - **amplified and large_biomes, against the server (MA).** No output
   changes. Vanilla's two other overworld presets are the overworld's
@@ -5027,7 +5144,11 @@ Open:
   the psl -85 dimension, where the lattice is consulted, keeps the
   comparand and refutes lambda as the floor's value — the server writes
   A_lava, (-54, lava), there (§11, "y_skip against the server"). The build
-  now reads it so (§11, "An aborted scan's status is A_lava").
+  now reads it so (§11, "An aborted scan's status is A_lava"). With the
+  value -54 the comparand is no longer tied to it, and is measured: cells
+  centred -64 to -55 there take the sea, as `lambda` says and -54 does not,
+  and so do the ties probe's `tc` sources (§11, "The surface scan, sample
+  by sample").
 
   *A methodological correction recorded rather than silently fixed.* The
   first version of the near-surface analysis found a smooth, centreY-varying
@@ -5180,8 +5301,8 @@ Open:
   *Per column, not through the surface rule's lattice.* The same corpus
   scores the scan's samples read per column against the same samples put
   through the 16-block lattice `above_preliminary_surface` reads the entry
-  through: 781897 blocks where the two predict different categories, 661223
-  to the per-column reading and 0 to the lattice — 0 of 1542768 again on the
+  through: 802159 blocks where the two predict different categories, 679973
+  to the per-column reading and 0 to the lattice — 0 of 1564944 again on the
   nsfloor corpus at three seeds with the barrier on. Every feature size
   discriminates on its own, over 100000 blocks each. The
   figures and their population are in "Where a varying
@@ -5297,14 +5418,19 @@ Open:
   X = floorDiv(centre.x, 4) * 4        // floorDiv, never `/`
   Z = floorDiv(centre.z, 4) * 4
   m = full = psl(X, 0, Z)              // the anchor, read first and unconditionally
-  aborted = false
+  aborted = m < -62                    // the anchor arms the abort (below)
   for (dx, dz) in the window, IN ORDER:
       v = psl(X + dx, 0, Z + dz)
       if (!aborted) { if (v < -62) aborted = true; else m = min(m, v); }
       full = min(full, v)
-  gate = floor(m)                      // the ocean gate and the near-surface return
-  cap  = floor(aborted ? full : m)     // the ladder's cap
+  gate = floor(m)                      // the clean samples before the first abort
+  cap  = floor(full)                   // Q5.4's minimum (m itself without an abort)
   ```
+
+  (`-62` is `abortThreshold(sea_level)`, -62 at every sea from -54 up. How
+  the four values — `gate`, `cap`, the anchor and `aborted` — decide a
+  source's status is the clean-room spec's Q5.3 read sample by sample: §11,
+  "The surface scan, sample by sample".)
 
   The window is thirteen positions on a 16-block lattice, and it is NOT a
   square — it reaches 48 blocks west and 16 east, north and south:
@@ -5388,11 +5514,13 @@ Open:
   armed, `aborted` and `cap <= -63` are the same predicate over every field
   that can exist, since `cap` is the whole window's minimum always and -62 is
   an integer. Under the exempt spelling that identity fails on precisely the
-  discriminating class. What is genuinely tied is only where the flag is
-  TESTED — "the anchor arms it" and "the near-surface return additionally
-  requires a clean anchor" are indistinguishable, because reaching the other
-  branch with a low anchor forces `sea_level <= -55`, where lambda IS
-  `sea_level` and both outcomes are the same number.
+  discriminating class. Where the flag is TESTED was carried here as a tie
+  ("the anchor arms it" against "the near-surface return additionally
+  requires a clean anchor"), and it is not one: once the floor left lambda
+  the two part at every sea, and `aquifer-lowfloor-probe.sh` takes the first
+  (§11, "An aborted scan's status is A_lava"). Under the spec's first match,
+  now measured (§11, "The surface scan, sample by sample"), the question
+  does not arise: an aborting anchor is simply the first sample.
 
   **The abort refuses the sea.** When a window sample falls below -62 the
   floodedness-gated `sea_level` outcome does not happen. This is the whole
@@ -5401,8 +5529,12 @@ Open:
   settles it: a low arm of exactly -62, where nothing aborts, scores 1.00000
   under the model that has no abort term, and -63 collapses it to 0.807-0.897.
   An aborting cell near the surface still floods if it clears the scan's own
-  low sample by more than twenty blocks — the offset is exactly 20, and the
-  term reads the whole-window minimum.
+  low sample by more than twenty blocks — the offset is exactly 20. That
+  term was read as the whole-window minimum; it is Q5.3(a) on the anchor,
+  which every field measured here made the same number (§11, "The surface
+  scan, sample by sample"). And the abort refuses the sea only when the
+  aborting sample is the first to fire: a clean submerged sample before it
+  gives the sea.
 
   **Every "-54" that is a LEVEL moves with `sea_level`.** Below
   `min(-54, sea_level)` the world is lava unconditionally, whatever the aquifer
@@ -5445,11 +5577,36 @@ Open:
   empties them. Corroborated by a second campaign on five further seeds with no
   cross-talk. One-value models score 0.7554-0.8199 against 1.0000.
 
-  On an aborting cell `cap` is always below -54 and is only ever consumed
-  through `max(-54, min(ladder, ·))`, so "the whole window's minimum", "the
-  aborting sample" and "any sentinel at or below -54" are a PERMANENT tie
-  rather than an open measurement; so is whether the abort short-circuits the
-  anchor read.
+  **Permanent ties, re-examined: what is measured, and what cannot be.** This
+  paragraph declared that on an aborting cell "the whole window's minimum",
+  "the aborting sample" and "any sentinel at or below -54" were a PERMANENT
+  tie, because `cap` reached a level only through `max(-54, min(ladder, ·))`;
+  and so was whether the abort short-circuits the anchor read. Neither
+  premise survived. The clamp went (the ladder is unclamped, and a level
+  below lambda reaches the barrier's Π as a number), and the anchor's role
+  was measured twice: it arms the abort (329 cells, seventeen seeds, above),
+  and the near-surface return does not also need it to clear the threshold
+  (`aquifer-lowfloor-probe.sh`). What was left carried — the exemption's
+  comparand, `cap` or the aborting sample; Q5.3(a)'s comparand for a scan
+  that did not abort, `cap` or the anchor; and whether the first submerged
+  sample in scan order decides, as the clean-room Q5.3(b) says, rather than
+  the abort flag and `cap` — is now measured on surfaces that part each
+  pair (§11, "The surface scan, sample by sample"): the comparand is the
+  anchor in both places, which is the aborting sample only when the anchor
+  aborts, and the first sample to fire decides. The build reads the spec's
+  Q5.3 as written. One kind of source is measured only thinly, by geometry
+  rather than by tie: an aborting scan whose centre sits four or more below
+  every sample fires nothing and takes the level rule, and since such a
+  centre is at least thirteen below lambda only Π just above lambda reaches
+  it — 14 blocks over two seeds in the probe built for it, all on row lambda
+  and all the spec's. The
+  permanent ties that remain are identities: quantising the anchor before or
+  after its offset (every offset is a multiple of sixteen), an anchor rule
+  against a quart cache, `spreadSample`'s two spellings and the y_skip
+  rectangle's +24..+27 end. The one the audit counted beside them, Q5.3(a)'s
+  comparand `lambda` against the literal -54, stopped being a tie when the
+  floor became A_lava's -54 rather than lambda: below a sea of -54 the two
+  part, and lowsea's `a_lo` and the ties probe's `tc` both hold `lambda`.
 
   **Why the previous two campaigns got an exact 1.00000 for a wrong law.** On a
   TWO-valued psl field the aborting prefix-minimum is identically the point
