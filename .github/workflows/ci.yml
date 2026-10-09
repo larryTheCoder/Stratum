@@ -2,8 +2,9 @@
 #
 # SPEC §5.5 makes the build matrix part of the determinism contract: the
 # unit suites run on x86-64 AND ARM64 across Linux, Windows and macOS, the
-# conformance suite on Linux x86-64 and ARM64 against the same probe worlds,
-# and a cross-architecture divergence is a build failure, never "noise".
+# conformance suite on Linux x86-64 and ARM64 against the same probe worlds
+# and region goldens, and a cross-architecture divergence is a build
+# failure, never "noise".
 #
 # No generator is pinned; each platform uses its native default (Make on
 # Linux, Make on macOS, MSBuild on Windows), so CI needs no extra toolchain
@@ -237,10 +238,13 @@ jobs:
 
   probes:
     name: probe worlds (${{ matrix.shard }})
-    # SPEC §7, §12. Generates the probe worlds the conformance cases read: one
-    # shard of tools/probe-worlds' table per runner, one server at a time, on
-    # x86-64 only, so both conformance legs score the same worlds and a
-    # cross-architecture difference is the engine's, never the oracle's.
+    # SPEC §7, §12. Generates the probe worlds and region goldens the
+    # conformance cases read: one shard of tools/probe-worlds' table per
+    # runner, one server at a time, on x86-64 only, so both conformance legs
+    # score the same worlds and a cross-architecture difference is the
+    # engine's, never the oracle's. The two goldens shards run
+    # tools/fetch-vanilla --generate-regions and cache regions/; the rest
+    # run tools/analysis generators and cache probes/.
     # Running the vanilla server requires accepting Mojang's EULA
     # (https://aka.ms/MinecraftEULA). The repository owner accepted it for
     # THIS repository's CI on 2026-10-08, so the job runs here and never in a
@@ -254,7 +258,9 @@ jobs:
     # Measured cold on runners (October 2026): capfloor about 24 minutes,
     # water 15, aquifer 14 before the fluidnear units and 33 with them,
     # surface 13.5, legacy 11, end 2 before the presets and y_skip units.
-    # markers (ten server starts) has no runner timing yet. Past this, take a
+    # markers (ten server starts) has no runner timing yet, nor have the
+    # goldens shards (about 15 minutes for goldens-nether and 27 for
+    # goldens-overworld locally, on 4 busy cores). Past this, take a
     # generator to have hung; the last log group the job opened names it.
     timeout-minutes: 90
     defaults:
@@ -264,15 +270,18 @@ jobs:
       fail-fast: false
       matrix:
         # `tools/probe-worlds shards`. unit.tools.probe_worlds fails if this
-        # list and the conformance restores below drift from the table.
-        shard: [aquifer, water, capfloor, surface, legacy, end, markers]
+        # list and the conformance restores below drift from the table. With
+        # lint and the nine build legs, 19 jobs start at once; any past the
+        # account's concurrent-job limit wait in the queue.
+        shard: [aquifer, water, capfloor, surface, legacy, end, markers, goldens-nether, goldens-overworld]
     steps:
       - uses: actions/checkout@v4
 
       - name: Name the cache entry
         # Hashes this shard's rows of the table and every script they run,
         # never the engine: an engine change does not change what the server
-        # writes, which is what makes caching the worlds pay.
+        # writes, which is what makes caching the worlds pay. Also names the
+        # tree the shard writes (`path`): probes/, or regions/ for goldens.
         id: key
         run: tools/probe-worlds key '${{ matrix.shard }}' >> "${GITHUB_OUTPUT}"
 
@@ -284,7 +293,7 @@ jobs:
         id: lookup
         uses: actions/cache/restore@v4
         with:
-          path: .fixtures/${{ env.MINECRAFT_VERSION }}/probes
+          path: ${{ steps.key.outputs.path }}
           key: ${{ steps.key.outputs.key }}
           lookup-only: true
 
@@ -304,13 +313,15 @@ jobs:
 
       - name: Fetch vanilla worldgen data
         # The jar, plus the overworld settings and biomes several generators
-        # read. Extraction and the data generator only; no world yet.
+        # read. Extraction and the data generator only; no world yet (a
+        # goldens unit runs fetch-vanilla again, with --generate-regions).
         if: steps.lookup.outputs.cache-hit != 'true'
         run: tools/fetch-vanilla
 
       - name: Generate
         # Then checks what it wrote (`verify`): every corpus present, from
-        # the seed its cases expect, frozen, every spec entry's region there.
+        # the seed its cases expect, frozen, every spec entry's region there;
+        # every golden region whole, all 1024 chunks at full status.
         if: steps.lookup.outputs.cache-hit != 'true'
         env:
           # One server at a time on a 16 GB runner, so every density probe
@@ -330,12 +341,13 @@ jobs:
         if: steps.lookup.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: .fixtures/${{ env.MINECRAFT_VERSION }}/probes
+          path: ${{ steps.key.outputs.path }}
           key: ${{ steps.key.outputs.key }}
 
       - name: Record the cache entry
         # The worlds keep a small run-dependent flow remnant (SPEC §7), so a
-        # red probe case right after a regeneration is traced to it from here.
+        # red probe or golden case right after a regeneration is traced to it
+        # from here.
         if: always()
         run: |
           {
@@ -346,10 +358,10 @@ jobs:
   conformance:
     name: conformance (${{ matrix.name }})
     # SPEC §7: scores the engine against vanilla's own output — the worldgen
-    # and reports extracted here, and the probe worlds the probes job
-    # generated, restored from the cache. Region goldens are not generated in
-    # CI yet (SPEC §7 says why). Every case that skips must be listed, with
-    # its reason, in tests/conformance/expected-skips.txt, or the job fails.
+    # and reports extracted here, and the probe worlds and region goldens the
+    # probes job generated, restored from the cache. Every case that skips
+    # must be listed, with its reason, in tests/conformance/expected-skips.txt,
+    # or the job fails.
     runs-on: ${{ matrix.os }}
     needs: [build, probes]
     # On a green build matrix, as before — but whatever the probe shards did:
@@ -406,8 +418,11 @@ jobs:
 
       - name: Fetch vanilla worldgen data
         # Extraction and the jar's own data generator; no world is generated
-        # in this job (the probes job does that). Nothing fetched, generated
-        # or restored in CI is committed or uploaded as an artifact (SPEC §12).
+        # in this job (the probes job does that, goldens included).
+        # --with-structures extracts the structure NBT the reader's cases
+        # parse, and nothing else: it never turns structures on in a world.
+        # Nothing fetched, generated or restored in CI is committed or
+        # uploaded as an artifact (SPEC §12).
         run: tools/fetch-vanilla --with-structures
 
       - name: Check the fixtures really arrived
@@ -444,10 +459,11 @@ jobs:
         if: github.repository == 'larryTheCoder/Stratum'
         run: tools/probe-worlds keys >> "${GITHUB_OUTPUT}"
 
-      # One restore per shard (a restore takes one key); the shards hold
-      # disjoint corpora and unpack into one directory. A miss fails its step
-      # loudly, and the job at the end, but lets the suite run, so the cases
-      # the other shards feed still report.
+      # One restore per shard (a restore takes one key, and its path must be
+      # the one the shard was saved under); the shards hold disjoint outputs
+      # and unpack into probes/, or regions/ for the goldens. A miss fails its
+      # step loudly, and the job at the end, but lets the suite run, so the
+      # cases the other shards feed still report.
       - name: Restore probe worlds (aquifer)
         if: steps.probe-keys.outcome == 'success'
         continue-on-error: true
@@ -511,11 +527,30 @@ jobs:
           key: ${{ steps.probe-keys.outputs.markers }}
           fail-on-cache-miss: true
 
+      - name: Restore region goldens (goldens-nether)
+        if: steps.probe-keys.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/regions
+          key: ${{ steps.probe-keys.outputs.goldens-nether }}
+          fail-on-cache-miss: true
+
+      - name: Restore region goldens (goldens-overworld)
+        if: steps.probe-keys.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/regions
+          key: ${{ steps.probe-keys.outputs.goldens-overworld }}
+          fail-on-cache-miss: true
+
       - name: Every probe world arrived
         # The CI twin of "Check the fixtures really arrived": several cases
         # score whatever subset of seeds or entries they find, so a missing
-        # corpus would otherwise pass them quietly. The job goes red on this
-        # after the suite has run ("Probe worlds were missing").
+        # corpus or golden region would otherwise pass them quietly. The job
+        # goes red on this after the suite has run ("Probe worlds were
+        # missing").
         id: probe-check
         if: steps.probe-keys.outcome == 'success'
         continue-on-error: true
@@ -523,7 +558,9 @@ jobs:
 
       - name: Conformance suite
         # Four wide, an hour per case: the probe-backed psl sweep alone takes
-        # about 1240 s in Debug, near include(CTest)'s 1500 s default.
+        # about 1240 s in Debug, near include(CTest)'s 1500 s default, and
+        # the golden "real overworlds" case about 1170 s. The 25 golden cases
+        # add about an hour of Debug time in all, spread over the four jobs.
         id: ctest
         run: ctest --preset ci-conformance --output-junit "${RUNNER_TEMP}/conformance-junit.xml"
 
@@ -545,20 +582,17 @@ jobs:
         if: always()
         run: |
           echo "Skipped here by design, each listed in tests/conformance/expected-skips.txt:"
-          echo "  regions       the region-golden cases. CI does not generate goldens yet:"
-          echo "                golden_overworld_test pins flow-dependent counts measured on one"
-          echo "                local generation (SPEC §7). Locally:"
-          echo "                  tools/fetch-vanilla --generate-regions --accept-eula"
           echo "  no-generator  cases whose probe corpus no committed script produces"
           # The repository, not the key step's outcome: that step is skipped
           # here too whenever a step before it failed.
           if [[ "${GITHUB_REPOSITORY}" != larryTheCoder/Stratum ]]; then
-            echo "No probe worlds here: outside larryTheCoder/Stratum nobody has accepted"
-            echo "Mojang's EULA for this CI (SPEC §12), so every probe-backed case skipped"
-            echo "too, unchecked. Locally: tools/probe-worlds generate --accept-eula"
+            echo "No probe worlds or region goldens here: outside larryTheCoder/Stratum"
+            echo "nobody has accepted Mojang's EULA for this CI (SPEC §12), so every"
+            echo "probe- and golden-backed case skipped too, unchecked. Locally:"
+            echo "  tools/probe-worlds generate --accept-eula"
           elif [[ "${{ steps.probe-keys.outcome }}" != success ]]; then
-            echo "No probe worlds were restored: a step before them failed, so no"
-            echo "probe-backed case was checked in this run."
+            echo "No probe worlds or region goldens were restored: a step before them"
+            echo "failed, so no probe- or golden-backed case was checked in this run."
           fi
 
   ext-pmmp:

@@ -119,6 +119,21 @@ private:
     return named(block, "minecraft:obsidian") || named(block, "minecraft:cobblestone");
 }
 
+/// Whether a column's SURFACE — the first block from the sky that is neither
+/// air nor fluid, which several golden cases count over — is one that fluid
+/// flow made after generation instead of one the generator placed: what
+/// water meeting lava leaves, or stone with flowing lava directly on it
+/// (lava that fell onto water). Those cases pin their counts exactly because
+/// flow never reaches a surface: on both golden region sets generated
+/// (SPEC §7, §11) not one of 2097152 overworld column surfaces is flow-made.
+/// They check that here rather than assume it, so a regeneration whose
+/// remnant ever does reach one fails by that name instead of moving a count.
+[[nodiscard]] inline bool flowMadeSurface(const chunk::BlockState* surface,
+                                          const chunk::BlockState* above) {
+    return fluidContactBlock(surface) || (named(surface, "minecraft:stone") &&
+                                          named(above, "minecraft:lava") && fluidLevel(above) > 0);
+}
+
 /// Whether a raw-category disagreement at (x, y, z) is the server's fluid
 /// moving AFTER generation rather than the aquifer deciding differently.
 /// Five shapes, and nothing else is let through:

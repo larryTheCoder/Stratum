@@ -80,6 +80,7 @@
 //   direction is decisive alone, which is why both are run.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
 #include "support/probe_region.hpp"
 
 #include <stratum/chunk/chunk.hpp>
@@ -1227,6 +1228,7 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
     long long surfaceGatedColumn = 0;
     long long surfaceBandLattice = 0;
     long long surfaceGatedLattice = 0;
+    long long flowMadeSurfaces = 0;
     std::map<std::string, long long> latticeSurfaceBlocks;
     int scored = 0;
     for (const auto& row : seeds) {
@@ -1290,6 +1292,9 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
                                 name == "minecraft:water" || name == "minecraft:lava") {
                                 continue;
                             }
+                            flowMadeSurfaces +=
+                                static_cast<long long>(stratum::test::flowMadeSurface(
+                                    found, chunk.blockAt(localX, y + 1, localZ)));
                             if (y >= blended + depth - 8 && y < blended) {
                                 ++seedSurfaceBand;
                                 ++latticeSurfaceBlocks[name];
@@ -1339,6 +1344,11 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
         SKIP("no golden overworld regions under " << (fixtures() / "regions"));
     }
     REQUIRE(scored == 8);
+    // The counts are pinned exactly because the server's post-generation
+    // flow (SPEC §7) never reaches what they count: a grass_block is never
+    // flow's, and no column surface in these regions is. CI regenerates the
+    // regions, so that is checked here, not assumed.
+    CHECK(flowMadeSurfaces == 0);
 
     INFO(grass << " grass_blocks in all, " << belowOld << " below the old boundary, " << perColumn
                << " explained per column, " << lattice << " explained by the lattice, "

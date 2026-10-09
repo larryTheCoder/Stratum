@@ -122,3 +122,29 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
 
     std::filesystem::remove(path);
 }
+
+TEST_CASE("a column surface is flow-made only in the shapes flow leaves", "[test-support]") {
+    using stratum::chunk::BlockState;
+    using stratum::test::flowMadeSurface;
+    const BlockState stone{.name = "minecraft:stone", .properties = {}};
+    const BlockState grass{.name = "minecraft:grass_block", .properties = {{"snowy", "false"}}};
+    const BlockState obsidian{.name = "minecraft:obsidian", .properties = {}};
+    const BlockState cobblestone{.name = "minecraft:cobblestone", .properties = {}};
+    const BlockState air{.name = "minecraft:air", .properties = {}};
+    const BlockState lavaSource{.name = "minecraft:lava", .properties = {{"level", "0"}}};
+    const BlockState lavaFlowing{.name = "minecraft:lava", .properties = {{"level", "3"}}};
+    const BlockState waterFlowing{.name = "minecraft:water", .properties = {{"level", "1"}}};
+
+    // What water meeting lava leaves is flow's wherever it surfaces.
+    CHECK(flowMadeSurface(&obsidian, &air));
+    CHECK(flowMadeSurface(&cobblestone, nullptr));
+    // Stone is flow's only under FLOWING lava: lava that fell onto water.
+    CHECK(flowMadeSurface(&stone, &lavaFlowing));
+    CHECK_FALSE(flowMadeSurface(&stone, &lavaSource));
+    CHECK_FALSE(flowMadeSurface(&stone, &air));
+    CHECK_FALSE(flowMadeSurface(&stone, &waterFlowing));
+    CHECK_FALSE(flowMadeSurface(&stone, nullptr));
+    // Nothing else is, whatever lies on it.
+    CHECK_FALSE(flowMadeSurface(&grass, &lavaFlowing));
+    CHECK_FALSE(flowMadeSurface(nullptr, &lavaFlowing));
+}

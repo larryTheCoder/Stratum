@@ -57,21 +57,26 @@ That runs the server, so it requires accepting
 without `--accept-eula` and will not accept it on your behalf. The defaults
 generate SPEC §7's fixed seed set across all three dimensions; `--seeds`,
 `--dimensions` and `--regions` narrow it. The world is frozen before
-generation and carvers and features are stripped, so the goldens isolate
-Tier A and two runs of the same seed agree exactly — see SPEC §7 for why
-both matter.
+generation and carvers, features and structures are left out, so the
+goldens isolate Tier A and two runs of the same seed agree on all but a
+few fluid blocks — see SPEC §7 for why both matter, and for the flow
+remnant the cases still allow for.
+`--with-structures` only extracts structure NBT; it never puts structures
+in a generated world.
 
 Probe worlds — the purpose-built worlds many conformance cases read — come
 from the generators under `tools/analysis`, which `tools/probe-worlds` names
-in one table, with the seeds the cases expect:
+in one table, with the seeds the cases expect; the same table carries the
+region goldens, as `fetch-vanilla --generate-regions` units:
 
 ```bash
-tools/probe-worlds generate --accept-eula   # every corpus, one server at a time; hours
+tools/probe-worlds generate --accept-eula   # every corpus and golden, one server at a time; hours
 tools/probe-worlds verify                   # what is there, checked without a server
 ```
 
-This repository's own CI passes `--accept-eula` to generate probe worlds, on
-the owner's recorded acceptance (SPEC §12); a fork's CI does not.
+This repository's own CI passes `--accept-eula` to generate probe worlds and
+region goldens, on the owner's recorded acceptance (SPEC §12); a fork's CI
+does not.
 
 | Preset | Purpose |
 |--------|---------|

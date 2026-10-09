@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before it, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-09 (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; still never run on GitHub). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA/CI: CI is set up to generate every probe world a comm
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: CI's region-golden jobs (never yet green; SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -163,9 +163,10 @@ Open:
       skip gate read "107 ran, 34 did not; expected: 9 no-generator, 25
       regions". The owner accepted Mojang's EULA for this repository's CI
       (2026-10-08, SPEC §12). One table, `tools/probe-worlds`, names every
-      probe world a committed generator makes for a conformance case (47
-      units, 69 corpora since the cache-markers units), generated in seven
-      x86-64 shards beside the build, each cached by a hash of its own
+      probe world a committed generator makes for a conformance case (45
+      units and 59 corpora in six shards at that run; 50 and 72, in seven,
+      since the cache-markers, lowfloor and default_block units), generated
+      on x86-64 beside the build, each shard cached by a hash of its own
       generators. The worlds travel between jobs only through the
       repository-scoped Actions cache, never as an artifact. A skip not
       listed in `tests/conformance/expected-skips.txt` fails CI, and so does
@@ -181,20 +182,31 @@ Open:
       General → "Approval for running fork pull request workflows from
       contributors" to "Require approval for all external contributors",
       and tick this once it is confirmed. SPEC §12.
-- [ ] **Region goldens in CI — deferred.** The EULA is no longer the
-      blocker; exactness is. Before CI generates them, in order: (a)
-      generate a second golden set locally with the exact CI commands and
-      score `golden_overworld`, `psl_lattice`, `above_preliminary_surface`
-      and `golden_terrain` against it, which measures whether the current
-      set's 871-block flow remnant comes out the same in a fresh one; (b) if
-      (a) finds two frozen sets differ, turn `golden_overworld_test.cpp`'s
-      flow-dependent pins (lava 1191, raw flow 23, exact 12582474, the
-      deep-dark case's flow 0) into bounds plus flow-shape checks, as the
-      probe cases' were, and correct SPEC §7 property 1's "agree exactly";
-      and (c) stop `fetch-vanilla --with-structures` from also generating
-      structures in the regions. A minimum settle time is optional. Then
-      two goldens shards join the same matrix, and the 25 `regions` lines
-      leave `expected-skips.txt`.
+- [ ] **Region goldens in CI — landed, pending their first green run.**
+      Three `fetch-vanilla` units in two shards of `tools/probe-worlds`
+      (goldens-nether, goldens-overworld; 25 region files), restored by
+      both conformance legs beside the probe worlds; `expected-skips.txt`
+      keeps only the 9 cases whose corpus no committed script produces.
+      (a) A second golden set, generated locally with CI's exact commands,
+      agrees with the first on all but 2 of 1 879 048 192 blocks: a water
+      source and a level-1 flowing block on one shoreline traded places, so
+      the 871-block flow remnant is nearly, not exactly, the same each run,
+      and SPEC §7 property 1's "agree exactly" is corrected. Every golden
+      case passes on the second set with its pins unchanged. (b) So the pins
+      flow could move are bounds with shapes now (CI also runs another
+      JDK): `golden_overworld_test.cpp`'s raw flow, golden lava and exact
+      count, and the deep-dark case's flow, with the model's own counts
+      (1 191 lava, 415 surface misses, 21 veins over fluid) pinned exactly;
+      the three cases that count column surfaces or stored floors check
+      that none is flow-made. (c) `fetch-vanilla --with-structures` only
+      extracts NBT now; `--generate-structures` is refused without
+      `--with-features`. `verify` also requires every golden chunk at full
+      status, which covers the settle time the plan left optional. Found on
+      the way: `golden_heightmaps_test.cpp` walked the whole fixture tree and
+      took the aquifer-presets probe regions for goldens, so both its cases
+      failed beside them (CI's `end` shard restores them); it reads
+      `regions/` only now. The 25 `regions` lines left
+      `expected-skips.txt`. SPEC §7, §11.
 - [x] **The aborting near-surface floor is lambda, not the sentinel.**
       Measured through the barrier, the only place the two differ: 1666 of
       1666 contested blocks on three seeds side with lambda. SPEC §11.

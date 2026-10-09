@@ -54,6 +54,8 @@
 //     for the still-open sampling question cannot drift from the fixture.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -547,6 +549,7 @@ TEST_CASE("real overworlds, both directions of the boundary at once", "[conforma
     long long insideBand = 0;
     long long surfaceInBand = 0;
     long long surfaceMaterial = 0;
+    long long flowMadeSurfaces = 0;
     long long seedsWithGrass = 0;
     std::map<std::string, long long> surfaceBlocks;
     int scored = 0;
@@ -603,6 +606,9 @@ TEST_CASE("real overworlds, both directions of the boundary at once", "[conforma
                                 name == "minecraft:water" || name == "minecraft:lava") {
                                 continue;
                             }
+                            flowMadeSurfaces +=
+                                static_cast<long long>(stratum::test::flowMadeSurface(
+                                    found, chunk.blockAt(localX, y + 1, localZ)));
                             if (y >= psl + depth - 8 && y < psl) {
                                 ++surfaceInBand;
                                 ++seedSurfaceInBand;
@@ -623,6 +629,12 @@ TEST_CASE("real overworlds, both directions of the boundary at once", "[conforma
     }
 
     REQUIRE(scored == 8);
+    // Every count below is pinned exactly, and may be, because the server's
+    // post-generation flow (SPEC §7) never reaches the populations they
+    // count: a grass_block is never flow's, and no column surface in these
+    // regions is (support/fluid_flow.hpp, `flowMadeSurface`). CI regenerates
+    // the regions, so that is checked, not assumed.
+    CHECK(flowMadeSurfaces == 0);
     // Seed 2891948927356891's region is desert and ocean end to end and holds
     // no grass_block at all, so the forward direction is silent there. It is
     // not silent in the reverse one — 1006 column surfaces inside the band,

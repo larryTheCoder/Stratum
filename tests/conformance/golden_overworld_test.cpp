@@ -26,21 +26,23 @@
 // as a rate: the surface pass never writes over a fluid the first pass
 // placed, and every lava block the first pass got right survives it.
 //
-// The totals are pinned EXACTLY. They are not all 100%. The raw residual is
-// fluid the SERVER moved after generating — flowing water and lava, sources
-// the infinite-source rule rebuilt from flow, obsidian where water met the
-// lava sea — and `explainedByFlow` attributes every block of it, per seed,
-// with nothing left over; Stratum schedules no fluid ticks (spec Q8), so a
-// first pass that is right leaves exactly this. The shipped residual is
-// mostly surface MATERIAL near biome borders (M4). A pinned count is the
-// point: any change to either, in either direction, fails here and has to be
-// explained.
+// What the model alone decides is pinned EXACTLY, and it is not all 100%:
+// the shipped residual over solid ground is surface MATERIAL near biome
+// borders (M4), and a pinned count is the point — any change to it, in
+// either direction, fails here and has to be explained. The rest of the
+// residual is fluid the SERVER moved after generating — flowing water and
+// lava, sources the infinite-source rule rebuilt from flow, obsidian where
+// water met the lava sea — and `explainedByFlow` attributes every block of
+// it, per seed, with nothing left over; Stratum schedules no fluid ticks
+// (spec Q8), so a first pass that is right leaves exactly this. How much of
+// it there is depends on the run (SPEC §7), and CI regenerates these
+// regions, so it is bounded and its shape required, never pinned.
 //
 // The second case is Q5.9's deep-dark override on the one golden region
 // where it decides blocks, and the flat_cache window it is read through.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12). Without
-// them this skips; CI never generates regions, so it runs locally.
+// them this skips; CI generates them (tools/probe-worlds' goldens shards).
 #include "support/fluid_flow.hpp"
 
 #include <stratum/chunk/chunk.hpp>
@@ -93,8 +95,20 @@ struct Score {
     std::size_t blocks = 0;
     /// The shipped pipeline's block NAME equals the golden's.
     std::size_t exact = 0;
+    /// ... does not, where the first pass placed something solid: the
+    /// surface pass's own residual. Flow cannot reach these positions (it
+    /// fills air and meets fluid; it replaces nothing solid), so this is the
+    /// model alone.
+    std::size_t shippedMissOverSolid = 0;
+    /// ... does not, anywhere else: where the first pass placed air or fluid
+    /// and the server holds something of another category. Every one is a
+    /// flow position (the shipped output keeps the first pass's air and
+    /// fluid: `fluidOverwritten` below), and the case requires exactly that.
+    std::size_t shippedMissElsewhere = 0;
     /// The raw first pass's category equals the golden's.
     std::size_t rawSameCategory = 0;
+    /// Lava the first pass placed: the model alone.
+    std::size_t rawLava = 0;
     std::size_t goldenLava = 0;
     /// Golden lava where the raw first pass also placed lava.
     std::size_t rawLavaRight = 0;
@@ -108,16 +122,21 @@ struct Score {
     std::size_t rawFlow = 0;
     std::size_t rawUnexplained = 0;
     /// Positions where the first pass placed fluid and the vein chain, run
-    /// there anyway, would place a vein block; and of those, the ones where
-    /// the server holds fluid, and the ones where it holds anything solid.
+    /// there anyway, would place a vein block (the model alone); and of
+    /// those, the ones where the server holds that fluid's category, and the
+    /// ones where it holds something `explainedByFlow` accepts. A vein
+    /// block there would be neither.
     std::size_t veinOverFluid = 0;
     std::size_t veinOverFluidServerFluid = 0;
-    std::size_t veinOverFluidServerSolid = 0;
+    std::size_t veinOverFluidFlowed = 0;
 
     void absorb(const Score& other) {
         blocks += other.blocks;
         exact += other.exact;
+        shippedMissOverSolid += other.shippedMissOverSolid;
+        shippedMissElsewhere += other.shippedMissElsewhere;
         rawSameCategory += other.rawSameCategory;
+        rawLava += other.rawLava;
         goldenLava += other.goldenLava;
         rawLavaRight += other.rawLavaRight;
         shippedLavaRight += other.shippedLavaRight;
@@ -126,7 +145,7 @@ struct Score {
         rawUnexplained += other.rawUnexplained;
         veinOverFluid += other.veinOverFluid;
         veinOverFluidServerFluid += other.veinOverFluidServerFluid;
-        veinOverFluidServerSolid += other.veinOverFluidServerSolid;
+        veinOverFluidFlowed += other.veinOverFluidFlowed;
     }
 };
 
@@ -199,15 +218,25 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
                             const Category rawCategory = categoryOf(rawName);
 
                             ++score.blocks;
-                            score.exact += static_cast<std::size_t>(shippedName == theirs->name);
+                            if (shippedName == theirs->name) {
+                                ++score.exact;
+                            } else if (rawCategory == Category::Solid) {
+                                ++score.shippedMissOverSolid;
+                            } else {
+                                ++score.shippedMissElsewhere;
+                            }
                             score.rawSameCategory +=
                                 static_cast<std::size_t>(rawCategory == goldenCategory);
+                            score.rawLava +=
+                                static_cast<std::size_t>(rawCategory == Category::Lava);
+                            bool flowed = false;
                             if (rawCategory != goldenCategory) {
                                 const std::int32_t worldX = (cx * 16) + x;
                                 const std::int32_t worldZ = (cz * 16) + z;
                                 if (explainedByFlow(goldenRegion, worldX, y, worldZ, goldenCategory,
                                                     rawCategory)) {
                                     ++score.rawFlow;
+                                    flowed = true;
                                 } else {
                                     ++score.rawUnexplained;
                                     UNSCOPED_INFO("unexplained: golden "
@@ -245,9 +274,9 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
                                                             .placed()) {
                                         ++score.veinOverFluid;
                                         score.veinOverFluidServerFluid +=
-                                            static_cast<std::size_t>(isFluid(goldenCategory));
-                                        score.veinOverFluidServerSolid += static_cast<std::size_t>(
-                                            goldenCategory == Category::Solid);
+                                            static_cast<std::size_t>(goldenCategory == rawCategory);
+                                        score.veinOverFluidFlowed +=
+                                            static_cast<std::size_t>(flowed);
                                     }
                                 }
                             }
@@ -271,37 +300,65 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
     }
 
     REQUIRE(seedsScored == kSeeds.size());
+    WARN("total: shipped exact " << total.exact << ", over solid missed "
+                                 << total.shippedMissOverSolid << ", elsewhere missed "
+                                 << total.shippedMissElsewhere << "; raw lava " << total.rawLava
+                                 << ", golden lava " << total.goldenLava << ", raw right "
+                                 << total.rawLavaRight << "; raw flow " << total.rawFlow);
     CHECK(total.blocks == 12582912U);
-    // Every golden lava block on this grid is one the first pass got right,
-    // and (the invariant above) every one of them survives the surface pass.
-    // Before the fix the shipped count was 0: all of them were deepslate.
-    CHECK(total.goldenLava == 1191U);
-    CHECK(total.rawLavaRight == 1191U);
-    // The aquifer's own residual on this grid: 23 of 12582912 categories,
-    // every one of them fluid that moved after generation (above).
-    CHECK(total.rawSameCategory == 12582889U);
-    CHECK(total.rawFlow == 23U);
-    // The shipped residual, 438 blocks, is mostly surface MATERIAL near biome
-    // borders (sand/dirt, sandstone/stone) — M4, not the aquifer. It was 540
-    // while the bottom-up stone-depth run skipped water: 102 blocks directly
-    // over water — 60 stone the filler made gravel, 42 sandstone it made
-    // sand — are the `stone_depth` ceiling rules firing once water resets the
-    // run, as aquifer-lavarun-probe.sh measured; none got worse (SPEC §11).
-    CHECK(total.exact == 12582474U);
+
+    // What the model alone decides is pinned exactly: flow cannot move it.
+    // What the server's flow remnant decides is bounded, and its shape
+    // required, because CI regenerates these regions and the remnant is
+    // run-dependent (SPEC §7: two frozen sets of the same seeds differ, by
+    // flow and by nothing else).
+    //
+    // The aquifer's own residual: 23 of 12582912 categories on the region
+    // set first measured, every one of them fluid that moved after
+    // generation (the invariant above). Bounded at under 1 in 100 000
+    // blocks, as the probe cases' remnants are; and every other category
+    // agrees.
+    CHECK(total.rawSameCategory + total.rawFlow == total.blocks);
+    CHECK(total.rawFlow * 100000U < total.blocks);
+
+    // The lava the first pass places, all of it the server's where flow has
+    // not reached it, and every block of it surviving the surface pass (the
+    // invariant above). Before the v2 fix the shipped count was 0: all of
+    // it was deepslate. Golden lava differs from the first pass's only by
+    // flow: lava that ran into air, or a source water met.
+    CHECK(total.rawLava == 1191U);
+    CHECK(total.rawLava - total.rawLavaRight <= total.rawFlow);
+    CHECK(total.goldenLava - total.rawLavaRight <= total.rawFlow);
+
+    // The shipped residual over solid ground, 415 blocks, is surface
+    // MATERIAL near biome borders (sand/dirt, sandstone/stone) — M4, not the
+    // aquifer — and flow cannot reach it. It was 517 while the bottom-up
+    // stone-depth run skipped water: 102 blocks directly over water — 60
+    // stone the filler made gravel, 42 sandstone it made sand — are the
+    // `stone_depth` ceiling rules firing once water resets the run, as
+    // aquifer-lavarun-probe.sh measured; none got worse (SPEC §11).
+    CHECK(total.shippedMissOverSolid == 415U);
+    // Everywhere else the shipped output keeps the first pass's air and
+    // fluid, so it misses exactly the flow positions: the shape, exactly,
+    // with the count bounded above. 12582474 exact on the first set.
+    CHECK(total.shippedMissElsewhere == total.rawFlow);
+    CHECK(total.exact + total.shippedMissOverSolid + total.shippedMissElsewhere == total.blocks);
 
     // A vein never replaces the aquifer's fluid. The filler runs the vein
     // chain only over `default_block`, which was a choice (ore/vein.hpp):
     // the placement probe held no fluid at all. Here the chain is run at
-    // every position the first pass made fluid inside the vein ranges, and
-    // wherever it would place a vein block the server kept the fluid — 21
-    // of 21 on this grid. Few, but not a sample: placement is deterministic,
-    // so under the other reading every one of them would be a vein block.
-    // The floor sits just under the count, so a lost seed fails it.
+    // every position the first pass made fluid inside the vein ranges — 21
+    // on this grid, the model alone — and wherever it would place a vein
+    // block the server kept the fluid, or flow moved it: 21 of 21 kept on
+    // the first set. Few, but not a sample: placement is deterministic, so
+    // under the other reading every one of them would be a vein block, which
+    // is neither.
     INFO("vein over fluid " << total.veinOverFluid << ", server fluid "
-                            << total.veinOverFluidServerFluid << ", server solid "
-                            << total.veinOverFluidServerSolid);
-    REQUIRE(total.veinOverFluid >= 20U);
-    CHECK(total.veinOverFluidServerSolid == 0U);
+                            << total.veinOverFluidServerFluid << ", flowed "
+                            << total.veinOverFluidFlowed);
+    CHECK(total.veinOverFluid == 21U);
+    CHECK(total.veinOverFluidServerFluid + total.veinOverFluidFlowed == total.veinOverFluid);
+    CHECK(total.veinOverFluidFlowed <= total.rawFlow);
 }
 
 TEST_CASE("the deep-dark override reads erosion and depth through the chunk's flat_cache window",
@@ -338,6 +395,7 @@ TEST_CASE("the deep-dark override reads erosion and depth through the chunk's fl
     std::size_t agree = 0;
     std::size_t flow = 0;
     std::size_t unexplained = 0;
+    std::size_t rawLavaDeep = 0;
     std::size_t goldenLavaDeep = 0;
     for (std::int32_t cz = 3; cz <= 5; ++cz) {
         for (std::int32_t cx = 2; cx <= 3; ++cx) {
@@ -354,8 +412,9 @@ TEST_CASE("the deep-dark override reads erosion and depth through the chunk's fl
                         const Category g = categoryOf(theirs->name);
                         const Category r = categoryOf(first.at(x, y, z).name.toString());
                         ++blocks;
-                        goldenLavaDeep +=
-                            static_cast<std::size_t>(g == Category::Lava && y >= -40 && y <= -17);
+                        const bool deep = y >= -40 && y <= -17;
+                        rawLavaDeep += static_cast<std::size_t>(r == Category::Lava && deep);
+                        goldenLavaDeep += static_cast<std::size_t>(g == Category::Lava && deep);
                         if (g == r) {
                             ++agree;
                         } else if (explainedByFlow(golden, worldX, y, worldZ, g, r)) {
@@ -383,11 +442,21 @@ TEST_CASE("the deep-dark override reads erosion and depth through the chunk's fl
     }
     CHECK(unexplained == 0U);
     CHECK(blocks == 6U * 16U * 16U * 384U);
-    // Not one block of fluid moved in these six chunks, so every category
-    // agrees outright — where the three rejected readings leave 440, 16 and
-    // 2 disagreements, all of them inside this footprint.
-    CHECK(flow == 0U);
-    CHECK(agree == blocks);
-    // The lava the window keeps: the pool at y -32 the corner reading dried.
-    CHECK(goldenLavaDeep == 9U);
+    // On the region set first measured not one block of fluid moved in these
+    // six chunks, so every category agreed outright — where the three
+    // rejected readings leave 440, 16 and 2 disagreements, all of them
+    // inside this footprint. Flow is the server's and run-dependent (SPEC
+    // §7), so it is bounded rather than pinned at 0, at the probe cases'
+    // under 1 in 100 000 blocks: 5 here, fewer than the 16 or 440 of the
+    // rejected readings that are not flow-shaped anyway, which
+    // `unexplained` already refuses.
+    INFO("agree " << agree << ", flow " << flow << ", raw lava " << rawLavaDeep << ", golden lava "
+                  << goldenLavaDeep);
+    CHECK(agree + flow == blocks);
+    CHECK(flow * 100000U < blocks);
+    // The lava the window keeps: the pool at y -32 the corner reading dried
+    // — the model's own 9 blocks, and the server's, but for flow.
+    CHECK(rawLavaDeep == 9U);
+    CHECK((goldenLavaDeep > rawLavaDeep ? goldenLavaDeep - rawLavaDeep
+                                        : rawLavaDeep - goldenLavaDeep) <= flow);
 }

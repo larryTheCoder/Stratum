@@ -176,9 +176,9 @@ These are hard requirements; violations are release blockers.
    differ by an ulp. See the open item in §11.
 5. CI runs the unit suites on x86-64 **and** ARM64 across Linux, Windows
    and macOS, and the conformance suite on Linux x86-64 and ARM64, both legs
-   scored against one set of server-generated probe worlds made on x86-64
-   (§7). The region goldens are not generated in CI yet (§7).
-   Cross-architecture divergence is a build failure.
+   scored against one set of server-generated probe worlds and region
+   goldens made on x86-64 (§7). Cross-architecture divergence is a build
+   failure.
 6. Engine updates must reproduce stored pipelines byte-identically (§6). Any
    intentional output change bumps the pipeline engine version and is called
    out in release notes.
@@ -301,8 +301,15 @@ cannot keep stamping the old number.
      spread when the region is saved depends on wall-clock timing. Measured:
      two runs of the same seed differed in 197 of 100,663,296 blocks — all
      flowing lava, flowing water, and the cobblestone where they met. Frozen,
-     the same two runs agree exactly. Aquifer fill is Tier A, so those blocks
+     those two runs agreed exactly. Aquifer fill is Tier A, so those blocks
      cannot simply be excluded from the comparison; they have to not happen.
+     Freezing does not stop all of it, though, and what it leaves is not
+     quite the same every run: the frozen overworld goldens still hold 871
+     blocks of fluid the server moved after generating (§11), and a whole
+     second set generated with CI's own commands agrees with the first on
+     all but 2 of their 1 879 048 192 blocks — a water source and a level-1
+     flowing water block, two apart on a shoreline, that traded places
+     (below, §11). Two frozen sets do not agree exactly.
   2. **Carvers and features are stripped** by a generated datapack that
      empties every biome's `features` and `carvers`. They are Tier B (below),
      and would otherwise be noise in every Tier-A comparison. Ore *veins*
@@ -367,22 +374,38 @@ cannot keep stamping the old number.
 - Fixed seed set: at least 8 seeds × overworld/nether/end noise settings ×
   a spread of chunk regions including y-extremes and biome borders.
 - Fixtures are **generated, never committed** (they are derived from Mojang
-  data); the repo ships scripts, not fixtures. CI generates the probe worlds
-  (above). The region goldens are generated locally only, for now: the
-  current set holds an 871-block flow remnant (fluid the server moved after
-  generating, §11) and frozen probe reruns differ by 5-918 blocks (above),
-  so a fresh golden generation may not reproduce the flow-dependent counts
-  `golden_overworld_test.cpp` pins from the current set. Whether it does is
-  unmeasured: property 1's two frozen runs agreed exactly, and a remnant
-  that came out the same in every run would not contradict that. Before CI
-  generates goldens, in order: a second set generated locally with CI's
-  exact commands is scored, which measures it; if the two sets differ,
-  those pins become bounds plus flow-shape checks, as the probe cases' did;
-  and `fetch-vanilla --with-structures`, which today also turns structures
-  on in any regions it generates, stops doing so. No file generated in CI
-  leaves this repository's runners except through its repository-scoped
-  Actions cache, though the job logs carry some observed server output
-  (§12).
+  data); the repo ships scripts, not fixtures. **CI generates the region
+  goldens too**, as three more units of `tools/probe-worlds`' table, each a
+  `tools/fetch-vanilla --generate-regions` run with a 4 GB heap: the Nether
+  in shard `goldens-nether`, the overworld and End plus seed
+  -4172144997902289642's r.4.3 (one case reads it) in `goldens-overworld`.
+  Those shards cache `regions/` where the others cache `probes/`. `lint`
+  holds their seeds to fetch-vanilla's own and refuses them any option that
+  would change what the cases score (thawed, with features, another
+  margin, another place); `verify` requires every chunk of every region at
+  full status before a shard is saved, because fetch-vanilla calls a region
+  settled once its file stops growing, which a chunk still being promoted
+  need not change. Before CI generated them, a second set was generated
+  locally with exactly those commands and scored (§11): decoded block for
+  block it agrees with the set every case had been measured on except for
+  2 water blocks whose `level` traded places, which no case's category or
+  name comparison can see, and every golden case passes on it with its
+  pins unchanged. The remnant is nonetheless run-dependent, as the probe
+  reruns' is, and CI runs another JDK on other hardware, so the golden
+  cases now treat flow as the probe cases do: what flow can move is
+  bounded and must take a shape flow leaves; what it cannot is pinned
+  exactly; and the cases that count column surfaces or stored floors check
+  that no block they count is flow-made rather than assume it.
+  `fetch-vanilla --with-structures` extracts the structure NBT and nothing
+  else. It used to set `generate-structures=true` as well, so any regions
+  generated beside it held structures: a set made
+  that way on 2026-10-06 differs from the current one by 179 081 blocks in
+  seed 42's overworld region alone, a mineshaft among them. Structures
+  enter a generated world only through `--generate-structures`, which is
+  refused without `--with-features`, since they are Tier B. No file
+  generated in CI leaves this repository's runners except through its
+  repository-scoped Actions cache, though the job logs carry some observed
+  server output (§12).
 
 ---
 
@@ -2856,6 +2879,61 @@ Open:
   credited; it is also what a missed barrier looks like. Below the sea -70
   arm's lava sea, one frozen run kept 311 blocks of falling water, each with
   its own fluid tick still pending.
+
+- **The region goldens are generated in CI; a second set agrees with the
+  first on all but two blocks (MA/CI).** No output changes. Before the
+  goldens joined `tools/probe-worlds`' table (§7), a second set was
+  generated with exactly the commands CI runs — the three golden units, 4 GB
+  heap, frozen, terrain-only — on 2026-10-09, locally (OpenJDK 21.0.12 on
+  four cores shared with other builds and servers; CI pins Temurin 25), into
+  a separate tree, and the first set's 25 regions were compared with it
+  decoded, block for block (`stratum diff`): **2 of 1 879 048 192 blocks
+  differ**, both in seed 9223372036854775807's overworld at y = 62, in chunk
+  (15, 7), where the sea laps over a stone shore: (255, 62, 125) is a water
+  source in the first set and level-1 flowing water in the second, and
+  (253, 62, 127) the reverse. The 8 Nether and 8 End regions, and the other
+  7 overworld ones, are identical (r.4.3 had no first-set twin; it is new).
+  So the overworld's flow remnant — 498 flowing water, 169 flowing lava, 54
+  obsidian and the 150 sources rebuilt from flow, the 871 blocks attributed
+  above — is nearly but not exactly the same from run to run: the same
+  blocks are fluid, and which of them are sources can differ. §7's "frozen,
+  two runs agree exactly" is corrected accordingly. Both blocks are water
+  either way, so every category and every block name agrees, and every one
+  of the 25 golden cases, run against the second set with the pins of the
+  first, passes unchanged — the r.4.3 case for the first time, since the
+  first set has no r.4.3 (on the first set's own tree the two heightmap
+  cases failed, for a reason of their own: below). The pins that flow could
+  move are bounds with shapes now, since a remnant that moves at all can
+  move into what a case counts, and CI runs another JDK on other hardware:
+  `golden_overworld_test.cpp`'s raw flow (23 on its grid, now under
+  1 in 100 000 blocks, every other category agreeing), its golden lava (now
+  the first pass's own 1 191 lava blocks, pinned, with the golden's within
+  the flow of it), its shipped exact count (split into the 415 misses over
+  solid ground, pinned — surface material, which flow cannot reach — and the
+  misses elsewhere, required to be exactly the flow positions), its veins
+  over fluid (21, pinned; each kept by the server or moved by flow, never a
+  vein block), and the deep-dark case's flow (0, now bounded at under
+  1 in 100 000 with its 9 lava blocks the model's). Three cases count
+  populations flow could in principle reach — column surfaces (`real
+  overworlds`, `the lattice on real terrain`) and stored ocean floors
+  (`golden_terrain_test.cpp`) — and none of 2 097 152 surfaces in either set
+  is flow-made; their counts stay exact, and each now checks that, rather
+  than assuming it. Generating the set took about 15 minutes for the Nether,
+  25 for the overworld and End, and 2.5 for r.4.3, on that busy machine. The
+  regions generated on 2026-10-06 while `--with-structures` still turned
+  structures on (§7) differ from the current set by 179 081 blocks in seed
+  42's overworld alone.
+
+  *Scoring the golden cases on the full fixture tree found one that could
+  never have passed in CI.* `golden_heightmaps_test.cpp` found its regions
+  by walking the whole tree for `seed-*/<dimension>/*.mca`, which since the
+  amplified / large_biomes probe (`probes/aquifer-presets/seed-322/...`)
+  also matches six probe regions: it counted 30 goldens where it wants 24,
+  and read a probe world's chunks as the overworld's, so both of its cases
+  failed — and would have in CI, where the `end` shard restores those
+  corpora even with no goldens present, while `expected-skips.txt` listed
+  both as skips. It reads `regions/` only now, as every other golden case
+  does.
 
 - **Q4.1's window beats the symmetric 27-cell set, on the server's own
   deep barriers (MA).** No output changes. The two entries below that keep
@@ -8336,32 +8414,33 @@ Open:
   extracted assets, no golden fixtures derived from them. Users obtain
   vanilla presets by pointing `tools/fetch-vanilla` (or the in-server
   equivalent) at the official jar they download from Mojang.
-- **CI and Mojang's EULA.** Generating probe worlds runs the vanilla server,
-  which requires accepting Mojang's EULA (https://aka.ms/MinecraftEULA). The
-  repository owner accepted it for this repository's CI on 2026-10-08. The
-  workflow passes `--accept-eula` only in the job guarded by
-  `github.repository == 'larryTheCoder/Stratum'`, so a fork's own CI never
-  accepts it on its owner's behalf, and no script accepts it for anyone who
-  did not pass the flag. Every Mojang-derived file CI handles — the jar,
-  extracted JSON and reports, probe worlds, server work directories — stays
-  on this repository's runners or in its Actions cache: never committed,
-  and never published as a workflow artifact, release, Pages site or
-  package. `tools/lint/check-determinism.sh` rule 8 refuses any
-  non-comment line under `.github`, or in any `action.yml`, that names
-  `upload-artifact` or `upload-pages-artifact`, in any case or YAML
-  spelling; what a third-party action does inside itself is beyond it,
-  which is why `ci.yml` uses `actions/*` only. The job logs, public on a
-  public repository, are not files but do carry observed server output:
-  the last lines of the server's log when a generator fails, and the
+- **CI and Mojang's EULA.** Generating probe worlds and region goldens runs
+  the vanilla server, which requires accepting Mojang's EULA
+  (https://aka.ms/MinecraftEULA). The repository owner accepted it for this
+  repository's CI on 2026-10-08. The workflow passes `--accept-eula` only in
+  the job guarded by `github.repository == 'larryTheCoder/Stratum'`, so a
+  fork's own CI never accepts it on its owner's behalf, and no script
+  accepts it for anyone who did not pass the flag. Every Mojang-derived file
+  CI handles — the jar, extracted JSON and reports, probe worlds, region
+  goldens, server work directories — stays on this repository's runners or
+  in its Actions cache: never committed, and never published as a workflow
+  artifact, release, Pages site or package.
+  `tools/lint/check-determinism.sh` rule 8 refuses any non-comment line
+  under `.github`, or in any `action.yml`, that names `upload-artifact` or
+  `upload-pages-artifact`, in any case or YAML spelling; what a third-party
+  action does inside itself is beyond it, which is why `ci.yml` uses
+  `actions/*` only. The job logs, public on a public repository, are not
+  files but do carry observed server output: the last lines of the server's
+  log when a generator fails (fetch-vanilla prints them too), and the
   exception text the inline-noise probe records on every run. The cache is
   repository-scoped, not private: this repository's own workflow runs
   restore it, pull-request runs from forks included once they are approved
   to run, and such a run executes the pull request's own `ci.yml`. So
-  outside contributors' pull-request runs must stay behind that approval
-  for every run, not only a first-time contributor's, which is GitHub's
-  default: Settings → Actions → General → "Approval for running fork pull
-  request workflows from contributors" must be "Require approval for all
-  external contributors". PROGRESS.md records whether it has been set.
+  outside contributors' pull-request runs must stay behind that approval for
+  every run, not only a first-time contributor's, which is GitHub's default:
+  Settings → Actions → General → "Approval for running fork pull request
+  workflows from contributors" must be "Require approval for all external
+  contributors". PROGRESS.md records whether it has been set.
 - No Mojang source code — decompiled or unobfuscated — is read, pasted,
   transcribed, or paraphrased in this repository or by Implementer
   sessions. Since commit 7f8a5ebe, behavior may additionally derive from

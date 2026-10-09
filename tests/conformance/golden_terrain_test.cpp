@@ -54,6 +54,8 @@
 // chunk of seed 42 comes out 256 of 256 and would have hidden the residual
 // entirely. Full coverage costs six minutes a seed, which is why this samples;
 // the wider runs are in SPEC.
+#include "support/fluid_flow.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -85,6 +87,10 @@ struct Comparison {
     /// column only changes answer on a last-bit difference if it sits within
     /// a few ULP of a tie, and none of them do.
     double margin = 1.0e30;
+    /// Sampled columns whose stored OCEAN_FLOOR block is one fluid flow made
+    /// after generation: the counts above are pinned only because there are
+    /// none (support/fluid_flow.hpp, `flowMadeSurface`).
+    std::size_t flowMadeFloors = 0;
 };
 
 [[nodiscard]] std::filesystem::path fixtures() {
@@ -150,6 +156,10 @@ struct Comparison {
                         std::min(result.margin, std::min(std::abs(below), std::abs(above)));
 
                     ++result.columns;
+                    result.flowMadeFloors +=
+                        static_cast<std::size_t>(stratum::test::flowMadeSurface(
+                            decoded.blockAt(localX, *stored, localZ),
+                            decoded.blockAt(localX, *stored + 1, localZ)));
                     const long long diff = ours - *stored;
                     if (diff == 0) {
                         ++result.exact;
@@ -177,6 +187,10 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
     SECTION("seed 42") {
         const Comparison result = compare(42);
         REQUIRE(result.columns == 256U);
+        // The server's post-generation flow (SPEC §7) reaches no sampled
+        // floor, so it cannot move the counts; CI regenerates the regions,
+        // so that is checked rather than assumed.
+        CHECK(result.flowMadeFloors == 0U);
         // Pinning exact counts is only sound if no column is near a tie.
         // Measured, the closest is 1.4e-05 from zero — six orders of
         // magnitude above double rounding — so an x86-64/ARM64 contraction
@@ -198,6 +212,7 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         }
         const Comparison result = compare(-1);
         REQUIRE(result.columns == 256U);
+        CHECK(result.flowMadeFloors == 0U);
         CHECK(result.margin > 1.0e-9);
         // What is left, now, is ENTIRELY the aquifer gap: this seed has
         // barriers, and 28 blocks is a column whose terrain this build gets
