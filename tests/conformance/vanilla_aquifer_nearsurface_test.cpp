@@ -333,8 +333,20 @@ constexpr std::array<Subset, 3> kSubsets{Subset::Floor, Subset::Above, Subset::B
            javamath::wrappingSub(cell.surface.gate, cell.centreY) < aquifer::kNearSurfaceDepth;
 }
 
+/// Q5.3(a) as pipeline engine v13 reads it: a centre more than twenty above
+/// the ANCHOR's surface takes the global picker's status before any sample
+/// of the scan is weighed, aborted or not (SPEC §11, "The surface scan,
+/// sample by sample").
+[[nodiscard]] bool takesQ53a(const aquifer::CellFluid& cell) {
+    return cell.centreY >
+           javamath::wrappingAdd(cell.surface.anchor, aquifer::kNearSurfaceFloorOffset);
+}
+
 /// Which rival reading a source's own branch is open to, from `cellLevel`'s
-/// documented conditions.
+/// documented conditions. These are the analyzer's subsets, kept as it
+/// defines them so its figures stay comparable; since engine v13 a source in
+/// the abort's subsets that Q5.3(a) decides takes the sea under both
+/// readings and is simply not contested.
 [[nodiscard]] Subset subsetOf(const aquifer::CellFluid& cell) {
     if (!cell.surface.aborted) {
         return Subset::None;
@@ -415,10 +427,16 @@ struct SourceInfo {
             aquifer::CellFluid ignored = inputs.cell;
             ignored.surface.aborted = false;
             info.rival = aquifer::sourceStatus(ignored, inputs.lava);
-            info.inconsistent = info.built.level != aquifer::kLavaLevel ||
-                                info.built.type != aquifer::FluidType::Lava ||
-                                info.rival.level != kSeaLevel ||
-                                info.rival.type != aquifer::FluidType::Default;
+            const bool sea =
+                info.rival.level == kSeaLevel && info.rival.type == aquifer::FluidType::Default;
+            if (takesQ53a(inputs.cell)) {
+                // Q5.3(a) before the abort: the sea, which is also the rival's.
+                info.inconsistent = info.built.level != kSeaLevel ||
+                                    info.built.type != aquifer::FluidType::Default || !sea;
+            } else {
+                info.inconsistent = info.built.level != aquifer::kLavaLevel ||
+                                    info.built.type != aquifer::FluidType::Lava || !sea;
+            }
             break;
         }
         case Subset::None:
@@ -505,6 +523,8 @@ private:
 struct Census {
     std::array<long long, 3> subsets{};
     long long clause = 0;
+    /// Sources of the abort's two subsets that Q5.3(a) decides (engine v13).
+    long long abortQ53a = 0;
 };
 
 [[nodiscard]] Census censusOf(const aquifer::CentreSource& centres, const Field& field) {
@@ -525,6 +545,8 @@ struct Census {
                     ++census.subsets.at(indexOf(subset));
                 }
                 const aquifer::CellFluid cell = inputsOf(source, field).cell;
+                census.abortQ53a += static_cast<long long>(
+                    (subset == Subset::Above || subset == Subset::Below) && takesQ53a(cell));
                 census.clause += static_cast<long long>(
                     !cell.surface.aborted && !onNearSurfacePath(cell) &&
                     cell.centreY >
@@ -638,6 +660,7 @@ struct Score {
     long long libraryMismatch = 0; ///< the case's own statuses against computeSubstance's
     long long inconsistent = 0;
     long long clause = 0;
+    long long abortQ53a = 0;
     /// Abort-subset sources with 64 or more sampled contested blocks as the
     /// nearest; those whose blocks the server holds the rival's way on most;
     /// and the largest share any of them gives the rival.
@@ -667,6 +690,7 @@ struct Score {
         libraryMismatch += other.libraryMismatch;
         inconsistent += other.inconsistent;
         clause += other.clause;
+        abortQ53a += other.abortQ53a;
         territories += other.territories;
         territoriesLost += other.territoriesLost;
         worstTerritory = std::max(worstTerritory, other.worstTerritory);
@@ -923,14 +947,20 @@ struct Pinned {
     std::array<long long, 3> sources{};
     std::array<long long, 3> contested{};
     long long clause = 0;
+    long long abortQ53a = 0;
 };
 
 constexpr std::array<Pinned, 2> kPinned{{
-    {.seed = 42, .sources = {2584, 320, 191}, .contested = {143575, 116254, 143562}, .clause = 0},
+    {.seed = 42,
+     .sources = {2584, 320, 191},
+     .contested = {143575, 116254, 143562},
+     .clause = 0,
+     .abortQ53a = 140},
     {.seed = 31337,
      .sources = {2480, 311, 162},
      .contested = {143662, 111167, 127025},
-     .clause = 0},
+     .clause = 0,
+     .abortQ53a = 140},
 }};
 
 [[nodiscard]] double share(const long long part, const long long whole) {
@@ -984,6 +1014,7 @@ TEST_CASE("the near-surface floor reads cap and an aborted scan is refused the s
                 corpus.sources.at(i) += census.subsets.at(i);
             }
             corpus.clause += census.clause;
+            corpus.abortQ53a += census.abortQ53a;
             scoreArm(dir / arm.world / "r.0.0.mca", centres, field, corpus);
         }
         for (const Subset subset : kSubsets) {
@@ -1050,6 +1081,11 @@ TEST_CASE("the near-surface floor reads cap and an aborted scan is refused the s
         // off the near-surface path its whole window reads 96, which no
         // source does. So none of the residual below can be that clause.
         CHECK(corpus.clause == pinned.clause);
+        // Since engine v13 Q5.3(a) reads the anchor and comes before the
+        // abort, so sources of the abort's subsets centred more than twenty
+        // above their anchor take the sea under the build and the rival
+        // alike; this many, all over y 116 on these worlds.
+        CHECK(corpus.abortQ53a == pinned.abortQ53a);
 
         // The analyzer's figures, re-derived. The floor's cap is exact: a
         // sea source's water cannot leave and none can rise past 62, and
