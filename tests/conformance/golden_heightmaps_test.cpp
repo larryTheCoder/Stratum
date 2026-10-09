@@ -35,6 +35,11 @@ namespace {
 using stratum::chunk::Chunk;
 using stratum::chunk::Heightmap;
 
+/// The collected goldens only: `.../regions/seed-<n>/<dimension>/r.<x>.<z>.mca`,
+/// as tools/fetch-vanilla lays them out. A probe corpus may use the same
+/// `seed-<n>/<dimension>/` shape under probes/ (aquifer-presets does), and
+/// sorting puts probes/ before regions/, so without the `regions` level its
+/// partly generated chunks would stand in for a golden dimension.
 [[nodiscard]] std::vector<std::filesystem::path> findGoldenRegions() {
     const std::filesystem::path root{STRATUM_FIXTURES_DIR};
     std::vector<std::filesystem::path> regions;
@@ -42,8 +47,10 @@ using stratum::chunk::Heightmap;
         return regions;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        const std::filesystem::path seedDir = entry.path().parent_path().parent_path();
         if (entry.is_regular_file() && entry.path().extension() == ".mca" &&
-            entry.path().parent_path().parent_path().filename().string().starts_with("seed-")) {
+            seedDir.filename().string().starts_with("seed-") &&
+            seedDir.parent_path().filename() == "regions") {
             regions.push_back(entry.path());
         }
     }
