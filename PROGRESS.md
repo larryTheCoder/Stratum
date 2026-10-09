@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA/CI: CI is set up to generate every probe world a comm
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the aborted floor's status below sea_level -54 (A_lava, not lambda, on the one world that shows it), CI's probe-world jobs (never yet green) and the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the aborted floor's status below sea_level -54 (A_lava, not lambda, on the one world that shows it), the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -145,20 +145,25 @@ Open:
       apart, all fluid products), so flow is bounded, never pinned; every
       disagreement must still be flow-shaped. A corpus of another seed is
       refused too, and no longer silently overwritten. SPEC §7, §11.
-- [ ] **CI generates the probe worlds — landed, pending the first green
-      dispatch run on both legs** (which also gives the first runner
-      timings, the ARM64 restore and the live skip gate). The owner
-      accepted Mojang's EULA for this repository's CI (2026-10-08, SPEC
-      §12). One table, `tools/probe-worlds`, names every probe world a
-      committed generator makes for a conformance case (35 units, 47
-      corpora); CI generates it in six x86-64 shards beside the build, each
-      cached by a hash of its own generators, and both conformance legs,
-      x86-64 and ARM64, score the same worlds. The worlds travel between
-      jobs only through the repository-scoped Actions cache, never as an
-      artifact. A skip not listed in
-      `tests/conformance/expected-skips.txt` fails CI; it lists 34 of 125:
-      25 region-golden cases and 9 whose corpora no committed script
-      produces. SPEC §7, §12.
+- [x] **CI generates the probe worlds — green on both legs.** Dispatch run
+      37870578800 (dd899b6, 2026-10-09) is the first wholly green run with
+      CI-generated probe worlds: every shard generated or restored, both
+      conformance legs scored them (x86-64 about 50 minutes of ctest, ARM64
+      about 30, the ARM64 leg restoring the x86-64 shards' caches), and the
+      skip gate read "107 ran, 34 did not; expected: 9 no-generator, 25
+      regions". The owner accepted Mojang's EULA for this repository's CI
+      (2026-10-08, SPEC §12). One table, `tools/probe-worlds`, names every
+      probe world a committed generator makes for a conformance case (47
+      units, 69 corpora since the cache-markers units), generated in seven
+      x86-64 shards beside the build, each cached by a hash of its own
+      generators. The worlds travel between jobs only through the
+      repository-scoped Actions cache, never as an artifact. A skip not
+      listed in `tests/conformance/expected-skips.txt` fails CI, and so does
+      a listed case that ran. The runs before it failed on real defects,
+      each fixed: flow-dependent pins exact against one local generation
+      (now bounded, with their flow shape required), MSVC's C4702 after an
+      unconditional FAIL (lint rule 9), and a golden-region walk that took
+      a probe corpus for a golden. SPEC §7, §12.
 - [ ] **Owner: require approval for every fork pull request's CI run.**
       Fork pull-request runs restore the Actions cache, probe worlds
       included, and run the pull request's own `ci.yml`; GitHub's default
