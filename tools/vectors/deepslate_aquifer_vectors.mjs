@@ -49,8 +49,8 @@
 // halves' order, and the mix's y term, its shift and the half it is XORed
 // into. Not the x and z terms, not the wraps, not arithmetic against logical
 // shift (no value on this axis is negative before the shift), and not the
-// bounds or the order of the draws — none of those has a CI oracle; the
-// server-backed conformance cases pin them.
+// bounds or the order of the draws — the server-backed conformance cases pin
+// those, on probe corpora CI generates (tools/probe-worlds; SPEC §11).
 //
 // Nothing Mojang-derived goes in or comes out: the seeds and cells are
 // written here, and the settings are built through deepslate's own API.

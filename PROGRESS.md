@@ -129,16 +129,30 @@ Open:
       type's 0.3 strictness and -10 ceiling are replayed block for block on
       the fluid-type probe; deep-floor needs all three seeds; depth-gate's
       ties are set apart and the rest held exact. SPEC §11.
-- [ ] **The centre jitter in CI — partly.** deepslate was meant to be the
-      CI oracle and measures as only a partial one: its aquifer disagrees
-      with the frozen server on 19-25% of blocks on the five open-void
-      worlds (`fill` does not run it at all), and its `PositionalRandom.at`
-      does not wrap the mix (the server's jitter readout: 256/256 for the
-      wrapped mix, 193/255 for deepslate's). What it gets right now runs in
-      CI: 72 vectors on the y axis, the base and the mix's y term exact, and
-      every base ablation missing all 72. Still pinned only by cases that
-      skip in CI: the mix's x and z terms and wraps, arithmetic against
-      logical shift, the bounds and the draw order. SPEC §11.
+- [x] **The centre jitter in CI.** deepslate was meant to be the CI oracle
+      and measures as only a partial one: its aquifer disagrees with the
+      frozen server on 19-25% of blocks on the five open-void worlds
+      (`fill` does not run it at all), and its `PositionalRandom.at` does
+      not wrap the mix (the server's jitter readout: 256/256 for the wrapped
+      mix, 193/255 for deepslate's). What it gets right runs in the unit
+      binary: 72 vectors on the y axis, the base and the mix's y term exact,
+      every base ablation missing all 72. The rest is the server's, on
+      corpora CI generates: the comb
+      worlds are a unit, so the jitter readout and the block-level cases run
+      there — the "skip in CI" this item said was stale when written. The
+      x term's 32-bit product, which no cell index on disk can show (it
+      parts from a 64-bit one past |x| 686), is now pinned at block level
+      through the surface depth's jitter on the clamp probe's 180224 columns
+      at x 2176..6911: shipped right on all, x in 64 bits wrong on 15477, z
+      in 32 bits on 15330, a logical shift on 8054. Past cell 686 the
+      aquifer's own mix is the same function, inferred rather than measured.
+- [x] **Everything else taken from deepslate, audited.** Only those 72
+      vectors involve its `at()`, and nothing uses its aquifer or `fill`;
+      the blended-noise vectors draw nothing per position; "deepslate's own
+      rule" (rule 182) is a legacy seeding the server refutes, with no
+      per-position draw, and the `deepslate` surface rule is the block's
+      gradient, measured on the server. Re-run on this tree, the trust
+      script and both vector files reproduce exactly. SPEC §11.
 - [x] **The aquifer under `legacy_random_source` — measured, and no longer
       refused.** No vanilla dimension has the pair, so this build refused it
       on "no oracle can exist"; the server generates it from a datapack.
