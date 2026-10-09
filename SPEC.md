@@ -402,6 +402,11 @@ they should be: under `legacy_random_source` the cell centres are a
 positional random drawn from that source, and with any other default fluid
 the water-over-lava exception (Q6.3) and the lava-against-water pressure
 (Q6.4) part from "the default fluid". `stratum validate` warns on both.
+`default_block` need not be stone: where the aquifer decides solid the
+filler writes that state whole, as for positive density (Q6.7). Measured
+against the server with netherrack and with deepslate[axis=x], a state that
+spells out a non-default property (§11); a state that leaves properties
+out has not been.
 
 The overworld's two other presets, `minecraft:amplified` and
 `minecraft:large_biomes`, are the overworld's settings with other terrain and
@@ -3066,8 +3071,9 @@ Open:
   these seas not even the fluid-update flag can tell the two apart.
 
 - **An aborted scan's status is A_lava: -54 and lava, on every path and at
-  every sea (MA; pipeline engine v11).** A cell whose scan aborted and that takes no sea read lambda,
-  typed as the cell's own fluid, on three paths: the aborting near-surface
+  every sea (MA; pipeline engine v11).** A cell whose scan aborted and
+  that takes no sea read lambda, typed as the cell's own fluid, on three
+  paths: the aborting near-surface
   floor, an aborted cell off the near-surface path (engine v5) and one
   under Q5.9's override (v6). The clean-room spec's Q5.3(b) gives all three
   the global picker's status at the surface the scan met submerged in the
@@ -3286,6 +3292,62 @@ Open:
   source takes the sea whatever the surface reads. At 0.6 the surface
   decides between the sea and the capped ladder, and `size_horizontal` 2
   parts the blend from the argument on 61 295 and 79 351 blocks.
+
+- **The aquifer's barrier is the preset's `default_block`, measured where
+  that is not stone (MA).** No output changes. Spec Q6.7: the aquifer never
+  names a block, and where it decides solid the caller writes the preset's
+  `default_block`, the block positive density writes. `ChunkFiller` does
+  that, but no world could tell it from a filler that wrote literal stone
+  for the barrier or dropped the block's properties. Every probe ran stone,
+  because `density-probe.sh` wrote stone whatever the spec said, and the
+  vanilla presets with another default (netherrack, end_stone) have aquifers
+  off. The clean-room entry below confirmed Q6.7 on two worlds that were
+  never committed.
+
+  `tools/analysis/aquifer-defaultblock-probe.sh` is one frozen world on
+  `barrier3way`'s `d_neg1_0` recipe: constant density -1, vanilla's barrier
+  noises, min_y -48 above the lava sea and `lava` 0, so no lava is placed
+  and nothing that flows can make or unmake a solid block, and a surface
+  rule that never fires. It has four dimensions: a stone control,
+  netherrack, deepslate[axis=x] (a property that is not the block's
+  default), and deepslate[axis=x] at density +1. At seed 42, over 8x8
+  chunks and y -48..271 (5 242 880 blocks a dimension):
+
+  | dimension | solid blocks | where |
+  |---|---|---|
+  | stone (control) | 4 110 stone | `d_neg1_0`'s own 4 110, block for block, in its own world |
+  | netherrack | 4 110 netherrack | the control's positions exactly; no stone, no other solid |
+  | deepslate[axis=x] | 4 110 deepslate[axis=x] | the control's positions exactly; no stone, no other solid |
+  | deepslate[axis=x], density +1 | 5 242 880 deepslate[axis=x] | everywhere |
+
+  So the barrier is `default_block`'s whole state, properties included.
+  Positive density gives the same state with aquifers on. `default_block`
+  feeds nothing back into the decision, since the barrier positions do not
+  move with it; in this run the three barrier dimensions' air and water
+  agreed block for block as well, which the case bounds rather than pins.
+  The shipped filler, run over the corpus's own spec, writes the server's
+  exact state at every solid block of all four dimensions. The only
+  differences are 134 blocks a barrier dimension where the server has
+  water and the filler air, each in a shape flow leaves; bounded, not
+  pinned.
+  `vanilla_aquifer_default_block_test.cpp` holds the three comparisons: the
+  server against itself, the control against `barrier3way`, and the filler
+  against the server.
+
+  A filler writing literal stone for the barrier failed none of the 452
+  earlier unit cases (checked by mutation). The fixture-free case "the
+  aquifer's barrier is the dimension's default_block, properties and all"
+  (`terrain_filler_test.cpp`) fails on that, on a dropped property and on
+  literal stone for positive density. It uses two dimensions that differ
+  only in `default_block`, 4 657 barrier blocks, and made-up noises.
+
+  `density-probe.sh` now takes `default_block` per entry, stone by default.
+  An entry with no surface rule of its own gets one that paints its
+  `default_block` over itself; the old default painted stone, which would
+  repaint every non-stone default block. The specs of all 55 corpora on
+  disk here write byte-identical datapacks. Every density unit's cache key
+  hashes the script, so CI regenerates every probe corpus once.
+  `tests/support/probe_settings.hpp` mirrors both.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
@@ -4196,6 +4258,10 @@ Open:
   this project's own "first wins" scores 12.3%. `s12 <= 0` short-circuits to
   the nearest source — Q6.2. The barrier block is the preset's `default_block`
   — Q6.7, 100% of solid positions on two worlds with different defaults.
+  (Q6.7 has since landed: `ChunkFiller` writes `default_block` for the
+  aquifer's solid. The two worlds behind this figure were never committed;
+  `aquifer-defaultblock-probe.sh` re-measures it, in "The aquifer's barrier
+  is the preset's `default_block`" above.)
 
   *Refuted.* This build's barrier predicate, as a general model. It has no
   density term and sees two sources; against a density sweep its agreement runs

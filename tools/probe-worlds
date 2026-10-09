@@ -165,6 +165,11 @@ UNITS = [
          density(('lowfloor_s42', 42))),
     unit('lowfloor_s31337', 'legacy', ['aquifer-lowfloor-probe.sh', '31337'],
          density(('lowfloor_s31337', 31337))),
+    # The aquifer barrier on non-stone default_blocks (spec Q6.7): one server
+    # start of four dimensions. Here, not under aquifer, because this shard
+    # was the lightest.
+    unit('defaultblock_s42', 'legacy', ['aquifer-defaultblock-probe.sh', '42'],
+         density(('defaultblock_s42', 42))),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
     # runner), the amplified / large_biomes presets beside an overworld
     # control, one server start per seed, and y_skip's six 10 GB runs (about
