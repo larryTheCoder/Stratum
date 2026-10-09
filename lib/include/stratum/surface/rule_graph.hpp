@@ -28,6 +28,7 @@
 #pragma once
 
 #include <stratum/data/resource_location.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
@@ -84,6 +85,20 @@ struct VerticalAnchor {
 ///
 /// @p source must be the one built for the rule's `random_name`.
 [[nodiscard]] bool verticalGradientFires(const rng::PositionalSource& source, std::int32_t x,
+                                         std::int32_t y, std::int32_t z,
+                                         std::int32_t trueAtAndBelow,
+                                         std::int32_t falseAtAndAbove) noexcept;
+
+/// The same coin under `legacy_random_source`: one java.util.Random
+/// `nextFloat` from `rng::legacyPositionalSourceFor(seed, randomName).at(x, y,
+/// z)`, the primitive measured on the aquifer's lattice (SPEC §11). Against
+/// the golden Nether's bedrock floor and roof it is exact, 65536 of 65536
+/// labelled positions per gradient at each of four world seeds
+/// (vanilla_legacy_gradient_gap_test.cpp), where the Xoroshiro coin above
+/// lands at chance. NOT YET USED BY THE EXECUTOR: a legacy dimension with a
+/// gradient is still refused by name (surface::Executor::compile,
+/// ChunkFiller::compile), and lifting that is its own change.
+[[nodiscard]] bool verticalGradientFires(const rng::LegacyPositionalSource& source, std::int32_t x,
                                          std::int32_t y, std::int32_t z,
                                          std::int32_t trueAtAndBelow,
                                          std::int32_t falseAtAndAbove) noexcept;

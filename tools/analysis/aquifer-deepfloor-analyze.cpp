@@ -392,7 +392,7 @@ int run(int argc, char** argv) {
             density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
         const density::Interpreter interp(graph, noises);
         density::Interpreter::CornerCache cache(interp.cacheSize());
-        const aquifer::CentreSource centres(seed);
+        const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
         const aquifer::PslRead surface =
             aquifer::constantSurface(static_cast<std::int32_t>(std::floor(dim.psl)));
 

@@ -74,6 +74,14 @@ foreach(tool IN ITEMS
     stratum_configure_target(${target})
 endforeach()
 
+# The legacy-source aquifer probe's readback. It scores each arm through the
+# library's own aquifer and through tests/support/fluid_flow.hpp's flow
+# classifier, the one the conformance cases use, so it includes tests/.
+add_executable(stratum_legacy_aquifer_analyze legacy-aquifer-analyze.cpp)
+target_link_libraries(stratum_legacy_aquifer_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_legacy_aquifer_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_legacy_aquifer_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()

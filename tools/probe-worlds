@@ -199,6 +199,15 @@ UNITS = [
     unit('legseed_s42', 'legacy', ['legacy-seed-probe.sh', '42'], density(('legseed_s42', 42))),
     unit('legseed_s31337', 'legacy', ['legacy-seed-probe.sh', '31337'],
          density(('legseed_s31337', 31337))),
+    # The aquifer under the legacy source: four dimensions a seed, about a
+    # minute and a half each locally. 42's 48-bit twin is a seed of its own.
+    unit('aqlegacy_s42', 'legacy', ['legacy-aquifer-probe.sh', '42'],
+         density(('aqlegacy_s42', 42))),
+    unit('aqlegacy_s31337', 'legacy', ['legacy-aquifer-probe.sh', '31337'],
+         density(('aqlegacy_s31337', 31337))),
+    unit('aqlegacy_s-9223372036854775766', 'legacy',
+         ['legacy-aquifer-probe.sh', '-9223372036854775766'],
+         density(('aqlegacy_s-9223372036854775766', -9223372036854775766))),
     unit('oreveinplacement', 'legacy', ['ore-vein-placement-probe.sh', '100'],
          density(('oreveinplacement', 100))),
     unit('blended-noise', 'legacy', ['blended-datapack-probe.sh', '42'],

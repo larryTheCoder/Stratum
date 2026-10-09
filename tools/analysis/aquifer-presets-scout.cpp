@@ -196,7 +196,7 @@ void screen(const data::Pack& pack, const std::int64_t seed) {
     if (highestAmplified > kFittedPslMax) {
         // The cells centred at or above sea level whose level is above it:
         // the only ones that can put aquifer fluid above the sea.
-        const aquifer::CentreSource centres(seed);
+        const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
         const std::int32_t sea = amplified.settings.seaLevel;
         const auto psl = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
             return amplified.read(settings::RouterEntry::PreliminarySurfaceLevel, x, y, z, cache);
@@ -253,7 +253,7 @@ void screen(const data::Pack& pack, const std::int64_t seed) {
     {
         const Preset large(pack, "minecraft:large_biomes", seed);
         density::Interpreter::CornerCache largeCache(large.interpreter.cacheSize());
-        const aquifer::CentreSource centres(seed);
+        const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
         const std::int32_t sea = large.settings.seaLevel;
         const std::int32_t lambda = aquifer::lambdaLevel(sea);
         const auto at = [&](const settings::RouterEntry entry) {
@@ -384,7 +384,8 @@ class Scorer {
 public:
     Scorer(const data::Pack& pack, const char* id, const std::int64_t seed)
         : preset_(pack, id, seed), shipped_(withoutVeins(preset_.settings)),
-          off_(withoutAquifer(shipped_)), noDeepDark_(withoutDeepDark(shipped_)), centres_(seed),
+          off_(withoutAquifer(shipped_)), noDeepDark_(withoutDeepDark(shipped_)),
+          centres_(seed, stratum::density::RandomSource::Xoroshiro),
           withAquifer_(
               terrain::ChunkFiller::compile(preset_.loaded.graph, preset_.noises, shipped_)),
           withoutAquifer_(

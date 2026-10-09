@@ -105,7 +105,7 @@ TEST_CASE("the fluid type's two boundaries, block for block against the server",
     REQUIRE(nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>() == kSeed);
     std::ifstream specFile(probe / "spec.json");
     const nlohmann::json spec = nlohmann::json::parse(specFile);
-    const stratum::aquifer::CentreSource centres{kSeed};
+    const stratum::aquifer::CentreSource centres{kSeed, stratum::density::RandomSource::Xoroshiro};
 
     std::map<std::string, Tally> byDimension;
     for (const auto& entry : spec) {

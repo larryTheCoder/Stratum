@@ -243,7 +243,7 @@ that was rejected**.
 | `worldgen/density_function` | Supported | Including all cache node types |
 | `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
-| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A; refused by name with `legacy_random_source` or a `default_fluid` other than water, neither of which any vanilla dimension that enables aquifers uses |
+| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
 | Multi-noise biome source | Supported | |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |

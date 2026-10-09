@@ -233,7 +233,7 @@ struct ModelBlock {
 class LatticeModel {
 public:
     explicit LatticeModel(const std::int64_t seed)
-        : centres_(seed),
+        : centres_(seed, stratum::density::RandomSource::Xoroshiro),
           blocks_(static_cast<std::size_t>(kSpan) * kSpan * static_cast<std::size_t>(kRows)) {
         const auto constant = [](const double value) {
             return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };

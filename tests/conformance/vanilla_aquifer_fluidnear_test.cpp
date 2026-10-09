@@ -423,7 +423,7 @@ TEST_CASE("Q5.8's lava override on the near-surface and aborted seas", "[conform
         const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
         std::ifstream specFile(probe / "spec.json");
         const nlohmann::json spec = nlohmann::json::parse(specFile);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         std::size_t read = 0;
         for (const auto& entry : spec) {
             const std::string name = entry.at("name").get<std::string>();

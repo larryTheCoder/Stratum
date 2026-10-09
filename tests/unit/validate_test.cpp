@@ -113,7 +113,8 @@ void defineWorkingPack(const TempTree& tree) {
 /// A valid settings file whose `final_density` points at @p finalDensity.
 void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity,
                     bool legacyRandomSource = false,
-                    std::string_view defaultFluid = "minecraft:water") {
+                    std::string_view defaultFluid = "minecraft:water",
+                    const nlohmann::json& surfaceRule = {{"type", "minecraft:bandlands"}}) {
     nlohmann::json router = nlohmann::json::object();
     for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
         router[std::string(stratum::settings::routerEntryName(
@@ -132,7 +133,7 @@ void defineSettings(const TempTree& tree, std::string_view name, std::string_vie
         {"noise", {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}}},
         {"noise_router", router},
         {"spawn_target", nlohmann::json::array()},
-        {"surface_rule", {{"type", "minecraft:bandlands"}}},
+        {"surface_rule", surfaceRule},
     };
     tree.defineIn("noise_settings", name, json.dump());
 }
@@ -499,8 +500,47 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
     CHECK(finding->severity == Severity::Warning);
     CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
 
+    // Of what the dimension needs besides its router, the vein source is
+    // still refused by name and the aquifer lattice is not: its legacy
+    // derivation is measured (SPEC §11).
+    int veins = 0;
+    int aquifers = 0;
+    for (const Finding& each : report.findings) {
+        if (each.subject != "minecraft:nether") {
+            continue;
+        }
+        veins += static_cast<int>(each.message.find("'ore_veins_enabled'") != std::string::npos);
+        aquifers += static_cast<int>(each.message.find("aquifers_enabled") != std::string::npos);
+    }
+    CHECK(veins == 1);
+    CHECK(aquifers == 0);
+
     // And nothing was said about the dimension that is fine.
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
+}
+
+TEST_CASE("a legacy dimension's vein warning survives a surface rule that does not resolve",
+          "[validate]") {
+    // The flag needs no rule tree, and a surface rule's error used to swallow
+    // it: the warning sat inside the `try` that resolves the tree.
+    const TempTree tree;
+    defineWorkingPack(tree);
+    // A `block` rule with no result_state: loads, and does not resolve.
+    defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true, "minecraft:water",
+                   {{"type", "minecraft:block"}});
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    const Finding* rule = findingAbout(report, "minecraft:nether surface_rule");
+    REQUIRE(rule != nullptr);
+    CHECK(rule->severity == Severity::Error);
+    int veins = 0;
+    for (const Finding& each : report.findings) {
+        veins += static_cast<int>(each.subject == "minecraft:nether" &&
+                                  each.severity == Severity::Warning &&
+                                  each.message.find("'ore_veins_enabled'") != std::string::npos);
+    }
+    CHECK(veins == 1);
 }
 
 TEST_CASE("aquifers over a default fluid other than water are a warning, named", "[validate]") {

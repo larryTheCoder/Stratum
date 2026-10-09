@@ -144,7 +144,7 @@ TEST_CASE("the fluid-update flag is the server's own, on the comb worlds",
             return interpreter.evaluate(barrierNode,
                                         stratum::density::Point{.x = x, .y = y, .z = z}, cache);
         };
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         aquifer::StatusCache statuses;
         const auto oursFor = [&](std::int32_t cx, std::int32_t cz) {
             std::set<Position> ours;
@@ -237,7 +237,7 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
         const auto barrier = read(barrierNode);
         const auto flood = read(floodNode);
         const auto spread = read(spreadNode);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
 
         for (const auto& entry : spec) {
             const std::string name = entry.at("name").get<std::string>();

@@ -285,7 +285,8 @@ void requireArm(const Arm& arm) {
                                        .height = settings.geometry.cellHeight()});
     const auto pslNode =
         settings.router.at(stratum::settings::RouterEntry::PreliminarySurfaceLevel);
-    const stratum::aquifer::CentreSource centres(arm.seed);
+    const stratum::aquifer::CentreSource centres(arm.seed,
+                                                 stratum::density::RandomSource::Xoroshiro);
     const std::int32_t sea = settings.seaLevel;
 
     stratum::test::GoldenRegion golden(region);

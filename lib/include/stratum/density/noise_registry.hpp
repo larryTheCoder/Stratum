@@ -30,6 +30,7 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/noise_parameters.hpp>
+#include <stratum/density/random_source.hpp>
 #include <stratum/noise/perlin.hpp>
 
 #include <cstddef>
@@ -40,31 +41,6 @@
 #include <string_view>
 
 namespace stratum::density {
-
-/// Which generator seeds a dimension's noises. A noise settings entry
-/// chooses one for all of them at once, through `legacy_random_source`, so
-/// the same `minecraft:temperature` is a different noise in the overworld
-/// than it is in the Nether — and a registry can only hold one of the two.
-///
-/// Named rather than a bool, and required rather than defaulted, because a
-/// default is exactly how this went wrong: the registry used to be built
-/// per pack and always with Xoroshiro, which was right for three of
-/// vanilla's seven dimensions and silently wrong for the other four.
-enum class RandomSource : std::uint8_t {
-    /// Xoroshiro128++ through the positional factory, salted with the MD5 of
-    /// each noise's identifier. What a dimension declaring
-    /// `legacy_random_source: false` uses, which is the overworld and its
-    /// two variants.
-    Xoroshiro,
-    /// The Java LCG. What the Nether, the End, caves and floating islands
-    /// use. The nameless `old_blended_noise` is derived — the world seed
-    /// handed straight to the LCG — and so are the three CLIMATE noises,
-    /// `minecraft:temperature`, `vegetation` and `offset`, by the rule
-    /// cubiomes documents for the Nether and the goldens confirm (SPEC §11).
-    /// Every other NAMED noise is not: nothing available says how a name
-    /// becomes an LCG seed, and those are refused.
-    Legacy,
-};
 
 [[nodiscard]] std::string_view randomSourceName(RandomSource source) noexcept;
 
@@ -155,18 +131,18 @@ private:
 /// its declared random source for `minecraft:vertical_gradient`'s
 /// `random_name`, for the aquifer lattice's centre jitter, and for the
 /// ore-vein source — none of which is a named noise and none of which passes
-/// through `wanted`. This build derives all three with Xoroshiro128++
-/// unconditionally.
+/// through `wanted`. This build derives the gradient and the vein source
+/// with Xoroshiro128++ unconditionally; the aquifer's centres it derives
+/// from the declared source, which a constructed probe measured (SPEC §11),
+/// and they are not refused.
 ///
 /// For `vertical_gradient` that is MEASURED WRONG, not merely unverified:
 /// against the golden NETHER's bedrock floor and roof the Xoroshiro
 /// derivation agrees at chance, while the identical code on the modern
 /// overworld is exact — see
 /// tests/conformance/vanilla_legacy_gradient_gap_test.cpp, which carries the
-/// numbers and their denominators. The aquifer and ore sources are
-/// structurally identical draws from the same primitive and are UNTESTED:
-/// every vanilla legacy dimension has both flags off, so there is no oracle
-/// on disk for them.
+/// numbers and their denominators. The ore source is UNTESTED: every vanilla
+/// legacy dimension has the flag off, and no probe has asked for one.
 ///
 /// So the constructs are refused BY NAME, wherever they are built, and the
 /// refusal says which construct and why. A legacy dimension that names no

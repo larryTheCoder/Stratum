@@ -1,10 +1,14 @@
 // Stratum — the aquifer's cell lattice and fluid level.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include <stratum/aquifer/lattice.hpp>
+#include <stratum/density/random_source.hpp>
 #include <stratum/javamath.hpp>
+#include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace stratum::aquifer {
 
@@ -241,15 +245,41 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     return CellLevel{.level = level};
 }
 
-CentreSource::CentreSource(const std::int64_t worldSeed) noexcept
-    : base_(rng::positionalSourceFor(worldSeed, "minecraft:aquifer").base()) {}
+namespace {
+
+constexpr std::string_view kAquiferSalt = "minecraft:aquifer";
+
+} // namespace
+
+CentreSource::CentreSource(const std::int64_t worldSeed,
+                           const density::RandomSource source) noexcept
+    : source_(source) {
+    switch (source) {
+        case density::RandomSource::Xoroshiro:
+            base_ = rng::positionalSourceFor(worldSeed, kAquiferSalt).base();
+            break;
+        case density::RandomSource::Legacy:
+            legacySeed_ = rng::legacyPositionalSourceFor(worldSeed, kAquiferSalt).seed();
+            break;
+    }
+}
 
 Jitter CentreSource::jitterOf(const std::int32_t cx, const std::int32_t cy,
                               const std::int32_t cz) const noexcept {
-    rng::Xoroshiro128PlusPlus source = rng::PositionalSource{base_}.at(cx, cy, cz);
-    const std::int32_t jx = source.nextInt(kJitterBoundX);
-    const std::int32_t jy = source.nextInt(kJitterBoundY);
-    const std::int32_t jz = source.nextInt(kJitterBoundZ);
+    // The same three draws in the same order from either generator; only the
+    // generator and its bounded draw differ (Xoroshiro's multiply-and-shift,
+    // java.util.Random's rejection on the remainder).
+    if (source_ == density::RandomSource::Legacy) {
+        rng::JavaRandom random = rng::LegacyPositionalSource{legacySeed_}.at(cx, cy, cz);
+        const std::int32_t jx = random.nextInt(kJitterBoundX);
+        const std::int32_t jy = random.nextInt(kJitterBoundY);
+        const std::int32_t jz = random.nextInt(kJitterBoundZ);
+        return Jitter{.x = jx, .y = jy, .z = jz};
+    }
+    rng::Xoroshiro128PlusPlus random = rng::PositionalSource{base_}.at(cx, cy, cz);
+    const std::int32_t jx = random.nextInt(kJitterBoundX);
+    const std::int32_t jy = random.nextInt(kJitterBoundY);
+    const std::int32_t jz = random.nextInt(kJitterBoundZ);
     return Jitter{.x = jx, .y = jy, .z = jz};
 }
 

@@ -7,8 +7,10 @@
 // random source for three things that are not noises: a
 // `minecraft:vertical_gradient`'s `random_name`, the aquifer lattice's centre
 // jitter, and the ore-vein source. None of the three passes through the
-// registry's `wanted` list, and this build derives all three with
-// Xoroshiro128++ unconditionally.
+// registry's `wanted` list. This build derives the gradient and the vein
+// source with Xoroshiro128++ unconditionally, and refuses both by name under
+// a legacy source; the aquifer's lattice it now derives from the declared
+// source (measured, SPEC §11).
 //
 // For `vertical_gradient` that is MEASURED WRONG rather than merely
 // unverified, and this file is the measurement. Vanilla's own Nether writes
@@ -34,13 +36,16 @@
 // source and not this build's gradient, its region reader, or its anchor
 // resolution — all three of which the control exercises identically.
 //
-// WHAT IT DOES NOT SETTLE. It does not say what the legacy derivation IS.
-// And the aquifer lattice and the ore-vein source, which draw from the same
-// primitive, are UNTESTED: every vanilla legacy dimension has both flags
-// off, so there is no oracle on disk for either. They are refused by name
-// alongside the gradient (SPEC §11) on the structural argument, not on a
-// measurement of their own, and this comment is where that boundary is
-// written down.
+// WHAT THE LEGACY DERIVATION IS, since. The aquifer lattice draws from the
+// same primitive, and a constructed probe (tools/analysis/legacy-aquifer-
+// probe.sh, SPEC §11) measured it there: two java.util.Random forks around
+// String.hashCode of the name, the position mix XORed in
+// (rng::legacyPositionalSourceFor). That primitive, salted with each
+// gradient's own random_name and drawing one nextFloat, is scored here too,
+// as an out-of-sample check — nothing about the bedrock went into finding
+// it — and it is exact. The gradient is still refused by name; lifting that
+// is its own change. The ore-vein source has no oracle at all: every vanilla
+// legacy dimension has the flag off.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/temp_path.hpp"
@@ -52,6 +57,7 @@
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
@@ -189,11 +195,21 @@ struct BandScore {
     std::size_t certainColumns = 0;
 };
 
-/// Scores this build's Xoroshiro-derived gradient against the golden region's
-/// own bedrock, over the PROBABILISTIC levels only.
+/// Which positional coin a score draws.
+enum class Coin : std::uint8_t {
+    /// The modern derivation, which this build's executor runs.
+    Xoroshiro,
+    /// The legacy derivation measured on the aquifer's lattice.
+    Legacy,
+};
+
+/// Scores a derived gradient against the golden region's own bedrock, over
+/// the PROBABILISTIC levels only.
 [[nodiscard]] BandScore scoreGradient(const std::filesystem::path& region,
-                                      const std::int64_t worldSeed, const Gradient& gradient) {
+                                      const std::int64_t worldSeed, const Gradient& gradient,
+                                      const Coin coin = Coin::Xoroshiro) {
     const auto source = stratum::rng::positionalSourceFor(worldSeed, gradient.randomName);
+    const auto legacy = stratum::rng::legacyPositionalSourceFor(worldSeed, gradient.randomName);
     const auto file = stratum::region::RegionFile::open(region);
     BandScore score;
     for (std::int32_t cz = 0; cz < kChunksPerAxis; ++cz) {
@@ -214,8 +230,14 @@ struct BandScore {
                         const auto* block = golden.blockAt(lx, y, lz);
                         REQUIRE(block != nullptr);
                         const bool bedrock = block->name == "minecraft:bedrock";
-                        const bool fires = stratum::surface::verticalGradientFires(
-                            source, x, y, z, gradient.trueAtAndBelow, gradient.falseAtAndAbove);
+                        const bool fires =
+                            coin == Coin::Legacy
+                                ? stratum::surface::verticalGradientFires(legacy, x, y, z,
+                                                                          gradient.trueAtAndBelow,
+                                                                          gradient.falseAtAndAbove)
+                                : stratum::surface::verticalGradientFires(source, x, y, z,
+                                                                          gradient.trueAtAndBelow,
+                                                                          gradient.falseAtAndAbove);
                         const bool predicted = gradient.inverted ? !fires : fires;
                         ++score.scored;
                         score.agree += static_cast<std::size_t>(predicted == bedrock);
@@ -332,6 +354,15 @@ TEST_CASE("a legacy dimension's vertical_gradient is not Xoroshiro, and the mode
                 // refusal rests on.
                 CHECK(score.agree < score.scored);
 
+                // THE LEGACY PRIMITIVE, recovered on the aquifer's lattice
+                // and never fitted to bedrock: exact, every position, where
+                // the Xoroshiro coin above is at chance.
+                const BandScore legacy = scoreGradient(region, seed, gradient, Coin::Legacy);
+                WARN("nether " << gradient.randomName << " seed " << seed << ", legacy primitive: "
+                               << legacy.agree << " / " << legacy.scored << " agree");
+                CHECK(legacy.scored == score.scored);
+                CHECK(legacy.agree == legacy.scored);
+
                 // THE LADDER, asserted so the anchors are pinned. Vanilla's
                 // own bedrock over the four levels follows 80/60/40/20% of
                 // the columns (reversed where the gradient is inverted), and
@@ -403,7 +434,7 @@ TEST_CASE("a legacy dimension's vertical_gradient is not Xoroshiro, and the mode
     }
 }
 
-TEST_CASE("a legacy dimension that needs a gradient, an aquifer or a vein is refused by name",
+TEST_CASE("a legacy dimension that needs a gradient is refused by name",
           "[conformance][legacy][surface][gradient]") {
     const std::filesystem::path tree = fixtures() / "worldgen";
     if (!std::filesystem::is_directory(tree)) {
@@ -427,7 +458,7 @@ TEST_CASE("a legacy dimension that needs a gradient, an aquifer or a vein is ref
     const auto netherRules = stratum::surface::RuleGraph::resolve(nether.surfaceRule, netherId);
     REQUIRE_FALSE(stratum::surface::verticalGradientNames(netherRules).empty());
 
-    // It THROWS, like the aquifer and ore-vein refusals, rather than
+    // It THROWS, like the ore-vein refusal, rather than
     // returning a filler with the reason in blockedBy(): nothing on the
     // public CompiledDimension path consults blockedBy(), so a non-fatal
     // entry there let a doctored pack generate silently (the case below

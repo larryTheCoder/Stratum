@@ -205,6 +205,17 @@ std::optional<std::string_view> RuleGraph::unrunnableReason(RuleType /*type*/) n
     return std::nullopt;
 }
 
+namespace {
+
+/// The coin's odds at @p y, strictly between the anchors.
+[[nodiscard]] double gradientProbability(const std::int32_t y, const std::int32_t trueAtAndBelow,
+                                         const std::int32_t falseAtAndAbove) noexcept {
+    const double span = static_cast<double>(falseAtAndAbove) - static_cast<double>(trueAtAndBelow);
+    return (static_cast<double>(falseAtAndAbove) - static_cast<double>(y)) / span;
+}
+
+} // namespace
+
 bool verticalGradientFires(const rng::PositionalSource& source, const std::int32_t x,
                            const std::int32_t y, const std::int32_t z,
                            const std::int32_t trueAtAndBelow,
@@ -215,11 +226,24 @@ bool verticalGradientFires(const rng::PositionalSource& source, const std::int32
     if (y >= falseAtAndAbove) {
         return false;
     }
-    const double span = static_cast<double>(falseAtAndAbove) - static_cast<double>(trueAtAndBelow);
-    const double probability =
-        (static_cast<double>(falseAtAndAbove) - static_cast<double>(y)) / span;
     rng::Xoroshiro128PlusPlus draw = source.at(x, y, z);
-    return static_cast<double>(draw.nextFloat()) < probability;
+    return static_cast<double>(draw.nextFloat()) <
+           gradientProbability(y, trueAtAndBelow, falseAtAndAbove);
+}
+
+bool verticalGradientFires(const rng::LegacyPositionalSource& source, const std::int32_t x,
+                           const std::int32_t y, const std::int32_t z,
+                           const std::int32_t trueAtAndBelow,
+                           const std::int32_t falseAtAndAbove) noexcept {
+    if (y <= trueAtAndBelow) {
+        return true;
+    }
+    if (y >= falseAtAndAbove) {
+        return false;
+    }
+    rng::JavaRandom draw = source.at(x, y, z);
+    return static_cast<double>(draw.nextFloat()) <
+           gradientProbability(y, trueAtAndBelow, falseAtAndAbove);
 }
 
 std::optional<std::string_view> RuleGraph::unrunnableReason(ConditionType type) noexcept {

@@ -245,11 +245,13 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // source is a positional random derived from the world seed through the
     // DIMENSION'S declared random source, not from any named noise, so it
     // never reaches NoiseRegistry::create's `wanted` list. Under a legacy
-    // source this build has only the modern derivation, and it is UNTESTED
-    // there: every vanilla legacy dimension has `ore_veins_enabled` false, so
-    // no oracle for it exists on disk. It is the same primitive whose gradient
-    // use is measured WRONG under a legacy source, so running it would be the
-    // plausible-but-wrong world SPEC §8 forbids.
+    // source the vein source has no oracle: every vanilla legacy dimension
+    // has `ore_veins_enabled` false, and no probe has asked the server for
+    // one. The legacy positional primitive itself is measured now, for the
+    // aquifer (rng::LegacyPositionalSource, SPEC §11), but how the vein
+    // source salts and draws from it is not, and the modern derivation is
+    // measured WRONG under a legacy source for the gradient, so running it
+    // would be the plausible-but-wrong world SPEC §8 forbids.
     //
     // On the FLAG, deliberately, and outside the veinsPlaceBlocks gate below.
     // With aquifers off the vein source is never built and no random is ever
@@ -274,18 +276,17 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     }
 
     if (settings.aquifersEnabled) {
-        // Same refusal, same reason (SPEC §8, §11): the aquifer lattice's
-        // centre jitter is a positional random from the dimension's declared
-        // random source and names no noise. UNTESTED under a legacy source
-        // for the same reason as the veins — every vanilla legacy dimension
-        // has `aquifers_enabled` false.
-        if (noises.source() == density::RandomSource::Legacy) {
-            throw FillError(density::legacyConstructRefusal(
-                "aquifers_enabled",
-                "the lattice's centre jitter is a positional random drawn from that source, and "
-                "no vanilla legacy dimension enables aquifers, so nothing on disk can say what "
-                "it should be"));
-        }
+        // NOT refused under a legacy source, unlike the veins above. The
+        // lattice's centre jitter is a positional random from the
+        // dimension's declared source, and no vanilla legacy dimension
+        // enables aquifers — but the server generates one when a datapack
+        // asks, and `tools/analysis/legacy-aquifer-probe.sh` asked: the
+        // legacy derivation is measured (SPEC §11, "The aquifer under the
+        // legacy source") and `aquiferCentres_` below is built from the
+        // registry's own source. A legacy dimension whose aquifer router
+        // names vanilla's aquifer noises is still refused, by
+        // NoiseRegistry::create, for its noises' seeding.
+        //
         // The aquifer types a source as the dimension's default fluid or as
         // lava, and two of its rules are written for WATER specifically:
         // Q6.3's exception is water resting on the lava sea, and Q6.4's
@@ -303,9 +304,9 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                             "any other");
         }
         // The salted positional source (SPEC §4) is per-world, not per-block
-        // — built once here from the registry's own seed rather than
-        // re-derived on every call to fill().
-        filler.aquiferCentres_.emplace(noises.worldSeed());
+        // — built once here from the registry's own seed AND its own random
+        // source rather than re-derived on every call to fill().
+        filler.aquiferCentres_.emplace(noises.worldSeed(), noises.source());
         for (const settings::RouterEntry entry :
              {settings::RouterEntry::Barrier, settings::RouterEntry::FluidLevelFloodedness,
               settings::RouterEntry::FluidLevelSpread, settings::RouterEntry::Lava,
@@ -364,8 +365,9 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
         }
         if (noises.source() == density::RandomSource::Legacy) {
             // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11) —
-            // and it THROWS, exactly as the aquifer and ore-vein refusals
-            // above do. A first version of this recorded the refusal as an
+            // and it THROWS, exactly as the ore-vein refusal above does (the
+            // aquifer's, which sat beside it, is lifted: measured, SPEC §11).
+            // A first version of this recorded the refusal as an
             // entry in blockedBy_ instead, which is the shape this function
             // uses for "a caller did not supply something". That was the
             // wrong shape for "this dimension is underivable": nothing on the

@@ -425,7 +425,7 @@ int run(int argc, char** argv) {
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
 
     const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
         return interp.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);

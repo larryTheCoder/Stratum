@@ -26,6 +26,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <string_view>
 
 namespace stratum::rng {
 
@@ -158,5 +159,53 @@ private:
     double nextNextGaussian_ = 0.0;
     bool haveNextGaussian_ = false;
 };
+
+/// java.lang.String.hashCode, as the JDK specifies it: `s[0]*31^(n-1) + ...
+/// + s[n-1]` over the string's UTF-16 code units, wrapping in 32 bits.
+///
+/// Precondition: @p text is ASCII, where a byte and a UTF-16 code unit are
+/// the same number. Every resource location is (ResourceLocation::parse
+/// admits no other character), and those are the only strings this hashes.
+[[nodiscard]] constexpr std::int32_t javaStringHashCode(std::string_view text) noexcept {
+    std::uint32_t hash = 0;
+    for (const char character : text) {
+        hash = (hash * 31U) + static_cast<std::uint32_t>(static_cast<unsigned char>(character));
+    }
+    return static_cast<std::int32_t>(hash);
+}
+
+/// A named object's per-position generator under `legacy_random_source` —
+/// the java.util.Random counterpart of `PositionalSource` (xoroshiro128.hpp).
+///
+/// MEASURED, not read anywhere (SPEC §11, "The aquifer under the legacy
+/// source"): on the server's own legacy aquifer worlds the cell centres are
+/// exactly
+///
+///     seed   = fork(fork(worldSeed) ^ name.hashCode())     fork = new Random(s).nextLong()
+///     random = new Random(seed ^ positionSeed(x, y, z))
+///
+/// — the modern derivation's shape, two forks around one salt, with the LCG
+/// in place of Xoroshiro128++ and String.hashCode in place of the MD5. It was
+/// the one survivor of 7200 candidate rules, and a world seed generated only
+/// after it was frozen confirmed it.
+class LegacyPositionalSource {
+public:
+    /// From the derived 64-bit stream seed; `legacyPositionalSourceFor` derives it.
+    explicit constexpr LegacyPositionalSource(std::int64_t seed) noexcept : seed_(seed) {}
+
+    /// The generator for one position: the stream seed XOR the position mix,
+    /// handed to java.util.Random (which scrambles it as its constructor does).
+    [[nodiscard]] JavaRandom at(std::int32_t x, std::int32_t y, std::int32_t z) const noexcept;
+
+    [[nodiscard]] constexpr std::int64_t seed() const noexcept { return seed_; }
+
+private:
+    std::int64_t seed_;
+};
+
+/// The whole legacy derivation for a named object, from a world seed. Only
+/// the low 48 bits of @p worldSeed reach it, java.util.Random keeping no more.
+[[nodiscard]] LegacyPositionalSource legacyPositionalSourceFor(std::int64_t worldSeed,
+                                                               std::string_view name) noexcept;
 
 } // namespace stratum::rng
