@@ -132,13 +132,13 @@ private:
         } else if (cell.floodedness > aquifer::kFloodedLocalThreshold) {
             level = aquifer::ladderLevel(cell.centreY, surface.cap, cell.spread);
         }
-        return aquifer::SourceStatus{
-            .level = level,
-            .type = aquifer::fluidTypeOf(aquifer::FluidTypeAt{.centreY = cell.centreY,
-                                                              .level = level,
-                                                              .seaLevel = dim_.sea,
-                                                              .lava = 0.0,
-                                                              .fromNearSurface = false})};
+        return aquifer::SourceStatus{.level = level,
+                                     .type = aquifer::fluidTypeOf(aquifer::FluidTypeAt{
+                                         .centreY = cell.centreY,
+                                         .level = level,
+                                         .seaLevel = dim_.sea,
+                                         .lava = 0.0,
+                                         .origin = aquifer::LevelOrigin::Cell})};
     }
 
     const Dim& dim_;
