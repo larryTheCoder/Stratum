@@ -292,7 +292,7 @@ public:
                                                  density::RandomSource::Xoroshiro)),
           interpreter_(loaded_.graph, noises_),
           filler_(terrain::ChunkFiller::compile(loaded_.graph, noises_, settings_)),
-          centres_(seed) {}
+          centres_(seed, stratum::density::RandomSource::Xoroshiro) {}
 
     [[nodiscard]] const settings::NoiseSettings& settings() const { return settings_; }
 

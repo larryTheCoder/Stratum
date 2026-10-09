@@ -506,7 +506,7 @@ TEST_CASE("an aquifer's source reads are detached: an interpolated floodedness r
                                        .height = settings.geometry.cellHeight()});
     stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
     const auto node = settings.router.at(RouterEntry::FluidLevelFloodedness);
-    const stratum::aquifer::CentreSource centres(0);
+    const stratum::aquifer::CentreSource centres(0, stratum::density::RandomSource::Xoroshiro);
     long long straddling = 0;
     for (std::int32_t i = -1; i <= 2; ++i) {
         for (std::int32_t k = -2; k <= 1; ++k) {

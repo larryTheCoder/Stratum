@@ -590,7 +590,7 @@ template<typename Rival>
     using stratum::aquifer::RankedCell;
     using stratum::aquifer::Source;
     using stratum::aquifer::SourceStatus;
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const std::int32_t lambda = lambdaLevel(seaLevel);
     const auto field = [](std::uint64_t which) {
         return [which](std::int32_t x, std::int32_t y, std::int32_t z) {
