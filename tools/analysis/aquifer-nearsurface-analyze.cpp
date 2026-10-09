@@ -25,10 +25,17 @@
 // and skipping only the handful of blocks that are neither, has no such
 // failure mode.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
-//   tools/analysis/aquifer-nearsurface-analyze.cpp -L build/dev/lib -lstratum_core -lz -o
-//   build/aquifer-nearsurface-analyze build/aquifer-nearsurface-analyze
-//   .fixtures/1.21.11/probes/nearsurface <seed>
+// THIS READOUT IS NOT THE FILLER'S, and its residual says so. A bare
+// `y < level` of the nearest source ignores the barrier, the chunk's y_skip
+// and water over the lava sea, and it counts flowing water as the aquifer's.
+// tests/conformance/vanilla_aquifer_nearsurface_test.cpp reproduces these
+// figures block for block, then decides every block the filler's way and
+// attributes the readout's misses: on two frozen seeds every one inside its
+// edge margin is fluid that moved (SPEC §11).
+//
+//   cmake --build build/dev --target stratum_aquifer_nearsurface_analyze
+//   build/dev/tools/analysis/stratum_aquifer_nearsurface_analyze
+//   .fixtures/1.21.11/probes/nearsurface_s<seed> <seed>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -111,6 +118,9 @@ std::optional<double> scaleForDimension(const std::string& name) {
     }
     if (name == "nsf_16") {
         return 0.5;
+    }
+    if (name == "nsr_8" || name == "nsr_16") {
+        return std::nullopt; // the readouts: terrain, no aquifer
     }
     std::fprintf(stderr, "unknown dimension %s, skipping\n", name.c_str());
     return std::nullopt;

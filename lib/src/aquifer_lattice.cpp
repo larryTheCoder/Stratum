@@ -97,8 +97,10 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         // varying psl instead: read block-by-block rather than by fluid body
         // (a body-boundary reading is corrupted here by water/lava contact
         // turning to obsidian mid-column), `cap` scores a perfect 1.0000
-        // against `gate`'s 0.9266-0.9358 on 7.8M+ discriminating blocks
-        // across two seeds.
+        // against `gate`'s 0.9351-0.9358 per seed, of two, on a frozen
+        // corpus; on the 287 237 sampled blocks where the two place
+        // different blocks the server holds `cap`'s on all
+        // (vanilla_aquifer_nearsurface_test.cpp).
         //
         // The comparand is `lambda`, not the bare `kLavaLevel` this line used
         // to read: at `sea_level` -70 (lowsea's a_lo, psl -85, where the
@@ -147,10 +149,14 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     //
     // So the abort refuses the sea outcome outright, which is MA blocker 2's
     // other mark, closed: `aquifer-nearsurface-probe.sh` drives `aborted`
-    // true while floodedness alone would cross the depth path's sea gate,
-    // and refusing the sea scores 0.9911-0.9941 against 0.0564-0.0924 for
-    // ignoring the abort, on 469575-541125 discriminating blocks across two
-    // seeds; off the ocean branch, 0.9812-0.9829 against 0.6612-0.6872.
+    // true while floodedness alone would cross either branch's sea gate,
+    // and on a frozen corpus refusing the sea scores 0.9992-0.9996 against
+    // 0.066-0.089 for ignoring the abort with the anchor below
+    // `sea_level - 8`, and 0.9979-0.9987 against 0.645-0.651 at or above
+    // it, per seed of two. Every block the refusal misses is fluid that
+    // moved after generating, at the unwalled rows where a sea source meets
+    // an A_lava one (vanilla_aquifer_nearsurface_test.cpp); the unfrozen
+    // corpus's 0.9911-0.9941 and 0.9812-0.9829 were more of that flow.
     //
     // And what it takes instead is -54, lava. At sea 63, through the
     // barrier, the level: the unfloored ladder built 7 690 blocks of stone
@@ -184,9 +190,11 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // near-surface floor above, whose own measurement read `cap` over
     // `anchor`; a constant surface makes the two one number, so for a cell
     // that did not abort that choice is carried, not measured. An ABORTED
-    // cell off the near-surface path is left as it was: the near-surface
-    // probe refuses it the sea on 0.99 of the cells where floodedness would
-    // grant it.
+    // cell never gets here — the return above refuses it the sea, as the
+    // near-surface probe measures — so the guard only keeps the clause
+    // reading on its own; and that probe's varying surface gives this clause
+    // no source at all, since a scan there that does not abort reads no -70
+    // and, off the near-surface path, nothing but 96.
     if (!cell.surface.aborted &&
         cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset)) {
         return CellLevel{.level = cell.seaLevel, .origin = LevelOrigin::NearSurfaceSea};

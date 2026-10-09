@@ -54,6 +54,7 @@ add_executable(stratum_conformance_tests
     vanilla_aquifer_deepfloor_test.cpp
     vanilla_aquifer_waterlava_test.cpp
     vanilla_aquifer_nsfloor_test.cpp
+    vanilla_aquifer_nearsurface_test.cpp
     vanilla_aquifer_lava_run_test.cpp
     vanilla_aquifer_legacy_test.cpp
     vanilla_aquifer_presets_test.cpp

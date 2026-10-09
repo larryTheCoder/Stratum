@@ -252,6 +252,13 @@ UNITS = [
           '--large-biomes-origin', '14', '21'],
          own('aquifer-presets/seed-163', PRESET_REGIONS,
              {'file': 'manifest.json', 'seed': 163, 'frozen': True})),
+    # The near-surface floor's comparand and the abort's refusal of the sea,
+    # on a varying surface with the barrier noise off: one 10 GB run of four
+    # dimensions per seed. Here because this shard was the lightest.
+    unit('nearsurface_s42', 'end', ['aquifer-nearsurface-probe.sh', '42'],
+         density(('nearsurface_s42', 42))),
+    unit('nearsurface_s31337', 'end', ['aquifer-nearsurface-probe.sh', '31337'],
+         density(('nearsurface_s31337', 31337))),
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))
@@ -283,8 +290,6 @@ UNITS = [
 EXEMPT = {
     'density-probe.sh': 'the harness the density units run; hashed into their keys, never run alone',
     'run-blended-probe.sh': 'starts no server: it runs the deepslate oracle for the blended vectors',
-    'aquifer-nearsurface-probe.sh': 'no conformance case reads probes/nearsurface; only '
-                                    'aquifer-nearsurface-analyze does',
     'bandlands-probe.sh': 'no conformance case reads probes/bandlands; a second seed also dies on '
                           "density-probe.sh's seed guard",
     'end-islands-field-probe.sh': 'read only by end-islands-analyze, which is not a CTest',
