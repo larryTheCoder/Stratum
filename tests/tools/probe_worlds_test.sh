@@ -43,7 +43,7 @@ mkdir -p "${fake}/tools/analysis" "${fake}/.github/workflows" "${work}/bin" \
 cp "${real}" "${pw}"
 : > "${fake}/.fixtures/1.21.11/server-1.21.11.jar"
 echo '{}' > "${fake}/.fixtures/1.21.11/worldgen/noise_settings/overworld.json"
-for tool in java jq; do printf '#!/bin/sh\nexit 0\n' > "${work}/bin/${tool}"; chmod +x "${work}/bin/${tool}"; done
+for tool in java jq curl unzip; do printf '#!/bin/sh\nexit 0\n' > "${work}/bin/${tool}"; chmod +x "${work}/bin/${tool}"; done
 export PATH="${work}/bin:${PATH}"
 "${pw}" inventory > "${work}/inventory.json"
 # Counted off the table rather than written in, so a new unit does not break
@@ -60,12 +60,34 @@ print(len(units), len(aquifer), sum(u["shard"] == "aquifer" for u in units),
 ' "${work}/inventory.json")"
 read -r all_units aquifer_units aquifer_shard_units shard_count <<< "${counts}"
 
+# A region file the way the server writes one, as far as `verify` reads it:
+# the 4 KiB location table, then each chunk a length, compression 2 (zlib)
+# and an NBT compound holding its Status. Every chunk here shares one
+# sector. region.py <path> [status] [chunks present]
+cat > "${work}/region.py" <<'PY'
+import pathlib, sys, zlib
+def write(path, status='minecraft:full', present=1024):
+    nbt = (b'\x0a\x00\x00\x03\x00\x0bDataVersion\x00\x00\x11\x9b\x08\x00\x06Status'
+           + len(status).to_bytes(2, 'big') + status.encode() + b'\x00')
+    payload = zlib.compress(nbt)
+    body = (len(payload) + 1).to_bytes(4, 'big') + b'\x02' + payload
+    location = ((2 << 8) | 1).to_bytes(4, 'big')
+    table = b''.join(location if i < present else bytes(4) for i in range(1024))
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(table + bytes(4096) + body + bytes(4096 - len(body)))
+if __name__ == '__main__':
+    write(sys.argv[1], *(sys.argv[2:3] or []), *(int(n) for n in sys.argv[3:4]))
+PY
+
 # What every stub runs: finds its unit by script and arguments and writes
 # what the table says that unit writes. FAKE_FAIL=<unit> makes the unit exit
 # 1 having written nothing, FAKE_PARTIAL=<unit> after writing everything;
 # FAKE_THAWED=<corpus> records that corpus as not frozen.
 cat > "${work}/stub.py" <<'PY'
 import json, os, pathlib, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import region
 inventory, script, args = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3:]
 assert args and args[-1] == '--accept-eula', f'--accept-eula must come last: {args}'
 assert 'STRATUM_FIXTURES_DIR' not in os.environ, 'STRATUM_FIXTURES_DIR reached a generator'
@@ -75,6 +97,9 @@ if os.environ.get('FAKE_FAIL') == unit['name']:
     sys.exit(1)
 probes = pathlib.Path('.fixtures/1.21.11/probes')
 for out in unit['outputs']:
+    if out.get('root') == 'regions':
+        region.write(pathlib.Path('.fixtures/1.21.11/regions') / out['file'])
+        continue
     root = probes / out['dir']
     root.mkdir(parents=True, exist_ok=True)
     if out.get('density'):
@@ -112,17 +137,23 @@ for path in sorted({u['argv'][0] for u in inventory['units']}):
     text = '#!/bin/sh\n'
     if density:
         text += ': tools/analysis/density-probe.sh\n'
+    if path == 'tools/fetch-vanilla':
+        text += f'readonly DEFAULT_SEEDS="{",".join(inventory["golden_seeds"])}"\n'
     text += f'exec python3 "{stub}" "{sys.argv[1]}" "$(basename "$0")" "$@"\n'
     (fake / path).write_text(text)
     (fake / path).chmod(0o755)
 for name in inventory['exempt']:
     (analysis / name).write_text('#!/bin/sh\n# the harness, or a script CI does not run\n')
     (analysis / name).chmod(0o755)
-restores = ''.join(f'          key: ${{{{ steps.probe-keys.outputs.{s} }}}}\n'
+lookup = ('          path: ${{ steps.key.outputs.path }}\n'
+          '          key: ${{ steps.key.outputs.key }}\n')
+restores = ''.join(f'          path: .fixtures/${{{{ env.MINECRAFT_VERSION }}}}/{inventory["roots"][s]}\n'
+                   f'          key: ${{{{ steps.probe-keys.outputs.{s} }}}}\n'
                    for s in inventory['shards'])
 (fake / '.github/workflows/ci.yml').write_text(
     f'env:\n  MINECRAFT_VERSION: "{inventory["version"]}"\njobs:\n  probes:\n'
-    f'    strategy:\n      matrix:\n        shard: [{", ".join(inventory["shards"])}]\n{restores}')
+    f'    strategy:\n      matrix:\n        shard: [{", ".join(inventory["shards"])}]\n'
+    f'{lookup}{restores}')
 PY
 export STRATUM_FIXTURES_DIR="${work}/elsewhere"   # must never reach a generator
 
@@ -132,8 +163,35 @@ expect 1 "a probe script in neither list fails lint" "new-thing-probe.sh is neit
     "${pw}" lint
 rm "${fake}/tools/analysis/new-thing-probe.sh"
 
+# The goldens: lint holds them to fetch-vanilla's seeds, to the options that
+# keep them what the cases score, and to the tree CI caches each shard as.
+# Each fault is put back before the next.
+cp "${pw}" "${work}/saved"
+sed -i.bak "s/'--dimensions', 'nether', '--heap', '4G')/'--dimensions', 'nether', '--heap', '4G', '--with-structures')/" "${pw}"
+expect 1 "a golden unit may not pass --with-structures" "--with-structures is not one a golden may pass" \
+    "${pw}" lint
+cp "${work}/saved" "${pw}"
+sed -i.bak "s/'--dimensions', 'nether', '--heap', '4G')/'--dimensions', 'nether', '--heap', '4G', '--no-freeze-ticks')/" "${pw}"
+expect 1 "a golden unit may not thaw the world" "--no-freeze-ticks is not one a golden may pass" "${pw}" lint
+cp "${work}/saved" "${pw}"
+cp "${fake}/tools/fetch-vanilla" "${work}/saved"
+sed -i.bak 's/^readonly DEFAULT_SEEDS="0,/readonly DEFAULT_SEEDS="7,/' "${fake}/tools/fetch-vanilla"
+expect 1 "the golden seeds are fetch-vanilla's own" "but tools/fetch-vanilla's DEFAULT_SEEDS is 7," "${pw}" lint
+cp "${work}/saved" "${fake}/tools/fetch-vanilla"
+cp "${fake}/.github/workflows/ci.yml" "${work}/saved"
+sed -i.bak 's|/regions$|/probes|' "${fake}/.github/workflows/ci.yml"
+# shellcheck disable=SC2016 # the workflow's own ${{ }}, verbatim
+expect 1 "a goldens shard restored into probes/ fails lint" \
+    'restores shard goldens-nether into .fixtures/${{ env.MINECRAFT_VERSION }}/probes' "${pw}" lint
+cp "${work}/saved" "${fake}/.github/workflows/ci.yml"
+sed -i.bak 's|path: ${{ steps.key.outputs.path }}|path: .fixtures/1.21.11/probes|' "${fake}/.github/workflows/ci.yml"
+expect 1 "the probes job caches the tree key names" "probes job caches .fixtures/1.21.11/probes" "${pw}" lint
+cp "${work}/saved" "${fake}/.github/workflows/ci.yml"
+rm -f "${pw}.bak" "${fake}/tools/fetch-vanilla.bak" "${fake}/.github/workflows/ci.yml.bak"
+expect 0 "every fault put back, the scratch repository lints clean again" "ok:" "${pw}" lint
+
 # --- generate
-expect 0 "generates one shard, then checks it" "probe corpora of ${aquifer_shard_units} unit(s) present" \
+expect 0 "generates one shard, then checks it" "output(s) of ${aquifer_shard_units} unit(s) present" \
     "${pw}" generate --shard aquifer --accept-eula
 test -s "${probes}/comb_999/two/r.0.0.mca"
 test ! -e "${probes}/capfloor_s42"
@@ -179,7 +237,36 @@ if ! { test ! -e "${probes}/lowsea/old" && test ! -e "${probes}.previous"; }; th
 fi
 expect 1 "refuses what it generated unfrozen" "lowsea/manifest.json: ticks_frozen is False" \
     env FAKE_THAWED=lowsea "${pw}" generate --only lowsea --accept-eula
-expect 0 "generates every shard" "probe corpora of ${all_units} unit(s) present" "${pw}" generate --accept-eula
+expect 0 "generates every shard" "output(s) of ${all_units} unit(s) present" "${pw}" generate --accept-eula
+
+# --- the region goldens: files under regions/, each checked whole
+regions="${fake}/.fixtures/1.21.11/regions"
+test -s "${regions}/seed--4172144997902289642/overworld/r.4.3.mca"
+test -s "${regions}/seed--9223372036854775808/nether/r.0.0.mca"
+expect 0 "a goldens shard verifies" "golden region(s), every chunk at full status" \
+    "${pw}" verify --shard goldens-overworld
+python3 "${work}/region.py" "${regions}/seed-42/end/r.0.0.mca" minecraft:noise
+expect 1 "a golden region short of full status fails" \
+    "regions/seed-42/end/r.0.0.mca: 1024 chunk(s) at status 'minecraft:noise'" "${pw}" verify
+python3 "${work}/region.py" "${regions}/seed-42/end/r.0.0.mca" minecraft:full 1000
+expect 1 "a golden region missing chunks fails" "regions/seed-42/end/r.0.0.mca: 24 of 1024 chunks missing" \
+    "${pw}" verify --shard goldens-overworld
+printf 'not a region' > "${regions}/seed-42/end/r.0.0.mca"
+expect 1 "a truncated golden region fails" "regions/seed-42/end/r.0.0.mca: shorter than its 8 KiB header" \
+    "${pw}" verify --only goldens-overworld-end
+expect 0 "other shards do not see a goldens fault" "present" "${pw}" verify --shard goldens-nether
+expect 0 "its shard regenerates it" "golden region(s), every chunk at full status" \
+    "${pw}" generate --shard goldens-overworld --accept-eula
+echo old > "${regions}/seed-0/nether/r.0.0.mca"
+rm "${regions}/seed-1/nether/r.0.0.mca"
+expect 1 "a failed golden unit is undone" "1 of 1 unit(s) failed: goldens-nether" \
+    env FAKE_PARTIAL=goldens-nether "${pw}" generate --shard goldens-nether --accept-eula
+if ! { grep -q old "${regions}/seed-0/nether/r.0.0.mca" && test ! -e "${regions}/seed-1/nether/r.0.0.mca" \
+        && test ! -e "${regions}.previous"; }; then
+    echo "FAIL: a failed golden unit did not leave the regions it found"; exit 1
+fi
+echo "ok: a failed golden unit leaves the regions it found, and none it half-wrote"
+expect 0 "the goldens regenerate" "of 1 unit(s) present" "${pw}" generate --only goldens-nether --accept-eula
 cp "${repo_root}/tools/analysis/aquifer-probes.sh" "${fake}/tools/analysis/aquifer-probes.sh"
 expect 0 "aquifer-probes.sh runs the table's aquifer units" "of ${aquifer_units} unit(s) present" \
     "${fake}/tools/analysis/aquifer-probes.sh" --accept-eula
@@ -220,6 +307,8 @@ expect 1 "key refuses a version the table is not for" "but this table is for 1.2
     env MINECRAFT_VERSION=1.21.12 "${pw}" key aquifer
 expect 0 "a key names its epoch, version, JDK and shard" "key=probe-worlds-e1-1.21.11-jdk25-water-" \
     "${pw}" key water
+expect 0 "a probe shard caches probes/" "path=.fixtures/1.21.11/probes" "${pw}" key water
+expect 0 "a goldens shard caches regions/" "path=.fixtures/1.21.11/regions" "${pw}" key goldens-nether
 "${pw}" keys > "${work}/keys.before"
 [[ "$(wc -l < "${work}/keys.before")" -eq "${shard_count}" ]] || { echo "FAIL: keys printed $(wc -l < "${work}/keys.before") lines, for ${shard_count} shards"; exit 1; }
 echo "# one more line" >> "${fake}/tools/analysis/aquifer-lowsea-probe.sh"
@@ -244,6 +333,19 @@ got="$({ diff "${work}/keys.after" "${work}/keys.harness" || true; } \
 [[ "${got}" == "${want}" ]] || {
     echo "FAIL: a harness edit changed the keys of [${got}], wanted [${want}]"; exit 1; }
 echo "ok: editing density-probe.sh changes exactly the shards that run it (${want})"
+echo "# one more line" >> "${fake}/tools/fetch-vanilla"
+"${pw}" keys > "${work}/keys.fetch"
+want="$(python3 -c '
+import json, sys
+units = json.load(open(sys.argv[1]))["units"]
+print(" ".join(sorted({u["shard"] for u in units if u["argv"][0] == "tools/fetch-vanilla"})))
+' "${work}/inventory.json")"
+got="$({ diff "${work}/keys.harness" "${work}/keys.fetch" || true; } \
+       | sed -n 's/^> \([^=]*\)=.*/\1/p' \
+       | sort | tr '\n' ' ' | sed 's/ $//')"
+[[ -n "${want}" && "${got}" == "${want}" ]] || {
+    echo "FAIL: a fetch-vanilla edit changed the keys of [${got}], wanted [${want}]"; exit 1; }
+echo "ok: editing tools/fetch-vanilla changes exactly the goldens shards' keys (${want})"
 expect 0 "the epoch is in every key" "aquifer=probe-worlds-e2-" env PROBE_CACHE_EPOCH=2 "${pw}" keys
 
 echo "probe-worlds: all cases passed"

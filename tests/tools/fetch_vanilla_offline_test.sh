@@ -180,6 +180,73 @@ else
     failures=$((failures + 1))
 fi
 
+# Structures stay out of every generated world unless asked for by their own
+# flag, and that flag is refused for a terrain-only golden. --with-structures
+# once also set generate-structures=true, so the conformance job's fetch,
+# given --generate-regions, would have written goldens with villages in them;
+# it is extraction only now. Checked on the server.properties a run writes
+# before it starts the server: `java` here is a stub that exits at once, so
+# no server runs and the run fails right after, leaving the file behind.
+gen_src="${work_dir}/gen-src"
+cp -r "${jar_src}" "${gen_src}"
+mkdir -p "${gen_src}/data/minecraft/worldgen/biome" "${gen_src}/data/minecraft/structure"
+echo '{"features": [[], []], "carvers": {}}' > "${gen_src}/data/minecraft/worldgen/biome/plains.json"
+printf 'not really nbt' > "${gen_src}/data/minecraft/structure/igloo.nbt"
+gen_jar="${work_dir}/gen-server.jar"
+(cd "${gen_src}" && zip -qr "${gen_jar}" .)
+mkdir -p "${work_dir}/no-server"
+printf '#!/bin/sh\nexit 1\n' > "${work_dir}/no-server/java"
+chmod +x "${work_dir}/no-server/java"
+
+# generate <output dir> <option...>: one seed, one dimension, no server.
+generate() {
+    local out="$1"
+    shift
+    PATH="${work_dir}/no-server:${PATH}" "${fetch}" --jar "${gen_jar}" --skip-verify \
+        --output "${out}" --generate-regions --accept-eula --seeds 0 --dimensions overworld "$@" 2>&1
+}
+structures_setting() {
+    sed -n 's/^generate-structures=//p' "$1/servers/seed-0/server.properties" 2>/dev/null
+}
+
+generate "${work_dir}/gen-plain" > /dev/null || true
+check "a golden world is generated without structures" \
+    test "$(structures_setting "${work_dir}/gen-plain")" = false
+generate "${work_dir}/gen-nbt" --with-structures > /dev/null || true
+check "--with-structures extracts the structure NBT" \
+    test -f "${work_dir}/gen-nbt/structure/igloo.nbt"
+check "--with-structures does not turn structures on in the world" \
+    test "$(structures_setting "${work_dir}/gen-nbt")" = false
+check "the terrain-only datapack is still written beside it" \
+    test -f "${work_dir}/gen-nbt/servers/seed-0/world/datapacks/stratum-terrain-only/pack.mcmeta"
+
+structures_status=0
+structures_output="$(generate "${work_dir}/gen-refused" --generate-structures)" || structures_status=$?
+# By its own message: an unknown option fails too, and its usage text names
+# --with-features as well.
+if [[ ${structures_status} -ne 0 ]] && grep -q "too for a Tier-B world" <<<"${structures_output}" \
+        && [[ ! -e "${work_dir}/gen-refused/servers" ]]; then
+    echo "  ok: --generate-structures is refused for a terrain-only golden, before any server"
+else
+    echo "  FAILED: --generate-structures was not refused for a terrain-only golden" >&2
+    echo "${structures_output}" >&2
+    failures=$((failures + 1))
+fi
+generate "${work_dir}/gen-tier-b" --generate-structures --with-features > /dev/null || true
+check "--generate-structures with --with-features turns them on" \
+    test "$(structures_setting "${work_dir}/gen-tier-b")" = true
+nothing_status=0
+nothing_output="$("${fetch}" --jar "${gen_jar}" --skip-verify --output "${work_dir}/gen-nothing" \
+    --generate-structures --with-features 2>&1)" || nothing_status=$?
+if [[ ${nothing_status} -ne 0 ]] && grep -q "only means something with --generate-regions" \
+        <<<"${nothing_output}"; then
+    echo "  ok: --generate-structures without --generate-regions is refused"
+else
+    echo "  FAILED: --generate-structures without --generate-regions was not refused" >&2
+    echo "${nothing_output}" >&2
+    failures=$((failures + 1))
+fi
+
 # The dry run must describe generation without doing any of it.
 dry_output="$("${fetch}" --dry-run --generate-regions --accept-eula \
     --output "${work_dir}/dry-generate" 2>&1)"
@@ -187,6 +254,15 @@ if grep -q "requested" <<<"${dry_output}"; then
     echo "  ok: --dry-run reports that region goldens were requested"
 else
     echo "  FAILED: --dry-run did not report the requested region goldens" >&2
+    failures=$((failures + 1))
+fi
+dry_structures="$("${fetch}" --dry-run --generate-regions --accept-eula --with-structures \
+    --output "${work_dir}/dry-structures" 2>&1)"
+if grep -q "world structures *: no" <<<"${dry_structures}"; then
+    echo "  ok: --dry-run says --with-structures leaves the world without structures"
+else
+    echo "  FAILED: --dry-run did not report structures off in the world" >&2
+    echo "${dry_structures}" >&2
     failures=$((failures + 1))
 fi
 

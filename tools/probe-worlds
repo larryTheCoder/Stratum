@@ -6,7 +6,7 @@
   tools/probe-worlds generate --accept-eula [--shard NAME] [--only GLOB]
   tools/probe-worlds verify [--shard NAME] [--only GLOB] [--fixtures DIR]
   tools/probe-worlds shards        the CI shards, one per line
-  tools/probe-worlds key SHARD     `key=<Actions cache key>` for one shard (CI)
+  tools/probe-worlds key SHARD     `key=<Actions cache key>` and `path=<what it caches>` (CI)
   tools/probe-worlds keys          `<shard>=<Actions cache key>` for every shard (CI)
   tools/probe-worlds inventory     the table below, as JSON
   tools/probe-worlds lint          the table against tools/analysis and ci.yml
@@ -18,26 +18,38 @@ caches it under `key`; so this table IS the set of corpora CI provides
 (SPEC §7). A case that reads a corpus no unit writes skips in CI, and CI
 fails on any skip tests/conformance/expected-skips.txt does not list.
 
-`generate` replaces each selected unit's corpora whole, runs every selected
+The region goldens are units too: tools/fetch-vanilla --generate-regions,
+writing region files under regions/ instead of corpora under probes/. Each
+shard holds one of the two trees, which is the path CI caches it under
+(`key` prints both). Their seeds are fetch-vanilla's own fixed set, which
+`lint` holds the table to; and `lint` refuses a golden unit any option that
+would make it something other than what the cases score (thawed, with
+features, at another margin, somewhere else).
+
+`generate` replaces each selected unit's outputs whole, runs every selected
 unit even after one fails, then runs `verify` on the selection. A unit's
-corpora are moved aside to probes.previous/ while its generator runs:
-deleted when it succeeds, put back when it fails, so a failed regeneration
-(an exhausted heap, a settle timeout, a bad jar) leaves what was there
-rather than nothing. A run killed outright leaves them in probes.previous/,
-where the next `generate` of that unit takes them as the previous copy.
+outputs are moved aside to probes.previous/ (regions.previous/ for a
+golden) while its generator runs: deleted when it succeeds, put back when
+it fails, so a failed regeneration (an exhausted heap, a settle timeout, a
+bad jar) leaves what was there rather than nothing. A run killed outright
+leaves them there, where the next `generate` of that unit takes them as
+the previous copy.
 Because the corpus is out of the way, density-probe.sh's refusal to
 replace another seed's corpus does not arise here: the table names the
 seed. `verify` starts nothing: every corpus present, recorded
 under the seed its cases expect, frozen where its generator freezes, and a
-non-empty region for every entry its spec names. The cases cannot be left
-to notice, because several score whatever subset of seeds or entries they
-find, so a half-generated set would pass them.
+non-empty region for every entry its spec names; every golden region whole,
+all 1024 chunks at full status (fetch-vanilla calls a region settled when
+its file stops growing, which a chunk still being promoted need not
+change). The cases cannot be left to notice, because several score
+whatever subset of seeds or entries they find, so a half-generated set
+would pass them.
 
 A shard's cache key hashes its rows of this table and the text of every
 script those rows run (each generator and the tools/analysis/*.sh it
-calls, i.e. density-probe.sh): editing one generator regenerates only its
-shard. The engine is never an input; the server's output does not depend on
-it. FORMAT, or PROBE_CACHE_EPOCH in ci.yml, forces a regeneration for a
+calls, i.e. density-probe.sh; tools/fetch-vanilla for the goldens):
+editing one generator regenerates only its shard. The engine is never an
+input; the server's output does not depend on it. FORMAT, or PROBE_CACHE_EPOCH in ci.yml, forces a regeneration for a
 change this cannot see (the JDK patch level, the heap, the runner).
 
 Running a generator runs the Minecraft server, so `generate` needs
@@ -56,14 +68,19 @@ import shutil
 import subprocess
 import sys
 import time
+import zlib
 
 VERSION = '1.21.11'
 FORMAT = 1
 REPO = pathlib.Path(__file__).resolve().parent.parent
 ANALYSIS = 'tools/analysis/'
-# Beside probes/, never in it: where `generate` keeps a unit's previous
-# corpora while its generator runs. Not cached by CI, not read by any case.
-PREVIOUS = 'probes.previous'
+FETCH = 'tools/fetch-vanilla'
+# The two trees a unit writes into, under .fixtures/<version>/: the probe
+# corpora, and the region goldens (tools/fetch-vanilla --generate-regions).
+PROBES, REGIONS = 'probes', 'regions'
+# Beside each tree, never in it: where `generate` keeps a unit's previous
+# output while its generator runs. Not cached by CI, not read by any case.
+PREVIOUS = '.previous'
 
 
 def density(*pairs):
@@ -80,8 +97,38 @@ def own(directory, files, record=None):
 
 
 def unit(name, shard, argv, outputs):
-    return {'name': name, 'shard': shard, 'argv': [ANALYSIS + argv[0]] + list(argv[1:]),
-            'outputs': outputs}
+    """argv[0] is a script under tools/analysis, or a path from the repository root."""
+    script = argv[0] if '/' in argv[0] else ANALYSIS + argv[0]
+    return {'name': name, 'shard': shard, 'argv': [script] + list(argv[1:]), 'outputs': outputs}
+
+
+# tools/fetch-vanilla's DEFAULT_SEEDS, in its order (SPEC §7's fixed seed
+# set): what a golden unit generates when it names no --seeds. `lint` holds
+# the two together.
+GOLDEN_SEEDS = ('0', '1', '-1', '42', '-4172144997902289642', '2891948927356891',
+                '9223372036854775807', '-9223372036854775808')
+# The only options a golden unit may pass: anything else would make its
+# regions something other than what the cases score (--no-freeze-ticks,
+# --with-features, --margin, --output, --jar ...).
+GOLDEN_OPTIONS = {'--generate-regions': False, '--dimensions': True, '--seeds': True,
+                  '--regions': True, '--heap': True}
+
+
+def option(argv, flag, default):
+    return argv[argv.index(flag) + 1] if flag in argv else default
+
+
+def golden(name, shard, *options):
+    """A tools/fetch-vanilla --generate-regions run, and the region files it
+    collects: regions/seed-<seed>/<dimension>/r.<x>.<z>.mca, read off its own
+    arguments with fetch-vanilla's defaults."""
+    argv = [FETCH, '--generate-regions', *options]
+    seeds = option(argv, '--seeds', ','.join(GOLDEN_SEEDS)).split(',')
+    dimensions = option(argv, '--dimensions', 'overworld,nether,end').split(',')
+    regions = option(argv, '--regions', '0,0').split()
+    files = [f'seed-{seed}/{dimension}/r.{region.replace(",", ".")}.mca'
+             for seed in seeds for dimension in dimensions for region in regions]
+    return unit(name, shard, argv, [{'root': REGIONS, 'file': f} for f in files])
 
 
 FROZEN_MANIFEST = {'file': 'manifest.json', 'seed': -1, 'frozen': True}
@@ -198,6 +245,17 @@ UNITS = [
          density(*((f'markers_{group}_s{seed}', seed)
                    for group in ('bare', 'int', 'cell', 'flat', 'memo'))))
     for seed in (42, 31337)
+] + [
+    # The region goldens (SPEC §7), split as they were first generated: the
+    # Nether alone (about 15 minutes locally), the overworld and End beside
+    # it (about 25), and the one r.4.3 above_preliminary_surface reads at a
+    # negative-depth column (about 2.5). A 4 GB heap rather than
+    # fetch-vanilla's 2 GB: the runner has 16 and runs one server.
+    golden('goldens-nether', 'goldens-nether', '--dimensions', 'nether', '--heap', '4G'),
+    golden('goldens-overworld-end', 'goldens-overworld', '--dimensions', 'overworld,end',
+           '--heap', '4G'),
+    golden('goldens-r.4.3', 'goldens-overworld', '--seeds', '-4172144997902289642',
+           '--dimensions', 'overworld', '--regions', '4,3', '--heap', '4G'),
 ]
 
 # Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`
@@ -217,6 +275,21 @@ EXEMPT = {
 }
 
 SHARDS = list(dict.fromkeys(u['shard'] for u in UNITS))
+
+
+def root_of(out):
+    """The tree an output lives in: probes/ unless it says otherwise."""
+    return out.get('root', PROBES)
+
+
+def path_of(out):
+    """An output's path under its tree: a corpus directory, or one golden file."""
+    return out['file'] if 'file' in out else out['dir']
+
+
+def shard_root(shard):
+    """The one tree a shard writes into, which is what CI caches it as."""
+    return root_of(next(out for u in UNITS if u['shard'] == shard for out in u['outputs']))
 
 
 def die(message, code=1):
@@ -242,12 +315,56 @@ def outputs(units):
 
 # --- verify -----------------------------------------------------------------
 
-def problems_in(units, probes):
+STATUS_TAG = re.compile(rb'\x08\x00\x06Status(..)', re.S)
+
+
+def unfinished_chunks(data):
+    """What keeps a region file from being a golden: a chunk missing, one the
+    container cannot hand back, or one short of full status. Reads the
+    container (a 4 KiB table of 1024 sector locations, each chunk a length,
+    a compression byte and the payload) and each chunk's root `Status`
+    string, and nothing else; the cases decode the rest."""
+    if len(data) < 8192:
+        return ['shorter than its 8 KiB header']
+    missing, broken, statuses = 0, [], {}
+    for index in range(1024):
+        location = int.from_bytes(data[index * 4:index * 4 + 4], 'big')
+        if location == 0:
+            missing += 1
+            continue
+        start = (location >> 8) * 4096
+        length = int.from_bytes(data[start:start + 4], 'big')
+        kind = data[start + 4] if start + 4 < len(data) else None
+        try:
+            if kind == 1:
+                payload = zlib.decompress(data[start + 5:start + 4 + length], 47)
+            elif kind == 2:
+                payload = zlib.decompress(data[start + 5:start + 4 + length])
+            elif kind == 3:
+                payload = data[start + 5:start + 4 + length]
+            else:
+                raise ValueError(f'compression {kind!r}')
+        except (ValueError, zlib.error) as error:
+            broken.append(f'chunk {index % 32},{index // 32}: {error}')
+            continue
+        found = STATUS_TAG.search(payload)
+        size = int.from_bytes(found.group(1), 'big') if found else 0
+        status = payload[found.end():found.end() + size].decode('utf-8', 'replace') if found else None
+        if status != 'minecraft:full':
+            statuses.setdefault(status, []).append(f'{index % 32},{index // 32}')
+    problems = [f'{missing} of 1024 chunks missing'] if missing else []
+    problems += broken[:3] + ([f'... {len(broken) - 3} more'] if len(broken) > 3 else [])
+    problems += [f'{len(chunks)} chunk(s) at status {status!r} (first {chunks[0]}), not minecraft:full'
+                 for status, chunks in sorted(statuses.items(), key=lambda item: str(item[0]))]
+    return problems
+
+
+def problems_in(units, version_dir):
     problems = []
 
     def present(path):
         if not path.is_file() or path.stat().st_size == 0:
-            problems.append(f'{path.relative_to(probes)}: missing or empty')
+            problems.append(f'{path.relative_to(version_dir)}: missing or empty')
             return False
         return True
 
@@ -257,19 +374,27 @@ def problems_in(units, probes):
         try:
             data = json.loads(path.read_text())
         except ValueError as error:
-            problems.append(f'{path.relative_to(probes)}: not JSON ({error})')
+            problems.append(f'{path.relative_to(version_dir)}: not JSON ({error})')
             return None
         if not isinstance(data, dict):
-            problems.append(f'{path.relative_to(probes)}: not a JSON object')
+            problems.append(f'{path.relative_to(version_dir)}: not a JSON object')
             return None
         if data.get('seed') != seed:
-            problems.append(f'{path.relative_to(probes)}: seed {data.get("seed")!r}, expected {seed}')
+            problems.append(f'{path.relative_to(version_dir)}: seed {data.get("seed")!r}, '
+                            f'expected {seed}')
         if frozen and data.get('ticks_frozen') is not True:
-            problems.append(f'{path.relative_to(probes)}: ticks_frozen is '
+            problems.append(f'{path.relative_to(version_dir)}: ticks_frozen is '
                             f'{data.get("ticks_frozen")!r}; the world was not frozen')
         return data
 
+    probes = version_dir / PROBES
     for out in outputs(units):
+        if root_of(out) == REGIONS:
+            path = version_dir / REGIONS / out['file']
+            if present(path):
+                problems += [f'{REGIONS}/{out["file"]}: {problem}'
+                             for problem in unfinished_chunks(path.read_bytes())]
+            continue
         root = probes / out['dir']
         if out.get('density'):
             manifest = record(root / 'manifest.json', out['seed'], True)
@@ -299,45 +424,66 @@ def problems_in(units, probes):
 
 
 def verify(units, fixtures):
-    probes = fixtures / VERSION / 'probes'
-    problems = problems_in(units, probes)
+    version_dir = fixtures / VERSION
+    problems = problems_in(units, version_dir)
     count = len(outputs(units))
+    goldens = sum(root_of(out) == REGIONS for out in outputs(units))
     if problems:
-        print(f'{len(problems)} problem(s) across {count} probe corpora under {probes}:',
+        print(f'{len(problems)} problem(s) across {count} output(s) under {version_dir}:',
               file=sys.stderr)
         print('\n'.join('  ' + problem for problem in problems), file=sys.stderr)
         print('regenerate with: tools/probe-worlds generate --accept-eula', file=sys.stderr)
         return 1
-    print(f'all {count} probe corpora of {len(units)} unit(s) present, each from the seed its '
-          'cases expect, every density probe frozen')
+    print(f'all {count} output(s) of {len(units)} unit(s) present: {count - goldens} probe '
+          'corpora, each from the seed its cases expect, every density probe frozen; '
+          f'{goldens} golden region(s), every chunk at full status')
     return 0
 
 
 # --- generate ---------------------------------------------------------------
 
-def set_aside(u, probes, previous):
-    """Move a unit's corpora out of probes/ before its generator runs.
+def places(out, version_dir):
+    """Where an output lives, and where `generate` keeps its previous copy."""
+    root = root_of(out)
+    return version_dir / root / path_of(out), version_dir / (root + PREVIOUS) / path_of(out)
+
+
+def remove(path):
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
+def set_aside(u, version_dir):
+    """Move a unit's outputs out of their tree before its generator runs.
 
     A copy already set aside is one an interrupted run left: the last
-    complete corpus, so it stays and what is in probes/ (possibly half
+    complete one, so it stays and what is in the tree (possibly half
     written) goes."""
     for out in u['outputs']:
-        current, kept = probes / out['dir'], previous / out['dir']
+        current, kept = places(out, version_dir)
         if kept.exists():
-            shutil.rmtree(current, ignore_errors=True)
+            remove(current)
         elif current.exists():
             kept.parent.mkdir(parents=True, exist_ok=True)
             current.rename(kept)
 
 
-def put_back(u, probes, previous):
+def put_back(u, version_dir):
     """After a failed generator: drop what it wrote, restore what was there."""
     for out in u['outputs']:
-        current, kept = probes / out['dir'], previous / out['dir']
-        shutil.rmtree(current, ignore_errors=True)
+        current, kept = places(out, version_dir)
+        remove(current)
         if kept.exists():
             current.parent.mkdir(parents=True, exist_ok=True)
             kept.rename(current)
+
+
+def drop_previous(u, version_dir):
+    """After a generator that succeeded: its previous outputs go."""
+    for out in u['outputs']:
+        remove(places(out, version_dir)[1])
 
 
 def prune(root):
@@ -356,6 +502,10 @@ def generate(units):
             die(f'{tool} is needed')
     if any(u['name'] in ('inline-noise', 'end-islands') for u in units) and not shutil.which('jq'):
         die('jq is needed (inline-noise, end-islands)')
+    if any(u['argv'][0] == FETCH for u in units):
+        for tool in ('curl', 'jq', 'unzip'):
+            if shutil.which(tool) is None:
+                die(f'{tool} is needed ({FETCH}, for the region goldens)')
     fixture_root = REPO / '.fixtures' / VERSION
     if not any(fixture_root.glob('server*.jar')) and not any(fixture_root.glob('*/server*.jar')):
         die(f'no server jar under {fixture_root}; run tools/fetch-vanilla first')
@@ -366,11 +516,9 @@ def generate(units):
     # Every generator writes under <repo>/.fixtures, which is where verify looks.
     env = {k: v for k, v in os.environ.items() if k not in ('STRATUM_FIXTURES_DIR', 'PROBE_OUT')}
     in_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
-    probes = fixture_root / 'probes'
-    previous = fixture_root / PREVIOUS
     rows, failed = [], []
     for u in units:
-        set_aside(u, probes, previous)
+        set_aside(u, fixture_root)
         command = u['argv'] + ['--accept-eula']
         print(f'{"::group::" if in_actions else "==> "}{u["name"]}: {" ".join(command)}',
               file=sys.stderr, flush=True)
@@ -378,23 +526,23 @@ def generate(units):
         try:
             code = subprocess.call(command, cwd=REPO, env=env)
         except BaseException:
-            put_back(u, probes, previous)
+            put_back(u, fixture_root)
             raise
         seconds = round(time.monotonic() - started)
         if in_actions:
             print('::endgroup::', file=sys.stderr, flush=True)
         rows.append((u['name'], 'ok' if code == 0 else f'exit {code}', seconds))
         if code != 0:
-            put_back(u, probes, previous)
+            put_back(u, fixture_root)
             failed.append(u['name'])
             print(f'{"::error title=probe world " + u["name"] + "::" if in_actions else "error: "}'
-                  f'{" ".join(command)} exited {code} after {seconds}s; its corpora are as they '
+                  f'{" ".join(command)} exited {code} after {seconds}s; its outputs are as they '
                   'were before it ran', file=sys.stderr, flush=True)
         else:
-            for out in u['outputs']:
-                shutil.rmtree(previous / out['dir'], ignore_errors=True)
+            drop_previous(u, fixture_root)
             print(f'==> {u["name"]}: done in {seconds}s', file=sys.stderr, flush=True)
-        prune(previous)
+        for root in {root_of(out) for out in u['outputs']}:
+            prune(fixture_root / (root + PREVIOUS))
 
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
@@ -447,6 +595,44 @@ def key(shard):
 
 # --- lint -------------------------------------------------------------------
 
+def lint_goldens():
+    """The golden units against tools/fetch-vanilla: its seeds, the options
+    a golden may pass, and the files its arguments make it collect."""
+    problems = []
+    try:
+        text = (REPO / FETCH).read_text(encoding='utf-8')
+    except OSError as error:
+        return [f'cannot read {FETCH}: {error}']
+    found = re.search(r'^readonly DEFAULT_SEEDS="([^"]*)"', text, re.M)
+    if not found or tuple(found.group(1).split(',')) != GOLDEN_SEEDS:
+        problems.append(f'GOLDEN_SEEDS is {",".join(GOLDEN_SEEDS)}, but {FETCH}\'s DEFAULT_SEEDS is '
+                        f'{found.group(1) if found else "missing"}')
+    for u in UNITS:
+        golden_outputs = [out for out in u['outputs'] if root_of(out) == REGIONS]
+        if u['argv'][0] != FETCH:
+            if golden_outputs:
+                problems.append(f'{u["name"]}: only {FETCH} writes {REGIONS}/')
+            continue
+        if len(golden_outputs) != len(u['outputs']) or not golden_outputs:
+            problems.append(f'{u["name"]}: {FETCH} writes {REGIONS}/ and nothing else')
+        argv = u['argv'][1:]
+        index = 0
+        while index < len(argv):
+            flag = argv[index]
+            if flag not in GOLDEN_OPTIONS:
+                problems.append(f'{u["name"]}: {FETCH} {flag} is not one a golden may pass '
+                                f'({", ".join(GOLDEN_OPTIONS)}); the cases score frozen, '
+                                'terrain-only, structure-free regions where they look for them')
+                break
+            index += 2 if GOLDEN_OPTIONS[flag] else 1
+        if '--generate-regions' not in argv:
+            problems.append(f'{u["name"]}: {FETCH} without --generate-regions writes no region')
+        rest = [arg for arg in argv if arg != '--generate-regions']
+        if golden(u['name'], u['shard'], *rest)['outputs'] != u['outputs']:
+            problems.append(f'{u["name"]}: its outputs are not the files its arguments collect')
+    return problems
+
+
 def lint():
     problems = []
     generators = {os.path.basename(u['argv'][0]) for u in UNITS}
@@ -454,15 +640,22 @@ def lint():
         path = REPO / u['argv'][0]
         if not (path.is_file() and os.access(path, os.X_OK)):
             problems.append(f'{u["name"]}: {u["argv"][0]} is missing or not executable')
+        if not (u['argv'][0] == FETCH or u['argv'][0].startswith(ANALYSIS)):
+            problems.append(f'{u["name"]}: {u["argv"][0]} is neither under {ANALYSIS} nor {FETCH}')
     names = [u['name'] for u in UNITS]
     problems += [f'unit {n} is listed twice' for n in sorted({n for n in names if names.count(n) > 1})]
-    dirs = [out['dir'] for out in outputs(UNITS)]
-    problems += [f'output {d!r} must be a plain path under probes/' for d in dirs
-                 if d.startswith('/') or '..' in d.split('/') or not d]
-    for i, a in enumerate(dirs):
-        for b in dirs[i + 1:]:
-            if a == b or a.startswith(b + '/') or b.startswith(a + '/'):
-                problems.append(f'two outputs overlap: probes/{a} and probes/{b}')
+    paths = [(root_of(out), path_of(out)) for out in outputs(UNITS)]
+    problems += [f'output {p!r} must be a plain path under {r}/' for r, p in paths
+                 if r not in (PROBES, REGIONS) or p.startswith('/') or '..' in p.split('/') or not p]
+    for i, (root_a, a) in enumerate(paths):
+        for root_b, b in paths[i + 1:]:
+            if root_a == root_b and (a == b or a.startswith(b + '/') or b.startswith(a + '/')):
+                problems.append(f'two outputs overlap: {root_a}/{a} and {root_b}/{b}')
+    for shard in SHARDS:
+        roots = {root_of(out) for u in UNITS if u['shard'] == shard for out in u['outputs']}
+        if len(roots) != 1:
+            problems.append(f'shard {shard} writes into {sorted(roots)}; CI caches one tree a shard')
+    problems += lint_goldens()
     for path in sorted((REPO / ANALYSIS).glob('*-probe.sh')):
         if path.name not in generators and path.name not in EXEMPT:
             problems.append(f'{ANALYSIS}{path.name} is neither a unit nor exempt: add it to UNITS '
@@ -487,6 +680,26 @@ def lint():
         restored = set(re.findall(r'steps\.probe-keys\.outputs\.([a-z0-9-]+)', text))
         if restored != set(SHARDS):
             problems.append(f'ci.yml restores shards {sorted(restored)}, the table has {sorted(SHARDS)}')
+        # Each restore unpacks into its shard's own tree: an Actions cache
+        # entry is looked up by its key AND its path, so a `path:` line sits
+        # directly above every `key:` line.
+        cached = re.compile(r'^[ \t]*path:[ \t]*(\S[^\n]*?)[ \t]*\n[ \t]*key:[ \t]*'
+                            r'\$\{\{ steps\.(probe-keys\.outputs\.[a-z0-9-]+|key\.outputs\.key) \}\}',
+                            re.M)
+        pairs = cached.findall(text)
+        with_path = {source.rsplit('.', 1)[1] for _, source in pairs if source.startswith('probe-keys')}
+        if with_path != set(SHARDS):
+            problems.append(f'ci.yml restores {sorted(set(SHARDS) - with_path)} without a path line '
+                            'directly above the key')
+        for path, source in pairs:
+            shard = source.rsplit('.', 1)[1]
+            if source.startswith('probe-keys') and shard in SHARDS \
+                    and path != f'.fixtures/${{{{ env.MINECRAFT_VERSION }}}}/{shard_root(shard)}':
+                problems.append(f'ci.yml restores shard {shard} into {path}, but it is cached as '
+                                f'.fixtures/<version>/{shard_root(shard)}')
+            # ... and the probes job caches the tree `key` names, never a fixed one.
+            if source == 'key.outputs.key' and path != '${{ steps.key.outputs.path }}':
+                problems.append(f'ci.yml probes job caches {path}, not ${{{{ steps.key.outputs.path }}}}')
         version = re.search(r'^\s*MINECRAFT_VERSION:\s*"([^"]+)"', text, re.M)
         if not version or version.group(1) != VERSION:
             problems.append(f'ci.yml MINECRAFT_VERSION is not {VERSION}')
@@ -525,12 +738,15 @@ def main():
     if args.command == 'shards':
         print('\n'.join(SHARDS))
     elif args.command == 'key':
-        print(f'key={key(args.shard)}')
+        # The cached path is the shard's tree, never the other one, so a
+        # goldens entry and a probe entry never overwrite one another.
+        print(f'key={key(args.shard)}\npath=.fixtures/{VERSION}/{shard_root(args.shard)}')
     elif args.command == 'keys':
         print('\n'.join(f'{shard}={key(shard)}' for shard in SHARDS))
     elif args.command == 'inventory':
         print(json.dumps({'version': VERSION, 'shards': SHARDS, 'units': UNITS,
-                          'exempt': sorted(EXEMPT)}, indent=1))
+                          'roots': {shard: shard_root(shard) for shard in SHARDS},
+                          'golden_seeds': GOLDEN_SEEDS, 'exempt': sorted(EXEMPT)}, indent=1))
     elif args.command == 'lint':
         return lint()
     return 0

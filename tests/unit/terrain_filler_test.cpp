@@ -1214,14 +1214,13 @@ TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whol
     // The fixture-free guard on the WIRING of SPEC §11's psl lattice. The
     // server measurement lives in vanilla_psl_lattice_test.cpp and the
     // engine's own reproduction of it in golden_overworld_test.cpp, and both
-    // need server-generated worlds: probe worlds, which only CI's Linux
-    // conformance legs have, or region files, which CI does not generate; the
-    // constant-level case above is blind to it by construction. Here the
-    // entry varies by at least 8 blocks inside every chunk (required below),
-    // so a filler that samples it anywhere else, in any other order, or
-    // floors it anywhere else, moves the band's lower edge in a counted
-    // share of the columns — and the plane being solid stone from -64 to -1,
-    // a moved edge is a different block.
+    // need server-generated worlds — probe worlds and region goldens, which
+    // only CI's Linux conformance legs have; the constant-level case above
+    // is blind to it by construction. Here the entry varies by at least 8
+    // blocks inside every chunk (required below), so a filler that samples it
+    // anywhere else, in any other order, or floors it anywhere else, moves
+    // the band's lower edge in a counted share of the columns — and the plane
+    // being solid stone from -64 to -1, a moved edge is a different block.
     //
     // The reference is computed beside the engine, not by it: a separate
     // Interpreter for the raw entry at y = 0, the surface Executor for the

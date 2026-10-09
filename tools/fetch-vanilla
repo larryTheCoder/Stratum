@@ -39,6 +39,7 @@ skip_verify=0
 accept_eula=0
 generate_regions=0
 with_structures=0
+world_structures=0
 seeds=""
 dimensions="overworld,nether,end"
 regions="0,0"
@@ -61,7 +62,8 @@ options:
   --output <dir>     where fixtures are written (default: <repo>/.fixtures/<id>)
   --jar <path>       use a jar you already downloaded instead of fetching one
   --with-structures  also extract the vanilla structure NBT files, which the
-                     harness uses as real input for its NBT reader tests
+                     harness uses as real input for its NBT reader tests.
+                     Extraction only: it never puts structures in a world
   --generate-regions also produce golden region files by running the server
   --accept-eula      you accept Mojang's EULA; required by --generate-regions
   --seeds <list>     comma-separated seeds (default: the fixed eight)
@@ -72,6 +74,10 @@ options:
                      reach full status (default: 4)
   --with-features    keep carvers and features; by default a generated
                      datapack strips them so the goldens isolate Tier A
+  --generate-structures
+                     let the server place structures in the generated worlds
+                     (off by default). Tier B, like features, so only with
+                     --with-features: a terrain-only golden refuses it
   --heap <size>      server heap, passed to java -Xmx (default: 2G)
   --keep-servers     keep each server's working directory for inspection
   --no-freeze-ticks  let the world tick while generating; fluids then flow
@@ -133,6 +139,7 @@ while [[ $# -gt 0 ]]; do
         --regions)          regions="${2:?--regions needs an argument}"; shift 2 ;;
         --margin)           margin="${2:?--margin needs an argument}"; shift 2 ;;
         --with-features)    terrain_only=0; shift ;;
+        --generate-structures) world_structures=1; shift ;;
         --heap)             heap="${2:?--heap needs an argument}"; shift 2 ;;
         --keep-servers)     keep_servers=1; shift ;;
         --no-freeze-ticks)  freeze_ticks=0; shift ;;
@@ -160,6 +167,19 @@ if [[ "${version}" != "${PINNED_VERSION}" ]]; then
     warn "pin is moved deliberately: schema diff, regenerated goldens, matrix re-check."
 fi
 
+# Structures are Tier B, like the features and carvers the terrain-only
+# datapack strips, so a terrain-only golden must not hold one. They used to
+# follow --with-structures, which means only "extract the NBT", and so went
+# into any regions generated beside it (SPEC §7 measures what that cost).
+if [[ ${world_structures} -eq 1 && ${generate_regions} -eq 0 ]]; then
+    die "--generate-structures only means something with --generate-regions"
+fi
+if [[ ${world_structures} -eq 1 && ${terrain_only} -eq 1 ]]; then
+    die "--generate-structures puts structures in the generated worlds, which are Tier B
+       (SPEC §7) like the features a terrain-only golden strips. Pass --with-features
+       too for a Tier-B world; a golden for the Tier-A cases never holds them."
+fi
+
 if [[ ${dry_run} -eq 1 ]]; then
     log "dry run — no network access, nothing written"
     echo "  version          : ${version}"
@@ -178,6 +198,7 @@ if [[ ${dry_run} -eq 1 ]]; then
     echo "  verify SHA-1     : $([[ ${skip_verify} -eq 1 ]] && echo no || echo yes)"
     echo "  structures       : $([[ ${with_structures} -eq 1 ]] && echo "${structure_dir}" || echo no)"
     echo "  region goldens   : $([[ ${generate_regions} -eq 1 ]] && echo requested || echo no)"
+    echo "  world structures : $([[ ${world_structures} -eq 1 ]] && echo yes || echo no)"
     exit 0
 fi
 
@@ -530,7 +551,7 @@ max-players=1
 spawn-protection=0
 view-distance=10
 simulation-distance=10
-generate-structures=$([[ ${with_structures} -eq 1 ]] && echo true || echo false)
+generate-structures=$([[ ${world_structures} -eq 1 ]] && echo true || echo false)
 spawn-monsters=false
 spawn-npcs=false
 spawn-animals=false
