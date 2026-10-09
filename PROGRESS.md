@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA/CI: CI is set up to generate every probe world a comm
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the window's extent, the aborted floor's status below sea_level -54 (A_lava, not lambda, on the one world that shows it), CI's probe-world jobs (never yet green) and the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the aborted floor's status below sea_level -54 (A_lava, not lambda, on the one world that shows it), CI's probe-world jobs (never yet green) and the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -77,9 +77,17 @@ Open:
       `golden_overworld_test.cpp` and in `golden_fill_aquifer_test.cpp`'s new
       64-chunk case (6291264 of 6291456, 192 flowing; on the probe frozen,
       6291454 and 2 — bounded now, since the remnant varies by run).
-- [ ] **The `flat_cache` window's extent.** 16, 20 and 24 columns score the
-      same on every golden block; 20 is taken (the chunk's own read
-      footprint) and flagged. SPEC §11 names the probe that separates them.
+- [x] **The `flat_cache` window's extent — and every cache marker a
+      datapack can put in an aquifer entry.** `aquifer-markers-probe.sh` (37
+      dimensions a seed, two seeds): the window is the chunk's own columns
+      and one quart past them, [16c, 16c + 19], as taken — 16 columns, a
+      quart further, and a quart below all refuted. Off the window
+      `flat_cache` reads its argument at the read's own y, not y = 0;
+      `interpolated` blends only for the block being generated and is its
+      argument at every point the aquifer reads elsewhere (the old blend was
+      wrong on 5 139 104 blocks); `cache_all_in_cell`, `cache_once` and
+      `cache_2d` are transparent, as built. Output changes for datapacks
+      only — no golden block moves. SPEC §11.
 - [x] **`y_skip` against the server — the closed form holds; the rectangle
       was wrong and is fixed.** On flat psl from -200 to -80 the cutoff read
       off the server is the closed form's to the row (-62, -50, -38; floored,

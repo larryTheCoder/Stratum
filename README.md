@@ -204,8 +204,9 @@ cells under a preliminary surface above 141, and the deep-dark override on
 large_biomes' own erosion and depth.
 Vanilla also marks some fluid positions to tick once a chunk loads. That flag
 is computed too, and it is exact against the server's own lists
-(255457 of 255457 marks on one probe set). Still open: how far the
-`flat_cache` read window reaches, and handing those marks to PocketMine.
+(255457 of 255457 marks on one probe set). A datapack that wraps an aquifer
+entry in a cache marker gets the reading the server takes, measured marker by
+marker (SPEC §11). Still open: handing those marks to PocketMine.
 
 **Surface rules — run.** The overworld's whole tree executes (287 rules over
 141 conditions), and the shipped overworld figure above includes it. The
@@ -281,16 +282,16 @@ health — it would catch a type being badly wrong, not subtly.
 | `blend_density` | Supported — passthrough | 7 | golden terrain; the no-blending reading (SPEC §11) |
 | `blend_offset` | Supported — constant `0.0` | 3 | golden terrain; the no-blending value (SPEC §11) |
 | `cache_2d` | Supported | 24 | golden terrain, cubiomes |
-| `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors only — unused at 1.21.11 |
+| `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors; the vanilla server, via datapack aquifer probe — unused at 1.21.11 |
 | `cache_once` | Supported | 12 | golden terrain |
 | `clamp` | Supported | 14 | golden terrain, cubiomes |
 | `constant` | Supported | — | golden terrain; written as a bare number, so pervasive |
 | `cube` | Supported | 2 | golden terrain, cubiomes |
 | `end_islands` | Supported | 2 | golden End regions plus two far probes: every block exact (SPEC §11) |
 | `find_top_surface` | Supported | 3 | the vanilla server, via datapack probe: 1024/1024 columns |
-| `flat_cache` | Supported | 16 | golden terrain, cubiomes |
+| `flat_cache` | Supported | 16 | golden terrain, cubiomes; its chunk window, via datapack aquifer probe |
 | `half_negative` | Supported | 3 | golden terrain |
-| `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings) |
+| `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings); the vanilla server's aquifer reads, via datapack probe |
 | `invert` | Supported | 3 | golden `preliminary_surface_level`, since `find_top_surface` landed |
 | `max` | Supported | 9 | golden terrain, cubiomes |
 | `min` | Supported | 13 | golden terrain, cubiomes |

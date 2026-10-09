@@ -54,6 +54,7 @@ add_executable(stratum_conformance_tests
     vanilla_aquifer_lava_run_test.cpp
     vanilla_aquifer_presets_test.cpp
     vanilla_aquifer_yskip_test.cpp
+    vanilla_aquifer_markers_test.cpp
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_biome_tie_break_test.cpp

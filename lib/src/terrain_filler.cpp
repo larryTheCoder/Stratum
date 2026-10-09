@@ -479,17 +479,27 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
             ? settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel)
             : density::NodeIndex{};
     // Every aquifer read goes through THIS chunk's flat_cache window: a
-    // source centre in a neighbouring chunk reads its router values at the
-    // column itself, not at a 4x4 corner this chunk's grid does not hold.
-    // Measured through Q5.9 (`deepDarkAt` below), the one read in the
-    // vanilla presets that can tell; see `flatCacheWindow`.
+    // source centre in a neighbouring chunk reads its router values where it
+    // is, not at a 4x4 corner this chunk's grid does not hold. Measured
+    // through Q5.9 (`deepDarkAt` below), the one read in the vanilla presets
+    // that can tell, and through every entry a datapack can wrap; see
+    // `flatCacheWindow`.
+    //
+    // And every read but the barrier's is DETACHED: it is a point this block
+    // reads somewhere else — a source's centre, its contracted spread and
+    // lava indices, its surface anchors — so an `interpolated` there reads
+    // its argument at that point rather than blending over a cell. The
+    // barrier is read at the block itself and blends like terrain does.
+    // Measured, both halves (density::ReadContext, SPEC §11).
     const density::FlatCacheWindow window = flatCacheWindow(chunkX, chunkZ);
     const auto aquiferRead = [&](density::NodeIndex node, std::int32_t x, std::int32_t y,
                                  std::int32_t z) {
-        return interpreter_.evaluate(node, density::Point{.x = x, .y = y, .z = z}, cache, window);
+        return interpreter_.evaluate(node, density::Point{.x = x, .y = y, .z = z}, cache, window,
+                                     density::ReadContext::Detached);
     };
     const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return aquiferRead(barrierNode, x, y, z);
+        return interpreter_.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache,
+                                     window, density::ReadContext::Block);
     };
     const auto floodednessAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
         return aquiferRead(floodednessNode, x, y, z);

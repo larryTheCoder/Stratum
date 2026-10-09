@@ -292,6 +292,11 @@ TEST_CASE("flat_cache relocates only inside its chunk's window", "[density][inte
     tree.define("flat", R"({"type":"minecraft:flat_cache","argument":"raw"})");
     // Nested: an outer flat_cache over a sum that reads an inner one. Off the
     // window, NEITHER relocates — the window rides into nested scopes.
+    // Off the window a read is where it was asked, its own y included:
+    // measured through every aquifer entry a datapack can wrap in it, with a
+    // y-varying argument (SPEC §11, "Cache markers in a datapack's aquifer
+    // entries"), where pinning y to 0 was wrong on 67 771 to 284 101 blocks
+    // an arm and seed.
     tree.define("nested", R"({"type":"minecraft:flat_cache","argument":
         {"type":"minecraft:add","argument1":"flat","argument2":1.0}})");
 
@@ -316,14 +321,16 @@ TEST_CASE("flat_cache relocates only inside its chunk's window", "[density][inte
         CHECK(bits(read("flat", at, chunk)) == bits(raw((at.x / 4) * 4, 0, (at.z / 4) * 4)));
     }
 
-    // Outside, by one column on each side: the column itself, at y = 0.
+    // Outside, by one column on each side: the point itself, at its own y.
     for (const Point at : {Point{.x = 33, .y = -30, .z = 34}, Point{.x = 18, .y = 7, .z = 49},
                            Point{.x = 13, .y = 0, .z = 35}, Point{.x = 19, .y = 0, .z = 30}}) {
         CAPTURE(at.x, at.y, at.z);
-        CHECK(bits(read("flat", at, chunk)) == bits(raw(at.x, 0, at.z)));
+        CHECK(bits(read("flat", at, chunk)) == bits(raw(at.x, at.y, at.z)));
         CHECK(bits(read("flat", at, chunk)) != bits(pipeline.at("flat", at)));
-        CHECK(bits(read("nested", at, chunk)) == bits(raw(at.x, 0, at.z) + 1.0));
+        CHECK(bits(read("nested", at, chunk)) == bits(raw(at.x, at.y, at.z) + 1.0));
     }
+    // ... which is not the column at y = 0 when y is not 0.
+    CHECK(bits(read("flat", Point{.x = 33, .y = -30, .z = 34}, chunk)) != bits(raw(33, 0, 34)));
 
     // `none()` covers nothing: every read is at its own column.
     const Point inside{.x = 17, .y = 0, .z = 33};
@@ -353,6 +360,27 @@ TEST_CASE("cache_2d over a column-varying function is refused", "[density][inter
 
     CHECK_FALSE(pipeline.interpreter().isColumnInvariant(pipeline.root("gradient")));
     CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("good")));
+}
+
+TEST_CASE("flat_cache is only as column-invariant as what it wraps", "[density][interpreter]") {
+    // Inside a chunk's window it reads its argument at y = 0; outside one it
+    // reads the argument where it was asked (SPEC §11). So a cache_2d over a
+    // flat_cache of something y-varying varies with y wherever an aquifer
+    // reads it off the window, and is refused like any other.
+    const TempTree tree;
+    tree.define("gradient", R"({"type":"minecraft:y_clamped_gradient",
+        "from_y":0,"to_y":100,"from_value":0.0,"to_value":1.0})");
+    tree.define("flat_gradient", R"({"type":"minecraft:flat_cache","argument":"gradient"})");
+    tree.define("flat_constant", R"({"type":"minecraft:flat_cache","argument":2.0})");
+    tree.define("bad", R"({"type":"minecraft:cache_2d","argument":"flat_gradient"})");
+    tree.define("good", R"({"type":"minecraft:cache_2d","argument":"flat_constant"})");
+    const Pipeline pipeline(tree.pack());
+
+    CHECK_FALSE(pipeline.interpreter().isColumnInvariant(pipeline.root("flat_gradient")));
+    CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("flat_constant")));
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("bad")),
+                      ContainsSubstring("cache_2d") && ContainsSubstring("varies with y"));
+    CHECK_NOTHROW(pipeline.interpreter().requireEvaluable(pipeline.root("good")));
 }
 
 TEST_CASE("a cache over something unevaluable blames the right thing", "[density][interpreter]") {
@@ -765,6 +793,57 @@ TEST_CASE("only the interpolated part of a tree is interpolated", "[density][cel
     // The gradient is linear in y, so interpolating it changes almost
     // nothing — but "almost" is the point: they are not the same number.
     CHECK(std::abs(smoothed - exact) < 1e-9);
+}
+
+TEST_CASE("a detached read of interpolated is its argument at the point", "[density][cells]") {
+    // The block being generated blends over its cell; a point that block
+    // reads elsewhere — an aquifer source's centre, its contracted indices —
+    // reads the argument itself. Measured on every aquifer entry, both
+    // halves (SPEC §11, "Cache markers in a datapack's aquifer entries").
+    using stratum::density::ReadContext;
+    const TempTree tree;
+    defineCellPack(tree);
+    tree.define("flat_smooth", R"({"type":"minecraft:flat_cache","argument":"smooth"})");
+    const Pipeline pipeline(tree.pack(), 13, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    const auto read = [&](std::string_view function, Point at, ReadContext context) {
+        return interpreter.evaluate(pipeline.root(function), at, cache,
+                                    stratum::density::FlatCacheWindow::none(), context);
+    };
+
+    for (const Point at : {Point{.x = 1, .y = 3, .z = 2}, Point{.x = -7, .y = -5, .z = 9},
+                           Point{.x = 37, .y = -33, .z = 70}}) {
+        CAPTURE(at.x, at.y, at.z);
+        CHECK(bits(read("smooth", at, ReadContext::Detached)) == bits(pipeline.at("field", at)));
+        CHECK(bits(read("smooth", at, ReadContext::Block)) == bits(pipeline.at("smooth", at)));
+        // Off the lattice the two are different numbers, or this would test
+        // nothing.
+        CHECK(bits(read("smooth", at, ReadContext::Block)) !=
+              bits(read("smooth", at, ReadContext::Detached)));
+    }
+    // At a lattice point there is nothing to blend: the two agree.
+    const Point lattice{.x = 8, .y = 16, .z = -4};
+    CHECK(bits(read("smooth", lattice, ReadContext::Block)) ==
+          bits(read("smooth", lattice, ReadContext::Detached)));
+
+    // The context rides into the scope a node opens for another point: a
+    // flat_cache that relocates reads its corner detached too. On an
+    // 8-wide lattice the 4x4 corner (36, 0, 68) is a cell midpoint, so the
+    // blend there is not the argument.
+    const Pipeline wide(tree.pack(), 13, CellGeometry{.width = 8, .height = 8});
+    Interpreter::CornerCache wideCache(wide.interpreter().cacheSize());
+    const stratum::density::FlatCacheWindow everywhere{
+        .minX = -1000, .maxX = 1000, .minZ = -1000, .maxZ = 1000};
+    const Point at{.x = 37, .y = -33, .z = 70};
+    const Point corner{.x = 36, .y = 0, .z = 68};
+    const auto relocated = [&](ReadContext context) {
+        return wide.interpreter().evaluate(wide.root("flat_smooth"), at, wideCache, everywhere,
+                                           context);
+    };
+    CHECK(bits(relocated(ReadContext::Detached)) == bits(wide.at("field", corner)));
+    CHECK(bits(relocated(ReadContext::Block)) == bits(wide.at("smooth", corner)));
+    CHECK(bits(relocated(ReadContext::Block)) != bits(relocated(ReadContext::Detached)));
 }
 
 TEST_CASE("cache_all_in_cell keeps a value per block, so it changes none", "[density][cells]") {

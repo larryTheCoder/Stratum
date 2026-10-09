@@ -55,9 +55,10 @@ import fnmatch, json, os, sys
 units = json.load(open(sys.argv[1]))["units"]
 aquifer = [u for u in units if fnmatch.fnmatch(u["name"], "aquifer-*")
            or fnmatch.fnmatch(os.path.basename(u["argv"][0]), "aquifer-*")]
-print(len(units), len(aquifer), sum(u["shard"] == "aquifer" for u in units))
+print(len(units), len(aquifer), sum(u["shard"] == "aquifer" for u in units),
+      len(json.load(open(sys.argv[1]))["shards"]))
 ' "${work}/inventory.json")"
-read -r all_units aquifer_units aquifer_shard_units <<< "${counts}"
+read -r all_units aquifer_units aquifer_shard_units shard_count <<< "${counts}"
 
 # What every stub runs: finds its unit by script and arguments and writes
 # what the table says that unit writes. FAKE_FAIL=<unit> makes the unit exit
@@ -220,7 +221,7 @@ expect 1 "key refuses a version the table is not for" "but this table is for 1.2
 expect 0 "a key names its epoch, version, JDK and shard" "key=probe-worlds-e1-1.21.11-jdk25-water-" \
     "${pw}" key water
 "${pw}" keys > "${work}/keys.before"
-[[ "$(wc -l < "${work}/keys.before")" -eq 6 ]] || { echo "FAIL: keys printed $(wc -l < "${work}/keys.before") lines"; exit 1; }
+[[ "$(wc -l < "${work}/keys.before")" -eq "${shard_count}" ]] || { echo "FAIL: keys printed $(wc -l < "${work}/keys.before") lines, for ${shard_count} shards"; exit 1; }
 echo "# one more line" >> "${fake}/tools/analysis/aquifer-lowsea-probe.sh"
 "${pw}" keys > "${work}/keys.after"
 changed="$(diff "${work}/keys.before" "${work}/keys.after" | grep -c '^>' || true)"

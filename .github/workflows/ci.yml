@@ -251,12 +251,11 @@ jobs:
     # artifact (tools/lint/check-determinism.sh refuses one).
     if: github.repository == 'larryTheCoder/Stratum'
     runs-on: ubuntu-24.04
-    # An estimate. The only recorded timing is aquifer-probes.sh's, run
-    # locally: about 70 minutes on 4 cores, nearly half of it capfloor's two
-    # seeds, so about 35 minutes cold for that shard. No other generator
-    # (end, legacy, aps-clamp among them) has a recorded timing, and no
-    # shard has run on a GitHub runner yet. Past this, take a generator to
-    # have hung; the last log group the job opened names it.
+    # Measured cold on runners (October 2026): capfloor about 24 minutes,
+    # water 15, aquifer 14 before the fluidnear units and 33 with them,
+    # surface 13.5, legacy 11, end 2 before the presets and y_skip units.
+    # markers (ten server starts) has no runner timing yet. Past this, take a
+    # generator to have hung; the last log group the job opened names it.
     timeout-minutes: 90
     defaults:
       run:
@@ -266,7 +265,7 @@ jobs:
       matrix:
         # `tools/probe-worlds shards`. unit.tools.probe_worlds fails if this
         # list and the conformance restores below drift from the table.
-        shard: [aquifer, water, capfloor, surface, legacy, end]
+        shard: [aquifer, water, capfloor, surface, legacy, end, markers]
     steps:
       - uses: actions/checkout@v4
 
@@ -501,6 +500,15 @@ jobs:
         with:
           path: .fixtures/${{ env.MINECRAFT_VERSION }}/probes
           key: ${{ steps.probe-keys.outputs.end }}
+          fail-on-cache-miss: true
+
+      - name: Restore probe worlds (markers)
+        if: steps.probe-keys.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/probes
+          key: ${{ steps.probe-keys.outputs.markers }}
           fail-on-cache-miss: true
 
       - name: Every probe world arrived

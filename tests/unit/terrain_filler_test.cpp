@@ -2,10 +2,12 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include "support/temp_path.hpp"
 
+#include <stratum/aquifer/lattice.hpp>
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -431,6 +433,93 @@ TEST_CASE("an aquifer above its own floodedness gate reproduces the plain sea, t
     CHECK(buffer.at(3, 31, 12).name.toString() == "minecraft:air");
 
     CHECK(buffer.paletteSize() == 3U);
+}
+
+TEST_CASE("an aquifer's source reads are detached: an interpolated floodedness reads exactly",
+          "[terrain][filler][aquifer]") {
+    // A source's floodedness is read at its centre, a point the generating
+    // block reads elsewhere, and `interpolated` there is its argument at that
+    // point — measured (density::ReadContext, SPEC §11). So wrapping the
+    // entry changes no block. The argument is a step in y the cell blend
+    // smears: 0.9 (past the sea gate) from y = 1 up, 0.0 (dry) below.
+    const nlohmann::json step{{"type", "minecraft:range_choice"},
+                              {"input",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", -2048},
+                                {"to_y", 2048},
+                                {"from_value", -2048.0},
+                                {"to_value", 2048.0}}},
+                              {"min_inclusive", 0.5},
+                              {"max_exclusive", 1000.0},
+                              {"when_in_range", 0.9},
+                              {"when_out_of_range", 0.0}};
+    nlohmann::json bare = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    bare["noise_router"]["fluid_level_floodedness"] = step;
+    nlohmann::json wrapped = bare;
+    wrapped["noise_router"]["fluid_level_floodedness"] =
+        nlohmann::json{{"type", "minecraft:interpolated"}, {"argument", step}};
+
+    const TempTree bareTree;
+    bareTree.defineSettings("test", bare);
+    const TempTree wrappedTree;
+    wrappedTree.defineSettings("test", wrapped);
+    const LoadedSettings bareLoaded = bareTree.load();
+    const LoadedSettings wrappedLoaded = wrappedTree.load();
+    const ChunkFiller bareFiller = compileFrom(bareTree, bareLoaded);
+    const ChunkFiller wrappedFiller = compileFrom(wrappedTree, wrappedLoaded);
+    const auto& settings =
+        wrappedLoaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+
+    long long water = 0;
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{1, -1}}) {
+        ChunkBuffer bareBuffer(settings.geometry);
+        ChunkBuffer wrappedBuffer(settings.geometry);
+        bareFiller.fill(chunkX, chunkZ, bareBuffer);
+        wrappedFiller.fill(chunkX, chunkZ, wrappedBuffer);
+        long long differing = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = -16; y < 32; ++y) {
+                    const std::string name = wrappedBuffer.at(x, y, z).name.toString();
+                    differing +=
+                        static_cast<long long>(name != bareBuffer.at(x, y, z).name.toString());
+                    water += static_cast<long long>(name == "minecraft:water");
+                }
+            }
+        }
+        CAPTURE(chunkX, chunkZ);
+        CHECK(differing == 0);
+    }
+    CHECK(water > 0);
+
+    // Not vacuous: at some of these chunks' source centres the blend and the
+    // argument fall on opposite sides of the sea gate, so a filler that
+    // blended there would read those sources differently.
+    const auto noises = stratum::density::NoiseRegistry::create(
+        wrappedTree.pack(), wrappedLoaded.graph.referencedNoises(), 0,
+        stratum::density::RandomSource::Xoroshiro);
+    const stratum::density::Interpreter interpreter(
+        wrappedLoaded.graph, noises,
+        stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                       .height = settings.geometry.cellHeight()});
+    stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
+    const auto node = settings.router.at(RouterEntry::FluidLevelFloodedness);
+    const stratum::aquifer::CentreSource centres(0);
+    long long straddling = 0;
+    for (std::int32_t i = -1; i <= 2; ++i) {
+        for (std::int32_t k = -2; k <= 1; ++k) {
+            const stratum::aquifer::CellIndex centre = centres.centreOf(i, 0, k);
+            const stratum::density::Point at{.x = centre.x, .y = centre.y, .z = centre.z};
+            const auto read = [&](stratum::density::ReadContext context) {
+                return interpreter.evaluate(node, at, cache,
+                                            stratum::density::FlatCacheWindow::none(), context);
+            };
+            straddling +=
+                static_cast<long long>((read(stratum::density::ReadContext::Block) > 0.8) !=
+                                       (read(stratum::density::ReadContext::Detached) > 0.8));
+        }
+    }
+    CHECK(straddling > 0);
 }
 
 TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
@@ -1390,14 +1479,18 @@ TEST_CASE("a surface rule writes over the default block and nothing else",
 
 TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
           "[terrain][aquifer]") {
-    // Twenty columns a side from the chunk's own corner — the extent is a
-    // choice among three the goldens cannot separate (filler.hpp); pinned so
-    // that changing it is a decision, not a drift.
+    // Twenty columns a side from the chunk's own corner — measured
+    // (filler.hpp, SPEC §11): a read up to four columns past the chunk's far
+    // edge relocates, one past that does not, and neither does one below
+    // its own corner.
     constexpr auto window = ChunkFiller::flatCacheWindow(3, 3);
     CHECK(window.minX == 48);
     CHECK(window.maxX == 67);
     CHECK(window.minZ == 48);
     CHECK(window.maxZ == 67);
+    CHECK(window.covers(48, 67));
+    CHECK_FALSE(window.covers(47, 50));
+    CHECK_FALSE(window.covers(50, 68));
 
     // The measurement turned on one source centre: off chunk (3, 3)'s
     // window, where the server read it wet, and inside chunk (3, 4)'s, where
