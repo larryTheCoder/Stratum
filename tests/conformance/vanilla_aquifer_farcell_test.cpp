@@ -29,6 +29,7 @@
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 #include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
@@ -118,28 +119,32 @@ constexpr std::array<ArmOf, 2> kArms{
             ".mca");
 }
 
-[[nodiscard]] const nlohmann::json& entryNamed(const nlohmann::json& spec, const char* name) {
-    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
-    // unconditional FAIL as unreachable (C4702), and warnings are errors.
-    const nlohmann::json* named = nullptr;
-    for (const auto& entry : spec) {
-        if (entry.at("name") == name) {
-            named = &entry;
-            break;
-        }
+/// Whether the far-cell corpora are here: false when none is (the cases
+/// skip), true when both are, and a failure naming the missing one when only
+/// one is, since the unit writes both and a partial set is not a pass.
+[[nodiscard]] bool corporaPresent() {
+    std::size_t present = 0;
+    for (const Placement& placement : kPlacements) {
+        present += std::filesystem::is_regular_file(probeDir(placement) / "spec.json") ? 1U : 0U;
     }
-    INFO("the probe's spec has no arm " << name);
-    REQUIRE(named != nullptr);
-    return *named;
+    if (present == 0) {
+        return false;
+    }
+    for (const Placement& placement : kPlacements) {
+        INFO(probeDir(placement) << " is missing while the other far-cell corpus is present; "
+                                 << "regenerate both with " << kScript << " --accept-eula "
+                                 << kSeed);
+        REQUIRE(std::filesystem::is_regular_file(probeDir(placement) / "spec.json"));
+    }
+    return true;
 }
 
 /// The corpus for @p placement, checked; nullopt when it was never generated.
 [[nodiscard]] std::optional<nlohmann::json> corpus(const Placement& placement) {
-    std::ifstream in(probeDir(placement) / "spec.json");
-    if (!in) {
+    if (!std::filesystem::is_regular_file(probeDir(placement) / "spec.json")) {
         return std::nullopt;
     }
-    nlohmann::json spec = nlohmann::json::parse(in);
+    nlohmann::json spec = stratum::test::readSpec(probeDir(placement));
     stratum::test::requireFrozen(probeDir(placement), kScript);
     stratum::test::requireSeed(probeDir(placement), kSeed);
 
@@ -153,8 +158,9 @@ constexpr std::array<ArmOf, 2> kArms{
     REQUIRE(regionPath(placement, "mj").filename() == manifest.at("region").get<std::string>());
 
     // The two arms are one dimension but for the flag.
-    const nlohmann::json& mj = entryNamed(spec, "mj");
-    const nlohmann::json& lj = entryNamed(spec, "lj");
+    const std::filesystem::path dir = probeDir(placement);
+    const nlohmann::json& mj = stratum::test::specEntry(spec, dir, "mj");
+    const nlohmann::json& lj = stratum::test::specEntry(spec, dir, "lj");
     REQUIRE(mj.at("legacy_random_source") == false);
     REQUIRE(lj.at("legacy_random_source") == true);
     REQUIRE(mj.at("aquifers_enabled") == true);
@@ -545,15 +551,17 @@ TEST_CASE("the aquifer's own position mix multiplies x in 32 bits where only far
     std::array<std::array<Score, kMixes.size()>, kArms.size()> totals{};
     std::array<std::array<int, kMixes.size()>, kArms.size()> partedTotals{};
     std::ostringstream record;
+    if (!corporaPresent()) {
+        SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
+                                                 << "; generate them with " << kScript
+                                                 << " --accept-eula " << kSeed);
+    }
     int placements = 0;
     for (std::size_t p = 0; p < kPlacements.size(); ++p) {
         const Placement& placement = kPlacements.at(p);
         INFO(placement.corpus);
         const std::optional<nlohmann::json> spec = corpus(placement);
-        if (!spec) {
-            SKIP("no far-cell aquifer probe at " << probeDir(placement) << "; generate it with "
-                                                 << kScript << " --accept-eula " << kSeed);
-        }
+        REQUIRE(spec.has_value());
         ++placements;
         for (std::size_t a = 0; a < kArms.size(); ++a) {
             const ArmOf& arm = kArms.at(a);
@@ -629,18 +637,21 @@ TEST_CASE("the shipped aquifer lattice replays the far cells block for block",
     // frozen world's remnant moved is set apart by fluid_flow.hpp's shapes
     // and nothing else. And each arm against the OTHER source's centres,
     // which is what says the replay sees a wrong lattice at these cells.
+    if (!corporaPresent()) {
+        SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
+                                                 << "; generate them with " << kScript
+                                                 << " --accept-eula " << kSeed);
+    }
     int placements = 0;
     for (const Placement& placement : kPlacements) {
         INFO(placement.corpus);
         const std::optional<nlohmann::json> spec = corpus(placement);
-        if (!spec) {
-            SKIP("no far-cell aquifer probe at " << probeDir(placement) << "; generate it with "
-                                                 << kScript << " --accept-eula " << kSeed);
-        }
+        REQUIRE(spec.has_value());
         ++placements;
         for (const ArmOf& arm : kArms) {
             INFO("arm " << arm.name);
-            const Arm constants = armOf(entryNamed(*spec, arm.name));
+            const Arm constants =
+                armOf(stratum::test::specEntry(*spec, probeDir(placement), arm.name));
             const CentreSource own{kSeed, arm.source};
             const CentreSource other{kSeed, arm.source == RandomSource::Legacy
                                                 ? RandomSource::Xoroshiro
@@ -673,21 +684,25 @@ TEST_CASE("the shipped filler generates the far aquifer cells block for block",
     // ChunkFiller::compile, the call world::CompiledDimension makes, so the
     // filler's own block-to-cell arithmetic at chunk -709 is in the loop,
     // against the server, name for name.
+    if (!corporaPresent()) {
+        SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
+                                                 << "; generate them with " << kScript
+                                                 << " --accept-eula " << kSeed);
+    }
     int placements = 0;
     for (const Placement& placement : kPlacements) {
         INFO(placement.corpus);
         const std::optional<nlohmann::json> spec = corpus(placement);
-        if (!spec) {
-            SKIP("no far-cell aquifer probe at " << probeDir(placement) << "; generate it with "
-                                                 << kScript << " --accept-eula " << kSeed);
-        }
+        REQUIRE(spec.has_value());
         ++placements;
 
         const ScratchTree scratch;
         for (const ArmOf& arm : kArms) {
             std::ofstream out(scratch.path() / "noise_settings" /
                               (std::string(arm.name) + ".json"));
-            out << stratum::test::probeNoiseSettings(entryNamed(*spec, arm.name)).dump();
+            out << stratum::test::probeNoiseSettings(
+                       stratum::test::specEntry(*spec, probeDir(placement), arm.name))
+                       .dump();
         }
         const stratum::data::Pack pack = stratum::data::Pack::open(scratch.path());
         const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
