@@ -45,6 +45,7 @@
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -457,9 +458,7 @@ TEST_CASE("the lava override's level ceiling is -10 and absolute on three arms o
         INFO("arm " << arm.label << ", corpus " << dir);
         stratum::test::requireFrozen(dir, kScript);
         stratum::test::requireSeed(dir, kSeed);
-        std::ifstream specFile(dir / "spec.json");
-        const nlohmann::json spec = nlohmann::json::parse(specFile);
-        REQUIRE(spec.is_array());
+        const nlohmann::json spec = stratum::test::readSpec(dir);
         // Every dimension the arm is built from, and nothing else.
         REQUIRE(spec.size() == arm.dimCount);
         for (std::size_t i = 0; i < arm.dimCount; ++i) {
