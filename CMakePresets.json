@@ -130,7 +130,7 @@
       "configurePreset": "dev",
       "configuration": "Debug",
       "displayName": "Tier-A golden diffs vs vanilla",
-      "description": "Requires locally generated fixtures; skips loudly when they are absent.",
+      "description": "Requires locally generated fixtures; skips loudly when they are absent. An hour per case, as CI allows: with the goldens present three cases outrun include(CTest)'s 1500 s default on a loaded 4-core machine.",
       "filter": {
         "include": {
           "label": "conformance"
@@ -140,7 +140,8 @@
         "outputOnFailure": true
       },
       "execution": {
-        "noTestsAction": "error"
+        "noTestsAction": "error",
+        "timeout": 3600
       }
     },
     {
