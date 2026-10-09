@@ -93,11 +93,13 @@
 // 293, with 0 false stone throughout, before and after. Every one of the 4
 // and the 35 sits on row lambda itself.
 //
-// ONE SEED PER PROBE DIRECTORY, read from its manifest; every
-// `waterlava_s*` directory present is scored, and the case SKIPs when there
-// is none. The fixtures are Mojang-derived and never committed (SPEC §12).
+// ONE SEED PER PROBE DIRECTORY, checked against its manifest: the three
+// seeds tools/probe-worlds generates, every one of them and every dimension
+// each spec.json lists, and the case SKIPs only when there is no corpus at
+// all. The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
@@ -121,6 +123,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -148,9 +151,10 @@ struct Dimension {
     double lava = 0.0;
 };
 
-[[nodiscard]] std::vector<Dimension> readSpec(const std::filesystem::path& specPath) {
-    std::ifstream in(specPath);
-    const nlohmann::json spec = nlohmann::json::parse(in);
+/// Every dimension of the corpus in @p probeDir, as its own spec.json
+/// records it.
+[[nodiscard]] std::vector<Dimension> dimensionsOf(const std::filesystem::path& probeDir) {
+    const nlohmann::json spec = stratum::test::readSpec(probeDir);
     std::vector<Dimension> dims;
     for (const auto& entry : spec) {
         dims.push_back(Dimension{
@@ -312,14 +316,14 @@ struct Score {
     return level >= 0 ? name + ":" + std::to_string(level) : name;
 }
 
-void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
+void scoreProbe(const std::filesystem::path& probeDir, const std::int64_t seed, Score& total) {
     // Every count below is exact on a frozen corpus and timing-dependent on
     // one that was not (support/probe_corpus.hpp).
+    INFO("probe " << probeDir.filename().string());
     stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-waterlava-probe.sh");
-    std::ifstream manifestFile(probeDir / "manifest.json");
-    const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
-    const std::int64_t seed = manifest.at("seed").get<std::int64_t>();
-    const std::vector<Dimension> dims = readSpec(probeDir / "spec.json");
+    stratum::test::requireSeed(probeDir, seed);
+    const std::vector<Dimension> dims = dimensionsOf(probeDir);
+    REQUIRE(!dims.empty());
 
     const auto pack = data::Pack::open(fixtures() / "worldgen");
     density::Graph::Builder builder(pack);
@@ -360,9 +364,10 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
 
     for (const Dimension& dim : dims) {
         const std::filesystem::path regionPath = probeDir / dim.name / "r.0.0.mca";
-        if (!std::filesystem::is_regular_file(regionPath)) {
-            continue;
-        }
+        // Every dimension the spec lists was generated: one without a region
+        // is a broken corpus, not a smaller sample.
+        INFO("dimension " << dim.name);
+        REQUIRE(std::filesystem::is_regular_file(regionPath));
         const std::int32_t lambda = aquifer::lambdaLevel(dim.seaLevel);
         const auto pslAt = [&](std::int32_t, std::int32_t, std::int32_t) { return dim.psl; };
         const auto lavaAt = [&](std::int32_t, std::int32_t, std::int32_t) { return dim.lava; };
@@ -609,32 +614,32 @@ void scoreProbe(const std::filesystem::path& probeDir, Score& total) {
     }
 }
 
-/// Every `waterlava_s*` probe present, scored ONCE for both test cases —
-/// the walk reads four region files per seed and calls the whole substance
-/// decision on every block of eight rows, so it is not repeated per case.
-struct ScoredProbes {
-    std::vector<std::filesystem::path> probes;
-    Score total;
-};
+/// The seeds tools/probe-worlds generates the corpus at. The pooled floors
+/// below are set against all three: seed 42 alone gives 18 of the constant's
+/// 100.
+constexpr std::array<std::int64_t, 3> kSeeds{42, 31337, 8675309};
 
-[[nodiscard]] const ScoredProbes& scoredProbes() {
-    static const ScoredProbes scored = [] {
-        ScoredProbes out;
-        const std::filesystem::path probesRoot = fixtures() / "probes";
-        if (std::filesystem::is_directory(probesRoot)) {
-            for (const auto& entry : std::filesystem::directory_iterator(probesRoot)) {
-                if (entry.is_directory() &&
-                    entry.path().filename().string().rfind("waterlava_s", 0) == 0 &&
-                    std::filesystem::is_regular_file(entry.path() / "manifest.json")) {
-                    out.probes.push_back(entry.path());
-                }
-            }
+/// The `waterlava_s<seed>` corpora: none (the cases SKIP) or one for every
+/// seed of kSeeds — a partial set fails, naming what is missing, rather than
+/// scoring whichever seeds are on disk (support/probe_corpus.hpp).
+[[nodiscard]] std::vector<std::filesystem::path> presentProbes() {
+    return stratum::test::seededCorpora(
+        fixtures() / "probes", "waterlava_s", kSeeds,
+        "tools/probe-worlds generate --only aquifer-waterlava-probe.sh --accept-eula");
+}
+
+/// Every probe, scored ONCE for both test cases — the walk reads four region
+/// files per seed and calls the whole substance decision on every block of
+/// eight rows, so it is not repeated per case. Called only once
+/// presentProbes() has found all of them.
+[[nodiscard]] const Score& scoredProbes() {
+    static const Score scored = [] {
+        Score total;
+        for (std::size_t i = 0; i < kSeeds.size(); ++i) {
+            scoreProbe(fixtures() / "probes" / ("waterlava_s" + std::to_string(kSeeds[i])),
+                       kSeeds[i], total);
         }
-        std::ranges::sort(out.probes);
-        for (const auto& probe : out.probes) {
-            scoreProbe(probe, out.total);
-        }
-        return out;
+        return total;
     }();
     return scored;
 }
@@ -643,14 +648,13 @@ struct ScoredProbes {
 
 TEST_CASE("water resting on the global lava sea is water, not a barrier",
           "[conformance][aquifer]") {
-    const ScoredProbes& scored = scoredProbes();
-    const std::vector<std::filesystem::path>& probes = scored.probes;
+    const std::vector<std::filesystem::path> probes = presentProbes();
     if (probes.empty()) {
         SKIP("no waterlava_s* aquifer probe under " << fixtures() / "probes"
-                                                    << "; generate one with "
+                                                    << "; generate them with "
                                                        "tools/analysis/aquifer-waterlava-probe.sh");
     }
-    const Score& total = scored.total;
+    const Score& total = scoredProbes();
 
     INFO("probes " << probes.size() << ": fires " << total.fires << ", bare stone "
                    << total.firesBareStone << ", server stone " << total.firesServerStone
@@ -704,20 +708,20 @@ TEST_CASE("water resting on the global lava sea is water, not a barrier",
 
 TEST_CASE("a lava body meeting a water body is walled off, and nothing else changes",
           "[conformance][aquifer]") {
-    const ScoredProbes& scored = scoredProbes();
-    if (scored.probes.empty()) {
+    const std::vector<std::filesystem::path> probes = presentProbes();
+    if (probes.empty()) {
         SKIP("no waterlava_s* aquifer probe under " << fixtures() / "probes"
-                                                    << "; generate one with "
+                                                    << "; generate them with "
                                                        "tools/analysis/aquifer-waterlava-probe.sh");
     }
-    const Score& total = scored.total;
+    const Score& total = scoredProbes();
 
-    INFO("probes " << scored.probes.size() << ": mixed-junction server stone "
-                   << total.mixedServerStone << ", misses old " << total.mixedOldMiss << " new "
-                   << total.mixedNewMiss << ", false old " << total.mixedOldFalse << " new "
-                   << total.mixedNewFalse << "; pure server stone " << total.pureServerStone
-                   << " misses old " << total.pureOldMiss << " new " << total.pureNewMiss
-                   << " false " << total.pureFalse << "; flow stone " << total.flowStone
+    INFO("probes " << probes.size() << ": mixed-junction server stone " << total.mixedServerStone
+                   << ", misses old " << total.mixedOldMiss << " new " << total.mixedNewMiss
+                   << ", false old " << total.mixedOldFalse << " new " << total.mixedNewFalse
+                   << "; pure server stone " << total.pureServerStone << " misses old "
+                   << total.pureOldMiss << " new " << total.pureNewMiss << " false "
+                   << total.pureFalse << "; flow stone " << total.flowStone
                    << "; the constant adds " << total.constantAdds << " (server stone "
                    << total.constantAddsServerStone << "); type-field formula-only "
                    << total.tfFormulaOnly << " (stone " << total.tfFormulaOnlyServerStone

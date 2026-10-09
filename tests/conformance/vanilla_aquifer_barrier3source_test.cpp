@@ -32,6 +32,7 @@
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -48,6 +49,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -143,12 +145,22 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
     density::Interpreter::CornerCache cache(interp.cacheSize());
     const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
 
+    // The worlds on disk are the ones kDimensions describes, and no others.
+    const nlohmann::json spec = stratum::test::readSpec(probeDir);
+    REQUIRE(spec.size() == kDimensions.size());
+
     Score total;
     for (const Dimension& dim : kDimensions) {
         const std::filesystem::path region = probeDir / dim.name / "r.0.0.mca";
-        if (!std::filesystem::is_regular_file(region)) {
-            continue;
-        }
+        // Every dimension the script writes: one without a region is a broken
+        // corpus, not a smaller sample.
+        INFO("corpus " << probeDir << ", dimension " << dim.name
+                       << " — regenerate it with tools/analysis/aquifer-barrier-probe.sh");
+        REQUIRE(stratum::test::specEntry(spec, probeDir, dim.name)
+                    .at("raw_final_density")
+                    .at("argument")
+                    .get<double>() == Catch::Approx(dim.density));
+        REQUIRE(std::filesystem::is_regular_file(region));
         const auto file = region::RegionFile::open(region);
         // The whole three-source answer at one block, as the filler computes it.
         const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {

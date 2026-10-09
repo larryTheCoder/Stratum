@@ -33,6 +33,8 @@
 // seeds. The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/barrier.hpp>
@@ -458,7 +460,9 @@ constexpr std::array<std::int64_t, 2> kSeeds{42, 31337};
 // --- The world, rebuilt -----------------------------------------------------
 
 /// A one-dimension data pack holding exactly what density-probe.sh wrote for
-/// @p entry: its noise settings and the probe's own noise, from the manifest.
+/// @p entry: its noise settings, through the one mirror of the script
+/// (support/probe_settings.hpp, which refuses a key it does not know rather
+/// than dropping it), and the probe's own noise, from the manifest.
 class ProbePack {
 public:
     ProbePack(const nlohmann::json& entry, const nlohmann::json& manifest)
@@ -474,42 +478,8 @@ public:
         write(data / "noise" / "probe_noise.json",
               nlohmann::json{{"firstOctave", declared.at("first_octave")},
                              {"amplitudes", declared.at("amplitudes")}});
-
-        // density-probe.sh's own defaults, then the entry's overrides.
-        nlohmann::json router = {{"barrier", 0},
-                                 {"fluid_level_floodedness", 0},
-                                 {"fluid_level_spread", 0},
-                                 {"lava", 0},
-                                 {"temperature", 0},
-                                 {"vegetation", 0},
-                                 {"continents", 0},
-                                 {"erosion", 0},
-                                 {"depth", 0},
-                                 {"ridges", 0},
-                                 {"preliminary_surface_level", 0},
-                                 {"vein_toggle", 0},
-                                 {"vein_ridged", 0},
-                                 {"vein_gap", 0}};
-        for (const auto& [key, value] : entry.at("router").items()) {
-            router[key] = value;
-        }
-        router["final_density"] = entry.at("raw_final_density");
-        const nlohmann::json settings = {{"sea_level", entry.at("sea_level")},
-                                         {"disable_mob_generation", true},
-                                         {"aquifers_enabled", entry.at("aquifers_enabled")},
-                                         {"ore_veins_enabled", false},
-                                         {"legacy_random_source", false},
-                                         {"default_block", {{"Name", "minecraft:stone"}}},
-                                         {"default_fluid", entry.at("default_fluid")},
-                                         {"noise",
-                                          {{"min_y", entry.at("min_y")},
-                                           {"height", entry.at("height")},
-                                           {"size_horizontal", entry.value("size_horizontal", 1)},
-                                           {"size_vertical", entry.value("size_vertical", 1)}}},
-                                         {"spawn_target", nlohmann::json::array()},
-                                         {"surface_rule", entry.at("surface_rule")},
-                                         {"noise_router", router}};
-        write(data / "noise_settings" / (entry.at("name").get<std::string>() + ".json"), settings);
+        write(data / "noise_settings" / (entry.at("name").get<std::string>() + ".json"),
+              test::probeNoiseSettings(entry));
     }
 
     ProbePack(const ProbePack&) = delete;
@@ -1208,18 +1178,12 @@ void scoreGroup(const Group& group) {
         test::requireFrozen(dir, "tools/analysis/aquifer-markers-probe.sh");
         test::requireSeed(dir, seed);
         const nlohmann::json manifest = nlohmann::json::parse(std::ifstream(dir / "manifest.json"));
-        const nlohmann::json spec = nlohmann::json::parse(std::ifstream(dir / "spec.json"));
+        const nlohmann::json spec = test::readSpec(dir);
         REQUIRE(spec.size() == group.arms.size());
 
         for (const Arm& arm : group.arms) {
             INFO("dimension " << arm.name);
-            const nlohmann::json* entry = nullptr;
-            for (const auto& candidate : spec) {
-                if (candidate.at("name").get<std::string>() == arm.name) {
-                    entry = &candidate;
-                }
-            }
-            REQUIRE(entry != nullptr);
+            const nlohmann::json* entry = &test::specEntry(spec, dir, arm.name);
             // The world on disk is the world this case believes it is.
             REQUIRE(entry->at("default_fluid").at("Name").get<std::string>() ==
                     "minecraft:packed_ice");

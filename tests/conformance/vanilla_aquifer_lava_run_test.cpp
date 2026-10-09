@@ -57,6 +57,7 @@
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 #include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/data/pack.hpp>
@@ -412,11 +413,10 @@ enum class Ladder : std::uint8_t { Floor, Ceiling, Water };
 // --------------------------------------------------------- reading the world
 
 [[nodiscard]] std::optional<nlohmann::json> loadSpec() {
-    std::ifstream in(probeDir() / "spec.json");
-    if (!in) {
+    if (!std::filesystem::exists(probeDir() / "spec.json")) {
         return std::nullopt;
     }
-    return nlohmann::json::parse(in);
+    return test::readSpec(probeDir());
 }
 
 /// One dimension, scored: its layout against the script's, and the marker

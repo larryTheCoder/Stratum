@@ -19,6 +19,7 @@
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/probe_corpus.hpp"
 #include "support/probe_region.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
@@ -216,14 +217,13 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
 
     Score total;
     long long waterOverLavaMarked = 0;
-    for (const char* probeName : {"waterlava_s42", "waterlava_s8675309"}) {
-        INFO("probe " << probeName);
-        const std::filesystem::path probe = fixtures() / "probes" / probeName;
+    for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{8675309}}) {
+        const std::filesystem::path probe =
+            fixtures() / "probes" / ("waterlava_s" + std::to_string(seed));
+        INFO("probe " << probe.filename().string());
+        stratum::test::requireSeed(probe, seed);
         stratum::test::requireFrozen(probe, "tools/analysis/aquifer-waterlava-probe.sh");
-        std::ifstream manifestFile(probe / "manifest.json");
-        const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
-        std::ifstream specFile(probe / "spec.json");
-        const nlohmann::json spec = nlohmann::json::parse(specFile);
+        const nlohmann::json spec = stratum::test::readSpec(probe);
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, wanted, seed, stratum::density::RandomSource::Xoroshiro);
         const stratum::density::Interpreter interpreter(graph, noises);
@@ -279,11 +279,13 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
             };
             // Only the scored rows of the server's list count.
             Score dimension;
+            REQUIRE(std::filesystem::is_regular_file(probe / name / "r.0.0.mca"));
             scoreRegion(
                 probe / name / "r.0.0.mca", minY,
                 [&](std::int32_t cx, std::int32_t cz) { return oursFor(cx, cz); }, dimension);
             const auto file = stratum::region::RegionFile::open(probe / name / "r.0.0.mca");
             long long serverOutsideRows = 0;
+            long long band = 0;
             for (std::int32_t cz = 0; cz < 32; ++cz) {
                 for (std::int32_t cx = 0; cx < 32; ++cx) {
                     if (!file.hasChunk(cx, cz)) {
@@ -293,12 +295,21 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
                     if (!untouched(cx, cz, doc.root.at("Status").asString())) {
                         continue;
                     }
+                    band += cx < 12 && cz < 12 ? 1 : 0;
                     for (const Position& p : stratum::test::postProcessingMarks(doc.root, minY)) {
                         const int y = std::get<1>(p);
                         serverOutsideRows += (y < lambda - 1 || y > lambda + 40) ? 1 : 0;
                     }
                 }
             }
+            // Every untouched chunk of the band out to chunk 11 that every
+            // probe generates (support/probe_region.hpp): a missing one is a
+            // broken corpus, not a smaller sample. Generation can reach past
+            // the band too (84 and 91 untouched chunks on the two sea -70
+            // arms as generated here, 63 on the rest), so the region's own
+            // total is not pinned.
+            INFO("untouched chunks " << dimension.chunks << ", " << band << " in the band");
+            REQUIRE(band == 63);
             total.chunks += dimension.chunks;
             total.agree += dimension.agree;
             total.extra += dimension.extra;
@@ -309,7 +320,6 @@ TEST_CASE("the fluid-update flag on water resting on the lava sea, where the spe
     INFO("chunks " << total.chunks << ", server marks in the rows " << total.serverMarks
                    << ", agree " << total.agree << ", extra " << total.extra << ", missing "
                    << total.missing << ", marked on row lambda " << waterOverLavaMarked);
-    REQUIRE(total.chunks > 400);
     CHECK(total.extra == 0);
     CHECK(total.missing == 0);
     // The rule has to have been exercised: row lambda carries thousands.

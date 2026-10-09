@@ -210,7 +210,8 @@ struct NoDeepDark {
 
 /// Memoizes a cell centre's own status across one `fill()` call.
 /// `detail::rankedStatusOf`'s expensive part — a `preliminary_surface_level`
-/// scan of up to fourteen positions — is the SAME every time the SAME
+/// scan of up to thirteen positions, the anchor and then the twelve of
+/// `kPslWindow` (sampling.hpp) — is the SAME every time the SAME
 /// centre wins a rank, and a chunk touches dozens of distinct centres, not
 /// thousands of blocks' worth of them: measured, caching here is the
 /// difference between minutes and well under a second a chunk (matching the

@@ -30,6 +30,7 @@
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
 #include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
@@ -103,11 +104,10 @@ struct Arm {
 }
 
 [[nodiscard]] std::optional<nlohmann::json> loadSpec() {
-    std::ifstream in(probeDir() / "spec.json");
-    if (!in) {
+    if (!std::filesystem::exists(probeDir() / "spec.json")) {
         return std::nullopt;
     }
-    return nlohmann::json::parse(in);
+    return test::readSpec(probeDir());
 }
 
 /// A block state as a spec writes one: {"Name": ..., "Properties": {...}}.
@@ -312,17 +312,8 @@ TEST_CASE("the default-block probe's control is barrier3way's d_neg1_0, block fo
     test::requireSeed(other, kSeed);
     // The same recipe: the d_neg1_0 entry is the control's but for the name
     // and the default_block it leaves to the script's default (stone).
-    std::ifstream otherSpecFile(other / "spec.json");
-    REQUIRE(otherSpecFile.good());
-    const nlohmann::json otherSpec = nlohmann::json::parse(otherSpecFile);
-    nlohmann::json theirs;
-    for (const auto& entry : otherSpec) {
-        if (entry.at("name") == "d_neg1_0") {
-            theirs = entry;
-        }
-    }
-    REQUIRE(theirs.is_object());
-    nlohmann::json ours = loadSpec()->at(0);
+    nlohmann::json theirs = test::specEntry(other, "d_neg1_0");
+    nlohmann::json ours = test::specEntry(probeDir(), "db_stone");
     REQUIRE(ours.at("default_block") == nlohmann::json{{"Name", "minecraft:stone"}});
     ours.erase("default_block");
     ours.erase("name");

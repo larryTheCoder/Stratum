@@ -33,12 +33,13 @@
 // the server holds water on every one, and the four rivals are each wrong
 // on at least one whole class.
 //
-// ONE SEED PER CORPUS, read from its manifest; every `fluidnear_s*` corpus
-// present is scored with its `fluidnearb_s*` twin, and the case SKIPs when
-// there is none. The fixtures are Mojang-derived and never committed
-// (SPEC §12).
+// ONE SEED PER CORPUS, read from its manifest; the `fluidnear_s*` corpus of
+// each seed tools/probe-worlds generates (42 and 31337) is scored with its
+// `fluidnearb_s*` twin, every one of them, and the case SKIPs only when there
+// is none. The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -83,20 +84,15 @@ constexpr std::int32_t kOuterStride = 4;
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
 }
 
-/// Every probe directory under the fixtures whose name starts with @p prefix,
-/// sorted.
+/// The seeds tools/probe-worlds generates both families at.
+constexpr std::array<std::int64_t, 2> kSeeds{42, 31337};
+
+/// A family's corpora (`fluidnear_s`, `fluidnearb_s`), one per seed of
+/// kSeeds: none, or every one (support/probe_corpus.hpp).
 [[nodiscard]] std::vector<std::filesystem::path> corpora(const std::string& prefix) {
-    const std::filesystem::path root = fixtures() / "probes";
-    std::vector<std::filesystem::path> found;
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind(prefix, 0) == 0) {
-                found.push_back(entry.path());
-            }
-        }
-    }
-    std::ranges::sort(found);
-    return found;
+    return test::seededCorpora(
+        fixtures() / "probes", prefix, kSeeds,
+        "tools/probe-worlds generate --only aquifer-fluidnear-probe.sh --accept-eula");
 }
 
 /// A router entry the probe declared, which this case requires to be a
@@ -421,8 +417,7 @@ TEST_CASE("Q5.8's lava override on the near-surface and aborted seas", "[conform
         test::requireFrozen(probe, "tools/analysis/aquifer-fluidnear-probe.sh");
         std::ifstream manifestFile(probe / "manifest.json");
         const auto seed = nlohmann::json::parse(manifestFile).at("seed").get<std::int64_t>();
-        std::ifstream specFile(probe / "spec.json");
-        const nlohmann::json spec = nlohmann::json::parse(specFile);
+        const nlohmann::json spec = test::readSpec(probe);
         const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         std::size_t read = 0;
         for (const auto& entry : spec) {

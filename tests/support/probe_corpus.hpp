@@ -17,10 +17,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace stratum::test {
 
@@ -59,6 +63,40 @@ inline void requireFrozen(const std::filesystem::path& dir, std::string_view reg
                 "ticks_frozen); regenerate it with "
              << regenerate);
     REQUIRE(ticksFrozen(dir));
+}
+
+/// A family's corpora `<prefix><seed>` under @p probes, one for each of
+/// @p seeds — the seeds tools/probe-worlds generates the family at — in that
+/// order. Empty when none of them was generated, so the case can SKIP. A
+/// partial set fails the running case, naming each missing corpus and
+/// @p regenerate, rather than scoring whichever seeds happen to be on disk:
+/// one seed agreeing with an RNG-driven model is not evidence, and a pooled
+/// count one seed carries is not the count. Every corpus returned was
+/// generated from its own seed (requireSeed).
+[[nodiscard]] inline std::vector<std::filesystem::path>
+seededCorpora(const std::filesystem::path& probes, std::string_view prefix,
+              std::span<const std::int64_t> seeds, std::string_view regenerate) {
+    std::vector<std::filesystem::path> present;
+    std::string missing;
+    for (const std::int64_t seed : seeds) {
+        const std::filesystem::path dir = probes / (std::string(prefix) + std::to_string(seed));
+        if (std::filesystem::is_regular_file(dir / "manifest.json")) {
+            present.push_back(dir);
+        } else {
+            missing += " " + dir.filename().string();
+        }
+    }
+    if (present.empty()) {
+        return present;
+    }
+    INFO(present.size() << " of " << seeds.size() << " " << prefix << "* corpora under " << probes
+                        << " are present (missing:" << missing << "); regenerate the family with "
+                        << regenerate);
+    REQUIRE(present.size() == seeds.size());
+    for (std::size_t i = 0; i < seeds.size(); ++i) {
+        requireSeed(present[i], seeds[i]);
+    }
+    return present;
 }
 
 } // namespace stratum::test

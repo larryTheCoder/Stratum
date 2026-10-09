@@ -33,6 +33,7 @@
 #include "support/probe_corpus.hpp"
 #include "support/probe_region.hpp"
 #include "support/probe_settings.hpp"
+#include "support/probe_spec.hpp"
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
@@ -97,18 +98,15 @@ constexpr int kFillerChunks = 5;
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
 }
 
+/// The seeds tools/probe-worlds generates the corpus at.
+constexpr std::array<std::int64_t, 2> kSeeds{42, 31337};
+
+/// The `lowfloor_s<seed>` corpora: none, or one for every seed of kSeeds
+/// (support/probe_corpus.hpp).
 [[nodiscard]] std::vector<std::filesystem::path> corpora(const std::string& prefix) {
-    const std::filesystem::path root = fixtures() / "probes";
-    std::vector<std::filesystem::path> found;
-    if (std::filesystem::is_directory(root)) {
-        for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind(prefix, 0) == 0) {
-                found.push_back(entry.path());
-            }
-        }
-    }
-    std::ranges::sort(found);
-    return found;
+    return test::seededCorpora(
+        fixtures() / "probes", prefix, kSeeds,
+        "tools/probe-worlds generate --only aquifer-lowfloor-probe.sh --accept-eula");
 }
 
 /// The seed a corpus's name carries (`lowfloor_s<seed>`), checked against
@@ -121,23 +119,6 @@ constexpr int kFillerChunks = 5;
     const std::int64_t seed = std::stoll(name.substr(at + 2));
     test::requireSeed(dir, seed);
     return seed;
-}
-
-[[nodiscard]] nlohmann::json specEntry(const std::filesystem::path& dir, const std::string& name) {
-    std::ifstream in(dir / "spec.json");
-    const nlohmann::json spec = nlohmann::json::parse(in);
-    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
-    // unconditional FAIL as unreachable (C4702), and warnings are errors.
-    const nlohmann::json* named = nullptr;
-    for (const auto& entry : spec) {
-        if (entry.at("name").get<std::string>() == name) {
-            named = &entry;
-            break;
-        }
-    }
-    INFO("no dimension " << name << " in " << (dir / "spec.json"));
-    REQUIRE(named != nullptr);
-    return *named;
 }
 
 /// One probe dimension as a data pack on disk: its noise settings as
@@ -286,7 +267,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(Reading::Count)> kRea
 class Dimension {
 public:
     Dimension(const std::filesystem::path& corpus, const std::string& name, std::int64_t seed)
-        : probe_(specEntry(corpus, name), corpus), pack_(probe_.pack()),
+        : probe_(test::specEntry(corpus, name), corpus), pack_(probe_.pack()),
           loaded_(settings::loadAll(pack_)), settings_(loaded_.settings.at(probe_.settingsId())),
           noises_(density::NoiseRegistry::create(pack_, loaded_.graph.referencedNoises(), seed,
                                                  density::RandomSource::Xoroshiro)),
