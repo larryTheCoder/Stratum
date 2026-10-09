@@ -94,13 +94,18 @@ constexpr std::int32_t kLavaBandTo = -37;
 }
 
 [[nodiscard]] const nlohmann::json& entryNamed(const nlohmann::json& spec, const char* name) {
+    // REQUIRE rather than FAIL-then-return: MSVC sees the return after an
+    // unconditional FAIL as unreachable (C4702), and warnings are errors.
+    const nlohmann::json* named = nullptr;
     for (const auto& entry : spec) {
         if (entry.at("name") == name) {
-            return entry;
+            named = &entry;
+            break;
         }
     }
-    FAIL("the probe's spec has no arm " << name);
-    return spec; // unreachable: FAIL throws
+    INFO("the probe's spec has no arm " << name);
+    REQUIRE(named != nullptr);
+    return *named;
 }
 
 /// The arms' declared constants, which this case requires to be constants:
