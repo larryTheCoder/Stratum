@@ -908,3 +908,147 @@ TEST_CASE("a rank 2-3 tie can change a block", "[aquifer]") {
     CHECK(decide(ranked, -11.0 / 24.0).substance == Substance::Solid);
     CHECK(decide(swapped, -11.0 / 24.0).substance == Substance::Fluid);
 }
+
+namespace {
+
+/// What one block's decision came to, every field a block or a mark can show.
+[[nodiscard]] bool sameDecision(const SubstanceAt& a, const SubstanceAt& b) {
+    return a.substance == b.substance && a.fluidType == b.fluidType &&
+           a.fluidUpdate == b.fluidUpdate;
+}
+
+} // namespace
+
+TEST_CASE("the barrier value is read only where the predicate weighs it, and no block can tell",
+          "[aquifer]") {
+    // Three ways to decide the same blocks, over stub fields that put wet and
+    // dry sources of many levels and both types side by side, with a
+    // varying surface (some scans abort): the shipped path, reading the
+    // `barrier` value only on demand with the candidate window memoized; the
+    // same with every read made up front (BarrierReads::Always); and the
+    // unmemoized `computeSubstanceWith` over `selectSources`. All three must
+    // agree on every field of every block — substance, fluid type and the
+    // fluid-update mark — and the on-demand path must read the value on far
+    // fewer blocks, never where Q6.2 short-circuits.
+    using stratum::aquifer::BarrierReads;
+    using stratum::aquifer::computeSubstanceWith;
+    using stratum::aquifer::NoDeepDark;
+    using stratum::aquifer::Source;
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
+    const auto field = [](std::uint64_t salt) {
+        return [salt](std::int32_t x, std::int32_t y, std::int32_t z) {
+            return stubField(salt, x, y, z);
+        };
+    };
+    const auto floodedness = field(11);
+    const auto spread = field(12);
+    const auto lava = field(13);
+    const auto psl = [](std::int32_t x, std::int32_t, std::int32_t z) {
+        return 20.0 + (90.0 * stubField(14, x, 0, z)); // [-70, 110): some scans abort
+    };
+    long long readsOnDemand = 0;
+    long long readsAlways = 0;
+    long long readsUnmemoized = 0;
+    long long readWithoutCompeting = 0;
+    const auto barrierCounting = [](long long& reads) {
+        return [&reads](std::int32_t x, std::int32_t y, std::int32_t z) {
+            ++reads;
+            return 1.3 * stubField(15, x, y, z);
+        };
+    };
+    const auto onDemand = barrierCounting(readsOnDemand);
+    const auto always = barrierCounting(readsAlways);
+    const auto unmemoized = barrierCounting(readsUnmemoized);
+
+    StatusCache onDemandCache;
+    StatusCache alwaysCache;
+    StatusCache statusOnly;
+    long long blocks = 0;
+    long long disagreements = 0;
+    long long stone = 0;
+    long long fluid = 0;
+    long long marked = 0;
+    for (std::int32_t z = -45; z < 45; z += 4) {
+        for (std::int32_t x = -45; x < 45; x += 4) {
+            for (std::int32_t y = -70; y < 100; ++y) {
+                const AquiferQuery query{.x = x, .y = y, .z = z, .density = -0.4, .seaLevel = kSea};
+                const long long before = readsOnDemand;
+                const SubstanceAt shipped =
+                    computeSubstance(centres, query, onDemandCache, onDemand, floodedness, spread,
+                                     lava, psl, NoDeepDark{});
+                const SubstanceAt eager =
+                    computeSubstance(centres, query, alwaysCache, always, floodedness, spread, lava,
+                                     psl, NoDeepDark{}, BarrierReads::Always);
+                const SubstanceAt reference = computeSubstanceWith(
+                    centres, query,
+                    [&](const Source& ranked) {
+                        return statusOnly.statusOf(ranked, kSea, psl, floodedness, spread, lava,
+                                                   NoDeepDark{});
+                    },
+                    unmemoized, BarrierReads::Always);
+                ++blocks;
+                disagreements += static_cast<long long>(!sameDecision(shipped, eager) ||
+                                                        !sameDecision(shipped, reference));
+                if (readsOnDemand > before) {
+                    const Selection selection = selectSources(centres, x, y, z);
+                    readWithoutCompeting +=
+                        static_cast<long long>(!stratum::aquifer::nearestPairCompetes(
+                            selection.ranked[0].distanceSq, selection.ranked[1].distanceSq));
+                }
+                stone += static_cast<long long>(shipped.substance == Substance::Solid);
+                fluid += static_cast<long long>(shipped.substance == Substance::Fluid);
+                marked += static_cast<long long>(shipped.fluidUpdate);
+            }
+        }
+    }
+    CHECK(blocks == 23LL * 23 * 170);
+    CHECK(disagreements == 0);
+    CHECK(readWithoutCompeting == 0);
+    CHECK(readsAlways == readsUnmemoized);
+    // Not vacuous: barriers, fluid and marks all occur, the value is read
+    // where it is weighed, and on far fewer blocks than it used to be.
+    CHECK(stone > 0);
+    CHECK(fluid > 0);
+    CHECK(marked > 0);
+    CHECK(readsOnDemand > 0);
+    CHECK(readsOnDemand * 4 < readsAlways);
+}
+
+TEST_CASE("the candidate window is drawn once per home cell, for the world it was drawn from",
+          "[aquifer]") {
+    // StatusCache::candidatesOf is candidatesFor, memoized: the same twelve
+    // candidates for every home cell, on both sides of the origin and in an
+    // order that alternates between neighbouring homes (which share no slot)
+    // and returns to them; and a different world's lattice is redrawn, not
+    // served from the slots another world filled.
+    using stratum::aquifer::candidatesFor;
+    const CentreSource modern{42, stratum::density::RandomSource::Xoroshiro};
+    const CentreSource other{43, stratum::density::RandomSource::Xoroshiro};
+    const CentreSource legacy{42, stratum::density::RandomSource::Legacy};
+    StatusCache cache;
+    long long compared = 0;
+    long long wrong = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (std::int32_t y = -7; y <= 7; ++y) {
+            for (std::int32_t z = -3; z <= 3; ++z) {
+                for (std::int32_t x = -3; x <= 3; ++x) {
+                    for (const std::int32_t dx : {0, 1, 0, -1}) {
+                        const CellIndex home{.x = x + dx, .y = y, .z = z};
+                        for (const CentreSource* world : {&modern, &modern, &other, &legacy}) {
+                            ++compared;
+                            wrong += static_cast<long long>(cache.candidatesOf(*world, home) !=
+                                                            candidatesFor(*world, home));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared == 2LL * 15 * 7 * 7 * 4 * 4);
+    CHECK(wrong == 0);
+    // The three worlds really do draw different windows, so the check above
+    // would have caught a slot served across them.
+    const CellIndex home{.x = -2, .y = 3, .z = 1};
+    CHECK(candidatesFor(modern, home) != candidatesFor(other, home));
+    CHECK(candidatesFor(modern, home) != candidatesFor(legacy, home));
+}

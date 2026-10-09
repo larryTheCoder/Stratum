@@ -61,6 +61,7 @@ done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
                    tools/analysis/legacy-goldens-surface-analyze.cpp \
                    tools/analysis/aquifer-barrier-analyze.cpp \
                    tools/analysis/aquifer-cells.cpp \
+                   tools/analysis/aquifer-cost-bench.cpp \
                    tools/analysis/aquifer-deepfloor-analyze.cpp \
                    tools/analysis/aquifer-fluidtype-analyze.cpp \
                    tools/analysis/aquifer-level-analyze.cpp \

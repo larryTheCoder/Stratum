@@ -12,7 +12,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -467,4 +470,73 @@ TEST_CASE("the abort threshold moves with sea_level below -54", "[aquifer]") {
     Oracle classic{kAnchorX, kAnchorZ, 100.0};
     classic.at(0, 0, -62.01);
     CHECK_FALSE(readPreliminarySurface(classic, kCentre, -70).aborted);
+}
+
+TEST_CASE("a memoized read asks once per position and answers as the sampler did",
+          "[aquifer][sampling]") {
+    // The filler wraps `preliminary_surface_level` in this for one chunk, so
+    // it must be the sampler exactly: the same value at every position, on
+    // both sides of the origin, with y part of the position, past any table
+    // growth — and only the call count may change.
+    using stratum::aquifer::MemoizedRead;
+    long long calls = 0;
+    const auto field = [&calls](std::int32_t x, std::int32_t y, std::int32_t z) {
+        ++calls;
+        return (static_cast<double>(x) * 1.25) - (static_cast<double>(z) * 0.5) +
+               (static_cast<double>(y) * 1000.0);
+    };
+    MemoizedRead memo(field);
+    const auto expected = [](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return (static_cast<double>(x) * 1.25) - (static_cast<double>(z) * 0.5) +
+               (static_cast<double>(y) * 1000.0);
+    };
+    const auto same = [](const double a, const double b) {
+        return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+    };
+    long long wrong = 0;
+    // 41 x 41 x 2 = 3362 distinct positions, more than the table's first
+    // size, every one asked for three times in an interleaved order.
+    for (int pass = 0; pass < 3; ++pass) {
+        for (std::int32_t x = -80; x <= 80; x += 4) {
+            for (std::int32_t z = 80; z >= -80; z -= 4) {
+                for (const std::int32_t y : {0, -1}) {
+                    wrong += static_cast<long long>(!same(memo(x, y, z), expected(x, y, z)));
+                }
+            }
+        }
+    }
+    CHECK(wrong == 0);
+    CHECK(calls == 41 * 41 * 2);
+    CHECK(memo.size() == static_cast<std::size_t>(41 * 41 * 2));
+    // The extremes of the coordinate range are positions like any other.
+    constexpr std::int32_t kMin = std::numeric_limits<std::int32_t>::min();
+    constexpr std::int32_t kMax = std::numeric_limits<std::int32_t>::max();
+    CHECK(same(memo(kMin, 0, kMax), expected(kMin, 0, kMax)));
+    CHECK(same(memo(kMax, 0, kMin), expected(kMax, 0, kMin)));
+    CHECK(same(memo(kMin, 0, kMax), expected(kMin, 0, kMax)));
+    CHECK(calls == (41 * 41 * 2) + 2);
+}
+
+TEST_CASE("a memoized read that throws stores nothing and asks again", "[aquifer][sampling]") {
+    // A router read can refuse on a value (find_top_surface's step bound).
+    // Nothing may be remembered for it: the next call asks again and throws
+    // again, exactly as the bare sampler would.
+    using stratum::aquifer::MemoizedRead;
+    int calls = 0;
+    const auto refusing = [&calls](std::int32_t x, std::int32_t, std::int32_t) -> double {
+        ++calls;
+        if (x < 0) {
+            throw std::runtime_error("refused");
+        }
+        return 7.0;
+    };
+    MemoizedRead memo(refusing);
+    CHECK_THROWS_AS(memo(-4, 0, 0), std::runtime_error);
+    CHECK_THROWS_AS(memo(-4, 0, 0), std::runtime_error);
+    CHECK(calls == 2);
+    CHECK(memo.size() == 0U);
+    const auto seven = std::bit_cast<std::uint64_t>(7.0);
+    CHECK(std::bit_cast<std::uint64_t>(memo(4, 0, 0)) == seven);
+    CHECK(std::bit_cast<std::uint64_t>(memo(4, 0, 0)) == seven);
+    CHECK(calls == 3);
 }

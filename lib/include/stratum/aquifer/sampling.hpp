@@ -33,6 +33,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
+#include <vector>
 
 namespace stratum::aquifer {
 
@@ -366,6 +368,109 @@ template<typename Sampler>
                    .anchor = javamath::floorToInt(seed),
                    .aborted = aborted};
 }
+
+/// One router read, memoized by position: the first call at a position asks
+/// the wrapped sampler, and every later call at the same position returns
+/// what it said then. For a read that is a pure function of its position —
+/// and nothing else — this changes how often the sampler runs and nothing
+/// about what any caller gets back.
+///
+/// Built for `preliminary_surface_level`, whose every read is a
+/// `find_top_surface` column scan: a source's thirteen scan positions all sit
+/// on the 4-aligned lattice its anchor quantum and the window's 16-block
+/// pitch make, so neighbouring sources, and the sources of one cell column at
+/// different layers, read many of the same positions — and `chunkYSkip`'s
+/// own samples, 4-aligned over the same rectangle, cover every anchor a
+/// chunk's sources can have. Measured on the shipped overworld (SPEC §11,
+/// "What the aquifer costs").
+///
+/// Per-task scratch, like `StatusCache`: the caller owns one for as long as
+/// the wrapped read stays the same function — in `ChunkFiller::fill`, one
+/// chunk, since its reads go through that chunk's flat_cache window — and
+/// never shares it between threads. Not callable through a const reference:
+/// a caller hands `readPreliminarySurface` a lambda that calls it.
+template<typename Sampler>
+class MemoizedRead {
+public:
+    explicit MemoizedRead(Sampler sampler) : sampler_(std::move(sampler)) {}
+
+    [[nodiscard]] double operator()(const std::int32_t x, const std::int32_t y,
+                                    const std::int32_t z) {
+        const Key key{.x = x, .y = y, .z = z};
+        if (slots_.empty()) {
+            slots_.resize(kInitialSlots);
+        }
+        std::size_t slot = probe(key);
+        if (slots_[slot].used) {
+            return slots_[slot].value;
+        }
+        // Asked first and stored after: a read that throws stores nothing,
+        // and the next call at the same position asks again.
+        const double value = sampler_(x, y, z);
+        if ((size_ + 1) * 2 > slots_.size()) {
+            grow();
+            slot = probe(key);
+        }
+        slots_[slot] = Slot{.key = key, .value = value, .used = true};
+        ++size_;
+        return value;
+    }
+
+    /// How many distinct positions the wrapped sampler has been asked for.
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+
+private:
+    struct Key {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t z = 0;
+
+        [[nodiscard]] bool operator==(const Key&) const noexcept = default;
+    };
+
+    struct Slot {
+        Key key{};
+        double value = 0.0;
+        bool used = false;
+    };
+
+    /// Open addressing in ONE vector, grown by doubling at half full: a
+    /// node-per-entry map scatters small allocations between the
+    /// interpreter's own per-read ones, and measured, that cost the terrain
+    /// reads around it more than the map saved.
+    static constexpr std::size_t kInitialSlots = 1024;
+
+    /// Where @p key sits, or the empty slot it would take. Any mix will do —
+    /// the hash decides where an entry is stored, never what it holds.
+    /// Unsigned throughout, so it wraps by definition.
+    [[nodiscard]] std::size_t probe(const Key& key) const noexcept {
+        constexpr std::uint64_t kMix = 0x9e3779b97f4a7c15ULL;
+        std::uint64_t h = static_cast<std::uint32_t>(key.x);
+        h = (h * kMix) ^ static_cast<std::uint32_t>(key.y);
+        h = (h * kMix) ^ static_cast<std::uint32_t>(key.z);
+        h *= kMix;
+        const std::size_t mask = slots_.size() - 1;
+        auto slot = static_cast<std::size_t>(h >> 32U) & mask;
+        while (slots_[slot].used && !(slots_[slot].key == key)) {
+            slot = (slot + 1) & mask;
+        }
+        return slot;
+    }
+
+    void grow() {
+        std::vector<Slot> old(slots_.size() * 2);
+        old.swap(slots_);
+        for (const Slot& entry : old) {
+            if (entry.used) {
+                slots_[probe(entry.key)] = entry;
+            }
+        }
+    }
+
+    Sampler sampler_;
+    std::vector<Slot> slots_;
+    std::size_t size_ = 0;
+};
 
 /// WHAT THE FOUR VALUES ANSWER. The clean-room spec's Q5.3 is a first match
 /// over the thirteen samples in scan order — Q5.3(a) on the anchor, then the

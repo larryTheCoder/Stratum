@@ -63,6 +63,7 @@ stratum_configure_target(stratum_legacy_goldens_surface_analyze)
 foreach(tool IN ITEMS
         aquifer-barrier-analyze
         aquifer-cells
+        aquifer-cost-bench
         aquifer-deepfloor-analyze
         aquifer-fluidtype-analyze
         aquifer-level-analyze

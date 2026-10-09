@@ -58,6 +58,8 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
+#include <stratum/density/random_source.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 
 #include <array>
 #include <cstddef>
@@ -208,20 +210,62 @@ struct NoDeepDark {
     }
 };
 
-/// Memoizes a cell centre's own status across one `fill()` call.
-/// `detail::rankedStatusOf`'s expensive part — a `preliminary_surface_level`
-/// scan of up to thirteen positions, the anchor and then the twelve of
-/// `kPslWindow` (sampling.hpp) — is the SAME every time the SAME
-/// centre wins a rank, and a chunk touches dozens of distinct centres, not
-/// thousands of blocks' worth of them: measured, caching here is the
-/// difference between minutes and well under a second a chunk (matching the
-/// same shape of fix `ChunkFiller::applySurfaceRules`'s own biome cache
+/// The aquifer's per-task scratch for one `fill()` call: each cell centre's
+/// own status, and each home cell's candidate window. Both are pure functions
+/// of the world and the position they are keyed by, so what this holds can
+/// only ever change how often a value is computed, never the value.
+///
+/// The STATUS. `detail::rankedStatusOf`'s expensive part — a
+/// `preliminary_surface_level` scan of thirteen positions — is the SAME every
+/// time the SAME centre wins a rank, and a chunk touches dozens of distinct
+/// centres, not thousands of blocks' worth of them: measured, caching here is
+/// the difference between minutes and well under a second a chunk (matching
+/// the same shape of fix `ChunkFiller::applySurfaceRules`'s own biome cache
 /// already uses this file's caller for). The type rides along for the same
 /// reason in miniature: it is one more router read per centre, and it is
 /// now needed for all three ranked sources on every block rather than for
 /// the nearest wet one alone.
+///
+/// THE CANDIDATES. `selectSources` draws the twelve candidate centres of a
+/// block's home cell — twelve positional seeds, thirty-six bounded draws —
+/// and a home cell is 16 x 12 x 16 blocks, so consecutive blocks almost always
+/// share one. `candidatesOf` keeps the window of the last few home cells, in
+/// slots chosen by the cell index's low bits: a 4-wide row of a noise cell
+/// that straddles a cell boundary (x = 5 mod 16) alternates between two home
+/// cells, and they land in different slots. Measured on the shipped
+/// overworld, about one block in 120 still draws its window (SPEC §11,
+/// "What the aquifer costs"); the ranking itself runs on every block, as it
+/// must — it is the block's own distances.
+///
+/// Reused across an entire `fill()` call (or more), never across a different
+/// world: the candidates check the `CentreSource` they were drawn from and
+/// redraw for another, but a status is keyed by its centre alone, and its
+/// samplers cannot be checked at all.
 class StatusCache {
 public:
+    /// The twelve candidates of home cell @p home, in iteration order —
+    /// `candidatesFor(centres, home)`, drawn once per home cell rather than
+    /// once per block.
+    [[nodiscard]] const std::array<Candidate, kCandidateCount>&
+    candidatesOf(const CentreSource& centres, const CellIndex home) {
+        if (centres.source() != drawnSource_ || centres.base() != drawnBase_ ||
+            centres.legacySeed() != drawnLegacySeed_) {
+            for (HomeSlot& slot : homes_) {
+                slot.filled = false;
+            }
+            drawnSource_ = centres.source();
+            drawnBase_ = centres.base();
+            drawnLegacySeed_ = centres.legacySeed();
+        }
+        HomeSlot& slot = homes_[slotOf(home)];
+        if (!slot.filled || slot.home != home) {
+            slot.candidates = candidatesFor(centres, home);
+            slot.home = home;
+            slot.filled = true;
+        }
+        return slot.candidates;
+    }
+
     template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
              typename LavaSampler, typename DeepDarkSampler>
     [[nodiscard]] SourceStatus statusOf(const Source& ranked, const std::int32_t seaLevel,
@@ -240,7 +284,29 @@ public:
     }
 
 private:
+    struct HomeSlot {
+        bool filled = false;
+        CellIndex home{};
+        std::array<Candidate, kCandidateCount> candidates{};
+    };
+
+    /// Eight slots, one per parity of the home cell's three indices: two
+    /// home cells adjacent on any axis never share one. Unsigned, so a
+    /// negative index needs no floorMod.
+    static constexpr std::size_t kHomeSlots = 8;
+
+    [[nodiscard]] static std::size_t slotOf(const CellIndex home) noexcept {
+        const auto bit = [](const std::int32_t index) {
+            return static_cast<std::size_t>(static_cast<std::uint32_t>(index) & 1U);
+        };
+        return bit(home.x) | (bit(home.y) << 1U) | (bit(home.z) << 2U);
+    }
+
     std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, SourceStatus> cache_;
+    std::array<HomeSlot, kHomeSlots> homes_{};
+    density::RandomSource drawnSource_ = density::RandomSource::Xoroshiro;
+    rng::Seed128 drawnBase_{};
+    std::int64_t drawnLegacySeed_ = 0;
 };
 
 /// Q1.2's global picker, reduced to the one question the substance decision
@@ -338,23 +404,39 @@ template<typename FourthStatus>
     return false;
 }
 
-/// The decision after the selection: `computeSubstanceWith` from the point
-/// where the four sources are ranked, given the ranking itself. The caller
-/// has already answered Q2.4 (the block is not under the global lava sea),
-/// as `computeSubstanceWith` does before calling this; Q2.3's `y_skip` is
-/// the caller's to apply to either, as it always was (`ChunkFiller`). Past
-/// both is exactly where the lattice is consulted.
-///
-/// Its own entry point for one reason: the spec measures the tie-break's
-/// visibility (Q4.7) by running THIS logic twice per tied selection, once
-/// as ranked and once with the tied pair swapped, and a conformance case
-/// that wants the same figure must run the shipped logic rather than a copy
-/// of it (golden_aquifer_tiebreak_test.cpp). @p selection is otherwise
-/// `selectSources`'s for the query's own position.
+/// When the decision reads the `barrier` router value.
+enum class BarrierReads : std::uint8_t {
+    /// Only where the predicate weighs it (`BarrierNoise`): past Q2.4 and
+    /// Q6.3, past Q6.2's short-circuit, and only in a term of Π's level
+    /// branch within `kBarrierNoiseReach` of the pair's boundary. Everywhere
+    /// else the predicate reaches its answer without the value, so the read
+    /// is skipped and no block can tell. The default, and what the filler
+    /// uses whenever the read is a pure, total function of the block.
+    WhereWeighed,
+    /// On every block past Q2.4 and Q6.3 — the read sequence from before
+    /// reads were deferred. The filler asks for it where its barrier read is
+    /// not provably free of effects (ChunkFiller::compile says which entries
+    /// those are): skipping such a read could change what happens next, and
+    /// this keeps every one.
+    Always,
+};
+
+namespace detail {
+
+/// Q2.4's answer: below the global lava sea the lattice is never consulted —
+/// the sea is lava whatever any source says, and it is literal lava, not the
+/// dimension's default fluid.
+[[nodiscard]] constexpr SubstanceAt globalLavaSea() noexcept {
+    return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
+}
+
+/// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier
+/// and the nearest source's own reading, for the four ranked sources in
+/// @p selection.
 template<typename StatusOf, typename BarrierSampler>
-[[nodiscard]] SubstanceAt computeSubstanceFrom(const Selection& selection,
-                                               const AquiferQuery& query, StatusOf&& statusOf,
-                                               BarrierSampler&& barrier) {
+[[nodiscard]] SubstanceAt decideRanked(const Selection& selection, const AquiferQuery& query,
+                                       StatusOf&& statusOf, BarrierSampler&& barrier,
+                                       const BarrierReads reads) {
     // All three statuses, typed unconditionally: Π needs the type of a
     // source that reads AIR at this block as much as of one that reads fluid
     // (barrier.hpp).
@@ -379,21 +461,31 @@ template<typename StatusOf, typename BarrierSampler>
             .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::WaterOverLava, fourth)};
     }
 
-    const double barrierNoise = barrier(query.x, query.y, query.z);
     const auto asBarrierSource = [&](const std::size_t r) {
         return BarrierSource{.level = status[r].level,
                              .distanceSq = selection.ranked[r].distanceSq,
                              .type = status[r].type};
     };
-    const BarrierAt at{
+    BarrierAt at{
         .y = query.y,
         .density = query.density,
         .nearest = asBarrierSource(0),
         .second = asBarrierSource(1),
         .third = asBarrierSource(2),
-        .barrier = barrierNoise,
     };
-    if (placesBarrier(at)) {
+    // The `barrier` value, read where `reads` says (`BarrierReads`): on
+    // first use inside the predicate — which on most blocks is never — or
+    // up front, as before reads were deferred.
+    const auto readBarrier = [&] { return barrier(query.x, query.y, query.z); };
+    bool placed = false;
+    if (reads == BarrierReads::Always) {
+        at.barrier = readBarrier();
+        placed = placesBarrier(at);
+    } else {
+        BarrierNoise noise(readBarrier);
+        placed = placesBarrier(at, noise);
+    }
+    if (placed) {
         return SubstanceAt{.substance = Substance::Solid};
     }
 
@@ -406,6 +498,32 @@ template<typename StatusOf, typename BarrierSampler>
         .substance = Substance::Fluid,
         .fluidType = status[0].type,
         .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
+}
+
+} // namespace detail
+
+/// The decision after the selection: `computeSubstanceWith` from the point
+/// where the four sources are ranked, given the ranking itself. The caller
+/// has already answered Q2.4 (the block is not under the global lava sea),
+/// as `computeSubstanceWith` does before calling this; Q2.3's `y_skip` is
+/// the caller's to apply to either, as it always was (`ChunkFiller`). Past
+/// both is exactly where the lattice is consulted.
+///
+/// Its own entry point for one reason: the spec measures the tie-break's
+/// visibility (Q4.7) by running THIS logic twice per tied selection, once
+/// as ranked and once with the tied pair swapped, and a conformance case
+/// that wants the same figure must run the shipped logic rather than a copy
+/// of it (golden_aquifer_tiebreak_test.cpp). @p selection is otherwise
+/// `selectSources`'s for the query's own position.
+///
+/// @p reads is `BarrierReads::WhereWeighed` unless the caller's barrier read
+/// is not provably pure (`BarrierReads`); either way the answer is the same.
+template<typename StatusOf, typename BarrierSampler>
+[[nodiscard]] SubstanceAt
+computeSubstanceFrom(const Selection& selection, const AquiferQuery& query, StatusOf&& statusOf,
+                     BarrierSampler&& barrier,
+                     const BarrierReads reads = BarrierReads::WhereWeighed) {
+    return detail::decideRanked(selection, query, statusOf, barrier, reads);
 }
 
 /// The aquifer substance decision for one block (spec Q2.2-Q6.7, clean-room
@@ -423,23 +541,26 @@ template<typename StatusOf, typename BarrierSampler>
 /// shipped status; a conformance case that weighs a rival reading of a
 /// status (`rankedCellOf` gives its inputs) passes its own, so the rival is
 /// scored through exactly the decision the filler runs.
+///
+/// @p barrier is called at most once, at the block, and only where
+/// @p reads says (`BarrierReads`).
 template<typename StatusOf, typename BarrierSampler>
-[[nodiscard]] SubstanceAt computeSubstanceWith(const CentreSource& centres,
-                                               const AquiferQuery& query, StatusOf&& statusOf,
-                                               BarrierSampler&& barrier) {
-    // Q2.4: below the global lava sea the lattice is never consulted — the
-    // sea is lava whatever any source says, and it is literal lava, not the
-    // dimension's default fluid.
+[[nodiscard]] SubstanceAt
+computeSubstanceWith(const CentreSource& centres, const AquiferQuery& query, StatusOf&& statusOf,
+                     BarrierSampler&& barrier,
+                     const BarrierReads reads = BarrierReads::WhereWeighed) {
     if (globalReadsLava(query.y, query.seaLevel)) {
-        return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
+        return detail::globalLavaSea();
     }
-
     return computeSubstanceFrom(selectSources(centres, query.x, query.y, query.z), query, statusOf,
-                                barrier);
+                                barrier, reads);
 }
 
 /// The full aquifer substance decision for one block: `computeSubstanceWith`
-/// with each source's own status, read from the router and memoized.
+/// with each source's own status, read from the router and memoized, and the
+/// candidate window drawn once per home cell (`StatusCache::candidatesOf`) —
+/// the same twelve candidates `selectSources` draws, ranked by the same
+/// `rankCandidates`.
 ///
 /// Each sampler is called as `double(std::int32_t x, std::int32_t y,
 /// std::int32_t z)` at the position its own router entry reads at
@@ -459,13 +580,19 @@ template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSa
 [[nodiscard]] SubstanceAt
 computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusCache& cache,
                  BarrierSampler&& barrier, FloodednessSampler&& floodedness, SpreadSampler&& spread,
-                 LavaSampler&& lava, PslSampler&& psl, DeepDarkSampler&& deepDark) {
-    return computeSubstanceWith(
-        centres, query,
+                 LavaSampler&& lava, PslSampler&& psl, DeepDarkSampler&& deepDark,
+                 const BarrierReads reads = BarrierReads::WhereWeighed) {
+    if (globalReadsLava(query.y, query.seaLevel)) {
+        return detail::globalLavaSea();
+    }
+    const Selection selection = rankCandidates(
+        query.x, query.y, query.z, cache.candidatesOf(centres, cellOf(query.x, query.y, query.z)));
+    return detail::decideRanked(
+        selection, query,
         [&](const Source& ranked) {
             return cache.statusOf(ranked, query.seaLevel, psl, floodedness, spread, lava, deepDark);
         },
-        barrier);
+        barrier, reads);
 }
 
 } // namespace stratum::aquifer

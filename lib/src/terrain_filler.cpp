@@ -391,6 +391,32 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
             // surface tree happens to read the biome.
             filler.interpreter_.requireEvaluable(settings.router.at(entry));
         }
+        // Where the barrier is read. computeSubstance skips the read where
+        // Q6.2 decides without it, which no block can see — provided the
+        // read has no effect but its value. Two node types make that
+        // unprovable, and a barrier reaching either keeps every read it
+        // always had (aquifer::BarrierReads::Always):
+        //
+        //   * `interpolated`. The barrier is the one aquifer read made in
+        //     the BLOCK context, so its cells' corners are read from, and
+        //     written to, the CornerCache the terrain's own reads share —
+        //     keyed by cell, not by the flat_cache window a corner was read
+        //     through. Every other aquifer read is detached and never
+        //     touches the cache.
+        //   * `find_top_surface`, which refuses a scan longer than its step
+        //     bound when it is evaluated, on a value — a chunk that threw
+        //     because of one skippable read must still throw.
+        //
+        // Vanilla's barrier is a bare noise, so every vanilla preset reads it
+        // only where it is weighed.
+        const std::vector<density::NodeIndex> barrierTree =
+            graph.reachableFrom(settings.router.at(settings::RouterEntry::Barrier));
+        filler.barrierReadsAlways_ =
+            std::ranges::any_of(barrierTree, [&graph](const density::NodeIndex index) {
+                const density::NodeType type = graph.node(index).type;
+                return type == density::NodeType::Interpolated ||
+                       type == density::NodeType::FindTopSurface;
+            });
     }
 
     if (surfaceRules != nullptr) {
@@ -595,8 +621,18 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // (`preliminarySurfaceIn`, below). Two readings of one entry, on purpose:
     // head to head, the server sides with the lattice on no block where the
     // two part (aquifer::readPreliminarySurface, SPEC §11).
-    const auto pslAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+    //
+    // Memoized by position for this chunk: each read is a whole
+    // `find_top_surface` column scan, and the y_skip samples and the
+    // sources' anchors and windows land on the same 4-aligned positions
+    // again and again. Exact by construction: a detached read is a function
+    // of its position and this chunk's window alone, never of the
+    // CornerCache (aquifer::MemoizedRead).
+    aquifer::MemoizedRead pslMemo([&](std::int32_t x, std::int32_t y, std::int32_t z) {
         return aquiferRead(pslNode, x, y, z);
+    });
+    const auto pslAt = [&pslMemo](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return pslMemo(x, y, z);
     };
     const density::NodeIndex erosionNode =
         settings_->aquifersEnabled ? settings_->router.at(settings::RouterEntry::Erosion)
@@ -685,7 +721,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                                                   .seaLevel = settings_->seaLevel};
                                 const aquifer::SubstanceAt result = aquifer::computeSubstance(
                                     *aquiferCentres_, query, aquiferStatusCache, barrierAt,
-                                    floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt);
+                                    floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt,
+                                    barrierReadsAlways_ ? aquifer::BarrierReads::Always
+                                                        : aquifer::BarrierReads::WhereWeighed);
                                 switch (result.substance) {
                                     case aquifer::Substance::Solid:
                                         block = &settings_->defaultBlock;

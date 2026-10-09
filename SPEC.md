@@ -1052,7 +1052,9 @@ mapping has two halves, split at a platform-neutral midpoint:
      one `fill()` call — a chunk touches dozens of distinct centres, not
      thousands of blocks' worth of them — and brought that to about 1
      second a chunk, the same shape of fix `ChunkFiller`'s own biome cache
-     already used for surface rules.
+     already used for surface rules. Both figures are that day's build;
+     what the aquifer costs now, measured in an optimised build and split
+     by part, is §11's "What the aquifer costs".
 
      *Wider, still open — and one guess about it now REFUTED.* Over a
      64-chunk sweep of the same probe world (6291456 blocks), RAW category
@@ -1492,7 +1494,9 @@ Open:
     filler asking for every block of a 4x8x4 cell paid that 128 times for
     eight values that never change. Computing them once per cell is
     **86.8 times faster** — 39.7 seconds a chunk down to 0.46 — and bit-for-bit
-    identical, which is asserted over 17000 points rather than assumed. The
+    identical, which is asserted over 17000 points rather than assumed (both
+    figures that build's bare first pass; what a fill costs now is §11's
+    "What the aquifer costs"). The
     cache belongs to the calling task, not to the interpreter, because a
     compiled pipeline is immutable and shared between threads (§4.1).
 
@@ -4023,6 +4027,142 @@ Open:
   stone, the ore-vein flag and the legacy flag hard-coded, and now build
   through it, so a field the script reads and a case does not fails by name
   instead of being dropped.
+
+- **What the aquifer costs — measured, and cut by four fifths without moving
+  a block or a mark (MA).** No output changes; the engine stays where it
+  is. Until now the only speed on record was the whole overworld's
+  237 ms/chunk (M5, below), with no split by stage, and the aquifer's own
+  cost was a list of suspected mechanisms.
+
+  *The instrument.* `tools/analysis/aquifer-cost-bench.cpp`, a build
+  target, fills vanilla's own overworld (or `amplified`, `large_biomes`)
+  from the fetched pack exactly as `world::CompiledDimension` does, with
+  aquifers, ore veins and the surface pass each switchable. Veins are gated
+  on aquifers by the engine itself, so the aquifer's share is "veins off"
+  against "aquifers off". It times `ChunkFiller::fill` alone — the first
+  pass and the surface rules, not the biome fill or the packing — as
+  process CPU time, each chunk's fastest of several passes. Every run also
+  writes a byte dump of every block state and every fluid-update mark, in
+  order, which is how "no block moved" below is checked. On a 4-core box
+  shared with other work, wall time wanders by about ten percent, so the
+  shares are also taken as callgrind instruction counts, which do not
+  wander.
+
+  *Where it went, before.* The first pass of four chunks (seed 0, chunks
+  -1..0 on both axes; instructions in `ChunkFiller::fill`): 7 902 M with
+  aquifers on, 7 408 M off, so the aquifer was 493 M, 6.2%. Of that:
+
+  | Part | Instructions | Share | What it was |
+  |---|---|---|---|
+  | `barrier` reads | 239 M | 48% | 32 669 router reads, one per block reaching the barrier step |
+  | source statuses | 128 M | 26% | 2 322 router reads for 129 centres, 1 677 of them `find_top_surface` scans |
+  | candidate windows | 74 M | 15% | 392 028 cell draws, twelve per block |
+  | `y_skip` samples | 35 M | 7% | 484 scans, 121 a chunk |
+  | the rest | 17 M | 4% | ranking, the status map, the decision itself |
+
+  Every router read pays the interpreter's own entry cost — a fresh scope
+  the size of the whole graph, allocated and zeroed (that `memset` alone is
+  41% of every instruction in the run above, terrain included) — so reads,
+  not arithmetic, were the aquifer's cost. That entry cost is the
+  interpreter's, and the compiled program M5 owes is what removes it
+  (§10); it is recorded here, not touched.
+
+  *Three cuts, each exact by construction.*
+
+  * *The `barrier` value is read on demand* (`aquifer::BarrierNoise`). The
+    predicate weighs it in one place — Π's level branch, within
+    `kBarrierNoiseReach` of a pair's boundary — and returns before that on
+    most blocks: Q6.2's short-circuit (`nearestPairCompetes`), equal
+    levels, the mixed-type constant, a block too far from the boundary.
+    One implementation serves the stored and the on-demand overload; a
+    unit sweep of 725 760 configurations holds them to the same answer,
+    the value read at most once, and wherever it was not read the stored
+    overload giving the same answer at -1000 and +1000. 32 669 reads ->
+    0 on the sample above.
+  * *The candidate window is drawn once per home cell*
+    (`StatusCache::candidatesOf`), in eight slots keyed by the cell
+    index's parities so that a noise-cell row straddling `x = 5 (mod 16)`
+    keeps both of its home cells. 392 028 cell draws -> 3 228.
+  * *`preliminary_surface_level` is memoized by position for one chunk*
+    (`aquifer::MemoizedRead`, in one open-addressed vector: a node-per-entry
+    map was tried first and slowed the terrain's own reads around it by
+    100 M instructions, by fragmenting the heap the interpreter allocates
+    from). The `y_skip` samples and every source's anchor and window sit on
+    the same 4-aligned lattice, so 2 161 scans -> 875. A detached read never
+    touches the CornerCache, so it is a function of its position and the
+    chunk's flat_cache window alone.
+
+  After them the aquifer costs 103 M of 7 512 M on the same sample (1.4%),
+  down 79%.
+
+  *The guard.* A skipped read is invisible only if it has no effect but
+  its value. The `barrier` read is the one aquifer read in the BLOCK
+  context, so an `interpolated` in it reads and fills the CornerCache the
+  terrain shares — keyed by cell, not by the window a corner was read
+  through — and a `find_top_surface` in it can refuse a scan on a value.
+  A barrier entry reaching either keeps every read it always had
+  (`BarrierReads::Always`; `ChunkFiller::readsBarrierOnEveryBlock()`).
+  Vanilla's barrier is a bare noise.
+
+  *One cut dropped: sharing statuses across chunks.* A source's status is
+  read through the generating chunk's flat_cache window, and the window
+  changes what a read returns: Q5.9's erosion and depth in every vanilla
+  preset (the golden centre (57, -33, 70), wet for chunk (3, 3) and dry for
+  (3, 4), `ChunkFiller::flatCacheWindow`), and any wrapped entry in a
+  datapack. A cache shared between chunks would have to key on the window
+  as well, and `fill()` would have to carry it. After the cuts above,
+  every router read the aquifer still makes on the sample — 875 surface
+  scans, the `y_skip` samples among them, and 645 other source reads, 1 520
+  against 35 475 before — comes to about 62 M instructions, under 1% of the
+  fill, so neither was worth it.
+
+  *Proof that nothing moved.* Byte dumps of 816 chunks before and after —
+  the eight golden seeds over 64 chunks around the origin (all four
+  quadrants), three seeds in each of three far windows (the --, +- and ++
+  quadrants, out to 144 000 blocks), `amplified` and `large_biomes`
+  including the presets case's own chunks (seed 163's (17, 27), seed 322's
+  (2, 26)), and a first-pass-only run — are byte-identical: every block
+  state and all 33 974 fluid-update marks. The conformance suite passes
+  unchanged — `vanilla_compiled_dimension_test.cpp`'s FNV pin, the golden
+  cases and every aquifer probe case among its 139 passes; its 19 skips
+  are corpora this machine lacks, none of them an aquifer case.
+
+  On a second sample — seeds 0 and 9223372036854775807, the same four
+  chunks each — the first pass's aquifer was 539 M of 15 585 M (3.5%)
+  and is 72 M of 15 118 M (0.5%); the whole fill, veins and surface rules
+  included, went from 23 766 M to 23 239 M instructions. The share is the
+  terrain's: seed 0's chunks hold nearly all of it.
+
+  *What a chunk costs now.* CPU ms/chunk from `aquifer-cost-bench`, the
+  build at HEAD against this one, interleaved configuration by
+  configuration; the overworld over seeds 0, -1, 42 and
+  9223372036854775807, chunks -2..1 on both axes (64 chunks), `amplified`
+  over seeds 0 and 163, chunks 15..18 by 25..28 (32 chunks, where its
+  aquifer reaches above the sea); each chunk's fastest of five passes:
+
+  | Configuration | Before | After |
+  |---|---|---|
+  | overworld, everything | 183.5 | 174.0 |
+  | overworld, veins off | 180.0 | 169.9 |
+  | overworld, aquifers off (control) | 172.6 | 167.8 |
+  | overworld, first pass, veins off | 109.7 | 104.6 |
+  | overworld, first pass, aquifers off (control) | 102.0 | 103.5 |
+  | `amplified`, everything | 242.9 | 220.8 |
+  | `amplified`, veins off | 238.8 | 219.9 |
+  | `amplified`, aquifers off (control) | 223.9 | 217.1 |
+
+  The controls run no aquifer code in either build, so they are the noise:
+  up to 3% between builds. Read within each build, aquifers on minus off
+  with veins off, the aquifer cost 7.7 ms of the overworld's first pass
+  (7.0%) and costs 1.1 (1.1%); 7.4 ms of the whole overworld fill (4.1%),
+  now 2.1 (1.2%); 14.9 ms of `amplified`'s (6.2%), now 2.8 (1.3%). Two
+  earlier runs of three passes agree on the first-pass rows within 6 ms and
+  put the whole overworld at 188 to 190 before and 176 after.
+
+  The 237 ms/chunk on record (M5) was measured with the binding's work,
+  before engines v3 to v12, and by its own note includes the per-quart
+  biome search and the packing, which this bench leaves out; it is not
+  comparable, and is left as the measurement it was.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,
