@@ -218,10 +218,22 @@ TEST_CASE("the lava override does not reach a short-circuit sea", "[aquifer]") {
     CHECK(typed(ownSea, 0.5) == FluidType::Lava);
 
     // The type rule alone: the origin decides it, not the level.
-    CHECK(
-        fluidTypeOf(FluidTypeAt{
-            .centreY = -30, .level = -20, .seaLevel = -20, .lava = 0.5, .fromNearSurface = true}) ==
-        FluidType::Default);
+    CHECK(fluidTypeOf(FluidTypeAt{.centreY = -30,
+                                  .level = -20,
+                                  .seaLevel = -20,
+                                  .lava = 0.5,
+                                  .origin = stratum::aquifer::LevelOrigin::NearSurfaceSea}) ==
+          FluidType::Default);
+    // And A_lava is lava where a cell's own type, at the same centre, level
+    // and `lava`, is water (an aborted scan's floor: lowfloor's worlds).
+    CHECK(fluidTypeOf(FluidTypeAt{.centreY = -30,
+                                  .level = -54,
+                                  .seaLevel = -70,
+                                  .lava = 0.0,
+                                  .origin = stratum::aquifer::LevelOrigin::GlobalLava}) ==
+          FluidType::Lava);
+    CHECK(fluidTypeOf(FluidTypeAt{.centreY = -30, .level = -54, .seaLevel = -70, .lava = 0.0}) ==
+          FluidType::Default);
     CHECK(fluidTypeOf(FluidTypeAt{.centreY = -30, .level = -20, .seaLevel = -20, .lava = 0.5}) ==
           FluidType::Lava);
 }

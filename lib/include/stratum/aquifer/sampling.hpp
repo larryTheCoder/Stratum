@@ -363,20 +363,23 @@ template<typename Sampler>
                    .aborted = aborted};
 }
 
-/// WHAT REMAINS A PERMANENT TIE, rather than an open measurement. `cap`'s value
-/// on an aborting cell is only ever consumed through `max(lambda, min(ladder,
-/// ·))` and every aborting sample is below -62, so "the whole window's
-/// minimum", "the aborting sample" and "any sentinel at or below the lava
-/// level" cannot be told apart by any consumer that exists.
+/// WHAT `cap` STILL DECIDES on an aborting cell. It used to reach a level
+/// through the ladder as well, and that consumer is gone: an aborted scan off
+/// the near-surface path takes A_lava before the ladder is built
+/// (lattice.hpp, `cellLevel`). What reads it is the near-surface exemption
+/// alone (`centreY > cap + 20`), where the whole window's minimum was
+/// measured against `gate` and `anchor` (aquifer_lattice.cpp).
 ///
 /// Whether the anchor arms the abort was ALSO listed here as undecidable, and
 /// it is not: 329 cells over seventeen seeds decide it, and the armed reading
-/// is right on every one. What is genuinely tied is only where the flag is
-/// TESTED — "the anchor arms it" and "the near-surface return additionally
-/// requires the anchor to clear the threshold" are indistinguishable, because
-/// reaching the other branch with a low anchor forces `sea_level <= -55`,
-/// where lambda IS `sea_level` and both outcomes are the same number. The
-/// simpler spelling is taken.
+/// is right on every one. Where the flag is TESTED was carried here as a
+/// permanent tie — "the anchor arms it" against "the near-surface return
+/// additionally requires the anchor to clear the threshold" — and it is not
+/// one either: a cell with a low anchor more than twenty above the cap takes
+/// the sea under the first and A_lava (lambda, through engine v9) under the
+/// second, and on `aquifer-lowfloor-probe.sh`'s worlds the server sides with
+/// the first on every sampled block where they part, at sea -70, -60 and 63
+/// alike (vanilla_aquifer_lowfloor_test.cpp).
 ///
 /// With the anchor armed, `aborted` and `cap <= -63` are the SAME predicate
 /// over every field that can exist — `cap` is the whole window's minimum
