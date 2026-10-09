@@ -239,9 +239,11 @@ UNITS = [
          density(('levelice_s8675309', 8675309))),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
     # runner), the amplified / large_biomes presets beside an overworld
-    # control, one server start per seed, and y_skip's six 10 GB runs (about
-    # two minutes each locally). The name predates the last two; the shard
-    # holds them because it was the lightest.
+    # control, one server start per seed, y_skip's six 10 GB runs (about
+    # two minutes each locally), and the aquifer at cells past 686 (two
+    # starts of two dimensions, about a minute each locally). The name
+    # predates the last three; the shard holds them because it was the
+    # lightest.
     unit('end-islands', 'end', ['end-islands-probe.sh', '--seeds', '0,42', '--regions', '-1,-1 64,0'],
          own('end-islands/seed-0', END_REGIONS) + own('end-islands/seed-42', END_REGIONS)),
     unit('aquifer-presets_s322', 'end', ['aquifer-presets-probe.sh', '322'],
@@ -264,6 +266,8 @@ UNITS = [
     # water. Here because this shard was among the lightest.
     unit('fluidceiling_s42', 'end', ['aquifer-fluidceiling-probe.sh', '42'],
          density(('fluidceiling_s42', 42), ('fluidceilingp_s42', 42), ('fluidceilingl_s42', 42))),
+    unit('farcell_s42', 'end', ['aquifer-farcell-probe.sh', '42'],
+         density(('farcell_pos_s42', 42), ('farcell_neg_s42', 42))),
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))

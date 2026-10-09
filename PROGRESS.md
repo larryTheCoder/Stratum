@@ -145,12 +145,21 @@ Open:
       corpora CI generates: the comb
       worlds are a unit, so the jitter readout and the block-level cases run
       there — the "skip in CI" this item said was stale when written. The
-      x term's 32-bit product, which no cell index on disk can show (it
-      parts from a 64-bit one past |x| 686), is now pinned at block level
+      x term's 32-bit product, which no cell index near the origin can show
+      (it parts from a 64-bit one past |x| 686), is pinned at block level
       through the surface depth's jitter on the clamp probe's 180224 columns
       at x 2176..6911: shipped right on all, x in 64 bits wrong on 15477, z
-      in 32 bits on 15330, a logical shift on 8054. Past cell 686 the
-      aquifer's own mix is the same function, inferred rather than measured.
+      in 32 bits on 15330, a logical shift on 8054. And on the aquifer's own
+      cells, measured rather than inferred: `aquifer-farcell-probe.sh` (unit
+      `farcell_s42`, shard `end`) puts the legacy probe's all-constant
+      Xoroshiro and legacy arms at cells 704..711 and -712..-705 on both
+      axes. The comb's readout places 128 of 128 cells (Xoroshiro) and 127
+      of 127 (legacy) under the shipped mix; x in 64 bits misses 39 and 23,
+      z in 32 bits 29 and 25, a logical shift 21 under Xoroshiro and none
+      under the legacy source, where it changes only seed bits
+      java.util.Random drops. Block for block, the shipped lattice agrees
+      on 98304 of 98304 per arm and window and the filler end to end is
+      wrong on 0 of 1572864. No library change. SPEC §11.
 - [x] **Everything else taken from deepslate, audited.** Only those 72
       vectors involve its `at()`, and nothing uses its aquifer or `fill`;
       the blended-noise vectors draw nothing per position; "deepslate's own

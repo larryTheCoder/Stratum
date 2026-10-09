@@ -187,7 +187,10 @@ private:
 /// — the modern derivation's shape, two forks around one salt, with the LCG
 /// in place of Xoroshiro128++ and String.hashCode in place of the MD5. It was
 /// the one survivor of 7200 candidate rules, and a world seed generated only
-/// after it was frozen confirmed it.
+/// after it was frozen confirmed it. java.util.Random keeps 48 bits of its
+/// seed, so whether the mix shifts arithmetically or logically, which moves
+/// only the top 16, cannot change a draw here; the products' widths can, and
+/// were measured past cell 686 (SPEC §11).
 class LegacyPositionalSource {
 public:
     /// From the derived 64-bit stream seed; `legacyPositionalSourceFor` derives it.
