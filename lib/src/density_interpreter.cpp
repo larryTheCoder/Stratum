@@ -74,10 +74,16 @@ public:
     Scope(Point at, std::size_t nodeCount, CornerCache* cache)
         : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache) {}
 
-    Scope(Point at, std::size_t nodeCount, CornerCache* cache, const FlatCacheWindow* window)
-        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache), window_(window) {}
+    Scope(Point at, std::size_t nodeCount, CornerCache* cache, const FlatCacheWindow* window,
+          ReadContext context = ReadContext::Block)
+        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache), window_(window),
+          context_(context) {}
 
     [[nodiscard]] Point at() const noexcept { return at_; }
+
+    /// Whose read this is: the generating block's, or a point it reads
+    /// elsewhere. Carried into every scope a node opens for another point.
+    [[nodiscard]] ReadContext context() const noexcept { return context_; }
 
     /// Where `interpolated` keeps its cell corners, or null when the caller
     /// supplied nowhere and every point pays for its own eight.
@@ -106,6 +112,7 @@ private:
     std::vector<char> computed_;
     CornerCache* cache_ = nullptr;
     const FlatCacheWindow* window_ = nullptr;
+    ReadContext context_ = ReadContext::Block;
 };
 
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
@@ -287,12 +294,18 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
             case NodeType::BlendOffset:
             case NodeType::ShiftA:
             case NodeType::ShiftB:
-            case NodeType::FlatCache:
                 // Constants and the two blend states do not vary at all;
                 // shift_a and shift_b sample with y pinned, where plain
                 // shift does not, which is the entire difference between
-                // them; and flat_cache asks for whatever it wraps at y = 0.
+                // them.
                 invariant = true;
+                break;
+            case NodeType::FlatCache:
+                // flat_cache asks for whatever it wraps at y = 0 — inside
+                // the window its grid covers. Outside one it reads its
+                // argument where it was asked (SPEC §11), so it is only as
+                // invariant as that argument.
+                invariant = argumentsInvariant();
                 break;
             case NodeType::Noise:
                 invariant = isZero(node.parameters[1]);
@@ -504,8 +517,8 @@ double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache) const
 }
 
 double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache,
-                             const FlatCacheWindow& window) const {
-    Scope scope(at, graph_->nodeCount(), &cache, &window);
+                             const FlatCacheWindow& window, ReadContext context) const {
+    Scope scope(at, graph_->nodeCount(), &cache, &window, context);
     return evaluateNode(scope, root);
 }
 
@@ -731,7 +744,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             value = lowerBound;
             for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
                 Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
-                             scope.window());
+                             scope.window(), scope.context());
                 if (evaluateNode(column, node.arguments[0]) > 0.0) {
                     value = scanY;
                     break;
@@ -773,19 +786,18 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             // once per 4x4 column at y = 0, so every block in that column
             // reads the corner's value — inside the window that grid covers.
             // Outside it there is no grid point to read, and the argument is
-            // read at the column itself, still at y = 0: the vanilla presets
-            // only ever wrap column-invariant functions, so the y of an
-            // off-grid read is unobservable there, and pinning it to the same
-            // 0 keeps this node column-invariant either way (SPEC §11).
+            // read where it was asked for, at its own y: measured through
+            // every aquifer read a datapack can wrap in it, where a y-varying
+            // argument makes that y visible (SPEC §11, "Cache markers in a
+            // datapack's aquifer entries"). Without a window every read
+            // relocates.
             const FlatCacheWindow* window = scope.window();
             const bool relocates = window == nullptr || window->covers(at.x, at.z);
-            const Point corner =
-                relocates ? Point{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)}
-                          : Point{.x = at.x, .y = 0, .z = at.z};
-            if (corner == at) {
+            const Point corner{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)};
+            if (!relocates || corner == at) {
                 value = argument(0);
             } else {
-                Scope cornerScope(corner, graph_->nodeCount(), nullptr, window);
+                Scope cornerScope(corner, graph_->nodeCount(), nullptr, window, scope.context());
                 value = evaluateNode(cornerScope, node.arguments[0]);
             }
             break;
@@ -801,16 +813,29 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         case NodeType::Cache2d:
         case NodeType::CacheOnce:
         case NodeType::CacheAllInCell:
-            // Memoisation that does not move the sample. cache_all_in_cell
-            // keeps one value per block of a cell rather than one per cell,
-            // so like the other two it is a cache and not a relocation.
-            // requireEvaluable has already refused a cache_2d whose contents
-            // would make that untrue.
+            // Memoisation that does not move the sample. Measured for all
+            // three at the aquifer's reads, the one place a point is read off
+            // its own block (SPEC §11, "Cache markers in a datapack's aquifer
+            // entries"): cache_all_in_cell is the argument at the block and
+            // at every detached point alike — not the cell's lower corner,
+            // not a blend, not the generating block's value — and cache_once
+            // and cache_2d are not one memo per block either: the ranked
+            // sources each read their own. requireEvaluable has already
+            // refused a cache_2d whose contents would make that untrue.
             value = argument(0);
             break;
 
         case NodeType::Interpolated:
-            value = interpolate(node.arguments[0], scope);
+            // Blended over the cell only for the block being generated (and
+            // the cell corners it is blended from). A point that block reads
+            // elsewhere — an aquifer source's centre, its contracted indices,
+            // its surface anchors — reads the argument itself: measured on
+            // every aquifer entry, where the blend is wrong on 61 295 to
+            // 785 454 blocks an arm and seed, and the argument exact on every
+            // block (SPEC §11).
+            value = scope.context() == ReadContext::Detached
+                        ? argument(0)
+                        : interpolate(node.arguments[0], scope);
             break;
 
         // --- blending ------------------------------------------------------
@@ -860,7 +885,7 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
         Scope inner(Point{.x = x0 + (dx * cells.width),
                           .y = y0 + (dy * cells.height),
                           .z = z0 + (dz * cells.width)},
-                    graph_->nodeCount(), scope.cache(), scope.window());
+                    graph_->nodeCount(), scope.cache(), scope.window(), scope.context());
         return evaluateNode(inner, argument);
     };
 

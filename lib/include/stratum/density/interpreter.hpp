@@ -38,14 +38,19 @@
 //
 // CACHE NODES. CLAUDE.md calls these parity-critical, and they are, so it is
 // worth being exact about what this layer does with them. `flat_cache`
-// relocates its sample to the corner of the 4x4 column it sits in, at y=0,
-// and that changes the value at a point, so it is implemented. `cache_2d`
-// and `cache_once` are memoisation that does not move the sample, so at a
-// single point they are transparent — and `cache_2d` is transparent only
-// because what vanilla wraps in it never varies with y, which this layer
-// checks rather than assumes. `interpolated` and `cache_all_in_cell` do move
-// the sample, but to somewhere only the cell structure defines, so they are
-// refused rather than approximated.
+// relocates its sample to the corner of the 4x4 column it sits in, at y=0 —
+// inside the window a chunk's grid covers, when a caller passes one — and
+// that changes the value at a point, so it is implemented. `cache_2d`,
+// `cache_once` and `cache_all_in_cell` are memoisation that does not move the
+// sample, so at a single point they are transparent — and `cache_2d` is
+// transparent only because what vanilla wraps in it never varies with y,
+// which this layer checks rather than assumes. `interpolated` blends its
+// argument over the cell the point sits in, which needs a CellGeometry (it is
+// refused without one) and applies only to the block being generated: a
+// point that block reads elsewhere reads the argument itself (ReadContext).
+// All of that is measured at the aquifer's reads, the only place a point is
+// read off its own block (SPEC §11, "Cache markers in a datapack's aquifer
+// entries").
 
 #pragma once
 
@@ -137,16 +142,16 @@ struct Point {
 /// both ends inclusive.
 ///
 /// A `flat_cache` read INSIDE the window is relocated to its 4x4 column
-/// corner — the grid point that holds it. A read OUTSIDE has no grid point to
-/// be relocated to and reads its argument at the column itself. Every
-/// in-chunk density read sits inside its own chunk's window, so the
-/// distinction is invisible to terrain; it surfaces only for a read the
-/// chunk makes off its own footprint at an unaligned column, which in the
-/// vanilla presets means one thing — the aquifer's Q5.9 erosion and depth at
-/// a source centre in a neighbouring chunk (SPEC §11). Its extent is
-/// measured, not assumed: see `ChunkFiller`.
+/// corner at y = 0 — the grid point that holds it. A read OUTSIDE has no grid
+/// point to be relocated to and reads its argument where it was asked, its
+/// own y included. Every in-chunk density read sits inside its own chunk's
+/// window, so the distinction is invisible to terrain; it surfaces only for a
+/// read the chunk makes off its own footprint, which in the vanilla presets
+/// means one thing — the aquifer's Q5.9 erosion and depth at a source centre
+/// in a neighbouring chunk — and in a datapack, any aquifer entry wrapped in
+/// it (SPEC §11). Its extent is measured, not assumed: see `ChunkFiller`.
 ///
-/// `none()` covers nothing: every read is at the column itself. Evaluating
+/// `none()` covers nothing: every read is where it was asked. Evaluating
 /// without a window at all relocates every read, which is what a caller
 /// with no chunk in hand (a probe, a test, `stratum render`) has always got.
 struct FlatCacheWindow {
@@ -190,6 +195,25 @@ struct UnsettledSubstitutions {
     [[nodiscard]] bool empty() const noexcept {
         return blendedNoise == nullptr && !weirdScaledSampler.has_value();
     }
+};
+
+/// Whose read an evaluation is. Only `interpolated` tells the two apart.
+///
+/// MEASURED, not chosen (SPEC §11, "Cache markers in a datapack's aquifer
+/// entries", `tools/analysis/aquifer-markers-probe.sh`): with an aquifer
+/// entry wrapped in `interpolated`, the barrier — read at the block being
+/// generated — is the blend over that block's cell, and every other read the
+/// aquifer makes for that block — a source's centre, its contracted spread
+/// and lava indices, its surface anchors — is the argument at the point
+/// itself. Off the block the blend is wrong on 61 295 to 785 454 blocks an
+/// arm and seed, and the argument exact on every block; at the block the
+/// argument is wrong on 14 878 blocks over four arm-seeds, and the blend
+/// exact.
+enum class ReadContext : std::uint8_t {
+    /// The block being generated, or a cell corner it is blended from.
+    Block,
+    /// A point the generating block reads somewhere else.
+    Detached,
 };
 
 class Interpreter {
@@ -273,10 +297,12 @@ public:
     [[nodiscard]] double evaluate(NodeIndex root, Point at, CornerCache& cache) const;
 
     /// The same, with `flat_cache` relocating only inside @p window (see
-    /// FlatCacheWindow). Identical to the form above at every point whose
-    /// column the window covers.
+    /// FlatCacheWindow), for the read @p context names (see ReadContext).
+    /// Identical to the form above at every point whose column the window
+    /// covers, for a `Block` read.
     [[nodiscard]] double evaluate(NodeIndex root, Point at, CornerCache& cache,
-                                  const FlatCacheWindow& window) const;
+                                  const FlatCacheWindow& window,
+                                  ReadContext context = ReadContext::Block) const;
 
     /// How many entries a CornerCache for this interpreter needs.
     [[nodiscard]] std::size_t cacheSize() const noexcept;

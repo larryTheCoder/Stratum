@@ -266,6 +266,7 @@ to bump the version and be called out; this is that call-out.
 | 7 | **Lava is fluid to the surface pass, and the bottom-up stone-depth run resets on every fluid** (§11, "Lava in the surface pass's runs"). Aquifer lava now holds the top-down run and latches the water height as water does; the bottom-up run (`stone_depth` ceiling) resets on water and lava where it used to skip water and count lava. On the lava-run probe the old filler wrote 2 392 064 of 74 973 184 blocks wrong and the new one none; on the golden overworld grid 102 blocks over water become exact (gravel to stone, sand to sandstone) and none get worse (12 582 372 to 12 582 474). v6 had reached only this development branch; bumped rather than amended because a v6 blob could exist. |
 | 8 | **y_skip's sampling rectangle reaches every candidate source centre** (§11, "`y_skip` against the server"). The per-chunk cutoff's psl maximum was read over x and z from -16 to +16 of the chunk at stride 4; the server's rectangle runs to +25, the full extent where a candidate source centre can sit (`16 * (i_max + 1) + (kJitterBoundX - 1)`), so its samples reach +24 (any end in +24..+27 reads the same samples, a permanent tie). On a two-valued psl field (`aquifer-yskip-probe.sh`) the old rectangle was refuted on 8 646 blocks in 71 chunks; the new one is exact on 22 968 000 blocks and 123 588 fluid-update marks. Changes only worlds whose psl varies within a rectangle's reach of the cutoff; no golden block changes. v7 had reached only this development branch; bumped rather than amended because a v7 blob could exist. |
 | 9 | **Q5.8's lava override does not reach a short-circuit sea** (§11, "Nor the lava override: a short-circuit sea is the default fluid"). The near-surface return and an aborted scan's sea are the global picker's status at or above lambda, so the default fluid; v8 typed them lava at `sea_level` <= -10 with `|lava|` > 0.3. Over two seeds of `aquifer-fluidnear-probe.sh` the server holds water on all 1 027 693 contested sources, and lava on all 241 896 of the positive control's. Changes blocks and fluid-update flags only where `sea_level` <= -10; no golden block changes. v8 had reached only this development branch; bumped rather than amended because a v8 blob could exist. |
+| 10 | **Cache markers in a datapack's aquifer entries** (§11, "Cache markers in a datapack's aquifer entries"). Every aquifer read but the barrier's is detached (`density::ReadContext::Detached`): an `interpolated` there is its argument at the read point, not the blend over a cell (refuted on 5 139 104 blocks over two seeds of `aquifer-markers-probe.sh`), and a `flat_cache` read off the chunk's [16c, 16c + 19] window is its argument at the read's own y, not y = 0 (refuted on 1 437 270). `flat_cache`'s column invariance now follows its argument, so `cache_2d` over a `flat_cache` of something y-varying is refused by name. Changes output only for datapacks that wrap a non-barrier aquifer entry in `interpolated` or put a y-varying argument under an aquifer `flat_cache`; no vanilla preset does, no golden block changes and the pinned overworld hash holds. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2552,7 +2553,9 @@ Open:
   fast enough to cross -0.225 within four blocks, `depth` constant 1.0,
   floodedness constant high — every source wet unless its own read is
   deep-dark — with source centres placed by the seed in the four columns
-  that differ.
+  that differ. *Still open at the time; since closed* (below, "Cache markers
+  in a datapack's aquifer entries"): the extent is these twenty columns, and
+  off the window the argument is read at its own y, not at y = 0.
 
   *The `y_skip` cutoff (spec Q2.3/Q2.5) is implemented*, with known-answer
   vectors for both the step and its rectangle, and changes no golden block —
@@ -3112,6 +3115,81 @@ Open:
   `level-type` (PROGRESS, M4). Nor is the per-column psl read the aquifer
   takes scored against the 16-block lattice the surface rule takes (PROGRESS,
   M4), though amplified's steep surface is where the two would part most.
+
+- **Cache markers in a datapack's aquifer entries (MA; pipeline engine v10;
+  output changes for datapacks only).** The aquifer reads its router entries at five kinds of
+  point, and only the barrier's is the block being generated: a source's
+  floodedness — and Q5.9's erosion and depth — at its jittered centre, often
+  in a neighbouring chunk; its spread and lava at contracted indices; its
+  surface at 4-aligned anchors at y = 0. No vanilla preset wraps any of these
+  in a marker but erosion and depth in `flat_cache`, so what a marker means
+  off the generating block was never observable, and the build applied a
+  reading of its own without saying so: `interpolated` blended over the cell
+  holding the read point; `cache_all_in_cell`, `cache_once` and `cache_2d`
+  passed through; `flat_cache` relocated inside the chunk's window and read
+  the column at y = 0 outside it.
+
+  `tools/analysis/aquifer-markers-probe.sh` asks the server: 37 dimensions a
+  seed in five corpora, at seeds 42 and 31337 — a bare control per family;
+  `interpolated` and `cache_all_in_cell` on all six entries (barrier,
+  floodedness, spread, lava, surface, erosion) at `size_horizontal` 1 and 2;
+  `flat_cache` on five; `cache_once` and `cache_2d` on two. Each wraps one
+  entry over a field built so the candidate readings part on whole bands:
+  y-step profiles for the spread and the lava, whose contracted y indices sit
+  between cell corners, and fast noises for the rest. The default fluid is
+  `packed_ice`, which the aquifer places exactly where it places water and
+  which never flows; the five controls are exact on both seeds, every row of
+  every column, which is what licenses scoring it as water. The server
+  builds every dimension — no marker in any aquifer entry is refused or
+  crashes it. `vanilla_aquifer_markers_test.cpp` scores every reading on
+  2 605 056 blocks a dimension; pooled over both seeds:
+
+  | marker | what the server reads | refuted — blocks where the reading parts from the server's; the server sides with it on none |
+  |---|---|---|
+  | `interpolated` | the barrier (at the block): the blend over its cell, as built. Every other read: the argument at the point | at the block, the argument: 14 878. Elsewhere, the blend over the point's cell — the build until now: 5 139 104 over eight arms, 61 295 to 785 454 an arm and seed; the generating block's own blend: 5 103 539 |
+  | `cache_all_in_cell` | the argument, at the block and everywhere else, as built | the blend: 14 878 at the block, 5 139 104 elsewhere; the cell's lower corner: 20 298 and 6 663 997; the generating block's argument, off it: 5 766 448 |
+  | `flat_cache` | inside the chunk's [16c, 16c + 19]: the 4x4 corner at y = 0, as built. Outside: the read point itself, its own y included | the barrier, always inside: the argument at the block, 10 432; the column at y = 0, 7 831. Off the block: outside, the column at y = 0 — the build until now: 1 437 270 over four arms, 67 771 to 284 101 an arm and seed; the chunk's own 16 columns: 775 357; a quart further past the chunk: 356 832; a quart below it: 98; two quarts below: 49 975; relocating every read: 1 480 403; never relocating: 3 101 043; the read point everywhere: 2 579 912 |
+  | `cache_once`, `cache_2d` | each ranked source its own read, as built | one value per generating block, the nearest source's: 532 105 |
+
+  Two changes follow, both for datapacks only. `interpolated` is the
+  argument itself at any point the generating block reads elsewhere
+  (`density::ReadContext::Detached`; `ChunkFiller` reads every aquifer entry
+  but the barrier that way, the `y_skip` scan's surface reads included).
+  `flat_cache` reads its argument where it was asked when the read is off
+  its window; so its column invariance now follows its argument, and a
+  `cache_2d` over a `flat_cache` of something y-varying is refused like any
+  other y-varying `cache_2d`. Neither shows in the vanilla presets: their
+  aquifer entries hold no `interpolated`, and every `flat_cache` argument is
+  column-invariant, so the y of an off-window read cannot matter. No golden
+  block moves; the pinned overworld output hash is unchanged.
+
+  *The window's extent, settled* — the flagged item of "The deep-dark
+  override" above. The high side, where source centres land (the next cell's
+  sit at chunk-local 16..25): a centre at 16..19 relocates — the chunk's own
+  sixteen columns are wrong there — and one at 20..23 does not. The low side,
+  which no centre reaches (the cell below's sit at local -7 at most; a window
+  reaching -8 is wrong on 49 877 blocks): only contracted indices land there,
+  at -1 in chunk (0, 0), and the server reads them where they are. On the
+  spread arm a window reaching -4 parts from twenty on 41 blocks and the
+  server takes twenty on every one; on the lava arm every block whose
+  nearest source has lava index -1 holds lava, which a read relocated to
+  that profile's y = 0 cannot give (57 blocks). So the twenty columns the
+  build took are right. In the vanilla presets the low side is unobservable:
+  no read lands on it.
+
+  *Set aside, and counted.* Where a lava source meets a default-fluid one the
+  barrier weighs Q6.4's lava-against-water constant, and whether packed_ice
+  counts as water there is a separate question — the one `ChunkFiller`
+  refuses a non-water default fluid over. Only the flat_cache lava arm has
+  such blocks, where the window splits chunk (0, 0)'s sources between lava
+  and packed ice: 1 993 of them over both seeds, scored on their fluid alone
+  (a fluid block is its nearest source's fluid whatever the barrier weighed),
+  and right on every one. Every other arm has none, which the case asserts.
+
+  The surface arms were blind as first written: at floodedness 0.9 every
+  source takes the sea whatever the surface reads. At 0.6 the surface
+  decides between the sea and the capped ladder, and `size_horizontal` 2
+  parts the blend from the argument on 61 295 and 79 351 blocks.
 
 - **A write path exists now, deliberately outside every milestone this
   document tracks.** `nbt::write` (the exact inverse of `nbt::read`,

@@ -264,13 +264,14 @@ public:
     }
 
     /// The columns chunk (@p chunkX, @p chunkZ)'s `flat_cache` grid holds,
-    /// which is where the aquifer's router reads relocate to a 4x4 corner;
-    /// anywhere else they read the column itself (density::FlatCacheWindow).
+    /// which is where the aquifer's router reads relocate to a 4x4 corner at
+    /// y = 0; anywhere else they read where they were asked, their own y
+    /// included (density::FlatCacheWindow).
     ///
-    /// MEASURED, through Q5.9's deep-dark override — the one aquifer read in
-    /// the vanilla presets that lands on an unaligned column off the chunk:
-    /// erosion and depth at a source centre, both behind `flat_cache`. On
-    /// golden seed 9223372036854775807 one centre, (57, -33, 70), is
+    /// MEASURED, first through Q5.9's deep-dark override — the one aquifer
+    /// read in the vanilla presets that lands on an unaligned column off the
+    /// chunk: erosion and depth at a source centre, both behind `flat_cache`.
+    /// On golden seed 9223372036854775807 one centre, (57, -33, 70), is
     /// deep-dark at its corner (depth 0.9092) and not at its own column
     /// (0.8620). The server keeps it WET for chunk (3, 3), which it lies off
     /// — lava at y -32 and the barrier around it, 16 blocks — and DRY for
@@ -280,14 +281,19 @@ public:
     /// overworld regions (805306368 blocks) leaves no disagreement that is
     /// not fluid moving after generation.
     ///
-    /// THE EXTENT IS A CHOICE, NOT A MEASUREMENT. The chunk's own sixteen
-    /// columns, these twenty (five quart columns: the chunk's own reads reach
-    /// the corner column at +16, so a grid serving them holds the quart
-    /// beyond it), and twenty-four (one quart further on the low side too)
-    /// score identically on every golden block — no deep-dark verdict on
-    /// those regions flips within the four columns that separate them.
-    /// Twenty is the reading that follows from the chunk's own read
-    /// footprint; SPEC §11 carries the probe that would settle it.
+    /// THE EXTENT, measured by `tools/analysis/aquifer-markers-probe.sh`,
+    /// whose datapack arms wrap every aquifer entry in `flat_cache` over a
+    /// fast, y-varying argument (SPEC §11): the chunk's own sixteen columns
+    /// and one quart beyond its far edge, [16c, 16c + 19] — five quart
+    /// columns, the chunk's own reads reaching the corner column at +16. The
+    /// high side, where source centres land: a centre at chunk-local 16..19
+    /// relocates (the chunk's own sixteen columns alone are wrong there) and
+    /// one at 20..23 does not. The low side, which no source centre reaches
+    /// (a centre in the cell below sits at most at local -7): only the
+    /// contracted spread and lava indices land there, at -1 in chunk (0, 0),
+    /// and the server reads them where they are — a lava source indexed -1
+    /// holds lava, which a read relocated to y = 0 could not give. In the
+    /// vanilla presets the low side is unobservable: no read lands on it.
     [[nodiscard]] static constexpr density::FlatCacheWindow
     flatCacheWindow(const std::int32_t chunkX, const std::int32_t chunkZ) noexcept {
         constexpr std::int32_t kGridColumns = kChunkWidthBlocks + 4;

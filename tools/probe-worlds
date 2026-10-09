@@ -178,6 +178,14 @@ UNITS = [
          density((f'{corpus}_s{seed}', seed)))
     for seed in (42, 31337)
     for group, corpus in (('step', 'yskip'), ('step2', 'yskip2'), ('rect', 'yskiprect'))
+] + [
+    # markers: every cache marker a datapack can wrap an aquifer entry in,
+    # five corpora (one server start each) per seed. A shard of its own: ten
+    # starts would push any other shard's cold run past its timeout.
+    unit(f'markers_s{seed}', 'markers', ['aquifer-markers-probe.sh', str(seed)],
+         density(*((f'markers_{group}_s{seed}', seed)
+                   for group in ('bare', 'int', 'cell', 'flat', 'memo'))))
+    for seed in (42, 31337)
 ]
 
 # Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`
