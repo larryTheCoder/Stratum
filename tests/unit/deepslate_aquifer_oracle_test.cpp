@@ -6,8 +6,9 @@
 // and XORed with a mix of the cell's index (SPEC §11, "The jitter draw,
 // recovered"). The known answers in aquifer_lattice_test.cpp are this build's
 // own output, so they hold that derivation still but cannot say it is right;
-// what ties it to vanilla is vanilla_aquifer_jitter_test.cpp, which needs the
-// server's probe corpora and so never runs in CI.
+// what ties it to vanilla is vanilla_aquifer_jitter_test.cpp, on the server's
+// comb worlds — which CI generates (tools/probe-worlds, unit `comb`), so that
+// case runs in CI too, in the conformance job rather than this binary.
 //
 // These vectors come from an implementation that is not this one: deepslate,
 // run as a black box (tools/vectors/deepslate_aquifer_vectors.mjs). They cover
@@ -21,8 +22,12 @@
 // discovered: the mix's x and z terms and its wraps, arithmetic against
 // logical shift, and the jitter's bounds (10, 9, 10) and draw order. The
 // vectors' bounded draws were taken with this project's own bounds, so they
-// hold `jitterOf`'s wiring to that reading, not the reading to vanilla. None
-// of those has a CI oracle; the server-backed conformance cases pin them.
+// hold `jitterOf`'s wiring to that reading, not the reading to vanilla. The
+// server pins those, in the conformance job on corpora CI generates: the
+// jitter readout and the aquifer's block-level cases on cells near the
+// origin, and the x term's 32-bit product — which no cell index on disk is
+// large enough to show — through the surface depth's jitter at x 2176..6911
+// (vanilla_above_preliminary_surface_test.cpp; SPEC §11).
 #include "deepslate_aquifer_vectors.inc"
 
 #include <stratum/aquifer/lattice.hpp>

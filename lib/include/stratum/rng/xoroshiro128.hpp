@@ -212,7 +212,10 @@ private:
 /// using a logical shift, collapses either match rate to chance.
 ///
 /// Every step wraps, and the x term is multiplied as a 32-bit value before
-/// being sign-extended. Spelled in unsigned arithmetic because C++ signed
+/// being sign-extended. Neither of those two recoveries reaches |x| > 686,
+/// where a 32-bit and a 64-bit x product first part; the surface depth's
+/// jitter on the clamp probe's columns at x 2176..6911 does, and refutes the
+/// 64-bit one (SPEC §11). Spelled in unsigned arithmetic because C++ signed
 /// overflow is undefined where Java's simply wraps.
 [[nodiscard]] std::int64_t positionSeed(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
 

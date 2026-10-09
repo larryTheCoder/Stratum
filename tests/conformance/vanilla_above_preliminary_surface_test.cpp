@@ -53,6 +53,12 @@
 //   * the varying-psl counts, so the numbers SPEC §11 and PROGRESS.md quote
 //     for the still-open sampling question cannot drift from the fixture.
 //
+// AND ONE THING THAT IS NOT ABOUT THE CONDITION AT ALL: the depth's jitter is
+// vanilla's per-position mix, and of every corpus read through a per-position
+// draw, only the clamp probe's columns lie far enough out (|x| > 686) to show
+// that its x term is a 32-bit product. The case after the clamp case scores
+// that, beside the alternatives.
+//
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 
@@ -62,6 +68,7 @@
 #include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -71,7 +78,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -118,6 +127,13 @@ public:
     /// about.
     [[nodiscard]] double surfaceDepthRaw(std::int32_t x, std::int32_t z) const {
         return executor_.surfaceDepthRaw(x, z);
+    }
+
+    /// `minecraft:surface` at (x, 0, z): the depth's field, without its
+    /// jitter, so a case can put a different jitter beside it.
+    [[nodiscard]] double surfaceField(std::int32_t x, std::int32_t z) const {
+        return noises_.get(ResourceLocation::parse("minecraft:surface"))
+            .sample(static_cast<double>(x), 0.0, static_cast<double>(z));
     }
 
     /// The overworld's own `preliminary_surface_level`, floored the way the
@@ -1218,6 +1234,185 @@ TEST_CASE("the surface depth carries no bottom clamp", "[conformance][surface]")
     CHECK(separatingUnclampedTotal == 245);
     CHECK(separatingClampedTotal == 0);
     CHECK(separatingFlooredTotal == 0);
+}
+
+namespace {
+
+/// The position mix (`rng::positionSeed`) with one choice in it changed, for
+/// the case below. `Shipped` is the library's own, which the case checks
+/// before it reads anything into the others.
+enum class Mix : std::uint8_t {
+    Shipped,
+    WideX,       ///< the x term multiplied in 64 bits, not 32
+    NarrowZ,     ///< the z term multiplied in 32 bits, not 64
+    LogicalShift ///< `>>>` 16 instead of `>>` 16
+};
+
+[[nodiscard]] std::uint64_t mixUnder(const Mix mix, const std::int32_t x, const std::int32_t y,
+                                     const std::int32_t z) noexcept {
+    const auto wide = [](const std::int32_t value, const std::uint64_t factor) {
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(value)) * factor;
+    };
+    const auto narrow = [](const std::int32_t value, const std::uint32_t factor) {
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(
+            static_cast<std::int32_t>(static_cast<std::uint32_t>(value) * factor)));
+    };
+    const std::uint64_t xTerm =
+        mix == Mix::WideX ? wide(x, UINT64_C(3129871)) : narrow(x, UINT32_C(3129871));
+    const std::uint64_t zTerm =
+        mix == Mix::NarrowZ ? narrow(z, UINT32_C(116129781)) : wide(z, UINT64_C(116129781));
+    std::uint64_t value = xTerm ^ zTerm ^ static_cast<std::uint64_t>(static_cast<std::int64_t>(y));
+    value = (value * value * UINT64_C(42317861)) + (value * UINT64_C(11));
+    const auto mixed = static_cast<std::int64_t>(value);
+    return static_cast<std::uint64_t>(mix == Mix::LogicalShift ? stratum::javamath::ushr(mixed, 16)
+                                                               : stratum::javamath::shr(mixed, 16));
+}
+
+/// The surface depth's raw value at (x, z), its field @p field, with its
+/// jitter drawn under @p mix — spelled as `Executor::surfaceDepthRaw` spells
+/// it.
+[[nodiscard]] double rawDepthUnder(const double field, const stratum::rng::Seed128 base,
+                                   const Mix mix, const std::int32_t x, const std::int32_t z) {
+    stratum::rng::Xoroshiro128PlusPlus draw{
+        stratum::rng::Seed128{.lo = base.lo ^ mixUnder(mix, x, 0, z), .hi = base.hi}};
+    return (2.75 * field) + 3.0 + (0.25 * draw.nextDouble());
+}
+
+} // namespace
+
+TEST_CASE("the position mix multiplies x in 32 bits and z in 64 where only far columns tell",
+          "[conformance][surface][rng]") {
+    // WHAT NOTHING ELSE ON DISK CAN SEE. The mix is `l = (int)(x * 3129871) ^
+    // (z * 116129781L) ^ y`, squared and shifted (SPEC §11). The cases that
+    // recovered it read the aquifer's cell indices 0..7 and vertical_gradient
+    // at x, z in [0, 128), the golden regions are r.0.0, and nowhere there
+    // does the 32-bit x product overflow: that needs |x| > 686, which is
+    // about 11000 blocks out for a cell index. So "the x term is a 32-bit
+    // product" held only on this build's own word, and deepslate cannot speak
+    // for it either: its PositionalRandom.at reduces nothing
+    // (tools/analysis/deepslate-aquifer-trust.sh).
+    //
+    // `aps-clamp-probe.sh`'s worlds sit at x 2176..6911 and z 1776..13823,
+    // and every column there is a reading of the surface depth: the marker
+    // band's lower edge is `psl + surfaceDepth - 8` (the case above), and
+    // surfaceDepth = (int)(2.75 * surface + 3 + 0.25 * u), with u one draw
+    // from the world's UNSALTED positional source at (x, 0, z). A wrong mix
+    // there is a different u in every column, which moves the cast in about
+    // one column in twelve — so each alternative below is scored on what the
+    // server painted rather than reasoned about. psl 100 alone: the other
+    // entries repeat the same columns at other offsets.
+    //
+    // Negative coordinates are not this case's to show: psllat3 sits at
+    // x, z in [-256, -1] and vanilla_psl_lattice_test.cpp recovers the
+    // server's psl through this same depth on all 65536 columns there.
+    const std::filesystem::path root = fixtures() / "probes";
+    static constexpr std::array<ClampCase, 3> kCases{{
+        {std::int64_t{-4172144997902289642}, "apsc_s1", "r.4.3.mca", 4},
+        {std::int64_t{42}, "apsc_s2", "r.6.10.mca", 22},
+        {std::int64_t{-9223372036854775807} - 1, "apsc_s3", "r.13.26.mca", 23},
+    }};
+    constexpr std::int32_t kPsl = 100;
+    constexpr std::int32_t kWindow = 32;
+    for (const auto& probe : kCases) {
+        const std::filesystem::path region = root / probe.directory / "k_p100" / probe.region;
+        if (!std::filesystem::is_directory(fixtures() / "worldgen") ||
+            !std::filesystem::is_regular_file(region)) {
+            SKIP("no clamp probe at "
+                 << region << "; generate it with tools/analysis/aps-clamp-probe.sh --accept-eula");
+        }
+    }
+
+    static constexpr std::array<Mix, 4> kMixes{Mix::Shipped, Mix::WideX, Mix::NarrowZ,
+                                               Mix::LogicalShift};
+    long long painted = 0;
+    long long liveness = 0;
+    long long smallX = 0;
+    long long edgeBelow = 0;
+    std::int32_t lowX = std::numeric_limits<std::int32_t>::max();
+    std::int32_t highX = std::numeric_limits<std::int32_t>::min();
+    std::int32_t lowZ = std::numeric_limits<std::int32_t>::max();
+    std::int32_t highZ = std::numeric_limits<std::int32_t>::min();
+    std::array<long long, kMixes.size()> right{};
+
+    for (const auto& probe : kCases) {
+        const World world{probe.seed};
+        const stratum::rng::Seed128 base =
+            stratum::rng::XoroshiroPositionalFactory{probe.seed}.base();
+        const auto file =
+            stratum::region::RegionFile::open(root / probe.directory / "k_p100" / probe.region);
+        for (std::int32_t chunkZ = 0; chunkZ < 32; ++chunkZ) {
+            for (std::int32_t chunkX = 0; chunkX < 32; ++chunkX) {
+                if (!file.hasChunk(chunkX, chunkZ)) {
+                    continue;
+                }
+                const auto chunk = stratum::chunk::Chunk::decode(
+                    stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
+                for (int localZ = 0; localZ < 16; ++localZ) {
+                    for (int localX = 0; localX < 16; ++localX) {
+                        // The edge is psl + depth - 8 and the depth stays
+                        // within a few blocks of 3, so a window around psl
+                        // finds it; a marker at the window's floor would
+                        // mean the edge lies below, and is counted.
+                        std::int32_t lowest = 0;
+                        bool marked = false;
+                        for (std::int32_t y = kPsl - kWindow; y < kPsl + kWindow && !marked; ++y) {
+                            const auto* block = chunk.blockAt(localX, y, localZ);
+                            if (block != nullptr && block->name == "minecraft:diamond_block") {
+                                lowest = y;
+                                marked = true;
+                            }
+                        }
+                        if (!marked) {
+                            continue;
+                        }
+                        ++painted;
+                        edgeBelow += static_cast<long long>(lowest == kPsl - kWindow);
+                        const std::int32_t x = (chunk.x() * 16) + localX;
+                        const std::int32_t z = (chunk.z() * 16) + localZ;
+                        smallX += static_cast<long long>(x >= -686 && x <= 686);
+                        lowX = std::min(lowX, x);
+                        highX = std::max(highX, x);
+                        lowZ = std::min(lowZ, z);
+                        highZ = std::max(highZ, z);
+                        // The shipped mix, spelled here, is the library's to
+                        // the bit — or the alternatives perturb a lookalike.
+                        const double field = world.surfaceField(x, z);
+                        const double shipped = rawDepthUnder(field, base, Mix::Shipped, x, z);
+                        liveness += static_cast<long long>(
+                            std::bit_cast<std::uint64_t>(shipped) !=
+                            std::bit_cast<std::uint64_t>(world.surfaceDepthRaw(x, z)));
+                        for (std::size_t i = 0; i < kMixes.size(); ++i) {
+                            const auto depth = static_cast<std::int32_t>(
+                                rawDepthUnder(field, base, kMixes.at(i), x, z));
+                            right.at(i) += static_cast<long long>(lowest == kPsl + depth - 8);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    INFO(painted << " painted columns over x " << lowX << ".." << highX << ", z " << lowZ << ".."
+                 << highZ << "; right: shipped " << right[0] << ", x in 64 bits " << right[1]
+                 << ", z in 32 bits " << right[2] << ", logical shift " << right[3]);
+    // The clamp case's own floor for three windows of k_p100.
+    REQUIRE(painted >= 3 * 49152);
+    REQUIRE(liveness == 0);
+    REQUIRE(edgeBelow == 0);
+    // Every column is past the point where the two x products part.
+    REQUIRE(smallX == 0);
+
+    // The measurement: the library's mix on every column the server painted.
+    CHECK(right[0] == painted);
+    // And each alternative wrong on a share of them no cast could hide.
+    // Bounds, not counts, though nothing here flows: the painted window is
+    // the server's skirt, which the clamp case above floors rather than pins.
+    // A fresh u moves the cast in about one column in twelve (8.6% and 8.5%
+    // measured); a logical shift moves only the negative mixes, so half that
+    // (4.5%).
+    CHECK(painted - right[1] > painted / 20);
+    CHECK(painted - right[2] > painted / 20);
+    CHECK(painted - right[3] > painted / 40);
 }
 
 TEST_CASE("the overworld read at a negative-depth column is stone under both candidates",

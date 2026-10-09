@@ -74,7 +74,9 @@ Study for design, never transcribe code without license check:
   server on 19-25% of blocks, and its `PositionalRandom.at` evaluates the
   position mix without wrapping, which the server refutes (§11, "The jitter
   draw, recovered"). Of its aquifer's random source, only the base and the
-  mix's y term are taken, as CI vectors.
+  mix's y term are taken, as CI vectors. Nothing else in the repository
+  rests on its `at()` or its aquifer — audited, with the aquifer and `at()`
+  figures above re-measured unchanged (§11, "What CI holds of it").
 
 ---
 
@@ -1287,10 +1289,13 @@ Open:
   Positional seeding at a block or cell position (`rng::PositionalSource`:
   fork, salt, fork again, then the position mix) is implemented, recovered
   against the server twice over — the aquifer's cell centres and surface
-  rules' `vertical_gradient` (below, "The jitter draw, recovered"). In CI it
-  is checked against deepslate on 72 vectors (9 seeds, 8 cells), but only on
-  the y axis: deepslate's own mix does not wrap, so off that axis it is not
-  vanilla's, and the x and z terms have no oracle that runs in CI.
+  rules' `vertical_gradient` (below, "The jitter draw, recovered"). In CI the
+  server itself checks it, on corpora CI generates (§7): the aquifer's
+  jitter readout and block-level cases on cells near the origin, and — for
+  the x term's 32-bit product, which only |x| > 686 can show — the surface
+  depth's jitter on 180224 columns at x 2176..6911. deepslate checks the
+  base and the y term on 72 vectors (9 seeds, 8 cells), on the y axis only:
+  its own mix does not wrap, so off that axis it is not vanilla's.
 
   Its java.util.Random counterpart under `legacy_random_source`
   (`rng::LegacyPositionalSource`: the same two forks around one salt, with
@@ -4249,10 +4254,15 @@ Open:
   fixtures the search never saw, including one with lava live and one at
   psl 120.
 
-  *What CI holds of it, and what only the server does (MA).* Every case
-  above needs probe corpora, which CI does not have, so CI held the
-  derivation only by this build's own known answers. deepslate is an
-  independent implementation, but only partly a usable one:
+  *What CI holds of it (MA).* Every case above reads probe corpora, and CI
+  generates them (§7): the comb worlds are `tools/probe-worlds`' unit `comb`
+  (shard `aquifer`) and the aquifer-on world its unit `aquifer-on` (shard
+  `water`), so `vanilla_aquifer_jitter_test.cpp`,
+  `vanilla_aquifer_selection_test.cpp` and `golden_fill_aquifer_test.cpp`
+  run on both conformance legs against a fresh generation. (This paragraph
+  said they skip in CI; that was stale when it landed, the probe-world CI
+  being in the tree already.) deepslate is an independent implementation,
+  but only partly a usable one:
   `PositionalRandom.at` evaluates the mix WITHOUT wrapping — on 400 of 400
   fixed cells it is the formula above in arbitrary precision, on 0 of 400
   the wrapped one — and the server takes the wrapped one: on the jitter
@@ -4268,15 +4278,62 @@ Open:
   shift misses none, since nothing on the axis is negative before the
   shift, and is pinned as invisible there.
 
-  **Still with no CI oracle:** the mix's x and z terms and its wraps,
-  arithmetic against logical shift, the bounds (10, 9, 10) and the draw
-  order. The vectors' draws were asked for with this reading, so they hold
-  `jitterOf`'s wiring to it (every other order, and seven other bound
-  triples, miss at least 34 of 72) and not the reading to vanilla. Those
-  rest on the server-backed cases alone — the vertical draw on
-  `vanilla_aquifer_jitter_test.cpp`, all three through the block-level cases
-  (`vanilla_aquifer_selection_test.cpp`, `golden_fill_aquifer_test.cpp`) —
-  which skip in CI.
+  What the vectors do not hold, the server does. Their draws were asked for
+  with this reading, so they hold `jitterOf`'s wiring to it (every other
+  order, and seven other bound triples, miss at least 34 of 72) and not the
+  reading to vanilla: the bounds and the draw order rest on the vertical
+  draw in the jitter readout and on the block-level cases. So do the mix's x
+  and z terms, its 64-bit wraps and arithmetic against logical shift — but
+  only on cell indices within a few of the origin, where neither product's
+  width shows. The z term's 64-bit product parts from a 32-bit one past
+  |z| = 18, which block-level readings reach (`vertical_gradient`'s probe
+  to z 127, the goldens to 511). The x term's 32-bit product,
+  `(int)(cx * 3129871)`, parts from a 64-bit one only past |x| = 686: about
+  11000 blocks out for a cell index, 686 for a block. No aquifer corpus, no
+  `vertical_gradient` probe (x, z < 128) and no golden region (all r.0.0)
+  gets there, and deepslate reduces nothing, so until this was audited the
+  32-bit x product held on this build's own word.
+
+  **The 32-bit x product, confirmed at block level.** The surface depth's
+  jitter is the same mix, unsalted, at (x, 0, z), and `aps-clamp-probe.sh`'s
+  three worlds (unit `apsc`, shard `surface`) sit at x 2176..6911 and
+  z 1776..13823, where every painted column is a reading of the depth (the
+  clamp case's `psl + surfaceDepth - 8`). Over psl 100's 180224 columns the
+  shipped mix is right on all 180224; with the x term in 64 bits it is wrong
+  on 15477 (8.6%), with the z term in 32 bits on 15330 (8.5%), with a logical
+  shift on 8054 (4.5%: only the negative mixes move). `the position mix
+  multiplies x in 32 bits and z in 64 where only far columns tell`
+  (`vanilla_above_preliminary_surface_test.cpp`, 14 s in the Debug build CI
+  runs) holds that in CI. Negative coordinates were already held: `psllat3`,
+  at x, z in -256..-1, recovers the server's psl through the same depth on
+  all 65536 columns (`the lattice cell is found with floorDiv, measured
+  below zero`, re-run on this tree). That the aquifer's own mix behaves the
+  same past cell 686 is an inference from `rng::positionSeed` serving both,
+  not a measurement: no corpus has a cell index that large.
+
+  *The audit, for the record.* Of what this repository takes from
+  deepslate's output, only those 72 vectors involve `PositionalRandom.at`,
+  and nothing uses its aquifer or `NoiseChunkGenerator.fill`.
+  `deepslate_vectors.inc`'s 240 `old_blended_noise` values draw nothing per
+  position (one named fork of the positional factory, whose base and salt
+  these vectors confirm) and are held to the server separately, to half a
+  block (unit `blended-noise`). The legacy tables' "deepslate's own rule"
+  (rule 182) is a legacy noise seeding with no per-position draw, and the
+  server refutes it; nothing in the repository measures that deepslate uses
+  it, and nothing depends on whether it does. The `deepslate` rule of the
+  surface-rule entries is the `minecraft:deepslate` block's
+  `vertical_gradient`, measured on the server.
+  `vertical_gradient` (27 million blocks) and the ore veins (79790 of 79790)
+  were recovered on the server and never on deepslate. Re-run on this tree,
+  `deepslate-aquifer-trust.sh` reproduces every figure above unchanged
+  (0 of 4 moved inputs change `fill`; `NoiseAquifer` 298 934 to 375 270
+  blocks wrong; 400 of 400 cells unwrapped; 193 of 255 against 256 of 256),
+  and `generate-deepslate-vectors.sh` reproduces both committed vector
+  files byte for byte. `spec/aquifer-spec.md`'s verify-by lines for Q3.4 and
+  Q7.5 name a "deepslate-oracle probe"; for 1.21.11 there is none, and no
+  claim here rests on one: Q3.4 is the jitter above, and Q7.5's sampling
+  positions are server measurements in this section (the spread's pitch 16,
+  the lava's 64).
 
   *What the remaining 22% is.* Not the centres. Split by how far the third
   nearest source sits beyond the second, exactness runs 0.53 where three
