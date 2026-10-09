@@ -452,26 +452,31 @@ namespace {
 
 TEST_CASE("under a surface of -75 or lower a source's status is its centre's alone", "[aquifer]") {
     // The y_skip probe's instrument (vanilla_aquifer_yskip_test.cpp), pinned
-    // without a server: every scan aborts, so a centre at or above lambda
-    // takes the sea (it sits more than twenty blocks above the scan's
-    // minimum) and every centre below it reads lambda. Which blocks are
-    // pockets — the nearest source dry — is then the same at every such
-    // surface, and only y_skip moves between the probe's dimensions.
+    // without a server: every scan aborts at its anchor, so a centre at or
+    // above lambda takes the sea (it sits more than twenty blocks above the
+    // anchor, spec Q5.3(a)) and every centre below it reads no fluid at or
+    // above lambda — A_lava where the anchor fires, the level rule on the
+    // surface (a ladder at most the surface, or the sentinel) four or more
+    // below it. Which blocks are pockets — the nearest source dry — is then
+    // the same at every such surface, and only y_skip moves between the
+    // probe's dimensions.
     const std::int32_t lambda = lambdaLevel(kSea);
     for (const double surface : {-200.0, -93.0, -92.5, -92.0, -85.0, -81.0, -80.0, -75.0}) {
         INFO("surface " << surface);
         int wrong = 0;
         for (std::int32_t centreY = -130; centreY <= 60; ++centreY) {
             const stratum::aquifer::SourceStatus status = statusOver(surface, centreY);
+            const bool fires = centreY > stratum::javamath::floorToInt(surface) - 4;
             const bool expected = centreY >= lambda
                                       ? (status.level == kSea && status.type == FluidType::Default)
-                                      : status.level == lambda;
+                                  : fires ? status.level == lambda
+                                          : status.level <= lambda;
             wrong += expected ? 0 : 1;
         }
         CHECK(wrong == 0);
     }
     // And -75 is the bound: one block higher and the centre at lambda itself
-    // is no longer twenty blocks clear of the scan's minimum, and reads lambda.
+    // is no longer twenty blocks clear of the anchor, and reads lambda.
     CHECK(statusOver(-74.0, lambda).level == lambda);
     CHECK(statusOver(-74.0, lambda + 1).level == kSea);
     CHECK(statusOver(-75.0, lambda).level == kSea);

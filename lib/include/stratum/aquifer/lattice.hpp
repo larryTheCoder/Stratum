@@ -375,7 +375,9 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// How near the preliminary surface a cell's centre must be for the ocean
 /// branch to flood it whatever the floodedness says. Bracketed to one block:
 /// at a floodedness of -2.0, two full below any gate, depths 0 to 3 are still
-/// the sea and depth 4 is dry.
+/// the sea and depth 4 is dry. It is Q5.3(b)'s margin, `qy + 12 > p + 8`,
+/// applied to each sample in scan order: the first submerged sample the
+/// centre sits above less this decides.
 inline constexpr std::int32_t kNearSurfaceDepth = 4;
 
 /// How far below `sea_level` the preliminary surface must fall for the ocean
@@ -441,17 +443,21 @@ inline constexpr double kSeaBonusDenominator = 640.0;
 inline constexpr double kLocalBonusNumerator = 3.0;
 inline constexpr double kLocalBonusDenominator = 160.0;
 
-/// How far above the surface read an aborting near-surface cell must sit to
-/// still take the sea. Exactly 20, pinned on eight purpose-built dimensions
-/// where 19 and 21 each lose more than forty cells and are right on at most
-/// one; the term reads the scan's `cap`, and it is independent of `sea_level`,
-/// of the surface's high value and of the floodedness.
+/// Q5.3(a)'s margin: a cell centred more than this above its ANCHOR's surface
+/// takes the global picker's status at its centre (the sea at or above
+/// lambda) before any sample is weighed. Exactly 20, pinned twice: over an
+/// aborting surface on eight purpose-built dimensions, where 19 and 21 each
+/// lose more than forty cells and are right on at most one, and on
+/// `aquifer-level-probe.sh`'s land arms, where each is refuted wherever it
+/// parts from 20. Independent of `sea_level`, of the surface's high value and
+/// of the floodedness.
 ///
-/// The same margin is Q5.3(a)'s for a cell that did not abort: off the ocean
-/// branch, a cell centred more than this above its surface read takes the
-/// sea before any floodedness is weighed. Measured separately, on
-/// `aquifer-level-probe.sh`'s land arms, where 19 and 21 are each refuted
-/// wherever they part from 20 (SPEC §11).
+/// Both of those held the surface constant, where the anchor, the scan's
+/// minimum and the aborting sample are one number, and engine v12 read the
+/// minimum (`cap`) here. `aquifer-ties-probe.sh` parts them, aborted scan
+/// and land alike: the anchor (SPEC §11, "The surface scan, sample by
+/// sample"). The constant keeps the near-surface floor's name, which is what
+/// it was first measured as.
 inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
 
 /// Lambda: where the global picker's lava sea tops out, and the threshold the
@@ -557,16 +563,22 @@ inline constexpr std::int32_t kYSkipSampleStride = 4;
 /// (see `sampling.hpp` for how the scan produces them, and for why it is a
 /// scan at all rather than a sample).
 struct PslRead {
-    /// The window's prefix minimum, stopping before any aborting sample. Read
-    /// by the near-surface gate, the near-surface depth test, and the reach.
+    /// The minimum of the samples before the first aborting one: the clean
+    /// samples Q5.3(b) weighs first, which fire exactly when this does. When
+    /// the anchor itself aborts there is no such sample, and this is the
+    /// anchor, below the abort threshold (`cellLevel` tells by that).
     std::int32_t gate = 0;
 
-    /// The whole window's minimum, aborting sample included. Read by the
-    /// ladder's cap and by the aborting near-surface floor.
+    /// The whole window's minimum, aborting samples included: Q5.4's minimum,
+    /// read by the level rule (the depth and the ladder's cap), and, on an
+    /// aborted scan, the test of whether any sample at or past the abort
+    /// fires (only an aborting one can, and the lowest fires first if any
+    /// does).
     std::int32_t cap = 0;
 
     /// The anchor sample alone — the first read, before the window. Read by
-    /// the DEPTH PATH's gate, and by nothing else.
+    /// Q5.3(a) (a centre more than twenty above it takes the global picker's
+    /// status) and by the DEPTH PATH's gate.
     ///
     /// CONFIRMED BY A SECOND INSTRUMENT. The asymmetry (near-surface on the
     /// minimum, depth path on the anchor) is exactly the shape that had been
@@ -578,10 +590,11 @@ struct PslRead {
     /// §11, "A second instrument for the depth path's gate").
     std::int32_t anchor = 0;
 
-    /// Whether a window sample fell below the scan's threshold. When it did,
-    /// the floodedness-gated `sea_level` outcome is REFUSED — which is the
-    /// entire explanation of a failure this project first read as the slopes
-    /// being wrong in the middle of the band.
+    /// Whether a sample (the anchor included) fell below the scan's
+    /// threshold. When one did and it fires before any clean sample, the
+    /// source takes A_lava and the floodedness-gated `sea_level` outcome is
+    /// never weighed — which is the entire explanation of a failure this
+    /// project first read as the slopes being wrong in the middle of the band.
     bool aborted = false;
 
     [[nodiscard]] constexpr bool operator==(const PslRead&) const noexcept = default;
@@ -625,8 +638,8 @@ struct CellFluid {
 
     /// Q5.9's deep-dark override, read at the centre: `erosion < -0.225` AND
     /// `depth > 0.9` (`isDeepDark`). When set, both floodedness comparisons
-    /// fail and the cell is dry — off the near-surface early return only,
-    /// which compares no floodedness at all.
+    /// fail and the cell is dry — in the level rule only: Q5.3's two
+    /// short-circuits compare no floodedness at all.
     bool deepDark = false;
 };
 
@@ -635,25 +648,26 @@ enum class LevelOrigin : std::uint8_t {
     /// Everything but the two cases below: the cell's own lattice and
     /// floodedness, or the dry sentinel.
     Cell,
-    /// A sea that Q5.3 short-circuits to: a cell close under a submerged
-    /// surface takes the sea from THAT surface (spec Q5.3(b)), and a cell
-    /// more than twenty blocks above an aborting surface — or above any
-    /// surface off the ocean branch, if its scan did not abort — takes the
-    /// global picker's sea at its own centre (Q5.3(a)). All are the global
-    /// picker's status at or above lambda, so `fluidTypeOf` types them the
-    /// default fluid: neither a centre below the lava sea (cf58 of
-    /// `aquifer-capfloor-probe.sh`, 20 462 blocks of false barrier
-    /// otherwise) nor the `lava` override (`aquifer-fluidnear-probe.sh`)
-    /// makes them lava. The name predates the last case.
+    /// A sea that Q5.3 short-circuits to: a cell whose first firing sample
+    /// is a clean submerged one takes the sea from THAT surface (spec
+    /// Q5.3(b)), and a cell centred at or above lambda more than twenty
+    /// blocks above its anchor takes the global picker's sea at its own
+    /// centre (Q5.3(a)). All are the global picker's status at or above
+    /// lambda, so `fluidTypeOf` types them the default fluid — even for a
+    /// centre below the lava sea (cf58 of `aquifer-capfloor-probe.sh`,
+    /// 20 462 blocks of false barrier otherwise), and whatever the `lava`
+    /// override reads (`aquifer-fluidnear-probe.sh`). The name predates
+    /// Q5.3(a).
     NearSurfaceSea,
     /// The global picker's status below lambda: spec Q1.1's
     /// A_lava = (`kLavaLevel`, lava), the literal -54 whatever `sea_level`
-    /// is, and lava whatever the cell's own `lava` reads. An aborted scan
-    /// takes it from the surface it met submerged in the lava sea (spec
-    /// Q5.3(b)) — on the near-surface path when it does not take the sea,
-    /// and off it always, deep-dark or not — and a cell centred below lambda
-    /// takes it when its floodedness gives it the sea (Q5.6's `Global(Q)`,
-    /// the trailing guard). `fluidTypeOf` types it lava.
+    /// is, and lava whatever the cell's own `lava` reads. A cell takes it
+    /// from the first sample to fire when that sample aborts — the surface
+    /// met submerged in the lava sea (spec Q5.3(b)), deep-dark or not — and
+    /// from Q5.3(a) when centred below lambda more than twenty above its
+    /// anchor; a cell centred below lambda also takes it when its floodedness
+    /// gives it the sea (Q5.6's `Global(Q)`, the trailing guard).
+    /// `fluidTypeOf` types it lava.
     GlobalLava,
 };
 
@@ -694,14 +708,24 @@ struct CellLevel {
 /// crossing, where they differ because the crossing floodedness is not itself
 /// representable.
 ///
-/// AN ABORTED SCAN TAKES A_LAVA. A cell whose surface scan aborted (a sample
-/// below `abortThreshold`) has met a surface submerged in the lava sea, and
-/// unless it sits on the near-surface path more than twenty blocks above the
-/// scan's minimum (where it takes the sea) it takes that surface's global
-/// status before its floodedness is weighed (spec Q5.3(b)): Q1.1's
-/// A_lava, the literal -54 and lava (`LevelOrigin::GlobalLava`), whatever
-/// its ladder, its floodedness, Q5.9's override or its own `lava` reading
-/// say. Measured three ways:
+/// THE CLEAN-ROOM SPEC'S Q5.3, AS WRITTEN, measured as written
+/// (`aquifer-ties-probe.sh`, SPEC §11 "The surface scan, sample by sample"):
+/// (a) a centre more than `kNearSurfaceFloorOffset` above the ANCHOR's
+/// surface takes the global picker's status at the centre; (b) otherwise
+/// the FIRST sample in scan order that is submerged and that the centre sits
+/// above less `kNearSurfaceDepth` decides, the sea if it is clean and A_lava
+/// if it aborts; and only if no sample fires does the level rule run, on the
+/// whole minimum (Q5.4). Engine v12 read the same four values differently —
+/// Q5.3(a) on `cap`, the abort flag over a clean sample that fires first,
+/// A_lava for an aborted scan nothing fires on — and the server sides with
+/// the spec on every block where they part, on all five kinds of source.
+///
+/// AN ABORTING SAMPLE THAT FIRES GIVES A_LAVA. The source has met a surface
+/// submerged in the lava sea, and takes that surface's global status before
+/// its floodedness is weighed (spec Q5.3(b)): Q1.1's A_lava, the literal
+/// -54 and lava (`LevelOrigin::GlobalLava`), whatever its ladder, its
+/// floodedness, Q5.9's override or its own `lava` reading say. Measured
+/// three ways:
 ///
 ///   * At sea 63, where -54 is lambda, through the barrier: over an aborting
 ///     surface with vanilla's barrier on (`aquifer-nsfloor-probe.sh`) the
@@ -720,23 +744,26 @@ struct CellLevel {
 ///     fluid-update mark compares it with anything of its own level
 ///     (aquifer_substance_test.cpp pins this).
 ///
-/// A cell that did NOT abort keeps its unclamped ladder and its sentinel.
-/// Where its cap is above lambda that is measured (the water/lava and
-/// deep-floor worlds). Where its cap is below lambda without an abort
-/// (psl in [lambda - 8, lambda)) it is the documented reading — the spec
-/// ties A_lava to the submerged surface, not to the cap — and
-/// `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the only 4
-/// blocks over two seeds where the two readings part.
+/// A cell no sample of which fires keeps its unclamped ladder and its
+/// sentinel. Where its minimum is above lambda that is measured (the
+/// water/lava and deep-floor worlds). Where its minimum is below lambda
+/// without an abort (psl in [lambda - 8, lambda)) it is the documented
+/// reading — the spec ties A_lava to the submerged surface, not to the
+/// minimum — and `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the
+/// only 4 blocks over two seeds where the two readings part. Where the scan
+/// aborted on a sample the centre sits four or more below, it is the spec's
+/// reading too, and the ties probe's `td` world bears it out on the 14
+/// blocks over two seeds, all on row lambda, where it parts from v12's
+/// A_lava: such a centre sits at least thirteen below lambda, where only Π
+/// just above lambda can reach it.
 ///
-/// Q5.3(a) reaches a cell that did not abort, too: one whose centre sits
-/// more than `kNearSurfaceFloorOffset` above the scan's `cap` takes the sea
-/// (`LevelOrigin::NearSurfaceSea`) whatever its floodedness. On the ocean
-/// branch every such cell is a near-surface sea already, so this is the land
-/// branch's: on `aquifer-level-probe.sh`'s constant surfaces the floodedness
-/// gates alone are wrong exactly where it parts from them, and right
-/// everywhere else (SPEC §11). `cap` rather than the anchor (the spec's a0)
-/// is carried from the aborted near-surface floor's measurement; a constant
-/// surface cannot separate the two.
+/// Q5.3(a) is the land branch's as much as the aborted scan's: off the ocean
+/// branch a cell centred more than twenty above its anchor takes the sea
+/// (`LevelOrigin::NearSurfaceSea`) whatever its floodedness; on
+/// `aquifer-level-probe.sh`'s constant surfaces the floodedness gates alone
+/// are wrong exactly where it parts from them (SPEC §11), and on the ties
+/// probe's varying ones the scan's minimum in the anchor's place is wrong
+/// exactly where it parts from the anchor.
 [[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
 
 /// `cellLevel(cell).level`, for the callers that need nothing else.

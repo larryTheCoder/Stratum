@@ -83,6 +83,15 @@ target_link_libraries(stratum_legacy_aquifer_analyze PRIVATE stratum::core ZLIB:
 target_include_directories(stratum_legacy_aquifer_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 stratum_configure_target(stratum_legacy_aquifer_analyze)
 
+# The surface scan's readings (aquifer-ties-probe.sh). Its scorer reads probe
+# regions through the conformance cases' own support headers, and
+# tests/conformance/vanilla_aquifer_ties_test.cpp runs the same scorer, so it
+# includes tests/ too.
+add_executable(stratum_aquifer_ties_analyze aquifer-ties-analyze.cpp)
+target_link_libraries(stratum_aquifer_ties_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_aquifer_ties_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_aquifer_ties_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()

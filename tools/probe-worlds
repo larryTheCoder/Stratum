@@ -265,6 +265,13 @@ UNITS = [
     for seed in (42, 31337)
     for group, corpus in (('step', 'yskip'), ('step2', 'yskip2'), ('rect', 'yskiprect'))
 ] + [
+    # The surface scan sample by sample (spec Q5.3): one 10 GB start of
+    # fourteen dimensions per seed, thirteen of them packed ice, about two
+    # minutes each locally. The end shard again because it was the lightest.
+    unit(f'ties_s{seed}', 'end', ['aquifer-ties-probe.sh', str(seed)],
+         density((f'ties_s{seed}', seed)))
+    for seed in (42, 31337)
+] + [
     # markers: every cache marker a datapack can wrap an aquifer entry in,
     # five corpora (one server start each) per seed. A shard of its own: ten
     # starts would push any other shard's cold run past its timeout.

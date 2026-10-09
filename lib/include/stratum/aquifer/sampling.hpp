@@ -291,10 +291,10 @@ static_assert(std::ranges::all_of(kPslWindow, [](const PslOffset offset) {
 /// rule gets, which reads this same entry through a 16-block lattice, blended
 /// and floored twice (`terrain::ChunkFiller::preliminarySurfaceIn`). Scored
 /// head to head with the anchor, window, order and abort unchanged, on the
-/// blocks where the two readings predict different categories: 781 897 on
+/// blocks where the two readings predict different categories: 802 159 on
 /// the varying-surface probe, where the server sides with the per-column
-/// reading on 661 223 and with the lattice on none, and 1 542 768 over three
-/// seeds with the barrier on, 1 320 468 to none; every other block is solid
+/// reading on 679 973 and with the lattice on none, and 1 564 944 over three
+/// seeds with the barrier on, 1 340 616 to none; every other block is solid
 /// or fluid flow may have moved. The lattice taken at the unquantised centre
 /// loses the same way. A source whose anchor is 16-aligned on both axes
 /// reads the same under either, for every field, so all of the evidence is
@@ -359,34 +359,67 @@ template<typename Sampler>
     // not truncation toward zero (0.9209 — failing exactly on the negatives).
     // Java's `(int) Math.floor`, saturating and NaN -> 0: a datapack's psl can
     // be either, and a bare cast of them is undefined.
+    // `cap` is the whole minimum whether or not the scan aborted: without an
+    // abort every sample folded into the prefix too, and the two are one.
     return PslRead{.gate = javamath::floorToInt(prefix),
-                   .cap = javamath::floorToInt(aborted ? whole : prefix),
+                   .cap = javamath::floorToInt(whole),
                    .anchor = javamath::floorToInt(seed),
                    .aborted = aborted};
 }
 
-/// WHAT `cap` STILL DECIDES on an aborting cell. It used to reach a level
-/// through the ladder as well, and that consumer is gone: an aborted scan off
-/// the near-surface path takes A_lava before the ladder is built
-/// (lattice.hpp, `cellLevel`). What reads it is the near-surface exemption
-/// alone (`centreY > cap + 20`), where the whole window's minimum was
-/// measured against `gate` and `anchor` (aquifer_lattice.cpp).
+/// WHAT THE FOUR VALUES ANSWER. The clean-room spec's Q5.3 is a first match
+/// over the thirteen samples in scan order — Q5.3(a) on the anchor, then the
+/// first sample that is submerged and that the centre sits above less four —
+/// and `cellLevel` answers it from this reduction without the samples:
+/// `anchor` is Q5.3(a)'s comparand; `gate` fires exactly when a clean sample
+/// before the first abort does (the minimum fires when any does), and sits
+/// below the threshold, firing nothing clean, when the anchor itself aborts;
+/// past the abort only an aborting sample can fire, and the lowest does if
+/// any does, so `cap - centreY < 4` says one fired; and `cap` is Q5.4's
+/// minimum for the level rule. `aquifer-ties-probe.sh` measured that reading
+/// against the one engine v12 made of the same values, on every kind of
+/// source where they part, and the server sides with the spec on every block
+/// (SPEC §11, "The surface scan, sample by sample").
+///
+/// THREE TIES THIS NOTE CARRIED, now measured. The near-surface exemption's
+/// comparand (`centreY > cap + 20`) was called a permanent tie between the
+/// whole window's minimum, the aborting sample and any sentinel at or below
+/// -54, on the argument that `cap` reached a level only through a clamped
+/// ladder; once the clamp went it reached the barrier as a number, and the
+/// comparand is neither — it is Q5.3(a)'s anchor, which is the aborting
+/// sample exactly when the anchor aborts (the ties probe's `ta` and `tab`
+/// worlds: 106 393 blocks for the anchor over the minimum; `tb` and `tab`:
+/// 69 935 against the aborting sample where it is not the anchor). Q5.3(a)'s
+/// comparand for a scan that did not abort, `cap` or the anchor, which a
+/// constant surface makes one number: the anchor (`tl35`, `tl43`, through
+/// the sea's lid, 1 780 blocks). And whether the first submerged sample in
+/// scan order decides, which the abort flag had stood in for: it does (`tb`,
+/// `tbr`, `tab`, 64 913 blocks; a land prefix before an abort, `tc`, `tcr`,
+/// `tp35`, `tp43`, 26 389 blocks and 6 472 marks).
 ///
 /// Whether the anchor arms the abort was ALSO listed here as undecidable, and
 /// it is not: 329 cells over seventeen seeds decide it, and the armed reading
 /// is right on every one. Where the flag is TESTED was carried here as a
 /// permanent tie — "the anchor arms it" against "the near-surface return
 /// additionally requires the anchor to clear the threshold" — and it is not
-/// one either: a cell with a low anchor more than twenty above the cap takes
-/// the sea under the first and A_lava (lambda, through engine v9) under the
-/// second, and on `aquifer-lowfloor-probe.sh`'s worlds the server sides with
+/// one either: on `aquifer-lowfloor-probe.sh`'s worlds the server sides with
 /// the first on every sampled block where they part, at sea -70, -60 and 63
-/// alike (vanilla_aquifer_lowfloor_test.cpp).
+/// alike (vanilla_aquifer_lowfloor_test.cpp). Under the spec's reading the
+/// question does not arise: an aborting anchor is simply the first sample.
+///
+/// What no world can part, and why: a source four or more below every
+/// sample of an aborting scan fires none, and takes the level rule where v12
+/// gave A_lava; such a centre sits at least thirteen below lambda, so only Π
+/// just above lambda reaches it, and the ties probe's `td` world, built for
+/// it, shows 14 blocks over two seeds, all on row lambda (the spec's on all
+/// 14). That is a thin
+/// measurement, not a tie. The permanent ties that remain are arithmetic:
+/// `kPslAnchorQuantum`'s before-or-after offset and `spreadSample`'s two
+/// spellings.
 ///
 /// With the anchor armed, `aborted` and `cap <= -63` are the SAME predicate
-/// over every field that can exist — `cap` is the whole window's minimum
-/// always, and -62 is an integer, so `floor(m) <= -63` exactly when `m < -62`.
-/// The tests assert that identity, because it is a one-line guard against ever
-/// reintroducing the exemption.
+/// over every field that can exist at an ordinary sea — `cap` is the whole
+/// window's minimum always, and -62 is an integer, so `floor(m) <= -63`
+/// exactly when `m < -62`. The tests assert that identity.
 
 } // namespace stratum::aquifer

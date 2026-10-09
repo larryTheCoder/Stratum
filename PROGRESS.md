@@ -17,7 +17,7 @@ Last swept: 2026-10-09 (MA, pipeline engines v10 and v11: cache markers in a dat
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: Q5.3(a)'s comparand off the ocean branch (`cap` or the anchor; a constant surface cannot tell), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -319,6 +319,24 @@ Open:
       the bonus spelling at both exact crossings, `psl` floored rather than
       truncated or rounded, and packed ice standing where water stands.
       SPEC §11.
+- [x] **The surface scan, sample by sample: the clean-room Q5.3 as written
+      (pipeline engine v13).** Three readings were carried, not
+      measured: the near-surface exemption's comparand (`cap` or the
+      aborting sample), Q5.3(a)'s for a scan that did not abort (`cap` or
+      the anchor), and whether the first submerged sample in scan order
+      decides. `aquifer-ties-probe.sh` (fourteen dimensions a seed, packed
+      ice, seeds 42 and 31337, CI's end shard) builds surfaces that part
+      each, and the server takes the spec's side on every scored block and
+      mark: v12's readings part from it on 106 393 blocks (the exemption on
+      `cap` over an aborting anchor), 64 913 (the abort flag over a clean
+      sample that fires first), 26 389 and 6 472 marks (Q5.3(a) over an
+      aborted scan's land prefix, at sea -70 in blocks and at seas 43 and 51
+      through the lid), 1 780 (Q5.3(a) on `cap` on land, through the lid)
+      and 14 (a scan no sample of which fires, row lambda only); the
+      aborting sample in `cap`'s place is wrong on 69 935. `cellLevel` now
+      reads Q5.3(a) on the anchor, then the first sample to fire, then the
+      level rule on the whole minimum; a unit sweep checks the four-value
+      reduction against the thirteen samples. SPEC §11.
 - [x] **A vein never replaces aquifer fluid — measured on the goldens.**
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,
@@ -1464,18 +1482,19 @@ Open:
       (`preliminarySurfaceIn`, anchor, window, order and abort unchanged) and
       scores both readings on every block where they predict different
       categories, from the lava sea's top to the lower of the two readings'
-      `y_skip`. On `probes/pslvar` (seed 42): 781897 such blocks (778125
-      before engine v8's `y_skip` rectangle), 661223 to the per-column
-      reading, 0 to the lattice, 105516 solid and 15158 that
-      flow may have moved — 13578 of those still sources beside two more,
+      `y_skip`. On `probes/pslvar` (seed 42): 802159 such blocks (778125
+      before engine v8's `y_skip` rectangle, 781897 under v12's reading of
+      the scan), 679973 to the per-column reading, 0 to the lattice, 106836
+      solid and 15350 that flow may have moved — 13578 of those still
+      sources beside two more,
       the infinite-source shape the interior of any pool the lattice would
       leave dry satisfies, so the case bounds them at 5% of the per-column
       reading's blocks rather than 1%. On the barrier-on nsfloor corpus at
-      seeds 42, 31337 and 8675309: 1542768 blocks, 1320468 to the per-column
+      seeds 42, 31337 and 8675309: 1564944 blocks, 1340616 to the per-column
       reading, 0 to the lattice — and no other case asserts that corpus's
       air and fluid, so that 0 is not implied by anything else in the
       suite. The lattice at the unquantised centre loses the same way (0 of
-      898686 on pslvar). A source anchored on the lattice on both axes
+      906228 on pslvar). A source anchored on the lattice on both axes
       cannot separate the two
       (378 of 2446 sources, none of the blocks), so the evidence is the
       other 2068. The analyzer figure this item used to quote — the
