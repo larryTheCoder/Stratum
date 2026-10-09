@@ -263,6 +263,23 @@ void ChunkBuffer::markFluidUpdate(int localX, std::int32_t y, int localZ) {
                                         .localZ = static_cast<std::uint8_t>(localZ)});
 }
 
+void ChunkBuffer::orderFluidUpdatesByCells(const std::int32_t cellWidth) {
+    if (cellWidth < 1) {
+        throw FillError("cannot order fluid updates by cells " + std::to_string(cellWidth) +
+                        " blocks wide");
+    }
+    // Local x and z are 0..15, so plain division and remainder are exact
+    // here; y is the only signed coordinate, and it is only compared.
+    const auto key = [cellWidth](const FluidUpdate& update) {
+        const std::int32_t x = update.localX;
+        const std::int32_t z = update.localZ;
+        return std::tuple{x / cellWidth, z / cellWidth, -update.y, x % cellWidth, z % cellWidth};
+    };
+    std::ranges::sort(fluidUpdates_, [&key](const FluidUpdate& lhs, const FluidUpdate& rhs) {
+        return key(lhs) < key(rhs);
+    });
+}
+
 ChunkFiller::ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                          const settings::NoiseSettings& settings)
     : settings_(&settings),
@@ -742,6 +759,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
             }
         }
     }
+    // This loop runs z-major and bottom-up, which is what keeps the corner
+    // cache warm; the server's fill runs x-major and top-down, and its
+    // `PostProcessing` lists hold the marks in that order.
+    into.orderFluidUpdatesByCells(cellWidth);
 
     if (surfaceExecutor_.has_value()) {
         applySurfaceRules(chunkX, chunkZ, into);

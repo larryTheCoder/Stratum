@@ -16,6 +16,10 @@
 // feature runs, so that list is the aquifer's flag and nothing else: the
 // server's own answer, position by position.
 //
+// The last case takes the filler's marks the rest of the way, through
+// `chunk::encode` to bytes, and holds them to the server's own lists entry
+// for entry, order included.
+//
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/probe_corpus.hpp"
 #include "support/probe_region.hpp"
@@ -23,12 +27,15 @@
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/substance.hpp>
+#include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
+#include <stratum/nbt/writer.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/terrain/filler.hpp>
@@ -37,12 +44,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -369,4 +378,106 @@ TEST_CASE("the filler marks exactly the fluid updates the server does, on real o
     CHECK(total.serverMarks == 1964);
     CHECK(total.extra == 0);
     CHECK(total.missing == 0);
+}
+
+TEST_CASE("the chunk encoder writes the server's own PostProcessing lists",
+          "[conformance][aquifer][terrain][chunk]") {
+    // The other half of the case above: the marks, once the filler has them,
+    // written by `chunk::encode` and read back from real NBT bytes, against
+    // the tag the server itself wrote — list count, each list's element type,
+    // and each list's entries IN ORDER. The order is the server's fill order
+    // (cell column by cell column, x outer, top down), not the filler's loop
+    // order, and `fill()` sorts its marks into it
+    // (ChunkBuffer::orderFluidUpdatesByCells); left in loop order, 37 of
+    // these lists fail. Every untouched chunk of the aquifer-on probe whose
+    // list is non-empty (24 of its 63) is filled; the empty ones only
+    // exercise what the unit cases already pin.
+    const std::filesystem::path tree = fixtures() / "worldgen";
+    const std::filesystem::path region =
+        fixtures() / "probes" / "aquifer-on" / "seed--1" / "r.0.0.mca";
+    if (!std::filesystem::is_directory(tree) || !std::filesystem::is_regular_file(region)) {
+        SKIP("no aquifer-on probe at " << region
+                                       << "; generate it with "
+                                          "tools/analysis/aquifer-on-probe.sh --accept-eula");
+    }
+    stratum::test::requireFrozen(region.parent_path(), "tools/analysis/aquifer-on-probe.sh");
+    const auto pack = stratum::data::Pack::open(tree);
+    const auto loaded = stratum::settings::loadAll(pack);
+    auto overworld =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:overworld"));
+    overworld.oreVeinsEnabled = false;
+    const auto noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), -1, stratum::density::RandomSource::Xoroshiro);
+    const auto filler = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, overworld);
+    const std::int32_t lowestSection = stratum::javamath::floorDiv(overworld.geometry.minY, 16);
+    const std::int32_t sectionCount = overworld.geometry.height / 16;
+    const auto render = [](const stratum::nbt::Tag& list) {
+        const auto& asList = list.asList();
+        std::string text = "type " + std::to_string(static_cast<int>(asList.elementType)) + ":";
+        for (const stratum::nbt::Tag& entry : asList.elements) {
+            text += " " + std::to_string(entry.asShort());
+        }
+        return text;
+    };
+
+    const auto file = stratum::region::RegionFile::open(region);
+    long long chunks = 0;
+    long long marks = 0;
+    long long listsCompared = 0;
+    for (std::int32_t cz = 0; cz < 32; ++cz) {
+        for (std::int32_t cx = 0; cx < 32; ++cx) {
+            if (!file.hasChunk(cx, cz)) {
+                continue;
+            }
+            const auto server = stratum::nbt::read(file.readChunk(cx, cz));
+            if (!untouched(cx, cz, server.root.at("Status").asString()) ||
+                stratum::chunk::Chunk::decode(server.root).postProcessing().empty()) {
+                continue;
+            }
+            INFO("chunk " << cx << ", " << cz);
+            ++chunks;
+            stratum::terrain::ChunkBuffer buffer(overworld.geometry);
+            filler.fill(cx, cz, buffer);
+
+            // Blocks play no part in the lists, so the sections are air: what
+            // is under test is the marks' path from the filler to the bytes.
+            stratum::chunk::ChunkData data;
+            data.x = cx;
+            data.z = cz;
+            data.lowestSection = lowestSection;
+            for (std::int32_t i = 0; i < sectionCount; ++i) {
+                stratum::chunk::Section section;
+                section.y = lowestSection + i;
+                section.palette = {
+                    stratum::chunk::BlockState{.name = "minecraft:air", .properties = {}}};
+                section.blocks.assign(stratum::chunk::kBlocksPerSection, 0);
+                data.sections.push_back(std::move(section));
+            }
+            for (const auto& update : buffer.fluidUpdates()) {
+                data.postProcessing.push_back(stratum::chunk::PostProcessingMark{
+                    .localX = update.localX, .y = update.y, .localZ = update.localZ});
+            }
+            marks += static_cast<long long>(data.postProcessing.size());
+            const auto ours =
+                stratum::nbt::read(stratum::nbt::write("", stratum::chunk::encode(data)));
+
+            const auto& theirs = server.root.at("PostProcessing").asList();
+            const auto& mine = ours.root.at("PostProcessing").asList();
+            CHECK(mine.elementType == theirs.elementType);
+            REQUIRE(mine.elements.size() == theirs.elements.size());
+            for (std::size_t i = 0; i < theirs.elements.size(); ++i) {
+                INFO("section " << (lowestSection + static_cast<std::int32_t>(i)));
+                // Spelled out, so a failure shows both lists.
+                CHECK(render(mine.elements[i]) == render(theirs.elements[i]));
+                CHECK(mine.elements[i] == theirs.elements[i]);
+                ++listsCompared;
+            }
+        }
+    }
+    INFO("chunks " << chunks << ", marks " << marks << ", lists " << listsCompared);
+    // Model-only counts: these chunks never ticked, so nothing after
+    // generation moved their lists (support/probe_region.hpp).
+    REQUIRE(chunks == 24);
+    CHECK(listsCompared == 24 * 24);
+    CHECK(marks == 1964);
 }

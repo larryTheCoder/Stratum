@@ -16,7 +16,11 @@
 // regions. Carvers, features and structures are not part of this engine.
 // Every chunk is written at Status "minecraft:full" with `isLightOn: 0`
 // (chunk::encode's own doc): the server relights on load rather than this
-// build guessing at vanilla's light-storage convention.
+// build guessing at vanilla's light-storage convention. Each chunk's
+// `PostProcessing` lists carry the aquifer's fluid updates exactly as the
+// server writes its own (tests/conformance/vanilla_aquifer_fluid_update_test
+// .cpp holds the encoder to the server's bytes), so aquifer water and lava
+// flow once a chunk loads, as in a world the server generated.
 //
 // NOT a level.dat writer, and not even a region writer: this writes one
 // `<cx>_<cz>.nbt` chunk per file into the given directory, so that several
@@ -232,6 +236,15 @@ enum class Category { Air, Fluid, Solid };
     // No leaves exist in this build's output (no features/decorators), so
     // "ignoring leaves" changes nothing — the same array, written twice.
     data.heightmaps.emplace_back(chunk::Heightmap::MotionBlockingNoLeaves, motionBlocking);
+
+    // The aquifer's fluid updates, which fill() leaves in the order the
+    // server's own PostProcessing lists hold them: the server ticks each once
+    // the chunk loads, so aquifer water and lava flow as they would in a
+    // world it generated itself.
+    for (const terrain::ChunkBuffer::FluidUpdate& update : buffer.fluidUpdates()) {
+        data.postProcessing.push_back(chunk::PostProcessingMark{
+            .localX = update.localX, .y = update.y, .localZ = update.localZ});
+    }
 
     return data;
 }

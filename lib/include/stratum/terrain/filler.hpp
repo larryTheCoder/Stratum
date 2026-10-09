@@ -141,8 +141,21 @@ public:
     /// like `at` for a position outside the chunk.
     void markFluidUpdate(int localX, std::int32_t y, int localZ);
 
+    /// Puts the marks in the order the server's own noise fill reaches them,
+    /// for cells @p cellWidth blocks wide: cell column by cell column, x the
+    /// outer index; each column from the top down; within one layer of a
+    /// cell, x then z. That is the order the server's `PostProcessing` lists
+    /// hold them, each section's restricted to that section — read off every
+    /// un-ticked list of every probe region on disk, 77 046 lists at cell
+    /// width 4, and matched through the filler list for list on the
+    /// aquifer-on probe (SPEC §11, the Q8 entry); other widths follow the
+    /// same reading, unmeasured. A pure function of the positions, so it is
+    /// exact whatever order they were marked in. ChunkFiller::fill() calls it.
+    void orderFluidUpdatesByCells(std::int32_t cellWidth);
+
     /// Every position marked since the buffer was built or last cleared, each
-    /// once, in the order the first pass reached them.
+    /// once — after ChunkFiller::fill(), in the server's own order
+    /// (orderFluidUpdatesByCells).
     [[nodiscard]] const std::vector<FluidUpdate>& fluidUpdates() const noexcept {
         return fluidUpdates_;
     }
