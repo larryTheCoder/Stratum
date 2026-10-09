@@ -803,12 +803,38 @@ TEST_CASE("no candidate legacy seeding reproduces the Nether's decoded surface n
     INFO("columns " << columns.size() << ", true " << trueBits << ", majority null " << majority);
     CHECK(majority < 60.0);
 
-    // deepslate's own derivation, BY NAME rather than left to be inferred
-    // from a list it is absent from: rule 182, block 0.
-    const std::size_t deepslate = score(legacy_goldens::kDeepslateRule, 0);
-    INFO("deepslate rule " << legacy_goldens::kDeepslateRule << " scores " << deepslate << "/"
-                           << columns.size());
-    CHECK(percent(deepslate, columns.size()) < majority);
+    // The forked-MD5 rule, BY NAME rather than left to be inferred from a
+    // list it is absent from: rule 182, block 0. An anonymous candidate (it
+    // is not deepslate's derivation; deepslate_legacy_noise_oracle_test.cpp).
+    const std::size_t named = score(legacy_goldens::kForkedMd5Rule, 0);
+    INFO("rule " << legacy_goldens::kForkedMd5Rule << " scores " << named << "/" << columns.size());
+    CHECK(percent(named, columns.size()) < majority);
+
+    // And what deepslate DOES build for a legacy named noise, observed there:
+    // the unforked generator (rule 180), blocks in cubiomes' octaveInit order,
+    // with java.util.Random's own nextDouble here. It is outside the
+    // enumeration, so it is scored here by name, and it is not vanilla's
+    // either: a correct seeding scores every column (the plant below).
+    const legacy_goldens::Layout observedLayout =
+        legacy_goldens::octaveInitLayout(parameters.firstOctave, parameters.amplitudes);
+    const legacy_goldens::SeedRule unforked =
+        legacy_goldens::ruleAt(legacy_goldens::kUnforkedMd5Rule);
+    std::map<std::int64_t, std::vector<stratum::noise::PerlinNoise>> observedBlocks;
+    for (const std::int64_t seed : seeds) {
+        observedBlocks.emplace(seed, legacy_goldens::blocksFor(
+                                         unforked, legacy_goldens::seedFor(unforked, seed, target),
+                                         observedLayout.blocksPerNoise));
+    }
+    std::size_t observed = 0;
+    for (const Column& column : columns) {
+        const double value = legacy_goldens::sampleNormal(
+            observedLayout, observedBlocks.at(column.seed), 0, static_cast<double>(column.x), 0.0,
+            static_cast<double>(column.z));
+        const bool holds = threshold <= value && value <= maxThreshold;
+        observed += holds == (column.bit == 1) ? 1U : 0U;
+    }
+    INFO("deepslate's observed construction scores " << observed << "/" << columns.size());
+    CHECK(percent(observed, columns.size()) < majority);
 
     // A BOUNDED SWEEP, not the whole space: all 900 seed rules at block
     // offsets 0..1, which is 1800 of the 270000 candidates. The full sweep

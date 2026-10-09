@@ -4895,10 +4895,12 @@ Open:
   `deepslate_vectors.inc`'s 240 `old_blended_noise` values draw nothing per
   position (one named fork of the positional factory, whose base and salt
   these vectors confirm) and are held to the server separately, to half a
-  block (unit `blended-noise`). The legacy tables' "deepslate's own rule"
-  (rule 182) is a legacy noise seeding with no per-position draw, and the
-  server refutes it; nothing in the repository measures that deepslate uses
-  it, and nothing depends on whether it does. The `deepslate` rule of the
+  block (unit `blended-noise`). The legacy tables' by-name candidate (rule
+  182, once labelled "deepslate's own rule") is a legacy noise seeding with
+  no per-position draw, and the server refutes it; deepslate, observed, does
+  not use it either, so the label is withdrawn ("It is not deepslate's
+  derivation, observed", in the legacy-seed entry below), and nothing
+  depends on it. The `deepslate` rule of the
   surface-rule entries is the `minecraft:deepslate` block's
   `vertical_gradient`, measured on the server.
   `vertical_gradient` (27 million blocks) and the ore veins (79790 of 79790)
@@ -4906,8 +4908,9 @@ Open:
   `deepslate-aquifer-trust.sh` reproduces every figure above unchanged
   (0 of 4 moved inputs change `fill`; `NoiseAquifer` 298 934 to 375 270
   blocks wrong; 400 of 400 cells unwrapped; 193 of 255 against 256 of 256),
-  and `generate-deepslate-vectors.sh` reproduces both committed vector
-  files byte for byte. `spec/aquifer-spec.md`'s verify-by lines for Q3.4 and
+  and `generate-deepslate-vectors.sh` reproduces the committed vector
+  files byte for byte (three since the legacy named-noise file was added;
+  re-run, all three). `spec/aquifer-spec.md`'s verify-by lines for Q3.4 and
   Q7.5 name a "deepslate-oracle probe"; for 1.21.11 there is none, and no
   claim here rests on one: Q3.4 is the jitter above, and Q7.5's sampling
   positions are server measurements in this section (the spread's pitch 16,
@@ -7083,7 +7086,7 @@ Open:
   separate "the name enters" from "the build ORDER enters"; that needs a probe
   whose packs differ in which other noises they define.
 
-  *deepslate's derivation is inside the space and scores at the null.* base =
+  *The by-name candidate is inside the space and scores at the null.* base =
   `JavaRandom(worldSeed).nextLong()`, XOR the first eight bytes of
   MD5("ns:path"), one further LCG fork — **rule 290** at the baseline stack
   shape and frequency (it was rule 182 before the widening re-indexed the
@@ -7093,9 +7096,73 @@ Open:
   seed 42 and 10-23 (0.43-1.00%) at seed 31337, against a null mean of
   0.61-0.72% — that is the null, not a near miss. Re-measured after the
   widening through the new evaluator, the figures are unchanged, which is one
-  more check that the re-indexing named the same rule. This is a second,
-  independent refutation of it against the server, in an apparatus that can
-  be re-run from the repository.
+  more check that the re-indexing named the same rule. This is a refutation
+  of it against the server, in an apparatus that can be re-run from the
+  repository.
+
+  *It is not deepslate's derivation, observed — and the label it carried is
+  withdrawn.* This candidate entered the tables (4d646e0) as "deepslate's own
+  derivation", and nothing recorded how that was known; deepslate's source is
+  never read (CLAUDE.md), so the claim could only be settled by running it.
+  `tools/vectors/deepslate_legacy_noise_vectors.mjs`, at deepslate **0.26.2**
+  (the version every driver here pins; run by
+  `tools/vectors/generate-deepslate-vectors.sh`, regenerated and diffed in
+  CI), declares `legacy-seed-probe.sh`'s four noises with its parameters in a
+  `legacy_random_source` settings entry built through deepslate's public API,
+  and at world seeds 42, 31337, 0 and -1 records: the positional generator's
+  key and `fromHashOf(id)`'s first long; every octave of `getOrCreateNoise(id)`
+  (56, each origin and its 256-entry permutation); and 128 values through the
+  ROUTER — a `minecraft:noise` at xz_scale 1, y_scale 0, applied by
+  `RandomState.createVisitor` as the probe's dimensions carry it, refused
+  unless bit-identical to `getOrCreateNoise(id).sample` — plus the same 128
+  with the flag off. `tests/unit/deepslate_legacy_noise_oracle_test.cpp`
+  scores them against rule 182 as
+  `tools/analysis/legacy-goldens-surface-decoder.hpp` computes it, the code
+  the goldens analyzers and `vanilla_legacy_goldens_surface_test.cpp` score
+  it with:
+
+  | | |
+  |---|---|
+  | control: flag off, against this build's modern derivation | 128 / 128 values bit-exact |
+  | the seed half: key = `JavaRandom(worldSeed).nextLong()`, and `fromHashOf(id)`'s first long = rule 182's seed | 16 / 16 |
+  | deepslate's octave permutations among the blocks rule 182 draws, block offsets 0-299 included | **0 of 56** |
+  | rule 182 at block 0: values within 1e-5 of deepslate's | **0 of 128** (closest miss 0.0082) |
+  | the UNFORKED generator (rule 180's seed), blocks in `octaveInit` order: permutations | 56 of 56, exact |
+  | the same: origins / values | all within 3.6e-6 (bound 256 x 2^-26) / 128 of 128 within 5.9e-6 |
+  | deepslate's own octaves, summed by the decoder's `sampleNormal` in that order | 128 of 128 bit-exact |
+
+  So the rule's SEED is the first long deepslate's named generator yields,
+  but deepslate builds the noise from that generator itself, not from a
+  second LCG seeded with the long, and takes its octaves in cubiomes'
+  `octaveInit` order: per stack, one Perlin
+  block passed over for each octave above the top, then every declared
+  octave highest frequency first, a zero amplitude still costing its block,
+  the second stack continuing from there. For all-ones amplitudes that is
+  `NormalNoise::createLegacy` on `JavaRandom(JavaRandom(worldSeed).nextLong()
+  ^ md5_first8("ns:path"))`. The values meet only a bound because deepslate's
+  `LegacyRandom.nextDouble` is not `java.util.Random`'s (0 of 8 recorded
+  seeds equal — six distinct 48-bit states — every one within 2^-26;
+  `nextLong` and `nextInt(256)` 8 of 8 equal), and the permutation, drawn by
+  `nextInt` alone, is exact.
+
+  The rule stays in every table as an anonymous candidate, scored by name as
+  before (`kForkedMd5Rule` in the decoder header); the attribution is gone
+  from the code, the scripts and this section. What the old wording implied —
+  that deepslate's derivation lies in the scanned space and the server
+  refutes it — does not follow: deepslate's construction is not a candidate
+  of either scanned space for any noise either one scores (each stack passes
+  over one block per octave above its top, which no block offset shared by
+  both stacks reproduces, and the 900-rule space neither draws highest
+  frequency first nor spends a block on a zero amplitude). It is refuted on
+  its own now, by name: `vanilla_legacy_goldens_surface_test.cpp` scores it
+  — with
+  `java.util.Random`'s nextDouble, the unforked rule-180 generator and
+  `octaveInitLayout`'s blocks — on the golden Nether's decoded
+  `nether_state_selector` bits, **3655 of 7651 columns (47.77%)** against a
+  majority-class null of 50.45% (the by-name rule: 3449, 45.08%), where a
+  correct seeding scores every column (the case's own plant). One noise, at
+  the case's default stride; the other four surface noises have not been
+  scored against it.
 
 - **The stack rule was the suspect, and it is now searched: 729,535,800
   candidates, still no survivor (M4).** The entry above named the stack rule
@@ -7388,7 +7455,7 @@ Open:
 
   (Both seeds; the same noise, the same seeding, only the output scale
   moving.) The sharpest single demonstration is one fixed wrong candidate
-  rather than a distribution: deepslate's derivation scores **16/2304 (0.69%)
+  rather than a distribution: the by-name rule (290) scores **16/2304 (0.69%)
   on `leg_skip` and 318/2304 (13.80%) on `leg_skip_q16`** — the same rule,
   the same noise, the same world, differing in nothing but the band.
 
@@ -8004,8 +8071,8 @@ Open:
   | stage 2, 24576 cells | |
   |---|---|
   | best of stage 1's 32 survivors (rule 387 block 2, `xoroLo add md5FirstLE, forks 1, xoroshiro`) — and, by the enumeration below, the best in the whole space | 13064 / 24576 = **53.16%** |
-  | deepslate's own rule (182) at its best block, 219 | 12241 / 24576 = 49.81% |
-  | deepslate's own rule at block 0 | 10878 / 24576 = 44.26% |
+  | the by-name rule (182) at its best block, 219 | 12241 / 24576 = 49.81% |
+  | the by-name rule at block 0 | 10878 / 24576 = 44.26% |
   | what a correct rule would score | ~**100%**, per the control |
 
   **THE COMPARISON THAT CARRIES: ~100% against 53.16%.** A correctly seeded
@@ -9219,7 +9286,7 @@ Open:
   49.74% ± 3.04 max 59.25%, 47.53% before it, and the other three rows are
   unchanged to the last digit, as are those noises' per-condition censuses:
 
-  | noise | columns | trivial predictor | BEST of 270000, full set | measured null, full set | deepslate's own rule (182, 0) |
+  | noise | columns | trivial predictor | BEST of 270000, full set | measured null, full set | by-name rule (182, 0) |
   | --- | --- | --- | --- | --- | --- |
   | `nether_state_selector` | 550906 | 50.48% | **51.86%** | 50.02% ± 0.61, max 52.15% | 49.56% |
   | `netherrack` | 688833 | 97.77% | **96.02%** | 95.66% ± 0.32, max 96.66% | 95.61% |

@@ -162,11 +162,34 @@ Open:
       wrong on 0 of 1572864. No library change. SPEC §11.
 - [x] **Everything else taken from deepslate, audited.** Only those 72
       vectors involve its `at()`, and nothing uses its aquifer or `fill`;
-      the blended-noise vectors draw nothing per position; "deepslate's own
-      rule" (rule 182) is a legacy seeding the server refutes, with no
-      per-position draw, and the `deepslate` surface rule is the block's
-      gradient, measured on the server. Re-run on this tree, the trust
-      script and both vector files reproduce exactly. SPEC §11.
+      the blended-noise vectors draw nothing per position; the legacy
+      tables' by-name rule 182 is a legacy seeding the server refutes, with
+      no per-position draw (and not deepslate's, next item), and the
+      `deepslate` surface rule is the block's gradient, measured on the
+      server. Re-run on this tree, the trust script and the vector files
+      reproduce exactly. SPEC §11.
+- [x] **The "deepslate's own derivation" label, observed and withdrawn.**
+      Rule 182 (290 in `legacy-seed-analyze.cpp`) carried it from 4d646e0
+      with nothing recording how it was known. Settled by running deepslate
+      0.26.2 through its public API:
+      `tools/vectors/deepslate_legacy_noise_vectors.mjs` records its
+      legacy-source named noise (`legacy-seed-probe.sh`'s four noises, seeds
+      42, 31337, 0, -1: 56 octaves and 128 router values, plus 128 flag-off
+      values), and
+      `tests/unit/deepslate_legacy_noise_oracle_test.cpp` scores rule 182's
+      prediction against it. The seed half matches (16 of 16: the rule's
+      seed is the first long deepslate's generator yields), the noise does
+      not: **0 of 56** octave permutations among the blocks rule 182 draws
+      at any offset 0-299, **0 of 128** values within 1e-5 (closest 0.0082).
+      deepslate draws from the unforked generator in cubiomes' `octaveInit`
+      order — 56 of 56 permutations exact, 128 of 128 values within 5.9e-6,
+      the residue its `LegacyRandom.nextDouble` (not Java's, by under 2^-26)
+      — with the flag-off control 128 of 128 bit-exact. The rule stays as an
+      anonymous candidate (`kForkedMd5Rule`); the label is gone from code,
+      scripts, SPEC and here. deepslate's own construction, outside both
+      scanned spaces, is refuted separately on the golden Nether's
+      `nether_state_selector`: 3655 of 7651 (47.77%) against a 50.45% null.
+      SPEC §11.
 - [x] **The aquifer under `legacy_random_source` — measured, and no longer
       refused.** No vanilla dimension has the pair, so this build refused it
       on "no oracle can exist"; the server generates it from a datapack.
@@ -767,15 +790,20 @@ Open:
 
       The derivation itself remains a searched wall with a reproducible
       apparatus rather than an untried gap, and the old wording here ("no
-      oracle exists yet") was wrong twice over.
+      oracle exists yet") was wrong twice over: another implementation
+      exists to compare with, deepslate, and it disagrees with vanilla — its
+      legacy named noise, observed long after this entry, scores 47.77%
+      against a 50.45% null on the golden Nether's `nether_state_selector`
+      (the deepslate items above).
 
-      An oracle exists and it disagrees with vanilla. deepslate's
-      derivation — base = `JavaRandom(worldSeed).nextLong()`, XOR
-      `md5_first8("ns:path")`, one further LCG fork — is a member of this
-      project's own scanned candidate space (rule 182, block 0) and scores
-      10-25 of 2304 columns, 0.43-1.09%, on the legacy probe dimensions at
-      two world seeds, against a measured null mean of 0.64-0.72%. That is
-      the null.
+      One candidate is scored by name. base =
+      `JavaRandom(worldSeed).nextLong()`, XOR `md5_first8("ns:path")`, one
+      further LCG fork — rule 182, block 0, a member of this project's own
+      scanned space, written up here at the time as deepslate's derivation,
+      which observing deepslate later refuted (the label is withdrawn) —
+      scores 10-25 of 2304 columns, 0.43-1.09%, on the legacy probe
+      dimensions at two world seeds, against a measured null mean of
+      0.64-0.72%. That is the null.
 
       The scan around it: 900 seed rules x 300 block offsets = 270,000
       candidates per dimension, over 9 probe dimensions and 2 seeds, no
@@ -845,7 +873,7 @@ Open:
       | p50 / p90 / p99 / p99.9 | 26.56 / 38.02 / 44.21 / 49.48 % |
       | the same 270,000 at the full **24576 cells** | mean **25.54%**, sd 7.25 pts; p90 35.73%, p99.9 45.82% |
       | best in the whole space, full 24576 cells | **53.16%** (rule 387 block 2) |
-      | deepslate's rule 182, best block | 49.81% |
+      | the by-name rule 182, best block | 49.81% |
       | what a correct rule would score | ~**100%** (measured: the control's 99.94%) |
 
       **~100% against 53.16% is the comparison.** The stage-1 maximum (56.84%)

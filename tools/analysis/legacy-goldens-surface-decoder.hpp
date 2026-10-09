@@ -1350,16 +1350,18 @@ private:
 // -------------------------------------------------------- the candidate space
 //
 // THE SAME 270,000 CANDIDATES tools/analysis/legacy-seed-analyze.cpp
-// enumerates, in the SAME index order, so that a rule number printed by one
-// tool names the same rule in the other — 5 bases x 10 salts x 3 combines x
-// 3 fork counts x 2 generators = 900 seed rules, times 300 block offsets.
-// That file owns the scan over synthetic probe worlds and is not edited here;
-// this is a second SCORER for the same space, against a different oracle (the
-// golden Nether regions rather than a probe dimension's terrain height), and
-// it re-states the enumeration rather than sharing it because the two tools
-// have to be able to disagree for the comparison between them to mean
-// anything. If they ever diverge, the candidate named by `--candidate 182 0`
-// — deepslate's own derivation — is the fixed point that says so.
+// enumerated before its widening, in the SAME index order — 5 bases x 10
+// salts x 3 combines x 3 fork counts x 2 generators = 900 seed rules, times
+// 300 block offsets. The widening (two salt spellings and a fourth fork
+// count) re-indexed that file's rules, so a number carried between the two
+// has to be translated: its rule 290 is rule 182 here. That file owns the
+// scan over synthetic probe worlds and is not edited here; this is a second
+// SCORER for the same space, against a different oracle (the golden Nether
+// regions rather than a probe dimension's terrain height), and it re-states
+// the enumeration rather than sharing it because the two tools have to be
+// able to disagree for the comparison between them to mean anything. If they
+// ever diverge, the candidate both score by name — kForkedMd5Rule below — is
+// the fixed point that says so.
 //
 // The same two gaps apply, unchanged and restated so they are not assumed
 // away: ONE stack rule (every octave's Perlin block drawn in order from a
@@ -1375,10 +1377,18 @@ inline constexpr std::size_t kGenerators = 2;
 inline constexpr std::size_t kSeedRules = kBases * kSalts * kCombines * kForks * kGenerators;
 inline constexpr std::size_t kBlockOffsets = 300;
 
-/// deepslate's own derivation, as legacy-seed-analyze.cpp names it:
-/// JavaRandom(worldSeed).nextLong(), XORed with the first eight bytes of
-/// MD5("ns:path") big-endian, one further fork, driving the LCG, at offset 0.
-inline constexpr std::size_t kDeepslateRule = 182;
+/// The one candidate every legacy scorer also scores by name, block offset
+/// 0: JavaRandom(worldSeed).nextLong(), XORed with the first eight bytes of
+/// MD5("ns:path") big-endian, one further fork, driving the LCG
+/// (legacy-seed-analyze.cpp's rule 290). An anonymous candidate: it was once
+/// labelled deepslate's derivation, and observing deepslate refutes that
+/// (tests/unit/deepslate_legacy_noise_oracle_test.cpp; SPEC §11).
+inline constexpr std::size_t kForkedMd5Rule = 182;
+
+/// The same rule with no further fork: base XOR salt handed to the LCG as it
+/// is. It is the generator deepslate's legacy named noise is built from —
+/// with the blocks in octaveInitLayout's order, which no candidate here takes.
+inline constexpr std::size_t kUnforkedMd5Rule = 180;
 
 enum class Base : std::uint8_t { WorldSeed, LcgLong, XoroLo, Scrambled, Zero };
 
@@ -1627,6 +1637,50 @@ blocksFor(const SeedRule& rule, std::int64_t seed, std::size_t needed) {
         }
     }
     return blocks;
+}
+
+/// The block declared octave @p slot of stack @p stack takes in cubiomes'
+/// `octaveInit` draw order (noise.c, MIT, Cubitect, at e61f905 — the order
+/// lib's OctaveNoise::createLegacy follows): each stack first passes over one
+/// block per octave above its top, octaves 0 down to top + 1, then draws its
+/// octaves highest frequency first; the second stack continues where the
+/// first stopped. A declared zero amplitude still takes its block: cubiomes'
+/// octaveInit has no zero amplitudes, and that part is deepslate's. This is
+/// the order deepslate draws a legacy named noise in, observed
+/// (tests/unit/deepslate_legacy_noise_oracle_test.cpp); it is not a candidate
+/// of the enumeration above, whose stacks are sequential and skip nothing.
+[[nodiscard]] inline std::size_t octaveInitBlock(int firstOctave, std::size_t count,
+                                                 std::size_t stack, std::size_t slot) {
+    const int top = firstOctave + static_cast<int>(count) - 1;
+    if (count == 0 || top > 0 || slot >= count || stack > 1) {
+        throw std::invalid_argument("octaveInit order needs a top octave of at most 0, got first "
+                                    "octave " +
+                                    std::to_string(firstOctave) + " and " + std::to_string(count) +
+                                    " octave(s)");
+    }
+    const auto skipped = static_cast<std::size_t>(-top);
+    return (stack * (skipped + count)) + skipped + (count - 1 - slot);
+}
+
+/// layoutFor's persistence schedule and valueFactor, with the blocks in
+/// octaveInitBlock's order, so sampleNormal evaluates it unchanged.
+[[nodiscard]] inline Layout octaveInitLayout(int firstOctave,
+                                             const std::vector<double>& amplitudes) {
+    Layout layout = layoutFor(firstOctave, amplitudes);
+    for (std::size_t stack = 0; stack < 2; ++stack) {
+        std::vector<Octave>& octaves = stack == 0 ? layout.first : layout.second;
+        std::size_t next = 0;
+        for (std::size_t slot = 0; slot < amplitudes.size(); ++slot) {
+            if (nonZero(amplitudes[slot])) {
+                octaves.at(next).block =
+                    octaveInitBlock(firstOctave, amplitudes.size(), stack, slot);
+                ++next;
+            }
+        }
+    }
+    // The last block drawn is the second stack's lowest octave.
+    layout.blocksPerNoise = octaveInitBlock(firstOctave, amplitudes.size(), 1, 0) + 1;
+    return layout;
 }
 
 } // namespace legacy_goldens
