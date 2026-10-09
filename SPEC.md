@@ -2524,7 +2524,11 @@ Open:
   The filler now classes lava as fluid (`categorize`) and resets the
   bottom-up run on anything not solid. On the probe the old filler wrote
   2 392 064 of 74 973 184 blocks wrong (every one a marker, in nine of the
-  twelve dimensions); the new one writes none.
+  twelve dimensions); the new one writes none. Both rules live in
+  `terrain::SurfaceColumn` (`stratum/terrain/surface_column.hpp`), which the
+  golden-region surface decoder also calls. That decoder kept its own copy
+  of the old rules until it was moved onto this code; the readback entry at
+  the end of this section records what that moved.
 
   On `golden_overworld_test.cpp`'s grid (16 chunks on each of the eight
   golden seeds) the shipped exact count moves from 12 582 372 to 12 582 474
@@ -8281,8 +8285,8 @@ Open:
   eight region files are therefore a second copy of a world already in the
   pool: a quarter of the files, and a comparable share of every pooled
   column count in this entry — MEASURED per noise at stride 4 (what `--scan`
-  now prints): `netherrack` 21.73%, `nether_state_selector` 25.58%,
-  `patch` 31.27%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%.** That is measured, not assumed: over the
+  now prints): `netherrack` 21.73%, `nether_state_selector` 25.41%,
+  `patch` 32.14%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%.** That is measured, not assumed: over the
   67108864 block positions of the `0` and `Long.MIN_VALUE` Nether regions
   the two agree on the air/fluid/solid CATEGORY of every single one, agree
   on every biome, and differ in **11914 block names — 0.0178%, confined to
@@ -8324,6 +8328,54 @@ Open:
   one noise are not independent, and an assignment is pruned as soon as the
   intervals it asserts about that noise have no value in common.
 
+  *What the surface pass read is rebuilt with the filler's own code.* The
+  decoder has to rebuild, from a post-rule region, everything the filler's
+  surface pass read: each block's category, both stone-depth runs, the water
+  height, and which positions it visits. It used to do this with its own
+  copy of the filler's rules, and the copy fell behind twice. It missed
+  pipeline engine v2's position set, so it visited every block of a column's
+  first non-solid stretch. It also missed v7's runs ("Lava in the surface
+  pass's runs" above): it called aquifer lava Solid in the overworld, and it
+  held the bottom-up run (`stone_depth` ceiling) through fluid. It now calls
+  `terrain::categorize` and `terrain::SurfaceColumn`
+  (`lib/include/stratum/terrain/surface_column.hpp`), which `ChunkFiller`
+  itself runs. It visits only positions the first pass left as
+  `default_block`; in a golden region those are the solid blocks that are
+  not vein blocks. One step remains the decoder's own: a water or lava block
+  at any level but 0 has moved since generation, so it is read as the air
+  it flowed into. On the local generation that is 667 blocks across the
+  eight overworld goldens, and none across the Nether ones, which hold
+  level-0 lava only. Every figure below is re-measured after this change on
+  the same fixtures. The old decoder, rebuilt from the previous commit,
+  reproduces every control, census, identity and calibration figure this
+  entry quoted before, exactly. Its stride-1 scans were not re-run.
+
+  | | old copy of the rules | the filler's own code |
+  | --- | --- | --- |
+  | overworld control, depth supplied, stride 1: positions decoded | 262581476 | **239040392** |
+  | replay agreement | 99.9335% | **99.9840%** |
+  | recovered bits / trivial predictor / worldSeed + 1 | 30104 / 86.37% / 78.97% | **30077** / 86.36% / 78.95% |
+  | overworld control, depth enumerated, stride 4: positions | 16470418 | **14994348** |
+  | replay agreement | 99.9316% | **99.9836%** |
+  | recovered bits / trivial predictor / worldSeed + 1 | 1766 / 77.41% / 73.39% | unchanged |
+  | Nether, stride 1: positions decoded | 176537818 | unchanged, position for position |
+  | unexplained by the tree | 262795 (0.1489%) | **55353 (0.0314%)** |
+  | most contradicting columns on one condition | 8514 of 238576 (`nether_state_selector`) | **828 of 496013** (`netherrack`) |
+  | identity joint table | (F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6 | unchanged |
+
+  In the overworld the old decoder visited 23541084 more positions, and the
+  server hands the rules none of them: 23413197 water blocks of a column's
+  first non-solid stretch, all 127700 of the goldens' lava blocks, and 187
+  blocks of moved fluid and air. Recovery holds at 100% on both sets. In the
+  Nether the visited positions are identical, so every change there comes
+  from the bottom-up run now restarting above the lava ocean. Netherrack
+  over lava is no longer read as deep inside a run, and the
+  `stone_depth(ceiling)` gates now see what the server saw. The identity
+  table does not move, and neither do the per-condition censuses or the
+  scans of `netherrack`, `nether_wart`, `soul_sand_layer` and
+  `gravel_layer`. `nether_state_selector` and `patch` move (tables below). No verdict moves: the control passes on both arms, the
+  identity claim stands on the same 1398 columns, and no candidate survives.
+
   *The surface depth is ENUMERATED, not assumed.* `minecraft:surface` is
   itself a named noise, so under a legacy source every `stone_depth`
   carrying `add_surface_depth`, every `hole` and every
@@ -8340,15 +8392,15 @@ Open:
 
   *THE CONTROL, and it passes.* The identical decoder over the eight golden
   OVERWORLD regions, whose surface-rule noises are modern-seeded and already
-  exact here. At stride 1 — **262581476 positions decoded**:
+  exact here. At stride 1 — **239040392 positions decoded**:
 
   | arm | result |
   | --- | --- |
-  | replay: the library's own `surface::Executor` on the RECONSTRUCTED Context reproduces the golden block | **262406910 / 262581476 = 99.9335%** |
+  | replay: the library's own `surface::Executor` on the RECONSTRUCTED Context reproduces the golden block | **239002099 / 239040392 = 99.9840%** |
   | positions the tree cannot explain at all, among those | **0** |
-  | recovery: decoded bits against the TRUE modern noise | **30104 / 30104 = 100.0000%** |
-  | the trivial predictor (always the commoner answer) | 86.37% |
-  | negative: the same bits against the same noises at worldSeed + 1 | **78.97%** — *below* the trivial predictor |
+  | recovery: decoded bits against the TRUE modern noise | **30077 / 30077 = 100.0000%** |
+  | the trivial predictor (always the commoner answer) | 86.36% |
+  | negative: the same bits against the same noises at worldSeed + 1 | **78.95%** — *below* the trivial predictor |
 
   *THAT CONTROL DOES NOT TAKE THE PATH THE MEASUREMENT TAKES, so here is one
   that does.* Every number in the table above comes from a walk that is
@@ -8358,14 +8410,14 @@ Open:
   over [-4, 11] and a bit survives only where all sixteen assignments agree.
   That is a different and strictly weaker path through the same walker.
   `--enumerate` makes the control take it. Measured here over the same eight
-  regions at **stride 4 — 16470418 positions decoded** (the enumerated walk
+  regions at **stride 4 — 14994348 positions decoded** (the enumerated walk
   costs sixteen walks a position, so stride 1 is hours rather than minutes;
   the conformance case runs this arm at its own default stride 8 and gets
   823 / 823 = 100.0000%, trivial 80.19%, worldSeed + 1 68.77%):
 
   | arm | result |
   | --- | --- |
-  | replay, as above | **16459152 / 16470418 = 99.9316%** |
+  | replay, as above | **14991888 / 14994348 = 99.9836%** |
   | positions the tree cannot explain at all | **0** |
   | recovery: decoded bits against the TRUE modern noise | **1766 / 1766 = 100.0000%** |
   | the trivial predictor | 77.41% |
@@ -8387,22 +8439,27 @@ Open:
   column's water height and no post-rule region can undo it. The water
   height is therefore carried as an INTERVAL — the golden's topmost fluid,
   up through any rule-placeable solid above it — and a `water` condition is
-  branched on wherever the two ends disagree; the residual 0.0665% is gated
-  out and counted rather than absorbed. **The Nether's tree contains no
+  branched on wherever the two ends disagree. The residual, 0.0665% then
+  and 0.0160% since the decoder visits only the filler's positions, is
+  gated out and counted rather than absorbed. (Engine v2 has since measured
+  that the rules write over `default_block` and nothing else, so no rule
+  freezes a fluid position; the interval is kept because a wider one can
+  only lose a `water` bit, never invent one.) **The Nether's tree contains no
   `water` and no `steep` condition at all**, so that whole failure mode is
   absent from the run this control is for.
 
   *WHAT THE NETHER READBACK REACHES.* At stride 1 over all eight regions:
-  **176537818 positions decoded**, **262795 (0.1489%)** of which the tree
-  cannot explain at all. Decoded COLUMNS per noise, after pooling the
+  **176537818 positions decoded**, **55353 (0.0314%)** of which the tree
+  cannot explain at all (262795, 0.1489%, before the decoder reset the
+  bottom-up run on lava). Decoded COLUMNS per noise, after pooling the
   several conditions that read each one at the same threshold:
 
   | noise | threshold | columns | bit is true |
   | --- | --- | --- | --- |
   | `netherrack` | >= 0.54 | **688833** | 2.2-2.3% |
   | `nether_wart` | >= 1.17 | **674596** | **0.00% — constant** |
-  | `nether_state_selector` | >= 0.0 | **545395** | 47.5-50.2% |
-  | `patch` | >= -0.012 | **56330** | 40.8-43.9% |
+  | `nether_state_selector` | >= 0.0 | **550906** (545395 before) | 46.6-47.7% |
+  | `patch` | >= -0.012 | **50991** (56330 before) | 43.6-48.1% |
   | `soul_sand_layer` | >= -0.012 | **41448** | 88.0% |
   | `gravel_layer` | >= -0.012 | **5182** | 65.3% |
 
@@ -8425,9 +8482,9 @@ Open:
   and differ only by name. The `nether_wastes` branch reads both at -0.012
   at the same column, and the decoder's joint table over 8 region files /
   6 worlds is **(F,F) 1800, (F,T) 1398, (T,F) 0, (T,T) 6** — re-measured at
-  stride 1 for this revision (83m17s wall, 176537818 positions, 262795 of
-  them 0.1489% unexplained), reproducing every column count in the tables
-  above as well.
+  stride 1 with the decoder on the filler's own code (176537818 positions,
+  55353 of them 0.0314% unexplained), identical cell for cell and seed for
+  seed to the table measured before it (262795 unexplained then).
 
   *Which cell carries the claim, re-derived from the resolved tree.*
   `nether_wastes` is a two-child SEQUENCE. Child 0 is gated by
@@ -8477,31 +8534,38 @@ Open:
   candidate's effective sample size is patches, not columns, and `sqrt(n)`
   would call every leader an impossible outlier. An evenly spaced
   thousandth of the space (997 candidates) is rescored on the FULL column
-  set to get it, and the leaders of the whole space are rescored there too:
+  set to get it, and the leaders of the whole space are rescored there too.
+  Measured at stride 1 with the decoder on the filler's own code; the
+  `nether_state_selector` and `patch` rows read 545395 columns, 50.63%,
+  51.36%, 50.02% ± 0.61 max 52.21%, 49.68% and 56330, 59.87%, 64.74%,
+  49.74% ± 3.04 max 59.25%, 47.53% before it, and the other three rows are
+  unchanged to the last digit, as are those noises' per-condition censuses:
 
   | noise | columns | trivial predictor | BEST of 270000, full set | measured null, full set | deepslate's own rule (182, 0) |
   | --- | --- | --- | --- | --- | --- |
-  | `nether_state_selector` | 545395 | 50.63% | **51.36%** | 50.02% ± 0.61, max 52.21% | 49.68% |
+  | `nether_state_selector` | 550906 | 50.48% | **51.86%** | 50.02% ± 0.61, max 52.15% | 49.56% |
   | `netherrack` | 688833 | 97.77% | **96.02%** | 95.66% ± 0.32, max 96.66% | 95.61% |
-  | `patch` | 56330 | 59.87% | **64.74%** | 49.74% ± 3.04, max 59.25% | 47.53% |
+  | `patch` | 50991 | 55.01% | **64.23%** | 49.91% ± 3.30, max 60.57% | 46.86% |
   | `soul_sand_layer` | 41448 | 68.69% | **83.96%** | 51.03% ± 9.11, max 81.90% | 51.98% |
   | `gravel_layer` | 5182 | 65.26% | **89.89%** | 50.33% ± 11.03, max 81.42% | 32.61% |
 
   **No survivor.** On the two noises with hundreds of thousands of columns
   the null is tight and NOTHING in the space clears the null's own observed
   maximum — the best of 270000 candidates for `nether_state_selector` is
-  51.36% against a null max of 52.21%, and for `netherrack` it is 96.02%
+  51.86% against a null max of 52.15%, and for `netherrack` it is 96.02%
   against a null max of 96.66% and a trivial predictor of 97.77%. The three
   small-column noises have nulls 3 to 11 points wide, precisely because
-  their columns sit in a few patches, and their leaders are 3 to 4 sigma out
+  their columns sit in a few patches, and their leaders are 3.6 to 4.3 sigma
+  out (`patch`'s was 4.9 before the reset; this sentence said "3 to 4" then)
   — which is where the extreme of 270000 draws from such a null belongs, and
   is nowhere near a correct rule. **A correct rule scores 100%**, and that
   is not an assumption:
 
   *THE SCAN CAN FIND A CORRECT RULE, BY RANK.* `--plant <rule> <block>`
   replaces the server's bits with the bits that candidate would have
-  produced and runs the identical scan: it returns **rank 1 at 543/543
-  thinned and 7599/7599 full — 100.0000% — against a runner-up at 66.1%**.
+  produced and runs the identical scan: at stride 8 it returns **rank 1 at
+  547/547 thinned and 7651/7651 full — 100.0000% — against a runner-up at
+  67.1%** (543/543, 7599/7599 and 66.1% before the reset).
   Rank is the claim, not recovery: a planted rule scoring 100% on bits it
   just wrote is near-tautological, and the conformance case accordingly
   reruns its whole 1800-candidate sweep after planting and asserts that the
@@ -8530,18 +8594,26 @@ Open:
   `minecraft:nether_wart` is observed on 674596 columns and carries NO
   information, as the table above says. The Nether run has no replay arm,
   because its tree cannot be compiled under a legacy source at all, so its
-  reconstruction is bounded only by the overworld's 99.9335% and by its own
-  two reported rates: positions the tree cannot explain (**262795 of
-  176537818, 0.1489%**) and CONTRADICTIONS — columns where two positions
+  reconstruction is bounded only by the overworld's 99.9840% and by its own
+  two reported rates: positions the tree cannot explain (**55353 of
+  176537818, 0.0314%**) and CONTRADICTIONS — columns where two positions
   decode one condition both ways, which cannot honestly happen because a
   `noise_threshold` samples at (x, 0, z) and is constant down a column.
-  **8514 of 238576** columns on the worst-affected condition, 0 on the
-  best. Contradicting columns are dropped whole rather than resolved
-  first-wins, which would keep exactly the wrong half. Their likely cause is
-  named rather than waved at: vanilla's own `hole` branch replaces a solid
-  block with LAVA below y = 32, which turns a solid position fluid and
-  leaves the reconstructed stone-depth run one short, and `hole` — a surface
-  depth of 0 or less — fires on about 0.3% of columns.
+  **828 of 496013** columns on `netherrack`, the most of any condition, no
+  condition above 0.18% of its columns, and 0 on the best. Contradicting
+  columns are dropped whole rather than resolved first-wins, which would
+  keep exactly the wrong half.
+
+  *THE CAUSE THIS ENTRY NAMED FOR THOSE RATES WAS MOSTLY WRONG.* Until the
+  decoder ran the filler's own run counting they stood at 262795 positions
+  (0.1489%) and **8514 of 238576** columns on one `nether_state_selector`
+  condition, and this entry named vanilla's `hole` branch as their likely
+  cause. That branch replaces a solid block with LAVA below y = 32, which a
+  post-rule region cannot undo. Most of both was the decoder holding the
+  bottom-up run through the lava ocean, which the server does not do. With
+  only the reset changed, 79% of the unexplained positions go and that
+  condition's contradictions fall to 0. What remains is not attributed;
+  `hole`'s lava is still a candidate for part of it.
 
   And the scan is one NOISE at a time against one THRESHOLD. It does not
   test whether the six noises share a seeding rule with one another, and it

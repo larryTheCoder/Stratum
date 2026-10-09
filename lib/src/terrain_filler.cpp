@@ -5,6 +5,7 @@
 #include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
 #include <stratum/terrain/filler.hpp>
+#include <stratum/terrain/surface_column.hpp>
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -79,28 +81,6 @@ constexpr int kChunkWidth = 16;
     throw FillError("veinBlock asked for a block for a position the vein system did not place");
 }
 
-/// Solid, fluid or air — what the FIRST pass decided, read back for the
-/// second. Not stored anywhere: rederived from the block a position already
-/// holds. Fluid is `default_fluid` AND the aquifer's literal lava, the only
-/// two fluids the first pass writes; the ore veins' blocks are Solid. The
-/// surface pass's WRITE does not rely on this — it writes over
-/// `default_block` only (`applySurfaceRules`) — but its two stone-depth runs
-/// and its water height do, and the server treats lava there exactly as
-/// water: measured on `tools/analysis/aquifer-lavarun-probe.sh` (SPEC §11),
-/// where this called lava Solid and so counted it toward both runs.
-enum class Category : std::uint8_t { Air, Fluid, Solid };
-
-[[nodiscard]] Category categorize(const settings::BlockState& block,
-                                  const settings::NoiseSettings& settings) {
-    if (block == air()) {
-        return Category::Air;
-    }
-    if (block == settings.defaultFluid || block == lava()) {
-        return Category::Fluid;
-    }
-    return Category::Solid;
-}
-
 /// What one dimension's surface rules ask of the caller, beyond the block
 /// the first pass already placed. Scanning the tree once at compile is
 /// cheaper than guessing, and safer: a field left unpopulated because a
@@ -151,6 +131,75 @@ struct SurfaceNeeds {
 }
 
 } // namespace
+
+// THE CATEGORY. The surface pass's WRITE does not rely on this — it writes
+// over `default_block` only (`applySurfaceRules`) — but its two stone-depth
+// runs and its water height do, and the server treats lava there exactly as
+// water: measured on `tools/analysis/aquifer-lavarun-probe.sh` (SPEC §11),
+// where this called lava Solid and so counted it toward both runs. Here, next
+// to `air()` and `lava()`, so the blocks it compares against are the very
+// ones the first pass writes.
+Category categorize(const settings::BlockState& block, const settings::NoiseSettings& settings) {
+    if (block == air()) {
+        return Category::Air;
+    }
+    if (block == settings.defaultFluid || block == lava()) {
+        return Category::Fluid;
+    }
+    return Category::Solid;
+}
+
+void SurfaceColumn::read(const std::span<const Category> categories, const std::int32_t minY) {
+    const std::size_t height = categories.size();
+    minY_ = minY;
+    above_.resize(height);
+    below_.resize(height);
+    waterHeight_.reset();
+    top_ = minY - 1;
+    // Top down: the run counting from the world's top, and the water height
+    // latched at the first fluid block met descending. Air resets the run;
+    // fluid — water or lava alike — neither breaks it nor counts toward it,
+    // and lava latches the height as water does (surface::Context's own doc,
+    // measured).
+    std::int32_t run = 0;
+    for (std::size_t i = height; i-- > 0;) {
+        const Category category = categories[i];
+        const std::int32_t y = minY + static_cast<std::int32_t>(i);
+        if (category == Category::Air) {
+            run = 0;
+        } else {
+            if (top_ < minY) {
+                top_ = y;
+            }
+            if (category == Category::Solid) {
+                ++run;
+            } else if (!waterHeight_.has_value()) {
+                waterHeight_ = y + 1;
+            }
+        }
+        above_[i] = run;
+    }
+    // The run counted from the world's floor, for `surface_type: ceiling` —
+    // and NOT the mirror image of the one above: bottom up, fluid RESETS the
+    // run exactly as air does, water as much as lava. Measured
+    // (aquifer-lavarun-probe.sh, SPEC §11): stone over an enclosed pool reads
+    // depth 0 from the pool's roof up, on every column of every pool, where a
+    // run that skipped the fluid — the filler's reading until then, for water
+    // too — left it stone.
+    run = 0;
+    for (std::size_t i = 0; i < height; ++i) {
+        run = categories[i] == Category::Solid ? run + 1 : 0;
+        below_[i] = run;
+    }
+}
+
+std::int32_t SurfaceColumn::stoneDepthAbove(const std::int32_t y) const {
+    return above_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+}
+
+std::int32_t SurfaceColumn::stoneDepthBelow(const std::int32_t y) const {
+    return below_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+}
 
 ChunkBuffer::ChunkBuffer(const settings::NoiseGeometry& geometry)
     : minY_(geometry.minY), height_(geometry.height) {
@@ -727,10 +776,14 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
         return worldSurface[(lz * kChunkWidth) + lx];
     };
 
-    // Scratch for the two stone-depth runs, sized once and overwritten whole
-    // by every column rather than reallocated 256 times a chunk.
-    std::vector<std::int32_t> stoneDepthAbove(static_cast<std::size_t>(geometry.height));
-    std::vector<std::int32_t> stoneDepthBelow(static_cast<std::size_t>(geometry.height));
+    // Scratch for one column's categories and the reads drawn from them
+    // (`SurfaceColumn`: the two stone-depth runs, the water height, the
+    // topmost non-air block), sized once and overwritten whole by every
+    // column rather than reallocated 256 times a chunk. Each block is
+    // categorised ONCE here, where the three loops this replaced each did it
+    // again.
+    std::vector<Category> categories(static_cast<std::size_t>(geometry.height));
+    SurfaceColumn column;
 
     // One cache for every density read this whole second pass makes —
     // `preliminarySurface` and the six climate router entries alike — shared
@@ -798,46 +851,15 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 context.preliminarySurface = preliminarySurfaceIn(pslCorners, localX, localZ);
             }
 
-            // Top-down: the stone-depth run counting from the world's top,
-            // and the water height latched at the first fluid block met
-            // descending. Air resets the run; fluid — water or lava alike —
-            // neither breaks it nor counts toward it, and lava latches the
-            // height as water does (surface::Context's own doc, measured).
-            std::optional<std::int32_t> waterHeight;
-            {
-                std::int32_t run = 0;
-                for (std::int32_t y = topY - 1; y >= minY; --y) {
-                    const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else if (category == Category::Solid) {
-                        ++run;
-                    }
-                    stoneDepthAbove[static_cast<std::size_t>(y - minY)] = run;
-                    if (category == Category::Fluid && !waterHeight.has_value()) {
-                        waterHeight = y + 1;
-                    }
-                }
+            // The column's reads — both stone-depth runs, the water height
+            // and the topmost non-air block — counted by `SurfaceColumn`
+            // (surface_column.hpp carries the measured rules), the same code
+            // the golden decoder reconstructs them with.
+            for (std::int32_t y = minY; y < topY; ++y) {
+                categories[static_cast<std::size_t>(y - minY)] =
+                    categorize(into.at(localX, y, localZ), *settings_);
             }
-            // The run counted from the world's floor, for `surface_type:
-            // ceiling` — and NOT the mirror image of the one above: bottom
-            // up, fluid RESETS the run exactly as air does, water as much as
-            // lava. Measured (aquifer-lavarun-probe.sh, SPEC §11): stone
-            // over an enclosed pool reads depth 0 from the pool's roof up,
-            // on every column of every pool, where a run that skipped the
-            // fluid — this loop's reading until then, for water too — left
-            // it stone.
-            {
-                std::int32_t run = 0;
-                for (std::int32_t y = minY; y < topY; ++y) {
-                    if (categorize(into.at(localX, y, localZ), *settings_) == Category::Solid) {
-                        ++run;
-                    } else {
-                        run = 0;
-                    }
-                    stoneDepthBelow[static_cast<std::size_t>(y - minY)] = run;
-                }
-            }
+            column.read(categories, minY);
 
             // The biome grid is quarter-resolution and constant within a
             // cell, so this is resolved once per four y levels rather than
@@ -886,13 +908,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // (golden_end_test.cpp, 2097152 of 2097152) is safe under either.
             // A column of nothing but air leaves `scanFrom` below `minY` and
             // the loop runs zero times.
-            std::int32_t scanFrom = minY - 1;
-            for (std::int32_t y = topY - 1; y >= minY; --y) {
-                if (categorize(into.at(localX, y, localZ), *settings_) != Category::Air) {
-                    scanFrom = y;
-                    break;
-                }
-            }
+            const std::int32_t scanFrom = column.top();
             for (std::int32_t y = scanFrom; y >= minY; --y) {
                 if (!(into.at(localX, y, localZ) == settings_->defaultBlock)) {
                     continue;
@@ -940,9 +956,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 }
 
                 context.y = y;
-                context.stoneDepthAbove = stoneDepthAbove[static_cast<std::size_t>(y - minY)];
-                context.stoneDepthBelow = stoneDepthBelow[static_cast<std::size_t>(y - minY)];
-                context.waterHeight = waterHeight;
+                context.stoneDepthAbove = column.stoneDepthAbove(y);
+                context.stoneDepthBelow = column.stoneDepthBelow(y);
+                context.waterHeight = column.waterHeight();
 
                 if (const settings::BlockState* placed = executor.apply(context);
                     placed != nullptr) {
