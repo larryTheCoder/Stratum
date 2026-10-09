@@ -17,9 +17,9 @@
 # ran, and the rest still run; then every corpus is checked
 # (tools/probe-worlds verify).
 #
-# probes/nearsurface is not among them: no conformance case reads it. For
-# aquifer-nearsurface-analyze, run tools/analysis/aquifer-nearsurface-probe.sh
-# --accept-eula 42. Nothing this writes is committed or uploaded: worlds are
+# That includes the near-surface corpora (nearsurface_s42, nearsurface_s31337),
+# which vanilla_aquifer_nearsurface_test.cpp and aquifer-nearsurface-analyze
+# read. Nothing this writes is committed or uploaded: worlds are
 # Mojang-derived (SPEC §12).
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
