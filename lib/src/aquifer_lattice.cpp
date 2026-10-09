@@ -164,6 +164,34 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         return CellLevel{.level = kLavaLevel, .origin = LevelOrigin::GlobalLava};
     }
 
+    // Q5.3(a) off the near-surface path too: a cell centred more than twenty
+    // blocks above its surface read takes the global picker's status — the
+    // sea, at a centre that is then above lambda — before any floodedness is
+    // weighed, and before Q5.9's override (spec Q5.3 precedes the level
+    // rule). On the ocean branch every such cell that did not abort is a
+    // near-surface sea already (its depth is below -20), so this reaches
+    // exactly the cells "off the ocean branch" — a surface at or above
+    // `sea_level - 8` — that used to take the floodedness gates alone.
+    // Measured, not read: replayed at every column of `aquifer-level-probe.sh`'s
+    // 255 constant-surface worlds over three seeds, 556 964 848 blocks from
+    // y -51 up, this clause leaves no block wrong, and the floodedness gates
+    // alone part from it on 3 324 — stone just over the sea's level where a
+    // source centred 21 or more above the surface walls itself off — every
+    // one held the clause's way by the server. Margins of 19 and 21 are
+    // refuted the same way (5 536 and 2 807 blocks), and a threshold on the
+    // sea instead of the surface (480 493) (vanilla_aquifer_level_test.cpp,
+    // SPEC §11). The comparand is the scan's `cap`, as in the aborted
+    // near-surface floor above, whose own measurement read `cap` over
+    // `anchor`; a constant surface makes the two one number, so for a cell
+    // that did not abort that choice is carried, not measured. An ABORTED
+    // cell off the near-surface path is left as it was: the near-surface
+    // probe refuses it the sea on 0.99 of the cells where floodedness would
+    // grant it.
+    if (!cell.surface.aborted &&
+        cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset)) {
+        return CellLevel{.level = cell.seaLevel, .origin = LevelOrigin::NearSurfaceSea};
+    }
+
     // The DRY level is the spec's sentinel, not `lambda`. Q2.4 hands every
     // row below `lambda` to the global lava sea before the lattice is
     // consulted, so the two are indistinguishable in any block readout — the

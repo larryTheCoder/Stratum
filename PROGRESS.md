@@ -17,7 +17,7 @@ Last swept: 2026-10-09 (MA, pipeline engines v10 and v11: cache markers in a dat
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: CI's region-golden jobs (never yet green; SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: Q5.3(a)'s comparand off the ocean branch (`cap` or the anchor; a constant surface cannot tell), CI's region-golden jobs (never yet green; SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -279,6 +279,25 @@ Open:
       it / aborted sea), water on every one; the cell's own sea control is
       lava on all 241 896. Changes output only where `sea_level <= -10`; no
       golden block moves. SPEC §11.
+- [x] **The level rule's old per-cell score is retired; on a constant
+      surface the rule now holds block for block, with Q5.3(a) off the ocean
+      branch (engine v12).** The 99.9806-99.9902% figures came from ~1370
+      dimensions nobody can regenerate (specs never committed, readout gone,
+      model since changed), so their remainder is retired, not attributed.
+      `aquifer-level-probe.sh` rebuilds the regime frozen, in packed ice: 255
+      dimensions over three seeds, generated in CI, and every block from
+      y -51 up at every column, 556 964 848, matches the server. The one
+      clause v9 lacked there: a cell whose scan did not abort, centred more
+      than twenty above its surface, takes the sea before any floodedness is
+      weighed (spec Q5.3(a)). No clause at all off the ocean branch parts
+      from it on 3 324 blocks, margins 19 and 21 on 5 536 and 2 807, a
+      threshold on the sea instead of the surface on 480 493, and the server
+      takes the clause's side on every one. Its comparand (`cap`, as the
+      aborted floor measured, or the spec's anchor) is not separated by a
+      constant surface. No golden block moves. Also in committed worlds now:
+      the bonus spelling at both exact crossings, `psl` floored rather than
+      truncated or rounded, and packed ice standing where water stands.
+      SPEC §11.
 - [x] **A vein never replaces aquifer fluid — measured on the goldens.**
       21 of 21 positions where the chain would place a vein over the first
       pass's fluid hold fluid in the server; the filler's guard was chosen,

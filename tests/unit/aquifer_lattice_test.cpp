@@ -1087,14 +1087,56 @@ TEST_CASE("a datapack's NaN or out-of-range router value is defined, as Java's i
     CHECK_FALSE(nan.aborted);
 
     // And the level rule's own arithmetic on a saturated reading wraps
-    // rather than trapping: a surface at INT_MAX is land, so floodedness 0.5
-    // takes the ladder, capped by nothing it can reach.
-    CHECK(cellFluidLevel(cellWith(huge, 63, 0, 0.5)) == 20);
-    // A surface at INT_MIN is an ocean cell; one block above it the depth
-    // INT_MIN - 1 wraps to INT_MAX, exactly as Java's would.
+    // rather than trapping. Q5.3(a)'s threshold `cap + 20` wraps as Java's
+    // int would: under a surface at INT_MAX it is INT_MIN + 19, so a cell
+    // centred at 0 sits "more than twenty above" it and takes the sea.
+    CHECK(cellFluidLevel(cellWith(huge, 63, 0, 0.5)) == 63);
+    // A surface at INT_MIN is an ocean cell, and every cell above
+    // INT_MIN + 20 is more than twenty above it: the sea, by Q5.3(a), before
+    // the depth path is reached.
     const PslRead floor{.gate = kMin, .cap = kMin, .anchor = kMin, .aborted = false};
     CHECK(cellFluidLevel(cellWith(floor, 63, 0, -1.0)) == 63);
-    CHECK(cellFluidLevel(cellWith(floor, 63, 1, -1.0)) == kNeverLevel);
+    CHECK(cellFluidLevel(cellWith(floor, 63, 1, -1.0)) == 63);
+    // Aborted, the same surface still reaches the depth path: one block
+    // above it the depth INT_MIN - 1 wraps to INT_MAX, exactly as Java's
+    // would, the reach clamps at zero, and the dry outcome is floored at
+    // lambda.
+    const PslRead abortedFloor{.gate = kMin, .cap = kMin, .anchor = kMin, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(abortedFloor, 63, 1, -1.0)) == lambdaLevel(63));
+}
+
+TEST_CASE("a cell more than twenty above a land surface takes the sea, Q5.3(a)", "[aquifer]") {
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    // Off the ocean branch (surface 87, sea 95: 87 >= 95 - 8), floodedness
+    // 0.25 is under both gates, so a cell is dry — unless it is centred more
+    // than twenty above the surface, where the global picker's status, the
+    // sea, is taken first (aquifer-level-probe.sh, SPEC §11).
+    const PslRead land = constantSurface(87);
+    CHECK(cellFluidLevel(cellWith(land, 95, 107, 0.25)) == kNeverLevel); // twenty above
+    CHECK(cellFluidLevel(cellWith(land, 95, 108, 0.25)) == 95);          // twenty-one
+    // Whatever the floodedness would have given: the ladder, at 0.6.
+    CHECK(cellFluidLevel(cellWith(land, 95, 107, 0.6)) == 87);
+    CHECK(cellFluidLevel(cellWith(land, 95, 108, 0.6)) == 95);
+    // It is the global picker's status, typed the default fluid as both
+    // near-surface seas are: the lava override does not reach it.
+    const auto level = cellLevel(cellWith(land, 95, 108, 0.25));
+    CHECK(level.origin == LevelOrigin::NearSurfaceSea);
+    // And before Q5.9's override, which forces only the gates' comparands.
+    CellFluid deep = cellWith(land, 95, 108, 0.95);
+    deep.deepDark = true;
+    CHECK(cellFluidLevel(deep) == 95);
+    deep.centreY = 107;
+    CHECK(cellFluidLevel(deep) == kNeverLevel);
+    // The threshold reads the surface, not the sea: with the sea well under
+    // the surface (psl 87, sea 65) a cell 21 above the surface takes the sea
+    // and one 13 above the sea does not.
+    CHECK(cellFluidLevel(cellWith(land, 65, 108, 0.25)) == 65);
+    CHECK(cellFluidLevel(cellWith(land, 65, 78, 0.25)) == kNeverLevel);
+    // An aborted scan off the near-surface path is left to the abort's own
+    // floor (the near-surface probe refuses it the sea).
+    const PslRead aborted{.gate = 87, .cap = -70, .anchor = 87, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(aborted, 95, 108, 0.25)) == lambdaLevel(95));
 }
 
 TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {

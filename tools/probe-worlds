@@ -226,6 +226,17 @@ UNITS = [
     # was the lightest.
     unit('defaultblock_s42', 'legacy', ['aquifer-defaultblock-probe.sh', '42'],
          density(('defaultblock_s42', 42))),
+    # The level rule on a constant surface: three packed-ice seeds of 85
+    # dimensions (about eight minutes a server run locally) and seed 42's
+    # four-dimension water twin (about two and a half), over the three
+    # lightest shards.
+    unit('levelice_s42', 'legacy', ['aquifer-level-probe.sh', '42'], density(('levelice_s42', 42))),
+    unit('levelwater_s42', 'legacy', ['aquifer-level-probe.sh', '--water', '42'],
+         density(('levelwater_s42', 42))),
+    unit('levelice_s31337', 'surface', ['aquifer-level-probe.sh', '31337'],
+         density(('levelice_s31337', 31337))),
+    unit('levelice_s8675309', 'water', ['aquifer-level-probe.sh', '8675309'],
+         density(('levelice_s8675309', 8675309))),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
     # runner), the amplified / large_biomes presets beside an overworld
     # control, one server start per seed, and y_skip's six 10 GB runs (about

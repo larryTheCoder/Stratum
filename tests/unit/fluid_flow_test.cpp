@@ -101,6 +101,9 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     // between two sources (the infinite-source rule); obsidian where the
     // first pass has lava; water where the first pass has lava, beside it.
     CHECK(explained(2, 2, Category::Water, Category::Air));
+    // Flowing water where the first pass has a lava source: the aquifer
+    // places sources only, so the lava's place was taken by movement.
+    CHECK(explained(2, 2, Category::Water, Category::Lava));
     CHECK(explained(5, 5, Category::Water, Category::Air));
     CHECK(explained(12, 12, Category::Solid, Category::Lava));
     CHECK(explained(12, 12, Category::Solid, Category::Air)); // fluid flowed in first
@@ -117,7 +120,8 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     CHECK_FALSE(explained(14, 12, Category::Solid, Category::Air)); // no water ever met it
     CHECK_FALSE(explained(8, 2, Category::Air, Category::Lava));
     CHECK_FALSE(explained(14, 6, Category::Lava, Category::Air));
-    // And water beside nothing that water left behind.
+    // And a water SOURCE beside nothing that water left behind: the type of
+    // a source is the aquifer's decision, flowing or not around it.
     CHECK_FALSE(explained(10, 9, Category::Water, Category::Lava));
 
     std::filesystem::remove(path);

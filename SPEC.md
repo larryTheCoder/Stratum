@@ -270,6 +270,7 @@ to bump the version and be called out; this is that call-out.
 | 9 | **Q5.8's lava override does not reach a short-circuit sea** (§11, "Nor the lava override: a short-circuit sea is the default fluid"). The near-surface return and an aborted scan's sea are the global picker's status at or above lambda, so the default fluid; v8 typed them lava at `sea_level` <= -10 with `|lava|` > 0.3. Over two seeds of `aquifer-fluidnear-probe.sh` the server holds water on all 1 027 693 contested sources, and lava on all 241 896 of the positive control's. Changes blocks and fluid-update flags only where `sea_level` <= -10; no golden block changes. v8 had reached only this development branch; bumped rather than amended because a v8 blob could exist. |
 | 10 | **Cache markers in a datapack's aquifer entries** (§11, "Cache markers in a datapack's aquifer entries"). Every aquifer read but the barrier's is detached (`density::ReadContext::Detached`): an `interpolated` there is its argument at the read point, not the blend over a cell (refuted on 5 139 104 blocks over two seeds of `aquifer-markers-probe.sh`), and a `flat_cache` read off the chunk's [16c, 16c + 19] window is its argument at the read's own y, not y = 0 (refuted on 1 437 270). `flat_cache`'s column invariance now follows its argument, so `cache_2d` over a `flat_cache` of something y-varying is refused by name. Changes output only for datapacks that wrap a non-barrier aquifer entry in `interpolated` or put a y-varying argument under an aquifer `flat_cache`; no vanilla preset does, no golden block changes and the pinned overworld hash holds. |
 | 11 | **An aborted scan's status is A_lava, -54 and lava** (§11, "An aborted scan's status is A_lava"). The aborting near-surface floor, an aborted cell off the near-surface path (v5) and one under Q5.9's override (v6) read lambda, typed as the cell's own fluid; the server holds Q1.1's A_lava there, the literal -54 and lava, on all three (`aquifer-lowfloor-probe.sh`, two seeds: the build exact on every sampled block and mark, v10's reading refuted on 8 938 to 18 209 blocks an arm). Changes blocks and fluid-update flags only where `sea_level` < -54; at or above it the floor's type is unobservable. No golden block changes. v10 had reached only this development branch; bumped rather than amended because a v10 blob could exist. |
+| 12 | **Q5.3(a) off the ocean branch** (§11, "The level rule on a constant surface, block for block"). A cell whose scan did not abort and whose centre sits more than twenty above the scan's `cap` takes the sea before any floodedness is weighed, on land as on the ocean branch; v11 applied the clause only on the near-surface path. Replayed through the filler at every column of `aquifer-level-probe.sh`'s 255 constant-surface worlds (three seeds, 556 964 848 blocks from y -51 up) the build is exact, and v11's reading parts from the server on 3 324 blocks, every one held the new way. Changes blocks where a land surface sits more than twenty below a source centre; no golden block changes. `cap` against the anchor (the spec's a0) is carried, not measured: a constant surface makes them one number. v11 had reached only this development branch; bumped rather than amended because a v11 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -3264,6 +3265,128 @@ Open:
   all 1 966 080 blocks, and counts the 27 477 the lattice's A_lava would
   fill if the cutoff did not hide them.
 
+- **The level rule on a constant surface, block for block (MA, pipeline
+  engine v12).** The level rule's standing figure was four per-seed, per-cell
+  scores, 99.9806-99.9902%, on the ~1370-dimension corpus below ("*Scale.*"),
+  and nobody could say what the remaining one or two cells in ten thousand
+  were. Nor can anyone now: that corpus's specs were never committed, its
+  per-cell readout is not in the tree, and the model it scored has since
+  changed (a pre-divided bonus constant, a clamped ladder, -54 as the dry
+  level). So the figure is retired rather than attributed, and the regime is
+  rebuilt where it can be re-measured.
+
+  `tools/analysis/aquifer-level-probe.sh` writes `levelice_s<seed>` for
+  seeds 42, 31337 and 8675309, 85 dimensions each, frozen and generated in
+  CI (§7). Every router entry is a constant and the density is -1, so every
+  block above the lava sea is the aquifer's decision. The default fluid is
+  `minecraft:packed_ice`, the instrument the old campaign settled on (below,
+  "*Instrument findings*"): the aquifer places it where it places water and
+  it cannot flow, so no disagreement needs a flow allowance. The grid puts
+  each surface -54, -51, ..., 141 under one configuration a seed, at a
+  different phase per seed: sea level 32 to 200, on the ocean branch's
+  strict edge (psl + 9) or deeper, and off it at psl + 8 or lower for
+  surfaces of 24 and up; floodedness -2.0, -0.5, 0.0, 0.25, 0.4, 0.5, 0.6 and
+  0.95, which between them put both gates' crossing depths and the
+  near-surface edge inside the rows read; spread 0, ±0.3, ±0.7 and 0.9;
+  barrier +1, -2 and +2. Beside the grid: fractional surfaces, the two exact
+  crossings of the bonus spelling, and ten land arms (below). `lava` is 0.0
+  throughout; even so a source centred below the lava sea is lava, and at
+  spread 0.9 a ladder in the band under -40 reaches -51, so rows -54..-52
+  hold lava beside packed ice and are reported, not asserted.
+
+  *Exact but for one clause.* Replayed through the filler's own path (the
+  global picker above the chunk's y_skip, `computeSubstance` at and below
+  it) at every column of the 75 first dimensions a seed, 488 418 640 blocks
+  from y -51 up, the engine v9 rule missed 16, all in one dimension (seed
+  31337, psl 87, sea 95, floodedness 0.25, barrier +1): stone at y 95, the
+  sea level, beside a source centred at 108. Floodedness 0.25 is under both
+  gates, so the rule called every source here dry; the clean-room spec's
+  Q5.3(a) does not — a point centred more than twenty blocks above its
+  surface (qy - 12 > a0, a0 = psl + 8) takes the global picker's status, the
+  sea, before any floodedness is weighed. This build had that clause only
+  for an aborted scan on the near-surface path. On the ocean branch every
+  other such cell is a near-surface sea already, so what was missing is the
+  land branch's: a cell whose scan did not abort and whose centre is more
+  than 20 above its surface read takes the sea, typed the default fluid as
+  both other short-circuit seas are, ahead of Q5.9's override.
+
+  The ten land arms make it measurable: eight at the ocean gate's edge from
+  the land side (sea psl + 8, barrier +2, floodedness -2.0 or 0.6, at
+  surfaces where the model puts the seeds' jitter in the clause's way), and
+  two with the sea 30 lower. With the clause, all 255 dimensions are exact
+  at every column, 556 964 848 blocks from y -51 up over three seeds. Every
+  rival is wrong exactly where it parts from the clause
+  (`stratum_aquifer_level_analyze`, all columns, all rows):
+
+  | rival | blocks it parts on | server holds the clause's |
+  |---|---|---|
+  | no clause off the ocean branch (engine v9) | 3 324 | 3 324 |
+  | a margin of 19 | 5 536 | 5 536 |
+  | a margin of 21 | 2 807 | 2 807 |
+  | a threshold on the sea (centre above sea + 12) | 480 493 | 480 493 |
+
+  The conformance case (`vanilla_aquifer_level_test.cpp`) repeats the rival
+  table on the land arms' rows sea - 4 to sea + 8 (3 308 / 5 105 / 2 791 /
+  469 blocks) and the bulk replay every fourth column. What it does not
+  separate is the clause's comparand. The spec writes the anchor (a0); the
+  aborted near-surface floor, the same clause, was measured on `cap` over
+  the anchor; for a scan that did not abort `cap` and the gate are one
+  number, and a constant surface makes the anchor that number too. The
+  build reads `cap`, carried from that measurement, and a surface that
+  varies across a land window is what would show a wrong choice. An aborted
+  scan off the near-surface path keeps the abort's floor: the near-surface
+  probe refuses such cells the sea where floodedness would grant it.
+
+  Vanilla's land is where the clause lives, and no golden block moves:
+  `golden_overworld_test.cpp`'s exact pins (12 582 474 exact blocks, 23
+  flowed) hold, as do the aquifer-on probe's fluid-update lists and the
+  amplified and large_biomes cases. A cell twenty blocks over its window's
+  surface owns rows above that surface, which are solid ground or air above
+  sea level either way; only a barrier lid at the sea's own level could
+  show it, and on real terrain none does in those windows.
+
+  *The old remainder, as hypotheses only.* None of these can be checked
+  against the old corpus. The old campaign ran before probe worlds were
+  frozen, and its instrument note records a +2 wobble on 99 cells with
+  water; its arms carried `lava` ±1, whose lava/ice contacts can move in an
+  unfrozen world; its per-cell readout had to decide where a barrier ends a
+  fluid run or a ladder level equals the centre; it scored the pre-divided bonus,
+  which fires at exact crossing floodednesses only; and its barrier-+1 land
+  arms would have shown the missing Q5.3(a) clause as stone at the sea's
+  level — on this corpus that is 16 blocks in 488 418 640, on land arms not
+  built to show it. Any of these could account for a remainder of 1-2e-4 per
+  cell, and nothing here says which did.
+
+  *What the same corpus re-measures, in committed worlds.* The bonus
+  spelling at both exact crossings: at reach 45 (psl 41, floodedness
+  0.0265625) and reach 50 (psl 36, -0.059375) the product over the divisor
+  leaves dry the cells a pre-divided 11/640 floods, and a control a
+  ten-millionth higher, which both spellings flood, is the pre-divided
+  spelling's world; the two part on 12 996, 27 635 and 11 585 blocks per
+  crossing on the three seeds (rows 10-50, every column), and the server is
+  the product's on every one. `psl` is floored: at -10.4, -10.6, -20.5,
+  -20.25 and 40.5, truncation toward zero parts from flooring on 10 459
+  blocks and Java's `Math.round` on 9 109 (every fourth column), and the
+  server is the floor's on all. Neither result is new (both are above); the
+  worlds that show them now are.
+
+  *Packed ice stands where water stands.* `levelwater_s42` repeats four of
+  seed 42's dimensions with water. From y -51 up the ice world and the water
+  world hold the same block on all but 966 of 1 706 736 (every second
+  column), and every one of those is water that moved; the water world
+  against the build moves 1 523 of 1 752 864 from y -54 up, with nothing
+  else wrong. One shape of that movement was new: flowing water standing
+  where the build places a lava source, on the lava sea's top row, which
+  `explainedByFlow` now accepts with the rest of its first shape (a fluid
+  at level 1+ where the first pass has air or the other fluid — the aquifer
+  places sources only). On rows -54..-52, where lava meets packed ice, the
+  two worlds part on 1 807 of 46 128 blocks, and the ice worlds against the
+  build on 77 534 of 11 762 640, stone in both directions: the server's
+  barrier between lava and packed ice is not the one it builds between lava
+  and water. That is the mixed-type pressure and Q6.3 with a non-water
+  default fluid, which the filler refuses by name (§8); this corpus is a
+  reading of it, not a measurement of the rule.
+
 - **amplified and large_biomes, against the server (MA).** No output
   changes. Vanilla's two other overworld presets are the overworld's
   settings with other entries: amplified has its own `depth`,
@@ -4115,6 +4238,9 @@ Open:
   ```
 
   Both floodedness comparisons are strict; equality falls through.
+  (The `else` arm is not the whole land branch: a cell centred more than
+  twenty blocks above `psl` takes `sea_level` before either gate — Q5.3(a),
+  found later by "The level rule on a constant surface, block for block".)
 
   *The two gates carry different slopes, and that is what kills the old
   reading.* The refutation does not assume the bonus is linear. Any ONE bonus
@@ -4151,10 +4277,15 @@ Open:
 
   *Scale.* ~1370 probe dimensions, 12 world seeds, `psl` -54 to 141, sea levels
   32 to 200, spread 0/±0.3/±0.7/+0.9, barrier +1/-2, lava ±1. Four whole-model
-  per-cell scores, never pooled across seeds: **99.9902%, 99.9806%, 99.9902%,
-  99.9858%**. The same cells score 13-77% under the honest null (no ocean
+  per-cell scores, never pooled across seeds: 99.9902%, 99.9806%, 99.9902%,
+  99.9858%. The same cells score 13-77% under the honest null (no ocean
   branch) and 86-97% under the K model this replaces. Of 48 of 63 `psl` values
-  the score is exactly 100%.
+  the score is exactly 100%. **Those four scores are retired, not
+  attributed:** the corpus was never committed, its readout is gone and the
+  model it scored has changed, so its remainder cannot be re-measured. The
+  rule is now held block for block on a committed corpus over the same axes
+  ("The level rule on a constant surface, block for block", above), which
+  also found the one clause the rule lacked there.
 
   *Three details that a plausible reading gets wrong.*
 

@@ -138,7 +138,10 @@ private:
 /// moving AFTER generation rather than the aquifer deciding differently.
 /// Five shapes, and nothing else is let through:
 ///
-///   - golden fluid FLOWING (level > 0) where the first pass has air;
+///   - golden fluid FLOWING (level > 0) where the first pass has air or the
+///     other fluid — the aquifer places sources only, so a level above 0 is
+///     movement whatever stood there first (water falling through the lava
+///     sea's top row, on the level probe's water twin);
 ///   - golden water SOURCE where the first pass has air, between at least two
 ///     horizontal water sources — flow the infinite-source rule converted
 ///     back into a source;
@@ -171,6 +174,9 @@ private:
     if (isFluid(goldenCategory) && rawCategory == Category::Air) {
         return fluidLevel(here) > 0 || (goldenCategory == Category::Water &&
                                         fluidLevel(here) == 0 && horizontalWaterSources >= 2);
+    }
+    if (isFluid(goldenCategory) && isFluid(rawCategory) && fluidLevel(here) > 0) {
+        return true;
     }
     if (goldenCategory == Category::Solid &&
         (isFluid(rawCategory) || rawCategory == Category::Air)) {

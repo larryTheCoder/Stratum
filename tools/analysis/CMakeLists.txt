@@ -65,6 +65,7 @@ foreach(tool IN ITEMS
         aquifer-cells
         aquifer-deepfloor-analyze
         aquifer-fluidtype-analyze
+        aquifer-level-analyze
         aquifer-nearsurface-analyze
         aquifer-presets-scout
         aquifer-waterlava-analyze)
