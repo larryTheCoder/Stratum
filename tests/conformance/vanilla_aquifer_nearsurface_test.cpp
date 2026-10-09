@@ -56,6 +56,7 @@
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
 #include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
 
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
@@ -193,23 +194,12 @@ struct FieldSpec {
     return field;
 }
 
-[[nodiscard]] const nlohmann::json& entryNamed(const nlohmann::json& spec, const char* name) {
-    const nlohmann::json* found = nullptr;
-    for (const auto& entry : spec) {
-        if (entry.at("name").get<std::string>() == name) {
-            found = &entry;
-        }
-    }
-    INFO("spec.json has no entry " << name);
-    REQUIRE(found != nullptr);
-    return *found;
-}
-
 /// One arm's field, refusing anything this case does not replay: every
 /// router input it scores against is the constant written here, and the
 /// readout reads the same noise at the same scale and thresholds.
-[[nodiscard]] FieldSpec parseArm(const nlohmann::json& spec, const Arm& arm) {
-    const nlohmann::json& world = entryNamed(spec, arm.world);
+[[nodiscard]] FieldSpec parseArm(const nlohmann::json& spec, const std::filesystem::path& dir,
+                                 const Arm& arm) {
+    const nlohmann::json& world = stratum::test::specEntry(spec, dir, arm.world);
     INFO("spec entry " << arm.world);
     REQUIRE(world.at("min_y").get<std::int32_t>() == kMinY);
     REQUIRE(world.at("height").get<std::int32_t>() == kMaxY - kMinY + 1);
@@ -227,7 +217,7 @@ struct FieldSpec {
     REQUIRE(same(field.arms[1], kMid));
     REQUIRE(same(field.arms[2], kHigh));
 
-    const nlohmann::json& readout = entryNamed(spec, arm.readout);
+    const nlohmann::json& readout = stratum::test::specEntry(spec, dir, arm.readout);
     INFO("spec entry " << arm.readout);
     const FieldSpec indicator = parseField(readout.at("function"));
     REQUIRE(same(indicator.xzScale, field.xzScale));
@@ -985,9 +975,7 @@ TEST_CASE("the near-surface floor reads cap and an aborted scan is refused the s
         stratum::test::requireSeed(dir, seed);
         std::ifstream manifestFile(dir / "manifest.json");
         const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
-        std::ifstream specFile(dir / "spec.json");
-        const nlohmann::json spec = nlohmann::json::parse(specFile);
-        REQUIRE(spec.is_array());
+        const nlohmann::json spec = stratum::test::readSpec(dir);
 
         // The probe's noise as the manifest records it, not restated here.
         const nlohmann::json& declared = manifest.at("probe_noise");
@@ -1002,7 +990,7 @@ TEST_CASE("the near-surface floor reads cap and an aborted scan is refused the s
         Score& corpus = perSeed.at(s);
         for (const Arm& arm : kArms) {
             INFO("arm " << arm.world);
-            const Field field(noise, parseArm(spec, arm));
+            const Field field(noise, parseArm(spec, dir, arm));
             long long corners = 0;
             const long long mismatches =
                 readoutMismatches(dir / arm.readout / "r.0.0.mca", field, corners);
