@@ -671,7 +671,7 @@ public:
           interp_(loaded_.graph, noises_,
                   density::CellGeometry{.width = settings_.geometry.cellWidth(),
                                         .height = settings_.geometry.cellHeight()}),
-          centres_(seed) {
+          centres_(seed, stratum::density::RandomSource::Xoroshiro) {
         // ChunkFiller refuses a default fluid other than water; the server's
         // packed_ice stands where its water would.
         settings_.defaultFluid =
