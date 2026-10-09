@@ -26,7 +26,14 @@
 //     rank 4 alone. Only Q8's fluid-update flag reads it (substance.hpp).
 //   * Ties displace toward the LATER candidate, at every rank (spec Q4.4).
 //     228/228 and 334/334, where this project's own earlier "first wins"
-//     scores 12.3%.
+//     scores 12.3%. And on real generation: over the eight golden overworld
+//     regions, swapping a tied pair changes 1617 blocks (65 at ranks 1-2,
+//     none at 2-3, 1552 at 3-4); the golden holds what only this order
+//     leaves on 1585 of them, what either could on 32, and what only the
+//     swap leaves on none (golden_aquifer_tiebreak_test.cpp). On the
+//     deep-floor probe a swap moves 27 barrier verdicts at ranks 2-3 and
+//     1131 at 3-4, every one the server's way for this order
+//     (vanilla_aquifer_deepfloor_test.cpp).
 //
 //   * The WINDOW (spec Q4.1), against its obvious rival, the symmetric 27
 //     cells. The two agree on the NEAREST source on all but about two blocks
@@ -169,10 +176,12 @@ struct Source {
 ///
 /// Rank 4 is retained and must NOT be fed to the substance decision: it
 /// reaches only the fluid-update flag (spec Q4.3, confirmed on 2582 blocks
-/// chosen because two models disagree on rank 4 alone). This build has no
-/// fluid-update flag yet, so rank 4 is currently carried and unused — kept
-/// because dropping it would change which cell occupies rank 3 the moment a
-/// rank 3-4 tie arises, and those are the ties that move the most blocks.
+/// chosen because two models disagree on rank 4 alone). The flag's last
+/// clause is its one reader (substance.hpp's `fluidUpdateFlag`). It would
+/// be kept even without one: dropping it would change which cell occupies
+/// rank 3 the moment a rank 3-4 tie arises, and those are the ties that move
+/// the most blocks — 1552 of the 1617 tie swaps that change a block over the
+/// eight golden overworld regions (golden_aquifer_tiebreak_test.cpp).
 struct Selection {
     std::array<Source, kRankCount> ranked{};
 
@@ -193,8 +202,11 @@ struct Selection {
 /// distance EQUALS the value standing at a rank takes that rank and cascades
 /// the previous occupant down, and this holds independently at all four —
 /// spec Q4.4, confirmed here at 228/228 and 334/334 against the server, where
-/// this project's own "first wins" reading scores 12.3%. Which is to say the
-/// comparisons below are `<=` and every one of them matters.
+/// this project's own "first wins" reading scores 12.3%, and on the goldens
+/// at every block a swap changes that the golden can decide (this file's
+/// header). Which is to say the comparisons below are `<=` and every one of
+/// them matters — though a rank 2-3 tie reaches a block far more rarely
+/// than the other two (SPEC §11, open question 9).
 ///
 /// Spelled to take a span rather than the window so that the ranking rule can
 /// be given known-answer vectors without a world seed anywhere in the loop.

@@ -2955,6 +2955,99 @@ Open:
   tools) allocates one buffer per chunk, and none of the three conformance
   cases that reuse one reads the list, so no output changed.
 
+- **The aquifer tie-break's reach on the goldens, and open question 9
+  explained (MA).** No output changes. Spec Q4.4's later-wins tie-break had
+  probe-block confirmation (228/228, 334/334) and nothing on real
+  generation; the clean-room spec's coverage budget (rank 1-2 ties change
+  the substance 47 times in 4096 chunks, so 87·N chunks for N events) was
+  met by no encoded golden, and its open question 9 — rank 2-3 ties changed
+  0 blocks of 792 338 — had no mechanism.
+
+  *How it is counted.* `aquifer::computeSubstanceFrom` is the decision
+  after the selection, split out of `computeSubstanceWith` unchanged, so
+  that the spec's own Q4.7 experiment — decide each tied selection twice,
+  once with the tied pair swapped — runs the shipped logic.
+  `tests/support/aquifer_tiebreak.hpp` replays `ChunkFiller`'s first pass
+  at every position the lattice is consulted, checked against the filler
+  block for block and mark for mark (0 mismatches over all 8192 chunks).
+  Over the eight golden overworld regions, 72 889 063 consultations:
+
+  | pair | ties | substance changed | flag changed (this build's flag) |
+  |---|---|---|---|
+  | 1-2 | 797 131 | 65 | 65 |
+  | 2-3 | 1 075 059 | 0 | 2 915 |
+  | 3-4 | 1 283 696 | 1 552 | 1 112 |
+
+  Duplicate distances sit somewhere in 15.51% of selections and the whole
+  strict earlier-wins ranking differs on 6.09% (the spec: 15.40%, 6.05%).
+  Rank 1-2 changes the substance at 0.0079 per chunk against the spec's
+  0.0115 — the same order, about 126 chunks per expected event. The flag
+  column does not compare with the spec's: this build's flag is set only on
+  a fluid result, the spec counted it on every block. The goldens hold no
+  flag to compare with either: every golden overworld chunk's
+  `PostProcessing` list is empty (all 8192 chunks at full status).
+
+  *The goldens decide it, the later-wins way.* A swap that changes the
+  substance changes a block the server saved, so the golden settles the
+  order there unless fluid that moved after generation could have made
+  that block from either answer. Of the 65 rank 1-2 blocks, 33 hold what
+  only the later-wins order leaves — water where the swap writes stone
+  (11), a lava source where it writes air (10), a water source with fewer
+  than two beside it where it writes air (5), flowing water or lava where
+  it writes a source (6), air where it writes water (1) — 32 what either
+  could (a water source beside two or more others, which the infinite-water
+  rule makes from air), and none what only the swap leaves. Rank 3-4 is
+  decided on all 1552 blocks the same way; the whole strict rival on 1595
+  of 1627, 32 ambiguous, none against. So Q4.4 has golden confirmation at
+  ranks 1-2 and 3-4, and the coverage budget is known on this build's own
+  model: at 0.0079 per chunk, ten expected rank 1-2 substance events need
+  about 1260 chunks; the goldens' 8192 hold 65, 33 of them decided.
+
+  *Open question 9.* Under a rank 2-3 swap (d2 = d3) `s13 = s12 = s` and
+  `s23 = 1`, so Q6.6 weighs {s·P12, s²·P13, s·P23} against {s·P13, s²·P12,
+  s·P23}: the same statuses, only the weights moved. The two agree
+  whenever A2 = A3; whenever A1 equals either (one pressure is 0, and for
+  `D <= 0`, `0 < s <= 1`, `D + s²·P > 0` implies `D + s·P > 0`); and
+  whenever d1 = d2 (`s = 1`). Past Q6.2 Q8.4 is symmetric under the swap
+  too, so a rank 2-3 tie moves the flag only where Q6.2 decides — where
+  the substance is the nearest source's alone — and moves the block only
+  where the barrier is weighed over three distinct statuses: disjoint
+  populations, which is the spec's "flag-only" observation. On the goldens:
+
+      1 075 059 rank 2-3 ties: 801 011 decided by Q6.2, 1 by Q6.3,
+        274 047 weighed: 7 404 with d1 = d2, 248 593 with A2 = A3,
+                         16 170 with A1 shared, 1 880 all distinct
+          1 880: the orders part on no density (1 059), only below the
+                 overworld's density floor of -11/24 (666) or only above 0
+                 (140), and within reach on 15
+
+  The 15 sit at d2 - d1 of 22-24 (`s <= 0.12`), each window's upper end at
+  -0.066 or below, and each block's own density between -0.0003 and
+  -0.085 — shallower than its window every time. Against the all-distinct
+  blocks' own density distribution the 15 windows predict about 0.35
+  changed blocks in 8192 chunks (an estimate, assuming window and density
+  independent), a fraction of one on the spec's 4096. So the zero is
+  rarity, not structure: a unit case has an input in reach (levels 20, 0,
+  30, gap 24, `D = -0.4`) whose block the swap does change, and the server
+  shows one where the population is not rare. On the deep-floor probe
+  (floodedness pinned at 0.6, so neighbouring cells hold different ladder
+  levels; densities -0.3 and -0.05), 4x4 chunks of three seeds: ties
+  86 800 / 117 266 / 139 678 at ranks 1-2 / 2-3 / 3-4, a swap changes the
+  verdict on 0 / 27 / 1131 blocks — the 27 on every seed (13 / 4 / 10), 25
+  of them at -0.3 — and the server's stone is the later-wins verdict on
+  all 1158. Stone there is flow-free, so these are decided outright. The
+  spec's warning not to encode the zero stands, and this build does not.
+
+  Held by `golden_aquifer_tiebreak_test.cpp` (the 21 chunks holding the 33
+  decided rank 1-2 blocks: every model-only count pinned exactly, the
+  golden verdicts bounded with nothing against and nothing unexplained;
+  about 30 s in Debug), by `vanilla_aquifer_deepfloor_test.cpp` (the
+  deep-floor counts above, decided counts exact, the server's side on
+  every one, rank 2-3 non-empty per seed), by four unit cases in `aquifer_substance_test.cpp`
+  (the rank 2-3 barrier and flag lemmas over a 16-status alphabet, the
+  rank 1-2 symmetry, and the changing input), and by
+  `tools/analysis/aquifer-tiebreak-analyze.cpp` for the whole regions.
+
 - **Three probe residuals this project carried as unexplained were fluid
   that moved, or attribution (MA).** No output changes. The probe worlds are
   not tick-frozen, so their fluids flow after generating exactly as the

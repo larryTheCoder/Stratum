@@ -17,7 +17,7 @@ Last swept: 2026-10-09 (MA, pipeline engines v10 and v11: cache markers in a dat
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -400,6 +400,20 @@ Open:
       last clause. Exposed as `ChunkBuffer::fluidUpdates()`, which
       `ChunkFiller::fill` clears first, so a reused buffer no longer carries
       an earlier chunk's marks. SPEC §11.
+- [x] **The tie-break's reach on the goldens, and open question 9.** The
+      spec's Q4.7 swap, run through the shipped decision at every lattice
+      consultation of the eight golden overworld regions (72 889 063):
+      ties 797 131 / 1 075 059 / 1 283 696 at ranks 1-2 / 2-3 / 3-4 change
+      65 / 0 / 1552 blocks. The golden decides 33 of the 65 and all 1552,
+      every one the later-wins way; none goes the other way. Open question
+      9: a rank 2-3 swap only reweights the same three statuses, so it can
+      move a block only past Q6.2 with all three distinct (1880 ties), and
+      there the densities that would part the orders lie outside the
+      overworld's reach on all but 15, whose own densities miss them — about
+      0.35 expected in 8192 chunks (an estimate). Rarity, not structure: on
+      the deep-floor probe, where three distinct levels meet at density
+      -0.3, rank 2-3 ties decide 27 blocks on three seeds and rank 3-4 1131,
+      the server's stone the later-wins verdict on all of them. SPEC §11.
 - [ ] **Fluid updates to PocketMine.** The positions are computed; the PHP
       binding does not carry them yet, so PMMP never ticks the fluid that
       vanilla would (M5).

@@ -33,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <tuple>
+#include <utility>
 
 using stratum::aquifer::AquiferQuery;
 using stratum::aquifer::BarrierAt;
@@ -687,4 +688,223 @@ TEST_CASE("the floor's type reaches nothing at a sea at or above -54", "[aquifer
     };
     CHECK(rivalDisagreements(63, lambdaFloor) == 0);
     CHECK(rivalDisagreements(-70, lambdaFloor) > 1000);
+}
+
+// THE TIE-BREAK'S REACH, rank pair by rank pair (spec Q4.7, open question
+// 9). Swapping two sources tied in squared distance changes only what
+// reads them, and for two of the three pairs Q6.6 and Q8.4 read them
+// symmetrically. These sweeps pin that over every combination of a small
+// status alphabet, both fluid types, the dry sentinel and the overworld's
+// whole density range; golden_aquifer_tiebreak_test.cpp counts the same
+// populations on real generation.
+namespace {
+using stratum::aquifer::kNeverLevel;
+using stratum::aquifer::similarity;
+
+/// Levels on both sides of every `y` swept, and the dry sentinel.
+constexpr std::array<std::int32_t, 8> kSweepLevels = {-60, -20, -5, 0, 7, 12, 30, kNeverLevel};
+constexpr std::array<std::int32_t, 7> kSweepRows = {-30, -6, 0, 6, 10, 20, 40};
+/// The overworld's final density at a block the lattice is consulted for
+/// lies in [-11/24, 0] (`min(squeeze, noodle)`).
+constexpr std::array<double, 6> kSweepDensities = {-11.0 / 24.0, -0.4, -0.3, -0.1, -0.01, 0.0};
+constexpr std::array<double, 3> kSweepBarrier = {-1.0, 0.0, 0.7};
+
+[[nodiscard]] std::array<SourceStatus, 16> sweepStatuses() {
+    std::array<SourceStatus, 16> out{};
+    std::size_t i = 0;
+    for (const std::int32_t level : kSweepLevels) {
+        for (const FluidType type : {FluidType::Default, FluidType::Lava}) {
+            out.at(i++) = SourceStatus{.level = level, .type = type};
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] bool same(const SourceStatus& a, const SourceStatus& b) {
+    return a.level == b.level && a.type == b.type;
+}
+
+[[nodiscard]] BarrierAt barrierOf(std::int32_t y, double density, double noise,
+                                  const std::array<SourceStatus, 3>& s,
+                                  const std::array<std::int64_t, 3>& d) {
+    const auto source = [&](std::size_t r) {
+        return BarrierSource{.level = s.at(r).level, .distanceSq = d.at(r), .type = s.at(r).type};
+    };
+    return BarrierAt{.y = y,
+                     .density = density,
+                     .nearest = source(0),
+                     .second = source(1),
+                     .third = source(2),
+                     .barrier = noise};
+}
+
+/// Calls @p visit with every (y, density, barrier) combination swept.
+template<typename Visit>
+void forEachBlock(Visit&& visit) {
+    for (const std::int32_t y : kSweepRows) {
+        for (const double density : kSweepDensities) {
+            for (const double noise : kSweepBarrier) {
+                visit(y, density, noise);
+            }
+        }
+    }
+}
+} // namespace
+
+TEST_CASE("a rank 2-3 tie moves the barrier only where all three statuses differ", "[aquifer]") {
+    // With d2 = d3, s13 = s12 = s and s23 = 1, so the two orders weigh
+    // {s*P12, s^2*P13, s*P23} against {s*P13, s^2*P12, s*P23}. Where A2 = A3
+    // they are the same set. Where A1 equals one of them, one pressure is
+    // 0 and the other two are equal, and for D <= 0 and 0 < s <= 1 the term
+    // `D + s^2*P > 0` implies `D + s*P > 0`, so the s^2 term never decides;
+    // the same holds where s = 1 (a three-way tie). So the orders can part
+    // only past Q6.2, with d1 < d2, and with A1, A2, A3 pairwise different.
+    const auto statuses = sweepStatuses();
+    std::size_t parted = 0;
+    std::size_t outsideTheLemma = 0;
+    for (const SourceStatus& a1 : statuses) {
+        for (const SourceStatus& a2 : statuses) {
+            for (const SourceStatus& a3 : statuses) {
+                const bool allDistinct = !same(a1, a2) && !same(a1, a3) && !same(a2, a3);
+                for (const std::int64_t gap : {0, 1, 12, 24}) {
+                    const std::array<std::int64_t, 3> d{100, 100 + gap, 100 + gap};
+                    forEachBlock([&](std::int32_t y, double density, double noise) {
+                        const bool ranked =
+                            placesBarrier(barrierOf(y, density, noise, {a1, a2, a3}, d));
+                        const bool swapped =
+                            placesBarrier(barrierOf(y, density, noise, {a1, a3, a2}, d));
+                        if (ranked != swapped) {
+                            ++parted;
+                            outsideTheLemma += (gap > 0 && allDistinct) ? 0 : 1;
+                        }
+                    });
+                }
+            }
+        }
+    }
+    CHECK(outsideTheLemma == 0);
+    // And the zero the clean-room spec measured (0 of 792 338 ties) is NOT
+    // the predicate's: inside the lemma's population the orders do part.
+    INFO("parted " << parted);
+    CHECK(parted > 0);
+}
+
+TEST_CASE("a rank 1-2 tie never moves the barrier", "[aquifer]") {
+    // With d1 = d2, s12 = 1 and s13 = s23, so swapping the nearest pair
+    // swaps the second and third terms of Q6.6 and nothing else: the
+    // predicate is symmetric. A rank 1-2 tie reaches a block only through
+    // the nearest source's own reading — Q6.3's exit, or the fall-through.
+    const auto statuses = sweepStatuses();
+    std::size_t parted = 0;
+    for (const SourceStatus& a1 : statuses) {
+        for (const SourceStatus& a2 : statuses) {
+            for (const SourceStatus& a3 : statuses) {
+                for (const std::int64_t gap13 : {0, 1, 12, 24, 30}) {
+                    const std::array<std::int64_t, 3> d{100, 100, 100 + gap13};
+                    forEachBlock([&](std::int32_t y, double density, double noise) {
+                        const bool ranked =
+                            placesBarrier(barrierOf(y, density, noise, {a1, a2, a3}, d));
+                        const bool swapped =
+                            placesBarrier(barrierOf(y, density, noise, {a2, a1, a3}, d));
+                        parted += ranked == swapped ? 0 : 1;
+                    });
+                }
+            }
+        }
+    }
+    CHECK(parted == 0);
+}
+
+TEST_CASE("a rank 2-3 tie moves the fluid-update flag only where Q6.2 decides", "[aquifer]") {
+    // Past Q6.2 (s12 > 0 > -0.76), Q8.4 with s13 = s12 and s23 = 1 reads
+    // "A1 != A2, or A2 != A3, or A1 != A3", then A4 against A1 alone: the
+    // same under the swap. Where Q6.2 decides, the flag is A1 != A2 alone,
+    // and the swap makes it A1 != A3. So a rank 2-3 tie's flag changes and
+    // its substance changes come from DISJOINT populations: the flag only
+    // where the nearest source wins outright, the substance only where the
+    // barrier is weighed (the case above).
+    const auto statuses = sweepStatuses();
+    std::size_t partedShortCircuit = 0;
+    std::size_t partedPast = 0;
+    for (const SourceStatus& a1 : statuses) {
+        for (const SourceStatus& a2 : statuses) {
+            for (const SourceStatus& a3 : statuses) {
+                for (const SourceStatus& a4 : {statuses.front(), statuses.back()}) {
+                    const auto fourth = [a4] { return a4; };
+                    for (const std::int64_t gap : {0, 1, 24, 25, 30, 44, 45}) {
+                        for (const std::int64_t gap4 : {0, 44, 45}) {
+                            const std::array<std::int64_t, 4> d{100, 100 + gap, 100 + gap,
+                                                                100 + gap + gap4};
+                            for (const FluidExit exit :
+                                 {FluidExit::BarrierFellThrough, FluidExit::WaterOverLava}) {
+                                const bool ranked = fluidUpdateFlag(d, {a1, a2, a3}, exit, fourth);
+                                const bool swapped = fluidUpdateFlag(d, {a1, a3, a2}, exit, fourth);
+                                if (ranked == swapped) {
+                                    continue;
+                                }
+                                if (similarity(d[0], d[1]) <= 0.0) {
+                                    ++partedShortCircuit;
+                                } else {
+                                    ++partedPast;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(partedPast == 0);
+    CHECK(partedShortCircuit > 0);
+}
+
+TEST_CASE("a rank 2-3 tie can change a block", "[aquifer]") {
+    // One input inside the lemma's population, run through the shipped
+    // decision both ways: three water sources at levels 20 (nearest), 0
+    // and 30, the second and third tied at a gap of 24 (s = 0.04), a block
+    // at y 10 and a density of -0.4 — inside the overworld's reach.
+    //
+    //   ranked:  P12 = 2 * 9.5/1.5       -> -0.4 + 0.04 * 12.67 > 0: stone
+    //   swapped: P13 = 2 * (3 - 9.5)/10  -> -0.4 + 0.04 * -1.3   < 0
+    //            P12 at s^2              -> -0.4 + 0.0016 * 12.67 < 0
+    //            P23 = 2 * (3 + 10.5)/3  -> -0.4 + 0.04 * 9      < 0: water
+    //
+    // So the clean-room spec's 0 of 792 338 (open question 9) is how rarely
+    // real generation lands here, not a property of Q6.6 — and the server's
+    // deep-floor probe has 27 such blocks, every one the later-wins way
+    // (vanilla_aquifer_deepfloor_test.cpp).
+    using stratum::aquifer::Source;
+    const std::array<SourceStatus, 3> status = {
+        SourceStatus{.level = 20, .type = FluidType::Default},
+        SourceStatus{.level = 0, .type = FluidType::Default},
+        SourceStatus{.level = 30, .type = FluidType::Default}};
+    const auto sourceAt = [](std::int32_t id, std::int32_t distanceSq) {
+        return Source{.cell = CellIndex{.x = id, .y = 0, .z = 0},
+                      .centre = CellIndex{.x = id, .y = 0, .z = 0},
+                      .distanceSq = distanceSq};
+    };
+    const auto statusOf = [&status](const Source& source) {
+        return source.cell.x < 3 ? status.at(static_cast<std::size_t>(source.cell.x))
+                                 : SourceStatus{.level = 20, .type = FluidType::Default};
+    };
+    const auto noBarrierNoise = [](std::int32_t, std::int32_t, std::int32_t) { return 0.0; };
+    const AquiferQuery query{.x = 0, .y = 10, .z = 0, .density = -0.4, .seaLevel = kSea};
+    Selection ranked{};
+    ranked.ranked = {sourceAt(0, 100), sourceAt(1, 124), sourceAt(2, 124), sourceAt(3, 200)};
+    Selection swapped = ranked;
+    std::swap(swapped.ranked[1], swapped.ranked[2]);
+    const auto decide = [&](const Selection& selection, double density) {
+        AquiferQuery at = query;
+        at.density = density;
+        return stratum::aquifer::computeSubstanceFrom(selection, at, statusOf, noBarrierNoise);
+    };
+    CHECK(decide(ranked, -0.4).substance == Substance::Solid);
+    const SubstanceAt asSwapped = decide(swapped, -0.4);
+    CHECK(asSwapped.substance == Substance::Fluid);
+    CHECK(asSwapped.fluidType == FluidType::Default);
+    // Inside a window of density only: at -0.3 both write stone, and at the
+    // overworld's floor, -11/24, the two still part.
+    CHECK(decide(swapped, -0.3).substance == Substance::Solid);
+    CHECK(decide(ranked, -11.0 / 24.0).substance == Substance::Solid);
+    CHECK(decide(swapped, -11.0 / 24.0).substance == Substance::Fluid);
 }

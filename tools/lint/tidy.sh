@@ -68,7 +68,8 @@ done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
                    tools/analysis/aquifer-presets-scout.cpp \
                    tools/analysis/aquifer-ties-analyze.cpp \
                    tools/analysis/aquifer-waterlava-analyze.cpp \
-                   tools/analysis/legacy-aquifer-analyze.cpp)
+                   tools/analysis/legacy-aquifer-analyze.cpp \
+                   tools/analysis/aquifer-tiebreak-analyze.cpp)
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"
