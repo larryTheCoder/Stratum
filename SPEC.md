@@ -3521,6 +3521,15 @@ Open:
   `sea_level - 8`, on a read the scan itself produces
   (`aquifer_lattice_test.cpp`).
 
+  *Under engine v13* (the next entry) Q5.3(a) reads the anchor and comes
+  before the abort, aborted or not. On this field 140 sources a seed in the
+  anchor-high abort subset, all centred over y 116, are more than twenty
+  above their anchor of 96: the build now gives them the sea, which is also
+  the ignore-the-abort rival's answer, so they are not contested and no
+  scored block or mark moved. The subsets keep the analyzer's definitions
+  so its figures above stay comparable; the case pins those 140 as
+  uncontested.
+
 - **The surface scan, sample by sample: the clean-room Q5.3 as written (MA;
   pipeline engine v13).** Engine v12 reduced a source's scan to four
   values — the prefix minimum before the first abort (`gate`), the whole
