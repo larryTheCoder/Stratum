@@ -43,7 +43,7 @@ probeNoiseSettings(const nlohmann::json& entry,
     // surface rule that reads it is refused by ChunkFiller without a
     // biome::ParameterList, which no caller here supplies. min_y and height
     // go to the dimension type AND to noise_settings.
-    constexpr std::array<std::string_view, 15> kKnown{"name",
+    constexpr std::array<std::string_view, 16> kKnown{"name",
                                                       "min_y",
                                                       "height",
                                                       "raw_final_density",
@@ -56,6 +56,7 @@ probeNoiseSettings(const nlohmann::json& entry,
                                                       "ore_veins_enabled",
                                                       "legacy_random_source",
                                                       "sea_level",
+                                                      "default_block",
                                                       "default_fluid",
                                                       "router"};
     for (const auto& [key, value] : entry.items()) {
@@ -94,13 +95,17 @@ probeNoiseSettings(const nlohmann::json& entry,
         }
     }
     router["final_density"] = entry.at("raw_final_density");
+    // The script's default surface rule paints the entry's own default_block
+    // over itself, so it changes nothing whatever that block is.
+    const nlohmann::json defaultBlock =
+        entry.value("default_block", nlohmann::json{{"Name", "minecraft:stone"}});
     return nlohmann::json{
         {"sea_level", entry.value("sea_level", minY)},
         {"disable_mob_generation", true},
         {"aquifers_enabled", entry.value("aquifers_enabled", false)},
         {"ore_veins_enabled", entry.value("ore_veins_enabled", false)},
         {"legacy_random_source", entry.value("legacy_random_source", false)},
-        {"default_block", {{"Name", "minecraft:stone"}}},
+        {"default_block", defaultBlock},
         {"default_fluid", entry.value("default_fluid", nlohmann::json{{"Name", "minecraft:air"}})},
         {"noise",
          {{"min_y", minY},
@@ -110,8 +115,7 @@ probeNoiseSettings(const nlohmann::json& entry,
         {"spawn_target", nlohmann::json::array()},
         {"surface_rule",
          entry.value("surface_rule",
-                     nlohmann::json{{"type", "minecraft:block"},
-                                    {"result_state", {{"Name", "minecraft:stone"}}}})},
+                     nlohmann::json{{"type", "minecraft:block"}, {"result_state", defaultBlock}})},
         {"noise_router", router},
     };
 }

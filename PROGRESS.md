@@ -248,6 +248,16 @@ Open:
       every surfaced name agrees where the category does, and the server
       takes the override's side on every Q5.9 block not flow-shaped. SPEC
       §8, §11.
+- [x] **The barrier is the preset's `default_block` (Q6.7) — measured on
+      presets where that is not stone.** Every probe had run stone.
+      `aquifer-defaultblock-probe.sh` (seed 42, one frozen world): netherrack
+      and deepslate[axis=x] stand at exactly the stone control's 4 110
+      barrier positions, with no stone and no other solid; at density +1,
+      deepslate[axis=x] on all 5 242 880 blocks. The shipped filler matches
+      every solid state; air against water is flow-shaped (134 per arm). A
+      fixture-free unit case catches a literal-stone barrier (which every
+      earlier unit case passed), a dropped property and literal stone for
+      positive density. No output changes. SPEC §8, §11.
 - [x] **Aquifers over a `default_fluid` other than water are refused by
       name** (`ChunkFiller::compile`; `stratum validate` warns). Q6.3 and
       Q6.4 are written for water, and no vanilla dimension that enables

@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -1565,6 +1566,112 @@ TEST_CASE("aquifers over a default fluid other than water are refused by name",
     CHECK_NOTHROW(ChunkFiller::compile(
         loaded.graph, noises,
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"))));
+}
+
+namespace {
+
+/// An aquifer whose barrier fires: `barrier`, floodedness and spread each
+/// read a noise of their own, made up here (no vanilla data), so neighbouring
+/// sources disagree on their level. Density is positive on the six rows
+/// -48..-43 and -0.3 above, so every column holds both kinds of solid the
+/// filler writes as `default_block`: positive density, and the barrier.
+[[nodiscard]] nlohmann::json barrierSettings(const nlohmann::json& defaultBlock) {
+    nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    settings["default_block"] = defaultBlock;
+    settings["sea_level"] = 63;
+    settings["noise"] = {
+        {"min_y", -48}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 2}};
+    const auto noise = [](const char* name, double yScale) {
+        return nlohmann::json{
+            {"type", "minecraft:noise"}, {"noise", name}, {"xz_scale", 1.0}, {"y_scale", yScale}};
+    };
+    nlohmann::json& router = settings["noise_router"];
+    router["barrier"] = noise("minecraft:test_barrier", 0.5);
+    router["fluid_level_floodedness"] = noise("minecraft:test_floodedness", 0.67);
+    router["fluid_level_spread"] = noise("minecraft:test_spread", 0.7142857142857143);
+    router["preliminary_surface_level"] = 96.0;
+    router["final_density"] = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                             {"from_y", -44},
+                                             {"to_y", -42},
+                                             {"from_value", 1.0},
+                                             {"to_value", -0.3}};
+    return settings;
+}
+
+} // namespace
+
+TEST_CASE("the aquifer's barrier is the dimension's default_block, properties and all",
+          "[terrain][filler][aquifer]") {
+    // Spec Q6.7, the fixture-free guard for
+    // tests/conformance/vanilla_aquifer_default_block_test.cpp: the aquifer
+    // never names a block, and where it decides solid the filler writes the
+    // preset's own default_block, whole state. Two dimensions identical but
+    // for that block must come out identical but for that block. Every
+    // aquifer case elsewhere runs stone, where a filler writing literal
+    // stone for the barrier, or the bare block without its properties,
+    // passes unseen.
+    const TempTree tree;
+    tree.defineNoise("test_barrier", R"({"firstOctave": -4, "amplitudes": [1.0, 1.0]})")
+        .defineNoise("test_floodedness", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})")
+        .defineNoise("test_spread", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})");
+    tree.defineSettings("test_stone", barrierSettings({{"Name", "minecraft:stone"}}));
+    tree.defineSettings("test_deepslate", barrierSettings({{"Name", "minecraft:deepslate"},
+                                                           {"Properties", {{"axis", "x"}}}}));
+    const LoadedSettings loaded = tree.load();
+    // A registry of this tree's own: compileFrom()'s is built once per
+    // process, from whichever tree reached it first.
+    const auto noises =
+        stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 42,
+                                                stratum::density::RandomSource::Xoroshiro);
+    const auto& stoneSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test_stone"));
+    const auto& deepslateSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test_deepslate"));
+    const auto& stone = stoneSettings.defaultBlock;
+    const auto& deepslateX = deepslateSettings.defaultBlock;
+    REQUIRE(deepslateX.properties == std::map<std::string, std::string>{{"axis", "x"}});
+    const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
+    const ChunkFiller deepslateFiller =
+        ChunkFiller::compile(loaded.graph, noises, deepslateSettings);
+
+    constexpr std::int32_t kLastPositiveRow = -43;
+    long long differing = 0;
+    long long stoneLeft = 0;
+    long long positiveRows = 0;
+    long long barriers = 0;
+    long long fluid = 0;
+    ChunkBuffer stoneBuffer(stoneSettings.geometry);
+    ChunkBuffer deepslateBuffer(deepslateSettings.geometry);
+    for (const auto& [chunkX, chunkZ] :
+         {std::pair{0, 0}, std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+        stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
+        deepslateFiller.fill(chunkX, chunkZ, deepslateBuffer);
+        for (int z = 0; z < 16; ++z) {
+            for (int x = 0; x < 16; ++x) {
+                for (std::int32_t y = -48; y < 80; ++y) {
+                    const auto& ours = deepslateBuffer.at(x, y, z);
+                    const auto& control = stoneBuffer.at(x, y, z);
+                    const auto& expected = control == stone ? deepslateX : control;
+                    differing += ours == expected ? 0 : 1;
+                    stoneLeft += ours.name == stone.name ? 1 : 0;
+                    if (y <= kLastPositiveRow) {
+                        positiveRows += ours == deepslateX ? 1 : 0;
+                    } else if (ours == deepslateX) {
+                        ++barriers;
+                    } else if (ours == deepslateSettings.defaultFluid) {
+                        ++fluid;
+                    }
+                }
+            }
+        }
+    }
+    INFO(barriers << " barrier blocks and " << fluid << " fluid above the positive rows");
+    CHECK(differing == 0);
+    CHECK(stoneLeft == 0);
+    CHECK(positiveRows == 4LL * 256LL * 6LL);
+    // Not vacuous: the barrier fires, beside fluid, in these four chunks.
+    REQUIRE(barriers > 100);
+    REQUIRE(fluid > 100);
 }
 
 namespace {
