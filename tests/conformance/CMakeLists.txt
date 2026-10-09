@@ -44,6 +44,7 @@ add_executable(stratum_conformance_tests
     vanilla_aquifer_fluid_update_test.cpp
     vanilla_aquifer_depthgate_test.cpp
     vanilla_aquifer_jitter_test.cpp
+    vanilla_aquifer_level_test.cpp
     vanilla_aquifer_lowsea_test.cpp
     vanilla_aquifer_lowfloor_test.cpp
     vanilla_aquifer_varying_surface_test.cpp

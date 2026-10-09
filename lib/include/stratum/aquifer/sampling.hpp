@@ -1,12 +1,14 @@
 // Stratum — where the aquifer reads its router inputs.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The level rule in `lattice.hpp` is settled to 99.99% per cell. Every probe
-// behind it, though — about 1370 dimensions — held `preliminary_surface_level`
-// and `fluid_level_floodedness` at CONSTANTS. So the predicate was settled and
-// the positions its inputs are read AT were not, and in a real world the
-// surface varies per column and feeds the depth directly. This header is the
-// answer to that question, for the two inputs where there is one.
+// The level rule in `lattice.hpp` holds block for block on a constant surface
+// (`aquifer-level-probe.sh`). Every probe behind it, though — the old
+// campaign's 1370 dimensions and the 255 that hold it now — held
+// `preliminary_surface_level` and `fluid_level_floodedness` at CONSTANTS. So
+// the predicate was settled and the positions its inputs are read AT were not,
+// and in a real world the surface varies per column and feeds the depth
+// directly. This header is the answer to that question, for the two inputs
+// where there is one.
 //
 // Measured by six agents across eleven world seeds, on instruments built
 // independently of each other. The headline is that the inputs DO NOT share a

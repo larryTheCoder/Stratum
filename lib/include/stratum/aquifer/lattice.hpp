@@ -362,10 +362,15 @@ inline constexpr std::int32_t kBasePhase = 20;
 //
 // What replaced it was measured over roughly 1370 probe dimensions on 12 world
 // seeds, preliminary surfaces from -54 to 141, sea levels 32 to 200, with the
-// spread, the barrier and the lava level all varied. Four whole-model per-cell
-// scores, never pooled across seeds: 99.9902%, 99.9806%, 99.9902%, 99.9858%.
-// The same cells score 13-77% under the honest null (no ocean branch) and
-// 86-97% under the K model this replaces.
+// spread, the barrier and the lava level all varied, and scored per cell:
+// 99.9806-99.9902% a seed, against 13-77% under the honest null (no ocean
+// branch) and 86-97% under the K model this replaces. That corpus was never
+// committed and its readout is gone, so those figures are retired rather than
+// attributed. The rule is now held block for block on a committed corpus over
+// the same axes (`aquifer-level-probe.sh`, three seeds, frozen, generated in
+// CI): every block from y -51 up matches the server, and the one clause the
+// rule lacked there — Q5.3(a) off the ocean branch — is in `cellLevel`
+// (tests/conformance/vanilla_aquifer_level_test.cpp, SPEC §11).
 
 /// How near the preliminary surface a cell's centre must be for the ocean
 /// branch to flood it whatever the floodedness says. Bracketed to one block:
@@ -441,6 +446,12 @@ inline constexpr double kLocalBonusDenominator = 160.0;
 /// where 19 and 21 each lose more than forty cells and are right on at most
 /// one; the term reads the scan's `cap`, and it is independent of `sea_level`,
 /// of the surface's high value and of the floodedness.
+///
+/// The same margin is Q5.3(a)'s for a cell that did not abort: off the ocean
+/// branch, a cell centred more than this above its surface read takes the
+/// sea before any floodedness is weighed. Measured separately, on
+/// `aquifer-level-probe.sh`'s land arms, where 19 and 21 are each refuted
+/// wherever they part from 20 (SPEC §11).
 inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
 
 /// Lambda: where the global picker's lava sea tops out, and the threshold the
@@ -624,15 +635,16 @@ enum class LevelOrigin : std::uint8_t {
     /// Everything but the two cases below: the cell's own lattice and
     /// floodedness, or the dry sentinel.
     Cell,
-    /// Either sea outcome of the near-surface early return: a cell close under
-    /// a submerged surface takes the sea from THAT surface (spec Q5.3(b)),
-    /// and a cell more than twenty blocks above an aborting surface takes the
-    /// global picker's sea at its own centre (Q5.3(a)). Both are the global
+    /// A sea that Q5.3 short-circuits to: a cell close under a submerged
+    /// surface takes the sea from THAT surface (spec Q5.3(b)), and a cell
+    /// more than twenty blocks above an aborting surface — or above any
+    /// surface off the ocean branch, if its scan did not abort — takes the
+    /// global picker's sea at its own centre (Q5.3(a)). All are the global
     /// picker's status at or above lambda, so `fluidTypeOf` types them the
     /// default fluid: neither a centre below the lava sea (cf58 of
     /// `aquifer-capfloor-probe.sh`, 20 462 blocks of false barrier
     /// otherwise) nor the `lava` override (`aquifer-fluidnear-probe.sh`)
-    /// makes them lava.
+    /// makes them lava. The name predates the last case.
     NearSurfaceSea,
     /// The global picker's status below lambda: spec Q1.1's
     /// A_lava = (`kLavaLevel`, lava), the literal -54 whatever `sea_level`
@@ -715,6 +727,16 @@ struct CellLevel {
 /// ties A_lava to the submerged surface, not to the cap — and
 /// `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the only 4
 /// blocks over two seeds where the two readings part.
+///
+/// Q5.3(a) reaches a cell that did not abort, too: one whose centre sits
+/// more than `kNearSurfaceFloorOffset` above the scan's `cap` takes the sea
+/// (`LevelOrigin::NearSurfaceSea`) whatever its floodedness. On the ocean
+/// branch every such cell is a near-surface sea already, so this is the land
+/// branch's: on `aquifer-level-probe.sh`'s constant surfaces the floodedness
+/// gates alone are wrong exactly where it parts from them, and right
+/// everywhere else (SPEC §11). `cap` rather than the anchor (the spec's a0)
+/// is carried from the aborted near-surface floor's measurement; a constant
+/// surface cannot separate the two.
 [[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
 
 /// `cellLevel(cell).level`, for the callers that need nothing else.
