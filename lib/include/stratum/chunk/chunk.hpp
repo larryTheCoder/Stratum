@@ -82,9 +82,35 @@ enum class Heightmap : std::uint8_t {
 /// "OCEAN_FLOOR" — the name vanilla stores it under.
 [[nodiscard]] std::string_view heightmapName(Heightmap kind) noexcept;
 
+/// One entry of a chunk's `PostProcessing` lists: a position the server
+/// processes once the chunk is promoted past generation. For this engine's
+/// output that is exactly the aquifer's fluid updates
+/// (`terrain::ChunkBuffer::fluidUpdates()`, spec Q8.1) — the marks that make
+/// aquifer water and lava flow once the chunk loads.
+///
+/// On disk: one list per section, the i-th belonging to section
+/// `yPos + i`, each entry a short packing `x | (y & 15) << 4 | z << 8`.
+/// Read from the server's own chunks, not assumed: every one of 66 156
+/// entries over two probes lands on a fluid under that packing, against a
+/// third on air or stone under the y/z swap (SPEC §11, the Q8 entry); empty
+/// lists are written with element type End and non-empty ones Short, and an
+/// entry is never repeated within a list.
+struct PostProcessingMark {
+    /// 0..15 within the chunk.
+    int localX = 0;
+    /// World y, not section-local.
+    std::int32_t y = 0;
+    /// 0..15 within the chunk.
+    int localZ = 0;
+
+    [[nodiscard]] bool operator==(const PostProcessingMark&) const noexcept = default;
+};
+
 class Chunk {
 public:
-    /// Decodes one chunk from the root tag of its NBT.
+    /// Decodes one chunk from the root tag of its NBT. Throws FormatError for
+    /// a `PostProcessing` entry with bits above the twelve a position packs
+    /// into, rather than masking them off.
     [[nodiscard]] static Chunk decode(const nbt::Tag& root);
 
     [[nodiscard]] std::int32_t x() const noexcept { return x_; }
@@ -127,6 +153,15 @@ public:
     /// inferred one and shift every height by sixteen.
     [[nodiscard]] std::int32_t lowestSection() const noexcept { return lowestSection_; }
 
+    /// The chunk's `PostProcessing` marks, list by list from the lowest
+    /// section up and in stored order within each — empty for a chunk that
+    /// carries no such tag, or whose lists the server has already consumed
+    /// (a chunk that ticked). List i is section `lowestSection() + i`, which
+    /// is why `yPos` is kept rather than inferred (see lowestSection()).
+    [[nodiscard]] const std::vector<PostProcessingMark>& postProcessing() const noexcept {
+        return postProcessing_;
+    }
+
 private:
     std::int32_t x_ = 0;
     std::int32_t z_ = 0;
@@ -134,6 +169,7 @@ private:
     std::int32_t lowestSection_ = 0;
     std::string status_;
     std::vector<Section> sections_;
+    std::vector<PostProcessingMark> postProcessing_;
     /// Kept as stored, decoded on demand: most callers want none of them.
     std::vector<std::pair<Heightmap, std::vector<std::int64_t>>> heightmaps_;
 };
@@ -178,6 +214,10 @@ struct ChunkData {
     /// is simply not written. 256 values each, in ZX order, matching
     /// Chunk::heightmap()'s own return shape — this is its inverse.
     std::vector<std::pair<Heightmap, std::vector<std::optional<int>>>> heightmaps;
+    /// What the server should process once it loads the chunk — for this
+    /// engine, `terrain::ChunkBuffer::fluidUpdates()` — in the order each
+    /// section's list should hold them. Chunk::postProcessing()'s inverse.
+    std::vector<PostProcessingMark> postProcessing;
 };
 
 /// Builds the NBT a real Java Edition server can load a chunk from — the
@@ -193,6 +233,17 @@ struct ChunkData {
 /// recomputes lighting itself the first time a chunk with it set is loaded,
 /// which is exactly the well-trodden path chunks written by external tools
 /// already rely on.
+///
+/// Writes `PostProcessing` as the server does: one list per entry of
+/// `sections`, list i holding the marks of section `lowestSection + i` in
+/// `postProcessing` order (PostProcessingMark's doc has the packing). With
+/// marks present, `sections` must run contiguously upward from
+/// `lowestSection` — otherwise a list would be read back as another
+/// section's — and every mark must lie inside the chunk and those sections;
+/// anything else, or a position marked twice, throws FormatError naming the
+/// chunk and the mark rather than writing lists the server would apply
+/// somewhere else. `block_ticks` and `fluid_ticks` stay empty: the server's
+/// own untouched chunks carry their fluid updates in `PostProcessing` alone.
 [[nodiscard]] nbt::Tag encode(const ChunkData& chunk);
 
 } // namespace stratum::chunk

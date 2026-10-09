@@ -34,6 +34,16 @@ ctest --preset ext                                  # PHPT, with the real chunku
 own `PalettedBlockArray::fromData`, which validates the width, the word
 length, the palette and every offset.
 
+**Landed: fluid updates** (`include/stratum_pmmp/fluid_updates.hpp`). The
+positions a Java server keeps in a chunk's `PostProcessing` lists and ticks
+once it loads — what makes aquifer water and lava flow — come back from
+`encodeChunk()` beside the sub-chunks. A generator's worker cannot hand them
+to PocketMine-MP with the chunk (only terrain crosses back), so the zend
+module leaves them in a per-world outbox and `Stratum\takeFluidUpdates()`
+gives them to the main thread, once, by the world's options and seed.
+`tests/fluid_updates_test.cpp` covers the hand-over, threads included;
+`zend/tests/004_fluid_updates.phpt` the PHP function.
+
 **Landed: the PocketMine-MP plugin** (`plugin/`, its own README): registers
 the generator, translates each sub-chunk's palette through PocketMine-MP's
 own deserializer, and freezes a pipeline into a new world's folder. Written
@@ -53,6 +63,9 @@ class that is pure PHP.
    world loader takes for every palette entry on disk — and builds the
    `SubChunk`s. A block PocketMine-MP does not implement goes through an
    explicit fallback with a log, never a silent substitution (SPEC §9).
+5. When PocketMine-MP reports a chunk populated, `plugin/` takes its fluid
+   updates and schedules a block update at each liquid, so aquifer water
+   and lava flow as they would in a world a Java server generated.
 
 No per-protocol table appears anywhere in this: a generator never learns
 which Bedrock version will connect. That translation belongs to

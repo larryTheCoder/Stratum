@@ -76,9 +76,11 @@ if(TARGET stratum_cli)
     add_dependencies(stratum_unit_tests stratum_cli)
 endif()
 
-# ext/'s plain C++ half: the sub-chunk encoding, fixture-free.
+# ext/'s plain C++ half: the sub-chunk encoding and the fluid-update
+# hand-over, fixture-free.
 target_sources(stratum_unit_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/chunk_encoder_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/fluid_updates_test.cpp"
 )
 target_link_libraries(stratum_unit_tests PRIVATE stratum::pmmp_core)
 

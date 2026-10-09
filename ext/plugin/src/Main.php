@@ -9,7 +9,8 @@ use pocketmine\world\generator\GeneratorManager;
 use pocketmine\world\generator\InvalidGeneratorOptionsException;
 
 /**
- * Registers Stratum as a PocketMine-MP generator.
+ * Registers Stratum as a PocketMine-MP generator, and the listener that
+ * makes its aquifer fluids flow (FluidUpdateScheduler).
  *
  * Registration happens in onLoad() rather than onEnable() because worlds are
  * loaded between the two enable phases: a world configured with
@@ -33,5 +34,14 @@ final class Main extends PluginBase{
 			// $fast=true would run C++ generation on the main thread, and the
 			// parameter does not exist before PocketMine-MP 5.30.
 		);
+	}
+
+	/**
+	 * Listeners can only be registered once the plugin is enabled. Enabling
+	 * at STARTUP is still before any world loads, so no chunk is populated
+	 * before this is listening.
+	 */
+	protected function onEnable() : void{
+		$this->getServer()->getPluginManager()->registerEvents(new FluidUpdateScheduler($this->getLogger()), $this);
 	}
 }

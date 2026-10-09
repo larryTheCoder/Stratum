@@ -6,7 +6,8 @@
 // sub-chunk with a reader written from chunkutils2's description of the
 // format: every block must decode to the Java state id of what the dimension
 // placed there, every biome to its quart's Bedrock id, and an all-air
-// sub-chunk must carry no block layer at all.
+// sub-chunk must carry no block layer at all. The chunk's fluid updates must
+// be the filler's own, each on a fluid.
 //
 // Mojang-derived fixtures are never committed (SPEC §12); without them this
 // SKIPs, naming the command that produces them.
@@ -24,6 +25,7 @@
 
 #include <array>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 using stratum::data::ResourceLocation;
@@ -71,6 +73,7 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
         overworld, overworld, 20260915);
     const stratum::settings::NoiseGeometry& geometry = dimension->geometry();
 
+    std::size_t fluidUpdates = 0;
     for (const auto& [chunkX, chunkZ] :
          std::array<std::pair<std::int32_t, std::int32_t>, 2>{{{0, 0}, {-3, 2}}}) {
         CAPTURE(chunkX, chunkZ);
@@ -82,11 +85,11 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
                                                     static_cast<std::size_t>(geometry.height / 4));
         dimension->fillBiomes(chunkX, chunkZ, biomes);
 
-        REQUIRE(encoded.size() == 24U);
+        REQUIRE(encoded.subChunks.size() == 24U);
         std::size_t emptySections = 0;
         std::size_t packedSections = 0;
-        for (std::size_t section = 0; section < encoded.size(); ++section) {
-            const auto& sub = encoded[section];
+        for (std::size_t section = 0; section < encoded.subChunks.size(); ++section) {
+            const auto& sub = encoded.subChunks[section];
             CAPTURE(sub.index);
             CHECK(sub.index == stratum::pmmp::kMinSubChunk + static_cast<std::int32_t>(section));
             const std::int32_t sectionMinY = sub.index * 16;
@@ -134,5 +137,17 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
         // needed real packing.
         CHECK(emptySections > 0U);
         CHECK(packedSections > 0U);
+
+        // The fluid updates are the filler's own, in its order, and each one
+        // is on a fluid the chunk holds.
+        CHECK(encoded.fluidUpdates == blocks.fluidUpdates());
+        for (const auto& update : encoded.fluidUpdates) {
+            const std::string block =
+                blocks.at(update.localX, update.y, update.localZ).name.toString();
+            CHECK((block == "minecraft:water" || block == "minecraft:lava"));
+        }
+        fluidUpdates += encoded.fluidUpdates.size();
     }
+    // Not vacuous either: chunk (-3, 2) holds aquifer fluid that ticks.
+    CHECK(fluidUpdates > 0U);
 }

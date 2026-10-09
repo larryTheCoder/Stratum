@@ -76,8 +76,8 @@ PalettedLayer encodeLayer(const std::span<const std::uint32_t, kSubChunkVolume> 
     return layer;
 }
 
-std::vector<EncodedSubChunk> encodeChunk(const world::CompiledDimension& dimension,
-                                         const std::int32_t chunkX, const std::int32_t chunkZ) {
+EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::int32_t chunkX,
+                         const std::int32_t chunkZ) {
     const settings::NoiseGeometry& geometry = dimension.geometry();
     if (javamath::floorMod(geometry.minY, kSubChunkEdge) != 0 ||
         javamath::floorMod(geometry.height, kSubChunkEdge) != 0 ||
@@ -121,8 +121,8 @@ std::vector<EncodedSubChunk> encodeChunk(const world::CompiledDimension& dimensi
 
     const std::int32_t firstIndex = javamath::floorDiv(geometry.minY, kSubChunkEdge);
     const std::int32_t sections = geometry.height / kSubChunkEdge;
-    std::vector<EncodedSubChunk> encoded;
-    encoded.reserve(static_cast<std::size_t>(sections));
+    EncodedChunk encoded;
+    encoded.subChunks.reserve(static_cast<std::size_t>(sections));
     std::array<std::uint32_t, kSubChunkVolume> blocks{};
     std::array<std::uint32_t, kSubChunkVolume> biomes{};
     for (std::int32_t section = 0; section < sections; ++section) {
@@ -152,8 +152,9 @@ std::vector<EncodedSubChunk> encodeChunk(const world::CompiledDimension& dimensi
             sub.blocks = encodeLayer(blocks);
         }
         sub.biomes = encodeLayer(biomes);
-        encoded.push_back(std::move(sub));
+        encoded.subChunks.push_back(std::move(sub));
     }
+    encoded.fluidUpdates = buffer.fluidUpdates();
     return encoded;
 }
 

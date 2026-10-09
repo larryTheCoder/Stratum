@@ -150,6 +150,15 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   through `Stratum\bedrockBlockState()` and PMMP's own deserializer (§9),
   then builds the `SubChunk`s — never anything Bedrock-protocol-specific,
   and no per-block PHP.
+- Fluid updates: `encodeChunk` also leaves the chunk's aquifer fluid updates
+  (spec Q8.1 — what a Java server keeps in `PostProcessing` and ticks) in the
+  extension, filed under the world's generator options and seed. The main
+  thread takes them with `Stratum\takeFluidUpdates($blobPath,
+  $noiseSettings, $biomeParameterList, $seed, $cx, $cz)`, as world
+  `[x, y, z]` positions, once; it opens and compiles nothing. The plugin
+  does so when PocketMine-MP reports the chunk populated and schedules a
+  block update at each liquid after its own tick rate. One lock per chunk,
+  after generation, never during it (§4.2).
 - Every failure is a `Stratum\GenerationException` naming what failed.
 - Optional main-thread post-population hooks for plugins (decoration in PHP,
   outside the parity contract).
@@ -2726,9 +2735,11 @@ Open:
   are 494 flowing water and 169 flowing lava where the first pass has air,
   150 water sources the infinite-source rule rebuilt out of that flow, 54
   obsidian where water reached the lava sea's top row, and 4 water beside
-  that obsidian — and nothing else, on any seed. Stratum generates no fluid
-  ticks (spec Q8's post-processing flag is unimplemented), so a first pass
-  that is right leaves exactly this. It closes the **192-block "fluid
+  that obsidian — and nothing else, on any seed. Stratum's first pass never
+  flows anything: it computes spec Q8's post-processing flag (the Q8 entry
+  below) and the region encoder writes it into `PostProcessing` for a server
+  to tick, but nothing in the engine runs a fluid tick, so a first pass that
+  is right leaves exactly this. It closes the **192-block "fluid
   extent" residual** of the aquifer-on probe's 64-chunk sweep outright:
   re-read the same way, all 192 are flowing water (`level` 1+), not one a
   source. Not an aquifer question at all.
@@ -2945,7 +2956,40 @@ Open:
   Held by `vanilla_aquifer_fluid_update_test.cpp` (all three oracles,
   exact, with the ticked-chunk premise asserted) and by unit cases for
   each exit of `fluidUpdateFlag`, built from distances and statuses
-  directly. The PHP binding does not carry the positions yet; that is M5's.
+  directly.
+
+  *Written where the server keeps it, in the server's order.* `chunk::encode`
+  writes `ChunkData::postProcessing` as the server writes its own lists: one
+  per section, list i for section `yPos + i`, entries packed as above, an
+  empty list typed End and a non-empty one Short, no position twice; and
+  `Chunk::decode` reads them back (`Chunk::postProcessing()`). A mark it
+  cannot place — outside the chunk or its sections, repeated, or with
+  sections that do not run up from `yPos` — is refused by name. The order
+  within a list is the server's too, and it is not the filler's: the
+  server's lists hold a section's marks in its own fill order — cell column
+  by cell column with x the outer index, each column from the top down, x
+  then z within a layer of a cell — where the filler walks z-major and
+  bottom-up to keep its corner cache warm. `fill()` now sorts its marks into
+  that order (`ChunkBuffer::orderFluidUpdatesByCells`), a pure function of
+  the positions and so exact. Read off every probe region on disk: 757
+  files, 77 046 un-ticked lists holding two or more marks (17 805 977 marks
+  between them), every one in that order at cell width 4; cells eight wide
+  order 5 510 of them. Through the filler on the aquifer-on probe, the
+  encoded lists equal the server's — element type, and every entry in
+  order — on all 576 lists of its 24 marked chunks (1964 marks), and
+  `tools/analysis/generate-world.cpp`, ore veins on, writes chunks
+  (9..11, 0) with lists identical to the server's. Every probe dimension that marks anything has cells four wide;
+  other widths follow the same reading, unmeasured — they arise only in a
+  datapack that sets `size_horizontal` with aquifers on, and the order moves
+  only the server's tick order, never a block or a mark. Held by the
+  conformance case "the chunk encoder writes the server's own PostProcessing
+  lists" and unit cases for the packing, the round trip, every refusal and
+  the order. Block output is unchanged.
+
+  *Carried to PocketMine-MP* (M5; §4.3, and the M5 entry "aquifer fluid
+  updates reach PocketMine-MP" below): `encodeChunk` leaves them in the
+  extension, the plugin takes them on the main thread when the chunk is
+  populated and schedules a block update at each liquid.
 
   `ChunkFiller::fill` clears the buffer it is given (`ChunkBuffer::clear`)
   before writing. It always rewrote every block, but it only appended to the
@@ -9007,6 +9051,70 @@ Open:
   generators; the density evaluation and the per-quart biome search dominate
   it, not the packing. M5's performance pass now has a number to work
   against.
+
+- **M5: aquifer fluid updates reach PocketMine-MP — carried across threads
+  by the extension, scheduled when the chunk is populated.** A Java server
+  ticks the fluid at every position of a generated chunk's `PostProcessing`
+  lists once the chunk loads, and that is what makes aquifer water and lava
+  flow (the Q8 entry above has the flag, measured exact, and the lists the
+  region encoder now writes). Read from PocketMine-MP 5.44.4 (`stable` @
+  `6a7cc02`) for how a world gets the same:
+
+  *Where a block update can be scheduled.* Only on the main thread:
+  `World::scheduleDelayedBlockUpdate(Vector3, int $delay)` queues it by
+  tick, and the tick drops one whose chunk is not loaded by then
+  (`World.php:956-965`). A liquid asks for exactly this itself when a
+  neighbour changes — `Liquid::onNearbyBlockChange()` schedules its own
+  position after `tickRate()`, 5 for water and 30 for lava. A generator
+  cannot: it runs on a worker with a `SimpleChunkManager`, and what crosses
+  back is `FastChunkSerializer::serializeTerrain()` — sub-chunks and the
+  populated flag, nothing else. No list rides along with a chunk, and none
+  is saved: PocketMine-MP keeps no scheduled updates on disk.
+
+  *The hand-over.* The one thing every thread of the process shares is the
+  extension. A worker's `encodeChunk` leaves the chunk's positions in a
+  per-world outbox (`ext/include/stratum_pmmp/fluid_updates.hpp`), replacing
+  any an earlier encoding of the chunk left — PocketMine-MP regenerates a
+  chunk whose population it discarded, and the second set must not double
+  the first. The main thread takes them with `Stratum\takeFluidUpdates`,
+  once, by the world's generator options and seed: the strings every
+  generator of that world is constructed from, so no handle is needed and
+  nothing is compiled to ask. Not by the blob's content hash, which the
+  compiled dimension is shared under: two worlds frozen from one pack with
+  one seed share a dimension, but `WorldFactory` gives each its own blob
+  path, so each has its own outbox. An outbox lives as long as a Dimension
+  holds it, so it goes when PocketMine-MP drops the world's generators.
+
+  *When.* `ChunkPopulateEvent`, not the chunk's first load.
+  `World::generateChunkCallback()` sets the centre chunk and the neighbours
+  the task generated, and only then fires it for the centre
+  (`World.php:3561-3581`); a populated chunk's eight neighbours all exist.
+  A liquid flowing out of it therefore never reaches ungenerated terrain,
+  where `getBlockAt()` answers air and `setBlockAt()` throws
+  (`World.php:1977-1983`, `2039-2041`) — which scheduling at a fresh
+  neighbour's load could reach. The plugin's `FluidUpdateScheduler` takes
+  the populated chunk's positions and schedules each that still holds a
+  `Liquid`, after its `tickRate()`; a block a plugin has since replaced is
+  left alone. A world another generator owns is not touched, and a Stratum
+  world whose options no longer parse is logged once by name rather than
+  crashing the tick.
+
+  *What does not carry over, by construction.* The outbox is memory: a
+  chunk generated as a neighbour in one server run and first populated in a
+  later one is populated without its updates, and its aquifer fluid stays
+  as generated until something beside it changes. A flow the server stops
+  in the middle of stops there, as any PocketMine-MP liquid's does. Neither
+  is measured; both follow from the source above.
+
+  *Verified here, and not.* The C++ hand-over is unit-tested, four workers
+  against a taking main thread included; the zend function and the
+  scheduler are PHPT-tested against the real extension built on PHP 8.2.30
+  ZTS (`ext/zend/tests/004_fluid_updates.phpt`,
+  `ext/plugin/tests/002_fluid_update_scheduler.phpt`), the scheduler
+  against stand-ins for the PocketMine-MP classes it calls, written to the
+  signatures above. It has not run inside PocketMine-MP — the plugin as a
+  whole never has (the entry above) — so whether the scheduled ticks make
+  the flow a Java server would make is unobserved.
 
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**

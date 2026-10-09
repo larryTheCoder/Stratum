@@ -27,6 +27,16 @@ PocketMine-MP itself can call.
   `{"blob":"…/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}`.
   A generator receives nothing else — not the server, not the plugin, not a
   config — so the path to the frozen pipeline travels in here.
+- `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
+  ticks every position in a generated chunk's `PostProcessing` lists once
+  the chunk loads; PocketMine-MP has no such list, so when it fires
+  `ChunkPopulateEvent` for a Stratum world this takes the chunk's positions
+  from the engine (`Stratum\takeFluidUpdates`) and schedules a block update
+  at each that still holds a liquid, after the liquid's own tick rate —
+  what `Liquid::onNearbyBlockChange()` does itself. Population rather than
+  first load, because a populated chunk's neighbours all exist and the flow
+  cannot reach ungenerated terrain. Registered in `onEnable()`, which at
+  `load: STARTUP` is still before any world loads.
 - `WorldFactory::create()` freezes the pipeline into the new world's own
   folder and then creates the world from it, in that order: creating the
   world immediately registers the generator on a worker, which opens the
@@ -61,10 +71,18 @@ build. So:
 - CI checks that every file parses (`php -l`) and runs
   `tests/001_generator_options.phpt`, which exercises the one class that is
   pure PHP against a faithful stand-in for the single PocketMine-MP class it
-  touches.
-- The rest — registration, chunk assembly, block translation — needs a real
+  touches, and `tests/002_fluid_update_scheduler.phpt`, which drives
+  `FluidUpdateScheduler` with the real extension against stand-ins for the
+  PocketMine-MP classes it calls.
+- The rest — registration, chunk assembly, block translation, and whether
+  the scheduled fluid updates flow as a Java server's do — needs a real
   PocketMine-MP server to verify, and that is the next real step for this
   binding (PROGRESS.md).
+- Fluid updates live in memory between a chunk's generation and its
+  population: a chunk generated as a neighbour in one server run and first
+  populated in a later one gets none, and its aquifer fluid stays as
+  generated until something beside it changes. PocketMine-MP saves no
+  scheduled updates either, so a flow the server stops mid-way stops there.
 
 ## Traps this code is written around
 

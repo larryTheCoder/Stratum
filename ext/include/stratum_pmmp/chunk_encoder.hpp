@@ -74,6 +74,20 @@ struct EncodedSubChunk {
     PalettedLayer biomes;
 };
 
+/// One chunk, as PocketMine-MP takes it.
+struct EncodedChunk {
+    /// Every sub-chunk the dimension's height covers, bottom to top.
+    std::vector<EncodedSubChunk> subChunks;
+    /// The aquifer's fluid updates (spec Q8.1): the positions a Java server
+    /// keeps in the chunk's `PostProcessing` lists and ticks once the chunk
+    /// loads, which is what makes aquifer water and lava flow. Chunk-local x
+    /// and z, world y, in the server's own order
+    /// (`terrain::ChunkBuffer::fluidUpdates()`). PocketMine-MP has no such
+    /// list, so the plugin schedules a block update at each instead
+    /// (fluid_updates.hpp says how they reach it).
+    std::vector<terrain::ChunkBuffer::FluidUpdate> fluidUpdates;
+};
+
 /// `(x << 8) | (z << 4) | y` within a sub-chunk.
 [[nodiscard]] constexpr std::size_t subChunkIndex(int x, int y, int z) noexcept {
     return (static_cast<std::size_t>(x) << 8U) | (static_cast<std::size_t>(z) << 4U) |
@@ -89,10 +103,11 @@ struct EncodedSubChunk {
 [[nodiscard]] PalettedLayer encodeLayer(std::span<const std::uint32_t, kSubChunkVolume> values);
 
 /// Chunk (@p chunkX, @p chunkZ) of @p dimension, as every PocketMine-MP
-/// sub-chunk the dimension's height covers, bottom to top. Throws
-/// EncodeError for a dimension that does not fit PocketMine-MP's chunk, and
-/// lets `mapping::BlockMappingError` through, naming the block.
-[[nodiscard]] std::vector<EncodedSubChunk> encodeChunk(const world::CompiledDimension& dimension,
-                                                       std::int32_t chunkX, std::int32_t chunkZ);
+/// sub-chunk the dimension's height covers, bottom to top, plus its fluid
+/// updates. Throws EncodeError for a dimension that does not fit
+/// PocketMine-MP's chunk, and lets `mapping::BlockMappingError` through,
+/// naming the block.
+[[nodiscard]] EncodedChunk encodeChunk(const world::CompiledDimension& dimension,
+                                       std::int32_t chunkX, std::int32_t chunkZ);
 
 } // namespace stratum::pmmp

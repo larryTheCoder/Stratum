@@ -17,7 +17,7 @@ Last swept: 2026-10-09 (MA, pipeline engines v10 and v11: cache markers in a dat
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's two unobservable conjuncts carried on the spec's word, and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -446,9 +446,23 @@ Open:
       the deep-floor probe, where three distinct levels meet at density
       -0.3, rank 2-3 ties decide 27 blocks on three seeds and rank 3-4 1131,
       the server's stone the later-wins verdict on all of them. SPEC §11.
-- [ ] **Fluid updates to PocketMine.** The positions are computed; the PHP
-      binding does not carry them yet, so PMMP never ticks the fluid that
-      vanilla would (M5).
+- [x] **Q8's fluid updates written out — into the region encoder's
+      `PostProcessing`, and to PocketMine-MP.** `chunk::encode` writes
+      them as the server writes its own lists (one per section from `yPos`,
+      `x | y << 4 | z << 8` shorts, empty lists typed End) and
+      `Chunk::decode` reads them back; `fill()` now leaves them in the
+      server's own order, cell column by cell column top-down, which is not
+      the order its loop visits — read off all 757 probe region files on
+      disk, 77 046 un-ticked lists (17 805 977 marks), every one in that
+      order at cell width 4. Through the filler the encoded lists equal the
+      server's on all 576 lists of the aquifer-on probe's 24 marked chunks,
+      order included (the case takes 17 s in a Debug build), and `generate-world` writes
+      them for every chunk. Other cell widths are the same reading,
+      unmeasured: no probe dimension that marks anything has them. For
+      PocketMine-MP, `encodeChunk` leaves them in the extension and the
+      plugin's `FluidUpdateScheduler` schedules a block update at each
+      liquid when the chunk is populated (M5 below). Block output
+      unchanged. SPEC §11 (the Q8 entry, and M5's fluid-update entry).
 
 - [x] **Q6.3's water-over-lava exception — closed, and smaller than it
       read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,
@@ -1725,12 +1739,29 @@ Java side has never been compiled.
          independently re-verified (SPEC §11); **never run** — PocketMine-MP
          cannot be installed here. CI checks every file parses and runs the
          options test.
+- [x] **Aquifer fluid updates reach PocketMine-MP — written, never run in
+      it.** A Java server ticks a generated chunk's `PostProcessing`
+      positions once it loads; PocketMine-MP has no such list, and a
+      generator's worker can return nothing but terrain
+      (`FastChunkSerializer::serializeTerrain`). So `encodeChunk` leaves the
+      positions in a per-world outbox inside the extension, and the main
+      thread takes them with `Stratum\takeFluidUpdates` (by the world's
+      options and seed, once) when PocketMine-MP fires `ChunkPopulateEvent`
+      — a populated chunk's neighbours all exist, so the flow never reaches
+      ungenerated terrain, where `setBlockAt()` throws. The plugin's
+      `FluidUpdateScheduler` schedules each liquid after its own
+      `tickRate()`, as `Liquid::onNearbyBlockChange()` does. Unit-tested
+      (threads included) and PHPT-tested on PHP 8.2.30 ZTS against the real
+      extension, the scheduler against stand-ins for PocketMine-MP's
+      classes. Not carried, by construction: a chunk generated as a
+      neighbour in one server run and populated in a later one, and a flow
+      the server stops mid-way. SPEC §4.3, §11.
 - [ ] **Run the plugin against a real PocketMine-MP server.** The one thing
-      no check here can stand in for: registration, chunk assembly and block
-      translation have never executed. Needs a PMMP install (its PHP build
-      needs pmmpthread, leveldb, igbinary, morton and more, which
-      `tools/php-dev` does not build) — the same shape of gap
-      `ext-nukkit/`'s Java side has.
+      no check here can stand in for: registration, chunk assembly, block
+      translation and fluid-update scheduling have never executed. Needs a
+      PMMP install (its PHP build needs pmmpthread, leveldb, igbinary,
+      morton and more, which `tools/php-dev` does not build) — the same
+      shape of gap `ext-nukkit/`'s Java side has.
 - [ ] **Generation speed.** Measured at **237 ms/chunk** for the overworld
       in an optimised build on this box (freeze 0.06 s, compiling a
       dimension 0.01 s, peak 2 MB). Fine for background generation, slow

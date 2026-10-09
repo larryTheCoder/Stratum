@@ -26,6 +26,21 @@ function bedrockBlockState(int $javaStateId) : array{}
 
 function javaBlockStateCount() : int{}
 
+/**
+ * Removes and returns the fluid updates Dimension::encodeChunk() left for
+ * chunk ($chunkX, $chunkZ) of the world whose generator was opened with
+ * these options and this seed, as world [x, y, z] positions. These are the
+ * positions a Java server keeps in the chunk's PostProcessing lists and ticks
+ * once the chunk loads (spec Q8.1), which is what makes aquifer water and
+ * lava flow; PocketMine-MP has no such list, so the caller schedules a block
+ * update at each. Built for the main thread: it opens and compiles nothing,
+ * and returns [] when no Dimension is open for that world or nothing is held
+ * for the chunk. Each chunk's updates are returned once.
+ *
+ * @return list<array{int, int, int}>
+ */
+function takeFluidUpdates(string $blobPath, string $noiseSettings, string $biomeParameterList, int $seed, int $chunkX, int $chunkZ) : array{}
+
 final class Dimension{
 	private function __construct(){}
 
@@ -43,6 +58,8 @@ final class Dimension{
 	 * Every sub-chunk of the chunk, keyed by PocketMine-MP sub-chunk index.
 	 * Each layer is PalettedBlockArray::fromData()'s argument list. Block
 	 * palettes hold Java block state ids; biome palettes hold Bedrock ids.
+	 * The chunk's fluid updates are left for takeFluidUpdates(), replacing
+	 * any an earlier encoding of the same chunk left.
 	 *
 	 * @return array<int, array{blocks: array{int, string, list<int>}|null, biomes: array{int, string, list<int>}}>
 	 */

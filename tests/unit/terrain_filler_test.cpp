@@ -747,6 +747,47 @@ TEST_CASE("a buffer refuses positions outside the chunk or the dimension", "[ter
     CHECK_THROWS_WITH(buffer.at(0, 32, 0), ContainsSubstring("outside this dimension"));
 }
 
+TEST_CASE("fluid updates are put in the server's fill order, cell column by cell column",
+          "[terrain][filler]") {
+    // Known answer for the order the server's PostProcessing lists hold
+    // (SPEC §11's Q8 entry): cell columns x-major, each from the top down,
+    // x then z within one layer of a cell — so (0,5,3) before (1,5,0), y 5
+    // before y -3 in one column, and every mark of column (0, 0) before any
+    // of column (0, 1), whatever their heights.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    using Update = ChunkBuffer::FluidUpdate;
+    // Through a cast: MSVC warns (C4242, an error here) on brace-initialising
+    // the uint8_t members from an int.
+    const auto at = [](int x, std::int32_t y, int z) {
+        return Update{
+            .localX = static_cast<std::uint8_t>(x), .y = y, .localZ = static_cast<std::uint8_t>(z)};
+    };
+    const std::vector<Update> marked = {
+        at(1, 5, 0), at(0, -3, 0),    at(2, 30, 4), at(0, 5, 3),
+        at(4, 7, 0), at(15, -16, 15), at(3, 5, 2),
+    };
+    for (const Update& update : marked) {
+        buffer.markFluidUpdate(update.localX, update.y, update.localZ);
+    }
+
+    buffer.orderFluidUpdatesByCells(4);
+    CHECK(buffer.fluidUpdates() == std::vector<Update>{at(0, 5, 3), at(1, 5, 0), at(3, 5, 2),
+                                                       at(0, -3, 0), at(2, 30, 4), at(4, 7, 0),
+                                                       at(15, -16, 15)});
+
+    // Eight wide, x 4 joins column (0, 0) and z 4 does too.
+    buffer.orderFluidUpdatesByCells(8);
+    CHECK(buffer.fluidUpdates() == std::vector<Update>{at(2, 30, 4), at(4, 7, 0), at(0, 5, 3),
+                                                       at(1, 5, 0), at(3, 5, 2), at(0, -3, 0),
+                                                       at(15, -16, 15)});
+
+    CHECK_THROWS_WITH(buffer.orderFluidUpdatesByCells(0), ContainsSubstring("0 blocks wide"));
+}
+
 TEST_CASE("the corner cache changes speed and not values", "[terrain][filler]") {
     // The load-bearing claim of the whole filler. `interpolated` is defined
     // over a cell, so a filler that walks a cell can compute its eight corners
