@@ -111,11 +111,15 @@
 //   block    (300)  complete Perlin blocks drawn and discarded first
 //
 // 5 x 10 x 3 x 3 x 2 = 900 seed rules x 300 block offsets = 270,000
-// candidates. The rule index is the SAME index legacy-seed-analyze prints, so
-// `--candidate 182 0` names deepslate's own derivation in both tools; the
-// agreement between the two enumerations is asserted by
-// tests/conformance/vanilla_legacy_goldens_biome_test.cpp rather than left to
-// the two headers agreeing in prose.
+// candidates. The rule index is the index legacy-seed-analyze printed before
+// its widening re-indexed its rules, so `--candidate 182 0` here is its
+// `--candidate 290 0` — the one anonymous candidate every legacy scorer also
+// scores by name (lcgLong xor md5FirstBE, forks 1, lcg; once labelled
+// deepslate's derivation, which observing deepslate refutes —
+// tests/unit/deepslate_legacy_noise_oracle_test.cpp). That the two
+// enumerations name the same rule is asserted by
+// conformance.legacy_goldens_biome_control (run-legacy-goldens-biome-control.cmake)
+// rather than left to the two headers agreeing in prose.
 //
 // WHAT THE SCAN DOES NOT COVER, stated here and not left to be assumed. It
 // inherits every gap of the space it borrows: ONE stack rule (sequential

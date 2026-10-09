@@ -125,11 +125,15 @@ jobs:
           diff -u tests/unit/nether_climate_vectors.inc "${RUNNER_TEMP}/nether_climate_vectors.inc"
 
           # And the deepslate oracle, run as a black box at a pinned version:
-          # old_blended_noise, and the aquifer's random source.
+          # old_blended_noise, the aquifer's random source, and its named
+          # noise under legacy_random_source.
           tools/vectors/generate-deepslate-vectors.sh "${RUNNER_TEMP}/deepslate_vectors.inc" \
-              "${RUNNER_TEMP}/deepslate_aquifer_vectors.inc"
+              "${RUNNER_TEMP}/deepslate_aquifer_vectors.inc" \
+              "${RUNNER_TEMP}/deepslate_legacy_noise_vectors.inc"
           diff -u tests/unit/deepslate_vectors.inc "${RUNNER_TEMP}/deepslate_vectors.inc"
           diff -u tests/unit/deepslate_aquifer_vectors.inc "${RUNNER_TEMP}/deepslate_aquifer_vectors.inc"
+          diff -u tests/unit/deepslate_legacy_noise_vectors.inc \
+              "${RUNNER_TEMP}/deepslate_legacy_noise_vectors.inc"
 
       - name: Generated schema is reproducible
         # The density function, noise settings and surface rule schemas are

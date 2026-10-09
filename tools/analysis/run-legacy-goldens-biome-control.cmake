@@ -23,10 +23,12 @@
 #              entirely different code is the sanity check that says the chain
 #              is reading the Nether and not something else.
 #
-# --candidate 182 0 is here for a fourth reason: rule 182 is deepslate's own
-# derivation, and BOTH analyzers have to agree on what rule index 182 means, or
-# a claim carried from one file to the other is about different things. The
-# string checked below is the one legacy-seed-analyze.cpp's header names.
+# --candidate 182 0 is here for a fourth reason: rule 182 is the one candidate
+# every legacy scorer also scores by name (legacy-seed-analyze.cpp's rule 290
+# since its widening), and the analyzers have to agree on what that index
+# means, or a claim carried from one file to the other is about different
+# things. The string checked below is the derivation legacy-seed-analyze.cpp's
+# header names.
 #
 # The full --scan is deliberately NOT run: 270,000 candidates is minutes of
 # compute, and its result is recorded in SPEC §11 with the command that
@@ -141,10 +143,11 @@ if(NOT STATUS EQUAL 0)
 endif()
 if(NOT CANDIDATE_OUT MATCHES "lcgLong xor md5FirstBE, forks 1, lcg")
     message(FATAL_ERROR
-        "rule index 182 no longer names deepslate's own derivation, which "
-        "tools/analysis/legacy-seed-analyze.cpp's header says it is. The two "
-        "analyzers' candidate enumerations have drifted apart and no rule "
-        "index carried between them means anything:\n${CANDIDATE_OUT}")
+        "rule index 182 no longer names lcgLong xor md5FirstBE, forks 1, lcg — "
+        "the by-name candidate tools/analysis/legacy-seed-analyze.cpp's header "
+        "describes (its rule 290). The analyzers' candidate enumerations have "
+        "drifted apart and no rule index carried between them means "
+        "anything:\n${CANDIDATE_OUT}")
 endif()
 
 # The two arms added after a review found the header describing a `--split`
