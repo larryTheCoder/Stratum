@@ -11,7 +11,9 @@
 // fitted quantity anywhere in it. It runs in CI: the comb worlds are a unit
 // of tools/probe-worlds (shard `aquifer`). What it cannot see is the x
 // term's 32-bit product, which parts from a 64-bit one only past cell 686;
-// vanilla_above_preliminary_surface_test.cpp pins that at block level.
+// vanilla_aquifer_farcell_test.cpp reads this same readout on cells past
+// it, on both signs, and vanilla_above_preliminary_surface_test.cpp pins
+// the product at block level.
 //
 // In the open-void probe a cell at layer -4 spans y -48..-37 and takes the
 // -20 fluid level rather than the lava floor exactly when its centre clears

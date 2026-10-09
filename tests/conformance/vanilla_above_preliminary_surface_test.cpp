@@ -56,8 +56,9 @@
 // AND ONE THING THAT IS NOT ABOUT THE CONDITION AT ALL: the depth's jitter is
 // vanilla's per-position mix, and of every corpus read through a per-position
 // draw, only the clamp probe's columns lie far enough out (|x| > 686) to show
-// that its x term is a 32-bit product. The case after the clamp case scores
-// that, beside the alternatives.
+// that its x term is a 32-bit product at block coordinates. The case after
+// the clamp case scores that, beside the alternatives; the aquifer's own
+// cells past 686 are vanilla_aquifer_farcell_test.cpp's.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
 #include "support/fluid_flow.hpp"
@@ -1290,7 +1291,9 @@ TEST_CASE("the position mix multiplies x in 32 bits and z in 64 where only far c
     // about 11000 blocks out for a cell index. So "the x term is a 32-bit
     // product" held only on this build's own word, and deepslate cannot speak
     // for it either: its PositionalRandom.at reduces nothing
-    // (tools/analysis/deepslate-aquifer-trust.sh).
+    // (tools/analysis/deepslate-aquifer-trust.sh). The aquifer's cells past
+    // 686 have since been read on corpora of their own
+    // (vanilla_aquifer_farcell_test.cpp); this is the block-level reading.
     //
     // `aps-clamp-probe.sh`'s worlds sit at x 2176..6911 and z 1776..13823,
     // and every column there is a reading of the surface depth: the marker

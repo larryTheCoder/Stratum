@@ -1315,7 +1315,9 @@ Open:
   server itself checks it, on corpora CI generates (§7): the aquifer's
   jitter readout and block-level cases on cells near the origin, and — for
   the x term's 32-bit product, which only |x| > 686 can show — the surface
-  depth's jitter on 180224 columns at x 2176..6911. deepslate checks the
+  depth's jitter on 180224 columns at x 2176..6911 and the aquifer's own
+  centres at cells 704..711 and -712..-705 on both axes, under both random
+  sources (`aquifer-farcell-probe.sh`, below). deepslate checks the
   base and the y term on 72 vectors (9 seeds, 8 cells), on the y axis only:
   its own mix does not wrap, so off that axis it is not vanilla's.
 
@@ -4823,10 +4825,11 @@ Open:
   |z| = 18, which block-level readings reach (`vertical_gradient`'s probe
   to z 127, the goldens to 511). The x term's 32-bit product,
   `(int)(cx * 3129871)`, parts from a 64-bit one only past |x| = 686: about
-  11000 blocks out for a cell index, 686 for a block. No aquifer corpus, no
-  `vertical_gradient` probe (x, z < 128) and no golden region (all r.0.0)
-  gets there, and deepslate reduces nothing, so until this was audited the
-  32-bit x product held on this build's own word.
+  11000 blocks out for a cell index, 686 for a block. No aquifer corpus then
+  (the far-cell worlds below came later), no `vertical_gradient` probe
+  (x, z < 128) and no golden region (all r.0.0) gets there, and deepslate
+  reduces nothing, so until this was audited the 32-bit x product held on
+  this build's own word.
 
   **The 32-bit x product, confirmed at block level.** The surface depth's
   jitter is the same mix, unsalted, at (x, 0, z), and `aps-clamp-probe.sh`'s
@@ -4842,8 +4845,49 @@ Open:
   at x, z in -256..-1, recovers the server's psl through the same depth on
   all 65536 columns (`the lattice cell is found with floorDiv, measured
   below zero`, re-run on this tree). That the aquifer's own mix behaves the
-  same past cell 686 is an inference from `rng::positionSeed` serving both,
-  not a measurement: no corpus has a cell index that large.
+  same past cell 686 was, when this landed, an inference from
+  `rng::positionSeed` serving both, not a measurement: no corpus had a cell
+  index that large. Since measured (next paragraph).
+
+  **The aquifer's own mix past cell 686, measured.**
+  `tools/analysis/aquifer-farcell-probe.sh` (unit `farcell_s42`, shard
+  `end`: two server starts of two water dimensions, about a minute each
+  locally) puts the legacy aquifer probe's two all-constant arms — `mj` on
+  Xoroshiro128++, `lj` on java.util.Random — at origin chunks (704, 704)
+  and (-712, -712), seed 42: cells 704..711 and -712..-705 on both axes,
+  every one past both parting points (|x| 686, |z| 18), and only the 8x8
+  chunks the readouts need forceloaded. `vanilla_aquifer_farcell_test.cpp`
+  reads them three ways:
+
+  * the comb's one-bit readout (fluid at y -42 in a layer -4 cell's
+    territory). The shipped mix places 128 of 128 cells on `mj` (23
+    positive, observed and predicted) and 127 of 127 on `lj` (16; one cell
+    of its (704, 704) window falls short of the 120-column floor). Each rival,
+    scored with its own centres for the territories as well as the draw:
+    x in 64 bits wrong on 39 of 128 (`mj`) and 23 of 128 (`lj`), z in
+    32 bits on 29 and 25, a logical shift on 21 of 128 (`mj`).
+  * model only, how many of a window's 64 cells a rival draws differently.
+    Both products part 64 of 64 on both arms and windows but two: `lj`'s
+    (706, 705) and (711, 710) under x in 64 bits, three equal draws from
+    different stream seeds, about one cell in 900. The logical shift parts
+    31 and 24 of 64 under Xoroshiro and NONE under the legacy source:
+    java.util.Random keeps 48 bits of its seed and `>>` and `>>>` differ
+    only in the top 16, so under `legacy_random_source` the shift is
+    invisible by construction. At the comb's cells 0..7 neither product
+    rival parts a single cell — which is why no corpus at the origin could
+    have told.
+  * block for block. `computeSubstance` with each arm's own centres agrees
+    on 98304 of 98304 blocks per arm and window (every eighth column, the
+    whole column; no block set apart as flow in this generation, and flow
+    is bounded, not pinned), and with the other source's centres leaves
+    5428-5652 unexplained (1329-1355 in the lava band). The shipped filler
+    end to end — `ChunkFiller::compile` from the corpus's spec, 2x2 chunks
+    per arm and window, chunk -709 among them — is wrong on 0 of 1572864
+    blocks (1 set apart as flow).
+
+  The build was right; nothing in the library changed. Debug-build runtimes
+  of the three cases, measured locally: 1.2-1.3 s, 6.5-6.8 s and
+  5.8-6.0 s.
 
   *The audit, for the record.* Of what this repository takes from
   deepslate's output, only those 72 vectors involve `PositionalRandom.at`,

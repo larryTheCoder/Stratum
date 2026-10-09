@@ -62,10 +62,16 @@ enum class Category : std::uint8_t { Air, Water, Lava, Solid };
 
 /// One region file, read lazily a chunk at a time, so that a block's
 /// neighbours can be looked at across a chunk edge. Null outside it.
+/// Blocks are addressed in world coordinates whichever region it is.
 class GoldenRegion {
 public:
-    explicit GoldenRegion(const std::filesystem::path& path)
-        : file_(region::RegionFile::open(path)) {}
+    /// r.0.0, which is where every probe at the world origin lands.
+    explicit GoldenRegion(const std::filesystem::path& path) : GoldenRegion(path, 0, 0) {}
+
+    /// The region r.<regionX>.<regionZ>, for a probe forceloaded elsewhere.
+    GoldenRegion(const std::filesystem::path& path, std::int32_t regionX, std::int32_t regionZ)
+        : file_(region::RegionFile::open(path)), firstChunkX_(regionX * 32),
+          firstChunkZ_(regionZ * 32) {}
 
     [[nodiscard]] const chunk::Chunk& chunk(std::int32_t cx, std::int32_t cz) {
         const auto key = std::make_pair(cx, cz);
@@ -81,7 +87,8 @@ public:
     [[nodiscard]] const chunk::BlockState* blockAt(std::int32_t x, std::int32_t y, std::int32_t z) {
         const std::int32_t cx = javamath::floorDiv(x, 16);
         const std::int32_t cz = javamath::floorDiv(z, 16);
-        if (cx < 0 || cz < 0 || cx >= 32 || cz >= 32 || !file_.hasChunk(cx, cz)) {
+        if (cx < firstChunkX_ || cz < firstChunkZ_ || cx >= firstChunkX_ + 32 ||
+            cz >= firstChunkZ_ + 32 || !file_.hasChunk(cx, cz)) {
             return nullptr;
         }
         return chunk(cx, cz).blockAt(javamath::floorMod(x, 16), y, javamath::floorMod(z, 16));
@@ -93,6 +100,8 @@ public:
 
 private:
     region::RegionFile file_;
+    std::int32_t firstChunkX_;
+    std::int32_t firstChunkZ_;
     std::map<std::pair<std::int32_t, std::int32_t>, chunk::Chunk> chunks_;
 };
 
