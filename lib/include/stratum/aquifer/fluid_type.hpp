@@ -39,7 +39,8 @@
 // is water, the very next representable double above it is lava. Strict
 // `>`, confirmed to the ULP rather than assumed.
 //
-// THE LEVEL CEILING IS PINNED at -10 (same tool, group D). An earlier pass
+// THE LEVEL CEILING IS PINNED at -10 (same tool, group D, which is
+// `aquifer-fluidceiling-probe.sh` now). An earlier pass
 // had only bracketed it to {-10, -9}, because sweeping `fluid_level_spread`
 // steps the level in threes and skipped both candidates: it read -11 (LAVA,
 // 14150 cells), -10 (LAVA, 68 cells) and -8 (water, 14004 cells), and no
@@ -54,6 +55,11 @@
 //   arm P, the psl cap (`sea_level` -16, spread 6.0 so the cap binds
 //     everywhere): -12/-11/-10 LAVA, -9/-8/-7 water.
 //   arm P', the same at `sea_level` -70: -12/-10 LAVA, -9/-8 water.
+//
+// Replayed in CI since (`vanilla_aquifer_fluid_ceiling_test.cpp`, seed 42,
+// frozen): the build places every sampled block of the three arms the
+// server does, fluid that moved aside, and every dimension again reads its
+// level on 16384 of 16384 columns with 0 of the other fluid.
 //
 // So the ceiling is an ABSOLUTE constant, which is more than the item asked.
 // Three sea levels (63, -16, -70) and two level-producing branches put the
@@ -180,8 +186,10 @@ inline constexpr double kLavaThreshold = 0.3;
 /// -9 is water. Measured on three independent routes to the level (the sea
 /// branch, and the psl cap at two different sea levels) across three seeds,
 /// every dimension 16384 of 16384 columns with 0 of the other fluid
-/// (`aquifer-fluidtype-probe.sh --group d`). The same run shows the ceiling
-/// is ABSOLUTE, not sea- or lambda-relative — see this file's own header.
+/// (`aquifer-fluidceiling-probe.sh`, replayed by
+/// `vanilla_aquifer_fluid_ceiling_test.cpp`). The same worlds show the
+/// ceiling is ABSOLUTE, not sea- or lambda-relative — see this file's own
+/// header.
 inline constexpr std::int32_t kLavaLevelCeiling = -10;
 
 /// Which fluid a source holds. `Air` is not a case: this answers "given that

@@ -71,11 +71,13 @@ TEST_CASE("a source too high up never turns to lava", "[aquifer]") {
     CHECK(fluidTypeOf(deep(0.9, kLavaLevelCeiling + 1)) == FluidType::Default);
     CHECK(fluidTypeOf(deep(0.9, 63)) == FluidType::Default);
 
-    // The ceiling is PINNED at -10 (`aquifer-fluidtype-probe.sh --group d`).
+    // The ceiling is PINNED at -10 (`aquifer-fluidceiling-probe.sh`, once
+    // `aquifer-fluidtype-probe.sh --group d`; replayed against the server by
+    // vanilla_aquifer_fluid_ceiling_test.cpp).
     // The earlier pass could only bracket it to {-10, -9} — sweeping the
     // spread steps the level in threes and skipped both candidates — so
     // these assertions were satisfied by EITHER value and did not
-    // discriminate. Group D reached -9 by two routes the mod-3 ladder does
+    // discriminate. That probe reached -9 by two routes the mod-3 ladder does
     // not constrain (the sea branch, and the psl cap at two different sea
     // levels) and read water there on three seeds, 16384 of 16384 columns
     // per dimension with 0 lava; -10 read lava the same way.
