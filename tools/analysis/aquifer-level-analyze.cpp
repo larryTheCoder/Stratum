@@ -296,7 +296,7 @@ void printLowRows(const Tally& t) {
 void explainBlock(const std::string& corpus, const std::int64_t seed, const std::string& dimName,
                   const std::int32_t x, const std::int32_t y, const std::int32_t z) {
     const std::filesystem::path dir = probes() / corpus;
-    const aquifer::CentreSource centres{seed};
+    const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
     for (const NamedDim& named : readSpec(dir)) {
         if (named.name != dimName) {
             continue;
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
         Tally total;
         for (const std::int64_t seed : seeds) {
             const std::filesystem::path dir = probes() / ("levelice_s" + std::to_string(seed));
-            const aquifer::CentreSource centres{seed};
+            const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
             Tally seedTotal;
             for (const NamedDim& named : readSpec(dir)) {
                 if (only.has_value() && named.name != *only) {

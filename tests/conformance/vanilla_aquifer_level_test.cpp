@@ -370,7 +370,7 @@ TEST_CASE("the level rule on a constant surface, every block of three seeds in p
     long long lowRowsAgree = 0;
     for (const std::int64_t seed : kIceSeeds) {
         const Corpus corpus = openCorpus(corpusName("levelice", seed), seed);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         INFO("seed " << seed);
 
         // The grid is whole: every surface -54, -51, ..., 141 once.
@@ -487,7 +487,7 @@ TEST_CASE("a source more than twenty above a land surface takes the sea, Q5.3(a)
     long long landArms = 0;
     for (const std::int64_t seed : kIceSeeds) {
         const Corpus corpus = openCorpus(corpusName("levelice", seed), seed);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         for (const Dim& dim : corpus.dims) {
             if (!dim.name.starts_with("l") && !dim.name.starts_with("m")) {
                 continue;
@@ -563,7 +563,7 @@ TEST_CASE("the bonus spelling at both exact crossings, against the world it woul
     constexpr std::int32_t kToRow = 50;
     for (const std::int64_t seed : kIceSeeds) {
         const Corpus corpus = openCorpus(corpusName("levelice", seed), seed);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         for (const auto& [exact, above] : {std::pair<const char*, const char*>{"x11", "x11c"},
                                            std::pair<const char*, const char*>{"x6", "x6c"}}) {
             INFO("seed " << seed << ", " << exact << " against " << above);
@@ -628,7 +628,7 @@ TEST_CASE("a fractional preliminary surface is floored, not truncated or rounded
     long long serverRounded = 0;
     for (const std::int64_t seed : kIceSeeds) {
         const Corpus corpus = openCorpus(corpusName("levelice", seed), seed);
-        const aquifer::CentreSource centres{seed};
+        const aquifer::CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         for (const char* name : {"fr104", "fr106", "fr205", "fr2025", "fr405"}) {
             INFO("seed " << seed << ", " << name);
             const Dim& dim = dimNamed(corpus, name);
@@ -683,7 +683,7 @@ TEST_CASE("packed ice stands where water stands: the level probe's water twin",
     }
     const Corpus water = openCorpus(waterName, kWaterSeed);
     const Corpus ice = openCorpus(corpusName("levelice", kWaterSeed), kWaterSeed);
-    const aquifer::CentreSource centres{kWaterSeed};
+    const aquifer::CentreSource centres{kWaterSeed, stratum::density::RandomSource::Xoroshiro};
     REQUIRE(water.dims.size() == 4);
 
     long long blocks = 0;
