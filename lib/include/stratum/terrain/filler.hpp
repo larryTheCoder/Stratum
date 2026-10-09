@@ -214,8 +214,13 @@ public:
     ///
     /// Blocks are visited cell by cell rather than column by column, so the
     /// eight cell corners `interpolated` needs are computed once and reused
-    /// across the 128 blocks of a cell instead of once per block. Measured,
-    /// that is the difference between 39.7 and 0.46 seconds a chunk.
+    /// across the 128 blocks of a cell instead of once per block. Measured
+    /// when the order went in — the bare first pass, long before aquifers,
+    /// surface rules or veins ran here — that was 39.7 against 0.46 seconds
+    /// a chunk (SPEC §11), and those figures describe nothing current. What
+    /// the whole fill costs now, in an optimised build and with each of its
+    /// parts switched off in turn, is SPEC §11's "What the aquifer costs"
+    /// (tools/analysis/aquifer-cost-bench.cpp measures it).
     ///
     /// When `runsSurfaceRules()` is true, a second pass then walks every
     /// column top to bottom and bottom to top — for the stone-depth runs and
@@ -244,6 +249,15 @@ public:
     [[nodiscard]] const std::vector<std::string>& surfaceRulesBlockedBy() const noexcept {
         return surfaceRulesBlockedBy_;
     }
+
+    /// Whether the aquifer reads its `barrier` entry on every block past
+    /// Q6.3 (aquifer::BarrierReads::Always) rather than only where the
+    /// barrier predicate weighs it. True exactly when aquifers are enabled
+    /// and the entry reaches an `interpolated` or a `find_top_surface`, whose
+    /// reads are not provably free of effects (compile() says why); false for
+    /// every vanilla preset. Either way the blocks are the same — this says
+    /// how much work they cost.
+    [[nodiscard]] bool readsBarrierOnEveryBlock() const noexcept { return barrierReadsAlways_; }
 
     /// The horizontal pitch the router's `preliminary_surface_level` is
     /// SAMPLED on before it reaches `above_preliminary_surface` — measured,
@@ -358,6 +372,12 @@ private:
     // once at compile() from the registry's own worldSeed() rather than
     // re-derived per block.
     std::optional<aquifer::CentreSource> aquiferCentres_;
+
+    // Whether every block past Q6.3 reads the `barrier` entry, as before the
+    // read was gated on Q6.2 (aquifer::BarrierReads::Always): true when the
+    // entry reaches a node whose read is not provably a pure, total function
+    // of the block. Decided once, at compile(); see there.
+    bool barrierReadsAlways_ = false;
 };
 
 } // namespace stratum::terrain

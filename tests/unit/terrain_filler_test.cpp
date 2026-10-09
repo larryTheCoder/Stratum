@@ -613,6 +613,51 @@ TEST_CASE("a buffer reused across chunks holds only the last chunk and its fluid
     CHECK(differing(reused, untouched) == 0);
 }
 
+TEST_CASE("the barrier is read on every block only where its read is not provably pure",
+          "[terrain][filler][aquifer]") {
+    // computeSubstance reads the `barrier` entry only where the predicate
+    // weighs it, which no block can see — unless the read itself has an
+    // effect. An `interpolated` reads and fills the chunk's shared corner
+    // cache, and a `find_top_surface` can refuse a scan on a value; a barrier
+    // reaching either, however deep, keeps every read (BarrierReads::Always).
+    const nlohmann::json gradient{{"type", "minecraft:y_clamped_gradient"},
+                                  {"from_y", -16},
+                                  {"to_y", 32},
+                                  {"from_value", -1.0},
+                                  {"to_value", 1.0}};
+    const nlohmann::json interpolated{{"type", "minecraft:interpolated"}, {"argument", gradient}};
+    const nlohmann::json findTop{{"type", "minecraft:find_top_surface"},
+                                 {"density", gradient},
+                                 {"upper_bound", 32.0},
+                                 {"lower_bound", -16},
+                                 {"cell_height", 8}};
+    const nlohmann::json nested{
+        {"type", "minecraft:add"}, {"argument1", 0.25}, {"argument2", interpolated}};
+
+    struct Case {
+        const char* name;
+        nlohmann::json barrier;
+        bool aquifers;
+        bool always;
+    };
+
+    for (const Case& c :
+         {Case{"constant", 0.0, true, false}, Case{"gradient", gradient, true, false},
+          Case{"interpolated", interpolated, true, true},
+          Case{"find_top_surface", findTop, true, true},
+          Case{"interpolated under add", nested, true, true},
+          Case{"interpolated, aquifers off", interpolated, false, false}}) {
+        INFO(c.name);
+        nlohmann::json settings = flatSettings(c.aquifers, /*oreVeins=*/false);
+        settings["noise_router"]["barrier"] = c.barrier;
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        CHECK(filler.readsBarrierOnEveryBlock() == c.always);
+    }
+}
+
 TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
     // Measured coupling, not a refusal: a probe with veins on and aquifers
     // off came back 6291456 of 6291456 plain stone (SPEC §11). Reproducing

@@ -54,6 +54,7 @@ analysis_targets=(
     tools/analysis/legacy-goldens-surface-decoder.hpp
     tools/analysis/aquifer-barrier-analyze.cpp
     tools/analysis/aquifer-cells.cpp
+    tools/analysis/aquifer-cost-bench.cpp
     tools/analysis/aquifer-deepfloor-analyze.cpp
     tools/analysis/aquifer-fluidtype-analyze.cpp
     tools/analysis/aquifer-level-analyze.cpp

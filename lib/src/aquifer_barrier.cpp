@@ -35,8 +35,12 @@ namespace {
 ///   * `h <= 0`, `3 + t <= 0` -> /10: the barrier's FLOOR. Reached only by a
 ///     pair that both read the SAME fluid, where `t = y + 0.5 - min(L)`, so
 ///     it is everything four or more blocks below the lower of the two.
+///
+/// The `barrier` router value enters through `noiseTerm` alone — after a
+/// level difference, and only within `kBarrierNoiseReach` of the boundary —
+/// so it is read there and nowhere else (`BarrierNoise`).
 double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const std::int32_t y,
-                     const double barrierNoise) noexcept {
+                     BarrierNoise& barrierNoise) {
     const std::int32_t deltaInt = levelA < levelB ? levelB - levelA : levelA - levelB;
     if (deltaInt == 0) {
         return 0.0;
@@ -68,7 +72,7 @@ double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const
         // vanilla_aquifer_deepfloor_test.cpp.
         u = (threeT > 0) ? (threeT / 3.0) : (threeT / 10.0);
     }
-    const double noiseTerm = (std::abs(u) <= kBarrierNoiseReach) ? barrierNoise : 0.0;
+    const double noiseTerm = (std::abs(u) <= kBarrierNoiseReach) ? barrierNoise.value() : 0.0;
     return 2.0 * (noiseTerm + u);
 }
 
@@ -107,7 +111,7 @@ double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const
 /// in advance was "the un-gated reading writes false stone the guarded one
 /// does not"; it never fired on any world, at any density, on any seed.
 bool termFires(const double density, const double weight, const BarrierSource& a,
-               const BarrierSource& b, const std::int32_t y, const double barrierNoise) noexcept {
+               const BarrierSource& b, const std::int32_t y, BarrierNoise& barrierNoise) {
     const bool aFluid = y < a.level;
     const bool bFluid = y < b.level;
     if (aFluid && bFluid && a.type != b.type) {
@@ -116,22 +120,36 @@ bool termFires(const double density, const double weight, const BarrierSource& a
     return (density + (weight * levelPressure(a.level, b.level, y, barrierNoise))) > 0.0;
 }
 
-} // namespace
-
-bool placesBarrier(const BarrierAt& at) noexcept {
-    const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
-    if (s12 <= 0.0) {
+/// Q6.6, the three terms in order, each tried only where the one before it
+/// did not fire. The `barrier` value is read through @p barrierNoise, on the
+/// first term that weighs it.
+bool placesBarrierWith(const BarrierAt& at, BarrierNoise& barrierNoise) {
+    // Q6.2 first, before any term and so before the `barrier` value.
+    if (!nearestPairCompetes(at.nearest.distanceSq, at.second.distanceSq)) {
         return false;
     }
-    if (termFires(at.density, s12, at.nearest, at.second, at.y, at.barrier)) {
+    const double s12 = similarity(at.nearest.distanceSq, at.second.distanceSq);
+    if (termFires(at.density, s12, at.nearest, at.second, at.y, barrierNoise)) {
         return true;
     }
     const double s13 = similarity(at.nearest.distanceSq, at.third.distanceSq);
-    if (s13 > 0.0 && termFires(at.density, s12 * s13, at.nearest, at.third, at.y, at.barrier)) {
+    if (s13 > 0.0 && termFires(at.density, s12 * s13, at.nearest, at.third, at.y, barrierNoise)) {
         return true;
     }
     const double s23 = similarity(at.second.distanceSq, at.third.distanceSq);
-    return s23 > 0.0 && termFires(at.density, s12 * s23, at.second, at.third, at.y, at.barrier);
+    return s23 > 0.0 && termFires(at.density, s12 * s23, at.second, at.third, at.y, barrierNoise);
+}
+
+} // namespace
+
+bool placesBarrier(const BarrierAt& at) noexcept {
+    const auto stored = [&at] { return at.barrier; };
+    BarrierNoise noise(stored);
+    return placesBarrierWith(at, noise);
+}
+
+bool placesBarrier(const BarrierAt& at, BarrierNoise& barrierNoise) {
+    return placesBarrierWith(at, barrierNoise);
 }
 
 } // namespace stratum::aquifer

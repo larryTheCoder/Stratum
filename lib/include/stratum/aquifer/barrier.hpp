@@ -190,7 +190,9 @@
 
 #include <stratum/aquifer/fluid_type.hpp>
 
+#include <concepts>
 #include <cstdint>
+#include <type_traits>
 
 namespace stratum::aquifer {
 
@@ -206,6 +208,19 @@ inline constexpr std::int32_t kSimilarityRange = 25;
 /// fluid-update flag (substance.hpp), which must compare the same doubles.
 [[nodiscard]] constexpr double similarity(const std::int64_t di, const std::int64_t dj) noexcept {
     return 1.0 - (static_cast<double>(dj - di) / static_cast<double>(kSimilarityRange));
+}
+
+/// Q6.2's short-circuit, on its own: whether the nearest pair is close enough
+/// for ANY of Q6.6's three terms to fire. Every term carries `s12` as a
+/// factor, so where this is false `placesBarrier` returns false before it
+/// reads anything else — the `barrier` router value included, which is why
+/// `computeSubstance` never asks the router for that value there
+/// (`BarrierNoise`). The predicate spells the test through this one
+/// function, and the unit cases hold it to `similarity > 0` at every gap
+/// either side of the range.
+[[nodiscard]] constexpr bool nearestPairCompetes(const std::int64_t nearestSq,
+                                                 const std::int64_t secondSq) noexcept {
+    return similarity(nearestSq, secondSq) > 0.0;
 }
 
 /// Q8.3's `θ_flow`: the similarity of a pair at distances 10 and 12, carried
@@ -287,5 +302,63 @@ struct BarrierAt {
 /// refused a pair reading the same thing is gone: the server refutes it
 /// (this file's own header). Each of those is measured separately.
 [[nodiscard]] bool placesBarrier(const BarrierAt& at) noexcept;
+
+/// The `barrier` router value at one block, read on first use and at most
+/// once. The predicate weighs that value in one place only — Π's level
+/// branch, within `kBarrierNoiseReach` of a pair's boundary — and on most
+/// blocks it never gets there: Q6.2 has returned, the pair's levels are
+/// equal (Π = 0 with no noise in it), it is the mixed-type constant, or the
+/// block is too far from the boundary. Reading the router only when asked
+/// changes nothing a block can see; on the shipped overworld those reads
+/// were about half of the aquifer's cost, and almost none of them are left
+/// (SPEC §11, "What the aquifer costs").
+///
+/// Type-erased rather than a template so that the predicate's arithmetic
+/// stays in aquifer_barrier.cpp, compiled once under the project's own
+/// floating-point flags. @p read must outlive this object and be callable as
+/// `double()`; a temporary is refused at compile time.
+class BarrierNoise {
+public:
+    template<typename Read>
+        requires(!std::same_as<std::remove_cvref_t<Read>, BarrierNoise>)
+    explicit BarrierNoise(const Read& read) noexcept
+        : context_(&read),
+          thunk_([](const void* context) { return (*static_cast<const Read*>(context))(); }) {}
+
+    template<typename Read>
+        requires(!std::same_as<std::remove_cvref_t<Read>, BarrierNoise>)
+    explicit BarrierNoise(const Read&& read) = delete;
+
+    BarrierNoise(const BarrierNoise&) = delete;
+    BarrierNoise& operator=(const BarrierNoise&) = delete;
+    BarrierNoise(BarrierNoise&&) = delete;
+    BarrierNoise& operator=(BarrierNoise&&) = delete;
+    ~BarrierNoise() = default;
+
+    /// The value, read on the first call and remembered.
+    [[nodiscard]] double value() {
+        if (!readDone_) {
+            value_ = thunk_(context_);
+            readDone_ = true;
+        }
+        return value_;
+    }
+
+    /// Whether `value()` has been asked for — what a test checks to see
+    /// that a block the predicate decides without the noise never read it.
+    [[nodiscard]] bool wasRead() const noexcept { return readDone_; }
+
+private:
+    const void* context_;
+    double (*thunk_)(const void*);
+    double value_ = 0.0;
+    bool readDone_ = false;
+};
+
+/// `placesBarrier`, with the `barrier` value read through @p barrierNoise —
+/// at most once, and only where a term weighs it — instead of from
+/// `at.barrier`, which this overload does not read. Same terms, same order,
+/// same arithmetic: the two overloads share one implementation.
+[[nodiscard]] bool placesBarrier(const BarrierAt& at, BarrierNoise& barrierNoise);
 
 } // namespace stratum::aquifer
