@@ -117,17 +117,23 @@ struct SourceStatus {
 [[nodiscard]] inline SourceStatus sourceStatus(const CellFluid& cell, const double lava) noexcept {
     const CellLevel level = cellLevel(cell);
     return SourceStatus{.level = level.level,
-                        .type = fluidTypeOf(FluidTypeAt{
-                            .centreY = cell.centreY,
-                            .level = level.level,
-                            .seaLevel = cell.seaLevel,
-                            .lava = lava,
-                            .fromNearSurface = level.origin == LevelOrigin::NearSurfaceSea})};
+                        .type = fluidTypeOf(FluidTypeAt{.centreY = cell.centreY,
+                                                        .level = level.level,
+                                                        .seaLevel = cell.seaLevel,
+                                                        .lava = lava,
+                                                        .origin = level.origin})};
 }
 
-namespace detail {
+/// One ranked candidate's inputs to its status: what `sourceStatus` takes.
+struct RankedCell {
+    CellFluid cell{};
+    double lava = 0.0;
+};
 
-/// One ranked candidate's own status. The LEVEL is its own
+/// One ranked candidate's inputs, each read where its router entry is read;
+/// `sourceStatus` makes them its status (`detail::rankedStatusOf`). A
+/// conformance case that weighs a rival reading of a status takes these and
+/// passes its own status to `computeSubstanceWith`. The LEVEL is its own
 /// `preliminary_surface_level` scan, its own `fluid_level_floodedness` (read
 /// at its centre, verbatim, per `floodednessSample`) and its own
 /// `fluid_level_spread` (read at CONTRACTED lattice indices, per
@@ -151,10 +157,10 @@ namespace detail {
 /// corpus is blind to it — not merely that it is.
 template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
          typename LavaSampler, typename DeepDarkSampler>
-[[nodiscard]] SourceStatus rankedStatusOf(const Source& ranked, const std::int32_t seaLevel,
-                                          PslSampler&& psl, FloodednessSampler&& floodedness,
-                                          SpreadSampler&& spread, LavaSampler&& lava,
-                                          DeepDarkSampler&& deepDark) {
+[[nodiscard]] RankedCell rankedCellOf(const Source& ranked, const std::int32_t seaLevel,
+                                      PslSampler&& psl, FloodednessSampler&& floodedness,
+                                      SpreadSampler&& spread, LavaSampler&& lava,
+                                      DeepDarkSampler&& deepDark) {
     const PslRead surface = readPreliminarySurface(psl, ranked.centre, seaLevel);
     const SamplePos floodPos = floodednessSample(ranked.centre);
     const double f = floodedness(floodPos.x, floodPos.y, floodPos.z);
@@ -169,7 +175,22 @@ template<typename PslSampler, typename FloodednessSampler, typename SpreadSample
                          // itself, the same point the floodedness is read at.
                          .deepDark = deepDark(floodPos.x, floodPos.y, floodPos.z)};
     const SamplePos lavaPos = lavaSample(ranked.centre);
-    return sourceStatus(cell, lava(lavaPos.x, lavaPos.y, lavaPos.z));
+    return RankedCell{.cell = cell, .lava = lava(lavaPos.x, lavaPos.y, lavaPos.z)};
+}
+
+namespace detail {
+
+/// One ranked candidate's own status: `rankedCellOf`'s inputs, through
+/// `sourceStatus`.
+template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+         typename LavaSampler, typename DeepDarkSampler>
+[[nodiscard]] SourceStatus rankedStatusOf(const Source& ranked, const std::int32_t seaLevel,
+                                          PslSampler&& psl, FloodednessSampler&& floodedness,
+                                          SpreadSampler&& spread, LavaSampler&& lava,
+                                          DeepDarkSampler&& deepDark) {
+    const RankedCell inputs =
+        rankedCellOf(ranked, seaLevel, psl, floodedness, spread, lava, deepDark);
+    return sourceStatus(inputs.cell, inputs.lava);
 }
 
 } // namespace detail
@@ -316,33 +337,25 @@ template<typename FourthStatus>
     return false;
 }
 
-/// The full aquifer substance decision for one block (spec Q2.2-Q6.7,
-/// clean-room spec/aquifer-spec.md, and SPEC §11's own measurements of each
-/// piece), in the spec's own order: the global lava sea first (Q2.4), then
-/// rank the four nearest sources and read each of the three nearest ones'
-/// own status — level AND type — then the water-over-lava exception (Q6.3),
-/// then the barrier (Q6.2-Q6.6, with Π reading the three types), and finally
-/// the nearest source's own reading.
+/// The aquifer substance decision for one block (spec Q2.2-Q6.7, clean-room
+/// spec/aquifer-spec.md, and SPEC §11's own measurements of each piece), in
+/// the spec's own order: the global lava sea first (Q2.4), then rank the
+/// four nearest sources and read each of the three nearest ones' own status
+/// — level AND type — then the water-over-lava exception (Q6.3), then the
+/// barrier (Q6.2-Q6.6, with Π reading the three types), and finally the
+/// nearest source's own reading.
 ///
-/// Each sampler is called as `double(std::int32_t x, std::int32_t y,
-/// std::int32_t z)` at the position its own router entry reads at
-/// (sampling.hpp): `barrier` and `floodedness` at true block/point
-/// coordinates, `spread`, `lava` and `psl` at the CONTRACTED positions this
-/// function itself computes and passes in — a caller supplies the router
-/// READ, not the position. @p deepDark is the exception in shape: it returns
-/// `bool`, Q5.9's `isDeepDark(erosion, depth)` read at a source's centre, so
-/// that one caller-side sampler carries both router reads (`NoDeepDark` for
-/// a router that cannot satisfy it).
-///
-/// @p cache belongs to the caller, the same way `CornerCache` does — reused
-/// across an entire `fill()` call (or more), never across a different world
-/// or seed. See `StatusCache`'s own doc for why one is needed at all.
-template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSampler,
-         typename LavaSampler, typename PslSampler, typename DeepDarkSampler>
-[[nodiscard]] SubstanceAt
-computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusCache& cache,
-                 BarrierSampler&& barrier, FloodednessSampler&& floodedness, SpreadSampler&& spread,
-                 LavaSampler&& lava, PslSampler&& psl, DeepDarkSampler&& deepDark) {
+/// Each ranked source's status is read through @p statusOf, called as
+/// `SourceStatus(const Source&)` — for the nearest three in rank order on
+/// every block that reaches the lattice, and for the fourth only where the
+/// fluid-update flag needs it. `computeSubstance` below is this with the
+/// shipped status; a conformance case that weighs a rival reading of a
+/// status (`rankedCellOf` gives its inputs) passes its own, so the rival is
+/// scored through exactly the decision the filler runs.
+template<typename StatusOf, typename BarrierSampler>
+[[nodiscard]] SubstanceAt computeSubstanceWith(const CentreSource& centres,
+                                               const AquiferQuery& query, StatusOf&& statusOf,
+                                               BarrierSampler&& barrier) {
     // Q2.4: below the global lava sea the lattice is never consulted — the
     // sea is lava whatever any source says, and it is literal lava, not the
     // dimension's default fluid.
@@ -357,18 +370,14 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
     // (barrier.hpp).
     std::array<SourceStatus, 3> status{};
     for (std::size_t r = 0; r < 3; ++r) {
-        status[r] = cache.statusOf(selection.ranked[r], query.seaLevel, psl, floodedness, spread,
-                                   lava, deepDark);
+        status[r] = statusOf(selection.ranked[r]);
     }
 
     std::array<std::int64_t, kRankCount> distanceSq{};
     for (std::size_t r = 0; r < kRankCount; ++r) {
         distanceSq[r] = selection.ranked[r].distanceSq;
     }
-    const auto fourth = [&] {
-        return cache.statusOf(selection.ranked[3], query.seaLevel, psl, floodedness, spread, lava,
-                              deepDark);
-    };
+    const auto fourth = [&] { return statusOf(selection.ranked[3]); };
 
     // Q6.3: water resting on the global lava sea is water, and no barrier
     // is even considered — the `barrier` noise is not read.
@@ -407,6 +416,36 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
         .substance = Substance::Fluid,
         .fluidType = status[0].type,
         .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
+}
+
+/// The full aquifer substance decision for one block: `computeSubstanceWith`
+/// with each source's own status, read from the router and memoized.
+///
+/// Each sampler is called as `double(std::int32_t x, std::int32_t y,
+/// std::int32_t z)` at the position its own router entry reads at
+/// (sampling.hpp): `barrier` and `floodedness` at true block/point
+/// coordinates, `spread`, `lava` and `psl` at the CONTRACTED positions this
+/// function itself computes and passes in — a caller supplies the router
+/// READ, not the position. @p deepDark is the exception in shape: it returns
+/// `bool`, Q5.9's `isDeepDark(erosion, depth)` read at a source's centre, so
+/// that one caller-side sampler carries both router reads (`NoDeepDark` for
+/// a router that cannot satisfy it).
+///
+/// @p cache belongs to the caller, the same way `CornerCache` does — reused
+/// across an entire `fill()` call (or more), never across a different world
+/// or seed. See `StatusCache`'s own doc for why one is needed at all.
+template<typename BarrierSampler, typename FloodednessSampler, typename SpreadSampler,
+         typename LavaSampler, typename PslSampler, typename DeepDarkSampler>
+[[nodiscard]] SubstanceAt
+computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusCache& cache,
+                 BarrierSampler&& barrier, FloodednessSampler&& floodedness, SpreadSampler&& spread,
+                 LavaSampler&& lava, PslSampler&& psl, DeepDarkSampler&& deepDark) {
+    return computeSubstanceWith(
+        centres, query,
+        [&](const Source& ranked) {
+            return cache.statusOf(ranked, query.seaLevel, psl, floodedness, spread, lava, deepDark);
+        },
+        barrier);
 }
 
 } // namespace stratum::aquifer

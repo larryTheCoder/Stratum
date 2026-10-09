@@ -158,6 +158,13 @@ UNITS = [
          own('blended-noise/seed-42', ['r.0.0.mca'])),
     unit('inline-noise', 'legacy', ['inline-noise-probe.sh', '42'],
          own('inline-noise', [], {'file': 'verdicts.json', 'seed': 42, 'variants': 11})),
+    # An aborted scan's floor below a sea under -54: one 10 GB run per seed,
+    # about three minutes each locally. Not a legacy question; the shard
+    # holds it because it was the lightest.
+    unit('lowfloor_s42', 'legacy', ['aquifer-lowfloor-probe.sh', '42'],
+         density(('lowfloor_s42', 42))),
+    unit('lowfloor_s31337', 'legacy', ['aquifer-lowfloor-probe.sh', '31337'],
+         density(('lowfloor_s31337', 31337))),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
     # runner), the amplified / large_biomes presets beside an overworld
     # control, one server start per seed, and y_skip's six 10 GB runs (about

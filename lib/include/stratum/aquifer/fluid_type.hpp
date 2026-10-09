@@ -111,12 +111,16 @@
 // own sea branch at -20, is lava on all 241 896 of its sources, so the
 // override is in force there.
 //
-// One adjacent status is NOT settled by this: an aborted scan's floor (level
-// lambda, centred twenty or fewer above the surface). The spec's Q5.3(b)
-// gives it the global picker's lava status; this build types it as a cell's
-// own, water at `|lava| <= 0.3` when centred at or above lambda. No block
-// can show the difference — such a source reads fluid nowhere above lambda
-// — and only spec Q8's fluid-update flag compares the types.
+// AN ABORTED SCAN'S FLOOR IS LAVA (`aquifer-lowfloor-probe.sh`,
+// `vanilla_aquifer_lowfloor_test.cpp`). A cell whose scan aborted and that
+// takes no sea has the global picker's status at the submerged surface, spec
+// Q5.3(b): Q1.1's A_lava, -54 and lava, typed before either test below. At
+// sea -70 the floor holds lava to y = -55 on every block it governs, centred
+// above lambda with `lava` 0.0 or not — where a cell's own type (engine v9
+// and earlier) would be water. At a sea at or above -54 the type cannot be
+// seen at all: the floor reads fluid nowhere the lattice is consulted, and
+// the barrier's mixed-type constant and the fluid-update flag only ever
+// weigh it against a source of another level (aquifer_substance_test.cpp).
 //
 // WHAT IS STILL NOT MEASURED, and is marked rather than guessed:
 //
@@ -206,13 +210,13 @@ struct FluidTypeAt {
     /// contracted indices, NOT the block position. See `sampling.hpp`.
     double lava = 0.0;
 
-    /// Whether the level is one of the near-surface path's short-circuit
-    /// seas (`LevelOrigin::NearSurfaceSea`): the global picker's status,
-    /// taken before the level rule, so neither the centre's height nor the
-    /// `lava` override types it — it is the default fluid. Defaulted, so a
-    /// hand-built status that forgets it types such a sea as a cell's own;
-    /// build statuses with `sourceStatus` (substance.hpp) instead.
-    bool fromNearSurface = false;
+    /// Where the level came from (`cellLevel`). The two global statuses are
+    /// typed by the global picker, before either test below: a short-circuit
+    /// sea (`LevelOrigin::NearSurfaceSea`) is the default fluid, and A_lava
+    /// (`LevelOrigin::GlobalLava`) is lava. Defaulted, so a hand-built status
+    /// that forgets it types either as a cell's own; build statuses with
+    /// `sourceStatus` (substance.hpp) instead.
+    LevelOrigin origin = LevelOrigin::Cell;
 };
 
 /// The fluid a source places.
@@ -230,8 +234,15 @@ struct FluidTypeAt {
     // override's: at a sea at or under -10 with `lava` past its threshold the
     // server holds water on every source such a sea owns (this file's
     // header).
-    if (at.fromNearSurface) {
+    if (at.origin == LevelOrigin::NearSurfaceSea) {
         return FluidType::Default;
+    }
+    // A_lava is lava whatever the centre and the `lava` reading say: at sea
+    // -70 an aborted scan's floor holds lava to -55 where its own type, from
+    // a centre above lambda and `lava` 0.0, would be water (this file's
+    // header).
+    if (at.origin == LevelOrigin::GlobalLava) {
+        return FluidType::Lava;
     }
     // A centre below the lava sea makes a source lava.
     if (at.centreY < lambdaLevel(at.seaLevel)) {

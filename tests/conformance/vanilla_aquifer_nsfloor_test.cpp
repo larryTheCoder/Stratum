@@ -632,8 +632,7 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
                                 aquifer::FluidTypeAt{.centreY = sel.ranked[0].centre.y,
                                                      .level = src[0].level,
                                                      .seaLevel = kSeaLevel,
-                                                     .lava = 0.0,
-                                                     .fromNearSurface = false});
+                                                     .lava = 0.0});
                             score.centreTypedLava +=
                                 static_cast<long long>(byCentre == aquifer::FluidType::Lava &&
                                                        src[0].type != aquifer::FluidType::Lava);

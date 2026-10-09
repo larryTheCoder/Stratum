@@ -290,15 +290,12 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             const double lava =
                 interpreter.evaluate(lavaNode, Point{.x = lavaAt.x, .y = lavaAt.y, .z = lavaAt.z});
             const bool observed = tally.first > 0;
-            const bool predicted =
-                stratum::aquifer::fluidTypeOf(stratum::aquifer::FluidTypeAt{
-                    .centreY = centre.y,
-                    .level = level,
-                    .seaLevel = kSeaLevel,
-                    .lava = lava,
-                    .fromNearSurface =
-                        cellLevel.origin == stratum::aquifer::LevelOrigin::NearSurfaceSea}) ==
-                FluidType::Lava;
+            const bool predicted = stratum::aquifer::fluidTypeOf(stratum::aquifer::FluidTypeAt{
+                                       .centreY = centre.y,
+                                       .level = level,
+                                       .seaLevel = kSeaLevel,
+                                       .lava = lava,
+                                       .origin = cellLevel.origin}) == FluidType::Lava;
 
             // The null that matters, in the same loop: the identical rule
             // reading the SPREAD's lattice instead of lava's own.

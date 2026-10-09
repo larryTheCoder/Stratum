@@ -100,27 +100,7 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         // to read: at `sea_level` -70 (lowsea's a_lo, psl -85, where the
         // lattice is consulted up to y_skip -50) cells centred from -64 to
         // -55 take the sea and are dry, where a `kLavaLevel` comparand
-        // floors them. THE FLOOR'S VALUE IS OPEN, and `lambda` is refuted
-        // there: every one of 135 716 blocks whose nearest cell takes this
-        // floor is lava up to y = -55 or barrier stone, not one air — spec
-        // Q1.1's A_lava, (-54, lava), which is what Q5.3(b) hands an aborted
-        // scan; lambda is dry above the lava sea. The 0/251229 once cited
-        // for `lambda` here was b_floor's, every row of which lies above its
-        // own y_skip (-158): the global picker's air, not this floor
-        // (vanilla_aquifer_lowsea_test.cpp, SPEC §11). At every
-        // `sea_level >= -54` the two are the same number; the floor's TYPE
-        // also reaches the fluid-update flag, so the change waits for its own
-        // measurements.
-        //
-        // AND THIS FLOOR IS NOT `kNeverLevel`, unlike the two dry outcomes
-        // further down — measured, not assumed. No block readout can tell
-        // them apart (both are dry at every y >= lambda), and every world
-        // that reached this branch held the barrier off, so for a while it
-        // was a choice. They part only in the barrier's pressure term:
-        // `aquifer-nsfloor-probe.sh` turns the barrier on over this branch,
-        // and on the 1666 blocks where the two floors give different
-        // verdicts the server sides with lambda on all 1666
-        // (vanilla_aquifer_nsfloor_test.cpp).
+        // floors them.
         //
         // The sea here is the other short-circuit (spec Q5.3(a)): the global
         // picker's status at the cell's own centre, which sits at or above
@@ -132,7 +112,52 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
             cell.centreY > javamath::wrappingAdd(cell.surface.cap, kNearSurfaceFloorOffset)) {
             return CellLevel{.level = cell.seaLevel, .origin = LevelOrigin::NearSurfaceSea};
         }
-        return CellLevel{.level = lambda};
+        // Otherwise the FLOOR: the global picker's status at the surface the
+        // scan met submerged in the lava sea (spec Q5.3(b)) — A_lava, -54
+        // and lava, not lambda and not the cell's own type. A centre below
+        // lambda more than twenty above the cap is Q5.3(a)'s global status,
+        // which there is the same A_lava. At every `sea_level >= -54` the
+        // level is lambda's and no consumer can see the type (SPEC §11);
+        // below it they part in blocks, and the server holds A_lava: at sea
+        // -70 (lowsea's a_lo) every one of 135 716 blocks whose nearest
+        // cell takes this floor is lava up to y = -55 or barrier stone, not
+        // one air, and at sea -60 too (aquifer-lowfloor-probe.sh's lf_f60,
+        // where the literal -54 and lambda + 16 part).
+        //
+        // AND THIS FLOOR IS NOT `kNeverLevel`, unlike the dry outcome
+        // further down — measured, not assumed. No block readout at an
+        // ordinary sea can tell them apart (both are dry at every
+        // y >= lambda), and every world that reached this branch held the
+        // barrier off, so for a while it was a choice. They part in the
+        // barrier's pressure term: `aquifer-nsfloor-probe.sh` turns the
+        // barrier on over this branch, and on the 1666 blocks where the two
+        // floors give different verdicts the server sides with -54 on all
+        // 1666 (vanilla_aquifer_nsfloor_test.cpp).
+        return CellLevel{.level = kLavaLevel, .origin = LevelOrigin::GlobalLava};
+    }
+
+    // An aborted scan off the near-surface path takes the same A_lava, and
+    // before the level rule: Q5.3's short-circuits precede it, so neither a
+    // floodedness gate nor Q5.9's override (which forces only that rule's
+    // comparands) is reached.
+    //
+    // So the abort refuses the sea outcome outright, which is MA blocker 2's
+    // other mark, closed: `aquifer-nearsurface-probe.sh` drives `aborted`
+    // true while floodedness alone would cross the depth path's sea gate,
+    // and refusing the sea scores 0.9911-0.9941 against 0.0564-0.0924 for
+    // ignoring the abort, on 469575-541125 discriminating blocks across two
+    // seeds; off the ocean branch, 0.9812-0.9829 against 0.6612-0.6872.
+    //
+    // And what it takes instead is -54, lava. At sea 63, through the
+    // barrier, the level: the unfloored ladder built 7 690 blocks of stone
+    // the server does not and the dry sentinel 3 770
+    // (aquifer-nsfloor-probe.sh), and the override's sentinel 10 577
+    // (aquifer-ddfloor-probe.sh), where -54 builds none — pipeline engines
+    // v5 and v6, which read it as lambda, the same number there. At sea -70,
+    // in blocks (aquifer-lowfloor-probe.sh): such cells hold lava to y = -55
+    // where lambda's reading leaves them dry, with the override and without.
+    if (cell.surface.aborted) {
+        return CellLevel{.level = kLavaLevel, .origin = LevelOrigin::GlobalLava};
     }
 
     // The DRY level is the spec's sentinel, not `lambda`. Q2.4 hands every
@@ -151,20 +176,10 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // depth bonus of at most 52 * 3/160 on the ocean branch), so the level is
     // the dry sentinel. It cannot reach the near-surface return above, which
     // compares no floodedness at all — the spec's override is on the
-    // comparands, and that branch has none.
-    //
-    // Nor does it reach an aborted scan, whose lambda status (the floor at
-    // the end of this function) comes before any floodedness is weighed:
-    // spec Q5.3's short-circuits precede the level rule. Measured, not only
-    // read: `aquifer-ddfloor-probe.sh` puts the near-surface probe's
-    // aborting field under the override, and where the sentinel and lambda
-    // give the barrier different verdicts the server sides with lambda on
-    // every block (vanilla_aquifer_nsfloor_test.cpp). Every aborted cell off
-    // the near-surface path reads exactly lambda — its cap is the whole
-    // window's minimum, below the abort threshold, and the sea is refused —
-    // so this returns that level directly.
+    // comparands, and that branch has none. Nor does it reach an aborted
+    // scan, whose status was returned above.
     if (cell.deepDark) {
-        return CellLevel{.level = cell.surface.aborted ? lambda : kNeverLevel};
+        return CellLevel{.level = kNeverLevel};
     }
 
     std::int32_t level = kNeverLevel;
@@ -185,18 +200,9 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
             static_cast<double>(std::max(0, javamath::wrappingSub(kZeroBonusDepth, depth)));
 
         // Product over divisor, never a pre-divided constant — see the slope
-        // constants in the header. The abort refuses the sea outcome
-        // outright — MA blocker 2's other remaining mark, now closed the
-        // same way as the floor branch above: `aquifer-nearsurface-probe.sh`
-        // drives `aborted` true while floodedness alone would cross this
-        // gate, and reading `!aborted` as written scores 0.9911-0.9941
-        // against 0.0564-0.0924 for ignoring it, on 469575-541125
-        // discriminating blocks across two seeds. The ocean branch's own
-        // copy of this guard below scores 0.9812-0.9829 against
-        // 0.6612-0.6872 the same way.
-        if (!cell.surface.aborted &&
-            cell.floodedness + ((reach * kSeaBonusNumerator) / kSeaBonusDenominator) >
-                kFloodedSeaThreshold) {
+        // constants in the header. No abort reaches here (above).
+        if (cell.floodedness + ((reach * kSeaBonusNumerator) / kSeaBonusDenominator) >
+            kFloodedSeaThreshold) {
             level = cell.seaLevel;
             tookSea = true;
         } else if (cell.floodedness + ((reach * kLocalBonusNumerator) / kLocalBonusDenominator) >
@@ -205,7 +211,7 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
         } else {
             level = kNeverLevel;
         }
-    } else if (!cell.surface.aborted && cell.floodedness > kFloodedSeaThreshold) {
+    } else if (cell.floodedness > kFloodedSeaThreshold) {
         // No depth term and no near-surface rule at all off the ocean branch.
         level = cell.seaLevel;
         tookSea = true;
@@ -224,21 +230,13 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // -56, and a numeric test would floor it to -54 — which the server does
     // not do. Same world, same cells, floodedness 1.0 reads -54 and 0.3 reads
     // -56, so the branch is the discriminator and the value cannot be.
+    //
+    // It is Q5.6's `Global(Q)` for a centre below lambda: A_lava, the same
+    // status an aborted scan takes. A cell that did not abort keeps its
+    // unclamped ladder and its sentinel, below lambda or not: the water/lava
+    // and deep-floor worlds measured that.
     if (cell.centreY < lambda && tookSea) {
-        level = kLavaLevel;
-    }
-    // An aborted scan met a surface submerged in the lava sea, whose level
-    // is lambda (spec Q5.3(b)), and takes that status before any floodedness
-    // is weighed: a level below lambda — a capped or deep ladder, or the dry
-    // sentinel itself — reads as lambda. Only the barrier can see this (the
-    // cell is dry above lambda either way). Over an aborting surface with
-    // the barrier on (aquifer-nsfloor-probe.sh) the unfloored ladder builds
-    // 7 690 blocks of stone the server does not, and at floodedness 0 the
-    // sentinel builds 3 770 more, every one of them decided lambda's way by
-    // the server. A cell that did not abort keeps its unclamped ladder and
-    // its sentinel: the water/lava and deep-floor worlds measured that.
-    if (cell.surface.aborted && level < lambda) {
-        level = lambda;
+        return CellLevel{.level = kLavaLevel, .origin = LevelOrigin::GlobalLava};
     }
     return CellLevel{.level = level};
 }

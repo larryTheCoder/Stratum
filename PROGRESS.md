@@ -17,7 +17,7 @@ Last swept: 2026-10-08 (MA/CI: CI is set up to generate every probe world a comm
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the aborted floor's status below sea_level -54 (A_lava, not lambda, on the one world that shows it), the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists. Open: the region-golden cases CI does not run (SPEC §7), fluid updates to PMMP, and Q5.8's two unobservable conjuncts carried on the spec's word |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk, still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -99,13 +99,23 @@ Open:
       included, end to end through `ChunkFiller`. Pipeline output changes for
       a datapack world, not for any golden block (the goldens read the same
       with no cutoff at all). SPEC §11.
-- [ ] **The aborting near-surface floor below `sea_level` -54.** Found by the
-      above: the low-sea probe's 0/251229 for a lambda floor was `y_skip`'s
-      global picker; where the lattice is consulted (psl -85, sea -70) all
-      135 716 blocks the floor governs are lava to -55 or barrier — A_lava,
-      (-54, lava), not lambda. Identical at every `sea_level >= -54`; the
-      floor's type reaches the fluid-update flag, and the off-near-surface
-      and deep-dark floors share the question unmeasured. SPEC §11.
+- [x] **An aborted scan's status is A_lava, -54 and lava (pipeline engine
+      v11).** Found by the above: the
+      low-sea probe's 0/251229 for a lambda floor was `y_skip`'s global
+      picker; where the lattice is consulted (psl -85, sea -70) all 135 716
+      blocks the floor governs are lava to -55 or barrier.
+      `aquifer-lowfloor-probe.sh` (two seeds) measures all three paths below
+      a sea of -54 — the near-surface floor, the aborted cell off the path
+      (v5) and under the override (v6): the build is exact on every sampled
+      block and mark, and v9's lambda, lambda with lava, -54 with the cell's
+      own type, the near-surface-only reading and lambda + 16 are each
+      refuted wherever it differs, on 6 092 to 18 209 sampled blocks an arm
+      (two seeds). At a sea at or above -54 the type reaches no block and
+      no mark (pinned by a unit case, and the sea-63 control ties every
+      floor reading). Also refuted there: sampling.hpp's "permanent tie" on
+      whether the near-surface return needs the anchor above the abort
+      threshold (1 726 to 3 585 sampled blocks an arm, sea 63 included). No
+      golden block moves. SPEC §11.
 - [x] **Aquifer hygiene.** Java int semantics at every aquifer narrowing
       and level sum (no datapack input is undefined behaviour); Q1.4's
       sentinel derived from the spec's arithmetic; Q5.6's clamp proven inert

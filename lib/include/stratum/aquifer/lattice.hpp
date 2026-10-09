@@ -418,9 +418,13 @@ inline constexpr double kLocalBonusDenominator = 160.0;
 /// of the surface's high value and of the floodedness.
 inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
 
-/// The level a cell falls to when nothing floods it — and it is NOT always the
-/// lava level. Every "-54" in this rule that is a LEVEL rather than a
-/// threshold moves with `sea_level`.
+/// Lambda: where the global picker's lava sea tops out, and the threshold the
+/// level and type rules compare a centre against. It is NOT always the lava
+/// level — it moves with `sea_level` below -54 — and it is a threshold, not a
+/// status: the global picker's two statuses are `sea_level` (which lambda
+/// equals below -54) and A_lava's literal -54 (spec Q1.1), which an aborted
+/// scan and the trailing guard take even where -54 sits above lambda
+/// (`cellLevel`). The dry outcome is the sentinel (`kNeverLevel`).
 ///
 /// Invisible until somebody mapped the global fluid picker with aquifers
 /// disabled: below `min(-54, sea_level)` the world is lava unconditionally,
@@ -592,8 +596,8 @@ struct CellFluid {
 
 /// Where a cell's level came from, where that decides more than the level.
 enum class LevelOrigin : std::uint8_t {
-    /// Everything but the case below: the cell's own lattice, floodedness and
-    /// guards, or one of the dry outcomes.
+    /// Everything but the two cases below: the cell's own lattice and
+    /// floodedness, or the dry sentinel.
     Cell,
     /// Either sea outcome of the near-surface early return: a cell close under
     /// a submerged surface takes the sea from THAT surface (spec Q5.3(b)),
@@ -605,6 +609,15 @@ enum class LevelOrigin : std::uint8_t {
     /// otherwise) nor the `lava` override (`aquifer-fluidnear-probe.sh`)
     /// makes them lava.
     NearSurfaceSea,
+    /// The global picker's status below lambda: spec Q1.1's
+    /// A_lava = (`kLavaLevel`, lava), the literal -54 whatever `sea_level`
+    /// is, and lava whatever the cell's own `lava` reads. An aborted scan
+    /// takes it from the surface it met submerged in the lava sea (spec
+    /// Q5.3(b)) — on the near-surface path when it does not take the sea,
+    /// and off it always, deep-dark or not — and a cell centred below lambda
+    /// takes it when its floodedness gives it the sea (Q5.6's `Global(Q)`,
+    /// the trailing guard). `fluidTypeOf` types it lava.
+    GlobalLava,
 };
 
 /// A cell's level and where it came from (`cellLevel`).
@@ -644,33 +657,39 @@ struct CellLevel {
 /// crossing, where they differ because the crossing floodedness is not itself
 /// representable.
 ///
-/// AN ABORTED SCAN NEVER LEAVES A CELL BELOW LAMBDA. A cell whose surface
-/// scan aborted (a sample below `abortThreshold`) and whose level would
-/// otherwise sit below lambda — a capped or deep ladder, or the dry sentinel
-/// — reports lambda: such a cell has met a surface submerged in the lava
-/// sea, whose level is lambda, and takes that status before its floodedness
-/// is weighed (spec Q5.3(b)). No block readout sees it — the cell is dry
-/// above lambda either way, and the lava sea takes everything below — but the
-/// barrier weighs the level: over an aborting surface with vanilla's barrier
-/// on (`aquifer-nsfloor-probe.sh`) the unfloored ladder writes 7 690 blocks
-/// of stone the server does not, and at floodedness 0 the sentinel 3 770
-/// more; the floor writes none. Since an aborted scan's cap is the whole
-/// window's minimum, below the abort threshold, every aborted cell off the
-/// near-surface path reads exactly lambda.
+/// AN ABORTED SCAN TAKES A_LAVA. A cell whose surface scan aborted (a sample
+/// below `abortThreshold`) has met a surface submerged in the lava sea, and
+/// unless it sits on the near-surface path more than twenty blocks above the
+/// scan's minimum (where it takes the sea) it takes that surface's global
+/// status before its floodedness is weighed (spec Q5.3(b)): Q1.1's
+/// A_lava, the literal -54 and lava (`LevelOrigin::GlobalLava`), whatever
+/// its ladder, its floodedness, Q5.9's override or its own `lava` reading
+/// say. Measured three ways:
+///
+///   * At sea 63, where -54 is lambda, through the barrier: over an aborting
+///     surface with vanilla's barrier on (`aquifer-nsfloor-probe.sh`) the
+///     unfloored ladder writes 7 690 blocks of stone the server does not,
+///     the dry sentinel 3 770 more at floodedness 0, and under the override
+///     (`aquifer-ddfloor-probe.sh`) the sentinel 10 577; -54 writes none.
+///     Pipeline engines v4-v9 read it as lambda, the same number there.
+///   * Below a sea of -54, in blocks: at sea -70 the near-surface floor
+///     holds lava to y = -55 on every block it governs (lowsea's a_lo,
+///     135 716 blocks), and on `aquifer-lowfloor-probe.sh`'s worlds so do
+///     the aborted cells off the path, with the override and without, and
+///     the near-surface floor at sea -60 — where lambda, lambda with lava,
+///     -54 with the cell's own type and lambda + 16 are each refuted.
+///   * Its TYPE is unseen at a sea at or above -54: the floor then reads
+///     fluid nowhere the lattice is consulted, and no barrier or
+///     fluid-update mark compares it with anything of its own level
+///     (aquifer_substance_test.cpp pins this).
 ///
 /// A cell that did NOT abort keeps its unclamped ladder and its sentinel.
 /// Where its cap is above lambda that is measured (the water/lava and
 /// deep-floor worlds). Where its cap is below lambda without an abort
 /// (psl in [lambda - 8, lambda)) it is the documented reading — the spec
-/// ties the lambda status to the submerged surface, not to the cap — and
+/// ties A_lava to the submerged surface, not to the cap — and
 /// `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the only 4
 /// blocks over two seeds where the two readings part.
-///
-/// The deep-dark override does not reach an aborted cell either: spec Q5.3's
-/// short-circuits precede the level rule, and Q5.9 forces only that rule's
-/// comparands, so an aborted deep-dark cell reads lambda, not the sentinel.
-/// Measured through the barrier by `aquifer-ddfloor-probe.sh`, which puts the
-/// aborting field under the override (pipeline engine v6).
 [[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
 
 /// `cellLevel(cell).level`, for the callers that need nothing else.

@@ -23,12 +23,16 @@
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
 #include <stratum/aquifer/substance.hpp>
+#include <stratum/javamath.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <tuple>
 
 using stratum::aquifer::AquiferQuery;
 using stratum::aquifer::BarrierAt;
@@ -572,4 +576,110 @@ TEST_CASE("the fluid-update flag on the full path, the fourth source last", "[aq
     CHECK_FALSE(flag(distancesFor(0, 10, 45), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt60));
     CHECK_FALSE(flag(distancesFor(0, 45, 46), {kWaterAt20, kWaterAt20, kWaterAt20}, kWaterAt60));
     CHECK(fourthReads == 2);
+}
+
+namespace {
+/// Blocks on rows lambda - 1 .. lambda + 30 where @p rival's status gives a
+/// different answer — substance, fluid type or fluid-update flag — from the
+/// shipped one, at @p seaLevel, over stub noise fields and a surface that
+/// sends cells down every path: aborting (-100), near-surface (-40) and
+/// high (96), in blobs two cells wide. @p rival is called with a source's
+/// inputs and its shipped status.
+template<typename Rival>
+[[nodiscard]] std::size_t rivalDisagreements(const std::int32_t seaLevel, Rival&& rival) {
+    using stratum::aquifer::RankedCell;
+    using stratum::aquifer::Source;
+    using stratum::aquifer::SourceStatus;
+    const CentreSource centres{42};
+    const std::int32_t lambda = lambdaLevel(seaLevel);
+    const auto field = [](std::uint64_t which) {
+        return [which](std::int32_t x, std::int32_t y, std::int32_t z) {
+            return stubField(which, x, y, z);
+        };
+    };
+    const auto psl = [](std::int32_t x, std::int32_t, std::int32_t z) {
+        constexpr std::int32_t kBlob = 32;
+        const double pick = stubField(7, stratum::javamath::floorDiv(x, kBlob), 0,
+                                      stratum::javamath::floorDiv(z, kBlob));
+        return pick < -0.4 ? -100.0 : (pick < 0.2 ? -40.0 : 96.0);
+    };
+    const stratum::aquifer::NoDeepDark noDeepDark;
+    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, SourceStatus> memo;
+    const auto rivalStatus = [&](const Source& ranked) {
+        const auto key = std::make_tuple(ranked.centre.x, ranked.centre.y, ranked.centre.z);
+        if (const auto found = memo.find(key); found != memo.end()) {
+            return found->second;
+        }
+        const RankedCell inputs = stratum::aquifer::rankedCellOf(ranked, seaLevel, psl, field(1),
+                                                                 field(2), field(3), noDeepDark);
+        const SourceStatus status =
+            rival(inputs, stratum::aquifer::sourceStatus(inputs.cell, inputs.lava));
+        memo.emplace(key, status);
+        return status;
+    };
+    StatusCache cache;
+    std::size_t differ = 0;
+    for (std::int32_t z = -64; z < 64; z += 3) {
+        for (std::int32_t x = -64; x < 64; x += 3) {
+            for (std::int32_t y = lambda - 1; y <= lambda + 30; ++y) {
+                const AquiferQuery query{
+                    .x = x, .y = y, .z = z, .density = -1.0, .seaLevel = seaLevel};
+                const SubstanceAt shipped = computeSubstance(
+                    centres, query, cache, field(0), field(1), field(2), field(3), psl, noDeepDark);
+                const SubstanceAt other =
+                    stratum::aquifer::computeSubstanceWith(centres, query, rivalStatus, field(0));
+                const bool same = shipped.substance == other.substance &&
+                                  shipped.fluidType == other.fluidType &&
+                                  shipped.fluidUpdate == other.fluidUpdate;
+                differ += same ? 0 : 1;
+            }
+        }
+    }
+    return differ;
+}
+} // namespace
+
+TEST_CASE("the floor's type reaches nothing at a sea at or above -54", "[aquifer]") {
+    // A_lava's type (lava) against the type engine v9 gave an aborted scan's
+    // floor: the cell's own, water for a centre at or above lambda whose
+    // `lava` reads 0.3 or less. At a sea at or above -54 the floor's level
+    // is lambda itself, so it reads fluid nowhere the lattice is consulted,
+    // and every consumer of a type is guarded by a reading: the barrier's
+    // mixed-type constant needs both sources reading fluid at the block, and
+    // every status the fluid-update flag compares the floor with is, or
+    // equals, the nearest source's, which reads fluid there and so sits
+    // above lambda — a level difference already. So no block and no mark can
+    // depend on it; this pins that rather than argues it.
+    const auto ownType = [](const stratum::aquifer::RankedCell& inputs,
+                            stratum::aquifer::SourceStatus status) {
+        const auto level = stratum::aquifer::cellLevel(inputs.cell);
+        if (level.origin == stratum::aquifer::LevelOrigin::GlobalLava) {
+            status.type = stratum::aquifer::fluidTypeOf(
+                stratum::aquifer::FluidTypeAt{.centreY = inputs.cell.centreY,
+                                              .level = level.level,
+                                              .seaLevel = inputs.cell.seaLevel,
+                                              .lava = inputs.lava});
+        }
+        return status;
+    };
+    for (const std::int32_t sea : {63, 0, -40, -54}) {
+        INFO("sea " << sea);
+        CHECK(rivalDisagreements(sea, ownType) == 0);
+    }
+    // Not vacuously: below -54 the floor reads fluid from lambda to -55, and
+    // the same retyping writes water there where the server holds lava
+    // (vanilla_aquifer_lowfloor_test.cpp).
+    CHECK(rivalDisagreements(-70, ownType) > 1000);
+    // Nor the level: lambda in its place, engine v9's, moves nothing at 63
+    // and blocks at -70.
+    const auto lambdaFloor = [](const stratum::aquifer::RankedCell& inputs,
+                                stratum::aquifer::SourceStatus status) {
+        if (stratum::aquifer::cellLevel(inputs.cell).origin ==
+            stratum::aquifer::LevelOrigin::GlobalLava) {
+            status.level = lambdaLevel(inputs.cell.seaLevel);
+        }
+        return status;
+    };
+    CHECK(rivalDisagreements(63, lambdaFloor) == 0);
+    CHECK(rivalDisagreements(-70, lambdaFloor) > 1000);
 }

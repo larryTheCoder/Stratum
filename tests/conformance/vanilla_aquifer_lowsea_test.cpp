@@ -26,7 +26,9 @@
 // its own y_skip (-158), where the global picker answers and no lattice is
 // consulted (vanilla_aquifer_yskip_test.cpp measures the cutoff). So that
 // 0/251229 is the cutoff's, and it is kept as such. The floor itself is read
-// on `a_lo` (psl -85, y_skip -50), where rows -70..-55 do reach the lattice.
+// on `a_lo` (psl -85, y_skip -50), where rows -70..-55 do reach the lattice:
+// it is the literal -54 after all, and lava (A_lava), while the exemption's
+// comparand is lambda — the third case below.
 //
 // Below `sea_level` itself, none of this is observable: the global fluid
 // picker overrides the aquifer lattice outright there (Q2.4), so every case
@@ -35,9 +37,11 @@
 // The fixture is Mojang-derived and never committed (SPEC §12).
 #include "support/probe_corpus.hpp"
 
+#include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
@@ -183,10 +187,12 @@ TEST_CASE("a flat surface of -200 at sea_level -70 is the global picker's on eve
           "[conformance][aquifer]") {
     // Every row read here is above this dimension's y_skip (-158), so the
     // global picker answers it: air from sea_level up, whatever the lattice
-    // would say. The level rule below agrees with that on every block, and
-    // so — this case's original purpose — does lambda's floor, where
-    // kLavaLevel's does not; but at these rows the lattice is not consulted,
-    // so the floor is measured on a_lo instead (the next case).
+    // would say. This case was written to measure the aborting floor (a
+    // lambda floor agreed with the server on every block, a kLavaLevel one
+    // did not), and that agreement was the cutoff's: the floor is A_lava,
+    // measured on a_lo (the next case), and the lattice here would hold its
+    // lava to -55 where the server, not consulting it, holds air. So the
+    // case now scores the global picker, and counts what the cutoff hides.
     REQUIRE(stratum::aquifer::chunkYSkip(
                 [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; }, 0, 0) < kSeaLevel);
     const std::filesystem::path region = fixtures() / "probes" / "lowsea" / "b_floor" / "r.0.0.mca";
@@ -203,7 +209,8 @@ TEST_CASE("a flat surface of -200 at sea_level -70 is the global picker's on eve
     const auto sampler = [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; };
 
     long blocks = 0;
-    long agree = 0;
+    long agree = 0;  ///< blocks where the server holds the global picker's air
+    long hidden = 0; ///< blocks the lattice, were it consulted, would make fluid
     for (std::int32_t cz = 0; cz < kChunks; ++cz) {
         for (std::int32_t cx = 0; cx < kChunks; ++cx) {
             // A probe region holds every chunk of its window: a missing one is
@@ -239,7 +246,8 @@ TEST_CASE("a flat surface of -200 at sea_level -70 is the global picker's on eve
                                                         .floodedness = 0.5,
                                                         .spread = 0.0});
                         ++blocks;
-                        agree += static_cast<int>((y < level) == fluid);
+                        agree += static_cast<long>(!fluid);
+                        hidden += static_cast<long>(y < level);
                     }
                 }
             }
@@ -247,11 +255,13 @@ TEST_CASE("a flat surface of -200 at sea_level -70 is the global picker's on eve
     }
 
     REQUIRE(blocks > 1000000);
-    INFO("blocks " << blocks << ", agree " << agree);
-    // Exact when this was written: 1966080/1966080. The old bare-kLavaLevel
-    // reading scored 0.87 here (0/251229 on the disagreeing population,
-    // matching the rest by coincidence) — against the global picker's air.
+    INFO("blocks " << blocks << ", agree " << agree << ", the lattice would make fluid " << hidden);
+    // The global picker on every block: 1966080 of 1966080.
     CHECK(agree == blocks);
+    // And the cutoff is what keeps it so: the lattice's floors (A_lava) would
+    // hold lava up to -55 on 27 477 of those blocks when this was re-read,
+    // the old bare-kLavaLevel comparand on 251 229.
+    CHECK(hidden > 10000);
 }
 
 TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not lambda",
@@ -259,15 +269,15 @@ TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not 
     // a_lo: psl -85, so every scan aborts and y_skip is -50 — rows -70..-50
     // are decided by the lattice (vanilla_aquifer_yskip_test.cpp measures the
     // cutoff). A near-surface cell that fails the exemption (centred at or
-    // below cap + 20 = -65, or below lambda) takes the aborting floor. Built,
-    // that is lambda (-70): dry everywhere above the lava sea. The server
-    // disagrees on every block such a cell is nearest to: lava up to y = -55
-    // and barrier stone, not one block of air. So the floor is wet to -54
-    // and LAVA — spec Q1.1's A_lava = (-54, lava), the status Q5.3(b) hands
-    // an aborted scan, whose level is the literal -54 rather than lambda.
-    // Open (SPEC §11, "y_skip against the server"): the build keeps lambda
-    // until the floor's status is changed with its own measurements, since
-    // its type also reaches the fluid-update flag at every sea_level.
+    // below cap + 20 = -65, or below lambda) takes the aborting floor. The
+    // server holds lava up to y = -55 and barrier stone on every block such
+    // a cell is nearest to, not one block of air: spec Q1.1's A_lava =
+    // (-54, lava), the status Q5.3(b) hands an aborted scan, whose level is
+    // the literal -54 rather than lambda. The build reads it so now; through
+    // pipeline engine v9 it read lambda (-70), dry everywhere above the lava
+    // sea. aquifer-lowfloor-probe.sh measures the same status off the
+    // near-surface path, under the deep-dark override and at sea -60
+    // (vanilla_aquifer_lowfloor_test.cpp).
     //
     // The exemption itself holds as built: a cell centred above -65 takes
     // the sea (-70) and is dry here, where kLavaLevel's comparand would have
@@ -295,7 +305,7 @@ TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not 
     long floorLavaAbove = 0; ///< lava on rows -54..y_skip whose nearest takes the floor
     long exemptBlocks = 0;   ///< rows lambda..-55 whose nearest takes the sea
     long exemptAir = 0;
-    long builtLambda = 0; ///< floor blocks whose nearest the build puts at lambda
+    long builtLava = 0; ///< floor blocks whose nearest the build makes A_lava (-54, lava)
     for (std::int32_t cz = 0; cz < kChunks; ++cz) {
         for (std::int32_t cx = 0; cx < kChunks; ++cx) {
             REQUIRE(file.hasChunk(cx, cz));
@@ -332,13 +342,16 @@ TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not 
                         floorAir += static_cast<long>(name == "minecraft:air");
                         floorLava += static_cast<long>(name == "minecraft:lava");
                         floorStone += static_cast<long>(name == "minecraft:stone");
-                        builtLambda += static_cast<long>(
-                            stratum::aquifer::cellFluidLevel(
-                                stratum::aquifer::CellFluid{.centreY = centre.y,
-                                                            .surface = surface,
-                                                            .seaLevel = kSeaLevel,
-                                                            .floodedness = 0.9,
-                                                            .spread = 0.0}) == lambda);
+                        const stratum::aquifer::SourceStatus built = stratum::aquifer::sourceStatus(
+                            stratum::aquifer::CellFluid{.centreY = centre.y,
+                                                        .surface = surface,
+                                                        .seaLevel = kSeaLevel,
+                                                        .floodedness = 0.9,
+                                                        .spread = 0.0},
+                            0.0);
+                        builtLava +=
+                            static_cast<long>(built.level == stratum::aquifer::kLavaLevel &&
+                                              built.type == stratum::aquifer::FluidType::Lava);
                     }
                 }
             }
@@ -346,13 +359,15 @@ TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not 
     }
     INFO("floor blocks " << floorBlocks << ": air " << floorAir << ", lava " << floorLava
                          << ", stone " << floorStone << "; lava above -55 " << floorLavaAbove
-                         << "; the build puts " << builtLambda << " at lambda (dry); exempt "
-                         << exemptBlocks << ", air " << exemptAir);
+                         << "; the build makes " << builtLava << " A_lava; exempt " << exemptBlocks
+                         << ", air " << exemptAir);
     REQUIRE(floorBlocks > 100000);
     // Wet to -54 and lava, every one: the barrier's stone and A_lava's lava.
     CHECK(floorAir == 0);
     CHECK(floorLava + floorStone == floorBlocks);
     CHECK(floorLavaAbove == 0);
+    // And the build's floor is that status on every one of them.
+    CHECK(builtLava == floorBlocks);
     // The exempt cells take the sea, dry here — most of their blocks air,
     // the rest the barrier between them and the floor's lava.
     CHECK(exemptAir * 4 > exemptBlocks * 3);

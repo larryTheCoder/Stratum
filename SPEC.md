@@ -267,6 +267,7 @@ to bump the version and be called out; this is that call-out.
 | 8 | **y_skip's sampling rectangle reaches every candidate source centre** (§11, "`y_skip` against the server"). The per-chunk cutoff's psl maximum was read over x and z from -16 to +16 of the chunk at stride 4; the server's rectangle runs to +25, the full extent where a candidate source centre can sit (`16 * (i_max + 1) + (kJitterBoundX - 1)`), so its samples reach +24 (any end in +24..+27 reads the same samples, a permanent tie). On a two-valued psl field (`aquifer-yskip-probe.sh`) the old rectangle was refuted on 8 646 blocks in 71 chunks; the new one is exact on 22 968 000 blocks and 123 588 fluid-update marks. Changes only worlds whose psl varies within a rectangle's reach of the cutoff; no golden block changes. v7 had reached only this development branch; bumped rather than amended because a v7 blob could exist. |
 | 9 | **Q5.8's lava override does not reach a short-circuit sea** (§11, "Nor the lava override: a short-circuit sea is the default fluid"). The near-surface return and an aborted scan's sea are the global picker's status at or above lambda, so the default fluid; v8 typed them lava at `sea_level` <= -10 with `|lava|` > 0.3. Over two seeds of `aquifer-fluidnear-probe.sh` the server holds water on all 1 027 693 contested sources, and lava on all 241 896 of the positive control's. Changes blocks and fluid-update flags only where `sea_level` <= -10; no golden block changes. v8 had reached only this development branch; bumped rather than amended because a v8 blob could exist. |
 | 10 | **Cache markers in a datapack's aquifer entries** (§11, "Cache markers in a datapack's aquifer entries"). Every aquifer read but the barrier's is detached (`density::ReadContext::Detached`): an `interpolated` there is its argument at the read point, not the blend over a cell (refuted on 5 139 104 blocks over two seeds of `aquifer-markers-probe.sh`), and a `flat_cache` read off the chunk's [16c, 16c + 19] window is its argument at the read's own y, not y = 0 (refuted on 1 437 270). `flat_cache`'s column invariance now follows its argument, so `cache_2d` over a `flat_cache` of something y-varying is refused by name. Changes output only for datapacks that wrap a non-barrier aquifer entry in `interpolated` or put a y-varying argument under an aquifer `flat_cache`; no vanilla preset does, no golden block changes and the pinned overworld hash holds. |
+| 11 | **An aborted scan's status is A_lava, -54 and lava** (§11, "An aborted scan's status is A_lava"). The aborting near-surface floor, an aborted cell off the near-surface path (v5) and one under Q5.9's override (v6) read lambda, typed as the cell's own fluid; the server holds Q1.1's A_lava there, the literal -54 and lava, on all three (`aquifer-lowfloor-probe.sh`, two seeds: the build exact on every sampled block and mark, v10's reading refuted on 8 938 to 18 209 blocks an arm). Changes blocks and fluid-update flags only where `sea_level` < -54; at or above it the floor's type is unobservable. No golden block changes. v10 had reached only this development branch; bumped rather than amended because a v10 blob could exist. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -2632,11 +2633,13 @@ Open:
   nearest cell takes the floor is lava up to y = -55 (120 991) or barrier
   stone (14 725) — not one air, and no lava from -54 up. That is spec
   Q1.1's A_lava, (-54, lava), which Q5.3(b) gives an aborted scan; the
-  build's lambda is dry there. The comparand holds (cells centred -64..-55
+  build's lambda was dry there. The comparand holds (cells centred -64..-55
   take the sea, dry). Identical at every `sea_level >= -54`, so no vanilla
-  block moves; OPEN, because the floor's lava type also reaches the
-  fluid-update flag at every sea level and the aborted off-near-surface and
-  deep-dark floors share the reading unmeasured.
+  block moves. Since resolved, with the floor's type and the aborted
+  off-near-surface and deep-dark floors measured too: every one is A_lava
+  (§11, "An aborted scan's status is A_lava"), and the type, which was
+  thought to reach the fluid-update flag at every sea, reaches nothing at a
+  sea at or above -54.
 
   *Every remaining raw disagreement is fluid the server moved after
   generating*, and is now attributed block by block rather than counted:
@@ -2959,7 +2962,10 @@ Open:
   arms show it: an aborted cell that nothing floods reads lambda, not the
   dry sentinel — built dry (v4), the barrier wrote 3 770 blocks of stone the
   server does not there, and the server took lambda's verdict on all 3 770
-  blocks where the two part (v5).
+  blocks where the two part (v5). Every one of these worlds has sea 63,
+  where lambda is -54: below a sea of -54 that status is A_lava's literal
+  -54 and lava, not lambda (the entry "An aborted scan's status is A_lava",
+  below).
 
   *A near-surface sea is not lava for its centre.* `fluidTypeOf` typed every
   source centred below lambda lava — carried from the trailing guard, where a
@@ -3011,10 +3017,10 @@ Open:
   barrier is exact over 186 337 server stone blocks. That exactness is also
   what shows the override is in force on those worlds: without it every
   cell that did not abort would flood to the sea, and the barrier would part
-  from the model's dry cells wherever they meet a near-surface sea. Since
-  every aborted cell off the near-surface path reads exactly lambda (its cap
-  is below the abort threshold and the sea is refused), the override
-  returns lambda for one directly.
+  from the model's dry cells wherever they meet a near-surface sea. Every
+  aborted cell off the near-surface path reads exactly lambda here (its cap
+  is below the abort threshold and the sea is refused), and the build now
+  returns that status, A_lava, before the override is consulted at all.
 
   *And the fluid, in blocks.* The capfloor case scores the fluid wherever
   the model fills one above lambda. It is right on every source block of
@@ -3054,10 +3060,100 @@ Open:
   twins are exact but for the frozen world's flow remnant (at most 1 017
   blocks an arm), which says the level these seas carry at sea levels this
   low is right as well. No golden block changes: vanilla's sea is 63.
-  What it does not settle is the type of an aborted scan's floor (level
-  lambda): the spec gives it the global picker's lava, this build types it
-  as a cell's own, and since it reads fluid nowhere above lambda only spec
-  Q8's fluid-update flag can tell them apart; no case scores it.
+  What it did not settle is the type of an aborted scan's floor (level
+  lambda here): the spec gives it the global picker's lava, and this build
+  typed it as a cell's own. The next entry settles it — and shows that at
+  these seas not even the fluid-update flag can tell the two apart.
+
+- **An aborted scan's status is A_lava: -54 and lava, on every path and at
+  every sea (MA; pipeline engine v11).** A cell whose scan aborted and that takes no sea read lambda,
+  typed as the cell's own fluid, on three paths: the aborting near-surface
+  floor, an aborted cell off the near-surface path (engine v5) and one
+  under Q5.9's override (v6). The clean-room spec's Q5.3(b) gives all three
+  the global picker's status at the surface the scan met submerged in the
+  lava sea: Q1.1's A_lava, the literal -54 and lava. At a sea at or above
+  -54 those are one level; below it lambda is `sea_level`, and lowsea's
+  `a_lo` (above, "`y_skip` against the server") had shown the near-surface
+  floor holding lava to -55 at sea -70.
+
+  *The type reaches nothing at a sea at or above -54, and that is pinned,
+  not argued.* There the floor reads fluid nowhere the lattice is
+  consulted. The barrier's mixed-type constant needs both sources reading
+  fluid at the block, and every status the fluid-update flag weighs the
+  floor against is the nearest source's or equal to it — a source that
+  reads fluid there and so sits above lambda, a level difference already.
+  A unit case runs the whole decision over stub fields that send cells down
+  every path, retyping every A_lava as the cell's own: no block or mark
+  differs at seas 63, 0, -40 and -54, and 10 655 positions do at -70;
+  lambda in A_lava's place moves nothing at 63 and 21 960 at -70.
+
+  *Below -54, against the server.* `tools/analysis/aquifer-lowfloor-probe.sh`
+  (`vanilla_aquifer_lowfloor_test.cpp`): at sea -70 a two-valued surface,
+  -88 where `stratum:probe_noise` (xz scale 0.25) is under -0.5 and -20
+  elsewhere, sends cells through all three paths — `lf_v5` at floodedness
+  0, `lf_v5w` at 0.6 (ladder water beside the floors), `lf_dd` at 0.9
+  under the override; `lf_f60` holds the near-surface floor alone at sea
+  -60 over a flat -75, where the literal -54 and lambda + 16 part; `lf_s63`
+  is the same noise at sea 63 (-70 / 96), the control. Every dimension has
+  vanilla's barrier noise, `lava` 0.0 and spread 0. Seeds 42 and 31337, on
+  the 63 untouched chunks of each dimension (their blocks and
+  post-processing lists are generation's own): each reading through the
+  shipped decision on every fourth column, rows lambda to lambda + 24
+  (46 800 blocks a dimension over the two seeds, 43 056 at -60, where
+  `y_skip` is -38), and the shipped filler end to end on five whole chunks
+  of each. Blocks wrong, and marks wrong, both seeds summed:
+
+  | reading of the aborted scan's status | sea -70 (lf_v5; lf_dd identical) | sea -70, water (lf_v5w) | sea -60 (lf_f60) | sea 63 (lf_s63) |
+  |---|---|---|---|---|
+  | A_lava, -54 and lava (built) | **0 / 0** | **0 / 0** | **0 / 0** | **0 / 0** |
+  | lambda, the cell's own type (engine v9) | 18 209 / 1 632 | 17 229 / 2 440 | 8 938 / 1 034 | tie |
+  | lambda, lava | 18 209 / 1 632 | 17 229 / 2 440 | 8 938 / 1 034 | tie |
+  | -54, the cell's own type | 13 949 / 1 180 | 14 957 / 1 855 | 7 649 / 1 483 | tie |
+  | A_lava on the near-surface path only, v9 off it | 17 893 / 1 662 | 16 926 / 2 470 | tie | tie |
+  | lambda + 16, lava | tie | tie | 6 092 / 1 300 | 16 664 / 3 018 |
+  | the near-surface return needs the anchor above the abort threshold | 1 802 / 423 | 1 726 / 489 | 2 931 / 1 034 | 3 585 / 613 |
+
+  "Tie" is model against model: that reading predicts the built block and
+  mark at every scored position, whatever the server holds. So the level is
+  the literal -54 (lambda and lambda + 16 each lose where they differ from
+  it), the type is lava (the cell's own type loses with the level right),
+  and it is one status on all three paths: the aborted cells off the
+  near-surface path, with the override and without, take it as the
+  near-surface floor does. 15 523, 16 002 and 8 302 of the scored server
+  lava blocks of `lf_v5`, `lf_v5w` and `lf_f60` are owned by such a floor.
+  `lf_dd` matching `lf_v5` block for block is also what shows the override
+  in force there: without it the cells that did not abort would take the
+  sea at floodedness 0.9, and those centred below lambda the trailing
+  guard's lava. End to end the filler writes the server's block on every
+  one of the 3 235 840 blocks of the 50 chunks but the 492 fluid moved to
+  (all in `lf_v5w`, each shaped like flow), and its 22 600 marks exactly.
+
+  *The last row corrects sampling.hpp.* It carried "the anchor arms the
+  abort" against "the near-surface return also needs the anchor to clear
+  the threshold" as a permanent tie, on an argument that no world could part
+  them above a sea of -55. They part wherever a cell with a low anchor sits
+  more than twenty blocks above the scan's minimum, which takes the sea
+  under the first and A_lava (lambda, through engine v9) under the second,
+  at sea 63 as much as below -54; the server takes the first in every
+  dimension.
+
+  *Implemented.* `cellLevel` returns A_lava as `LevelOrigin::GlobalLava`
+  for the near-surface floor and, before the deep-dark override and the
+  level rule, for every other aborted cell (the abort's refusal of the sea,
+  measured in MA blocker 2, is that early return now rather than two
+  `!aborted` guards); the trailing guard's -54 carries the same origin,
+  being Q5.6's `Global(Q)` for a centre below lambda. `fluidTypeOf` types
+  it lava before the centre and override tests, as it types the
+  near-surface sea the default fluid. `computeSubstanceWith` is the
+  substance decision with each source's status supplied by the caller, so
+  the conformance case scores every rival through the decision the filler
+  runs. No golden block changes (vanilla's sea is 63); output changes only
+  where `sea_level` is below -54. One case had to be re-read rather than
+  re-pinned: lowsea's `b_floor` scored the bare level rule on rows only the
+  global picker answers (above its `y_skip`), where lambda's floor agreed
+  with the server's air by construction; it now scores the picker, exact on
+  all 1 966 080 blocks, and counts the 27 477 the lattice's A_lava would
+  fill if the cutoff did not hide them.
 
 - **amplified and large_biomes, against the server (MA).** No output
   changes. Vanilla's two other overworld presets are the overworld's
@@ -4455,7 +4551,8 @@ Open:
   is above its own `y_skip` (-158), so its 0/251229 is the global picker's;
   the psl -85 dimension, where the lattice is consulted, keeps the
   comparand and refutes lambda as the floor's value — the server writes
-  A_lava, (-54, lava), there (§11, "y_skip against the server"). Open.
+  A_lava, (-54, lava), there (§11, "y_skip against the server"). The build
+  now reads it so (§11, "An aborted scan's status is A_lava").
 
   *A methodological correction recorded rather than silently fixed.* The
   first version of the near-surface analysis found a smooth, centreY-varying
