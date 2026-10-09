@@ -228,16 +228,28 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         //     `minecraft:surface`, `surface_secondary` and
         //     `clay_bands_offset` appear in no field of it;
         //   * and, under a legacy source, a random for every
-        //     `vertical_gradient` in that tree, for the aquifer lattice and
-        //     for the ore-vein source. None of those three is a noise, none
-        //     passes through `wanted`, and all three are refused by name
-        //     where they are built (SPEC §11).
+        //     `vertical_gradient` in that tree and for the ore-vein source.
+        //     Neither is a noise, neither passes through `wanted`, and both
+        //     are refused by name where they are built (SPEC §11). The
+        //     aquifer lattice's random was the third, and is measured.
         //
         // Without this a legacy dimension naming noises only in its surface
         // rule validated clean and then did not generate. These are warnings
         // and are NOT folded into routerEntries/dimensionsChecked: those
         // counts answer a narrower question on purpose, and widening them
         // would make the headline number mean something else again.
+        //
+        // The vein flag first, OUTSIDE the surface rule's `try`: it does not
+        // need the rule tree, and a dimension whose surface rule did not
+        // resolve used to lose this warning behind that rule's error.
+        // `aquifers_enabled` is not warned about: its legacy derivation is
+        // measured (SPEC §11), and a legacy aquifer that names vanilla's
+        // aquifer noises is reported below, by the router's noise refusal.
+        if (source == density::RandomSource::Legacy && dimension.oreVeinsEnabled) {
+            add(report, Severity::Warning, id.toString(),
+                density::legacyConstructRefusal("ore_veins_enabled",
+                                                "the vein source is drawn from that source"));
+        }
         try {
             const surface::RuleGraph rules = surface::RuleGraph::resolve(dimension.surfaceRule, id);
             const std::vector<data::ResourceLocation> surfaceWanted =
@@ -256,17 +268,6 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
                         density::legacyConstructRefusal("minecraft:vertical_gradient",
                                                         "its random_name '" + name +
                                                             "' salts this dimension's own source"));
-                }
-                if (dimension.aquifersEnabled) {
-                    add(report, Severity::Warning, id.toString(),
-                        density::legacyConstructRefusal(
-                            "aquifers_enabled",
-                            "the lattice's centre jitter is drawn from that source"));
-                }
-                if (dimension.oreVeinsEnabled) {
-                    add(report, Severity::Warning, id.toString(),
-                        density::legacyConstructRefusal(
-                            "ore_veins_enabled", "the vein source is drawn from that source"));
                 }
             }
         } catch (const surface::RuleError& error) {

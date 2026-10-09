@@ -80,7 +80,8 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
         stratum::test::requireFrozen(region.parent_path().parent_path(),
                                      "tools/analysis/aquifer-comb-probe.sh");
 
-        const stratum::aquifer::CentreSource centres{world.seed};
+        const stratum::aquifer::CentreSource centres{world.seed,
+                                                     stratum::density::RandomSource::Xoroshiro};
         std::vector grid(kCells, std::vector<Tally>(kCells));
         const auto file = stratum::region::RegionFile::open(region);
 

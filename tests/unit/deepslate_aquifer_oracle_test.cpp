@@ -148,7 +148,8 @@ TEST_CASE("the aquifer's random source matches deepslate's on every vector",
         // And the aquifer's wiring of it: the same base, the three draws in
         // the order and bounds this project measured, and the centre built
         // from them.
-        const stratum::aquifer::CentreSource centres{v.seed};
+        const stratum::aquifer::CentreSource centres{v.seed,
+                                                     stratum::density::RandomSource::Xoroshiro};
         CHECK(centres.base() == source.base());
         CHECK(centres.jitterOf(v.cx, v.cy, v.cz) ==
               stratum::aquifer::Jitter{v.draws[0], v.draws[1], v.draws[2]});

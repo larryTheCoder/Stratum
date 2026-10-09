@@ -227,7 +227,7 @@ TEST_CASE("the water-over-lava exception owns exactly one row", "[aquifer]") {
 }
 
 TEST_CASE("below the lava sea the substance is lava before any source is consulted", "[aquifer]") {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const FloodOne nothingFlooded{.flooded = CellIndex{.x = 1 << 20, .y = 0, .z = 0}};
     for (const std::int32_t y : {kLavaLevel - 1, kLavaLevel - 5, -64}) {
         const AquiferQuery query{.x = 7, .y = y, .z = 11, .density = -1.0, .seaLevel = kSea};
@@ -242,7 +242,7 @@ TEST_CASE("below the lava sea the substance is lava before any source is consult
 }
 
 TEST_CASE("water on the sea's top row is water, one row up it is a barrier", "[aquifer]") {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const std::int32_t row = lambdaLevel(kSea);
     const auto junction = findJunction(centres, row);
     REQUIRE(junction.has_value());
@@ -291,7 +291,7 @@ TEST_CASE("the exception's row follows a sea pulled below the lava level", "[aqu
     // row that must NOT fire rather than the one that must; the probe in
     // vanilla_aquifer_waterlava_test.cpp reads both off the server.)
     constexpr std::int32_t kLowSea = -70;
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const auto junction = findJunction(centres, kLavaLevel);
     REQUIRE(junction.has_value());
     const FloodOne nearestFlooded{.flooded = junction->nearest};
@@ -318,7 +318,7 @@ TEST_CASE("the lava sampler alone turns a junction inside two fluid bodies to st
     // while the second stays water at 63: a lava body meeting a water one,
     // and the constant fires at separation 12 (weight 0.52) and not at 13
     // (0.48), whatever the `barrier` noise says.
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const auto close = findMixedJunction(centres, 12);
     REQUIRE(close.has_value());
     for (const double barrier : {-1.0, 0.0, 4.0}) {
@@ -375,7 +375,7 @@ namespace {
 /// answers differently from the global picker, over a flat
 /// `preliminary_surface_level` at @p surface and three stub noise fields.
 [[nodiscard]] std::size_t disagreementsAboveSkip(const double surface) {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const std::int32_t skip = stratum::aquifer::ySkip(static_cast<std::int32_t>(surface));
     const auto psl = [surface](std::int32_t, std::int32_t, std::int32_t) { return surface; };
     std::size_t differ = 0;

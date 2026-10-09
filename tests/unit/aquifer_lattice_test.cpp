@@ -8,6 +8,9 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/substance.hpp>
+#include <stratum/density/random_source.hpp>
+#include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -174,29 +177,113 @@ TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
     // In CI, deepslate_aquifer_oracle_test.cpp checks the base and the mix's y
     // term against an independent implementation; the x and z terms, the
     // bounds and the draw order have no CI oracle but these answers.
-    const CentreSource s42{42};
+    const CentreSource s42{42, stratum::density::RandomSource::Xoroshiro};
     CHECK(s42.jitterOf(0, 0, 0) == Jitter{7, 7, 9});
     CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 4, 6});
     CHECK(s42.jitterOf(3, -4, 5) == Jitter{6, 7, 8});
     CHECK(s42.jitterOf(-1, 1, -1) == Jitter{0, 6, 4});
     CHECK(s42.jitterOf(7, 7, 7) == Jitter{2, 1, 8});
 
-    const CentreSource s7{7};
+    const CentreSource s7{7, stratum::density::RandomSource::Xoroshiro};
     CHECK(s7.jitterOf(0, 0, 0) == Jitter{9, 6, 8});
     CHECK(s7.jitterOf(3, -4, 5) == Jitter{0, 6, 2});
 
     // A negative seed, since the position mix sign-extends and shifts
     // arithmetically, and every step of it wraps.
-    const CentreSource sneg{-1};
+    const CentreSource sneg{-1, stratum::density::RandomSource::Xoroshiro};
     CHECK(sneg.jitterOf(0, 0, 0) == Jitter{2, 7, 4});
     CHECK(sneg.jitterOf(7, 7, 7) == Jitter{8, 8, 5});
+}
+
+TEST_CASE("under the legacy source the centre jitter is java.util.Random's", "[aquifer][legacy]") {
+    using stratum::aquifer::CentreSource;
+    using stratum::aquifer::Jitter;
+    using stratum::density::RandomSource;
+
+    // Known answers from a JVM, not from this build: java.util.Random and
+    // String.hashCode run in jshell over the clean-room spec's position mix
+    // (Q3.4), composed the way the server's legacy aquifer worlds measured it
+    // (SPEC §11, "The aquifer under the legacy source").
+    CHECK(stratum::rng::javaStringHashCode("minecraft:aquifer") == -1973797502);
+    CHECK(stratum::rng::javaStringHashCode("minecraft:bedrock_floor") == 2042456806);
+    CHECK(stratum::rng::javaStringHashCode("") == 0);
+    CHECK(stratum::rng::legacyPositionalSourceFor(42, "minecraft:aquifer").seed() ==
+          -651457591642403070);
+    CHECK(stratum::rng::legacyPositionalSourceFor(-1, "minecraft:aquifer").seed() ==
+          -95934913821622040);
+    CHECK(stratum::rng::legacyPositionalSourceFor(31337, "minecraft:aquifer").seed() ==
+          8565364769789071309);
+
+    const CentreSource s42{42, RandomSource::Legacy};
+    CHECK(s42.source() == RandomSource::Legacy);
+    CHECK(s42.legacySeed() == -651457591642403070);
+    CHECK(s42.jitterOf(0, 0, 0) == Jitter{2, 2, 4});
+    CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 1, 0});
+    CHECK(s42.jitterOf(3, -4, 5) == Jitter{5, 0, 5});
+    CHECK(s42.jitterOf(-1, 1, -1) == Jitter{7, 2, 5});
+    CHECK(s42.jitterOf(7, 7, 7) == Jitter{5, 0, 3});
+
+    const CentreSource sneg{-1, RandomSource::Legacy};
+    CHECK(sneg.jitterOf(0, 0, 0) == Jitter{2, 7, 1});
+    CHECK(sneg.jitterOf(7, 7, 7) == Jitter{6, 7, 3});
+    CHECK(sneg.jitterOf(-3, -5, 2) == Jitter{4, 1, 7});
+
+    // The same composition spelled out with the generator itself, over a
+    // block of cells with negative indices in every axis: the stream seed
+    // XOR the mix, then java.util.Random's own nextInt(10), (9), (10).
+    for (std::int32_t cx = -3; cx <= 3; ++cx) {
+        for (std::int32_t cy = -6; cy <= 6; ++cy) {
+            for (std::int32_t cz = -3; cz <= 3; ++cz) {
+                stratum::rng::JavaRandom random{s42.legacySeed() ^
+                                                stratum::rng::positionSeed(cx, cy, cz)};
+                const std::int32_t u = random.nextInt(10);
+                const std::int32_t v = random.nextInt(9);
+                const std::int32_t w = random.nextInt(10);
+                CAPTURE(cx, cy, cz);
+                REQUIRE(s42.jitterOf(cx, cy, cz) == Jitter{u, v, w});
+            }
+        }
+    }
+}
+
+TEST_CASE("the legacy lattice sees 48 bits of the world seed and the modern one sees 64",
+          "[aquifer][legacy]") {
+    using stratum::aquifer::CentreSource;
+    using stratum::density::RandomSource;
+
+    // java.util.Random keeps the low 48 bits of its seed, so 42 and 42 with the
+    // sign bit set are one world to the legacy lattice; Xoroshiro128++ is
+    // seeded from all 64. The server shows both on the probe's twin world
+    // (vanilla_aquifer_legacy_test.cpp); this pins the derivation's half.
+    constexpr std::int64_t kTwin = 42 ^ std::numeric_limits<std::int64_t>::min();
+    CHECK(CentreSource{42, RandomSource::Legacy}.legacySeed() ==
+          CentreSource{kTwin, RandomSource::Legacy}.legacySeed());
+    CHECK_FALSE(CentreSource{42, RandomSource::Xoroshiro}.base() ==
+                CentreSource{kTwin, RandomSource::Xoroshiro}.base());
+
+    // And the two sources are different lattices at one seed: of 1000 cells,
+    // the draws agree on all three axes at about the chance rate, 1 in 900.
+    const CentreSource legacy{42, RandomSource::Legacy};
+    const CentreSource modern{42, RandomSource::Xoroshiro};
+    CHECK(legacy.base() == stratum::rng::Seed128{});
+    CHECK(modern.legacySeed() == 0);
+    int same = 0;
+    for (std::int32_t cx = 0; cx < 10; ++cx) {
+        for (std::int32_t cy = 0; cy < 10; ++cy) {
+            for (std::int32_t cz = 0; cz < 10; ++cz) {
+                same +=
+                    static_cast<int>(legacy.jitterOf(cx, cy, cz) == modern.jitterOf(cx, cy, cz));
+            }
+        }
+    }
+    CHECK(same < 10);
 }
 
 TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
     // Ten horizontally, nine vertically — not one width on every axis, which is
     // what the measurement first suggested. Over 32000 cells every value inside
     // each bound appears and nothing outside it does.
-    const stratum::aquifer::CentreSource source{42};
+    const stratum::aquifer::CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     std::array<int, 16> seenX{};
     std::array<int, 16> seenY{};
     std::array<int, 16> seenZ{};
@@ -226,7 +313,7 @@ TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
 }
 
 TEST_CASE("the centre is the cell corner plus its jitter", "[aquifer]") {
-    const stratum::aquifer::CentreSource source{42};
+    const stratum::aquifer::CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     const auto jitter = source.jitterOf(3, -4, 5);
     const auto centre = source.centreOf(3, -4, 5);
     CHECK(centre.x == (3 * stratum::aquifer::kCellPitchX) + jitter.x);

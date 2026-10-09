@@ -3,6 +3,7 @@
 #include "support/temp_path.hpp"
 
 #include <stratum/aquifer/lattice.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
@@ -1506,17 +1507,17 @@ TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
     CHECK(negative.maxZ == -13);
 }
 
-TEST_CASE("a legacy random source refuses aquifers and ore veins by name",
-          "[terrain][filler][aquifer]") {
-    // Both are positional randoms drawn from the dimension's declared source,
-    // and no vanilla legacy dimension enables either, so nothing on disk says
-    // what they should be. No vanilla pack reaches these throws — which is
-    // exactly why they need a test: a regression would quietly generate
-    // with the modern derivation instead of failing.
+TEST_CASE("a legacy random source refuses ore veins by name", "[terrain][filler][aquifer]") {
+    // The vein source is a positional random drawn from the dimension's
+    // declared source, no vanilla legacy dimension enables veins, and no
+    // probe has asked the server for one, so nothing says what it should be.
+    // No vanilla pack reaches this throw — which is exactly why it needs a
+    // test: a regression would quietly generate with the modern derivation
+    // instead of failing. With and without aquifers, since the refusal is on
+    // the flag (veins place nothing without aquifers).
     for (const bool aquifers : {true, false}) {
-        const bool oreVeins = !aquifers;
-        INFO("aquifers " << aquifers << ", ore veins " << oreVeins);
-        nlohmann::json settings = flatSettings(aquifers, oreVeins);
+        INFO("aquifers " << aquifers);
+        nlohmann::json settings = flatSettings(aquifers, /*oreVeins=*/true);
         settings["legacy_random_source"] = true;
         const TempTree tree;
         tree.defineSettings("test", settings);
@@ -1529,9 +1530,110 @@ TEST_CASE("a legacy random source refuses aquifers and ore veins by name",
         const auto& dimension =
             loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
         CHECK_THROWS_WITH(ChunkFiller::compile(loaded.graph, noises, dimension),
-                          ContainsSubstring(aquifers ? "aquifers_enabled" : "ore_veins_enabled") &&
+                          ContainsSubstring("ore_veins_enabled") &&
                               ContainsSubstring("legacy_random_source"));
     }
+}
+
+TEST_CASE("a legacy dimension's aquifer draws its lattice from the legacy source",
+          "[terrain][filler][aquifer][legacy]") {
+    // NOT refused any more: the server's own legacy aquifer worlds measured
+    // the derivation (SPEC §11; vanilla_aquifer_legacy_test.cpp holds the
+    // filler to them block for block). What this pins, with no corpus and so
+    // in every CI run, is the WIRING: the filler must build its lattice from
+    // the registry's declared source. The probe's open-void world — every
+    // input a constant, so a block is the lattice's decision alone — filled
+    // through ChunkFiller under each source must equal computeSubstance with
+    // that source's centres, and the two fills must differ.
+    nlohmann::json router = nlohmann::json::object();
+    for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
+        router[std::string(stratum::settings::routerEntryName(static_cast<RouterEntry>(i)))] = 0.0;
+    }
+    router["final_density"] = -1.0;
+    router["barrier"] = -2.0;
+    router["fluid_level_floodedness"] = 0.5;
+    router["fluid_level_spread"] = 0.0;
+    router["lava"] = -1.0;
+    router["preliminary_surface_level"] = 96.0;
+    constexpr std::int64_t kSeed = 42;
+    constexpr std::int32_t kChunkX = 1;
+    constexpr std::int32_t kChunkZ = 2;
+
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool legacy : {false, true}) {
+        INFO("legacy " << legacy);
+        const auto source = legacy ? stratum::density::RandomSource::Legacy
+                                   : stratum::density::RandomSource::Xoroshiro;
+        const nlohmann::json settings{
+            {"default_block", {{"Name", "minecraft:stone"}}},
+            {"default_fluid", {{"Name", "minecraft:water"}, {"Properties", {{"level", "0"}}}}},
+            {"sea_level", 63},
+            {"disable_mob_generation", true},
+            {"aquifers_enabled", true},
+            {"ore_veins_enabled", false},
+            {"legacy_random_source", legacy},
+            {"noise",
+             {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 1}}},
+            {"noise_router", router},
+            {"spawn_target", nlohmann::json::array()},
+            {"surface_rule",
+             {{"type", "minecraft:block"}, {"result_state", {{"Name", "minecraft:stone"}}}}},
+        };
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const auto noises = stratum::density::NoiseRegistry::create(
+            tree.pack(), loaded.graph.referencedNoises(), kSeed, source);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        REQUIRE(dimension.legacyRandomSource == legacy);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, dimension);
+        ChunkBuffer buffer(dimension.geometry);
+        filler.fill(kChunkX, kChunkZ, buffer);
+
+        const stratum::aquifer::CentreSource centres{kSeed, source};
+        stratum::aquifer::StatusCache statuses;
+        const auto constant = [](double value) {
+            return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+        };
+        int mismatches = 0;
+        auto& names = filled.at(legacy ? 1U : 0U);
+        for (std::int32_t lz = 0; lz < 16; ++lz) {
+            for (std::int32_t lx = 0; lx < 16; ++lx) {
+                for (std::int32_t y = -64; y < 320; ++y) {
+                    const std::string ours = buffer.at(lx, y, lz).name.toString();
+                    names.push_back(ours);
+                    const auto expected = stratum::aquifer::computeSubstance(
+                        centres,
+                        stratum::aquifer::AquiferQuery{.x = (kChunkX * 16) + lx,
+                                                       .y = y,
+                                                       .z = (kChunkZ * 16) + lz,
+                                                       .density = -1.0,
+                                                       .seaLevel = 63},
+                        statuses, constant(-2.0), constant(0.5), constant(0.0), constant(-1.0),
+                        constant(96.0), stratum::aquifer::NoDeepDark{});
+                    std::string name = "minecraft:stone";
+                    if (expected.substance == stratum::aquifer::Substance::Air) {
+                        name = "minecraft:air";
+                    } else if (expected.substance == stratum::aquifer::Substance::Fluid) {
+                        name = expected.fluidType == stratum::aquifer::FluidType::Lava
+                                   ? "minecraft:lava"
+                                   : "minecraft:water";
+                    }
+                    mismatches += static_cast<int>(ours != name);
+                }
+            }
+        }
+        CHECK(mismatches == 0);
+    }
+    // The source reached the lattice: a 16x16 chunk of this world differs
+    // between the two by a few thousand blocks (about 7% of the window on
+    // the server's worlds).
+    int differ = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        differ += static_cast<int>(filled[0][i] != filled[1][i]);
+    }
+    CHECK(differ > 1000);
 }
 
 TEST_CASE("aquifers over a default fluid other than water are refused by name",

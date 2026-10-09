@@ -33,6 +33,7 @@
 // held constant was the jitter.
 #pragma once
 
+#include <stratum/density/random_source.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
@@ -228,28 +229,52 @@ struct Jitter {
 };
 
 /// The per-world source of cell centres. Immutable once built, and cheap to
-/// query: the world seed is folded down to a 128-bit base once, and each cell
-/// then costs one position mix and three draws.
+/// query: the world seed is folded down once, and each cell then costs one
+/// position mix and three draws.
+///
+/// THE DIMENSION'S DECLARED RANDOM SOURCE IS REQUIRED, with no default, for
+/// the reason `density::RandomSource` gives: under `legacy_random_source`
+/// the centres are drawn from java.util.Random rather than Xoroshiro128++,
+/// and a one-argument constructor that meant "modern" was the shape that
+/// would have let the filler hand a legacy dimension the wrong lattice.
 class CentreSource {
 public:
-    /// Forks the world seed, salts it with the MD5 of `minecraft:aquifer`, and
-    /// forks again — the same two-step derivation the noise registry uses,
-    /// which is why `XoroshiroPositionalFactory` does the first half here.
-    explicit CentreSource(std::int64_t worldSeed) noexcept;
+    /// Xoroshiro: forks the world seed, salts it with the MD5 of
+    /// `minecraft:aquifer`, and forks again — the same two-step derivation
+    /// the noise registry uses, which is why `XoroshiroPositionalFactory`
+    /// does the first half here.
+    ///
+    /// Legacy: the same two forks around one salt with java.util.Random,
+    /// String.hashCode for the MD5, and the position mix XORed into the
+    /// 64-bit stream seed (`rng::legacyPositionalSourceFor`). Measured on
+    /// the server's own legacy aquifer worlds (SPEC §11, "The aquifer under
+    /// the legacy source"): the one survivor of 7200 candidate rules, then
+    /// exact block for block on a seed generated after it was frozen.
+    CentreSource(std::int64_t worldSeed, density::RandomSource source) noexcept;
 
     /// The three draws for one cell, in the order x, y, z from one generator.
     /// The order is not free: the other five assignments of draw slots to axes
-    /// score 3.9-15.3% against this one's 78.9% at block level.
+    /// score 3.9-15.3% against this one's 78.9% at block level. Under the
+    /// legacy source each draw is java.util.Random's own nextInt(bound).
     [[nodiscard]] Jitter jitterOf(std::int32_t cx, std::int32_t cy, std::int32_t cz) const noexcept;
 
     /// The centre in absolute block coordinates.
     [[nodiscard]] CellIndex centreOf(std::int32_t cx, std::int32_t cy,
                                      std::int32_t cz) const noexcept;
 
+    [[nodiscard]] constexpr density::RandomSource source() const noexcept { return source_; }
+
+    /// The Xoroshiro derivation's 128-bit base; zero under the legacy source,
+    /// whose whole state is `legacySeed()`.
     [[nodiscard]] constexpr rng::Seed128 base() const noexcept { return base_; }
 
+    /// The legacy derivation's 64-bit stream seed; zero under Xoroshiro.
+    [[nodiscard]] constexpr std::int64_t legacySeed() const noexcept { return legacySeed_; }
+
 private:
-    rng::Seed128 base_;
+    density::RandomSource source_;
+    rng::Seed128 base_{};
+    std::int64_t legacySeed_ = 0;
 };
 
 /// The mix and the two-fork derivation live in `stratum::rng`: surface rules'

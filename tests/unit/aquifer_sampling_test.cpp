@@ -24,7 +24,7 @@ using stratum::aquifer::SamplePos;
 using stratum::aquifer::spreadSample;
 
 TEST_CASE("floodedness is read at the cell's own centre, verbatim", "[aquifer]") {
-    const CentreSource source{42};
+    const CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
 
     // Seven cells whose centres this build produces and the server was read
     // against. The point of listing them rather than asserting an identity is
@@ -70,7 +70,7 @@ TEST_CASE("floodedness is read at the cell's own centre, verbatim", "[aquifer]")
 }
 
 TEST_CASE("the spread is read in lattice indices, not in block space", "[aquifer]") {
-    const CentreSource source{42};
+    const CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     // The discriminating cell. Its centre y is 200, so the band is 5 — but the
     // cell's own layer times the pitch is 192, whose band is 4. Those are
     // forty blocks apart in the ladder. This is the cell that separates
@@ -103,7 +103,7 @@ TEST_CASE("the spread's band divides toward negative infinity", "[aquifer]") {
 
     // The measured negative-coordinate cell, where the whole chain runs
     // negative at once: the cell index, the centre and the band.
-    const CentreSource source{42};
+    const CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     const CellIndex cell{-7, -1, -1};
     const CellIndex centre = source.centreOf(cell.x, cell.y, cell.z);
     CHECK(centre == CellIndex{-106, -8, -9});
@@ -115,7 +115,7 @@ TEST_CASE("the ladder is built from the band the spread is addressed by", "[aqui
     // Not two derivations of the same number that happen to agree — one band,
     // used twice. If they ever disagree, one of the two is reading the wrong
     // cell.
-    const CentreSource source{42};
+    const CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     const CellIndex cell{2, 16, 5};
     const CellIndex centre = source.centreOf(cell.x, cell.y, cell.z);
     const std::int32_t band = spreadSample(cell, centre).y;

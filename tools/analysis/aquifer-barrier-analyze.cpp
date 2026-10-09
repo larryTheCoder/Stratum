@@ -194,7 +194,7 @@ int run(int argc, char** argv) {
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
 
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
 
     std::vector<std::string> names;
     for (const auto& entry : std::filesystem::directory_iterator(root)) {

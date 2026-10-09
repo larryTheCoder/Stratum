@@ -170,7 +170,7 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
                                  "tools/analysis/aquifer-depthgate-probe.sh");
     stratum::test::requireSeed(fixtures() / "probes" / "depthgate", 42);
     const Field field{readout};
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
 
     // Enumerate the candidate cell indices once; the field and geometry are
     // shared across every floodedness dimension.

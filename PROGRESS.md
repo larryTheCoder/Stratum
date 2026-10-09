@@ -139,6 +139,27 @@ Open:
       every base ablation missing all 72. Still pinned only by cases that
       skip in CI: the mix's x and z terms and wraps, arithmetic against
       logical shift, the bounds and the draw order. SPEC §11.
+- [x] **The aquifer under `legacy_random_source` — measured, and no longer
+      refused.** No vanilla dimension has the pair, so this build refused it
+      on "no oracle can exist"; the server generates it from a datapack.
+      `tools/analysis/legacy-aquifer-probe.sh` puts a legacy open-void
+      aquifer, its flag-off control and a named-noise positive control in
+      one world, at seeds 42, 31337 and 42's 48-bit twin. The flag reaches
+      the lattice (390759-429106 of 6291456 blocks differ), and of 7200
+      enumerated rules exactly one survives seed 42 alone (192/192, next
+      148/192): `new Random(seed ^ positionSeed)` with
+      `seed = fork(fork(worldSeed) ^ "minecraft:aquifer".hashCode())`,
+      JDK `nextInt(10/9/10)`. Frozen before the other two worlds were
+      generated, it replays all three block for block (0 unexplained of
+      5904384 a world), the twin is seed 42's legacy world and not its modern
+      one, and the same primitive is exact on the golden Nether's bedrock
+      gradients (65536/65536, four seeds, floor and roof). `CentreSource`
+      takes the dimension's random source as a required argument; the
+      filler passes the registry's. Pinned by
+      `vanilla_aquifer_legacy_test.cpp` (CI generates its corpora, legacy
+      shard) and, in every CI run, `terrain_filler_test.cpp`'s wiring case.
+      A legacy aquifer that names vanilla's aquifer noises is still refused,
+      for those noises' seeding. SPEC §11.
 - [x] **The probe residuals were flow, or attribution.** Varying surface
       (34 878 blocks) and selection readout two (999) are every block fluid
       that moved after generating. The fluid type's "4% mixed" and its four
@@ -501,9 +522,14 @@ Open:
 - [ ] **`legacy_random_source` for the CONSTRUCTS that are not noises —
       `vertical_gradient`, the aquifer lattice, the ore-vein source.** Opened
       by the narrowing below, and closed for safety rather than for
-      correctness: all three are now REFUSED BY NAME where they are built
+      correctness: all three were REFUSED BY NAME where they are built
       (`surface::Executor::compile`, `ChunkFiller::compile`), not silently
-      derived the modern way.
+      derived the modern way. **The aquifer lattice is since measured and
+      derived, not refused** (MA, above: the legacy positional primitive,
+      `rng::LegacyPositionalSource`); the same primitive reproduces the
+      golden Nether's bedrock gradients exactly, so the gradient's refusal
+      now waits on the executor running it; the vein source is still
+      refused, with no oracle.
 
       The narrowed refusal's predicate is "this dimension names a
       worldgen/noise". These three draw on the dimension's declared random
@@ -533,13 +559,17 @@ Open:
       band, 0% at the impossible one — is asserted, so the band being scored
       is pinned to the band the anchors name.
 
-      **The aquifer and ore sources are UNTESTED**, and that is the boundary:
-      both draw a positional random from the same primitive under the same
-      declared source, but every vanilla legacy dimension has
+      **The legacy primitive, out of sample, is exact on the same bedrock**:
+      measured on the aquifer's lattice (MA, above) and salted with each
+      gradient's `random_name`, it scores 65536 / 65536 on every row of the
+      table above, where the Xoroshiro coin is at chance.
+
+      **The aquifer source was UNTESTED and is now measured; the ore source
+      is still UNTESTED.** Every vanilla legacy dimension has
       `aquifers_enabled` and `ore_veins_enabled` false, so no oracle for
-      either is on disk and none can be produced from vanilla data. They are
-      refused on the structural argument — same source, same primitive, one
-      member of the class measured wrong — not on a measurement of their own.
+      either is on disk — but the server generates the pair from a datapack,
+      and `legacy-aquifer-probe.sh` asked it for the aquifer. The vein source
+      is still refused on the structural argument alone.
 
       *What this closed.* A legacy dimension naming no noise whose surface
       rule used vanilla's bedrock-floor gradient compiled clean
@@ -554,7 +584,7 @@ Open:
       dimension naming noises only in its surface rule validated clean and
       then did not generate. It now also reports, as warnings beside the
       router counts rather than folded into them, the surface tree's
-      `requiredNoises` and the three constructs — the router counts keep
+      `requiredNoises` and the constructs it refuses — the router counts keep
       answering the narrower question on purpose.
 
 - [x] **The legacy CLIMATE noises — `temperature`, `vegetation`, `offset` —

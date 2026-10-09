@@ -204,7 +204,7 @@ TEST_CASE("a flat surface of -200 at sea_level -70 is the global picker's on eve
                                  "tools/analysis/aquifer-lowsea-probe.sh");
     stratum::test::requireSeed(fixtures() / "probes" / "lowsea", 42);
 
-    const stratum::aquifer::CentreSource centres{42};
+    const stratum::aquifer::CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const auto file = stratum::region::RegionFile::open(region);
     const auto sampler = [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; };
 
@@ -295,7 +295,7 @@ TEST_CASE("at sea_level -70 the aborting near-surface floor is lava to -55, not 
     const std::int32_t lambda = stratum::aquifer::lambdaLevel(kSeaLevel);
     const std::int32_t ySkipLevel = stratum::aquifer::chunkYSkip(sampler, 0, 0);
     REQUIRE(ySkipLevel == -50);
-    const stratum::aquifer::CentreSource centres{42};
+    const stratum::aquifer::CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const auto file = stratum::region::RegionFile::open(region);
 
     long floorBlocks = 0; ///< rows lambda..-55 whose nearest source takes the floor

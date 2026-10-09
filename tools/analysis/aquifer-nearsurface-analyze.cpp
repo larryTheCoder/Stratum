@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     const auto noises =
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const auto& probeNoise = noises.get(wanted[0]);
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
 
     std::vector<std::string> names;
     for (const auto& entry : std::filesystem::directory_iterator(root)) {

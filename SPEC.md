@@ -418,13 +418,21 @@ multi-noise biome source, and the minimum of
 namespaced references within these.
 
 Aquifers (`aquifers_enabled` and the router entries they read) are supported
-at Tier A wherever the dimension's random source is Xoroshiro128++ and its
-`default_fluid` is water. Both other cases are refused by name, because no
-vanilla dimension that enables aquifers has either, so nothing can say what
-they should be: under `legacy_random_source` the cell centres are a
-positional random drawn from that source, and with any other default fluid
-the water-over-lava exception (Q6.3) and the lava-against-water pressure
-(Q6.4) part from "the default fluid". `stratum validate` warns on both.
+at Tier A wherever the dimension's `default_fluid` is water, under either
+random source. No vanilla dimension enables aquifers under
+`legacy_random_source`, but the server generates one when a datapack asks,
+and a constructed probe measured where the cell centres go there (§11, "The
+aquifer under the legacy source"). That covers the lattice and nothing else:
+a legacy dimension whose aquifer inputs name a `worldgen/noise` — vanilla's
+`aquifer_barrier`, `aquifer_fluid_level_floodedness`, `_spread`, `_lava` —
+is still refused, by the noise registry, for that noise's seeding (§11), so
+what generates under the legacy source is an aquifer whose inputs are
+constants, derived functions, or the three legacy climate noises. Any other
+default fluid is refused by name, because no vanilla dimension that enables
+aquifers has one, so nothing can say what it should be: the water-over-lava
+exception (Q6.3) and the lava-against-water pressure (Q6.4) part from "the
+default fluid". `stratum validate` warns on it. Ore veins under
+`legacy_random_source` stay refused by name: the vein source has no oracle.
 `default_block` need not be stone: where the aquifer decides solid the
 filler writes that state whole, as for positive density (Q6.7). Measured
 against the server with netherrack and with deepslate[axis=x], a state that
@@ -1283,6 +1291,14 @@ Open:
   is checked against deepslate on 72 vectors (9 seeds, 8 cells), but only on
   the y axis: deepslate's own mix does not wrap, so off that axis it is not
   vanilla's, and the x and z terms have no oracle that runs in CI.
+
+  Its java.util.Random counterpart under `legacy_random_source`
+  (`rng::LegacyPositionalSource`: the same two forks around one salt, with
+  the LCG's `nextLong` for each fork, `String.hashCode` for the salt, and
+  the mix XORed into a 64-bit stream seed) is implemented too, measured on
+  the server's own legacy aquifer worlds and then, out of sample, on the
+  golden Nether's bedrock gradients (§11, "The aquifer under the legacy
+  source"). Its unit vectors come from a JVM.
 
   Still deliberately **not implemented**, for want of an oracle: Xoroshiro
   Gaussians and the general-purpose `fork()` that derives a child generator
@@ -5871,7 +5887,10 @@ Open:
   three is refused by name, by THROWING, from `ChunkFiller::compile` — the
   path every real dimension takes — and the gradient also from
   `surface::Executor::compile` for a caller that reaches it directly (SPEC
-  §8: the construct is named, not merely the dimension).
+  §8: the construct is named, not merely the dimension). The aquifer's
+  refusal is since lifted: its lattice was measured under the legacy source
+  and is derived from it (the next entry, "The aquifer under the legacy
+  source"); the gradient and the vein source are still refused.
 
   Two shapes were wrong on the way here and are recorded because each let a
   constructed pack through. The gradient refusal was first landed as a
@@ -5917,14 +5936,18 @@ Open:
   conditions, so its outcome is not readable from the blocks. That exclusion
   is a property of the tree's shape, decided before any block is read.
 
-  *The aquifer and ore sources are structurally identical and UNTESTED.*
+  *The aquifer and ore sources were structurally identical and UNTESTED.*
   Both draw a positional random from the same primitive under the same
   declared source. Every vanilla legacy dimension has `aquifers_enabled` and
   `ore_veins_enabled` false, so **no oracle for either is on disk** and none
-  can be generated from vanilla data alone. They are refused on the
-  structural argument — same source, same primitive, one member of the class
-  measured wrong — and not on a measurement of their own. That is the
-  boundary: one construct measured, two argued.
+  can be generated from vanilla data alone — but one can be generated from a
+  datapack, and for the aquifer it now has been: the next entry, "The
+  aquifer under the legacy source", measures the legacy derivation on the
+  server's own worlds, and the same primitive, salted with each gradient's
+  `random_name`, reproduces the golden Nether's bedrock above **exactly**,
+  65536 of 65536 on every row of that table. The gradient's refusal stands
+  until the executor runs that coin (its own change); the ore source is
+  still refused on the structural argument alone, with no probe of its own.
 
   *What this closed.* A legacy dimension naming no noise whose surface rule
   used vanilla's bedrock-floor gradient used to compile clean
@@ -5938,6 +5961,125 @@ Open:
   and it compiles through the public path as the control. A doctored MODERN
   overworld with the identical gradient still generates — the refusal keys on
   the legacy source, not on the construct.
+
+- **The aquifer under the legacy source, measured: java.util.Random, two
+  forks around `String.hashCode` (MA).** The refusal above rested on "no
+  oracle can exist", and that was true only of vanilla's data. The server
+  generates a legacy dimension with aquifers when a datapack declares one,
+  so `tools/analysis/legacy-aquifer-probe.sh` declares four per world: `lj`,
+  the comb probe's open-void `jv` arm with every aquifer input a constant
+  (barrier -2.0, floodedness 0.5, spread 0, lava -1.0, psl 96) and
+  `legacy_random_source` true; `mj`, the same with the flag false; and `lc`
+  / `mc`, `stratum:probe_noise` read with the flag on and off. Nothing in
+  `lj` or `mj` names a noise and the biome has no features or carvers, so
+  the lattice is the only consumer of the random source either has; `lc`
+  against `mc` is the positive control that the flag reached the world at
+  all (16272, 16304 and 16288 of 16384 columns differ in height on the three
+  worlds). Three worlds, each about a minute and a half: seeds 42, 31337, and
+  42 with the sign bit set (-9223372036854775766).
+
+  *The flag reaches the lattice.* `lj` and `mj` differ in the category of
+  419509, 390759 and 429106 of 6291456 blocks, in four bands (y -50..-31,
+  -10..9, 30..49, 70..89 — layers -4, 3 and 6, whose level the vertical
+  draw moves, and the -1/0 interface, whose height it moves). Replayed
+  through `aquifer::computeSubstance` at every block of every column two in
+  from the window's edge (5904384 blocks an arm) and classified with
+  `tests/support/fluid_flow.hpp`, `mj` with the shipped Xoroshiro centres
+  leaves **0** unexplained (8 flow), and `lj` with the same centres 335984,
+  plus 58978 the flow classifier forgives — which is why no threshold here is
+  set from raw differences. The null, the modern centres at seed s scored
+  against a synthetic world drawn at s + 1 through the same classifier
+  (`legacy-aquifer-analyze null`), leaves 20561 of 369024 blocks
+  unexplained at stride 4; `lj` with the wrong centres leaves 19873-21273
+  there, so the legacy lattice is as far from the modern one as an
+  unrelated field.
+
+  *The derivation, from an enumerated space and then out of sample.*
+  `tools/analysis/legacy-aquifer-analyze.cpp scan` scores 7200 rules: the
+  base, salt, combine and fork axes of `legacy-seed-analyze.cpp`'s seed-rule
+  space (minus its two ordinal salts), the position mix XORed or added into
+  the stream seed with or without one more fork, and four bounded draws —
+  java.util.Random's documented `nextInt(bound)`, the Lemire draw this
+  project's Xoroshiro uses applied to the LCG's 32-bit words, the
+  power-of-two multiply-shift applied to bounds that are not powers of two
+  (which the JDK does not do; a speculative generalisation, labelled so),
+  and Xoroshiro128++ itself. The position mix, the draw order and the bounds
+  (10, 9, 10) are clean-room Q3.4's, which says only the "combination step"
+  differs under the legacy source. Nothing in the space was chosen from
+  Mojang's or deepslate's source. The readout is model-light: three one-bit
+  readouts per cell column, at layers -4, 3 and 6 — the only ones whose
+  level depends on the vertical draw under these constants, found from the
+  library's own level rule — each read at y = 12L + 4 over the cell's 6x6
+  core columns, which no horizontal neighbour can own, with ownership
+  decided per rule over the 27 neighbouring cells. On `mj` the shipped
+  Xoroshiro source alone survives (192/192 at seed 42; the best rule
+  153/192). On `lj` at seed 42 alone exactly one rule survives, **192/192,
+  the next best 148/192**:
+
+  ```
+  seed   = new Random(new Random(worldSeed).nextLong() ^ "minecraft:aquifer".hashCode()).nextLong()
+  random = new Random(seed ^ positionSeed(cx, cy, cz))       // Q3.4's mix, XORed
+  jx = random.nextInt(10);  jy = random.nextInt(9);  jz = random.nextInt(10)
+  ```
+
+  — the modern derivation's shape, two forks around one salt, with the LCG
+  for Xoroshiro128++ and `String.hashCode` for the MD5. Planting it through
+  the forward model reproduces the server's readouts exactly (the score
+  distribution over all 7200 rules is identical), and a planted unrelated
+  rule comes back alone. It was frozen (2026-10-09 02:46 UTC) before 31337
+  and the twin were generated, and on all three worlds it and the shipped
+  legacy source form the one surviving equivalence class, 576/576, the next
+  best 435/575; on `mj` the shipped Xoroshiro source alone, 576/576, the
+  next best 441/576. Block for block it is exact: `lj` replays with **0**
+  unexplained at all three seeds (flow 9, 4 and 9 of 5904384).
+
+  *48 bits.* java.util.Random keeps the low 48 bits of a seed, so 42 and
+  -9223372036854775766 are one legacy world, and Xoroshiro128++ is seeded
+  from all 64. The server agrees: the twin's `lj` replays exactly with seed
+  42's legacy centres, its readout fingerprint is seed 42's, and its `mj`
+  against seed 42's Xoroshiro centres leaves 21509 of 369024 blocks
+  unexplained.
+
+  *The same primitive, out of sample.* Salted with a gradient's
+  `random_name` and drawing one `nextFloat`, the identical derivation
+  reproduces the golden Nether's bedrock floor and roof — the measurement in
+  the previous entry, where the Xoroshiro coin is at chance — on **65536 of
+  65536** labelled positions per gradient at each of seeds 0, 1, -1 and 42
+  (`vanilla_legacy_gradient_gap_test.cpp`). Nothing about bedrock went into
+  finding it. The gradient is still refused: the executor runs the
+  Xoroshiro coin, and switching it is its own change.
+
+  *What ships.* `rng::LegacyPositionalSource` and
+  `rng::legacyPositionalSourceFor` (java_random.hpp), with JVM vectors;
+  `aquifer::CentreSource` takes the dimension's `density::RandomSource` as a
+  required argument with no default, as the noise registry does, and the
+  filler passes the registry's own. `ChunkFiller::compile` no longer
+  refuses `aquifers_enabled` under the legacy source, and `stratum validate`
+  no longer warns on it (the vein warning moved out of the surface rule's
+  `try`, where a rule that did not resolve swallowed it). Clean-room open
+  question 7 (spec/aquifer-spec.md, "Legacy random source") is answered by
+  measurement: the combination step is `String.hashCode` and LCG forks, and
+  the position mix XORs into a 64-bit stream seed. The pipeline engine
+  version does not move: every block this changes was refused before, as
+  for v2's legacy climate noises.
+
+  Pinned by `tests/conformance/vanilla_aquifer_legacy_test.cpp` — each arm
+  exact under its own source on all three worlds at stride 4, each at least
+  5000 unexplained under the other's (measured 19864-21626) and 1000 in the
+  lava band, y -54..-37, which flow cannot forgive (measured 4684-4811),
+  the positive control, the twin, and the
+  shipped filler, compiled from the probe's own spec through the registry
+  the dimension's flag selects, name-exact on a 3x3 block of chunks per arm
+  (about 55 s and 21 s in a debug build). `terrain_filler_test.cpp` holds
+  the wiring in every CI run with no corpus: the filler under each source
+  equals `computeSubstance` with that source's centres, and the two differ.
+  The corpora are three units of `tools/probe-worlds`' legacy shard, so CI
+  generates them.
+
+  *Still open.* The ore-vein source under the legacy source (no probe asks
+  for it), and a legacy dimension whose aquifer reads vanilla's named
+  aquifer noises (refused by `NoiseRegistry::create`, for the named-noise
+  seeding question in the entries below, not for the lattice).
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is

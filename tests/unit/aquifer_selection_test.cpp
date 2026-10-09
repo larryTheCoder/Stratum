@@ -189,7 +189,7 @@ TEST_CASE("the tie rule holds independently at every one of the four ranks", "[a
 }
 
 TEST_CASE("selection over a real seed is ordered and reaches its own cell", "[aquifer]") {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
 
     std::size_t blocks = 0;
     for (std::int32_t x = -40; x < 40; x += 3) {
@@ -227,7 +227,7 @@ TEST_CASE("every candidate lies within the window's own distance bound", "[aquif
     // The header claims the squared distance cannot exceed 1284, which is what
     // lets it be an int32 rather than the int64 a general distance needs.
     // Checked over enough blocks to cover every residue of the shift.
-    const CentreSource centres{-1};
+    const CentreSource centres{-1, stratum::density::RandomSource::Xoroshiro};
     std::int32_t worst = 0;
     for (std::int32_t x = 0; x < 32; ++x) {
         for (std::int32_t z = 0; z < 32; ++z) {
@@ -258,7 +258,7 @@ TEST_CASE("the shift is what makes a forward-only window bracket the block", "[a
     // Without the shift the same measurement gives 0.855 to 0.888, which is
     // what gives this case its teeth.
     for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{-1}}) {
-        const CentreSource centres{seed};
+        const CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         long long blocks = 0;
         long long bracketedXZ = 0;
         long long bracketedY = 0;
@@ -308,7 +308,7 @@ TEST_CASE("the symmetric window parts from the spec's rarely, and where a barrie
     // reaches rank 3 on sources of different levels: 39 blocks whose verdict
     // the rival changes, all 39 decided the spec's way
     // (tests/conformance/vanilla_aquifer_deepfloor_test.cpp).
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     long long blocks = 0;
     long long differAtRankOne = 0;
     long long differAtRankTwo = 0;

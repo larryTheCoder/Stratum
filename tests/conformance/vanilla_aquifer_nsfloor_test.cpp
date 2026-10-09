@@ -214,7 +214,7 @@ void scoreProbe(const std::filesystem::path& probeDir, const char* script,
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
     const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
 
     for (const NsArm& arm : arms) {
@@ -548,7 +548,7 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
     const std::int32_t lambda = aquifer::lambdaLevel(kSeaLevel);
     // The scan itself, on a constant field: unlike `constantSurface` it
     // aborts when the constant is below the threshold, which is the point.

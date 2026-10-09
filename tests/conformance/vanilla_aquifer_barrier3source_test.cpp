@@ -141,7 +141,7 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
 
     Score total;
     for (const Dimension& dim : kDimensions) {

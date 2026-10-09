@@ -364,7 +364,7 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                                                density::RandomSource::Xoroshiro);
             const density::Interpreter interp(graph, noises);
             density::Interpreter::CornerCache cache(interp.cacheSize());
-            const aquifer::CentreSource centres(seed);
+            const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
             const aquifer::PslRead surface = aquifer::constantSurface(dim.psl);
 
             const auto file = region::RegionFile::open(regionPath);
@@ -819,7 +819,7 @@ TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact o
             density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
         const density::Interpreter interp(graph, noises);
         density::Interpreter::CornerCache cache(interp.cacheSize());
-        const aquifer::CentreSource centres(seed);
+        const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
         const aquifer::PslRead surface = aquifer::constantSurface(kControlPsl);
 
         // A source's status is a function of its cell alone — floodedness at

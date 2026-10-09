@@ -196,7 +196,7 @@ struct Score {
 template<typename SurfaceAt>
 void scoreWorld(const std::filesystem::path& world, SurfaceAt&& surfaceAt, double floodedness,
                 Score& total) {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     const auto file = stratum::region::RegionFile::open(world);
     stratum::test::GoldenRegion golden(world);
     std::set<std::tuple<std::int32_t, std::int32_t, std::int32_t>> counted;
@@ -520,7 +520,7 @@ void judge(stratum::test::GoldenRegion& golden, const std::int32_t x, const std:
 /// one aquifer world from the lava sea's top to `y_skip`, solid or not.
 void headToHead(const std::filesystem::path& world, const Field& field, const std::int64_t seed,
                 const double floodedness, HeadToHead& total) {
-    const CentreSource centres{seed};
+    const CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
     stratum::test::GoldenRegion golden(world);
     std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, SourceLevels> seen;
     const auto perColumnAt = [&](std::int32_t x, std::int32_t z) { return field.at(x, z); };

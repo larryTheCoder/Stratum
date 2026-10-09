@@ -125,7 +125,7 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
         stratum::test::requireFrozen(region.parent_path().parent_path(),
                                      "tools/analysis/aquifer-comb-probe.sh");
 
-        const CentreSource centres{world.seed};
+        const CentreSource centres{world.seed, stratum::density::RandomSource::Xoroshiro};
         const auto file = stratum::region::RegionFile::open(region);
         stratum::test::GoldenRegion golden(region);
 

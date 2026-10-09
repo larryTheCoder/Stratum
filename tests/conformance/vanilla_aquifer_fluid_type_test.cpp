@@ -171,7 +171,8 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             loaded.graph, noises,
             stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
                                            .height = overworld.geometry.cellHeight()});
-        const stratum::aquifer::CentreSource centres{world.seed};
+        const stratum::aquifer::CentreSource centres{world.seed,
+                                                     stratum::density::RandomSource::Xoroshiro};
         const auto file = stratum::region::RegionFile::open(region);
         stratum::test::GoldenRegion golden(region);
 

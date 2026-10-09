@@ -59,6 +59,7 @@ analysis_targets=(
     tools/analysis/aquifer-nearsurface-analyze.cpp
     tools/analysis/aquifer-presets-scout.cpp
     tools/analysis/aquifer-waterlava-analyze.cpp
+    tools/analysis/legacy-aquifer-analyze.cpp
 )
 
 # A read loop rather than mapfile: macOS still ships bash 3.2, where
