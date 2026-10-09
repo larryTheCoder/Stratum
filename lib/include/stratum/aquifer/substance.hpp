@@ -338,34 +338,23 @@ template<typename FourthStatus>
     return false;
 }
 
-/// The aquifer substance decision for one block (spec Q2.2-Q6.7, clean-room
-/// spec/aquifer-spec.md, and SPEC §11's own measurements of each piece), in
-/// the spec's own order: the global lava sea first (Q2.4), then rank the
-/// four nearest sources and read each of the three nearest ones' own status
-/// — level AND type — then the water-over-lava exception (Q6.3), then the
-/// barrier (Q6.2-Q6.6, with Π reading the three types), and finally the
-/// nearest source's own reading.
+/// The decision after the selection: `computeSubstanceWith` from the point
+/// where the four sources are ranked, given the ranking itself. The caller
+/// has already answered Q2.4 (the block is not under the global lava sea),
+/// as `computeSubstanceWith` does before calling this; Q2.3's `y_skip` is
+/// the caller's to apply to either, as it always was (`ChunkFiller`). Past
+/// both is exactly where the lattice is consulted.
 ///
-/// Each ranked source's status is read through @p statusOf, called as
-/// `SourceStatus(const Source&)` — for the nearest three in rank order on
-/// every block that reaches the lattice, and for the fourth only where the
-/// fluid-update flag needs it. `computeSubstance` below is this with the
-/// shipped status; a conformance case that weighs a rival reading of a
-/// status (`rankedCellOf` gives its inputs) passes its own, so the rival is
-/// scored through exactly the decision the filler runs.
+/// Its own entry point for one reason: the spec measures the tie-break's
+/// visibility (Q4.7) by running THIS logic twice per tied selection, once
+/// as ranked and once with the tied pair swapped, and a conformance case
+/// that wants the same figure must run the shipped logic rather than a copy
+/// of it (golden_aquifer_tiebreak_test.cpp). @p selection is otherwise
+/// `selectSources`'s for the query's own position.
 template<typename StatusOf, typename BarrierSampler>
-[[nodiscard]] SubstanceAt computeSubstanceWith(const CentreSource& centres,
+[[nodiscard]] SubstanceAt computeSubstanceFrom(const Selection& selection,
                                                const AquiferQuery& query, StatusOf&& statusOf,
                                                BarrierSampler&& barrier) {
-    // Q2.4: below the global lava sea the lattice is never consulted — the
-    // sea is lava whatever any source says, and it is literal lava, not the
-    // dimension's default fluid.
-    if (globalReadsLava(query.y, query.seaLevel)) {
-        return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
-    }
-
-    const Selection selection = selectSources(centres, query.x, query.y, query.z);
-
     // All three statuses, typed unconditionally: Π needs the type of a
     // source that reads AIR at this block as much as of one that reads fluid
     // (barrier.hpp).
@@ -417,6 +406,36 @@ template<typename StatusOf, typename BarrierSampler>
         .substance = Substance::Fluid,
         .fluidType = status[0].type,
         .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
+}
+
+/// The aquifer substance decision for one block (spec Q2.2-Q6.7, clean-room
+/// spec/aquifer-spec.md, and SPEC §11's own measurements of each piece), in
+/// the spec's own order: the global lava sea first (Q2.4), then rank the
+/// four nearest sources and read each of the three nearest ones' own status
+/// — level AND type — then the water-over-lava exception (Q6.3), then the
+/// barrier (Q6.2-Q6.6, with Π reading the three types), and finally the
+/// nearest source's own reading.
+///
+/// Each ranked source's status is read through @p statusOf, called as
+/// `SourceStatus(const Source&)` — for the nearest three in rank order on
+/// every block that reaches the lattice, and for the fourth only where the
+/// fluid-update flag needs it. `computeSubstance` below is this with the
+/// shipped status; a conformance case that weighs a rival reading of a
+/// status (`rankedCellOf` gives its inputs) passes its own, so the rival is
+/// scored through exactly the decision the filler runs.
+template<typename StatusOf, typename BarrierSampler>
+[[nodiscard]] SubstanceAt computeSubstanceWith(const CentreSource& centres,
+                                               const AquiferQuery& query, StatusOf&& statusOf,
+                                               BarrierSampler&& barrier) {
+    // Q2.4: below the global lava sea the lattice is never consulted — the
+    // sea is lava whatever any source says, and it is literal lava, not the
+    // dimension's default fluid.
+    if (globalReadsLava(query.y, query.seaLevel)) {
+        return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
+    }
+
+    return computeSubstanceFrom(selectSources(centres, query.x, query.y, query.z), query, statusOf,
+                                barrier);
 }
 
 /// The full aquifer substance decision for one block: `computeSubstanceWith`

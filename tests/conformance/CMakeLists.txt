@@ -32,6 +32,7 @@ add_executable(stratum_conformance_tests
     golden_terrain_no_aquifer_test.cpp
     golden_end_test.cpp
     golden_overworld_test.cpp
+    golden_aquifer_tiebreak_test.cpp
     golden_regions_test.cpp
     nbt_structures_test.cpp
     nbt_writer_test.cpp

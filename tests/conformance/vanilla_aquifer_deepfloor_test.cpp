@@ -40,6 +40,11 @@
 //     levels on neighbouring sources are what let the rival's rank 3 change a
 //     verdict at all, so this corpus is the first that can tell them apart.
 //
+//   * Q4.4's later-wins tie-break, at ranks 2-3 and 3-4: swapping a tied
+//     pair changes the verdict on 27 and 1131 blocks, and the server writes
+//     the later-wins verdict on all of them. The 27 are what the clean-room
+//     spec's open question 9 never saw — a rank 2-3 tie deciding a block.
+//
 // The second case checks the recipe itself: the probe's control dimension,
 // real floodedness and spread with nothing rescaled, IS `barrier3way`'s
 // `d_neg0_3` block for block, and the predicate is exact on it on all three
@@ -81,6 +86,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -269,6 +275,14 @@ struct Score {
     long long windowDecides = 0;
     long long twelveCorrect = 0;
     long long rivalCorrect = 0;
+    /// Spec Q4.4 by rank pair (1-2, 2-3, 3-4): blocks whose two ranks tie in
+    /// squared distance, the ones where swapping the tied pair changes the
+    /// verdict, and which order the server sides with there. Stone is
+    /// stone: no fluid that moved can make it or take it away.
+    std::array<long long, 3> ties{};
+    std::array<long long, 3> tieDecides{};
+    std::array<long long, 3> laterCorrect{};
+    std::array<long long, 3> earlierCorrect{};
 };
 
 } // namespace
@@ -299,6 +313,8 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     // The brackets once more per seed: one seed agreeing with an RNG-driven
     // model is not evidence, and neither is a pooled count one seed carries.
     std::array<Brackets, kProbeDirs.size()> perSeed{};
+    // Rank 2-3 ties that decide a verdict, per seed and dimension.
+    std::array<std::array<long long, kDimensions.size()>, kProbeDirs.size()> rank23Decides{};
     std::size_t dimensionsScored = 0;
 
     for (std::size_t seedIndex = 0; seedIndex < kProbeDirs.size(); ++seedIndex) {
@@ -317,7 +333,8 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
         const auto seed = manifest.at("seed").get<std::int64_t>();
         const nlohmann::json spec = stratum::test::readSpec(probeDir);
 
-        for (const Dimension& dim : kDimensions) {
+        for (std::size_t dimIndex = 0; dimIndex < kDimensions.size(); ++dimIndex) {
+            const Dimension& dim = kDimensions.at(dimIndex);
             const std::filesystem::path regionPath = probeDir / dim.name / "r.0.0.mca";
             INFO("dimension " << dim.name);
             REQUIRE(std::filesystem::is_regular_file(regionPath));
@@ -498,6 +515,28 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
                                         }
                                     }
                                 }
+                                // Q4.4: each tied pair swapped on its own.
+                                for (std::size_t p = 0; p < 3; ++p) {
+                                    if (sel.ranked[p].distanceSq != sel.ranked[p + 1].distanceSq) {
+                                        continue;
+                                    }
+                                    ++pooled.ties.at(p);
+                                    aquifer::Selection swapped = sel;
+                                    std::swap(swapped.ranked[p], swapped.ranked[p + 1]);
+                                    const bool earlierStone =
+                                        aquifer::placesBarrier(barrierFor(swapped));
+                                    if (earlierStone != shipped) {
+                                        ++pooled.tieDecides.at(p);
+                                        if (p == 1) {
+                                            ++rank23Decides.at(seedIndex).at(dimIndex);
+                                        }
+                                        pooled.laterCorrect.at(p) +=
+                                            static_cast<long long>(shipped == observedStone);
+                                        pooled.earlierCorrect.at(p) +=
+                                            static_cast<long long>(earlierStone == observedStone);
+                                    }
+                                }
+
                                 const aquifer::Selection rival =
                                     aquifer::rankCandidates(x, y, z, rivalWindow);
                                 bool sameRanks = true;
@@ -621,6 +660,42 @@ TEST_CASE("Q6.4's fourth divisor is 10, on the server's own deep barriers",
     REQUIRE(pooled.windowDecides >= 30);
     CHECK(pooled.twelveCorrect == pooled.windowDecides);
     CHECK(pooled.rivalCorrect == 0);
+
+    // Q4.4 on the server's own stone, rank pair by rank pair — and the
+    // answer to the clean-room spec's open question 9, which measured rank
+    // 2-3 ties changing 0 blocks of 792 338 on real-noise generation and
+    // found no mechanism for the zero. Here, where floodedness 0.6 gives
+    // neighbouring cells three DIFFERENT ladder levels and the density sits
+    // at -0.3 or -0.05, rank 2-3 ties decide blocks on every seed, and the
+    // server writes the later-wins order's verdict on every one of them
+    // (golden_aquifer_tiebreak_test.cpp has why real generation almost never
+    // gets here). A rank 1-2 swap never moves the barrier at all (Q6.6 is
+    // symmetric in the nearest pair when they tie). The decided counts are
+    // the model's alone over the blocks scored — stone, water or air, which
+    // flow cannot change between — so they are pinned exactly; measured on
+    // 4x4 chunks:
+    // ties 86 800 / 117 266 / 139 678, decided 0 / 27 / 1131, the 27 being
+    // 13 / 4 / 10 per seed, 25 of them at -0.3.
+    INFO("ties " << pooled.ties[0] << " / " << pooled.ties[1] << " / " << pooled.ties[2]
+                 << "; decided " << pooled.tieDecides[0] << " / " << pooled.tieDecides[1] << " / "
+                 << pooled.tieDecides[2] << "; later right " << pooled.laterCorrect[0] << " / "
+                 << pooled.laterCorrect[1] << " / " << pooled.laterCorrect[2] << "; earlier right "
+                 << pooled.earlierCorrect[0] << " / " << pooled.earlierCorrect[1] << " / "
+                 << pooled.earlierCorrect[2]);
+    CHECK(pooled.tieDecides[0] == 0);
+    CHECK(pooled.tieDecides[1] == 27);
+    CHECK(pooled.tieDecides[2] == 1131);
+    for (std::size_t p = 0; p < 3; ++p) {
+        CHECK(pooled.laterCorrect.at(p) == pooled.tieDecides.at(p));
+        CHECK(pooled.earlierCorrect.at(p) == 0);
+    }
+    for (std::size_t si = 0; si < kProbeDirs.size(); ++si) {
+        INFO("seed corpus " << kProbeDirs.at(si) << ": rank 2-3 decides "
+                            << rank23Decides.at(si).at(0) << " at " << kDimensions.at(0).density
+                            << ", " << rank23Decides.at(si).at(1) << " at "
+                            << kDimensions.at(1).density);
+        CHECK(rank23Decides.at(si).at(0) + rank23Decides.at(si).at(1) > 0);
+    }
 }
 
 TEST_CASE("the deepfloor control arm is barrier3way's world, and Q6.4 is exact on its real noise",

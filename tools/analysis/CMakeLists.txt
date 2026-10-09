@@ -92,6 +92,15 @@ target_link_libraries(stratum_aquifer_ties_analyze PRIVATE stratum::core ZLIB::Z
 target_include_directories(stratum_aquifer_ties_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 stratum_configure_target(stratum_aquifer_ties_analyze)
 
+# The tie-break's visibility over the golden overworld regions, whole. It
+# replays the filler through tests/support/aquifer_tiebreak.hpp, the same
+# replay golden_aquifer_tiebreak_test.cpp pins a sample of, so it includes
+# tests/ too.
+add_executable(stratum_aquifer_tiebreak_analyze aquifer-tiebreak-analyze.cpp)
+target_link_libraries(stratum_aquifer_tiebreak_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_aquifer_tiebreak_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_aquifer_tiebreak_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()
