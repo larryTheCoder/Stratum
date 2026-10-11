@@ -51,7 +51,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 command -v java >/dev/null 2>&1 || die "java is needed"
 settings=".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings/overworld.json"
 [[ -f "${settings}" ]] || die "no ${settings}; run tools/fetch-vanilla first"
-jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 

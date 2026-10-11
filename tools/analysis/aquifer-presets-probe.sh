@@ -90,7 +90,9 @@ for preset in overworld amplified large_biomes; do
     [[ -f ".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings/${preset}.json" ]] \
         || die "no ${preset} noise settings; run tools/fetch-vanilla first"
 done
-jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
