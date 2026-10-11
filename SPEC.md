@@ -791,7 +791,13 @@ mapping has two halves, split at a platform-neutral midpoint:
     [-60, 50]. (`categorize()` counted lava as solid when this was written;
     it now counts it as fluid (§11, "Lava in the surface pass's runs"), and
     its "solid" still takes in more than this guard's `default_block`, so the
-    two are not the same predicate.)
+    two are not the same predicate.) *Since measured* (§11, "A vein never
+    replaces the aquifer's fluid — measured now, not chosen"): the golden
+    overworld regions were that probe. Run over the first pass's fluid
+    inside the vein ranges, the vein chain would place a vein block at 21
+    positions, and the server holds none — each is its fluid or fluid that
+    flowed. The guard is now observed, and `golden_overworld_test.cpp` pins
+    it.
 
   *A spatial fingerprint, measured and deliberately NOT used as evidence.*
   The membership outcome is vertically clustered: agreement with the
@@ -1183,7 +1189,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      where Q6.3, Q2.4 and the trailing guard all interact, plus 6 of 11923
      real barriers on `barrier3way`. Nothing was fitted to close them. (The
      6 on `barrier3way` are CLOSED by item 7 below; the water/lava band's
-     own residual falls with it too, but not to zero.)
+     own residual falls with it too, but not to zero.) *Since closed* (§11,
+     "Probe worlds are frozen now", its row-lambda paragraph): what item 7
+     left, 4 mixed and 35 pure misses, all on row lambda, was lava that fell
+     onto water after generation, not the predicate. On frozen corpora the
+     water/lava case misses none, and nothing was fitted to get there.
 
   7. **CLOSED. Q6.4's fourth divisor is 10 — and the agree-guard that hid it
      is REFUTED.** The `/10` arm (`u = (3 + t)/10` when `3 + t <= 0`) was
@@ -5257,7 +5267,13 @@ Open:
   above/below thickness asymmetry it predicts is inconclusive, showing +0.92
   points in the predicted direction at one density and -1.78 in the opposite
   direction at another. Q6.3, the water-over-lava exception, was touched by no
-  angle at all.
+  angle at all. *Since closed, but for Q6.1:* Q4.1's window against the
+  symmetric 27-cell rival ("Q4.1's window beats the symmetric 27-cell set",
+  above); Q6.4 as implemented — its four divisors, the `h > 0` split and
+  the `|u| <= 2` gate — exact on the deep-floor worlds, with 1.5 and 3
+  confirmed by arithmetic and 2.5 and 10 bracketed on the server (§10, MA
+  items 3 and 7); and Q6.3, measured and landed ("The lava sea's two
+  clauses", below).
 
   *A correction to this project's own arithmetic.* An earlier note here read
   "the spec's 12 candidates always contain the true nearest centre — 0
@@ -5299,7 +5315,11 @@ Open:
   three purpose-built probe worlds. The 5e-5 residual of the second readout is
   fixed by 0 blocks under a brute-force search over a 5x7x5 neighbourhood of
   cells, so it is the fluid TYPE rule or the `lava` entry (blocker 4), not the
-  window.
+  window. *Since attributed* (§11, "Three probe residuals this project
+  carried as unexplained were fluid that moved"): it is neither. All 999
+  blocks are fluid the server's ticks moved after generating, and
+  `vanilla_aquifer_selection_test.cpp` credits each by its shape
+  (`support/fluid_flow.hpp`) — the readout is exact but for flow.
 
   *Q4.1 stays untested, and the reason is now reproduced from this build's own
   centres rather than taken from the campaign.* The asymmetric and symmetric
@@ -5308,7 +5328,12 @@ Open:
   competing — 44 of 3993 disagreements inside the barrier shell over 3538944
   blocks, and 0 of them changing a predicted block on any of the four probe
   worlds. `tests/unit/aquifer_selection_test.cpp` keeps that executable, so it
-  speaks up if the rate ever moves.
+  speaks up if the rate ever moves. *Superseded* ("Q4.1's window beats the
+  symmetric 27-cell set", above): the deep-floor corpora hold neighbours at
+  different levels, so the three-source barrier reaches rank 3, where the
+  windows part. There the 27-cell rival changes 39 barrier verdicts and the
+  server sides with the twelve-cell window on all 39
+  (`vanilla_aquifer_deepfloor_test.cpp`). Only that rival is refuted.
 
   *Two spec claims sharpened rather than confirmed.* Q4.1 says the shift makes
   a forward-only window "still bracket the block"; measured over 786432 blocks
@@ -5734,7 +5759,18 @@ Open:
   was the mixed-fluid-type Π branch; that is now RULED OUT the same way —
   landed and measured ("The mixed-type Π" below), what it adds is stone,
   never the other fluid. No named candidate remains. It stays excluded
-  from the score and counted in the test.
+  from the score and counted in the test. *Since attributed, but for a few
+  blocks* (§11, "Three probe residuals this project carried as unexplained
+  were fluid that moved", and "Probe worlds are frozen now"): the 4% was
+  the readout's attribution, not the rule. Counting a source's own source
+  blocks below its own level, with flowing blocks set aside, the rule types
+  every pure source, 3 160 of 3 160 frozen, and 17 of 3 177 sources still
+  mix — each a lava body holding a few water sources, 12 of those blocks
+  beside a water/lava contact block and 8 elsewhere. The 8 are required to
+  have the shape of water that spread in, but not credited as flow, since
+  a water body's interior has that shape too;
+  `vanilla_aquifer_fluid_type_test.cpp` bounds them rather than pinning
+  them.
 
   **A surface that varies, and a model comparison that came out a tie for a
   provable reason (MA).** The probe SPEC §10 has demanded since the aquifer
@@ -5799,7 +5835,13 @@ Open:
   carries where this build floors to `lambda`, and — at the time — Q6.3's
   water-over-lava exception. Q6.3 is since measured and RULED OUT here by
   its shape: it turns a would-be barrier into water, never air into fluid,
-  so it cannot produce a "fluid this build calls air" residual.
+  so it cannot produce a "fluid this build calls air" residual. *Since
+  explained* (§11, "Three probe residuals this project carried as
+  unexplained were fluid that moved"): every one of the 34 878 is fluid the
+  server's ticks moved after generating — neither candidate. Frozen, 3 586
+  remain ("Probe worlds are frozen now"), and
+  `vanilla_aquifer_varying_surface_test.cpp` requires every disagreement to
+  be flow, and none in either direction otherwise.
 
   *One thing this cost.* The probe first ran under the spec name `psl`, whose
   fixture directory already held a dozen arms from an earlier campaign; the
@@ -6108,7 +6150,16 @@ Open:
   SPEC refuses no such regime ("Refuse `psl <= min_y`", above, marked so).
   At psl -64 the scan aborts, and the fitted `cy < psl + 21` is Q5.3(a)'s
   twenty-block margin over the anchor seen through an aborted scan ("The
-  abort refuses the sea", above).
+  abort refuses the sea", above). And the guard is since confirmed, and
+  sharpened. Two outside instruments scored the level rule only once they
+  carried it ("And a confirmation of the level rule from an unexpected
+  direction", above). A `sea_level` -56 world measured its parts ("Every
+  "-54" that is a LEVEL moves with `sea_level`", above): the threshold is
+  lambda, not -54; it tests the sea branch, not the number; and its
+  replacement is the literal -54. It is the clean-room spec's Q5.6
+  `Global(Q)` for a centre below lambda, A_lava, and
+  `aquifer_lattice_test.cpp`'s "the trailing guard tests the branch, not
+  the number" pins all three.
 
   *Instrument findings worth more than the results.* Chunks are forceloaded, so
   water ticks after generation and flowing water can become a source, lifting a
