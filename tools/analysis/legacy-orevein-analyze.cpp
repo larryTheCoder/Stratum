@@ -396,8 +396,10 @@ public:
     }
 
     [[nodiscard]] chunk::BlockState at(std::int32_t x, std::int32_t y, std::int32_t z) const {
+        const auto row = static_cast<std::size_t>(z / 16);
+        const auto column = static_cast<std::size_t>(x / 16);
         const chunk::Chunk& chunk =
-            chunks_.at(static_cast<std::size_t>(((z / 16) * kWindowChunks) + (x / 16)));
+            chunks_.at((row * static_cast<std::size_t>(kWindowChunks)) + column);
         const chunk::BlockState* state = chunk.blockAt(x % 16, y, z % 16);
         if (state == nullptr) {
             return chunk::BlockState{.name = "minecraft:air", .properties = {}};
@@ -603,7 +605,8 @@ int oreRoll(std::int64_t seed) {
         if (!chosen) {
             continue;
         }
-        const double f = static_cast<double>(*chosen) * 0x1.0P-24;
+        const std::int32_t target = *chosen;
+        const double f = static_cast<double>(target) * 0x1.0P-24;
         const double toggle = (f + 0x1.0P-27) + 0.3;
         const double chance = clampedMap(toggle, 0.4, 0.6, 0.1, 0.3);
         const auto rounded = static_cast<double>(static_cast<float>(chance));
@@ -615,7 +618,7 @@ int oreRoll(std::int64_t seed) {
             for (std::int32_t z = 0; z < kWindow; ++z) {
                 for (std::int32_t x = 0; x < kWindow; ++x) {
                     const auto [first, second] = firstTwo(legacy, seed, x, y, z);
-                    if (second == *chosen && ore::clearsRichness(y, toggle)) {
+                    if (second == target && ore::clearsRichness(y, toggle)) {
                         std::printf("  second draw f at (%d, %d, %d), first %d (%s)\n", x, y, z,
                                     first, first <= kMembershipBucket ? "member" : "not");
                     }
