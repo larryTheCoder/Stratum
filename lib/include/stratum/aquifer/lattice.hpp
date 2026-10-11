@@ -696,11 +696,16 @@ struct CellLevel {
 /// -0.125, 0.4), so the strictness is settled with no floating-point
 /// ambiguity at all.
 ///
-/// FLOATING POINT, and it matters here. `floodedness + reach * slope` is
-/// exactly the shape a fused multiply-add contracts, and with contraction on,
-/// the outcome flips at sea-gate depths 6 and 11 precisely at the crossing.
-/// §5's `-ffp-contract=off` / `/fp:precise` is load-bearing for this
-/// expression, and those two depths are the natural x86-64/ARM64 canary.
+/// FLOATING POINT, and it matters here — through the SPELLING. At sea-gate
+/// depths 6 and 11 (reaches 50 and 45) the crossing is decided by the last
+/// bit of the bonus, and only a product over a divisor gets it right (see
+/// `kSeaBonusNumerator`; SPEC §11, "The bonus is a product over a divisor,
+/// never a pre-divided constant"). Written so, there is no multiply-add to
+/// contract: §5's `-ffp-contract=off` / `/fp:precise` stays project policy,
+/// but it is not what makes this expression right. This comment used to call
+/// contraction load-bearing here and those two depths the x86-64/ARM64
+/// canary; that was the pre-divided constant, with which the contracted form
+/// happened to agree with the server where the uncontracted one did not.
 ///
 /// The integer restatements `11*d < 640*f + 104` and `3*d < 160*f + 104` are
 /// an oracle for reasoning, NOT the predicate: they agree with the form below
