@@ -18,7 +18,7 @@ no-generator conformance.the band's lower edge is the condition going false, not
 no-generator conformance.neither the cell geometry nor flat_cache moves the lattice
 no-generator conformance.the model-free reading holds where the cell geometry varies too
 # probes/orevein-multi and probes/orevein-heldout: ore-vein-probe.sh writes
-# probes/orevein/ov instead, and density-probe.sh refuses its second seed
+# probes/orevein/{ov,ova} instead, and density-probe.sh refuses its second seed
 no-generator conformance.ore veins match the server on the discovery worlds
 no-generator conformance.ore veins match the server on worlds generated after the fact
 # probes/psl/psl_overworld
