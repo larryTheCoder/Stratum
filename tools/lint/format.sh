@@ -66,6 +66,7 @@ analysis_targets=(
     tools/analysis/aquifer-ties-score.hpp
     tools/analysis/aquifer-waterlava-analyze.cpp
     tools/analysis/legacy-aquifer-analyze.cpp
+    tools/analysis/legacy-orevein-analyze.cpp
     tools/analysis/aquifer-tiebreak-analyze.cpp
 )
 
