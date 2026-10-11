@@ -206,9 +206,10 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
             continue;
         }
         // TWO KINDS, and keeping them apart is the point of this block. A
-        // refusal naming a CONSTRUCT rather than a noise says the phrase
-        // "and needs" — the vein refusal is the one left of three; the
-        // aquifer's and the gradient's are lifted, both measured (SPEC §11).
+        // refusal naming a CONSTRUCT rather than a noise said the phrase
+        // "and needs" — the aquifer's, the gradient's and the vein source's,
+        // all three lifted since, each measured (SPEC §11). Counted still, so
+        // that one coming back shows here.
         if (finding.message.find("legacy_random_source and needs") != std::string::npos) {
             constructsRefused.push_back(finding.subject);
         } else {
@@ -236,9 +237,9 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     // AND THE CONSTRUCTS: none. This read six — one warning per
     // `vertical_gradient` random_name in caves, floating_islands and the
     // Nether — until the executor ran the measured legacy coin (SPEC §11).
-    // No vein warning appears because every vanilla legacy dimension has the
-    // flag off — asserted, so that a pack turning it on would show up here
-    // rather than silently taking the modern derivation.
+    // No vein warning could appear here even before the legacy vein source
+    // was measured, because every vanilla legacy dimension has the flag off;
+    // still asserted, and no flag is mentioned at all.
     CHECK(constructsRefused.empty());
     for (const stratum::validate::Finding& finding : report.findings) {
         INFO(finding.subject << ": " << finding.message);

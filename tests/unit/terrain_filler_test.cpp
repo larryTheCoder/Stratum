@@ -660,26 +660,40 @@ TEST_CASE("the barrier is read on every block only where its read is not provabl
     }
 }
 
-TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
-    // Measured coupling, not a refusal: a probe with veins on and aquifers
-    // off came back 6291456 of 6291456 plain stone (SPEC §11). Reproducing
-    // that means compiling happily and placing nothing, which is what the
-    // server does — an exception here would be this build inventing a
-    // failure vanilla does not have.
-    const TempTree tree;
-    tree.defineSettings("test", veinSettings(/*aquifers=*/false));
-    const LoadedSettings loaded = tree.load();
-    const ChunkFiller filler = compileFrom(tree, loaded);
-
-    ChunkBuffer buffer(
-        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
-    filler.fill(0, 0, buffer);
-
-    for (std::int32_t y = -16; y < 0; ++y) {
-        for (int localX = 0; localX < 16; ++localX) {
-            CHECK(buffer.at(localX, y, 0).name.toString() == "minecraft:stone");
+TEST_CASE("ore veins place without aquifers too, the same blocks", "[terrain][filler][ore]") {
+    // Since pipeline engine v14. Veins were gated on aquifers_enabled from one
+    // probe world with veins on and aquifers off that came back unbroken
+    // stone; it does not replicate. The same recipe at the same seed is the
+    // aquifers-on world block for block, and tools/analysis/
+    // legacy-orevein-probe.sh's `la` and `ma` arms are their aquifers-on
+    // twins exactly at four seeds, under both sources (SPEC §11). So a fill
+    // with aquifers off holds the same vein blocks as one with them on.
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool aquifers : {false, true}) {
+        INFO("aquifers " << aquifers);
+        const TempTree tree;
+        tree.defineSettings("test", veinSettings(aquifers));
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        ChunkBuffer buffer(
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+        filler.fill(0, 0, buffer);
+        auto& names = filled.at(aquifers ? 1U : 0U);
+        for (std::int32_t y = -16; y <= -8; ++y) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    names.push_back(buffer.at(localX, y, localZ).name.toString());
+                }
+            }
         }
     }
+    int veinBlocks = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        CHECK(filled[0][i] == filled[1][i]);
+        veinBlocks += static_cast<int>(filled[0][i] != "minecraft:stone");
+    }
+    // About 70% of 9 * 256 candidates: not vacuous.
+    CHECK(veinBlocks > 1000);
 }
 
 TEST_CASE("ore veins replace solid blocks inside the iron range", "[terrain][filler][ore]") {
@@ -698,7 +712,7 @@ TEST_CASE("ore veins replace solid blocks inside the iron range", "[terrain][fil
     // module directly rather than against a hard-coded block list: what this
     // case exists to catch is the WIRING — a filler reading the wrong router
     // entry, passing x/z in the wrong order, or replacing the wrong block.
-    const stratum::ore::VeinSource veins(0);
+    const stratum::ore::VeinSource veins(0, stratum::density::RandomSource::Xoroshiro);
     int placed = 0;
     for (std::int32_t y = -16; y <= -8; ++y) {
         for (int localX = 0; localX < 16; ++localX) {
@@ -738,7 +752,7 @@ TEST_CASE("ore veins never replace air", "[terrain][filler][ore]") {
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
     filler.fill(0, 0, buffer);
 
-    const stratum::ore::VeinSource veins(0);
+    const stratum::ore::VeinSource veins(0, stratum::density::RandomSource::Xoroshiro);
     int wouldHavePlaced = 0;
     for (std::int32_t y = 8; y < 32; ++y) { // above sea level, so air not water
         for (int localX = 0; localX < 16; ++localX) {
@@ -1767,32 +1781,82 @@ TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
     CHECK(negative.maxZ == -13);
 }
 
-TEST_CASE("a legacy random source refuses ore veins by name", "[terrain][filler][aquifer]") {
-    // The vein source is a positional random drawn from the dimension's
-    // declared source, no vanilla legacy dimension enables veins, and no
-    // probe has asked the server for one, so nothing says what it should be.
-    // No vanilla pack reaches this throw — which is exactly why it needs a
-    // test: a regression would quietly generate with the modern derivation
-    // instead of failing. With and without aquifers, since the refusal is on
-    // the flag (veins place nothing without aquifers).
-    for (const bool aquifers : {true, false}) {
-        INFO("aquifers " << aquifers);
-        nlohmann::json settings = flatSettings(aquifers, /*oreVeins=*/true);
-        settings["legacy_random_source"] = true;
+TEST_CASE("a legacy dimension's ore veins draw from the legacy source",
+          "[terrain][filler][ore][legacy]") {
+    // NOT refused any more: the server's own legacy vein worlds measured the
+    // derivation (SPEC §11, "Ore veins under the legacy source";
+    // vanilla_orevein_legacy_test.cpp holds the filler to them block for
+    // block). What this pins, with no corpus and so in every CI run, is the
+    // WIRING: the filler must build its vein source from the registry's
+    // declared source. `veinSettings` makes every solid block of [-16, -8] an
+    // iron candidate, so the filler under each source must equal
+    // ore::VeinSource with that source there, and the two fills must differ.
+    constexpr std::int64_t kSeed = 42;
+    constexpr std::int32_t kChunkX = 3;
+    constexpr std::int32_t kChunkZ = -2;
+    const auto ironName = [](const stratum::ore::Vein& vein) -> std::string {
+        switch (vein.block) {
+            case stratum::ore::VeinBlock::Filler:
+                return "minecraft:tuff";
+            case stratum::ore::VeinBlock::Ore:
+                return "minecraft:deepslate_iron_ore";
+            case stratum::ore::VeinBlock::RawBlock:
+                return "minecraft:raw_iron_block";
+            case stratum::ore::VeinBlock::None:
+                break;
+        }
+        return "minecraft:stone";
+    };
+
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool legacy : {false, true}) {
+        INFO("legacy " << legacy);
+        const auto source = legacy ? stratum::density::RandomSource::Legacy
+                                   : stratum::density::RandomSource::Xoroshiro;
+        nlohmann::json settings = veinSettings(/*aquifers=*/true);
+        settings["legacy_random_source"] = legacy;
         const TempTree tree;
         tree.defineSettings("test", settings);
         const LoadedSettings loaded = tree.load();
-        // The flat router names no noise, so the legacy registry is empty
-        // and builds: the filler's own refusal is the one that fires.
-        const auto noises =
-            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 0,
-                                                    stratum::density::RandomSource::Legacy);
+        // The flat router names no noise, so the legacy registry is empty and
+        // builds.
+        const auto noises = stratum::density::NoiseRegistry::create(
+            tree.pack(), loaded.graph.referencedNoises(), kSeed, source);
         const auto& dimension =
             loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
-        CHECK_THROWS_WITH(ChunkFiller::compile(loaded.graph, noises, dimension),
-                          ContainsSubstring("ore_veins_enabled") &&
-                              ContainsSubstring("legacy_random_source"));
+        REQUIRE(dimension.legacyRandomSource == legacy);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, dimension);
+        ChunkBuffer buffer(dimension.geometry);
+        filler.fill(kChunkX, kChunkZ, buffer);
+
+        const stratum::ore::VeinSource veins{kSeed, source};
+        int mismatches = 0;
+        int placed = 0;
+        auto& names = filled.at(legacy ? 1U : 0U);
+        for (std::int32_t y = -16; y <= -8; ++y) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    const stratum::ore::Vein vein = veins.at(
+                        (kChunkX * 16) + localX, y, (kChunkZ * 16) + localZ,
+                        stratum::ore::VeinInputs{.toggle = -1.0, .ridged = -1.0, .gap = 0.0});
+                    const std::string ours = buffer.at(localX, y, localZ).name.toString();
+                    names.push_back(ours);
+                    mismatches += static_cast<int>(ours != ironName(vein));
+                    placed += static_cast<int>(vein.placed());
+                }
+            }
+        }
+        CHECK(mismatches == 0);
+        // About 70% of 9 * 256 candidates: the loop cannot pass vacuously.
+        CHECK(placed > 1000);
     }
+    // The source reached the veins: unrelated fields agree on about 37% of
+    // candidates (measured on the probe), so most of these 2304 part.
+    int differ = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        differ += static_cast<int>(filled[0][i] != filled[1][i]);
+    }
+    CHECK(differ > 1000);
 }
 
 TEST_CASE("a legacy dimension's aquifer draws its lattice from the legacy source",

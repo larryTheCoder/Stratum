@@ -500,9 +500,10 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
     CHECK(finding->severity == Severity::Warning);
     CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
 
-    // Of what the dimension needs besides its router, the vein source is
-    // still refused by name and the aquifer lattice is not: its legacy
-    // derivation is measured (SPEC §11).
+    // Of what the dimension needs besides its router, neither the vein
+    // source nor the aquifer lattice is warned about: both legacy
+    // derivations are measured (SPEC §11). The vein source was the last to
+    // be, and was warned about by name until it was.
     int veins = 0;
     int aquifers = 0;
     for (const Finding& each : report.findings) {
@@ -512,17 +513,22 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
         veins += static_cast<int>(each.message.find("'ore_veins_enabled'") != std::string::npos);
         aquifers += static_cast<int>(each.message.find("aquifers_enabled") != std::string::npos);
     }
-    CHECK(veins == 1);
+    CHECK(veins == 0);
     CHECK(aquifers == 0);
 
     // And nothing was said about the dimension that is fine.
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
 }
 
-TEST_CASE("a legacy dimension's vein warning survives a surface rule that does not resolve",
+TEST_CASE("a legacy dimension with veins on is reported only for a surface rule that does not "
+          "resolve",
           "[validate]") {
-    // The flag needs no rule tree, and a surface rule's error used to swallow
-    // it: the warning sat inside the `try` that resolves the tree.
+    // The vein flag drew a warning of its own while the legacy vein source
+    // was refused by name, and this case once held that warning outside the
+    // `try` that resolves the rule tree, where a rule's error had swallowed
+    // it. The legacy vein source is measured now (SPEC §11, "Ore veins under
+    // the legacy source"), so the flag draws nothing, and the rule's error
+    // is still the one finding.
     const TempTree tree;
     defineWorkingPack(tree);
     // A `block` rule with no result_state: loads, and does not resolve.
@@ -536,11 +542,9 @@ TEST_CASE("a legacy dimension's vein warning survives a surface rule that does n
     CHECK(rule->severity == Severity::Error);
     int veins = 0;
     for (const Finding& each : report.findings) {
-        veins += static_cast<int>(each.subject == "minecraft:nether" &&
-                                  each.severity == Severity::Warning &&
-                                  each.message.find("'ore_veins_enabled'") != std::string::npos);
+        veins += static_cast<int>(each.message.find("ore_veins_enabled") != std::string::npos);
     }
-    CHECK(veins == 1);
+    CHECK(veins == 0);
 }
 
 TEST_CASE("aquifers over a default fluid other than water are a warning, named", "[validate]") {

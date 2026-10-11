@@ -11,8 +11,9 @@
 // lattice, the fluid level rule, source selection and the three-source
 // barrier, SPEC §10 milestone MA); otherwise the old shortcut, `default_fluid`
 // at or below `sea_level` and air above it. Then, over solid ground only and
-// where `ore_veins_enabled` and `aquifers_enabled` are BOTH set, the vein
-// system's own replacement (`ore::VeinSource` — SPEC §10 milestone M3).
+// where `ore_veins_enabled` is set, the vein system's own replacement
+// (`ore::VeinSource` — SPEC §10 milestone M3), drawn from the dimension's
+// declared random source, whatever `aquifers_enabled` says.
 //
 // ORE VEINS, wired (SPEC §11). The RNG derivation is confirmed per block
 // against the vanilla server on 79790 of 79790 candidate positions across 11
@@ -23,11 +24,16 @@
 // Those 11455 are seed-100 positions already among the 79790, re-measured at
 // a different density — evidence about placement, not additional independent
 // confirmation of the derivation, so the two are not summed.
-// `ore/vein.hpp` carries the derivation, the brackets around each threshold,
-// and the two ambiguities the probes cannot separate.
+// Under `legacy_random_source` the same draws come from java.util.Random,
+// measured on tools/analysis/legacy-orevein-probe.sh's worlds (SPEC §11, "Ore
+// veins under the legacy source"). `ore/vein.hpp` carries the derivation, the
+// brackets around each threshold, how each draw meets it, and what the probes
+// cannot separate.
 //
 // The guard here is its own measured fact rather than a reading of the
-// derivation: veins replace only a block this filler has ALREADY made solid.
+// derivation: veins replace only a block this filler has ALREADY made the
+// dimension's default_block — stone or not, by the same blocks (netherrack
+// and deepslate[axis=x] measured, SPEC §11).
 // On the sign-varying probe the confirmed chain would have placed 17813 vein
 // blocks at positions the server left as air, and the server placed none of
 // them — while every position it left solid came back exact, including the
@@ -361,10 +367,10 @@ private:
     std::optional<surface::Executor> surfaceExecutor_;
     std::vector<std::string> surfaceRulesBlockedBy_;
 
-    // Present only when BOTH ore_veins_enabled and aquifers_enabled are
-    // set (ore::veinsPlaceBlocks): the coupling is measured, not assumed.
-    // Built at compile() from the registry's own worldSeed, same as the
-    // aquifer's centres below and for the same reason.
+    // Present only when ore_veins_enabled is set, whatever aquifers_enabled
+    // says (since engine v14; ore/vein.hpp, "NO AQUIFER COUPLING"). Built at
+    // compile() from the registry's own worldSeed and declared random
+    // source, same as the aquifer's centres below and for the same reason.
     std::optional<ore::VeinSource> oreVeins_;
 
     // Present only when settings_->aquifersEnabled — its own RNG derivation

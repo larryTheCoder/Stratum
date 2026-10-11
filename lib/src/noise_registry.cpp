@@ -34,19 +34,6 @@ std::string_view randomSourceName(RandomSource source) noexcept {
     return "unknown";
 }
 
-std::string legacyConstructRefusal(const std::string_view construct,
-                                   const std::string_view detail) {
-    // Same shape as the noise refusal above and deliberately so: it names the
-    // construct, says what it needs, and says what this build will not do
-    // instead (SPEC §8, §11).
-    return "this dimension declares legacy_random_source and needs '" + std::string(construct) +
-           "', which draws a random from that source rather than naming a worldgen/noise — " +
-           std::string(detail) +
-           ". How the Java LCG is seeded for it is not settled here, and this build will not "
-           "substitute the modern Xoroshiro derivation: for vertical_gradient that substitution "
-           "was measured to agree with vanilla at chance (SPEC §11)";
-}
-
 NoiseRegistry NoiseRegistry::create(const data::Pack& pack,
                                     std::span<const data::ResourceLocation> wanted,
                                     std::int64_t worldSeed, RandomSource source) {

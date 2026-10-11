@@ -1,11 +1,11 @@
 // Stratum — which generator a dimension declares.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// Its own header because two unrelated consumers need it and neither should
-// pull in the other: the noise registry (noise_registry.hpp), which seeds a
+// Its own header because unrelated consumers need it and none should pull
+// in another: the noise registry (noise_registry.hpp), which seeds a
 // dimension's named noises, and the aquifer's cell centres
-// (aquifer/lattice.hpp), which draw a positional random from the same
-// declared source and name no noise at all.
+// (aquifer/lattice.hpp) and the ore-vein source (ore/vein.hpp), which draw a
+// positional random from the same declared source and name no noise at all.
 #pragma once
 
 #include <cstdint>
@@ -33,8 +33,9 @@ enum class RandomSource : std::uint8_t {
     /// `minecraft:temperature`, `vegetation` and `offset`, by the rule
     /// cubiomes documents for the Nether and the goldens confirm (SPEC §11).
     /// Every other NAMED noise is not: nothing available says how a name
-    /// becomes an LCG seed, and those are refused. The aquifer's cell centres
-    /// are measured under it (rng::LegacyPositionalSource, SPEC §11).
+    /// becomes an LCG seed, and those are refused. The aquifer's cell
+    /// centres, the gradient's coin and the ore-vein source are measured
+    /// under it (rng::LegacyPositionalSource, SPEC §11).
     Legacy,
 };
 

@@ -23,9 +23,10 @@
 // biome search and surface tree; tests/conformance/
 // vanilla_compiled_dimension_test.cpp asserts the two agree block for block)
 // with each of the three toggles independent, so the aquifer's share is a
-// difference of two runs that differ in that flag alone. Ore veins are gated on
-// aquifers by the engine itself (`ore::veinsPlaceBlocks`), so the aquifer's
-// share is `veins off` against `aquifers off`, never `on` against `off`.
+// difference of two runs that differ in that flag alone. Since engine v14 ore
+// veins no longer follow aquifers off (the gate did not replicate, ore/vein.hpp),
+// so `aquifers off` keeps the veins; the figures in SPEC §11 were taken before
+// that, when the aquifer's share was `veins off` against `aquifers off`.
 //
 // THE TIME. CPU time per fill() (`std::clock`, process CPU time on POSIX),
 // which a loaded machine moves far less than wall time; wall time is printed

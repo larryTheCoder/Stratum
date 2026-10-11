@@ -8,9 +8,9 @@
 // `minecraft:vertical_gradient`'s `random_name`, the aquifer lattice's centre
 // jitter, and the ore-vein source. None of the three passes through the
 // registry's `wanted` list. This build once derived all three with
-// Xoroshiro128++ and refused them by name under a legacy source; the
-// aquifer's lattice and the gradient's coin are derived from the declared
-// source now (both measured, SPEC §11), and only the vein source is refused.
+// Xoroshiro128++ and refused them by name under a legacy source; all three
+// are derived from the declared source now, each measured (SPEC §11), the
+// vein source last ("Ore veins under the legacy source").
 //
 // For `vertical_gradient` the Xoroshiro coin is MEASURED WRONG rather than
 // merely unverified, and this file is the measurement. Vanilla's own Nether writes
