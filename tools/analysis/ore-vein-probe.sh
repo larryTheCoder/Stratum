@@ -72,9 +72,11 @@
 # what else moved. The first world ran at this script's default seed, 42,
 # with aquifers off and default_fluid air; the contrast that "produced real
 # vein output" set aquifers on, default_fluid to water AND the seed to 43 in
-# one step (the first run's session record, not in the repository). Seed
-# 42's window holds no position the deterministic gate admits under
-# vanilla's vein router (the library: none of 1818624), so it is stone with
+# one step (the first run's session record, not in the repository). Nor
+# did the inputs clear "their documented gates": the 4.2% above counted
+# `vein_ridged < 0` alone, and the type/sign and richness gate, never
+# counted then, admits no position of seed 42's window under vanilla's vein
+# router (the library: none of 1818624), so it is stone with
 # aquifers on too; at 43 the library predicts exactly the 339 vein blocks
 # that world held (48 copper_ore, 290 granite, 1 raw_copper_block). With
 # aquifers off veins ARE placed: at 13579, whose window has veins, `ova`
