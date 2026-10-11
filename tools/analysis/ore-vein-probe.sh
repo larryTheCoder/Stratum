@@ -67,14 +67,28 @@
 # is recorded as a hypothesis for the coupling, not a claim about the
 # implementation.
 #
-# RETRACTED SINCE: THE COUPLING DOES NOT REPLICATE. This recipe at 13579,
-# the seed probes/orevein records, with aquifers off — the `ova` arm below —
-# is the aquifers-on world block for block (0 of 6291456 differing, 14373
-# vein blocks in each), and so are legacy-orevein-probe.sh's aquifers-off
-# arms at four seeds under both random sources. The first world is not on
-# disk; engine v14 places veins on ore_veins_enabled alone (SPEC §11, "Ore
-# veins under the legacy source"). `ov` keeps aquifers on, which changes
-# nothing.
+# RETRACTED SINCE: A SEED CONFOUND, NOT A COUPLING (SPEC §11, "Ore veins
+# under the legacy source"). The paragraph above, kept as written, leaves out
+# what else moved. The first world ran at this script's default seed, 42,
+# with aquifers off and default_fluid air; the contrast that "produced real
+# vein output" set aquifers on, default_fluid to water AND the seed to 43 in
+# one step (the first run's session record, not in the repository). Seed
+# 42's window holds no position the deterministic gate admits under
+# vanilla's vein router (the library: none of 1818624), so it is stone with
+# aquifers on too; at 43 the library predicts exactly the 339 vein blocks
+# that world held (48 copper_ore, 290 granite, 1 raw_copper_block). With
+# aquifers off veins ARE placed: at 13579, whose window has veins, `ova`
+# (aquifers off) is `ov` block for block (0 of 6291456 differing, 14373 vein
+# blocks in each), and so are legacy-orevein-probe.sh's aquifers-off arms at
+# four seeds under both random sources. 13579 was never the stone world's
+# seed: it is the one probes/orevein has held since the held-out loop.
+#
+# So run with no seed, both arms come back all stone (the library predicts
+# no vein block in that window) and show nothing either way; pass 13579 to
+# reproduce the reversal (density-probe.sh's seed guard lets it replace
+# probes/orevein, which already holds 13579). The default stays 42, the seed
+# this script has always meant with no argument. Engine v14 places veins on
+# ore_veins_enabled alone; `ov` keeps aquifers on, which changes nothing.
 #
 # CONFIRMED, across five seeds and 25608 real non-stone blocks
 # (`tools/analysis/ore-vein-analyze.cpp`), with ZERO exceptions on every

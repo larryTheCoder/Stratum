@@ -25,8 +25,14 @@
 #   lr   lv with vein_toggle a constant 0.57947951108217244 (copper only)
 #   la   lv with aquifers_enabled FALSE
 #   ma   mv with aquifers_enabled FALSE: ore-vein-probe.sh's first world
-#        found veins place nothing without aquifers under the modern source,
-#        and la asks the same under the legacy one, with ma its control
+#        read all stone with aquifers off, and this build had gated veins on
+#        aquifers since; la and ma ask whether veins need them, under each
+#        source. They do not: each is its aquifers-on twin block for block
+#        (0 of 6291456 differing, at the four seeds tools/probe-worlds
+#        generates; three legacy worlds, as 42's 48-bit twin is 42's). The
+#        first world's stone was a seed confound — its seed, 42, has no
+#        position in its window that the vein gate admits (SPEC §11, "Ore
+#        veins under the legacy source")
 #
 # nv and dv ask the other open question: whether a vein replaces a
 # default_block that is not stone, and with which blocks. The filler gates
@@ -49,11 +55,12 @@
 # THE WORLD. A fully solid column (`raw_final_density` +1), so the aquifer's
 # own fluid decision never applies (Q2.2) and every block in both vein ranges
 # is the default_block before the vein system looks at it. aquifers_enabled
-# is TRUE because veins place nothing without it (measured, ore-vein-probe.sh)
-# and its five inputs are the constant 0, as everything else in the router
-# is. The vein inputs are constants too, chosen so that EVERY block of both
-# ranges is a candidate, which turns every block into a readout of the three
-# draws:
+# is TRUE in every arm but la and ma, so that those two are aquifers-off
+# twins of lv and mv (it was first set true on the belief that veins place
+# nothing without it, which la and ma refuted), and its five inputs are the
+# constant 0, as everything else in the router is. The vein inputs are
+# constants too, chosen so that EVERY block of both ranges is a candidate,
+# which turns every block into a readout of the three draws:
 #
 #   vein_toggle   y_clamped_gradient -0.7 at y <= -1, +0.7 at y >= 0: iron's
 #                 sign over its whole range [-60, -8], copper's over [0, 50],
