@@ -281,7 +281,7 @@ to bump the version and be called out; this is that call-out.
 | 11 | **An aborted scan's status is A_lava, -54 and lava** (§11, "An aborted scan's status is A_lava"). The aborting near-surface floor, an aborted cell off the near-surface path (v5) and one under Q5.9's override (v6) read lambda, typed as the cell's own fluid; the server holds Q1.1's A_lava there, the literal -54 and lava, on all three (`aquifer-lowfloor-probe.sh`, two seeds: the build exact on every sampled block and mark, v10's reading refuted on 8 938 to 18 209 blocks an arm). Changes blocks and fluid-update flags only where `sea_level` < -54; at or above it the floor's type is unobservable. No golden block changes. v10 had reached only this development branch; bumped rather than amended because a v10 blob could exist. |
 | 12 | **Q5.3(a) off the ocean branch** (§11, "The level rule on a constant surface, block for block"). A cell whose scan did not abort and whose centre sits more than twenty above the scan's `cap` takes the sea before any floodedness is weighed, on land as on the ocean branch; v11 applied the clause only on the near-surface path. Replayed through the filler at every column of `aquifer-level-probe.sh`'s 255 constant-surface worlds (three seeds, 556 964 848 blocks from y -51 up) the build is exact, and v11's reading parts from the server on 3 324 blocks, every one held the new way. Changes blocks where a land surface sits more than twenty below a source centre; no golden block changes. `cap` against the anchor (the spec's a0) is carried, not measured: a constant surface makes them one number. v11 had reached only this development branch; bumped rather than amended because a v11 blob could exist. |
 | 13 | **The surface scan, read sample by sample: the clean-room Q5.3 as written** (§11, "The surface scan, sample by sample"). Q5.3(a) compares a source's centre with the ANCHOR's surface (v12: the scan's `cap`); otherwise the first sample in scan order that is submerged and that the centre clears by less than four decides, the sea for a clean sample and A_lava for an aborting one, whether or not a later sample aborts (v12: an aborted scan took the sea only at or above lambda and more than twenty above `cap`, else A_lava); a scan where no sample fires takes the level rule on `cap` even when it aborted. `aquifer-ties-probe.sh` builds surfaces that part each v12 choice from the spec's: on both seeds the build is exact on every scored block and fluid-update mark, and v12's reading is wrong wherever it parts (106 393, 64 913, 24 761 + 6 472 marks, 1 628, 1 780 and 14 blocks by kind). Changes blocks only over varying surfaces with an aborting or submerged scan window; no golden block changes. v12 had reached only this development branch; bumped rather than amended because a v12 blob could exist. |
-| 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7 (equivalently `f <= 0.7F`; no draw separates the two readings); v13 compared `f < 0.7F` in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on one comparison that changed the seed along with the flag (its stone world, at seed 42, has no position in its window that the vein gate admits, and reads stone with aquifers on too). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
+| 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7 (equivalently `f <= 0.7F`; no draw separates the two readings); v13 compared `f < 0.7F` in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on one comparison that changed the seed along with the flag (its stone world, at seed 42, has no position in its window that the vein gate admits, so the library predicts it stone with aquifers on too). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -668,9 +668,11 @@ mapping has two halves, split at a platform-neutral midpoint:
   aquifers" — and got back 6291456 of 6291456 blocks as plain stone: not
   one ore, filler or raw block, despite the vein inputs themselves clearing
   their documented gates on a measurable fraction of positions (*corrected
-  since:* only `vein_ridged < 0` was counted, on 4.2% of a coarse sample. The
-  type/sign and richness gate was never checked, and on its own it admits no
-  position of that world; see the retraction below). Setting
+  since:* of the deterministic gate only `vein_ridged < 0` was counted, on
+  4.21% of a coarse sample, beside `vein_gap > -0.3`, which picks ore over
+  filler and admits nothing. The type/sign and richness gate was never
+  counted, and on its own it admits no position of that world's window; see
+  the retraction below). Setting
   `aquifers_enabled` true as well — with density still a constant positive,
   so the aquifer's own fluid decision can never apply to any block (Q2.2)
   — immediately produced real vein output. The two flags are not
@@ -683,14 +685,17 @@ mapping has two halves, split at a platform-neutral midpoint:
   42 (the first run's session record, not in the repository; the commit that
   recorded it names no seed). No position of seed 42's window clears the
   type/sign and richness gate under vanilla's vein router — the library finds
-  none of 1 818 624 — so that world is stone with aquifers on as well. The
+  none of 1 818 624 — so that world is stone with aquifers on as well (the
+  library's prediction for its recipe; two scratch worlds at 42, with
+  `size_vertical` 1 and water, read stone with aquifers on and off). The
   contrast that "immediately produced real vein output" changed three things
   at once: `aquifers_enabled` false to true, `default_fluid` air to water, and
   the seed, 42 to 43. Its 48 + 290 + 1 = 339 vein blocks are exactly what the
-  library predicts at 43. So the stone world replicates; only the inference
-  "veins need aquifers" was wrong. With aquifers off, veins are placed: the
-  recipe at 13579, whose window holds veins, is block for block the
-  aquifers-on world (14 373 vein blocks in each), and so are the legacy
+  library predicts at 43, where 468 positions of the window clear the gate
+  and the draws place 339 of them. So the stone world replicates; only the
+  inference "veins need aquifers" was wrong. With aquifers off, veins are
+  placed: the recipe at 13579, whose window holds veins, is block for block
+  the aquifers-on world (14 373 vein blocks in each), and so are the legacy
   probe's aquifers-off arms. `ore::veinsPlaceBlocks` is gone and engine v14
   places veins wherever `ore_veins_enabled` is set.
 
@@ -2863,10 +2868,15 @@ Open:
     the corpus size pinned and, for the first time, false stone checked: 0
     on all 19 601 open blocks within two of a real barrier. The baseLevel "clamp" assertion
     that held either way is gone. The legacy-source refusals for aquifers
-    and ore veins have a test. Eight aquifer conformance files REQUIRE every
-    chunk of their probe window instead of skipping a missing one, and the
-    aquifer-free per-block case classifies by exact block name, not by a
-    substring of the state string (where `waterlogged=false` read as water).
+    and ore veins have a test. (*Both since lifted*: §11, "The aquifer under
+    the legacy source" and "Ore veins under the legacy source". The two
+    `terrain_filler_test.cpp` cases now pin the wiring instead: "a legacy
+    dimension's aquifer draws its lattice from the legacy source" and "a
+    legacy dimension's ore veins draw from the legacy source".) Eight
+    aquifer conformance files REQUIRE every chunk of their probe window
+    instead of skipping a missing one, and the aquifer-free per-block case
+    classifies by exact block name, not by a substring of the state string
+    (where `waterlogged=false` read as water).
   * *The six aquifer analyzers are build targets*, under the project warning
     set, clang-format and clang-tidy, and in CI's lint list. Their output on
     their own probe worlds is byte-identical to before the cleanup.
@@ -7276,20 +7286,25 @@ Open:
   the window's 1 818 624 positions in y -60..50, finds none at the probe's
   cell height (8) or at half of it (4), so `vein_ridged < 0`, true at
   77 328 of them at the probe's (4.25%), has nothing to admit. The
-  "measurable fraction" the M3 entry saw was on `vein_ridged` alone — 4.21%
-  of a coarse sample, 113 664 positions on every fourth x and z — and the
-  type/sign and richness gate was never counted. The world is stone with
-  aquifers on too: two scratch worlds at 42, aquifers on and off (with
-  `size_vertical` 1 and `default_fluid` water, not the original's 2 and
-  air), read 6 291 456 of 6 291 456 stone each, and so does the discovery
-  set's seed 200 with aquifers on (the library: no position there either).
-  The aquifers-on contrast changed three things at once —
+  "measurable fraction" the M3 entry saw was, of the deterministic gate,
+  `vein_ridged < 0` alone — 4.21% of a coarse sample, 113 664 positions on
+  every fourth x and z — beside `vein_gap > -0.3` (83.6%), which picks ore
+  over filler and admits nothing; the toggle's range was printed, and the
+  type/sign and richness gate was never counted. With aquifers on the recipe
+  would be stone too: the gate reads no aquifer, so that is the library's
+  prediction, and no server world holds the recipe at 42 with aquifers on.
+  What the server did generate at 42 agrees: two scratch worlds, aquifers on
+  and off (with `size_vertical` 1 and `default_fluid` water, not the
+  original's 2 and air), read 6 291 456 of 6 291 456 stone each, and so does
+  the discovery set's seed 200 with aquifers on (the library: no position
+  there either). The aquifers-on contrast changed three things at once —
   `aquifers_enabled` false to true, `default_fluid` air to water, and the
   seed, 42 to 43 — and its 48 `copper_ore`, 290 `granite` and one
   `raw_copper_block` are exactly the 339 vein blocks the library predicts at
-  43; the session archived that world as `probes/orevein-multi/seed-43`,
-  which still reads 48 + 290 + 1. Only the inference, "veins need aquifers",
-  was wrong.
+  43, where 468 positions of the window clear the deterministic gate and the
+  draws place 339 of them; the session archived that world as
+  `probes/orevein-multi/seed-43`, which still reads 48 + 290 + 1. Only the
+  inference, "veins need aquifers", was wrong.
 
   To rule out the legacy probe's constant inputs, the original recipe
   (vanilla's real vein entries, `size_vertical` 2, `default_fluid` air) was
@@ -7299,36 +7314,55 @@ Open:
   world's seed (the rebuild's own report, not in the repository, calls it
   "its original seed"); its window happens to hold veins, 14 373 by the
   library's count — with aquifers on and off: 0 of 6 291 456 differ, and
-  each holds those 14 373 vein blocks. Again with every `interpolated`
-  stripped from the vein entries: identical too. `ore-vein-probe.sh`
-  carries the aquifers-off twin as its `ova` arm; at its default seed, 42,
-  both arms are stone, so the reversal reproduces at 13579.
+  each holds those 14 373 vein blocks (scratch `mra2` and `mr2`). Again with
+  every `interpolated` stripped from the vein entries: identical too.
+  `ore-vein-probe.sh` now writes that pair as its `ov` and `ova` arms, the
+  same entries as `mra2` and `mr2` under other names; `ova` itself has never
+  been generated. At the script's default seed, 42, `ova`'s recipe is the
+  first run's stone world (then named `ov`), and `ov` would be stone too —
+  the library's prediction; no server world holds that recipe at 42 with
+  aquifers on. So the reversal shows at 13579, not at the default seed;
+  and wherever `probes/orevein` already holds another seed (13579, on the
+  machine these worlds were made on), `density-probe.sh`'s seed guard
+  refuses a run with no seed unless `STRATUM_PROBE_OVERWRITE=1`.
 
-  *The flag's path through `density-probe.sh` — an unmeasured gap.* `la`,
-  `ma`, `ova` and the 13579 rebuild read exactly as their aquifers-on twins
-  do, which is also what they would read if `aquifers_enabled: false` never
-  reached the server. No conformance case is a control for that: every one
-  of the 184 aquifers-off arms in `tools/probe-worlds`' density corpora
-  either leaves `sea_level` at the dimension's floor, where the global
-  picker's only fluid is air, or is a solid column, so none shows anything
-  only aquifers off produce. (114 are solid. The other 70 keep the default
-  air `default_fluid` too, and on thirteen of them, from eleven of their
+  *The flag's path through `density-probe.sh` — measured on three local
+  corpora, pinned by no case.* `la`, `ma` and the 13579 rebuild's `mr2` read
+  exactly as their aquifers-on twins do, which is also what they would read
+  if `aquifers_enabled: false` never reached the server. No conformance case
+  is a control for that. Of the 184 aquifers-off arms in `tools/probe-worlds`'
+  density corpora, 114 are solid columns and the other 70 leave `sea_level`
+  at the dimension's floor with the default air `default_fluid`, so none is
+  known to separate the flag: on thirteen of the 70, from eleven of their
   twelve probes, the library's aquifers-on fill, with water standing in for
   the air it refuses and read back as air, is their aquifers-off fill block
-  for block. The twelfth, `legacy-seed-probe.sh`, was not checked.) What is
-  seen is each half apart.
-  `density-probe.sh` writes an entry's flag into its noise settings as given
-  (`'aquifers_enabled': aquifers`), and the first ore-vein run's kept
-  datapack read `"aquifers_enabled": false` (its session record). And the
-  server honours `aquifers_enabled: false` from a datapack:
-  `golden_fill_test.cpp` holds the aquifers-off filler to vanilla's own
-  overworld generated with that one field changed — "the filler places the
-  blocks the server placed, up to surface rules", 393 216 of 393 216, and
-  "aquifers off still keeps a global lava sea below min(-54, sea_level)",
-  its 1 005 lava blocks — but on `aquifer-free-probe.sh`'s corpus, whose
-  datapack that script's own harness writes, not `density-probe.sh`. So the
-  seed confound removes the only evidence for the coupling, and the evidence
-  against it rests on that one line of the harness as well as on the worlds.
+  for block (a library prediction; the other 57 arms, the twelfth probe
+  `legacy-seed-probe.sh`'s among them, were not checked).
+
+  The control exists on disk, outside every unit: three `density-probe.sh`
+  corpora with aquifers off and a water sea above the floor — `stdep2`'s
+  `w_fl0` (sea 250), `hsbA`'s `stw` (sea 100) and `hsbB`'s `sw40` (sea 40),
+  generated 2026-09-05, after commit 85c4a71 made `density-probe.sh` write an
+  entry's flag (none of the three sets it, so its default, false, went in).
+  The server's region is the library's aquifers-off fill, surface rules
+  included, on 6 291 456 of 6 291 456 blocks, state for state, in each; the
+  library's aquifers-on twin of the same entry differs from it on 483 083,
+  887 and 745 blocks (in `w_fl0`, where the server holds a flat sea of 245
+  water layers in every open column below 250, the twin leaves 483 083 of
+  them air). The aquifers-on side is a library prediction, and the corpora
+  are local: no committed generator makes them and no case reads them. So
+  the line `density-probe.sh` writes the flag with (`'aquifers_enabled':
+  aquifers`) reaches the server and is honoured, as `golden_fill_test.cpp`
+  shows the server honouring it from `aquifer-free-probe.sh`'s own harness
+  — "the filler places the blocks the server placed, up to surface rules",
+  393 216 of 393 216, and "aquifers off still keeps a global lava sea below
+  min(-54, sea_level)", its 1 005 lava blocks. (The ore-vein session's kept
+  datapack read `"aquifers_enabled": false` too, but it was not the first
+  run's: that run, at 23:29:43 UTC, deleted its work directory, and the
+  datapack was kept by a same-recipe re-run at 42 with
+  `STRATUM_PROBE_KEEP_WORK=1`, at 23:32:41 UTC.) The seed confound removes
+  the only evidence for the coupling; the evidence against it rests on the
+  worlds and on that harness line, which these three corpora exercise.
 
   *What ships.* `ore::VeinSource` takes the dimension's
   `density::RandomSource` as a required argument with no default, as the
@@ -7359,10 +7393,12 @@ Open:
   and are not.
 
   *Still open.* Draw 3's method; whether draw 2 is taken when
-  `vein_gap <= -0.3` (nothing downstream reads the stream); and a control
-  that `aquifers_enabled: false` reaches the server through
-  `density-probe.sh` (above). Why the first coupling world read stone is
-  answered: a seed with no admissible position in its window.
+  `vein_gap <= -0.3` (nothing downstream reads the stream); and a
+  conformance case for the control that `aquifers_enabled: false` reaches
+  the server through `density-probe.sh` — measured on three local corpora
+  (above), but no `tools/probe-worlds` unit generates one and no case reads
+  it. Why the first coupling world read stone is answered: a seed with no
+  admissible position in its window.
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is
