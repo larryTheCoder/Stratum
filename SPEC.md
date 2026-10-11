@@ -668,9 +668,9 @@ mapping has two halves, split at a platform-neutral midpoint:
   aquifers" — and got back 6291456 of 6291456 blocks as plain stone: not
   one ore, filler or raw block, despite the vein inputs themselves clearing
   their documented gates on a measurable fraction of positions (*corrected
-  since:* each gate on its own — `vein_ridged < 0` on 4.2% of a sample. They
-  were never checked together, and together they admit no position of that
-  world; see the retraction below). Setting
+  since:* only `vein_ridged < 0` was counted, on 4.2% of a coarse sample. The
+  type/sign and richness gate was never checked, and on its own it admits no
+  position of that world; see the retraction below). Setting
   `aquifers_enabled` true as well — with density still a constant positive,
   so the aquifer's own fluid decision can never apply to any block (Q2.2)
   — immediately produced real vein output. The two flags are not
@@ -7275,8 +7275,10 @@ Open:
   gate under vanilla's vein router: the library, evaluating that router over
   the window's 1 818 624 positions in y -60..50, finds none at the probe's
   cell height (8) or at half of it (4), so `vein_ridged < 0`, true at
-  77 328 of them at the probe's (4.25%: the "measurable fraction" the M3
-  entry saw, gate by gate), has nothing to admit. The world is stone with
+  77 328 of them at the probe's (4.25%), has nothing to admit. The
+  "measurable fraction" the M3 entry saw was on `vein_ridged` alone — 4.21%
+  of a coarse sample, 113 664 positions on every fourth x and z — and the
+  type/sign and richness gate was never counted. The world is stone with
   aquifers on too: two scratch worlds at 42, aquifers on and off (with
   `size_vertical` 1 and `default_fluid` water, not the original's 2 and
   air), read 6 291 456 of 6 291 456 stone each, and so does the discovery
@@ -7293,12 +7295,14 @@ Open:
   (vanilla's real vein entries, `size_vertical` 2, `default_fluid` air) was
   rebuilt at 13579 — not the stone world's seed, but the one `probes/orevein`
   has held since the held-out loop (byte-identical to
-  `orevein-heldout/seed-13579`), chosen because its window has veins — with
-  aquifers on and off: 0 of 6 291 456 differ, 14 373 vein blocks in each, the
-  count the library predicts there. Again with every `interpolated` stripped
-  from the vein entries: identical too. `ore-vein-probe.sh` carries the
-  aquifers-off twin as its `ova` arm; at its default seed, 42, both arms are
-  stone, so the reversal reproduces at 13579.
+  `orevein-heldout/seed-13579`), chosen in the belief that it was the stone
+  world's seed (the rebuild's own report, not in the repository, calls it
+  "its original seed"); its window happens to hold veins, 14 373 by the
+  library's count — with aquifers on and off: 0 of 6 291 456 differ, and
+  each holds those 14 373 vein blocks. Again with every `interpolated`
+  stripped from the vein entries: identical too. `ore-vein-probe.sh`
+  carries the aquifers-off twin as its `ova` arm; at its default seed, 42,
+  both arms are stone, so the reversal reproduces at 13579.
 
   *The flag's path through `density-probe.sh` — an unmeasured gap.* `la`,
   `ma`, `ova` and the 13579 rebuild read exactly as their aquifers-on twins
@@ -7307,7 +7311,12 @@ Open:
   of the 184 aquifers-off arms in `tools/probe-worlds`' density corpora
   either leaves `sea_level` at the dimension's floor, where the global
   picker's only fluid is air, or is a solid column, so none shows anything
-  only aquifers off produce. What is seen is each half apart.
+  only aquifers off produce. (114 are solid. The other 70 keep the default
+  air `default_fluid` too, and on thirteen of them, from eleven of their
+  twelve probes, the library's aquifers-on fill, with water standing in for
+  the air it refuses and read back as air, is their aquifers-off fill block
+  for block. The twelfth, `legacy-seed-probe.sh`, was not checked.) What is
+  seen is each half apart.
   `density-probe.sh` writes an entry's flag into its noise settings as given
   (`'aquifers_enabled': aquifers`), and the first ore-vein run's kept
   datapack read `"aquifers_enabled": false` (its session record). And the
