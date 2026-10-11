@@ -64,7 +64,8 @@
 // Every draw is a 24-bit nextFloat, and `f < c` read in float and read in
 // double part only where (float) c rounds DOWN onto f itself:
 //   * membership: f = 0.7F exactly (next(24) = 11744051) IS a member — the
-//     comparison is the draw widened to double against 0.7. Five positions
+//     comparison is the draw widened to double against 0.7 (equivalently
+//     f <= 0.7F; no draw separates the two readings). Five positions
 //     in the probe windows, under both sources (legacy 31337, 14, 15;
 //     Xoroshiro 2, twice), all but the first found from the RNG before their
 //     worlds existed. Engine v13 compared in float and left all five as the
@@ -86,12 +87,19 @@
 // NO AQUIFER COUPLING — a measurement retracted. This header used to say
 // veins place nothing unless `aquifers_enabled` is also true, from one probe
 // world with veins on and aquifers off that came back 6291456 of 6291456
-// stone. It does not replicate: the same recipe at the same seed (13579,
-// vanilla's real vein entries, size_vertical 2) is block for block the
-// aquifers-on world, 0 of 6291456 differing with 14373 vein blocks in it,
-// and the legacy probe's `la` and `ma` arms (aquifers off) are their `lv`
-// and `mv` exactly at four seeds, under both sources. Engine v14 places
-// veins wherever `ore_veins_enabled` is set (SPEC §11).
+// stone. That world was a seed confound, and it replicates: it ran at seed 42,
+// whose probe window holds no position the deterministic gate admits under
+// vanilla's vein router, so it is stone with aquifers on as well. The
+// aquifers-on world that "produced veins" also moved the seed to 43 (and the
+// default fluid to water), where the gate admits 339 vein blocks. With
+// aquifers off veins ARE placed: the same recipe at 13579, whose window has
+// veins, is block for block the aquifers-on world (14373 vein blocks in
+// each), and the legacy probe's `la` and `ma` arms (aquifers off) are their
+// `lv` and `mv` exactly at four seeds (three distinct legacy worlds: 42's
+// 48-bit twin is 42's), under both sources. Engine v14 places veins wherever
+// `ore_veins_enabled` is set (SPEC §11, "Ore veins under the legacy source",
+// which also records that no control yet shows the aquifers-off flag reaching
+// the server through density-probe.sh).
 //
 // WHAT THIS DELIBERATELY DOES NOT DECIDE, recorded rather than guessed
 // (SPEC §11), and two that were chosen first and measured since:
@@ -188,9 +196,9 @@ public:
     /// XORed into the stream seed: the primitive measured for the aquifer's
     /// lattice and the gradient's coin, and exact for veins on every block of
     /// `tools/analysis/legacy-orevein-probe.sh`'s legacy arms at seven
-    /// seeds, four of them generated after the rule was frozen (SPEC §11,
-    /// "Ore veins under the legacy source"). Only the low 48 bits of
-    /// @p worldSeed reach it.
+    /// seeds (six legacy worlds: 42's 48-bit twin is 42's), four of them
+    /// generated after the rule was frozen (SPEC §11, "Ore veins under the
+    /// legacy source"). Only the low 48 bits of @p worldSeed reach it.
     explicit VeinSource(std::int64_t worldSeed, density::RandomSource source) noexcept;
 
     /// What the vein system puts at this position, given its three router

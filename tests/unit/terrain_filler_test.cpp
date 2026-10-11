@@ -663,11 +663,14 @@ TEST_CASE("the barrier is read on every block only where its read is not provabl
 TEST_CASE("ore veins place without aquifers too, the same blocks", "[terrain][filler][ore]") {
     // Since pipeline engine v14. Veins were gated on aquifers_enabled from one
     // probe world with veins on and aquifers off that came back unbroken
-    // stone; it does not replicate. The same recipe at the same seed is the
-    // aquifers-on world block for block, and tools/analysis/
-    // legacy-orevein-probe.sh's `la` and `ma` arms are their aquifers-on
-    // twins exactly at four seeds, under both sources (SPEC §11). So a fill
-    // with aquifers off holds the same vein blocks as one with them on.
+    // stone; its seed's window holds no position the vein gate admits, so it
+    // is stone with aquifers on too, and the contrast that showed veins had
+    // changed the seed with the flag. The recipe at a seed whose window has
+    // veins is the aquifers-on world block for block with aquifers off, and
+    // tools/analysis/legacy-orevein-probe.sh's `la` and `ma` arms are their
+    // aquifers-on twins exactly at four seeds, under both sources (SPEC §11).
+    // So a fill with aquifers off holds the same vein blocks as one with them
+    // on.
     std::array<std::vector<std::string>, 2> filled;
     for (const bool aquifers : {false, true}) {
         INFO("aquifers " << aquifers);
