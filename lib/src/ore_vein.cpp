@@ -77,7 +77,8 @@ namespace {
 /// part of the answer, and C++ would not otherwise promise it.
 template<typename Generator>
 [[nodiscard]] Vein drawVein(Generator generator, const VeinType type, const VeinInputs& inputs) {
-    // Widened to double: a draw of exactly 0.7F is a member (vein.hpp).
+    // Widened to double (equivalently f <= 0.7F; no draw separates the two):
+    // a draw of exactly 0.7F is a member (vein.hpp).
     if (!(static_cast<double>(generator.nextFloat()) < kMembershipChance)) {
         return {};
     }

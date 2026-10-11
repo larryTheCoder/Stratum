@@ -313,9 +313,12 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // Ore veins, wired (SPEC §10, M3; SPEC §11), on `ore_veins_enabled`
     // ALONE since pipeline engine v14. They were gated on `aquifers_enabled`
     // too, from one probe world that came back unbroken stone with aquifers
-    // off; that does not replicate (the same recipe at the same seed is the
-    // aquifers-on world block for block, and so are the legacy probe's
-    // aquifers-off arms under both sources), so the gate is gone (ore/vein.hpp).
+    // off; its seed's window holds no position the vein gate admits, so it is
+    // stone with aquifers on as well, and the contrast that showed veins had
+    // moved the seed with the flag. With aquifers off the recipe at a seed
+    // that has veins is the aquifers-on world block for block, and so are the
+    // legacy probe's aquifers-off arms under both sources, so the gate is gone
+    // (ore/vein.hpp).
     //
     // NOT refused under a legacy source any more. The vein source is a
     // positional random drawn through the dimension's declared source, not
