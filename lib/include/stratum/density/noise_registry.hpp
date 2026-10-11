@@ -81,16 +81,15 @@ public:
     /// tests/conformance/vanilla_legacy_named_noises_test.cpp, which pins
     /// exactly which legacy dimension names what, per entry, and SPEC §11.
     ///
-    /// A NAMED NOISE IS NOT THE ONLY THING A LEGACY SOURCE SEEDS, and this
-    /// function no longer carries the whole refusal on its own. A dimension
-    /// also draws on its declared random source for
+    /// A NAMED NOISE IS NOT THE ONLY THING A LEGACY SOURCE SEEDS. A
+    /// dimension also draws on its declared random source for
     /// `minecraft:vertical_gradient`'s random_name, the aquifer lattice and
-    /// the ore-vein source, none of which appears in @p wanted. The first two
-    /// are measured and derived from the declared source where they are
-    /// built (surface::Executor::compile reads it from this registry; the
-    /// aquifer's CentreSource takes it). The vein source is refused BY NAME
-    /// OF THE CONSTRUCT in terrain::ChunkFiller::compile, where it is
-    /// constructed. See legacyConstructRefusal() below, and SPEC §11.
+    /// the ore-vein source, none of which appears in @p wanted. All three
+    /// are measured under the legacy source and derived from the declared
+    /// source where they are built: surface::Executor::compile reads it from
+    /// this registry, and the aquifer's CentreSource and the ore::VeinSource
+    /// take it from terrain::ChunkFiller::compile (SPEC §11). Each was
+    /// refused by name there until its measurement landed.
     [[nodiscard]] static NoiseRegistry create(const data::Pack& pack,
                                               std::span<const data::ResourceLocation> wanted,
                                               std::int64_t worldSeed, RandomSource source);
@@ -120,38 +119,5 @@ private:
     std::int64_t worldSeed_ = 0;
     RandomSource source_ = RandomSource::Xoroshiro;
 };
-
-/// The refusal message for a CONSTRUCT — not a noise — that a
-/// `legacy_random_source` dimension needs a random for, and that this build
-/// can only derive the modern way.
-///
-/// WHY THIS EXISTS SEPARATELY FROM NoiseRegistry::create. Narrowing that
-/// refusal to "the dimension names a worldgen/noise" left a hole, and the
-/// hole is measured rather than theorised. A legacy dimension also draws on
-/// its declared random source for `minecraft:vertical_gradient`'s
-/// `random_name`, for the aquifer lattice's centre jitter, and for the
-/// ore-vein source — none of which is a named noise and none of which passes
-/// through `wanted`. The aquifer's centres and the gradient's coin are
-/// derived from the declared source, both measured (SPEC §11): the same
-/// legacy primitive, found on a constructed aquifer probe and exact out of
-/// sample on the golden Nether's bedrock. The vein source is still derived
-/// with Xoroshiro128++ only, and is the one construct this message is for.
-///
-/// Substituting the modern derivation is MEASURED WRONG, not merely
-/// unverified, on the one construct where it was measured: against the
-/// golden NETHER's bedrock floor and roof the Xoroshiro gradient agrees at
-/// chance, while the identical code on the modern overworld is exact — see
-/// tests/conformance/vanilla_legacy_gradient_gap_test.cpp, which carries the
-/// numbers and their denominators. The ore source is UNTESTED: every vanilla
-/// legacy dimension has the flag off, and no probe has asked for one.
-///
-/// So it is refused BY NAME, wherever it is built, and the refusal says
-/// which construct and why. A legacy dimension that names no noise but
-/// placed vanilla's bedrock gradient once compiled and filled a chunk with
-/// bedrock from the Xoroshiro coin, with no error and no warning — the
-/// plausible-but-wrong world SPEC §8 forbids, closed first by refusing the
-/// gradient and since by running the measured legacy coin.
-[[nodiscard]] std::string legacyConstructRefusal(std::string_view construct,
-                                                 std::string_view detail);
 
 } // namespace stratum::density

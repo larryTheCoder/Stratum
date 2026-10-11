@@ -105,7 +105,7 @@ void forEachCandidate(const std::string& dimension, const std::int64_t seed,
         stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
                                        .height = overworld.geometry.cellHeight()});
     stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
-    const VeinSource veins(seed);
+    const VeinSource veins(seed, stratum::density::RandomSource::Xoroshiro);
 
     const auto file = stratum::region::RegionFile::open(probeRoot() / dimension / "r.0.0.mca");
     for (std::int32_t chunkZ = 0; chunkZ < 8; ++chunkZ) {

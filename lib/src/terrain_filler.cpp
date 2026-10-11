@@ -310,39 +310,24 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // chunk: a caller that cannot generate should learn so before it starts.
     filler.interpreter_.requireEvaluable(filler.finalDensity_);
 
-    // Ore veins, wired (SPEC §10, M3; SPEC §11). Both flags, not just
-    // `ore_veins_enabled`: the coupling is measured, and a dimension with
-    // veins on and aquifers off really does come back as unbroken stone, so
-    // leaving the source unbuilt here reproduces the server exactly rather
-    // than approximating it.
-    // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11). The vein
-    // source is a positional random derived from the world seed through the
-    // DIMENSION'S declared random source, not from any named noise, so it
-    // never reaches NoiseRegistry::create's `wanted` list. Under a legacy
-    // source the vein source has no oracle: every vanilla legacy dimension
-    // has `ore_veins_enabled` false, and no probe has asked the server for
-    // one. The legacy positional primitive itself is measured now, for the
-    // aquifer and the gradient (rng::LegacyPositionalSource, SPEC §11), but
-    // how the vein source salts and draws from it is not, and the modern
-    // derivation is measured WRONG under a legacy source for the gradient,
-    // so running it would be the plausible-but-wrong world SPEC §8 forbids.
+    // Ore veins, wired (SPEC §10, M3; SPEC §11), on `ore_veins_enabled`
+    // ALONE since pipeline engine v14. They were gated on `aquifers_enabled`
+    // too, from one probe world that came back unbroken stone with aquifers
+    // off; that does not replicate (the same recipe at the same seed is the
+    // aquifers-on world block for block, and so are the legacy probe's
+    // aquifers-off arms under both sources), so the gate is gone (ore/vein.hpp).
     //
-    // On the FLAG, deliberately, and outside the veinsPlaceBlocks gate below.
-    // With aquifers off the vein source is never built and no random is ever
-    // drawn — a legacy pack with veins alone fills a chunk bit-identical to
-    // the undoctored one (measured: FNV-1a 2b9f4b6af4ed174a both ways). But
-    // `validatePack` warns on the flag alone, and SPEC §11 says the vein
-    // source — the last of the three constructs still refused — is refused
-    // by name; a refusal that fires on one path and not the other is the
-    // disagreement this build exists to avoid.
-    if (settings.oreVeinsEnabled && noises.source() == density::RandomSource::Legacy) {
-        throw FillError(density::legacyConstructRefusal(
-            "ore_veins_enabled",
-            "the vein source is a positional random drawn from that source, and no vanilla "
-            "legacy dimension enables veins, so nothing on disk can say what it should be"));
-    }
-    if (ore::veinsPlaceBlocks(settings.oreVeinsEnabled, settings.aquifersEnabled)) {
-        filler.oreVeins_.emplace(noises.worldSeed());
+    // NOT refused under a legacy source any more. The vein source is a
+    // positional random drawn through the dimension's declared source, not
+    // from any named noise, so it never reaches NoiseRegistry::create's
+    // `wanted` list; it was refused by name here while nothing said how it
+    // draws under the legacy source. `tools/analysis/legacy-orevein-probe.sh`
+    // asked the server: the legacy positional primitive salted
+    // "minecraft:ore", nextFloat thrice, exact on every block of its legacy
+    // arms (SPEC §11, "Ore veins under the legacy source"). So the source is
+    // built from the registry's own, as the aquifer's centres are below.
+    if (settings.oreVeinsEnabled) {
+        filler.oreVeins_.emplace(noises.worldSeed(), noises.source());
         for (const settings::RouterEntry entry :
              {settings::RouterEntry::VeinToggle, settings::RouterEntry::VeinRidged,
               settings::RouterEntry::VeinGap}) {
@@ -351,7 +336,7 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     }
 
     if (settings.aquifersEnabled) {
-        // NOT refused under a legacy source, unlike the veins above. The
+        // NOT refused under a legacy source, as the veins above are not. The
         // lattice's centre jitter is a positional random from the
         // dimension's declared source, and no vanilla legacy dimension
         // enables aquifers — but the server generates one when a datapack

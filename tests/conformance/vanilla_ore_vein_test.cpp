@@ -131,7 +131,7 @@ struct Score {
         stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
                                        .height = overworld.geometry.cellHeight()});
     stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
-    const VeinSource veins(seed);
+    const VeinSource veins(seed, stratum::density::RandomSource::Xoroshiro);
 
     Score score;
     const auto file = stratum::region::RegionFile::open(region);
