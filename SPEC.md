@@ -588,10 +588,13 @@ mapping has two halves, split at a platform-neutral midpoint:
   four campaigns deep, with the last one's remaining blocker being a router
   entry nobody has measured at all — while everything behind it in the plan
   (surface rules, biomes, the bindings this project exists to feed) needed
-  none of it. Sequencing only: nothing shipped with aquifers approximated
-  while MA was open, and the filler refused `aquifers_enabled` by name until
-  it measured enough to call — see MA's own section for what it calls now
-  and what two narrow pieces still are not.
+  none of it. Sequencing only: nothing shipped with aquifers approximated,
+  and the filler refused `aquifers_enabled` by name until the fill decision
+  was measured enough to call. It calls it now (MA item 5), exact on every
+  golden block that did not flow after generation; MA's own section has
+  what the track still carries open — Q5.8's `L != never` conjunct, on the
+  spec's word, and the fluid updates' PocketMine-MP scheduling, never run
+  inside a real server (M5).
 
   Landed: noise settings — geometry, flags, block states and the fifteen-entry
   noise router, whose inline density functions resolve into the *same* graph
@@ -829,13 +832,18 @@ mapping has two halves, split at a platform-neutral midpoint:
   see below lambda at all (§11, item 6).
 
   Two things are deliberately NOT claimed by that. Q5.8 has two further
-  conjuncts — a source already reading lava being exempt, and `L != never` —
-  which are carried on the specification's word: both are provably
-  unobservable in every world measured here, so "the rule is implemented as
-  written" is the claim, not "the rule is measured". The 64-chunk
-  golden-fill residual below, briefly unattributed, is now attributed for
-  425 of its 617 blocks (§11, item 7); the 192 left are a fluid-extent
-  question rather than a barrier one.
+  conjuncts. `L != never` is carried on the specification's word: it is
+  provably inert in every world (item 6), so "the rule is implemented as
+  written" is the claim, not "the rule is measured". The other — a source
+  already reading lava being exempt — needs no one's word: the override
+  turns a source to lava, and overriding lava with lava returns lava, so the
+  conjunct is a tautology that decides no block in any world. (This
+  paragraph carried it as a second unobservable conjunct, hidden below the
+  lava sea; that was the wrong reason.) The 64-chunk golden-fill residual
+  below, briefly unattributed, is attributed whole: 425 of its 617 blocks to
+  the barrier (item 7), and the 192 left — read here at first as a
+  fluid-extent question — to flow, every one flowing water the server's
+  fluid ticks left after generation (§11, "The deep-dark override").
 
   **`ChunkFiller` now
   calls all of it** (`aquifer::computeSubstance`, wired into `fill()`):
@@ -849,9 +857,15 @@ mapping has two halves, split at a platform-neutral midpoint:
   617 and introduces none. WITH the real 287-rule surface tree also running,
   `golden_fill_aquifer_test.cpp` is now 393216 of 393216 too (§11: the
   deepslate surface-rule gap `golden_fill_test.cpp` named is CLOSED, not
-  carried). What remains is that 192-block fluid-extent residual, Q5.8's two
-  unobservable conjuncts, and ore veins (M3, untouched) — none of which is
-  unique to aquifers, which is why this still reads as a track.
+  carried). What remained when this was written — that 192-block residual,
+  Q5.8's two conjuncts and ore veins — has since moved: the 192 are flow
+  (above), Q5.8's lava exemption is a tautology and only `L != never` is
+  carried on the spec's word, and ore veins are closed (M3, "Ore veins,
+  SETTLED"; §11, "A vein never replaces the aquifer's fluid"). What MA
+  still carries open is that one conjunct and the fluid updates'
+  PocketMine-MP scheduling, which has never run inside a real server (M5;
+  §11, "M5: aquifer fluid updates reach PocketMine-MP") — neither of them a
+  fill decision, which is why this still reads as a track.
 
   1. **CLOSED. `PslRead::anchor` as the depth path's gate, confirmed by a
      second instrument.** The asymmetry — the near surface gates on the
@@ -942,7 +956,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      confirms those divisors; the fourth ("/10", `3+t<=0`) stays unmeasured —
      not wrong, just never reached: 0 of 866 real-block mismatches touched it
      across the barrier probe below, and it was never used at all, on either
-     seed. (c) **DONE.**
+     seed. *Since closed* (item 7; §11, "Both once-dead divisors are
+     bracketed by a test now"): it was never reached because of an
+     agree-guard of this build's own, and with the guard gone the deep-floor
+     worlds reach it and pin the divisor at 10, to within 1%, from both
+     sides. (c) **DONE.**
      `tools/analysis/aquifer-barrier-probe.sh` drives `barrier`,
      `fluid_level_floodedness` and `fluid_level_spread` with vanilla's own
      REAL noises (a synthetic field built for MA blocker 2 had no reason to
@@ -1008,10 +1026,11 @@ mapping has two halves, split at a platform-neutral midpoint:
      than sea- or lambda-relative (§11). Both boundaries are replayed in CI:
      the strictness and -10 on the fluid-type probe, -9 and the absolute
      ceiling on `aquifer-fluidceiling-probe.sh`'s three arms, every column of
-     every dimension again at its level in one fluid. A third piece is
-     carried on the spec's word — whether a source already reading lava is
-     exempt — and cannot be observed, since those sources sit below the lava
-     sea.
+     every dimension again at its level in one fluid. A third piece —
+     whether a source already reading lava is exempt — was carried here on
+     the spec's word as unobservable below the lava sea. It needs no word:
+     overriding lava with lava returns lava, so the conjunct is a tautology
+     and decides no block in any world (`fluid_type.hpp`).
 
   5. **CLOSED. `ChunkFiller` now calls the aquifer.** `aquifer::computeSubstance`
      (`lib/include/stratum/aquifer/substance.hpp`) combines everything above
@@ -1085,6 +1104,13 @@ mapping has two halves, split at a platform-neutral midpoint:
      dirt, 6 air -> deepslate). The 192 that remain are all one shape, this
      build placing air where the server has water, which makes what is left
      a fluid-EXTENT question rather than a barrier one.
+
+     *Since attributed whole* (§11, "The deep-dark override"): all 192 are
+     flowing water (`level` 1+), left by the server's own fluid ticks after
+     generation — not the aquifer's extent at all.
+     `golden_fill_aquifer_test.cpp`'s 64-chunk case requires every raw
+     disagreement to be flowing water; on the frozen probe 2 remain,
+     bounded rather than pinned (§11, "Probe worlds are frozen now").
 
   6. **CLOSED. The level a source carries below lambda: the dry sentinel and
      the ladder clamp.** `cellFluidLevel` reported a DRY source as `lambda`
@@ -1412,8 +1438,9 @@ Open:
   | -1 | 96.167% | 97.949% | **50 blocks** |
 
   **What that residual turned out to be, and it was not the density (M3).**
-  The table above is dominated by a step this build does not implement rather
-  than by an error in the chain. Vanilla's overworld runs aquifers, and an
+  The table above is dominated by a step this build did not then implement
+  (it is wired into `ChunkFiller` now: §10, MA item 5) rather than by an
+  error in the chain. Vanilla's overworld runs aquifers, and an
   aquifer places a stone BARRIER between two bodies of water at different
   levels — solid blocks no density function produced. OCEAN_FLOOR is the
   highest block that is neither air nor fluid, so it reports the barrier, and
@@ -3746,8 +3773,15 @@ Open:
   picker's status at the centre; (b) otherwise the FIRST sample that is
   submerged (under `sea_level - 8`) and that the centre sits above less four
   decides — A_lava if that sample aborts, the sea if not; and if none fires,
-  the level rule runs on the minimum of all thirteen. The two agreed on
-  every world measured until now, and three choices in between were carried
+  the level rule runs on the minimum of all thirteen. (A correction to the
+  clean-room spec, not to this reading: its prose glosses (a) as a point far
+  enough BELOW its own surface, which inverts the direction. Its formula —
+  `qy - 12 > a0`, with `a0` the anchor's surface plus eight — and the
+  server both say above, by more than twenty: the margin measured on
+  constant surfaces, and the land-prefix and land-anchor kinds below. The
+  formula is what this build implements; `spec/` is left as delivered, and
+  the inversion is flagged to its owner.) The two agreed on every world
+  measured until now, and three choices in between were carried
   rather than measured ("Permanent ties", below, has the history): the
   exemption's comparand (`cap` or the aborting sample), Q5.3(a)'s comparand
   for a scan that did not abort (`cap` or the anchor), and whether the first
@@ -4746,6 +4780,9 @@ Open:
 
   What is still open is the jitter's DISTRIBUTION and the random source behind
   it. Only its mean is measured, so `cellOf` is the grid, not the centre.
+  *Since closed* (below, "The jitter draw, recovered"): a per-cell
+  positional draw salted with `minecraft:aquifer` — ten values
+  horizontally, nine vertically — held at 256 of 256 cells.
 
   **What has landed in code, and what has not (M3).**
   `stratum::aquifer` carries the two things the probe actually settled: the
@@ -4763,6 +4800,8 @@ Open:
   cells into one and shifts every cell after them. The filler still refuses
   `aquifers_enabled` by name, and will until the base, the floodedness gate,
   the barrier rule and the per-cell randomness are measured too.
+  *Superseded:* all four were measured, and the refusal is gone —
+  `ChunkFiller` calls the aquifer (§10, MA item 5).
 
   **The jitter, the gate and the barrier, measured together (MA).** Twenty-three
   probe dimensions at four seeds — 92 terrain-free worlds — were analysed by ten
@@ -4891,14 +4930,21 @@ Open:
     writes lava where the server writes water in every ocean cell that is both
     below the lava sea and within three of the preliminary surface.
 
-  *Floating point, and it is load-bearing.* `f + reach * slope` is exactly the
-  shape a fused multiply-add contracts, and with contraction on the outcome
-  flips at sea-gate depths 6 and 11 precisely at the crossing. §5's
-  `-ffp-contract=off` / `/fp:precise` is required for this expression, and
-  those two depths are the natural x86-64/ARM64 canary. The surviving
-  equivalence class is bit-identical over 12.6M evaluations:
-  `f + (56.0-d)*0.0171875`, `f + 1.1*((56.0-d)/64.0)`, `f + (1.1*(56.0-d))/64.0`
-  and `f - (d-56.0)*0.0171875`. Spelling it as an amplitude over 56 —
+  *Floating point, and it is load-bearing — through the spelling.* At
+  sea-gate depths 6 and 11 (reaches 50 and 45) the crossing is decided by
+  the last bit of the bonus. The surviving spellings are
+  `f + (reach * 11.0) / 640.0`, its FMA form, and the cross-multiplied
+  `640.0 * f + 11.0 * reach > 512.0` (the local gate likewise, 3.0 over
+  160.0). Written as a product over a divisor there is no multiply-add to
+  contract: §5's `-ffp-contract=off` / `/fp:precise` stays project policy,
+  but it is not what makes this expression right. (This paragraph first
+  called contraction required here, those two depths the natural
+  x86-64/ARM64 canary, and pre-divided spellings — `f + (56.0-d)*0.0171875`
+  and three relatives — the survivors. All three are corrected below, "The
+  bonus is a product over a divisor, never a pre-divided constant":
+  `fl(11/640)` rounds up, and with it the contracted form happened to agree
+  with the server where the uncontracted one did not.) Spelling it as an
+  amplitude over 56 —
   `1.05 * ((56.0 - d) / 56.0)` and relatives — is REFUTED at observed depths,
   from two independent sessions on different seeds. Parametrise by the slope.
   The integer restatements `11*d < 640*f + 104` and `3*d < 160*f + 104` are a
@@ -4913,7 +4959,15 @@ Open:
   disagree and the sea/ladder boundary sits at centre -43/-44 instead of where
   this rule puts it. `psl` -54 fits, and every value from -48 to 141 fits
   exactly; the band -63 to -55 is unexplored. This is a refusal, not an
-  approximation (§8).
+  approximation (§8). *Superseded* (below, "The abort refuses the sea"; §11,
+  "An aborted scan's status is A_lava"): no such refusal exists, and none is
+  needed. A `psl` of -64 is below the scan's abort threshold
+  (`abortThreshold(seaLevel)`, -62 here), so the scan aborts and the sea is
+  refused — except to a cell centred more than twenty above its anchor,
+  Q5.3(a)'s margin, which at -64 puts the boundary between centres -44 and
+  -43, where it was observed. Vanilla's own overworld reads `psl` -64 in
+  places, and its goldens agree with the build, flow aside, with no
+  refusal anywhere.
 
   *The barrier is geometry, not a threshold.* A stone sheet is written at every
   cell interface where the two cells place different blocks, unconditionally —
@@ -5151,7 +5205,11 @@ Open:
   **Still short of the whole barrier, and this is why the filler keeps its
   refusal:** about 13% of the server's real barriers come from a THIRD source
   rather than from the nearest two. The predicate above is exact on the pairs
-  it is given; the pair selection is not yet complete.
+  it is given; the pair selection is not yet complete. *Since closed:* the
+  selection ranks four sources ("The selection layer, built and scored",
+  below), the third source is in the predicate ("The barrier's third
+  source, closed (MA blocker 3)", below), and the refusal is gone (§10, MA
+  item 5).
 
   **Selection and barrier, verified against the clean-room spec (MA).** The
   first campaign run under §12's clean-room provision. Every claim below is
@@ -5661,7 +5719,10 @@ Open:
   *Still not measured, and marked in the header rather than guessed.*
   Whether a source already reading lava is exempt cannot be observed at all,
   those sources being below the lava sea. And no `default_fluid` but water
-  has been in this position.
+  has been in this position. *Corrected:* the first needs no observing —
+  overriding lava with lava returns lava, so Q5.8's exemption is a
+  tautology, not a conjunct the lava sea hides (§10, MA item 4;
+  `fluid_type.hpp`). The second stands.
 
   *One thing left unexplained rather than explained away.* About 4% of sources
   hold both fluids above the global lava sea, and the minority blocks are
@@ -5879,7 +5940,11 @@ Open:
   since at `min_y` -128 that would put it at -126 and a -70 arm would not
   abort, and it does. It coincides with the lava level minus eight; that
   identity is UNPROVEN, and separating it from an arbitrary constant needs a
-  world with `sea_level` below -54.
+  world with `sea_level` below -54. *Superseded* (above, "A world with
+  `sea_level` below the lava"): that world was built, and the threshold is
+  not absolute. It is `abortThreshold(seaLevel)`, which is
+  `lambdaLevel(seaLevel) - 8`: -62 at every sea from -54 up, -78 at sea
+  -70, bisected to -78.00 / -78.01. The strictness stands.
 
   **Four consumers, one scan — and they do not agree.** The scan yields four
   values and the ocean branch reads a different one in each place. The near
@@ -5895,7 +5960,11 @@ Open:
   score 1.0000 for both, the effect moves one-for-one with `sea_level`, and all
   nine misses of the rival model in an earlier round fall in exactly this
   class. It still needs a second instrument before the filler leans on it, and
-  it is the mandatory conformance case.
+  it is the mandatory conformance case. *Since closed* (above, "A second
+  instrument for the depth path's gate ... (MA blocker 1, CLOSED)"; §10, MA
+  item 1): `aquifer-depthgate-probe.sh` confirms the anchor gate on 202 of
+  210 discriminating cells, the other eight a boundary tie, and
+  `vanilla_aquifer_depthgate_test.cpp` is that case.
 
   **The anchor arms the abort.** The scan's first sample is not exempt from
   the threshold, and this SPEC said it was. The two spellings differ on exactly
@@ -5919,7 +5988,8 @@ Open:
   now measured (§11, "The surface scan, sample by sample"), the question
   does not arise: an aborting anchor is simply the first sample.
 
-  **The abort refuses the sea.** When a window sample falls below -62 the
+  **The abort refuses the sea.** When a window sample falls below
+  `abortThreshold(seaLevel)` (-62 at every sea from -54 up) the
   floodedness-gated `sea_level` outcome does not happen. This is the whole
   explanation of a failure this SPEC recorded for a day as the ocean branch's
   slopes being wrong in the middle of the floodedness band. The clean control
@@ -6034,7 +6104,11 @@ Open:
   with no guard term. Four values beat one, and the one sits in the anomalous
   corner — which is `psl <= min_y`, the regime this SPEC already refuses. The
   guard stays as written; whether anything special happens below the lava sea
-  is unresolvable until the horizontal read is.
+  is unresolvable until the horizontal read is. *Superseded in part:* this
+  SPEC refuses no such regime ("Refuse `psl <= min_y`", above, marked so).
+  At psl -64 the scan aborts, and the fitted `cy < psl + 21` is Q5.3(a)'s
+  twenty-block margin over the anchor seen through an aborted scan ("The
+  abort refuses the sea", above).
 
   *Instrument findings worth more than the results.* Chunks are forceloaded, so
   water ticks after generation and flowing water can become a source, lifting a
@@ -6238,8 +6312,11 @@ Open:
   `golden_terrain_no_aquifer_test.cpp` moves from 253/256 exact columns to
   256/256; `golden_terrain_test.cpp`'s seed -1 section moves from 249 to
   252 of 256, with the remaining four an entirely separate, already-known
-  gap — the aquifer fill decision this build does not implement (MA), not
-  a density error. Why one missing epsilon explains an error up to 2e-2 in
+  gap — aquifer barriers, which a scan of `final_density` alone cannot see
+  (MA), not a density error. (Written while the fill decision was
+  unimplemented, this said so; the aquifer has since been wired into
+  `ChunkFiller` (§10, MA item 5), and the four stay because that test scans
+  the density alone.) Why one missing epsilon explains an error up to 2e-2 in
   the final density rather than something proportional to 1e-7: when it
   matters, the floor lands on the WRONG side of an exact-integer boundary,
   folding onto an adjacent, unrelated lattice cell — a discontinuous jump,
