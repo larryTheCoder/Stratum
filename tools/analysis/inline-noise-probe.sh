@@ -140,10 +140,12 @@ build_pack() {
     mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome" \
              "${pack}/worldgen/noise" "${pack}/worldgen/density_function"
 
-    # min_format/max_format, not pack_format: at this pack format the server
-    # answers pack_format with "missing mandatory fields min_format and
-    # max_format" and marks the pack incompatible, which is a second variable
-    # this experiment does not want.
+    # min_format/max_format, not pack_format: given pack_format alone at this
+    # pack format the server logs "Couldn't load file/stratum-probe pack
+    # metadata: ... missing mandatory fields min_format and max_format", then
+    # loads the pack anyway (observed with density-probe.sh's pack, whose
+    # worlds decode to the same blocks either way). An error in the log is
+    # still a second variable this experiment does not want.
     cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<META
 {
   "pack": {
