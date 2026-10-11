@@ -11,6 +11,8 @@
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
+#include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -959,6 +961,89 @@ TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pi
     // y = -15 is at-and-above the certain ceiling: always false, so the
     // filler's own stone stands.
     CHECK(buffer.at(0, -15, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("a legacy dimension's vertical_gradient draws the legacy coin through the whole filler",
+          "[terrain][filler][surface][legacy]") {
+    // NOT refused any more: the legacy coin is the aquifer lattice's
+    // primitive salted with the gradient's random_name, exact on the golden
+    // Nether's bedrock where the Xoroshiro coin is at chance (SPEC §11;
+    // vanilla_legacy_gradient_gap_test.cpp scores the executor there). What
+    // this pins, with no fixture and so in every CI run, is the WIRING: the
+    // filler's executor must draw from the registry's declared source. The
+    // flat plane is stone from the floor to y = -1, so every position of the
+    // band is solid and its block is the gradient's decision alone. Filled
+    // under each source, each must follow its own coin at every position,
+    // and the two must differ. A chunk off the origin on both axes, one of
+    // them negative, so the coordinates the coin is drawn at are absolute.
+    constexpr std::int32_t kTrueAtAndBelow = -16;
+    constexpr std::int32_t kFalseAtAndAbove = -8;
+    constexpr std::int32_t kChunkX = 1;
+    constexpr std::int32_t kChunkZ = -2;
+    const std::string name = "minecraft:bedrock_floor";
+    for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{-7}}) {
+        std::size_t differ = 0;
+        for (const bool legacy : {false, true}) {
+            INFO("seed " << seed << ", legacy " << legacy);
+            nlohmann::json settings = flatSettings(false, false);
+            settings["legacy_random_source"] = legacy;
+            const TempTree tree;
+            tree.defineSettings("test", settings);
+            const LoadedSettings loaded = tree.load();
+            const RuleGraph surface = resolveSurface(condition(
+                gradient(name, kTrueAtAndBelow, kFalseAtAndAbove), block("minecraft:bedrock")));
+            // The flat router names no noise, so a legacy registry builds
+            // empty and the gradient is the dimension's only draw on it.
+            const auto noises = stratum::density::NoiseRegistry::create(
+                tree.pack(), loaded.graph.referencedNoises(), seed,
+                legacy ? stratum::density::RandomSource::Legacy
+                       : stratum::density::RandomSource::Xoroshiro);
+            const auto& dimension =
+                loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+            const ChunkFiller filler =
+                ChunkFiller::compile(loaded.graph, noises, dimension, &surface);
+            REQUIRE(filler.runsSurfaceRules());
+            CHECK(filler.surfaceRulesBlockedBy().empty());
+
+            ChunkBuffer buffer(dimension.geometry);
+            filler.fill(kChunkX, kChunkZ, buffer);
+            const auto modern = stratum::rng::positionalSourceFor(seed, name);
+            const auto legacySource = stratum::rng::legacyPositionalSourceFor(seed, name);
+            std::size_t mismatches = 0;
+            std::size_t fired = 0;
+            for (std::int32_t lz = 0; lz < 16; ++lz) {
+                for (std::int32_t lx = 0; lx < 16; ++lx) {
+                    const std::int32_t x = (kChunkX * 16) + lx;
+                    const std::int32_t z = (kChunkZ * 16) + lz;
+                    for (std::int32_t y = kTrueAtAndBelow + 1; y < kFalseAtAndAbove; ++y) {
+                        const bool legacyFires = stratum::surface::verticalGradientFires(
+                            legacySource, x, y, z, kTrueAtAndBelow, kFalseAtAndAbove);
+                        const bool modernFires = stratum::surface::verticalGradientFires(
+                            modern, x, y, z, kTrueAtAndBelow, kFalseAtAndAbove);
+                        const bool bedrock =
+                            buffer.at(lx, y, lz).name.toString() == "minecraft:bedrock";
+                        mismatches += static_cast<std::size_t>(
+                            bedrock != (legacy ? legacyFires : modernFires));
+                        fired += static_cast<std::size_t>(bedrock);
+                        if (legacy) {
+                            differ += static_cast<std::size_t>(legacyFires != modernFires);
+                        }
+                    }
+                }
+            }
+            CHECK(mismatches == 0U);
+            // 1792 band positions at p from 7/8 down to 1/8: half fire on
+            // average, so neither "always" nor "never" can pass the check
+            // above by accident.
+            CHECK(fired > 600U);
+            CHECK(fired < 1200U);
+        }
+        // The two coins are different fields, so they part on 2p(1 - p) of
+        // each level: 672 of the 1792 positions expected, the standard
+        // deviation about 20.
+        INFO("seed " << seed);
+        CHECK(differ > 400U);
+    }
 }
 
 TEST_CASE("stone_depth reads the run the filler itself placed, not a fresh scan",

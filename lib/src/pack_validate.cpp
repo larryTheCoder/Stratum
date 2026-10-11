@@ -227,11 +227,11 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         //     which is a SUPERSET of what the tree spells, since
         //     `minecraft:surface`, `surface_secondary` and
         //     `clay_bands_offset` appear in no field of it;
-        //   * and, under a legacy source, a random for every
-        //     `vertical_gradient` in that tree and for the ore-vein source.
-        //     Neither is a noise, neither passes through `wanted`, and both
-        //     are refused by name where they are built (SPEC §11). The
-        //     aquifer lattice's random was the third, and is measured.
+        //   * and, under a legacy source, a random for the ore-vein source.
+        //     It is not a noise, does not pass through `wanted`, and is
+        //     refused by name where it is built (SPEC §11). The aquifer
+        //     lattice's random and every `vertical_gradient`'s were the
+        //     other two, and both are measured and run.
         //
         // Without this a legacy dimension naming noises only in its surface
         // rule validated clean and then did not generate. These are warnings
@@ -260,14 +260,6 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
                         density::NoiseRegistry::create(pack, surfaceWanted, options.seed, source));
                 } catch (const density::NoiseError& error) {
                     add(report, Severity::Warning, id.toString() + " surface_rule", error.what());
-                }
-            }
-            if (source == density::RandomSource::Legacy) {
-                for (const std::string& name : surface::verticalGradientNames(rules)) {
-                    add(report, Severity::Warning, id.toString() + " surface_rule",
-                        density::legacyConstructRefusal("minecraft:vertical_gradient",
-                                                        "its random_name '" + name +
-                                                            "' salts this dimension's own source"));
                 }
             }
         } catch (const surface::RuleError& error) {

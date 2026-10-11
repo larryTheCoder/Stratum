@@ -6730,7 +6730,8 @@ Open:
   router entries across 7 of 7 dimensions**, and what the legacy dimensions
   are still warned about is their surface rules alone — the Nether's eight
   named noises and nine each for caves and floating islands, plus their
-  `vertical_gradient`s.
+  `vertical_gradient`s — the gradients since lifted ("The gradient's
+  refusal, lifted", below), so the named noises alone.
 
   One assumption, stated because it has not been verified: that the flag
   selects the generator for *all* of a dimension's noises rather than some
@@ -6759,7 +6760,8 @@ Open:
   §8: the construct is named, not merely the dimension). The aquifer's
   refusal is since lifted: its lattice was measured under the legacy source
   and is derived from it (the next entry, "The aquifer under the legacy
-  source"); the gradient and the vein source are still refused.
+  source"). So is the gradient's, on the same primitive ("The gradient's
+  refusal, lifted", in that entry); the vein source is still refused.
 
   Two shapes were wrong on the way here and are recorded because each let a
   constructed pack through. The gradient refusal was first landed as a
@@ -6767,11 +6769,14 @@ Open:
   list has for "a caller did not supply something" — and nothing on the
   public `CompiledDimension::compile` path consults that list, so a legacy
   End doctored with a gradient compiled clean through it and filled 13549
-  blocks with its surface rules silently dropped. It throws now, and
-  `vanilla_legacy_gradient_gap_test.cpp` drives exactly that doctored pack
-  through `CompiledDimension::compile` and asserts the throw, beside the
-  undoctored End compiling on the same path as the control. And the ore-vein
-  refusal first sat inside the `veinsPlaceBlocks` gate, which is
+  blocks with its surface rules silently dropped. It threw from then until
+  the refusal was lifted, and `vanilla_legacy_gradient_gap_test.cpp` drove
+  exactly that doctored pack through `CompiledDimension::compile` and
+  asserted the throw, beside the undoctored End compiling on the same path
+  as the control. (The same case now drives the pack, its gradient
+  re-anchored inside the main island, through that path and asserts that it
+  generates on the legacy coin — "The gradient's refusal, lifted".) And the
+  ore-vein refusal first sat inside the `veinsPlaceBlocks` gate, which is
   `ore_veins && aquifers`, so a legacy pack with veins ALONE was not refused
   — materially inert, since with aquifers off no vein random is ever drawn
   and the chunk is bit-identical to the undoctored one (measured), but
@@ -6814,9 +6819,10 @@ Open:
   aquifer under the legacy source", measures the legacy derivation on the
   server's own worlds, and the same primitive, salted with each gradient's
   `random_name`, reproduces the golden Nether's bedrock above **exactly**,
-  65536 of 65536 on every row of that table. The gradient's refusal stands
-  until the executor runs that coin (its own change); the ore source is
-  still refused on the structural argument alone, with no probe of its own.
+  65536 of 65536 on every row of that table. The gradient's refusal stood
+  until the executor ran that coin, and it does now ("The gradient's
+  refusal, lifted", in that entry); the ore source is still refused on the
+  structural argument alone, with no probe of its own.
 
   *What this closed.* A legacy dimension naming no noise whose surface rule
   used vanilla's bedrock-floor gradient used to compile clean
@@ -6829,7 +6835,10 @@ Open:
   `vertical_gradient` and both flags are false, asserted in the same test,
   and it compiles through the public path as the control. A doctored MODERN
   overworld with the identical gradient still generates — the refusal keys on
-  the legacy source, not on the construct.
+  the legacy source, not on the construct. Since superseded for the
+  gradient: rather than refuse, the executor runs the measured legacy coin
+  ("The gradient's refusal, lifted", next entry), which closes the same
+  hole from the other side.
 
 - **The aquifer under the legacy source, measured: java.util.Random, two
   forks around `String.hashCode` (MA).** The refusal above rested on "no
@@ -6915,8 +6924,39 @@ Open:
   the previous entry, where the Xoroshiro coin is at chance — on **65536 of
   65536** labelled positions per gradient at each of seeds 0, 1, -1 and 42
   (`vanilla_legacy_gradient_gap_test.cpp`). Nothing about bedrock went into
-  finding it. The gradient is still refused: the executor runs the
-  Xoroshiro coin, and switching it is its own change.
+  finding it.
+
+  *The gradient's refusal, lifted.* `surface::Executor::compile` builds
+  each `random_name`'s coin from the source its registry declares —
+  `rng::legacyPositionalSourceFor` and one java.util.Random `nextFloat`
+  under `legacy_random_source`, the Xoroshiro source otherwise — and no
+  longer refuses a legacy gradient; neither does `ChunkFiller::compile`,
+  and `stratum validate` no longer warns on one (vanilla's own pack loses
+  six warnings: three for caves, one for floating islands, two for the
+  Nether). A caller compiling with no registry has declared no source and
+  gets the modern coin, as before; the path a real dimension takes always
+  supplies one. What decides a legacy gradient is now the registry's
+  declared source and nothing else, and that is scored three ways in
+  `vanilla_legacy_gradient_gap_test.cpp`: the shipped executor, compiled
+  from the head of the Nether's own tree (its two bedrock rules, which
+  nothing can pre-empt, so they decide bedrock-or-not at every block as the
+  whole tree does) under a legacy registry, is exact on the golden Nether,
+  65536 of 65536 per gradient at seeds 0, 1, -1 and 42, and under a modern
+  registry it reproduces the Xoroshiro coin's at-chance score position for
+  position; the doctored legacy End above, its gradient anchored at y 50 /
+  60 inside the main island, generates through `CompiledDimension::compile`
+  at seed 42 with all 9216 band blocks of the four chunks round the origin
+  on the legacy coin, 3302 of which the Xoroshiro coin would have decided
+  the other way; and a pack-only case compiles the Nether's bedrock head on
+  both paths under the legacy registry with nothing blocked, while the
+  Nether's whole tree is still blocked — by its named noises, its biome and
+  its surface depth, never by a gradient. `terrain_filler_test.cpp` holds the
+  wiring with no fixture at all: a flat legacy dimension filled through
+  `ChunkFiller` follows the legacy coin at every band position, a modern
+  one the Xoroshiro coin, and the two part on 2p(1-p) of each level. The
+  pipeline engine version does not move: every block this changes was
+  refused before. The legacy dimensions' surface rules are still blocked,
+  now by their named noises alone.
 
   *What ships.* `rng::LegacyPositionalSource` and
   `rng::legacyPositionalSourceFor` (java_random.hpp), with JVM vectors;
@@ -7141,8 +7181,10 @@ Open:
   The surface rules are NOT run: the tree spells six noises and NEEDS eight
   (`minecraft:surface` and `minecraft:surface_secondary` on top), none of
   which can be seeded, and §8 refuses a tree whole rather than running it
-  with branches skipped. (It is now refused for a second, independent reason
-  as well — its two `vertical_gradient` conditions, above.) So block
+  with branches skipped. (It was for a time refused for a second,
+  independent reason as well — its two `vertical_gradient` conditions,
+  above; that refusal is since lifted, the executor running the measured
+  legacy coin.) So block
   identity cannot be exact and is not asserted. Three things are asserted
   instead, and together they are stronger than a percentage:
 
@@ -8034,8 +8076,10 @@ Open:
   cannot seed — six spelled in the tree plus `minecraft:surface` and
   `surface_secondary`, which no field of it names — and whose two
   `vertical_gradient` conditions draw from the dimension's own random source,
-  which is separately measured to be underivable here (the gradient gap,
-  above). So the comparison is over a **class** (solid / lava / air), not a
+  which was then separately measured to be underivable here (the gradient
+  gap, above; its legacy coin is since measured and run, "The gradient's
+  refusal, lifted"). So the comparison is over a **class** (solid / lava /
+  air), not a
   block name; a twelfth name fails rather than being bucketed (§8). The
   scored range is y [5, 123), excluding the two bands the surface rule writes
   regardless of density — `bedrock_floor` below 5, and `bedrock_roof` plus

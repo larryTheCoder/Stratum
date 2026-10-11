@@ -95,9 +95,9 @@ struct VerticalAnchor {
 /// the golden Nether's bedrock floor and roof it is exact, 65536 of 65536
 /// labelled positions per gradient at each of four world seeds
 /// (vanilla_legacy_gradient_gap_test.cpp), where the Xoroshiro coin above
-/// lands at chance. NOT YET USED BY THE EXECUTOR: a legacy dimension with a
-/// gradient is still refused by name (surface::Executor::compile,
-/// ChunkFiller::compile), and lifting that is its own change.
+/// lands at chance. surface::Executor runs this one wherever its registry
+/// declares the legacy source, and that same test scores the executor
+/// itself on the golden Nether's two bedrock rules.
 [[nodiscard]] bool verticalGradientFires(const rng::LegacyPositionalSource& source, std::int32_t x,
                                          std::int32_t y, std::int32_t z,
                                          std::int32_t trueAtAndBelow,

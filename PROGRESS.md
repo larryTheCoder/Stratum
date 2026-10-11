@@ -16,7 +16,7 @@ Last swept: 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) of
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
-| M4 — biomes + surface | Open — the legacy RNG now blocks only surface rules (and their named noises) in 3 legacy dimensions: the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
+| M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's two unobservable conjuncts carried on the spec's word, and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk with biomes and packing; the fill alone 174, the aquifer about 1% of it since its per-block cost was cut; still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
@@ -111,10 +111,14 @@ search for, since line numbers move.
 
 **Engine follow-ups the audit surfaced (each its own change).**
 
-- [ ] Lift the legacy `vertical_gradient` refusal: the legacy primitive
+- [x] Lift the legacy `vertical_gradient` refusal: the legacy primitive
       salted with the gradient's `random_name` is exact on the golden
-      Nether bedrock (65 536 / 65 536, both gradients, four seeds); the
-      executor still refuses it.
+      Nether bedrock (65 536 / 65 536, both gradients, four seeds). Done
+      2026-10-11: the executor draws each gradient's coin from its
+      registry's declared source, and the shipped executor itself scores
+      65 536 / 65 536 on that bedrock; the filler, the executor and
+      validate no longer refuse or warn (SPEC §11, "The gradient's refusal,
+      lifted").
 - [ ] Ore veins under the legacy source (refused, no oracle — a legacy
       probe arm with veins on would settle it) and over a non-stone
       `default_block` (the vein gate compares against `default_block`;

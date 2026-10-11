@@ -44,7 +44,7 @@ std::string legacyConstructRefusal(const std::string_view construct,
            std::string(detail) +
            ". How the Java LCG is seeded for it is not settled here, and this build will not "
            "substitute the modern Xoroshiro derivation: for vertical_gradient that substitution "
-           "is measured to agree with vanilla at chance (SPEC §11)";
+           "was measured to agree with vanilla at chance (SPEC §11)";
 }
 
 NoiseRegistry NoiseRegistry::create(const data::Pack& pack,

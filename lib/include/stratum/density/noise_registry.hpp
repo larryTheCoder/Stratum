@@ -85,12 +85,12 @@ public:
     /// function no longer carries the whole refusal on its own. A dimension
     /// also draws on its declared random source for
     /// `minecraft:vertical_gradient`'s random_name, the aquifer lattice and
-    /// the ore-vein source, none of which appears in @p wanted. Those are
-    /// refused BY NAME OF THE CONSTRUCT where they are built:
-    /// surface::Executor::compile for the gradient, and
-    /// terrain::ChunkFiller::compile for both flags, which is where the
-    /// aquifer lattice and the vein source are actually constructed. See
-    /// legacyConstructRefusal() below, and SPEC §11.
+    /// the ore-vein source, none of which appears in @p wanted. The first two
+    /// are measured and derived from the declared source where they are
+    /// built (surface::Executor::compile reads it from this registry; the
+    /// aquifer's CentreSource takes it). The vein source is refused BY NAME
+    /// OF THE CONSTRUCT in terrain::ChunkFiller::compile, where it is
+    /// constructed. See legacyConstructRefusal() below, and SPEC §11.
     [[nodiscard]] static NoiseRegistry create(const data::Pack& pack,
                                               std::span<const data::ResourceLocation> wanted,
                                               std::int64_t worldSeed, RandomSource source);
@@ -131,24 +131,26 @@ private:
 /// its declared random source for `minecraft:vertical_gradient`'s
 /// `random_name`, for the aquifer lattice's centre jitter, and for the
 /// ore-vein source — none of which is a named noise and none of which passes
-/// through `wanted`. This build derives the gradient and the vein source
-/// with Xoroshiro128++ unconditionally; the aquifer's centres it derives
-/// from the declared source, which a constructed probe measured (SPEC §11),
-/// and they are not refused.
+/// through `wanted`. The aquifer's centres and the gradient's coin are
+/// derived from the declared source, both measured (SPEC §11): the same
+/// legacy primitive, found on a constructed aquifer probe and exact out of
+/// sample on the golden Nether's bedrock. The vein source is still derived
+/// with Xoroshiro128++ only, and is the one construct this message is for.
 ///
-/// For `vertical_gradient` that is MEASURED WRONG, not merely unverified:
-/// against the golden NETHER's bedrock floor and roof the Xoroshiro
-/// derivation agrees at chance, while the identical code on the modern
-/// overworld is exact — see
+/// Substituting the modern derivation is MEASURED WRONG, not merely
+/// unverified, on the one construct where it was measured: against the
+/// golden NETHER's bedrock floor and roof the Xoroshiro gradient agrees at
+/// chance, while the identical code on the modern overworld is exact — see
 /// tests/conformance/vanilla_legacy_gradient_gap_test.cpp, which carries the
 /// numbers and their denominators. The ore source is UNTESTED: every vanilla
 /// legacy dimension has the flag off, and no probe has asked for one.
 ///
-/// So the constructs are refused BY NAME, wherever they are built, and the
-/// refusal says which construct and why. A legacy dimension that names no
-/// noise but places vanilla's bedrock gradient used to compile and fill a
-/// chunk with bedrock, with no error and no warning — the
-/// plausible-but-wrong world SPEC §8 forbids.
+/// So it is refused BY NAME, wherever it is built, and the refusal says
+/// which construct and why. A legacy dimension that names no noise but
+/// placed vanilla's bedrock gradient once compiled and filled a chunk with
+/// bedrock from the Xoroshiro coin, with no error and no warning — the
+/// plausible-but-wrong world SPEC §8 forbids, closed first by refusing the
+/// gradient and since by running the measured legacy coin.
 [[nodiscard]] std::string legacyConstructRefusal(std::string_view construct,
                                                  std::string_view detail);
 
