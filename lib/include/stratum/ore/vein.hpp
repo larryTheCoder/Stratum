@@ -94,15 +94,15 @@
 // veins wherever `ore_veins_enabled` is set (SPEC §11).
 //
 // WHAT THIS DELIBERATELY DOES NOT DECIDE, recorded rather than guessed
-// (SPEC §11), and one more that was chosen first and measured since:
+// (SPEC §11), and two that were chosen first and measured since:
 //   * draw 3's method, and draws 1 and 2's method under Xoroshiro beyond
 //     the 0.7F bucket: one nextLong backs both precisions there, so they
 //     part only where a 53-bit draw and its 24-bit truncation fall either
 //     side of a threshold. The legacy source answers draws 1 and 2 for it.
 //   * whether draw 2 is consumed when `vein_gap <= -0.3`. Nothing downstream
 //     reads the stream at this position, so both variants also read 100.000%.
-//     `decide` takes the draw unconditionally, which is the simpler reading;
-//     no observable depends on it.
+//     `drawVein` (ore_vein.cpp) takes the draw unconditionally, which is the
+//     simpler reading; no observable depends on it.
 //   * WHETHER A VEIN MAY REPLACE A FLUID — it may not, now measured.
 //     `ChunkFiller` gates the vein call on `block == &settings_->defaultBlock`,
 //     so a vein never replaces a block the aquifer placed as water or lava.
@@ -191,7 +191,7 @@ public:
     /// seeds, four of them generated after the rule was frozen (SPEC §11,
     /// "Ore veins under the legacy source"). Only the low 48 bits of
     /// @p worldSeed reach it.
-    VeinSource(std::int64_t worldSeed, density::RandomSource source) noexcept;
+    explicit VeinSource(std::int64_t worldSeed, density::RandomSource source) noexcept;
 
     /// What the vein system puts at this position, given its three router
     /// values. Runs the deterministic gate itself, so a caller may hand it

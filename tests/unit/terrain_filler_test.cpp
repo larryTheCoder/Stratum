@@ -696,6 +696,89 @@ TEST_CASE("ore veins place without aquifers too, the same blocks", "[terrain][fi
     CHECK(veinBlocks > 1000);
 }
 
+TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the rest that block",
+          "[terrain][filler][ore]") {
+    // Measured against the server: tools/analysis/legacy-orevein-probe.sh's
+    // `nv` (netherrack) and `dv` (deepslate[axis=x]) arms hold exactly the
+    // vein blocks of their stone control, and their own default_block, whole
+    // state, everywhere else (SPEC §11, "Ore veins under the legacy source";
+    // vanilla_orevein_legacy_test.cpp). This is the fixture-free guard, as
+    // "the aquifer's barrier is the dimension's default_block" is for the
+    // aquifer: every other vein case here runs stone, where a filler that
+    // placed veins only over minecraft:stone, or wrote the default block
+    // without its properties, passes unseen.
+    const auto withDefault = [](const nlohmann::json& defaultBlock) {
+        nlohmann::json settings = veinSettings(/*aquifers=*/true);
+        settings["default_block"] = defaultBlock;
+        return settings;
+    };
+    const TempTree tree;
+    tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}))
+        .defineSettings("test_netherrack", withDefault({{"Name", "minecraft:netherrack"}}))
+        .defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
+                                                       {"Properties", {{"axis", "x"}}}}));
+    const LoadedSettings loaded = tree.load();
+    // The flat router names no noise, so this registry is empty; one of the
+    // tree's own rather than compileFrom()'s, which is built once per process.
+    const auto noises =
+        stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 42,
+                                                stratum::density::RandomSource::Xoroshiro);
+    const auto settingsOf = [&](const char* name) -> const stratum::settings::NoiseSettings& {
+        return loaded.settings.at(stratum::data::ResourceLocation::parse(name));
+    };
+    const auto& stoneSettings = settingsOf("minecraft:test_stone");
+    const auto& stone = stoneSettings.defaultBlock;
+    const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
+    const std::set<std::string> veinNames{
+        "minecraft:granite", "minecraft:copper_ore",         "minecraft:raw_copper_block",
+        "minecraft:tuff",    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block"};
+
+    for (const char* name : {"minecraft:test_netherrack", "minecraft:test_deepslate"}) {
+        INFO("dimension " << name);
+        const auto& settings = settingsOf(name);
+        const auto& declared = settings.defaultBlock;
+        REQUIRE(declared.name != stone.name);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings);
+        long long veinBlocks = 0;
+        long long defaultBlocks = 0;
+        long long wrongVein = 0;
+        long long wrongDefault = 0;
+        long long wrongOther = 0;
+        for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{3, -2}}) {
+            ChunkBuffer stoneBuffer(stoneSettings.geometry);
+            ChunkBuffer buffer(settings.geometry);
+            stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
+            filler.fill(chunkX, chunkZ, buffer);
+            for (std::int32_t y = settings.geometry.minY;
+                 y < settings.geometry.minY + settings.geometry.height; ++y) {
+                for (int z = 0; z < 16; ++z) {
+                    for (int x = 0; x < 16; ++x) {
+                        const auto& control = stoneBuffer.at(x, y, z);
+                        const auto& ours = buffer.at(x, y, z);
+                        if (veinNames.contains(control.name.toString())) {
+                            ++veinBlocks;
+                            wrongVein += ours == control ? 0 : 1;
+                        } else if (control == stone) {
+                            ++defaultBlocks;
+                            wrongDefault += ours == declared ? 0 : 1;
+                        } else {
+                            wrongOther += ours == control ? 0 : 1;
+                        }
+                    }
+                }
+            }
+        }
+        INFO(veinBlocks << " vein blocks and " << defaultBlocks << " default blocks");
+        CHECK(wrongVein == 0);
+        CHECK(wrongDefault == 0);
+        CHECK(wrongOther == 0);
+        // About 70% of 2 * 9 * 256 iron candidates, and the solid rest: not
+        // vacuous either way.
+        CHECK(veinBlocks > 2000);
+        CHECK(defaultBlocks > 2000);
+    }
+}
+
 TEST_CASE("ore veins replace solid blocks inside the iron range", "[terrain][filler][ore]") {
     const TempTree tree;
     tree.defineSettings("test", veinSettings(/*aquifers=*/true));

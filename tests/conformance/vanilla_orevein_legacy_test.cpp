@@ -66,7 +66,9 @@ namespace {
 
 using stratum::density::RandomSource;
 
-constexpr const char* kScript = "tools/analysis/legacy-orevein-probe.sh";
+/// What regenerates the family, named alike by the SKIP and by a partial set.
+constexpr const char* kRegenerate =
+    "tools/probe-worlds generate --only legacy-orevein-probe.sh --accept-eula";
 constexpr std::int64_t kTwin = 42 ^ std::numeric_limits<std::int64_t>::min();
 /// The seeds tools/probe-worlds generates the family at, in its order.
 constexpr std::array<std::int64_t, 4> kSeeds{42, 31337, kTwin, 2};
@@ -172,6 +174,17 @@ struct Arm {
     return sorted(*state);
 }
 
+/// One arm's region, REQUIREd present first. Constructed straight from a
+/// missing file, GoldenRegion throws, and Catch2 reports the exception
+/// without the seed and arm the case was reading.
+[[nodiscard]] stratum::test::GoldenRegion armRegion(const std::filesystem::path& dir,
+                                                    const char* name) {
+    const std::filesystem::path path = dir / name / "r.0.0.mca";
+    INFO("region " << path);
+    REQUIRE(std::filesystem::is_regular_file(path));
+    return stratum::test::GoldenRegion(path);
+}
+
 struct Tally {
     long long candidates = 0;
     long long exact = 0;
@@ -203,7 +216,7 @@ struct Tally {
 /// The family's corpora, checked: empty when none was generated, a failure
 /// when only some were (support/probe_corpus.hpp).
 [[nodiscard]] std::vector<std::filesystem::path> corpora() {
-    return stratum::test::seededCorpora(probes(), "orevlegacy_s", kSeeds, kScript);
+    return stratum::test::seededCorpora(probes(), "orevlegacy_s", kSeeds, kRegenerate);
 }
 
 /// The arms are the one recipe but for what each varies.
@@ -286,9 +299,7 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
           "[conformance][ore][legacy]") {
     const std::vector<std::filesystem::path> dirs = corpora();
     if (dirs.empty()) {
-        SKIP("no legacy ore-vein probe under " << probes() << "; generate it with "
-                                               << "tools/probe-worlds generate --accept-eula "
-                                                  "--only 'orevlegacy_*'");
+        SKIP("no legacy ore-vein probe under " << probes() << "; generate it with " << kRegenerate);
     }
     const auto bits = [](float value) { return std::bit_cast<std::uint32_t>(value); };
     for (std::size_t i = 0; i < kSeeds.size(); ++i) {
@@ -301,7 +312,7 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
         for (const char* name : kArms) {
             INFO("arm " << name);
             const Arm arm = armOf(stratum::test::specEntry(spec, dir, name));
-            stratum::test::GoldenRegion region(dir / name / "r.0.0.mca");
+            stratum::test::GoldenRegion region = armRegion(dir, name);
             for (std::int32_t cz = 0; cz < 8; ++cz) {
                 for (std::int32_t cx = 0; cx < 8; ++cx) {
                     REQUIRE(region.hasChunk(cx, cz));
@@ -344,12 +355,12 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
         // (measured 49.9% for the latter).
         if (seed == kTwin) {
             const Arm lv = armOf(stratum::test::specEntry(spec, dir, "lv"));
-            stratum::test::GoldenRegion lvRegion(dir / "lv" / "r.0.0.mca");
+            stratum::test::GoldenRegion lvRegion = armRegion(dir, "lv");
             const Tally asFortyTwo =
                 replay(lvRegion, lv, stratum::ore::VeinSource{42, RandomSource::Legacy});
             CHECK(asFortyTwo.exact == asFortyTwo.candidates);
             const Arm mv = armOf(stratum::test::specEntry(spec, dir, "mv"));
-            stratum::test::GoldenRegion mvRegion(dir / "mv" / "r.0.0.mca");
+            stratum::test::GoldenRegion mvRegion = armRegion(dir, "mv");
             const Tally modernAsFortyTwo =
                 replay(mvRegion, mv, stratum::ore::VeinSource{42, RandomSource::Xoroshiro});
             CHECK(modernAsFortyTwo.exact * 10 < modernAsFortyTwo.candidates * 6);
@@ -361,14 +372,14 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
         // A first draw of exactly 0.7F is a member (engine v13 compared in
         // float and left these as the default block).
         if (seed == 31337) {
-            stratum::test::GoldenRegion lv(dir / "lv" / "r.0.0.mca");
+            stratum::test::GoldenRegion lv = armRegion(dir, "lv");
             CHECK(bits(firstDraws(RandomSource::Legacy, seed, 38, -31, 7).first) == bits(0.7F));
             CHECK(servedAt(lv, 38, -31, 7).name == "minecraft:deepslate_iron_ore");
         }
         if (seed == 2) {
             for (const char* name : {"mv", "nv", "dv", "ma"}) {
                 INFO("arm " << name);
-                stratum::test::GoldenRegion region(dir / name / "r.0.0.mca");
+                stratum::test::GoldenRegion region = armRegion(dir, name);
                 for (const std::int32_t y : {-45, 45}) {
                     CHECK(bits(firstDraws(RandomSource::Xoroshiro, seed, 24, y, 22).first) ==
                           bits(0.7F));
@@ -387,7 +398,7 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
             CHECK(static_cast<double>(first) < 0.7);
             CHECK(bits(second) == bits(static_cast<float>(chance)));
             CHECK(static_cast<double>(second) < chance);
-            stratum::test::GoldenRegion region(dir / name / "r.0.0.mca");
+            stratum::test::GoldenRegion region = armRegion(dir, name);
             CHECK(servedAt(region, x, 20, 0).name == "minecraft:granite");
         };
         if (seed == 42) {
@@ -400,8 +411,8 @@ TEST_CASE("ore veins under the legacy source are the ones the server drew",
         // lv and mv, raw: the flag reached the vein source at all (measured
         // 1068829-1069573 of 1818624 blocks in y -60..50 differ).
         {
-            stratum::test::GoldenRegion lv(dir / "lv" / "r.0.0.mca");
-            stratum::test::GoldenRegion mv(dir / "mv" / "r.0.0.mca");
+            stratum::test::GoldenRegion lv = armRegion(dir, "lv");
+            stratum::test::GoldenRegion mv = armRegion(dir, "mv");
             long long differ = 0;
             long long blocks = 0;
             for (std::int32_t z = 0; z < kWindow; z += 2) {
@@ -431,9 +442,7 @@ TEST_CASE("the shipped filler generates the legacy ore-vein probe block for bloc
     // stone and the 0.7F positions as the default block.
     const std::vector<std::filesystem::path> dirs = corpora();
     if (dirs.empty()) {
-        SKIP("no legacy ore-vein probe under " << probes() << "; generate it with "
-                                               << "tools/probe-worlds generate --accept-eula "
-                                                  "--only 'orevlegacy_*'");
+        SKIP("no legacy ore-vein probe under " << probes() << "; generate it with " << kRegenerate);
     }
     // Every chunk holding a position that settled a comparison — (1, 0)
     // lr's, (2, 0) 31337's 0.7F draw, (3, 0) or's, (1, 1) seed 2's two —
@@ -473,7 +482,7 @@ TEST_CASE("the shipped filler generates the legacy ore-vein probe block for bloc
 
             const stratum::chunk::BlockState defaultBlock =
                 armOf(stratum::test::specEntry(spec, dir, name)).defaultBlock;
-            stratum::test::GoldenRegion region(dir / name / "r.0.0.mca");
+            stratum::test::GoldenRegion region = armRegion(dir, name);
             stratum::terrain::ChunkBuffer buffer(dimension.geometry);
             long long blocks = 0;
             long long wrong = 0;
