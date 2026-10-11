@@ -102,15 +102,29 @@ deleted.
 
 **Tests.**
 
-- [ ] `vanilla_psl_lattice_test.cpp` and `vanilla_weird_scaled_test.cpp`
+- [x] `vanilla_psl_lattice_test.cpp` and `vanilla_weird_scaled_test.cpp`
       still parse `spec.json` by hand; move them to
-      `tests/support/probe_spec.hpp` as every aquifer case now is.
+      `tests/support/probe_spec.hpp` as every aquifer case now is. Done
+      2026-10-11: every pinned count unchanged (13 cases, the assertion
+      count up by exactly the new REQUIREs); a corpus missing or doubling
+      a dimension now fails naming the spec, and an absent one still skips.
 - [ ] Optional: the remaining loose minimum-population floors in the
       aquifer cases could become exact corpus pins, as `barrier3source`
       and `depthgate` have.
-- [ ] `tools/analysis/density-probe.sh` worlds log "missing mandatory
+- [x] `tools/analysis/density-probe.sh` worlds log "missing mandatory
       fields min_format and max_format" for the probe pack; harmless (the
       dimensions load), but `inline-noise-probe.sh` already writes them.
+      Done 2026-10-11, with the worlds shown unchanged (`stratum diff`:
+      identical on every region of a CI unit run through both scripts).
+      The four other probe scripts that wrote `pack_format` alone
+      (`aquifer-free`, `aquifer-on`, `aquifer-presets`,
+      `blended-datapack`) write them too, each shown block-identical the
+      same way, and `inline-noise-probe.sh`'s claim that the server marks
+      such a pack incompatible is corrected: every server logs the error
+      and loads the pack. Together they move the cache key of all seven
+      probe shards (not the two goldens shards), so CI's next run
+      regenerates them cold — the aquifer shard, the longest, was about 33
+      minutes of its 90.
 
 **Engine follow-ups the audit surfaced (each its own change).**
 
