@@ -508,7 +508,12 @@ struct CapScore {
     long long typeBlocks = 0;
     long long typeLava = 0; ///< of which the model fills lava
     long long typeMismatch = 0;
-    long long typeMismatchFlowing = 0;    ///< of which the server's block is flowing (level > 0)
+    /// Of which flow explains: the server's block is flowing (level > 0), or
+    /// is the shared classifier's other shape for water where the model has
+    /// lava — a source beside water's meeting with lava, which the
+    /// infinite-source rule makes of water that flowed in
+    /// (stratum::test::explainedByFlow).
+    long long typeMismatchFlowed = 0;
     long long typeMismatchServerLava = 0; ///< of which the server's block is lava
     long long centreTypedLava = 0;
 };
@@ -552,6 +557,9 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
     const std::filesystem::path world = probeDir / arm.name / "r.0.0.mca";
     REQUIRE(std::filesystem::is_regular_file(world));
     const auto file = region::RegionFile::open(world);
+    // The same file again, for the flow classifier's neighbour reads, which
+    // cross chunk borders.
+    stratum::test::GoldenRegion golden(world);
     const std::int32_t ySkipLevel = aquifer::ySkip(javamath::floorToInt(arm.psl));
     for (std::int32_t cz = 0; cz < kChunks; ++cz) {
         for (std::int32_t cx = 0; cx < kChunks; ++cx) {
@@ -615,8 +623,14 @@ void scoreCapProbe(const std::filesystem::path& probeDir, const CapArm& arm, Cap
                             const bool mismatch =
                                 (src[0].type == aquifer::FluidType::Lava) != serverLava;
                             score.typeMismatch += static_cast<long long>(mismatch);
-                            score.typeMismatchFlowing += static_cast<long long>(
-                                mismatch && stratum::test::fluidLevel(block) > 0);
+                            score.typeMismatchFlowed += static_cast<long long>(
+                                mismatch &&
+                                (stratum::test::fluidLevel(block) > 0 ||
+                                 stratum::test::explainedByFlow(
+                                     golden, x, y, z, stratum::test::categoryOf(block->name),
+                                     src[0].type == aquifer::FluidType::Lava
+                                         ? stratum::test::Category::Lava
+                                         : stratum::test::Category::Water)));
                             score.typeMismatchServerLava +=
                                 static_cast<long long>(mismatch && serverLava);
                             score.typeLava +=
@@ -708,7 +722,7 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
                     << "; cap-floor contested " << score.capContested << ", abort right "
                     << score.abortRight << ", cap right " << score.capRight << "; fluid blocks "
                     << score.typeBlocks << " (" << score.typeLava << " lava), wrong fluid "
-                    << score.typeMismatch << " (" << score.typeMismatchFlowing << " flowing, "
+                    << score.typeMismatch << " (" << score.typeMismatchFlowed << " flow, "
                     << score.typeMismatchServerLava << " server lava)"
                     << ", water a centre below lambda would type lava " << score.centreTypedLava);
         REQUIRE(score.blocks > 100000);
@@ -717,14 +731,21 @@ TEST_CASE("which source levels the barrier weighs at lambda", "[conformance][aqu
         CHECK(score.falseStone == 0);
         CHECK(score.abortRight == score.capContested);
         // The fluid, where the model fills one above lambda: right on every
-        // SOURCE block. The only disagreements are flowing water at lava
-        // bodies' tops, over the obsidian their contact leaves — the frozen
-        // world's remnant of fluid ticks (SPEC §7), 382 blocks of cf200's
-        // 2.9M when first run, and none in any other arm.
+        // block the frozen world's remnant of fluid ticks (SPEC §7) did not
+        // reach. The disagreements are water at lava bodies' edges, over the
+        // obsidian their contact leaves: flowing water, 382 blocks of cf200's
+        // 2.9M when first run and 358 on CI's corpus, and — on a corpus
+        // regenerated 2026-10-12 — one water SOURCE at (93, -48, 79) at seed
+        // 31337, between two obsidian blocks and two water sources, which
+        // the infinite-source rule made of water that flowed in. So this
+        // counts what the shared flow classifier explains, not only what is
+        // flowing; it was the one flow-dependent pin here that held the
+        // remnant to a single shape, and a regeneration moved it. None in any
+        // other arm.
         REQUIRE(score.typeBlocks > 0);
-        CHECK(score.typeMismatch == score.typeMismatchFlowing);
+        CHECK(score.typeMismatch == score.typeMismatchFlowed);
         CHECK(score.typeMismatchServerLava == 0);
-        CHECK(score.typeMismatchFlowing * 1000 < score.typeBlocks);
+        CHECK(score.typeMismatchFlowed * 1000 < score.typeBlocks);
         const std::string_view name{arm.name};
         if (name == "cf58") {
             // The near-surface type shows in blocks, not only through the
