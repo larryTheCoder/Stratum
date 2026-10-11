@@ -128,11 +128,17 @@
 // the barrier's mixed-type constant and the fluid-update flag only ever
 // weigh it against a source of another level (aquifer_substance_test.cpp).
 //
+// ONE CONJUNCT THAT NEEDS NO MEASURING. Q5.8 exempts a source already
+// reading lava from the override, and that is a TAUTOLOGY, not a conjunct
+// hidden below the lava sea: the override turns a source to lava, and
+// overriding lava with lava returns lava, so exempt or not the source is
+// lava and no world could tell the two apart. `fluidTypeOf` returns `Lava`
+// for a centre below lambda, where the global picker reads lava, before the
+// override is weighed. This comment once carried it as unobservable and
+// taken on the spec's word alone; that was the wrong reason.
+//
 // WHAT IS STILL NOT MEASURED, and is marked rather than guessed:
 //
-//   * Whether a source already reading lava is exempt. Those cells sit below
-//     the global lava sea, where nothing can be observed, so the conjunct is
-//     carried on the spec's word alone.
 //   * Whether a DRY source is exempt (the spec's `L != never` conjunct).
 //     REPRESENTABLE NOW, and carried in the predicate below — but as spec
 //     hygiene, NOT as a measurement, and the difference is the whole point.
