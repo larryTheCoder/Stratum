@@ -17,7 +17,7 @@ Last swept: 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) of
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below). Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's two unobservable conjuncts carried on the spec's word, and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk with biomes and packing; the fill alone 174, the aquifer about 1% of it since its per-block cost was cut; still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -65,35 +65,38 @@ green on every job. Both budgets below are comfortably met.
 
 **Docs sweep — wording only, no code, no output change.** Each was
 verified against the code during the audit; anchors are phrases to
-search for, since line numbers move.
+search for, since line numbers move. All eight done 2026-10-11, each
+re-checked against the code first (`SPEC: the aquifer log's superseded
+statements marked, ...`); superseded text is marked with a pointer, not
+deleted.
 
-- [ ] `tests/conformance/golden_terrain_test.cpp`'s attribution prose
+- [x] `tests/conformance/golden_terrain_test.cpp`'s attribution prose
       (and the matching SPEC sentence): seed -1's four residual columns
       are aquifer barriers the density scan cannot see, not an
       unimplemented step.
-- [ ] SPEC's MA status sentences ("while MA was open", "ore veins (M3,
+- [x] SPEC's MA status sentences ("while MA was open", "ore veins (M3,
       untouched) — none of which", and the §10 MA status) to match the
       at-a-glance row above: veins closed, the 192-block residual
       attributed to flow, the open list as the row gives it.
-- [ ] SPEC MA item 3(b): the "/10" divisor "stays unmeasured" — since
+- [x] SPEC MA item 3(b): the "/10" divisor "stays unmeasured" — since
       closed by MA item 7 and the deep-floor bracket entry; mark it so.
-- [ ] SPEC §11's aquifer log keeps superseded "still open / refused"
+- [x] SPEC §11's aquifer log keeps superseded "still open / refused"
       statements unmarked (MA item 5, the jitter recovery, blockers 1 and
       3, the low-sea abort-threshold entry): mark each "since closed" or
       "superseded" with a pointer, and write the bare -62 as
       `abortThreshold(seaLevel)`.
-- [ ] SPEC §11's ocean-branch floats paragraph ("required for this
+- [x] SPEC §11's ocean-branch floats paragraph ("required for this
       expression"): the surviving spellings are `f + (reach*11.0)/640.0`,
       its FMA form and `640f + 11*reach > 512`; drop the pre-divided
       spelling and the FMA-canary claim, and point to the later
       correction.
-- [ ] SPEC's "Refuse `psl <= min_y`" (two places): no such refusal
+- [x] SPEC's "Refuse `psl <= min_y`" (two places): no such refusal
       exists or is needed; mark it superseded by the scan-abort entry.
-- [ ] Q5.8's first conjunct (a source already reading lava is exempt) is
+- [x] Q5.8's first conjunct (a source already reading lava is exempt) is
       a tautology — overriding lava with lava returns lava — not a
       conjunct hidden below the lava sea. Reword `fluid_type.hpp` and
       SPEC, and with it the MA row's "two unobservable conjuncts".
-- [ ] A short correction note beside SPEC's Q5.3 passage: the clean-room
+- [x] A short correction note beside SPEC's Q5.3 passage: the clean-room
       spec's prose has the direction inverted; its formula and the
       server say "above" (owner flag below; `spec/` stays untouched).
 
