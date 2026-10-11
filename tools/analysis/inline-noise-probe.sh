@@ -90,7 +90,9 @@ command -v jq >/dev/null 2>&1 || die "jq is needed"
 # checkout that keeps its fixtures elsewhere — a git worktree sharing one
 # 300MB download, say — does not need a second copy of the server jar.
 fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}"
-jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 

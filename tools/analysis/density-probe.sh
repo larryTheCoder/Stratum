@@ -52,7 +52,8 @@
 # almost nothing, so a sweep goes in ONE world as many dimensions rather than
 # as many worlds. The spec is a JSON array of {"name": ..., "function": ...};
 # each entry becomes a dimension, and each dimension's region lands under
-# .fixtures/<version>/probes/<spec name>/<entry name>/r.0.0.mca.
+# .fixtures/<version>/probes/<spec name>/<entry name>/r.0.0.mca (under
+# $STRATUM_FIXTURES_DIR instead of .fixtures when that is set).
 #
 # Every noise_settings field a probe might want to vary is a PER-ENTRY field
 # of that entry, `legacy_random_source` and `default_block` included — a
@@ -130,7 +131,13 @@ spec_name="$(basename "${spec}" .json)"
 # pinned against the first would then fail as if the code had regressed.
 # Regenerating the SAME seed is the normal case and goes ahead; a different
 # seed has to be asked for, with STRATUM_PROBE_OVERWRITE=1.
-existing_manifest="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/${spec_name}/manifest.json"
+# STRATUM_FIXTURES_DIR, as the CMake cache and inline-noise-probe.sh read it:
+# a git worktree sharing the main checkout's fixtures takes the jar from that
+# tree and writes its corpus into it, rather than needing a second copy of
+# either. tools/probe-worlds clears it for every generator it runs, so a
+# corpus it generates lands under <repo>/.fixtures whatever the environment.
+fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}"
+existing_manifest="${fixtures}/${MINECRAFT_VERSION}/probes/${spec_name}/manifest.json"
 if [[ -f "${existing_manifest}" && -z "${STRATUM_PROBE_OVERWRITE:-}" ]]; then
     existing_seed="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["seed"])' \
         "${existing_manifest}")"
@@ -138,8 +145,10 @@ if [[ -f "${existing_manifest}" && -z "${STRATUM_PROBE_OVERWRITE:-}" ]]; then
         || die "probes/${spec_name} holds seed ${existing_seed}, not ${seed}; this run would replace it.
        Give the spec a seed-specific name, or set STRATUM_PROBE_OVERWRITE=1 to replace it"
 fi
-jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
-[[ -n "${jar}" ]] || die "no server jar under .fixtures/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
+[[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
@@ -474,7 +483,7 @@ printf 'stop\n' >&3
 exec 3>&-
 wait "${server_pid}" 2>/dev/null || true
 
-out_root="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/${spec_name}"
+out_root="${fixtures}/${MINECRAFT_VERSION}/probes/${spec_name}"
 mkdir -p "${out_root}"
 for name in "${names[@]}"; do
     mkdir -p "${out_root}/${name}"
