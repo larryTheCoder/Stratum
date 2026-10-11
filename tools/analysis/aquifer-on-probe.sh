@@ -22,6 +22,8 @@
 set -euo pipefail
 
 readonly MINECRAFT_VERSION="1.21.11"
+readonly PACK_FORMAT_MAJOR=94
+readonly PACK_FORMAT_MINOR=1
 readonly CHUNKS=8
 
 accept_eula=0
@@ -66,8 +68,19 @@ server="${work}/server"
 pack="${server}/world/datapacks/stratum-aquifer-on/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome"
 
-cat > "${server}/world/datapacks/stratum-aquifer-on/pack.mcmeta" <<'META'
-{"pack": {"pack_format": 94, "description": "stratum aquifer-on overworld"}}
+# min_format/max_format, not pack_format: given pack_format alone at this pack
+# format the server logs "Couldn't load file/stratum-aquifer-on pack metadata: ...
+# missing mandatory fields min_format and max_format", then loads the pack
+# anyway. So it was only noise: a world generated either way decodes to the
+# same blocks. The same shape as tools/fetch-vanilla and density-probe.sh.
+cat > "${server}/world/datapacks/stratum-aquifer-on/pack.mcmeta" <<META
+{
+  "pack": {
+    "description": "stratum aquifer-on overworld",
+    "min_format": [${PACK_FORMAT_MAJOR}, ${PACK_FORMAT_MINOR}],
+    "max_format": ${PACK_FORMAT_MAJOR}
+  }
+}
 META
 
 cat > "${pack}/worldgen/biome/probe.json" <<'BIOME'
