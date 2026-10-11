@@ -68,12 +68,13 @@
 # implementation.
 #
 # RETRACTED SINCE: THE COUPLING DOES NOT REPLICATE. This recipe at 13579,
-# the seed probes/orevein records, with aquifers off is the aquifers-on world
-# block for block (0 of 6291456 differing, 14373 vein blocks in each), and so
-# are legacy-orevein-probe.sh's aquifers-off arms at four seeds under both
-# random sources. The first world is not on disk; engine v14 places veins on
-# ore_veins_enabled alone (SPEC §11, "Ore veins under the legacy source").
-# aquifers_enabled stays true here, which changes nothing.
+# the seed probes/orevein records, with aquifers off — the `ova` arm below —
+# is the aquifers-on world block for block (0 of 6291456 differing, 14373
+# vein blocks in each), and so are legacy-orevein-probe.sh's aquifers-off
+# arms at four seeds under both random sources. The first world is not on
+# disk; engine v14 places veins on ore_veins_enabled alone (SPEC §11, "Ore
+# veins under the legacy source"). `ov` keeps aquifers on, which changes
+# nothing.
 #
 # CONFIRMED, across five seeds and 25608 real non-stone blocks
 # (`tools/analysis/ore-vein-analyze.cpp`), with ZERO exceptions on every
@@ -141,17 +142,18 @@ NO_SURFACE = {"type": "minecraft:condition",
               "then_run": {"type": "minecraft:block",
                            "result_state": {"Name": "minecraft:stone"}}}
 
-def aquifer(name):
+def aquifer(name, aquifers=True):
     return {"name": name, "min_y": MIN_Y, "height": HEIGHT,
             "raw_final_density": {"type": "minecraft:constant", "argument": 1.0},
-            "aquifers_enabled": True, "ore_veins_enabled": True,
+            "aquifers_enabled": aquifers, "ore_veins_enabled": True,
             "sea_level": SEA,
             "default_fluid": {"Name": "minecraft:air"},  # irrelevant: D>0 everywhere, so the aquifer's own fluid decision never applies.
             "size_horizontal": 1, "size_vertical": 2, "surface_rule": NO_SURFACE,
             "router": {"vein_toggle": real_vein_toggle, "vein_ridged": real_vein_ridged,
                        "vein_gap": real_vein_gap}}
 
-spec = [aquifer("ov")]
+# `ova` is `ov` with aquifers off: the world the retraction above rests on.
+spec = [aquifer("ov"), aquifer("ova", aquifers=False)]
 
 json.dump(spec, open(sys.argv[1], "w"))
 print(len(spec), "dimensions", file=sys.stderr)
