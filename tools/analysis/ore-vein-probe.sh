@@ -73,24 +73,34 @@
 # with aquifers off and default_fluid air; the contrast that "produced real
 # vein output" set aquifers on, default_fluid to water AND the seed to 43 in
 # one step (the first run's session record, not in the repository). Nor
-# did the inputs clear "their documented gates": the 4.2% above counted
-# `vein_ridged < 0` alone, and the type/sign and richness gate, never
-# counted then, admits no position of seed 42's window under vanilla's vein
-# router (the library: none of 1818624), so it is stone with
-# aquifers on too; at 43 the library predicts exactly the 339 vein blocks
-# that world held (48 copper_ore, 290 granite, 1 raw_copper_block). With
-# aquifers off veins ARE placed: at 13579, whose window has veins, `ova`
-# (aquifers off) is `ov` block for block (0 of 6291456 differing, 14373 vein
-# blocks in each), and so are legacy-orevein-probe.sh's aquifers-off arms at
-# four seeds under both random sources. 13579 was never the stone world's
-# seed: it is the one probes/orevein has held since the held-out loop.
+# did the inputs clear "their documented gates": of the deterministic gate,
+# the 4.2% above counted `vein_ridged < 0` alone (beside `vein_gap > -0.3`,
+# which picks ore over filler and admits nothing), and the type/sign and
+# richness gate, never counted then, admits no position of seed 42's window
+# under vanilla's vein router (the library: none of 1818624), so the library
+# predicts that world stone with aquifers on too; at 43 the gate admits 468
+# positions and the library's draws place exactly the 339 vein blocks that
+# world held (48 copper_ore, 290 granite, 1 raw_copper_block). With aquifers
+# off veins ARE placed: at 13579, whose window has veins, the recipe pair
+# below (`ov`, and `ova` with aquifers off) was generated under the scratch
+# names `mra2` and `mr2`, and those are block for block the same (0 of
+# 6291456 differing, 14373 vein blocks in each); so are
+# legacy-orevein-probe.sh's aquifers-off arms at four seeds under both
+# random sources. `ova` itself has never been generated under that name.
+# 13579 was never the stone world's seed: it is the one probes/orevein has
+# held since the held-out loop.
 #
-# So run with no seed, both arms come back all stone (the library predicts
-# no vein block in that window) and show nothing either way; pass 13579 to
-# reproduce the reversal (density-probe.sh's seed guard lets it replace
-# probes/orevein, which already holds 13579). The default stays 42, the seed
-# this script has always meant with no argument. Engine v14 places veins on
-# ore_veins_enabled alone; `ov` keeps aquifers on, which changes nothing.
+# So run with no seed (42), `ova` is the first run's stone world, the same
+# recipe then named `ov`, and the library predicts `ov` all stone too (no
+# vein position in that window; no server world holds `ov`'s recipe at 42),
+# so the pair shows nothing either way. Where probes/orevein already holds
+# another seed (13579 on the machine these worlds were made on),
+# density-probe.sh's seed guard refuses that run unless
+# STRATUM_PROBE_OVERWRITE=1 is set. Pass 13579 to reproduce the reversal; the
+# guard lets it replace probes/orevein, which already holds 13579. The
+# default stays 42, the seed this script has always meant with no argument.
+# Engine v14 places veins on ore_veins_enabled alone; `ov` keeps aquifers
+# on, which changes nothing.
 #
 # CONFIRMED, across five seeds and 25608 real non-stone blocks
 # (`tools/analysis/ore-vein-analyze.cpp`), with ZERO exceptions on every
@@ -111,7 +121,14 @@
 # pinning "30%"/"2%"/"20 blocks" to more precision than this sample size
 # gives — a bisection-style probe, the way this project pinned other
 # constants, once the RNG derivation makes single-block prediction possible
-# at all.
+# at all. SINCE CLOSED, both: the derivation is settled per block (79790 of
+# 79790 candidates), the membership roll is `nextFloat() < 0.7`, not 30%;
+# the membership and raw-roll thresholds are bracketed rather than assumed,
+# and the deterministic gate, 20-block ramp included, holds with zero
+# exceptions — SPEC §10's M3 entry ("Ore veins, SETTLED") and
+# lib/include/stratum/ore/vein.hpp ("THE DERIVATION", "THRESHOLDS
+# BRACKETED"). What is left open about the draws is SPEC §11's "Ore veins
+# under the legacy source", Still open.
 #
 # Nothing this writes is committed: worlds are Mojang-derived (SPEC §12).
 set -euo pipefail
@@ -168,7 +185,8 @@ def aquifer(name, aquifers=True):
             "router": {"vein_toggle": real_vein_toggle, "vein_ridged": real_vein_ridged,
                        "vein_gap": real_vein_gap}}
 
-# `ova` is `ov` with aquifers off: the world the retraction above rests on.
+# `ova` is `ov` with aquifers off: the recipe of the world the retraction
+# above rests on, generated at 13579 as scratch `mr2` (never as `ova`).
 spec = [aquifer("ov"), aquifer("ova", aquifers=False)]
 
 json.dump(spec, open(sys.argv[1], "w"))
