@@ -5249,7 +5249,13 @@ Open:
   (Q6.7 has since landed: `ChunkFiller` writes `default_block` for the
   aquifer's solid. The two worlds behind this figure were never committed;
   `aquifer-defaultblock-probe.sh` re-measures it, in "The aquifer's barrier
-  is the preset's `default_block`" above.)
+  is the preset's `default_block`" above.) *Since landed, all four:* the
+  selection ranks by integer squared distance from the block's own
+  position, keeps four ranks of which the fourth reaches only Q8's
+  fluid-update flag and never the substance decision, and breaks ties
+  toward the later candidate, and the barrier short-circuits on
+  `s12 <= 0` before any term ("The selection layer, built and scored",
+  below; `aquifer/selection.hpp`, `aquifer/barrier.hpp`).
 
   *Refuted.* This build's barrier predicate, as a general model. It has no
   density term and sees two sources; against a density sweep its agreement runs
