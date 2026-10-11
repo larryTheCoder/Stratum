@@ -76,6 +76,8 @@
 set -euo pipefail
 
 readonly MINECRAFT_VERSION="1.21.11"
+readonly PACK_FORMAT_MAJOR=94
+readonly PACK_FORMAT_MINOR=1
 readonly K="0.35"          # scales the function into the gradient's range
 readonly MIN_Y=-64
 readonly HEIGHT=384
@@ -174,8 +176,19 @@ pack="${server}/world/datapacks/stratum-probe/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome" \
          "${pack}/worldgen/noise"
 
-cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<'META'
-{"pack": {"pack_format": 94, "description": "stratum density probe"}}
+# min_format/max_format, not pack_format: given pack_format alone at this pack
+# format the server logs "Couldn't load file/stratum-probe pack metadata: ...
+# missing mandatory fields min_format and max_format", then loads the pack
+# anyway. So it was only noise: a corpus generated either way decodes to the
+# same blocks. The same shape as tools/fetch-vanilla and inline-noise-probe.sh.
+cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<META
+{
+  "pack": {
+    "description": "stratum density probe",
+    "min_format": [${PACK_FORMAT_MAJOR}, ${PACK_FORMAT_MINOR}],
+    "max_format": ${PACK_FORMAT_MAJOR}
+  }
+}
 META
 
 # No carvers, no features. Without this the probe reads the wrong thing.
