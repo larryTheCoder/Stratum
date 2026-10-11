@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace stratum::surface {
@@ -212,35 +213,6 @@ std::vector<data::ResourceLocation> requiredNoises(const RuleGraph& graph) {
 Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                            const settings::NoiseGeometry& geometry,
                            const density::NoiseRegistry* noises, const std::int32_t seaLevel) {
-    // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11). A
-    // `vertical_gradient`'s randomness comes from the DIMENSION'S declared
-    // random source, not from a named noise, so it passes through no
-    // `wanted` list and NoiseRegistry::create never sees it. Under a legacy
-    // source this build has only the modern derivation for it, and that
-    // derivation is measured to agree with vanilla's own bedrock at chance
-    // (tests/conformance/vanilla_legacy_gradient_gap_test.cpp). Refusing
-    // here is what keeps a legacy pack that names no noise from compiling
-    // and quietly filling a chunk with bedrock.
-    //
-    // Only when a registry was supplied, because only a registry carries the
-    // source. A tree compiled without one is a caller that has told us
-    // nothing about the dimension, and ChunkFiller::compile — which is how a
-    // real dimension gets here — always supplies one.
-    const std::vector<std::string> gradientNames = verticalGradientNames(graph);
-    if (noises != nullptr && noises->source() == density::RandomSource::Legacy &&
-        !gradientNames.empty()) {
-        std::string names;
-        for (const std::string& name : gradientNames) {
-            if (!names.empty()) {
-                names += ", ";
-            }
-            names += name;
-        }
-        throw ExecutionError(density::legacyConstructRefusal(
-            "minecraft:vertical_gradient",
-            "its random_name(s) " + names + " salt this dimension's own random source"));
-    }
-
     const std::vector<std::string> blocked = graph.unrunnable();
     if (!blocked.empty()) {
         std::string message = "this build cannot run " + std::to_string(blocked.size()) +
@@ -282,13 +254,24 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
         executor.clayBandsBuilt_ = true;
     }
     // One source per name, so that a rule fired millions of times pays for no
-    // MD5 and no forking.
+    // hashing and no forking — and of the kind the dimension declares. Under
+    // `legacy_random_source` the coin is java.util.Random, two forks around
+    // the name's String.hashCode: the aquifer lattice's primitive, measured
+    // on the server's legacy aquifer worlds, and exact out of sample on the
+    // golden Nether's bedrock floor and roof, where the Xoroshiro coin agrees
+    // at chance (SPEC §11; vanilla_legacy_gradient_gap_test.cpp). This build
+    // refused a legacy gradient by name until the executor ran that coin.
+    const bool legacy = noises != nullptr && noises->source() == density::RandomSource::Legacy;
     for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
         const Condition& condition = graph.condition(index);
-        if (condition.type != ConditionType::VerticalGradient) {
+        if (condition.type != ConditionType::VerticalGradient ||
+            executor.gradients_.contains(condition.randomName)) {
             continue;
         }
-        if (!executor.gradients_.contains(condition.randomName)) {
+        if (legacy) {
+            executor.gradients_.emplace(condition.randomName, rng::legacyPositionalSourceFor(
+                                                                  worldSeed, condition.randomName));
+        } else {
             executor.gradients_.emplace(condition.randomName,
                                         rng::positionalSourceFor(worldSeed, condition.randomName));
         }
@@ -433,9 +416,14 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
                 throw ExecutionError("no positional source for random_name '" +
                                      condition.randomName + "'");
             }
-            return verticalGradientFires(found->second, at.x, at.y, at.z,
-                                         condition.trueAtAndBelow.resolve(*geometry_),
-                                         condition.falseAtAndAbove.resolve(*geometry_));
+            const std::int32_t trueAtAndBelow = condition.trueAtAndBelow.resolve(*geometry_);
+            const std::int32_t falseAtAndAbove = condition.falseAtAndAbove.resolve(*geometry_);
+            return std::visit(
+                [&](const auto& source) {
+                    return verticalGradientFires(source, at.x, at.y, at.z, trueAtAndBelow,
+                                                 falseAtAndAbove);
+                },
+                found->second);
         }
 
         case ConditionType::YAbove: {

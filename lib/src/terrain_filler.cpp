@@ -322,18 +322,19 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // source the vein source has no oracle: every vanilla legacy dimension
     // has `ore_veins_enabled` false, and no probe has asked the server for
     // one. The legacy positional primitive itself is measured now, for the
-    // aquifer (rng::LegacyPositionalSource, SPEC §11), but how the vein
-    // source salts and draws from it is not, and the modern derivation is
-    // measured WRONG under a legacy source for the gradient, so running it
-    // would be the plausible-but-wrong world SPEC §8 forbids.
+    // aquifer and the gradient (rng::LegacyPositionalSource, SPEC §11), but
+    // how the vein source salts and draws from it is not, and the modern
+    // derivation is measured WRONG under a legacy source for the gradient,
+    // so running it would be the plausible-but-wrong world SPEC §8 forbids.
     //
     // On the FLAG, deliberately, and outside the veinsPlaceBlocks gate below.
     // With aquifers off the vein source is never built and no random is ever
     // drawn — a legacy pack with veins alone fills a chunk bit-identical to
     // the undoctored one (measured: FNV-1a 2b9f4b6af4ed174a both ways). But
-    // `validatePack` warns on the flag alone, and SPEC §11 says each of the
-    // three constructs is refused by name; a refusal that fires on one path
-    // and not the other is the disagreement this build exists to avoid.
+    // `validatePack` warns on the flag alone, and SPEC §11 says the vein
+    // source — the last of the three constructs still refused — is refused
+    // by name; a refusal that fires on one path and not the other is the
+    // disagreement this build exists to avoid.
     if (settings.oreVeinsEnabled && noises.source() == density::RandomSource::Legacy) {
         throw FillError(density::legacyConstructRefusal(
             "ore_veins_enabled",
@@ -462,42 +463,6 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                 "minecraft:surface (this dimension's rules read a column's surface depth, and no "
                 "minecraft:surface noise was built into the registry supplied to "
                 "ChunkFiller::compile)");
-        }
-        if (noises.source() == density::RandomSource::Legacy) {
-            // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11) —
-            // and it THROWS, exactly as the ore-vein refusal above does (the
-            // aquifer's, which sat beside it, is lifted: measured, SPEC §11).
-            // A first version of this recorded the refusal as an
-            // entry in blockedBy_ instead, which is the shape this function
-            // uses for "a caller did not supply something". That was the
-            // wrong shape for "this dimension is underivable": nothing on the
-            // public path (`world::CompiledDimension::compile`, which every
-            // native binding generates through) consults blockedBy_, so a
-            // doctored legacy pack with a gradient compiled clean and filled
-            // 13549 blocks with its surface rules silently dropped — the
-            // best-effort partial load SPEC §8 forbids. Measured, not
-            // supposed; the conformance case below drives that pack through
-            // CompiledDimension and asserts the throw.
-            //
-            // MEASURED WRONG, not merely unverified: this build's Xoroshiro
-            // vertical_gradient against the golden NETHER's bedrock agrees
-            // at chance, while the identical code on the modern overworld is
-            // exact — see tests/conformance/
-            // vanilla_legacy_gradient_gap_test.cpp.
-            const std::vector<std::string> names = surface::verticalGradientNames(*surfaceRules);
-            if (!names.empty()) {
-                std::string list;
-                for (const std::string& name : names) {
-                    list += (list.empty() ? "'" : ", '") + name + "'";
-                }
-                throw FillError(density::legacyConstructRefusal(
-                    "minecraft:vertical_gradient",
-                    "its random_name(s) " + list +
-                        " salt this dimension's own random source, which declares "
-                        "legacy_random_source; this build can only derive the modern one, and "
-                        "for this construct that derivation is measured to agree with vanilla "
-                        "at chance"));
-            }
         }
         if (needs.bandlands &&
             noises.find(data::ResourceLocation::parse("minecraft:clay_bands_offset")) == nullptr) {
