@@ -45,22 +45,23 @@ three presets, a first-pass-only and a veins-off run) identical before and
 after the cost cut on the merged tree. CI was dispatched on the push; its
 result was not seen before the session ended.
 
-**First: that CI run.** It regenerates the aquifer, end, legacy, surface
-and water probe shards cold. Two budgets are close enough to watch:
+**First: that CI run.** Read 2026-10-11: run 37954735377 on 169e4a7,
+green on every job. Both budgets below are comfortably met.
 
-- [ ] **The `end` probe shard** now also builds `nearsurface_*`,
-      `ties_*`, `fluidceiling_s42` and `farcell_s42` — about 35 minutes
-      estimated, not yet measured on a runner, against the probes job's
-      90. If it is the long pole, move units to a lighter shard in
-      `tools/probe-worlds` (its lint derives the shard count).
-- [ ] **The x86-64 conformance leg** took about 96 of its 150 minutes
-      before this batch (21 420 s of serial test time; ARM64 about 55),
-      and the batch adds several minute-long cases. If it nears the
-      limit: shard the leg, or run it on an optimised build. Either is a
-      CI design choice for the owner. The cost cut shortens the slowest
-      aquifer cases (locally, in Debug, the constant-surface level rule
-      550 s -> 163 s), so the leg may come in under its old figure —
-      unmeasured on a runner.
+- [x] **The `end` probe shard**, cold (cache miss on its new key): 28 min
+      57 s against the probes job's 90, including `nearsurface_*`,
+      `ties_*`, `fluidceiling_s42` and `farcell_s42`. The `aquifer` shard,
+      also cold, 24 min 51 s. The `legacy`, `surface` and `water` shards
+      hit their caches (their keys had not moved), so they were not
+      regenerated on this run.
+- [x] **The x86-64 conformance leg**: 68 min 49 s of its 150 (ctest's
+      wall clock 3910 s; 14 764 s of serial test time, against about 96 min
+      / 21 420 s before the batch — the cost cut more than paid for the
+      batch's new cases). ARM64: 57 min 42 s (3255 s wall, 11 566 s
+      serial). Both 166 cases, 157 run and passed, 9 skipped, every
+      skip listed in `expected-skips.txt` (`tools/check-skips`: "157 ran,
+      9 did not; expected: 9 no-generator"). No sharding or optimised build
+      is needed yet.
 
 **Docs sweep — wording only, no code, no output change.** Each was
 verified against the code during the audit; anchors are phrases to
