@@ -84,6 +84,13 @@ target_link_libraries(stratum_legacy_aquifer_analyze PRIVATE stratum::core ZLIB:
 target_include_directories(stratum_legacy_aquifer_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 stratum_configure_target(stratum_legacy_aquifer_analyze)
 
+# The legacy-source ore-vein probe's readback (legacy-orevein-probe.sh). It
+# scores each arm through the library's own vein gate and VeinSource, so it
+# is a target for the same reason the aquifer analyzers are.
+add_executable(stratum_legacy_orevein_analyze legacy-orevein-analyze.cpp)
+target_link_libraries(stratum_legacy_orevein_analyze PRIVATE stratum::core ZLIB::ZLIB)
+stratum_configure_target(stratum_legacy_orevein_analyze)
+
 # The surface scan's readings (aquifer-ties-probe.sh). Its scorer reads probe
 # regions through the conformance cases' own support headers, and
 # tests/conformance/vanilla_aquifer_ties_test.cpp runs the same scorer, so it
