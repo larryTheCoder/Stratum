@@ -736,17 +736,26 @@ TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the re
         "minecraft:granite", "minecraft:copper_ore",         "minecraft:raw_copper_block",
         "minecraft:tuff",    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block"};
 
-    for (const char* name : {"minecraft:test_netherrack", "minecraft:test_deepslate"}) {
+    // Each dimension with the properties its default_block must parse to: the
+    // "without its properties" half of this case means nothing unless the
+    // deepslate the filler is held to really carries its axis.
+    const std::array<std::pair<const char*, std::map<std::string, std::string>>, 2> dimensions{{
+        {"minecraft:test_netherrack", {}},
+        {"minecraft:test_deepslate", {{"axis", "x"}}},
+    }};
+    for (const auto& [name, properties] : dimensions) {
         INFO("dimension " << name);
         const auto& settings = settingsOf(name);
         const auto& declared = settings.defaultBlock;
         REQUIRE(declared.name != stone.name);
+        REQUIRE(declared.properties == properties);
         const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings);
         long long veinBlocks = 0;
         long long defaultBlocks = 0;
         long long wrongVein = 0;
         long long wrongDefault = 0;
         long long wrongOther = 0;
+        long long otherBlocks = 0;
         for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{3, -2}}) {
             ChunkBuffer stoneBuffer(stoneSettings.geometry);
             ChunkBuffer buffer(settings.geometry);
@@ -765,20 +774,26 @@ TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the re
                             ++defaultBlocks;
                             wrongDefault += ours == declared ? 0 : 1;
                         } else {
+                            ++otherBlocks;
                             wrongOther += ours == control ? 0 : 1;
                         }
                     }
                 }
             }
         }
-        INFO(veinBlocks << " vein blocks and " << defaultBlocks << " default blocks");
+        INFO(veinBlocks << " vein blocks, " << defaultBlocks << " default blocks, " << otherBlocks
+                        << " water or air");
         CHECK(wrongVein == 0);
         CHECK(wrongDefault == 0);
         CHECK(wrongOther == 0);
         // About 70% of 2 * 9 * 256 iron candidates, and the solid rest: not
-        // vacuous either way.
+        // vacuous either way. The plane is solid only below y = 0, so the
+        // dimension's y 0..31 (water to sea level 8, air above) is what
+        // `wrongOther` reads; the three branches cover every position.
         CHECK(veinBlocks > 2000);
         CHECK(defaultBlocks > 2000);
+        CHECK(otherBlocks > 2000);
+        CHECK(veinBlocks + defaultBlocks + otherBlocks == 2LL * 16 * 16 * settings.geometry.height);
     }
 }
 
