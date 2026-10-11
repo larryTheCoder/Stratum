@@ -281,6 +281,7 @@ to bump the version and be called out; this is that call-out.
 | 11 | **An aborted scan's status is A_lava, -54 and lava** (§11, "An aborted scan's status is A_lava"). The aborting near-surface floor, an aborted cell off the near-surface path (v5) and one under Q5.9's override (v6) read lambda, typed as the cell's own fluid; the server holds Q1.1's A_lava there, the literal -54 and lava, on all three (`aquifer-lowfloor-probe.sh`, two seeds: the build exact on every sampled block and mark, v10's reading refuted on 8 938 to 18 209 blocks an arm). Changes blocks and fluid-update flags only where `sea_level` < -54; at or above it the floor's type is unobservable. No golden block changes. v10 had reached only this development branch; bumped rather than amended because a v10 blob could exist. |
 | 12 | **Q5.3(a) off the ocean branch** (§11, "The level rule on a constant surface, block for block"). A cell whose scan did not abort and whose centre sits more than twenty above the scan's `cap` takes the sea before any floodedness is weighed, on land as on the ocean branch; v11 applied the clause only on the near-surface path. Replayed through the filler at every column of `aquifer-level-probe.sh`'s 255 constant-surface worlds (three seeds, 556 964 848 blocks from y -51 up) the build is exact, and v11's reading parts from the server on 3 324 blocks, every one held the new way. Changes blocks where a land surface sits more than twenty below a source centre; no golden block changes. `cap` against the anchor (the spec's a0) is carried, not measured: a constant surface makes them one number. v11 had reached only this development branch; bumped rather than amended because a v11 blob could exist. |
 | 13 | **The surface scan, read sample by sample: the clean-room Q5.3 as written** (§11, "The surface scan, sample by sample"). Q5.3(a) compares a source's centre with the ANCHOR's surface (v12: the scan's `cap`); otherwise the first sample in scan order that is submerged and that the centre clears by less than four decides, the sea for a clean sample and A_lava for an aborting one, whether or not a later sample aborts (v12: an aborted scan took the sea only at or above lambda and more than twenty above `cap`, else A_lava); a scan where no sample fires takes the level rule on `cap` even when it aborted. `aquifer-ties-probe.sh` builds surfaces that part each v12 choice from the spec's: on both seeds the build is exact on every scored block and fluid-update mark, and v12's reading is wrong wherever it parts (106 393, 64 913, 24 761 + 6 472 marks, 1 628, 1 780 and 14 blocks by kind). Changes blocks only over varying surfaces with an aborting or submerged scan window; no golden block changes. v12 had reached only this development branch; bumped rather than amended because a v12 blob could exist. |
+| 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7; v13 compared in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on the word of one world that does not replicate (the same recipe at the same seed is the aquifers-on world block for block). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -444,13 +445,16 @@ constants, derived functions, or the three legacy climate noises. Any other
 default fluid is refused by name, because no vanilla dimension that enables
 aquifers has one, so nothing can say what it should be: the water-over-lava
 exception (Q6.3) and the lava-against-water pressure (Q6.4) part from "the
-default fluid". `stratum validate` warns on it. Ore veins under
-`legacy_random_source` stay refused by name: the vein source has no oracle.
-`default_block` need not be stone: where the aquifer decides solid the
-filler writes that state whole, as for positive density (Q6.7). Measured
-against the server with netherrack and with deepslate[axis=x], a state that
-spells out a non-default property (§11); a state that leaves properties
-out has not been.
+default fluid". `stratum validate` warns on it. Ore veins are supported at
+Tier A under either random source, with or without aquifers: the legacy vein
+source is measured on a constructed probe (§11, "Ore veins under the legacy
+source"; it was refused by name until then — since closed). `default_block`
+need not be stone: where the aquifer decides solid the filler writes that
+state whole, as for positive density (Q6.7), and a vein replaces it with the
+same blocks it puts over stone. Both measured against the server with
+netherrack and with deepslate[axis=x], a state that spells out a
+non-default property (§11); a state that leaves properties out has not
+been.
 
 The overworld's two other presets, `minecraft:amplified` and
 `minecraft:large_biomes`, are the overworld's settings with other terrain and
@@ -670,7 +674,14 @@ mapping has two halves, split at a platform-neutral midpoint:
   independent in the real server: ore veins are gated on the same enable
   path aquifers use, even where the fluid logic itself never fires.
   `ore::veinsPlaceBlocks` is that observation and nothing more; it is a
-  measured coupling, not a claim about why.
+  measured coupling, not a claim about why. **Retracted since: it does not
+  replicate** (§11, "Ore veins under the legacy source"). The same recipe at
+  the same seed, 13579, is the aquifers-on world block for block with
+  aquifers off — 0 of 6291456 differing, 14373 vein blocks in each — and so
+  are the legacy probe's aquifers-off arms at four seeds under both random
+  sources. The world that read 6291456 of 6291456 stone is not on disk, so
+  what went wrong in it cannot be said. `ore::veinsPlaceBlocks` is gone and
+  engine v14 places veins wherever `ore_veins_enabled` is set.
 
   *The deterministic gate, confirmed with ZERO exceptions.* The y-range
   (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
@@ -711,7 +722,10 @@ mapping has two halves, split at a platform-neutral midpoint:
   set the largest draw on a touched block and the smallest on an untouched
   one pin membership into `(0.6999681, 0.7000110]`; 0.6973 reads 99.752%
   and 0.71 reads 99.022%, so only 0.7 is exact. The raw roll brackets to
-  `(0.0199925, 0.0200130]` the same way.
+  `(0.0199925, 0.0200130]` the same way. (A draw of exactly 0.7F has since
+  been seen to be a member, five times under both random sources: the
+  comparison is the float draw widened to double against 0.7, which engine
+  v14 makes and v13 did not — §11, "Ore veins under the legacy source".)
 
   *Why the earlier search missed it, which is the part worth keeping.* The
   membership roll was described throughout as a "30% membership roll", and
@@ -774,6 +788,11 @@ mapping has two halves, split at a platform-neutral midpoint:
   * `nextFloat()` vs `nextDouble()`. One `nextLong()` backs both, and no
     row of the 79790 lands between the two precisions, so both read
     100.000%. Separating them needs a probe that takes a FOURTH draw.
+    *Since answered for draws 1 and 2* (§11, "Ore veins under the legacy
+    source"): under java.util.Random a nextDouble takes two LCG steps, so
+    the legacy probe reads each draw's method off the draws after it —
+    nextFloat for both; and under Xoroshiro seed 2's two 0.7F positions
+    refute nextDouble for draw 1. Draw 3's stays unobservable.
   * whether draw 2 is consumed when `vein_gap <= -0.3`. Nothing downstream
     reads this position's stream — every position gets its own
     `.at(x, y, z)` generator, so there is no ordering between blocks at all
@@ -4081,11 +4100,13 @@ Open:
   *The instrument.* `tools/analysis/aquifer-cost-bench.cpp`, a build
   target, fills vanilla's own overworld (or `amplified`, `large_biomes`)
   from the fetched pack exactly as `world::CompiledDimension` does, with
-  aquifers, ore veins and the surface pass each switchable. Veins are gated
-  on aquifers by the engine itself, so the aquifer's share is "veins off"
-  against "aquifers off". It times `ChunkFiller::fill` alone — the first
-  pass and the surface rules, not the biome fill or the packing — as
-  process CPU time, each chunk's fastest of several passes. Every run also
+  aquifers, ore veins and the surface pass each switchable. Veins were
+  gated on aquifers by the engine itself, so the aquifer's share is "veins
+  off" against "aquifers off" (engine v13; since v14 veins no longer follow
+  aquifers off — §11, "Ore veins under the legacy source"). It times
+  `ChunkFiller::fill` alone — the first pass and the surface rules, not the
+  biome fill or the packing — as process CPU time, each chunk's fastest of
+  several passes. Every run also
   writes a byte dump of every block state and every fluid-update mark, in
   order, which is how "no block moved" below is checked. On a 4-core box
   shared with other work, wall time wanders by about ten percent, so the
@@ -6896,6 +6917,9 @@ Open:
   and is derived from it (the next entry, "The aquifer under the legacy
   source"). So is the gradient's, on the same primitive ("The gradient's
   refusal, lifted", in that entry); the vein source is still refused.
+  *Since closed for the vein source too* ("Ore veins under the legacy
+  source", after that entry): all three are derived from the declared
+  source, and none is refused.
 
   Two shapes were wrong on the way here and are recorded because each let a
   constructed pack through. The gradient refusal was first landed as a
@@ -6956,7 +6980,9 @@ Open:
   65536 of 65536 on every row of that table. The gradient's refusal stood
   until the executor ran that coin, and it does now ("The gradient's
   refusal, lifted", in that entry); the ore source is still refused on the
-  structural argument alone, with no probe of its own.
+  structural argument alone, with no probe of its own. *Since closed:* it
+  has a probe of its own now, and the same primitive is exact for it ("Ore
+  veins under the legacy source").
 
   *What this closed.* A legacy dimension naming no noise whose surface rule
   used vanilla's bedrock-floor gradient used to compile clean
@@ -7120,9 +7146,144 @@ Open:
   generates them.
 
   *Still open.* The ore-vein source under the legacy source (no probe asks
-  for it), and a legacy dimension whose aquifer reads vanilla's named
-  aquifer noises (refused by `NoiseRegistry::create`, for the named-noise
-  seeding question in the entries below, not for the lattice).
+  for it) — *since closed*, next entry — and a legacy dimension whose
+  aquifer reads vanilla's named aquifer noises (refused by
+  `NoiseRegistry::create`, for the named-noise seeding question in the
+  entries below, not for the lattice).
+
+- **Ore veins under the legacy source, measured: the same three draws from
+  java.util.Random — and, on the way, two corrections to the modern veins
+  (M3/M4, pipeline engine v14).** The vein source was the last construct a
+  legacy dimension draws from its declared random source that was still
+  refused by name, for want of an oracle. `tools/analysis/legacy-orevein-probe.sh`
+  makes one: eight dimensions a world, each a solid column
+  (`raw_final_density` +1, so every block of both vein ranges is the
+  default block before the veins look at it) with `ore_veins_enabled` and
+  `aquifers_enabled` on, every aquifer input the constant 0, `vein_ridged`
+  -1, `vein_gap` 0, and `vein_toggle` a `y_clamped_gradient` at -0.7 up to
+  y -1 and +0.7 from y 0 — so every block of iron's and copper's ranges is a
+  candidate, and the ore chance is the clamp's top, 0.3. 1 703 936
+  candidates an arm over the force-loaded 8x8 chunks. Nothing names a
+  noise, the biome has no features or carvers and the surface rule never
+  fires, so the veins are the only consumer of the random source. The arms:
+  `lv` (legacy) and `mv` (its flag-off control); `nv` and `dv`, `mv` over
+  netherrack and over deepslate[axis=x]; `or` and `lr`, `mv` and `lv` with a
+  constant toggle built to part the ore roll's two comparisons (below);
+  `la` and `ma`, `lv` and `mv` with aquifers off. `lv` and `mv` differ on
+  1 068 829-1 069 573 of the 1 818 624 blocks in y -60..50 at each seed:
+  the flag reached the veins. Read by `tools/analysis/legacy-orevein-analyze.cpp`,
+  which scores every candidate, name for name, under the library's
+  `ore::VeinSource` and a family of models beside it.
+
+  *H0, and a single miss.* H0 was the aquifer's legacy primitive salted
+  `"minecraft:ore"` — `legacyPositionalSourceFor(worldSeed,
+  "minecraft:ore").at(x, y, z)` — with the modern draws, each
+  java.util.Random's `nextFloat`, compared as the library compared them.
+  At seed 42 and its 48-bit twin it is exact on `lv`, 1 703 936 of
+  1 703 936. At 31337 it is 1 703 935: at (38, -31, 7) the first draw is
+  0.7F exactly (`next(24)` = 11744051) and the server wrote
+  `deepslate_iron_ore` where H0, comparing `draw < 0.7F`, leaves stone. The
+  rule was refined to the one reading that admits it — the draw widened to
+  double against 0.7, equivalently "a draw of 0.7F is a member" — and frozen
+  at 2026-10-11 15:33 UTC. Then the analyzer's `bucket` mode searched seeds
+  for 0.7F first draws inside the window from the RNG alone: legacy ones at
+  seed 14 (47, -38, 94) and 15 (62, 31, 113), Xoroshiro ones at seed 2
+  (24, -45, 22) and (24, 45, 22), and none at 8675309. Generated after the
+  freeze, all four worlds are exact under the refined rule (1 703 936 of
+  1 703 936 on `lv` and on `mv`), and every one of the four positions is a
+  vein block the float comparison would have left as the default block —
+  `deepslate_iron_ore` at 14, granite at 15, `deepslate_iron_ore` and
+  `copper_ore` at 2. So the MODERN veins had it wrong too: engine v13
+  compared in float. The two readings part on 2^-24 of candidates and
+  nowhere else, which is why 79 790 modern rows never showed it.
+
+  *The nulls, and the separation.* A wrong field agrees by chance on
+  sum p² over the four outcomes (0.3, 0.49, 0.2058, 0.0042) = 37.25%. The
+  shipped Xoroshiro source on `lv` reads 634 363, 635 015, 635 107 and
+  634 714 of 1 703 936 at 42, 31337, the twin and 2 (37.2-37.3%); H0 at a
+  wrong seed (seed + 1) 635 199, 634 264, 635 199 and 635 477; and the
+  legacy source on `mv` the same as the first row. The twin's `lv` replays
+  exactly with seed 42's legacy source, as java.util.Random keeping 48 bits
+  says it must, and its `mv` against seed 42's Xoroshiro source reads
+  850 047 (49.9%). (Xoroshiro fields of nearby world seeds are not
+  independent: at a wrong seed they read 23.7-49.9% on `mv`, not 37%. Still
+  nowhere near exact.)
+
+  *nextFloat or nextDouble, now observable.* Under java.util.Random
+  `nextFloat` takes one LCG step and `nextDouble` two, so a draw's method
+  shows in every draw after it. Scored on `lv`: `nextDouble` for draw 1
+  reads 70.05% (1 193 648 at 42), for draw 2 99.17% (1 689 846), and for
+  draw 3 the same as `nextFloat` on every seed — its two precisions agree
+  on the top 24 bits and nothing follows it. So draws 1 and 2 are
+  `nextFloat`, and draw 3 stays open. Under Xoroshiro, seed 2's two 0.7F
+  positions refute `nextDouble` for draw 1 as well: the 53-bit value of the
+  same `nextLong` sits above 0.7 at both, where the server placed a vein.
+
+  *The ore roll compares in float.* A 24-bit draw f and a chance c compare
+  differently in float and in double only where (float) c rounds DOWN onto
+  f; for membership that is the 0.7F bucket, for the raw roll nowhere
+  (0.02F is not on the 24-bit grid), and for the ore roll only at a chance
+  built to do it. The analyzer's `oreroll` mode chose, from the RNG alone,
+  one member position per source at seed 42 whose second draw is in
+  [0.25, 0.3) — (58, 20, 0) under Xoroshiro, (20, 20, 0) under the legacy
+  source — and a constant toggle putting the chance a quarter of a float
+  ulp above it (0.59730469733476643 for `or`, 0.57947951108217244 for
+  `lr`). Frozen at 15:38 UTC, before the worlds existed: in double the roll
+  is won there, in float it is lost. The server wrote granite at both, so
+  the ore roll compares the draw with the chance rounded to float, which is
+  what the library already did. Both arms are otherwise exact at all four
+  seeds (802 816 and 737 280 candidates).
+
+  *A non-stone default_block takes the same veins.* `nv` and `dv` are exact
+  under the shipped source at every seed, and against `mv` they differ only
+  where `mv` holds stone (5 096 971-5 098 974 blocks, all netherrack
+  against stone for `nv`): every vein block is the same block, and every
+  other block is the arm's own default_block, deepslate's `axis=x`
+  included. The filler gates the vein on `default_block`, so it predicted
+  exactly this; nothing changes.
+
+  *Veins do not need aquifers — a measurement retracted.* §10's M3 entry
+  recorded a world with veins on and aquifers off that came back as
+  unbroken stone, and the filler gated veins on both flags since. `la` and
+  `ma` contradict it: each is its aquifers-on twin block for block, 0 of
+  6 291 456 differing, at all four seeds and under both sources. To rule
+  out the constant inputs, the original recipe was rebuilt at the original
+  seed (13579: vanilla's real vein entries, `size_vertical` 2,
+  `default_fluid` air) with aquifers on and off — 0 of 6 291 456 differ,
+  14 373 vein blocks in each — and again with every `interpolated` stripped
+  from the vein entries (identical too). The original world is not on
+  disk, so why it read stone cannot be said; the recipe it records does not
+  do it now.
+
+  *What ships.* `ore::VeinSource` takes the dimension's
+  `density::RandomSource` as a required argument with no default, as the
+  aquifer's `CentreSource` does, and `ChunkFiller::compile` passes the
+  registry's own; under the legacy source the three draws come from
+  `rng::legacyPositionalSourceFor(worldSeed, "minecraft:ore")`. The refusal
+  in `ChunkFiller::compile` and the warning in `stratum validate` are gone,
+  and with no construct left to refuse so is
+  `density::legacyConstructRefusal`. Engine v14 (§6) carries the two modern
+  corrections: membership compares the widened draw with 0.7, and veins are
+  placed wherever `ore_veins_enabled` is set. The legacy lift alone would
+  not have moved the version: every block it changes was refused before.
+  Pinned by `tests/conformance/vanilla_orevein_legacy_test.cpp` — every arm
+  at every seed exact under its own source over the whole window, under 40%
+  under the other (on every fourth column), its non-candidate blocks the
+  default block, the twin, the five comparison positions read off the
+  server directly, and the shipped filler, compiled from each arm's own spec
+  through the registry its flag selects, state-exact on five chunks an arm
+  holding every one of those positions — and, with no corpus, by
+  `ore_vein_test.cpp` (the legacy draws reproduced by hand from
+  `legacyPositionalSourceFor`, the 48-bit twin, and the five 0.7F and two
+  ore-roll positions as known answers) and `terrain_filler_test.cpp` (the
+  filler under each source equals `VeinSource` with that source, the two
+  differ, and aquifers off places the same veins). The four corpora are
+  units of `tools/probe-worlds`' legacy shard; 8675309, 14 and 15 confirmed
+  the rule and are not.
+
+  *Still open.* Draw 3's method; whether draw 2 is taken when
+  `vein_gap <= -0.3` (nothing downstream reads the stream); and why the
+  first coupling world read stone.
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is
