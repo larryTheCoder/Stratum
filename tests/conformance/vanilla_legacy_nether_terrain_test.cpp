@@ -35,13 +35,13 @@
 // So this build cannot reproduce WHICH solid a position holds. It can
 // reproduce WHETHER the position is solid, and that is the terrain chain.
 //
-// AND THE SURFACE RULES ARE REFUSED FOR A SECOND REASON NOW, which is worth
-// stating here because it is what makes the exclusion below permanent rather
-// than pending: the tree's two `vertical_gradient` conditions draw from the
-// DIMENSION'S declared random source, and under a legacy source that
-// derivation is measured to agree with vanilla's own bedrock at chance
-// (vanilla_legacy_gradient_gap_test.cpp). Solving the named-noise seeding
-// alone would not make this tree runnable.
+// THE SURFACE RULES WERE ONCE REFUSED FOR A SECOND REASON, and are not any
+// more: the tree's two `vertical_gradient` conditions draw from the
+// DIMENSION'S declared random source, and the Xoroshiro coin this build first
+// had agrees with vanilla's own bedrock at chance. The legacy coin is
+// measured since and the executor runs it — exact on this dimension's golden
+// bedrock (vanilla_legacy_gradient_gap_test.cpp) — so the named-noise
+// seeding is the one thing that keeps this tree from running.
 //
 // Hence the comparison is over a CLASS, not a block name:
 //

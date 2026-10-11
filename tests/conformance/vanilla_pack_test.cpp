@@ -205,10 +205,10 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
             std::string::npos) {
             continue;
         }
-        // TWO KINDS NOW, and keeping them apart is the point of this block.
-        // A refusal naming a CONSTRUCT rather than a noise says the phrase
-        // "and needs" — those are the gradient / aquifer / vein refusals
-        // (SPEC §11), and they are reported per construct.
+        // TWO KINDS, and keeping them apart is the point of this block. A
+        // refusal naming a CONSTRUCT rather than a noise says the phrase
+        // "and needs" — the vein refusal is the one left of three; the
+        // aquifer's and the gradient's are lifted, both measured (SPEC §11).
         if (finding.message.find("legacy_random_source and needs") != std::string::npos) {
             constructsRefused.push_back(finding.subject);
         } else {
@@ -233,16 +233,13 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
                                                "minecraft:floating_islands surface_rule",
                                                "minecraft:nether surface_rule"});
 
-    // AND THE CONSTRUCTS, one warning per `vertical_gradient` random_name.
-    // The End has none, which is why it still generates. No aquifer or vein
-    // warning appears because every vanilla legacy dimension has both flags
-    // off — asserted, so that a pack turning one on would show up here
+    // AND THE CONSTRUCTS: none. This read six — one warning per
+    // `vertical_gradient` random_name in caves, floating_islands and the
+    // Nether — until the executor ran the measured legacy coin (SPEC §11).
+    // No vein warning appears because every vanilla legacy dimension has the
+    // flag off — asserted, so that a pack turning it on would show up here
     // rather than silently taking the modern derivation.
-    CHECK(constructsRefused ==
-          std::vector<std::string>{
-              "minecraft:caves surface_rule", "minecraft:caves surface_rule",
-              "minecraft:caves surface_rule", "minecraft:floating_islands surface_rule",
-              "minecraft:nether surface_rule", "minecraft:nether surface_rule"});
+    CHECK(constructsRefused.empty());
     for (const stratum::validate::Finding& finding : report.findings) {
         INFO(finding.subject << ": " << finding.message);
         CHECK(finding.message.find("aquifers_enabled") == std::string::npos);
