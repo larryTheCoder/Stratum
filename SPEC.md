@@ -7240,7 +7240,9 @@ Open:
   against stone for `nv`): every vein block is the same block, and every
   other block is the arm's own default_block, deepslate's `axis=x`
   included. The filler gates the vein on `default_block`, so it predicted
-  exactly this; nothing changes.
+  exactly this; nothing changes. `terrain_filler_test.cpp` now holds it with
+  no corpus: a fill over netherrack and one over deepslate[axis=x] carry the
+  stone fill's vein blocks exactly, and their own state everywhere else.
 
   *Veins do not need aquifers — a measurement retracted.* §10's M3 entry
   recorded a world with veins on and aquifers off that came back as
@@ -7278,9 +7280,11 @@ Open:
   `legacyPositionalSourceFor`, the 48-bit twin, and the five 0.7F and two
   ore-roll positions as known answers) and `terrain_filler_test.cpp` (the
   filler under each source equals `VeinSource` with that source, the two
-  differ, and aquifers off places the same veins). The four corpora are
-  units of `tools/probe-worlds`' legacy shard; 8675309, 14 and 15 confirmed
-  the rule and are not.
+  differ, aquifers off places the same veins, and a netherrack or
+  deepslate[axis=x] default_block takes the stone fill's vein blocks and
+  keeps its own state elsewhere). The four corpora are units of
+  `tools/probe-worlds`' legacy shard; 8675309, 14 and 15 confirmed the rule
+  and are not.
 
   *Still open.* Draw 3's method; whether draw 2 is taken when
   `vein_gap <= -0.3` (nothing downstream reads the stream); and why the
