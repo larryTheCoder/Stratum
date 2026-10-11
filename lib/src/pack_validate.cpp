@@ -221,35 +221,24 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // dimensions that most need this answer. `wanted`, below, is the
         // router's reach, which is the right question for the fifteen
         // entries and the wrong one for "will this dimension generate".
-        // Generation additionally needs:
+        // Generation additionally needs the surface rule tree's noises —
+        // surface::requiredNoises(), which is a SUPERSET of what the tree
+        // spells, since `minecraft:surface`, `surface_secondary` and
+        // `clay_bands_offset` appear in no field of it.
         //
-        //   * the surface rule tree's noises — surface::requiredNoises(),
-        //     which is a SUPERSET of what the tree spells, since
-        //     `minecraft:surface`, `surface_secondary` and
-        //     `clay_bands_offset` appear in no field of it;
-        //   * and, under a legacy source, a random for the ore-vein source.
-        //     It is not a noise, does not pass through `wanted`, and is
-        //     refused by name where it is built (SPEC §11). The aquifer
-        //     lattice's random and every `vertical_gradient`'s were the
-        //     other two, and both are measured and run.
+        // Nothing else a legacy dimension draws from its declared source is
+        // warned about: the aquifer lattice, every `vertical_gradient` and
+        // the ore-vein source each draw a positional random from it, none
+        // passes through `wanted`, and all three are measured and run under
+        // the legacy source (SPEC §11). A legacy aquifer that names
+        // vanilla's aquifer noises is reported below, by the router's noise
+        // refusal.
         //
         // Without this a legacy dimension naming noises only in its surface
         // rule validated clean and then did not generate. These are warnings
         // and are NOT folded into routerEntries/dimensionsChecked: those
         // counts answer a narrower question on purpose, and widening them
         // would make the headline number mean something else again.
-        //
-        // The vein flag first, OUTSIDE the surface rule's `try`: it does not
-        // need the rule tree, and a dimension whose surface rule did not
-        // resolve used to lose this warning behind that rule's error.
-        // `aquifers_enabled` is not warned about: its legacy derivation is
-        // measured (SPEC §11), and a legacy aquifer that names vanilla's
-        // aquifer noises is reported below, by the router's noise refusal.
-        if (source == density::RandomSource::Legacy && dimension.oreVeinsEnabled) {
-            add(report, Severity::Warning, id.toString(),
-                density::legacyConstructRefusal("ore_veins_enabled",
-                                                "the vein source is drawn from that source"));
-        }
         try {
             const surface::RuleGraph rules = surface::RuleGraph::resolve(dimension.surfaceRule, id);
             const std::vector<data::ResourceLocation> surfaceWanted =

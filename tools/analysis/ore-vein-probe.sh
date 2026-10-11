@@ -67,6 +67,14 @@
 # is recorded as a hypothesis for the coupling, not a claim about the
 # implementation.
 #
+# RETRACTED SINCE: THE COUPLING DOES NOT REPLICATE. This recipe at 13579,
+# the seed probes/orevein records, with aquifers off is the aquifers-on world
+# block for block (0 of 6291456 differing, 14373 vein blocks in each), and so
+# are legacy-orevein-probe.sh's aquifers-off arms at four seeds under both
+# random sources. The first world is not on disk; engine v14 places veins on
+# ore_veins_enabled alone (SPEC §11, "Ore veins under the legacy source").
+# aquifers_enabled stays true here, which changes nothing.
+#
 # CONFIRMED, across five seeds and 25608 real non-stone blocks
 # (`tools/analysis/ore-vein-analyze.cpp`), with ZERO exceptions on every
 # deterministic gate: the y-range, the type/sign correspondence, the

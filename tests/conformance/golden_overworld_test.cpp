@@ -192,7 +192,7 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
             stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
                                            .height = settings.geometry.cellHeight()});
         stratum::density::Interpreter::CornerCache veinCache(veinReader.cacheSize());
-        const stratum::ore::VeinSource veins(seed);
+        const stratum::ore::VeinSource veins(seed, stratum::density::RandomSource::Xoroshiro);
         const auto toggleNode = settings.router.at(stratum::settings::RouterEntry::VeinToggle);
         const auto ridgedNode = settings.router.at(stratum::settings::RouterEntry::VeinRidged);
         const auto gapNode = settings.router.at(stratum::settings::RouterEntry::VeinGap);
