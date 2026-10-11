@@ -7250,8 +7250,9 @@ Open:
   out the constant inputs, the original recipe was rebuilt at the original
   seed (13579: vanilla's real vein entries, `size_vertical` 2,
   `default_fluid` air) with aquifers on and off — 0 of 6 291 456 differ,
-  14 373 vein blocks in each — and again with every `interpolated` stripped
-  from the vein entries (identical too). The original world is not on
+  14 373 vein blocks in each; `ore-vein-probe.sh` now carries the
+  aquifers-off twin as its `ova` arm — and again with every `interpolated`
+  stripped from the vein entries (identical too). The original world is not on
   disk, so why it read stone cannot be said; the recipe it records does not
   do it now.
 

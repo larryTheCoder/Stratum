@@ -323,9 +323,9 @@ EXEMPT = {
                           "density-probe.sh's seed guard",
     'end-islands-field-probe.sh': 'read only by end-islands-analyze, which is not a CTest',
     'final-density-probe.sh': 'needs a --targets file the repository does not carry',
-    'ore-vein-probe.sh': 'writes probes/orevein/ov, but the ore-vein cases read orevein-multi/ and '
-                         'orevein-heldout/ (no-generator in expected-skips.txt) until a per-seed '
-                         'wrapper exists',
+    'ore-vein-probe.sh': 'writes probes/orevein/{ov,ova}, but the ore-vein cases read '
+                         'orevein-multi/ and orevein-heldout/ (no-generator in '
+                         'expected-skips.txt) until a per-seed wrapper exists',
 }
 
 SHARDS = list(dict.fromkeys(u['shard'] for u in UNITS))
