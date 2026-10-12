@@ -38,7 +38,6 @@ using stratum::data::ResourceLocation;
 using stratum::settings::LoadedSettings;
 using stratum::settings::NoiseSettings;
 using stratum::settings::RouterEntry;
-using stratum::settings::SettingsError;
 
 class TempTree {
 public:
@@ -56,12 +55,12 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
-    const TempTree& define(std::string_view name, std::string_view json) const {
-        return write("density_function", name, json);
+    void define(std::string_view name, std::string_view json) const {
+        write("density_function", name, json);
     }
 
-    const TempTree& defineSettings(std::string_view name, const nlohmann::json& json) const {
-        return write("noise_settings", name, json.dump());
+    void defineSettings(std::string_view name, const nlohmann::json& json) const {
+        write("noise_settings", name, json.dump());
     }
 
     [[nodiscard]] Pack pack() const { return Pack::open(path_); }
@@ -69,11 +68,9 @@ public:
     [[nodiscard]] LoadedSettings load() const { return stratum::settings::loadAll(pack()); }
 
 private:
-    const TempTree& write(std::string_view registry, std::string_view name,
-                          std::string_view json) const {
+    void write(std::string_view registry, std::string_view name, std::string_view json) const {
         std::ofstream out(path_ / registry / (std::string(name) + ".json"));
         out << json;
-        return *this;
     }
 
     [[nodiscard]] static std::string uniqueName() {

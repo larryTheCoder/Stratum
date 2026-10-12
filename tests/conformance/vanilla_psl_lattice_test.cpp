@@ -104,6 +104,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -673,11 +674,11 @@ TEST_CASE("the preliminary surface level is sampled every 16 blocks, measured by
         {2, false, 4108, 36480},  {4, false, 2150, 36096},  {8, false, 3004, 35328},
         {16, false, 33792, 33792}};
     for (const auto& row : expected) {
-        char name[8];
-        std::snprintf(name, sizeof(name), "%c_c%02d", row.alongX ? 's' : 't', row.by);
-        const Readback shifted(world, root / name);
+        std::array<char, 8> name{};
+        std::snprintf(name.data(), name.size(), "%c_c%02d", row.alongX ? 's' : 't', row.by);
+        const Readback shifted(world, root / name.data());
         const Score got = equivariance(shifted, base, row.by, row.alongX);
-        INFO(name << ": " << got.hits << " of " << got.total);
+        INFO(name.data() << ": " << got.hits << " of " << got.total);
         CHECK(got.total == row.total);
         CHECK(got.hits == row.hits);
         // The statement, rather than the individual counts: a shift by a
@@ -704,11 +705,11 @@ TEST_CASE("the same pitch at a second seed", "[conformance][surface]") {
         {8, {1130, 35328}},
         {16, {33792, 33792}}};
     for (const auto& [by, counts] : expected) {
-        char name[8];
-        std::snprintf(name, sizeof(name), "s_c%02d", by);
-        const Readback shifted(world, root / name);
+        std::array<char, 8> name{};
+        std::snprintf(name.data(), name.size(), "s_c%02d", by);
+        const Readback shifted(world, root / name.data());
         const Score got = equivariance(shifted, base, by, true);
-        INFO(name << " at seed 31337: " << got.hits << " of " << got.total);
+        INFO(name.data() << " at seed 31337: " << got.hits << " of " << got.total);
         CHECK(got.total == counts.second);
         CHECK(got.hits == counts.first);
         CHECK((by % 16 == 0) == (got.hits == got.total));
@@ -953,11 +954,11 @@ TEST_CASE("the lattice cell is found with floorDiv, measured below zero",
     // And the pitch, by translation, at negative coordinates.
     for (const auto& [by, hits] : std::vector<std::pair<int, bool>>{
              {1, false}, {2, false}, {4, false}, {8, false}, {16, true}}) {
-        char name[8];
-        std::snprintf(name, sizeof(name), "s_c%02d", by);
-        const Readback shifted(world, root / name);
+        std::array<char, 8> name{};
+        std::snprintf(name.data(), name.size(), "s_c%02d", by);
+        const Readback shifted(world, root / name.data());
         const Score got = equivariance(shifted, base, by, true);
-        INFO(name << " below zero: " << got.hits << " of " << got.total);
+        INFO(name.data() << " below zero: " << got.hits << " of " << got.total);
         CHECK((got.hits == got.total) == hits);
     }
 }

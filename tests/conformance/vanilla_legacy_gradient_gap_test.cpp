@@ -70,7 +70,6 @@
 #include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
 #include <cstddef>
@@ -82,8 +81,6 @@
 #include <string>
 #include <system_error>
 #include <vector>
-
-using Catch::Matchers::ContainsSubstring;
 
 namespace {
 
