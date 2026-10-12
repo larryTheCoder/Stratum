@@ -7184,8 +7184,9 @@ Open:
   refused by name, for want of an oracle. `tools/analysis/legacy-orevein-probe.sh`
   makes one: eight dimensions a world, each a solid column
   (`raw_final_density` +1, so every block of both vein ranges is the
-  default block before the veins look at it) with `ore_veins_enabled` and
-  `aquifers_enabled` on, every aquifer input the constant 0, `vein_ridged`
+  default block before the veins look at it) with `ore_veins_enabled` on,
+  `aquifers_enabled` on in every arm but `la` and `ma` (below), every aquifer
+  input the constant 0, `vein_ridged`
   -1, `vein_gap` 0, and `vein_toggle` a `y_clamped_gradient` at -0.7 up to
   y -1 and +0.7 from y 0 — so every block of iron's and copper's ranges is a
   candidate, and the ore chance is the clamp's top, 0.3. 1 703 936
@@ -7269,7 +7270,9 @@ Open:
   included. The filler gates the vein on `default_block`, so it predicted
   exactly this; nothing changes. `terrain_filler_test.cpp` now holds it with
   no corpus: a fill over netherrack and one over deepslate[axis=x] carry the
-  stone fill's vein blocks exactly, and their own state everywhere else.
+  stone fill's vein blocks exactly, their own default_block, properties and
+  all, at every other solid position, and the stone fill's own water and air
+  where the dimension is open (y 0..31, at floodedness 0 and 0.9).
 
   *Veins do not need aquifers — a measurement retracted, and why it read
   stone.* §10's M3 entry recorded a world with veins on and aquifers off
