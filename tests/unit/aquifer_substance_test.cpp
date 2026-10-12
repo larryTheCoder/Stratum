@@ -468,10 +468,14 @@ TEST_CASE("under a surface of -75 or lower a source's status is its centre's alo
         for (std::int32_t centreY = -130; centreY <= 60; ++centreY) {
             const stratum::aquifer::SourceStatus status = statusOver(surface, centreY);
             const bool fires = centreY > stratum::javamath::floorToInt(surface) - 4;
-            const bool expected = centreY >= lambda
-                                      ? (status.level == kSea && status.type == FluidType::Default)
-                                  : fires ? status.level == lambda
-                                          : status.level <= lambda;
+            bool expected = false;
+            if (centreY >= lambda) {
+                expected = status.level == kSea && status.type == FluidType::Default;
+            } else if (fires) {
+                expected = status.level == lambda;
+            } else {
+                expected = status.level <= lambda;
+            }
             wrong += expected ? 0 : 1;
         }
         CHECK(wrong == 0);
@@ -607,7 +611,13 @@ template<typename Rival>
         constexpr std::int32_t kBlob = 32;
         const double pick = stubField(7, stratum::javamath::floorDiv(x, kBlob), 0,
                                       stratum::javamath::floorDiv(z, kBlob));
-        return pick < -0.4 ? -100.0 : (pick < 0.2 ? -40.0 : 96.0);
+        if (pick < -0.4) {
+            return -100.0;
+        }
+        if (pick < 0.2) {
+            return -40.0;
+        }
+        return 96.0;
     };
     const stratum::aquifer::NoDeepDark noDeepDark;
     std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, SourceStatus> memo;

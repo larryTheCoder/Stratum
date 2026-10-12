@@ -299,7 +299,7 @@ private:
 };
 
 [[nodiscard]] ParameterList loadTable(const std::filesystem::path& path) {
-    std::ifstream file(path);
+    const std::ifstream file(path);
     std::stringstream contents;
     contents << file.rdbuf();
     return ParameterList::fromJson(nlohmann::json::parse(contents.str()),

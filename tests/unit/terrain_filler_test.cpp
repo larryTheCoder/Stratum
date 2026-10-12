@@ -48,7 +48,6 @@ using stratum::settings::RouterEntry;
 using stratum::surface::RuleGraph;
 using stratum::terrain::ChunkBuffer;
 using stratum::terrain::ChunkFiller;
-using stratum::terrain::FillError;
 
 namespace {
 
@@ -68,20 +67,18 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
-    const TempTree& defineSettings(std::string_view name, const nlohmann::json& json) const {
+    void defineSettings(std::string_view name, const nlohmann::json& json) const {
         std::ofstream out(path_ / "noise_settings" / (std::string(name) + ".json"));
         out << json.dump();
-        return *this;
     }
 
     /// Writes `worldgen/noise/clay_bands_offset` — `bandlands`' one
     /// registered noise (spec/bandlands-spec.md Q4.3) — so a filler that
     /// uses bandlands has something to build a NoiseRegistry from.
-    const TempTree& defineClayBandsOffsetNoise() const {
+    void defineClayBandsOffsetNoise() const {
         std::filesystem::create_directories(path_ / "noise");
         std::ofstream out(path_ / "noise" / "clay_bands_offset.json");
         out << R"({"firstOctave": -8, "amplitudes": [1.0]})";
-        return *this;
     }
 
     /// Writes the two noises every surface DEPTH reads, so a filler whose
@@ -90,33 +87,30 @@ public:
     /// — has something to build a NoiseRegistry from. The parameters are
     /// vanilla's own shape; the numbers they produce are pinned against the
     /// server in tests/conformance, not here.
-    const TempTree& defineSurfaceNoises() const {
+    void defineSurfaceNoises() const {
         std::filesystem::create_directories(path_ / "noise");
         std::ofstream surface(path_ / "noise" / "surface.json");
         surface << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
         std::ofstream secondary(path_ / "noise" / "surface_secondary.json");
         secondary << R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
-        return *this;
     }
 
     /// Writes `worldgen/noise/<name>.json`, for a router entry that reads a
     /// noise of its own (density_interpreter_test.cpp's helper of the same
     /// name).
-    const TempTree& defineNoise(std::string_view name, std::string_view json) const {
+    void defineNoise(std::string_view name, std::string_view json) const {
         std::filesystem::create_directories(path_ / "noise");
         std::ofstream out(path_ / "noise" / (std::string(name) + ".json"));
         out << json;
-        return *this;
     }
 
     /// Writes `worldgen/biome/<name>.json` declaring only `temperature`, so
     /// a `biome::TemperatureTable` built from this tree's own Pack has
     /// something to read back for `minecraft:temperature`.
-    const TempTree& defineBiomeTemperature(std::string_view name, double temperature) const {
+    void defineBiomeTemperature(std::string_view name, double temperature) const {
         std::filesystem::create_directories(path_ / "biome");
         std::ofstream out(path_ / "biome" / (std::string(name) + ".json"));
         out << nlohmann::json{{"temperature", temperature}}.dump();
-        return *this;
     }
 
     [[nodiscard]] LoadedSettings load() const {
@@ -288,9 +282,9 @@ private:
                                       const TemperatureTable* biomeTemperatures = nullptr) {
     const auto& settings =
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
-    static stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
+    static const stratum::density::NoiseRegistry kNoises = stratum::density::NoiseRegistry::create(
         tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
-    return ChunkFiller::compile(loaded.graph, noises, settings, surfaceRules, biomeParameters,
+    return ChunkFiller::compile(loaded.graph, kNoises, settings, surfaceRules, biomeParameters,
                                 biomeTemperatures);
 }
 
@@ -554,7 +548,8 @@ TEST_CASE("a buffer reused across chunks holds only the last chunk and its fluid
     deepslate["default_block"] = {{"Name", "minecraft:deepslate"}};
 
     const TempTree tree;
-    tree.defineSettings("test", wet).defineSettings("other", deepslate);
+    tree.defineSettings("test", wet);
+    tree.defineSettings("other", deepslate);
     const LoadedSettings loaded = tree.load();
     const auto& wetSettings =
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
@@ -730,10 +725,10 @@ TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the re
     for (const auto& [floodedness, waterLayers] : {std::pair{0.0, 0}, std::pair{0.9, 8}}) {
         INFO("fluid_level_floodedness " << floodedness);
         const TempTree tree;
-        tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}, floodedness))
-            .defineSettings("test_netherrack",
-                            withDefault({{"Name", "minecraft:netherrack"}}, floodedness))
-            .defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
+        tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}, floodedness));
+        tree.defineSettings("test_netherrack",
+                            withDefault({{"Name", "minecraft:netherrack"}}, floodedness));
+        tree.defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
                                                            {"Properties", {{"axis", "x"}}}},
                                                           floodedness));
         const LoadedSettings loaded = tree.load();
@@ -923,7 +918,7 @@ TEST_CASE("a buffer refuses positions outside the chunk or the dimension", "[ter
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));
     const LoadedSettings loaded = tree.load();
-    ChunkBuffer buffer(
+    const ChunkBuffer buffer(
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
     CHECK_THROWS_WITH(buffer.at(16, 0, 0), ContainsSubstring("outside the chunk"));
     CHECK_THROWS_WITH(buffer.at(-1, 0, 0), ContainsSubstring("outside the chunk"));
@@ -1016,7 +1011,7 @@ TEST_CASE("the corner cache changes speed and not values", "[terrain][filler]") 
             }
         }
     }
-    CHECK(compared == 19U * 19U * 48U);
+    CHECK(compared == std::size_t{19} * 19U * 48U);
 }
 
 TEST_CASE("bandlands runs through the whole filler pipeline, not just the executor",
@@ -1663,19 +1658,19 @@ TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whol
     // Readings a regression could bring back, each scored by how many
     // columns it would have put the edge somewhere else. The per-column read
     // is what the engine did before pipeline engine v2.
-    enum Reading : std::size_t {
-        kPerColumn,      // floor(R(x, 0, z))
-        kTransposed,     // the (16, 0) and (0, 16) samples swapped
-        kFarCornerAt15,  // the chunk's own last column as the far sample, /15
-        kSingleFloor,    // floored only after the blend
-        kTruncated,      // truncated at the sample and after the blend
-        kTruncatingCell, // the cell found by truncating division, (x / 16) * 16
-        kReadings
+    enum Reading : std::uint8_t {
+        PerColumn,      // floor(R(x, 0, z))
+        Transposed,     // the (16, 0) and (0, 16) samples swapped
+        FarCornerAt15,  // the chunk's own last column as the far sample, /15
+        SingleFloor,    // floored only after the blend
+        Truncated,      // truncated at the sample and after the blend
+        TruncatingCell, // the cell found by truncating division, (x / 16) * 16
+        ReadingCount
     };
 
     constexpr std::int32_t kPitch = ChunkFiller::kPreliminarySurfacePitch;
     const std::int32_t minY = settings.geometry.minY;
-    std::array<std::int32_t, kReadings> separates{};
+    std::array<std::int32_t, ReadingCount> separates{};
     std::int32_t columns = 0;
     std::int32_t negativeColumns = 0;
     std::int32_t exact = 0;
@@ -1736,26 +1731,25 @@ TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whol
 
                 const double u = static_cast<double>(x - x0) / kPitch;
                 const double v = static_cast<double>(z - z0) / kPitch;
-                std::array<std::int32_t, kReadings> predicted{};
-                predicted[kPerColumn] = edge(perColumn);
-                predicted[kTransposed] = edge(ChunkFiller::preliminarySurfaceIn(
+                std::array<std::int32_t, ReadingCount> predicted{};
+                predicted[PerColumn] = edge(perColumn);
+                predicted[Transposed] = edge(ChunkFiller::preliminarySurfaceIn(
                     {samples[0], samples[2], samples[1], samples[3]}, x - x0, z - z0));
-                predicted[kFarCornerAt15] = edge(stratum::javamath::floorToInt(bilerp(
+                predicted[FarCornerAt15] = edge(stratum::javamath::floorToInt(bilerp(
                     floored(cell(x0, z0, kPitch - 1)), static_cast<double>(x - x0) / (kPitch - 1),
                     static_cast<double>(z - z0) / (kPitch - 1))));
-                predicted[kSingleFloor] =
-                    edge(stratum::javamath::floorToInt(bilerp(samples, u, v)));
-                predicted[kTruncated] =
+                predicted[SingleFloor] = edge(stratum::javamath::floorToInt(bilerp(samples, u, v)));
+                predicted[Truncated] =
                     edge(stratum::javamath::doubleToInt(bilerp(truncated(samples), u, v)));
                 // Deliberately the WRONG division: the regression this
                 // reading stands for is exactly a truncating cell index.
                 const std::int32_t xt = stratum::javamath::truncDiv(x, kPitch) * kPitch;
                 const std::int32_t zt = stratum::javamath::truncDiv(z, kPitch) * kPitch;
-                predicted[kTruncatingCell] =
+                predicted[TruncatingCell] =
                     edge(ChunkFiller::preliminarySurfaceIn(cell(xt, zt, kPitch), x - xt, z - zt));
-                for (std::size_t reading = 0; reading < kReadings; ++reading) {
+                for (std::size_t reading = 0; reading < ReadingCount; ++reading) {
                     // A truncating division is floorDiv at x, z >= 0.
-                    if (reading == kTruncatingCell && !negative) {
+                    if (reading == TruncatingCell && !negative) {
                         continue;
                     }
                     separates.at(reading) +=
@@ -1778,8 +1772,8 @@ TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whol
     // what keep it from going vacuous under a smoother field: every reading
     // must move some column, and the per-column read most of them.
     CHECK(negativeColumns == 512);
-    CHECK(separates[kPerColumn] >= 512);
-    for (std::size_t reading = 0; reading < kReadings; ++reading) {
+    CHECK(separates[PerColumn] >= 512);
+    for (std::size_t reading = 0; reading < ReadingCount; ++reading) {
         CAPTURE(reading);
         CHECK(separates.at(reading) > 0);
     }
@@ -1790,12 +1784,12 @@ TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whol
     // truncating rounds up; the truncating cell index is scored on the 512
     // columns of the two chunks with a negative coordinate only, since it is
     // floorDiv everywhere else.
-    CHECK(separates[kPerColumn] == 672);
-    CHECK(separates[kTransposed] == 304);
-    CHECK(separates[kFarCornerAt15] == 369);
-    CHECK(separates[kSingleFloor] == 363);
-    CHECK(separates[kTruncated] == 768);
-    CHECK(separates[kTruncatingCell] == 488);
+    CHECK(separates[PerColumn] == 672);
+    CHECK(separates[Transposed] == 304);
+    CHECK(separates[FarCornerAt15] == 369);
+    CHECK(separates[SingleFloor] == 363);
+    CHECK(separates[Truncated] == 768);
+    CHECK(separates[TruncatingCell] == 488);
 }
 
 TEST_CASE("a tree reading a surface depth without minecraft:surface built is blocked, not crashed",
@@ -1861,7 +1855,7 @@ TEST_CASE("a surface rule writes over the default block and nothing else",
     ChunkBuffer buffer(
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
     filler.fill(0, 0, buffer);
-    for (int x : {0, 7, 15}) {
+    for (const int x : {0, 7, 15}) {
         CAPTURE(x);
         CHECK(buffer.at(x, -64, x).name.toString() == "minecraft:diamond_block");
         CHECK(buffer.at(x, -61, x).name.toString() == "minecraft:diamond_block");
@@ -1881,14 +1875,14 @@ TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
     // (filler.hpp, SPEC §11): a read up to four columns past the chunk's far
     // edge relocates, one past that does not, and neither does one below
     // its own corner.
-    constexpr auto window = ChunkFiller::flatCacheWindow(3, 3);
-    CHECK(window.minX == 48);
-    CHECK(window.maxX == 67);
-    CHECK(window.minZ == 48);
-    CHECK(window.maxZ == 67);
-    CHECK(window.covers(48, 67));
-    CHECK_FALSE(window.covers(47, 50));
-    CHECK_FALSE(window.covers(50, 68));
+    constexpr auto kWindow = ChunkFiller::flatCacheWindow(3, 3);
+    CHECK(kWindow.minX == 48);
+    CHECK(kWindow.maxX == 67);
+    CHECK(kWindow.minZ == 48);
+    CHECK(kWindow.maxZ == 67);
+    CHECK(kWindow.covers(48, 67));
+    CHECK_FALSE(kWindow.covers(47, 50));
+    CHECK_FALSE(kWindow.covers(50, 68));
 
     // The measurement turned on one source centre: off chunk (3, 3)'s
     // window, where the server read it wet, and inside chunk (3, 4)'s, where
@@ -1897,11 +1891,11 @@ TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
     CHECK(ChunkFiller::flatCacheWindow(3, 4).covers(57, 70));
 
     // Below zero the window still starts at the chunk's own corner.
-    constexpr auto negative = ChunkFiller::flatCacheWindow(-1, -2);
-    CHECK(negative.minX == -16);
-    CHECK(negative.maxX == 3);
-    CHECK(negative.minZ == -32);
-    CHECK(negative.maxZ == -13);
+    constexpr auto kNegative = ChunkFiller::flatCacheWindow(-1, -2);
+    CHECK(kNegative.minX == -16);
+    CHECK(kNegative.maxX == 3);
+    CHECK(kNegative.minZ == -32);
+    CHECK(kNegative.maxZ == -13);
 }
 
 TEST_CASE("a legacy dimension's ore veins draw from the legacy source",
@@ -2159,9 +2153,9 @@ TEST_CASE("the aquifer's barrier is the dimension's default_block, properties an
     // stone for the barrier, or the bare block without its properties,
     // passes unseen.
     const TempTree tree;
-    tree.defineNoise("test_barrier", R"({"firstOctave": -4, "amplitudes": [1.0, 1.0]})")
-        .defineNoise("test_floodedness", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})")
-        .defineNoise("test_spread", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})");
+    tree.defineNoise("test_barrier", R"({"firstOctave": -4, "amplitudes": [1.0, 1.0]})");
+    tree.defineNoise("test_floodedness", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})");
+    tree.defineNoise("test_spread", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})");
     tree.defineSettings("test_stone", barrierSettings({{"Name", "minecraft:stone"}}));
     tree.defineSettings("test_deepslate", barrierSettings({{"Name", "minecraft:deepslate"},
                                                            {"Properties", {{"axis", "x"}}}}));
@@ -2322,7 +2316,7 @@ constexpr std::array<const char*, 16> kWool{
 }
 
 [[nodiscard]] const std::string& at(const std::vector<std::string>& column, std::int32_t y) {
-    return column.at(static_cast<std::size_t>(y + 64));
+    return column.at(static_cast<std::size_t>(y) + 64U);
 }
 
 } // namespace
