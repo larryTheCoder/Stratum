@@ -30,14 +30,15 @@
 // tie-break, the centre jitter and the level rule, with no fitted quantity
 // anywhere in the loop.
 //
-// The residual is about 5e-5 and it is NOT the selection: a brute-force search
-// over a 5x7x5 neighbourhood of cells fixes 0 of it on every seed. Some of it
-// sits within sixteen blocks of the probe footprint's edge, but not all — one
-// seed's residual is entirely interior — so the cause is left named rather
-// than explained. Candidates are the fluid TYPE rule and the `lava` router
-// entry, which nobody has measured (SPEC §10, milestone MA blocker 4).
+// The residual was about 5e-5 and it was NOT the selection: a brute-force
+// search over a 5x7x5 neighbourhood of cells fixed 0 of it on every seed. It
+// is fluid the server's ticks moved after generating — all 999 blocks of it,
+// attributed one by one (support/fluid_flow.hpp) — so the readout is exact.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -105,6 +106,8 @@ struct Score {
     std::int32_t worstSeparation = -1;
     long long fluidOrAir = 0;
     long long agree = 0;
+    long long flow = 0;        ///< fluid the server's ticks moved (fluid_flow.hpp)
+    long long unexplained = 0; ///< neither
 };
 
 } // namespace
@@ -117,17 +120,20 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
         const std::filesystem::path region = fixtures() / "probes" / world.dir / "jv" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no open-void aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
-        const CentreSource centres{world.seed};
+        const CentreSource centres{world.seed, stratum::density::RandomSource::Xoroshiro};
         const auto file = stratum::region::RegionFile::open(region);
+        stratum::test::GoldenRegion golden(region);
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {
@@ -195,8 +201,17 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
                                 continue;
                             }
                             ++total.fluidOrAir;
-                            total.agree += static_cast<int>(
-                                (y < levelOf(centres, selection.nearest().cell)) == fluid);
+                            const bool oursFluid = y < levelOf(centres, selection.nearest().cell);
+                            if (oursFluid == fluid) {
+                                ++total.agree;
+                            } else if (fluid &&
+                                       stratum::test::explainedByFlow(
+                                           golden, x, y, z, stratum::test::categoryOf(block->name),
+                                           stratum::test::Category::Air)) {
+                                ++total.flow;
+                            } else {
+                                ++total.unexplained;
+                            }
                         }
                     }
                 }
@@ -209,7 +224,8 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
 
     INFO("stone " << total.stone << ", impossible " << total.impossible << ", worst separation "
                   << total.worstSeparation << ", unshifted control " << total.unshifted
-                  << "; non-solid " << total.fluidOrAir << ", agree " << total.agree);
+                  << "; non-solid " << total.fluidOrAir << ", agree " << total.agree << ", flow "
+                  << total.flow << ", unexplained " << total.unexplained);
 
     // Not one of the server's own barrier blocks may sit where this build says
     // the nearest pair has stopped competing.
@@ -223,9 +239,13 @@ TEST_CASE("the aquifer's competing sources are the ones the server used",
     // The control has to fail, or the case above is measuring nothing.
     CHECK(total.unshifted > 10000);
 
-    // Readout two, over y >= lambda only (see the loop). 0.99993-0.99996 per
-    // seed when this was written and unchanged to the digit by the dry
-    // sentinel; the bound is set well below that so it flags a real
-    // regression rather than drift.
-    CHECK(total.agree * 10000 > total.fluidOrAir * 9999);
+    // Readout two, over y >= lambda only (see the loop): exact. It used to
+    // sit at 0.99993-0.99996 per seed under a 0.9999 bound, and its 999-block
+    // residual, "about 5e-5 and NOT the selection", was every block of it
+    // fluid the server's ticks moved before the save (support/fluid_flow.hpp).
+    // Frozen, 25 such blocks remain, a run-dependent remnant
+    // (support/probe_corpus.hpp): bounded at 1 in 100 000, not pinned.
+    CHECK(total.unexplained == 0);
+    CHECK(total.agree + total.flow == total.fluidOrAir);
+    CHECK(total.flow * 100000 < total.fluidOrAir);
 }

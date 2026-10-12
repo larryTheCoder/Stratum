@@ -230,6 +230,7 @@ TEST_CASE("three other seeds match over the same corner too", "[conformance][bio
     // the tie-break is not just seed 42 being fitted. It is still not a
     // derivation of vanilla's tree: outside this corner it is wrong on 20
     // cells, attributed in vanilla_biome_tie_break_test.cpp.
+    std::size_t scored = 0;
     for (const std::int64_t seed :
          {std::int64_t{0}, std::int64_t{-1}, std::int64_t{-4172144997902289642}}) {
         const std::filesystem::path region = fixtures() / "1.21.11" / "regions" /
@@ -238,9 +239,18 @@ TEST_CASE("three other seeds match over the same corner too", "[conformance][bio
         if (!std::filesystem::is_regular_file(region)) {
             continue;
         }
+        ++scored;
         CAPTURE(seed);
         const Comparison result = compare(pack, table, seed, region, 4);
         CHECK(result.cells == 24576U);
         CHECK(result.exact == result.cells);
     }
+    // None of the three regions: skip, so CI's skip gate sees it (it used to
+    // pass having compared nothing). Some but not all: fail, rather than pass
+    // on whichever seeds were there.
+    if (scored == 0) {
+        SKIP("no golden overworld regions for seeds 0, -1 and -4172144997902289642 under "
+             << STRATUM_FIXTURES_DIR << "; tools/fetch-vanilla --generate-regions --accept-eula");
+    }
+    CHECK(scored == 3U);
 }

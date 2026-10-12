@@ -22,6 +22,7 @@
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/noise/perlin.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -35,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace stratum::surface {
@@ -85,14 +87,23 @@ struct Context {
     /// How deep this block sits in its run of solid, counting DOWN from the
     /// world top: 1 at the top of a run, reset by air, and — measured, not
     /// assumed — left UNCHANGED by fluid, which neither breaks a run nor
-    /// counts toward it. Uncapped.
+    /// counts toward it. Fluid is water and lava alike: the aquifer's literal
+    /// lava in a water dimension, of the lattice or of the lava sea, holds
+    /// the run exactly as water does (SPEC §11). Uncapped.
     std::int32_t stoneDepthAbove = 1;
-    /// The same counting up from the world floor, for `surface_type: ceiling`.
+    /// How deep this block sits in its run of solid counting UP from the
+    /// world floor, for `surface_type: ceiling`. NOT the mirror image of
+    /// `stoneDepthAbove`: here fluid RESETS the run, exactly as air does —
+    /// water as much as lava — so a block one above a pool's roof is at 1.
+    /// Measured (SPEC §11); this doc once called it "the same", and the
+    /// filler skipped fluid here until the probe that measured lava showed
+    /// water resetting too.
     std::int32_t stoneDepthBelow = 1;
 
     /// The column's water height: one above the FIRST fluid block met
-    /// descending, latched and never updated again. Absent where the column
-    /// holds no fluid at all, which makes `water` unconditionally true.
+    /// descending — water or lava, measured alike (SPEC §11) — latched and
+    /// never updated again. Absent where the column holds no fluid at all,
+    /// which makes `water` unconditionally true.
     ///
     /// `sea_level` alone does not create one — only real fluid blocks do.
     std::optional<std::int32_t> waterHeight;
@@ -122,12 +133,12 @@ struct Context {
 /// Every `random_name` a `vertical_gradient` in this tree salts its
 /// dimension's random source with, sorted and deduplicated.
 ///
-/// Public for the same reason requiredNoises() is: a caller has to know
-/// BEFORE compiling. This list is not a list of noises and never passes
-/// through NoiseRegistry, so a dimension whose only draw on its declared
-/// random source is a gradient looks, to the registry, like a dimension that
-/// needs nothing. Under `legacy_random_source` that is exactly the case this
-/// build cannot derive, so the filler refuses it by name (SPEC §11).
+/// This list is not a list of noises and never passes through NoiseRegistry,
+/// so a dimension whose only draw on its declared random source is a
+/// gradient looks, to the registry, like a dimension that needs nothing.
+/// Under `legacy_random_source` that once made it the construct this build
+/// refused by name; the legacy coin is measured now and the executor runs it
+/// (verticalGradientFires, SPEC §11), so this is an inventory, not a gate.
 [[nodiscard]] std::vector<std::string> verticalGradientNames(const RuleGraph& graph);
 
 /// Every `worldgen/noise` entry this tree needs built before it can be
@@ -183,6 +194,15 @@ public:
     ///
     /// It may be null for a tree that needs neither — which is not a special
     /// case worth avoiding: most trees small enough to test by hand are one.
+    ///
+    /// @p noises also carries the dimension's declared random source, and a
+    /// `vertical_gradient` draws its coin from that source: Xoroshiro128++
+    /// salted with the MD5 of its `random_name`, or under
+    /// `legacy_random_source` java.util.Random salted with its
+    /// `String.hashCode` (verticalGradientFires; SPEC §11). With no registry
+    /// there is no declared source, and the modern one is used — which is
+    /// why ChunkFiller::compile, the path a real dimension takes, always
+    /// supplies one.
     [[nodiscard]] static Executor compile(const RuleGraph& graph, std::int64_t worldSeed,
                                           const settings::NoiseGeometry& geometry,
                                           const density::NoiseRegistry* noises = nullptr,
@@ -305,13 +325,19 @@ private:
     /// Seeded from the constant 1234, so it is built once and never varies.
     noise::PerlinNoise temperature_;
     /// The unsalted positional source the surface depth's jitter comes from.
+    /// Xoroshiro whatever the dimension declares, and unreachable under
+    /// `legacy_random_source`: a depth needs `minecraft:surface`, which a
+    /// legacy registry refuses to build (NoiseRegistry::create), so a legacy
+    /// tree that reads one never compiles.
     rng::PositionalSource jitter_;
     /// Resolved once at compile, so no lookup happens per block.
     const noise::NormalNoise* surface_ = nullptr;
     const noise::NormalNoise* surfaceSecondary_ = nullptr;
-    /// One positional source per `random_name`, built at compile so that
-    /// running a rule costs no MD5 and no forking.
-    std::map<std::string, rng::PositionalSource> gradients_;
+    /// One positional source per `random_name`, of the kind the registry's
+    /// declared random source calls for, built at compile so that running a
+    /// rule costs no hashing and no forking.
+    using GradientSource = std::variant<rng::PositionalSource, rng::LegacyPositionalSource>;
+    std::map<std::string, GradientSource> gradients_;
 
     /// `bandlands`' own state: the table, built once (empty/default-filled
     /// until clayBandsBuilt_ says otherwise), and the noise its per-column

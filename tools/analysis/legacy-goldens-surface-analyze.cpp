@@ -838,9 +838,11 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
                     percent(full, targets.bit.size()), legacy_goldens::describe(rule).c_str());
     }
 
-    // deepslate's own derivation, by name rather than left to be inferred
-    // from a list it is absent from.
-    const legacy_goldens::SeedRule named = legacy_goldens::ruleAt(legacy_goldens::kDeepslateRule);
+    // The forked-MD5 rule (legacy-seed-analyze.cpp's 290), by name rather
+    // than left to be inferred from a list it is absent from. An anonymous
+    // candidate: it is not deepslate's derivation
+    // (tests/unit/deepslate_legacy_noise_oracle_test.cpp).
+    const legacy_goldens::SeedRule named = legacy_goldens::ruleAt(legacy_goldens::kForkedMd5Rule);
     std::map<std::int64_t, std::vector<stratum::noise::PerlinNoise>> blocks;
     for (const std::int64_t seed : seeds) {
         blocks.emplace(
@@ -848,8 +850,8 @@ void runScan(const Pack& pack, const NetherRun& run, const Decoder& decoder,
                                             layout.blocksPerNoise));
     }
     const std::size_t namedAgreed = scoreCandidate(targets, all, layout, blocks, 0);
-    std::printf("  rule %zu block 0 (deepslate's own derivation): %zu/%zu  %.4f%%  %s\n",
-                legacy_goldens::kDeepslateRule, namedAgreed, targets.bit.size(),
+    std::printf("  rule %zu block 0 (scored by name): %zu/%zu  %.4f%%  %s\n",
+                legacy_goldens::kForkedMd5Rule, namedAgreed, targets.bit.size(),
                 percent(namedAgreed, targets.bit.size()), legacy_goldens::describe(named).c_str());
 
     // The full-set majority-class null, which is what the "full" column above

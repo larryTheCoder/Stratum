@@ -1,9 +1,11 @@
 // Stratum — ore veins: the three draws and the gate in front of them.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include <stratum/ore/vein.hpp>
+#include <stratum/rng/java_random.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace stratum::ore {
 
@@ -34,8 +36,12 @@ constexpr double kRichnessSpan = 0.2;
 constexpr std::int32_t kRichnessRampBlocks = 20;
 
 /// The three thresholds, each bracketed against the server rather than
-/// rounded to (see vein.hpp).
-constexpr float kMembershipChance = 0.7F;
+/// rounded to, and each in the precision its draw is compared in (vein.hpp,
+/// "HOW A DRAW MEETS ITS THRESHOLD"): membership against the double 0.7, so
+/// a draw of exactly 0.7F is a member; the ore roll against its chance
+/// rounded to float; the raw roll, whose two readings cannot part, as it
+/// always was.
+constexpr double kMembershipChance = 0.7;
 constexpr float kRawChance = 0.02F;
 constexpr double kGapFloor = -0.3;
 constexpr double kOreChanceInLo = 0.4;
@@ -63,8 +69,51 @@ bool clearsRichness(const std::int32_t y, const double toggle) noexcept {
     return std::abs(toggle) >= required;
 }
 
-VeinSource::VeinSource(const std::int64_t worldSeed)
-    : source_(rng::positionalSourceFor(worldSeed, "minecraft:ore")) {}
+namespace {
+
+/// The three draws, from one generator, in this order — the same under
+/// either source; only the generator differs. Sequenced through named
+/// locals rather than nested in one expression: which draw comes first is
+/// part of the answer, and C++ would not otherwise promise it.
+template<typename Generator>
+[[nodiscard]] Vein drawVein(Generator generator, const VeinType type, const VeinInputs& inputs) {
+    // Widened to double (equivalently f <= 0.7F; no draw separates the two):
+    // a draw of exactly 0.7F is a member (vein.hpp).
+    if (!(static_cast<double>(generator.nextFloat()) < kMembershipChance)) {
+        return {};
+    }
+    const float oreRoll = generator.nextFloat();
+    const double oreChance = clampedMap(std::abs(inputs.toggle), kOreChanceInLo, kOreChanceInHi,
+                                        kOreChanceOutLo, kOreChanceOutHi);
+    // In float: a draw equal to the chance rounded to float loses the roll,
+    // though the chance itself is above it (vein.hpp). The draw is taken
+    // whatever the gap says — unobservable either way, nothing downstream
+    // reads this position's stream, and vein.hpp's header records that
+    // rather than letting the choice pass silently.
+    if (oreRoll >= static_cast<float>(oreChance) || inputs.gap <= kGapFloor) {
+        return {.block = VeinBlock::Filler, .type = type};
+    }
+    if (generator.nextFloat() < kRawChance) {
+        return {.block = VeinBlock::RawBlock, .type = type};
+    }
+    return {.block = VeinBlock::Ore, .type = type};
+}
+
+constexpr std::string_view kVeinSalt = "minecraft:ore";
+
+} // namespace
+
+VeinSource::VeinSource(const std::int64_t worldSeed, const density::RandomSource source) noexcept
+    : source_(source) {
+    switch (source) {
+        case density::RandomSource::Xoroshiro:
+            base_ = rng::positionalSourceFor(worldSeed, kVeinSalt).base();
+            break;
+        case density::RandomSource::Legacy:
+            legacySeed_ = rng::legacyPositionalSourceFor(worldSeed, kVeinSalt).seed();
+            break;
+    }
+}
 
 Vein VeinSource::at(const std::int32_t x, const std::int32_t y, const std::int32_t z,
                     const VeinInputs& inputs) const {
@@ -78,29 +127,10 @@ Vein VeinSource::at(const std::int32_t x, const std::int32_t y, const std::int32
         return {};
     }
     const VeinType type = y >= kCopperLowY ? VeinType::Copper : VeinType::Iron;
-
-    // One generator, three draws, in this order. Sequenced through named
-    // locals rather than nested in one expression: which draw comes first is
-    // part of the answer, and C++ would not otherwise promise it.
-    auto generator = source_.at(x, y, z);
-
-    if (generator.nextFloat() >= kMembershipChance) {
-        return {};
+    if (source_ == density::RandomSource::Legacy) {
+        return drawVein(rng::LegacyPositionalSource{legacySeed_}.at(x, y, z), type, inputs);
     }
-
-    const float oreRoll = generator.nextFloat();
-    const double oreChance = clampedMap(std::abs(inputs.toggle), kOreChanceInLo, kOreChanceInHi,
-                                        kOreChanceOutLo, kOreChanceOutHi);
-    // The draw above is taken whatever the gap says. Unobservable either way
-    // — nothing downstream reads this position's stream — and vein.hpp's
-    // header records that rather than letting the choice pass silently.
-    if (oreRoll >= static_cast<float>(oreChance) || inputs.gap <= kGapFloor) {
-        return {.block = VeinBlock::Filler, .type = type};
-    }
-    if (generator.nextFloat() < kRawChance) {
-        return {.block = VeinBlock::RawBlock, .type = type};
-    }
-    return {.block = VeinBlock::Ore, .type = type};
+    return drawVein(rng::PositionalSource{base_}.at(x, y, z), type, inputs);
 }
 
 } // namespace stratum::ore

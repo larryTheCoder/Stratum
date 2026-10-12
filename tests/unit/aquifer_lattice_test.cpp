@@ -7,19 +7,35 @@
 // -20 is the offset that configuration produced.
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
+#include <stratum/aquifer/substance.hpp>
+#include <stratum/density/random_source.hpp>
+#include <stratum/javamath.hpp>
+#include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
 
-using stratum::aquifer::fluidLevel;
 using stratum::aquifer::spreadOffset;
 
 namespace {
 constexpr std::int32_t kMeasuredBase = -20;
+
+/// The level a cell at the measured base takes for @p spread: centred in
+/// the band whose lattice point is -20, under a surface too high to cap it.
+[[nodiscard]] std::int32_t fluidLevel(const std::int32_t base, const double spread) {
+    REQUIRE(base == kMeasuredBase);
+    return stratum::aquifer::ladderLevel(/*centreY=*/-20, /*cap=*/96, spread);
 }
+} // namespace
 
 TEST_CASE("the fluid level follows the spread the server was given", "[aquifer]") {
     // The coarse sweep: nine values a quarter apart. Steps of three, with the
@@ -105,7 +121,10 @@ TEST_CASE("the lattice divides toward negative infinity on every axis", "[aquife
 }
 
 TEST_CASE("the base sits on its own lattice, capped by the surface", "[aquifer]") {
-    using stratum::aquifer::baseLevel;
+    // The ladder with the spread at zero: its lattice point, capped.
+    const auto baseLevel = [](std::int32_t y, std::int32_t surface) {
+        return stratum::aquifer::ladderLevel(y, surface, 0.0);
+    };
 
     // The ladder read out of a spread-pinned world at psl 96: -20, 20, 60, 96.
     CHECK(baseLevel(-30, 96) == -20);
@@ -147,9 +166,8 @@ TEST_CASE("the measured aquifer constants are recorded as measured", "[aquifer]"
     CHECK(stratum::aquifer::kLavaLevel == -54);
     CHECK(stratum::aquifer::kVerticalLatticeIsAbsolute);
 
-    // The base lattice is clamped below by the lava level wherever it would
-    // otherwise fall through it.
-    CHECK(stratum::aquifer::baseLevel(-64, 96) < stratum::aquifer::kLavaLevel + 12);
+    // There is no floor under the lattice: `the preliminary surface caps
+    // the ladder after the spread moves it` pins it sinking below the lava.
 }
 
 TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
@@ -158,30 +176,119 @@ TEST_CASE("the centre jitter draws ten, nine and ten", "[aquifer]") {
 
     // Known answers from the derivation recovered against the server. They are
     // self-consistent by construction; what ties them to vanilla is the
-    // conformance case, which scores this same code on the server's own blocks.
-    const CentreSource s42{42};
+    // conformance case, which scores this same code on the server's own blocks
+    // and runs in CI's conformance job on the comb worlds CI generates. In
+    // this binary, deepslate_aquifer_oracle_test.cpp checks the base and the
+    // mix's y term against an independent implementation; the x and z terms,
+    // the bounds and the draw order have only these answers here, and the
+    // server there.
+    const CentreSource s42{42, stratum::density::RandomSource::Xoroshiro};
     CHECK(s42.jitterOf(0, 0, 0) == Jitter{7, 7, 9});
     CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 4, 6});
     CHECK(s42.jitterOf(3, -4, 5) == Jitter{6, 7, 8});
     CHECK(s42.jitterOf(-1, 1, -1) == Jitter{0, 6, 4});
     CHECK(s42.jitterOf(7, 7, 7) == Jitter{2, 1, 8});
 
-    const CentreSource s7{7};
+    const CentreSource s7{7, stratum::density::RandomSource::Xoroshiro};
     CHECK(s7.jitterOf(0, 0, 0) == Jitter{9, 6, 8});
     CHECK(s7.jitterOf(3, -4, 5) == Jitter{0, 6, 2});
 
     // A negative seed, since the position mix sign-extends and shifts
     // arithmetically, and every step of it wraps.
-    const CentreSource sneg{-1};
+    const CentreSource sneg{-1, stratum::density::RandomSource::Xoroshiro};
     CHECK(sneg.jitterOf(0, 0, 0) == Jitter{2, 7, 4});
     CHECK(sneg.jitterOf(7, 7, 7) == Jitter{8, 8, 5});
+}
+
+TEST_CASE("under the legacy source the centre jitter is java.util.Random's", "[aquifer][legacy]") {
+    using stratum::aquifer::CentreSource;
+    using stratum::aquifer::Jitter;
+    using stratum::density::RandomSource;
+
+    // Known answers from a JVM, not from this build: java.util.Random and
+    // String.hashCode run in jshell over the clean-room spec's position mix
+    // (Q3.4), composed the way the server's legacy aquifer worlds measured it
+    // (SPEC §11, "The aquifer under the legacy source").
+    CHECK(stratum::rng::javaStringHashCode("minecraft:aquifer") == -1973797502);
+    CHECK(stratum::rng::javaStringHashCode("minecraft:bedrock_floor") == 2042456806);
+    CHECK(stratum::rng::javaStringHashCode("") == 0);
+    CHECK(stratum::rng::legacyPositionalSourceFor(42, "minecraft:aquifer").seed() ==
+          -651457591642403070);
+    CHECK(stratum::rng::legacyPositionalSourceFor(-1, "minecraft:aquifer").seed() ==
+          -95934913821622040);
+    CHECK(stratum::rng::legacyPositionalSourceFor(31337, "minecraft:aquifer").seed() ==
+          8565364769789071309);
+
+    const CentreSource s42{42, RandomSource::Legacy};
+    CHECK(s42.source() == RandomSource::Legacy);
+    CHECK(s42.legacySeed() == -651457591642403070);
+    CHECK(s42.jitterOf(0, 0, 0) == Jitter{2, 2, 4});
+    CHECK(s42.jitterOf(0, -4, 0) == Jitter{9, 1, 0});
+    CHECK(s42.jitterOf(3, -4, 5) == Jitter{5, 0, 5});
+    CHECK(s42.jitterOf(-1, 1, -1) == Jitter{7, 2, 5});
+    CHECK(s42.jitterOf(7, 7, 7) == Jitter{5, 0, 3});
+
+    const CentreSource sneg{-1, RandomSource::Legacy};
+    CHECK(sneg.jitterOf(0, 0, 0) == Jitter{2, 7, 1});
+    CHECK(sneg.jitterOf(7, 7, 7) == Jitter{6, 7, 3});
+    CHECK(sneg.jitterOf(-3, -5, 2) == Jitter{4, 1, 7});
+
+    // The same composition spelled out with the generator itself, over a
+    // block of cells with negative indices in every axis: the stream seed
+    // XOR the mix, then java.util.Random's own nextInt(10), (9), (10).
+    for (std::int32_t cx = -3; cx <= 3; ++cx) {
+        for (std::int32_t cy = -6; cy <= 6; ++cy) {
+            for (std::int32_t cz = -3; cz <= 3; ++cz) {
+                stratum::rng::JavaRandom random{s42.legacySeed() ^
+                                                stratum::rng::positionSeed(cx, cy, cz)};
+                const std::int32_t u = random.nextInt(10);
+                const std::int32_t v = random.nextInt(9);
+                const std::int32_t w = random.nextInt(10);
+                CAPTURE(cx, cy, cz);
+                REQUIRE(s42.jitterOf(cx, cy, cz) == Jitter{u, v, w});
+            }
+        }
+    }
+}
+
+TEST_CASE("the legacy lattice sees 48 bits of the world seed and the modern one sees 64",
+          "[aquifer][legacy]") {
+    using stratum::aquifer::CentreSource;
+    using stratum::density::RandomSource;
+
+    // java.util.Random keeps the low 48 bits of its seed, so 42 and 42 with the
+    // sign bit set are one world to the legacy lattice; Xoroshiro128++ is
+    // seeded from all 64. The server shows both on the probe's twin world
+    // (vanilla_aquifer_legacy_test.cpp); this pins the derivation's half.
+    constexpr std::int64_t kTwin = 42 ^ std::numeric_limits<std::int64_t>::min();
+    CHECK(CentreSource{42, RandomSource::Legacy}.legacySeed() ==
+          CentreSource{kTwin, RandomSource::Legacy}.legacySeed());
+    CHECK_FALSE(CentreSource{42, RandomSource::Xoroshiro}.base() ==
+                CentreSource{kTwin, RandomSource::Xoroshiro}.base());
+
+    // And the two sources are different lattices at one seed: of 1000 cells,
+    // the draws agree on all three axes at about the chance rate, 1 in 900.
+    const CentreSource legacy{42, RandomSource::Legacy};
+    const CentreSource modern{42, RandomSource::Xoroshiro};
+    CHECK(legacy.base() == stratum::rng::Seed128{});
+    CHECK(modern.legacySeed() == 0);
+    int same = 0;
+    for (std::int32_t cx = 0; cx < 10; ++cx) {
+        for (std::int32_t cy = 0; cy < 10; ++cy) {
+            for (std::int32_t cz = 0; cz < 10; ++cz) {
+                same +=
+                    static_cast<int>(legacy.jitterOf(cx, cy, cz) == modern.jitterOf(cx, cy, cz));
+            }
+        }
+    }
+    CHECK(same < 10);
 }
 
 TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
     // Ten horizontally, nine vertically — not one width on every axis, which is
     // what the measurement first suggested. Over 32000 cells every value inside
     // each bound appears and nothing outside it does.
-    const stratum::aquifer::CentreSource source{42};
+    const stratum::aquifer::CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     std::array<int, 16> seenX{};
     std::array<int, 16> seenY{};
     std::array<int, 16> seenZ{};
@@ -211,7 +318,7 @@ TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
 }
 
 TEST_CASE("the centre is the cell corner plus its jitter", "[aquifer]") {
-    const stratum::aquifer::CentreSource source{42};
+    const stratum::aquifer::CentreSource source{42, stratum::density::RandomSource::Xoroshiro};
     const auto jitter = source.jitterOf(3, -4, 5);
     const auto centre = source.centreOf(3, -4, 5);
     CHECK(centre.x == (3 * stratum::aquifer::kCellPitchX) + jitter.x);
@@ -448,7 +555,9 @@ TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "
     // Capping first and then adding the offset gives 69 for the first of
     // those, which is two blocks above the surface the server was given and
     // two above where the server put it.
-    CHECK(stratum::aquifer::baseLevel(50, 67) + stratum::aquifer::spreadOffset(0.9) == 69);
+    CHECK(std::min(stratum::aquifer::ladderLevel(50, 200, 0.0), 67) +
+              stratum::aquifer::spreadOffset(0.9) ==
+          69);
     CHECK(stratum::aquifer::ladderLevel(50, 67, 0.9) != 69);
     // And the ladder DOES sink below the lava sea — this line used to assert
     // the opposite, pinning a `max(lambda, ...)` that Q5.7 does not have.
@@ -477,6 +586,7 @@ TEST_CASE("the preliminary surface caps the ladder after the spread moves it", "
 namespace {
 using stratum::aquifer::CellIndex;
 using stratum::aquifer::constantSurface;
+using stratum::aquifer::ladderLevel;
 using stratum::aquifer::lambdaLevel;
 using stratum::aquifer::PslRead;
 using stratum::aquifer::readPreliminarySurface;
@@ -490,6 +600,18 @@ CellFluid cellWith(const PslRead surface, const std::int32_t seaLevel, const std
     cell.floodedness = floodedness;
     cell.spread = spread;
     return cell;
+}
+
+/// The level rule alone (spec Q5.4-Q5.6) at sea 63, on minimum @p cap and
+/// anchor @p anchor: `cellFluidLevel` of a read that takes neither of Q5.3's
+/// short-circuits, a minimum below the abort threshold with the abort flag
+/// clear (no scan reads so; the rule does not look).
+[[nodiscard]] std::int32_t levelRuleOf(const std::int32_t cap, const std::int32_t anchor,
+                                       const std::int32_t centreY, const double floodedness) {
+    REQUIRE(cap < -62);
+    REQUIRE(centreY <= anchor + 20);
+    const PslRead read{.gate = cap, .cap = cap, .anchor = anchor, .aborted = false};
+    return cellFluidLevel(cellWith(read, 63, centreY, floodedness));
 }
 } // namespace
 
@@ -545,10 +667,14 @@ TEST_CASE("every level below the lava sea moves with sea_level", "[aquifer]") {
     // level sits at least 32 below lambda — sweeping it as `lambda - K` over
     // the three water/lava worlds, K = 32, 64, 256 and this sentinel score
     // byte-identically while K = 16 does not — so the value itself is
-    // arithmetic, and is asserted as arithmetic.
-    CHECK(stratum::aquifer::kMinYLimit == -2032);
-    CHECK(kNeverLevel == 16 * stratum::aquifer::kMinYLimit);
-    CHECK(kNeverLevel == -32512);
+    // arithmetic. lattice.hpp carries Q1.4's derivation; these are the
+    // spec's transcribed products, checked against it at compile time.
+    STATIC_REQUIRE(stratum::aquifer::detail::kHorizontalBits == 26);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYBits == 12);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYSpan == 4064);
+    STATIC_REQUIRE(stratum::aquifer::detail::kYUpper == 2031);
+    STATIC_REQUIRE(stratum::aquifer::kMinYLimit == -2032);
+    STATIC_REQUIRE(kNeverLevel == -32512);
     CHECK(kNeverLevel < lambdaLevel(-100) - 32);
 
     // The third outcome is AT OR BELOW Λ, and that bound is what the
@@ -589,13 +715,18 @@ TEST_CASE("the trailing guard tests the branch, not the number", "[aquifer]") {
     CHECK(stratum::aquifer::kLavaLevel > lambdaLevel(-56));
 }
 
-TEST_CASE("the aborting near-surface floor is lambda, not a bare -54", "[aquifer]") {
-    // Measured at `sea_level` -70, where lambda(-70) and the compile constant
-    // `kLavaLevel`(-54) finally part company: 251229 blocks the old bare-(-54)
-    // reading called wet up to y=-55 are observed dry at every one, 0/251229,
-    // over an aborting-near-surface probe of 1966080 blocks total. A cell
-    // whose centre sits comfortably above lambda still takes the sea, exactly
-    // as before -- this only moves the FLOOR a cell falls to when it does not.
+TEST_CASE("the aborting near-surface floor is A_lava, -54 and lava at every sea level",
+          "[aquifer]") {
+    // Measured at `sea_level` -70 and -60, where lambda and the compile
+    // constant `kLavaLevel`(-54) part company: every block whose nearest
+    // cell takes this floor is lava up to y = -55 or barrier stone (lowsea's
+    // a_lo, 135 716 blocks; aquifer-lowfloor-probe.sh's lf_f60) — spec
+    // Q1.1's A_lava, which Q5.3(b) hands an aborted scan. Pipeline engine v9
+    // and earlier floored it at lambda, dry above the lava sea, and typed it
+    // as the cell's own fluid.
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    using stratum::aquifer::sourceStatus;
     const PslRead deeplyAborting = readPreliminarySurface(
         [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; }, CellIndex{0, 0, 0}, -70);
     REQUIRE(deeplyAborting.aborted);
@@ -603,24 +734,45 @@ TEST_CASE("the aborting near-surface floor is lambda, not a bare -54", "[aquifer
     // Comfortably above lambda(-70): still takes the sea, same as at ordinary
     // sea levels where this project's earlier vectors already pinned it.
     CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -50, 0.5)) == -70);
-    // Below lambda: floors to lambda(-70), NOT to the literal kLavaLevel(-54)
-    // this line used to return. Every centreY in the measured range agrees.
-    CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -100, 0.5)) == -70);
-    CHECK(cellFluidLevel(cellWith(deeplyAborting, -70, -190, 0.5)) == -70);
+    // Below lambda: the literal -54, above lambda(-70) — not lambda, which
+    // this returned through engine v9. Every centreY in the range agrees.
+    for (const std::int32_t centreY : {-100, -190}) {
+        const auto floor = cellLevel(cellWith(deeplyAborting, -70, centreY, 0.5));
+        CHECK(floor.level == stratum::aquifer::kLavaLevel);
+        CHECK(floor.origin == LevelOrigin::GlobalLava);
+    }
+    // Lava whatever the cell's own type would be: centred at or above lambda
+    // with `lava` 0.0 the cell's own fluid is water (a_lo's cells centred
+    // -70..-65, which the server fills with lava).
+    const PslRead nearCap = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return -85.0; }, CellIndex{0, 0, 0}, -70);
+    REQUIRE(nearCap.aborted);
+    const auto ownWater = sourceStatus(cellWith(nearCap, -70, -66, 0.9), 0.0);
+    CHECK(ownWater.level == stratum::aquifer::kLavaLevel);
+    CHECK(ownWater.type == stratum::aquifer::FluidType::Lava);
 
-    // At an ORDINARY sea level this is a no-op: lambda(63) == kLavaLevel(-54),
-    // so the fix cannot regress anything the barrier campaign already
-    // verified there. Same shape, same cap+20 exemption, unchanged answer.
+    // At an ORDINARY sea level the level is unchanged: lambda(63) ==
+    // kLavaLevel(-54), so nothing the barrier campaigns verified there moves.
+    // Only the type does, and no consumer can see it there (the substance
+    // case "the floor's type reaches nothing at a sea at or above -54").
     const PslRead ordinaryAborting = readPreliminarySurface(
         [](std::int32_t, std::int32_t, std::int32_t) { return -200.0; }, CellIndex{0, 0, 0}, 63);
     CHECK(cellFluidLevel(cellWith(ordinaryAborting, 63, -100, 0.5)) ==
           stratum::aquifer::kLavaLevel);
+    // Centred at -52, between lambda and cap + 20 (-50): water as the
+    // cell's own, lava as A_lava.
+    const PslRead ordinaryNearSurface = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return -70.0; }, CellIndex{0, 0, 0}, 63);
+    REQUIRE(ordinaryNearSurface.aborted);
+    CHECK(sourceStatus(cellWith(ordinaryNearSurface, 63, -52, 0.5), 0.0).type ==
+          stratum::aquifer::FluidType::Lava);
 
-    // The `cap + 20` exemption itself is UNTOUCHED by this fix — this probe
-    // never varied it, and the comparand is still `cap`. Checked at an
-    // ORDINARY sea level, where lambda(63) == kLavaLevel(-54) and the two
-    // outcomes are numerically distinct, so the exemption's own boundary
-    // stays observable rather than collapsing the way it does at -70.
+    // Q5.3(a)'s margin of twenty over the anchor, which on this constant
+    // surface is the minimum too (the case "Q5.3(a) reads the anchor, not the
+    // scan's minimum" parts them). Checked at an ORDINARY sea level, where
+    // lambda(63) == kLavaLevel(-54) and the two outcomes are numerically
+    // distinct, so the boundary stays observable rather than collapsing the
+    // way it does at -70.
     const PslRead ordinaryNearCap = readPreliminarySurface(
         [](std::int32_t, std::int32_t, std::int32_t) { return -65.0; }, CellIndex{0, 0, 0}, 63);
     REQUIRE(ordinaryNearCap.aborted);
@@ -630,26 +782,17 @@ TEST_CASE("the aborting near-surface floor is lambda, not a bare -54", "[aquifer
           stratum::aquifer::kLavaLevel); // >= lambda but <= cap+20: floor
 }
 
-TEST_CASE("the near-surface floor also reads the scan's cap, not its gate", "[aquifer]") {
-    // MA blocker 2's own remaining mark on this comparand, closed rather than
-    // left at "0 of 2067 cells" (aquifer_lattice.cpp's own comment): every
-    // earlier probe that could even abort here held psl CONSTANT, which
-    // makes `gate` and `cap` the same number by construction
-    // (readPreliminarySurface, sampling.hpp) and so could never separate
-    // them from THIS comparand specifically — as opposed to the ladder's own
-    // read of `cap`, settled separately above ("the ladder's cap reads the
-    // scan's own minimum").
-    //
-    // `tools/analysis/aquifer-nearsurface-probe.sh` drives a genuinely
-    // varying psl and reads block-by-block rather than by fluid body (a
-    // body-boundary reading is corrupted here by water/lava contact turning
-    // to obsidian mid-column, which a first version of the analyzer learned
-    // the hard way): `cap` scores a perfect 1.0000 against `gate`'s
-    // 0.9266-0.9358 on 7.8M+ discriminating blocks across two seeds.
+TEST_CASE("a clean sample near the centre gives the sea though a later one aborts", "[aquifer]") {
+    // `tools/analysis/aquifer-nearsurface-probe.sh` drives a varying psl
+    // (96 / -20 / -70) and reads block by block: on the cells where a reading
+    // of `cap + 20` and one of `gate + 20` part, `cap` scores a perfect 1.0000
+    // against `gate`'s 0.9351-0.9358 on 7.6-7.8M blocks per seed of two, on
+    // frozen corpora (vanilla_aquifer_nearsurface_test.cpp). Those
+    // cells are a clean -20 sample firing before the -70 aborts, which the
+    // spec's first match gives the sea whatever the margin; the ties probe
+    // parts that from `cap + 20` too, and takes first match (SPEC §11).
     const PslRead split{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
-    // gate - centreY = 2, inside the near-surface window. cap+20 = -50,
-    // gate+20 = 0: a centreY of -22 sits strictly between them, so the two
-    // readings disagree outright — cap says sea, gate would say floor.
+    // gate - centreY = 2, inside the near-surface window.
     CHECK(cellFluidLevel(cellWith(split, 63, -22, 0.5)) == 63);
 }
 
@@ -667,6 +810,34 @@ TEST_CASE("the near-surface path is an early return that the guard cannot reach"
     CHECK(cellFluidLevel(cellWith(constantSurface(150), 200, 146, -2.0)) == kNeverLevel);
 }
 
+TEST_CASE("both short-circuit seas carry the near-surface origin", "[aquifer]") {
+    // The near-surface return and an aborted scan's sea are the global
+    // picker's status, typed by neither the centre nor the `lava` override
+    // (fluid_type.hpp); the origin is how `sourceStatus` tells. Measured on
+    // aquifer-fluidnear-probe.sh's worlds at sea -20.
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    // Non-aborted, centred within the near-surface window.
+    const auto nearSea = cellLevel(cellWith(constantSurface(-40), -20, -30, -2.0));
+    CHECK(nearSea.level == -20);
+    CHECK(nearSea.origin == LevelOrigin::NearSurfaceSea);
+    // Aborted (psl -64 under the -62 threshold), centred more than twenty
+    // above the anchor: the sea, Q5.3(a)'s.
+    const PslRead aborting{.gate = -64, .cap = -64, .anchor = -64, .aborted = true};
+    const auto abortedSea = cellLevel(cellWith(aborting, -20, -40, -2.0));
+    CHECK(abortedSea.level == -20);
+    CHECK(abortedSea.origin == LevelOrigin::NearSurfaceSea);
+    // Twenty or fewer above it: the floor, the global picker's other status
+    // (A_lava; the case on the floor above).
+    const auto floored = cellLevel(cellWith(aborting, -20, -44, -2.0));
+    CHECK(floored.level == stratum::aquifer::kLavaLevel);
+    CHECK(floored.origin == LevelOrigin::GlobalLava);
+    // And the cell's own sea branch is the cell's.
+    const auto ownSea = cellLevel(cellWith(constantSurface(96), -20, -30, 0.9));
+    CHECK(ownSea.level == -20);
+    CHECK(ownSea.origin == LevelOrigin::Cell);
+}
+
 TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // The whole explanation of a failure this project first read as the slopes
     // being wrong in the middle of the floodedness band. A cell whose scan
@@ -677,32 +848,62 @@ TEST_CASE("an aborting scan refuses the sea outcome", "[aquifer]") {
     // probe that could exercise it held psl CONSTANT, so `aborted` was never
     // true while floodedness alone would otherwise cross the gate in a world
     // that could also vary. `aquifer-nearsurface-probe.sh` builds that
-    // configuration directly and reads block-by-block: reading `!aborted` as
-    // written scores 0.9911-0.9941 against 0.0564-0.0924 for ignoring it on
-    // the depth path, and 0.9812-0.9829 against 0.6612-0.6872 on the ocean
-    // branch's own copy of the same guard, on 469575-913229 discriminating
-    // blocks across two seeds.
+    // configuration directly and reads block-by-block: refusing the sea
+    // scores 0.9992-0.9996 against 0.066-0.089 for ignoring the abort with
+    // the anchor below `sea_level - 8`, and 0.9979-0.9987 against
+    // 0.645-0.651 at or above it, per seed of two on a frozen corpus, every
+    // block it misses fluid that moved (vanilla_aquifer_nearsurface_test.cpp;
+    // the unfrozen corpus's 0.9911-0.9941 and 0.9812-0.9829 were that flow).
     const PslRead aborted{.gate = 100, .cap = -70, .anchor = 100, .aborted = true};
-    // The cell is refused the sea and falls to its LADDER, which a cap of -70
-    // pulls to -70. This line used to read -54: the old lower clamp lifted it
-    // to lambda, incidental to what the case is testing (that the abort
-    // refuses the sea at all, which the contrast with `quiet` below is what
-    // actually establishes).
-    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == -70);
+    // The clean anchor sits too far above the centre to fire; the -70 fires,
+    // and the cell takes A_lava before any floodedness is weighed (the case
+    // on that floor below). What this case tests is that the abort refuses
+    // the sea at all, which the contrast with `quiet` establishes.
+    CHECK(cellFluidLevel(cellWith(aborted, 200, 0, 0.9)) == lambdaLevel(200));
     // Without the abort the same cell floods.
     const PslRead quiet{.gate = 100, .cap = 100, .anchor = 100, .aborted = false};
     CHECK(cellFluidLevel(cellWith(quiet, 200, 0, 0.9)) == 200);
 
-    // But an aborting cell near the surface still floods, if it sits more than
-    // twenty blocks clear of the scan's own low sample. The offset is exactly
-    // 20: nineteen and twenty-one each lose more than forty cells.
+    // But an aborting cell still floods if it sits more than twenty blocks
+    // above its anchor (Q5.3(a); here the anchor is the low sample). The
+    // offset is exactly 20: nineteen and twenty-one each lose more than
+    // forty cells.
     const PslRead low{.gate = -70, .cap = -70, .anchor = -70, .aborted = true};
     CHECK(cellFluidLevel(cellWith(low, 200, -49, 0.0)) == 200);
     CHECK(cellFluidLevel(cellWith(low, 200, -50, 0.0)) == -54);
     CHECK(cellFluidLevel(cellWith(low, 200, -45, 0.0)) == 200);
     CHECK(cellFluidLevel(cellWith(low, 200, -55, 0.0)) == -54);
-    // And the near-surface flip still sits at gate - 4.
+    // And the clean anchor fires from gate - 3 up, before the abort: the sea.
     CHECK(cellFluidLevel(cellWith(aborted, 200, 97, 0.9)) == 200);
+}
+
+TEST_CASE("an aborted scan is refused the sea with its anchor at or above sea_level - 8",
+          "[aquifer]") {
+    // The other branch of the same refusal. Before pipeline engine v11 each
+    // branch of the level rule carried its own `!aborted` guard, and nothing
+    // reached this one aborted while floodedness alone would have granted the
+    // sea; since then one early return refuses both, and this pins it here
+    // too, on a read the scan itself produces rather than one written out.
+    // One window sample at -70 (below the -62 abort) and 96 everywhere else:
+    // the anchor and the gate stay 96, at or above the ocean gate (55), and
+    // the whole window's minimum is -70.
+    const auto oneLowSample = [](const std::int32_t x, std::int32_t, const std::int32_t z) {
+        return (x == 16 && z == 16) ? -70.0 : 96.0;
+    };
+    const PslRead read = readPreliminarySurface(oneLowSample, CellIndex{0, 0, 0}, 63);
+    REQUIRE(read == PslRead{.gate = 96, .cap = -70, .anchor = 96, .aborted = true});
+    REQUIRE(read.anchor >= 63 - stratum::aquifer::kOceanGateOffset);
+    // Floodedness 0.9 clears the sea gate on this branch; the abort refuses
+    // it, and the cell takes A_lava.
+    const auto refused = stratum::aquifer::cellLevel(cellWith(read, 63, 0, 0.9));
+    CHECK(refused.level == stratum::aquifer::kLavaLevel);
+    CHECK(refused.origin == stratum::aquifer::LevelOrigin::GlobalLava);
+    // The same window without the low sample floods, and the gate is strict.
+    const PslRead quiet = readPreliminarySurface(
+        [](std::int32_t, std::int32_t, std::int32_t) { return 96.0; }, CellIndex{0, 0, 0}, 63);
+    REQUIRE(quiet == constantSurface(96));
+    CHECK(cellFluidLevel(cellWith(quiet, 63, 0, 0.9)) == 63);
+    CHECK(cellFluidLevel(cellWith(quiet, 63, 0, 0.8)) != 63);
 }
 
 TEST_CASE("the depth path gates on the anchor while the rest gate on the minimum", "[aquifer]") {
@@ -753,4 +954,559 @@ TEST_CASE("the ladder's cap reads the scan's own minimum", "[aquifer]") {
     // the ladder rather than turning to lava. Spread 3.0 offsets it by 30.
     CHECK(cellFluidLevel(cellWith(constantSurface(150), 240, 90, 0.5, 3.0)) == 130);
     CHECK(stratum::aquifer::spreadOffset(3.0) == 30);
+}
+
+TEST_CASE("y_skip steps every twelve blocks and floors a negative surface", "[aquifer]") {
+    using stratum::aquifer::ySkip;
+    // Spec Q2.5: 12 * (floordiv(S_max + 8 + 12, 12) + 1) + 10.
+    CHECK(ySkip(96) == 130);
+    CHECK(ySkip(-20) == 22);
+    CHECK(ySkip(-9) == 22); // the top of the same twelve-block step
+    CHECK(ySkip(-8) == 34);
+    // A negative dividend: floorDiv(-1, 12) is -1, where truncation would
+    // give 0 and put the skip a whole step too high.
+    CHECK(ySkip(-21) == 10);
+    CHECK(ySkip(-80) == -38);
+    CHECK(ySkip(-92) == -50);
+    CHECK(ySkip(-93) == -62);
+    // A datapack's psl saturates at the int range (javamath::floorToInt);
+    // the arithmetic wraps as Java's int does. Evaluated at compile time,
+    // where undefined behaviour would not compile.
+    STATIC_REQUIRE(ySkip(std::numeric_limits<std::int32_t>::max()) == -2147483618);
+    STATIC_REQUIRE(ySkip(std::numeric_limits<std::int32_t>::min()) == -2147483606);
+}
+
+TEST_CASE("y_skip's rectangle is where the chunk's lattice extent puts source centres",
+          "[aquifer]") {
+    using stratum::aquifer::ySkipRectangle;
+    // Spec Q3.5: i from floorDiv(xMin - 5, 16) to floorDiv(xMax - 5, 16) + 1;
+    // the rectangle runs from the first cell's origin, 16 * i, to the last
+    // cell's origin plus the jitter's reach, + 9 (measured: SPEC §11). The
+    // shift of 5 puts the low edge one cell below the chunk on BOTH signs of
+    // coordinate, which is where a truncating division would part company
+    // with floorDiv.
+    const auto origin = ySkipRectangle(0, 0);
+    CHECK(origin.minX == -16);
+    CHECK(origin.maxX == 25);
+    CHECK(origin.minZ == -16);
+    CHECK(origin.maxZ == 25);
+
+    const auto east = ySkipRectangle(16, 32);
+    CHECK(east.minX == 0);
+    CHECK(east.maxX == 41);
+    CHECK(east.minZ == 16);
+    CHECK(east.maxZ == 57);
+
+    const auto west = ySkipRectangle(-16, -32);
+    CHECK(west.minX == -32);
+    CHECK(west.maxX == 9);
+    CHECK(west.minZ == -48);
+    CHECK(west.maxZ == -7);
+
+    // Inclusive of both endpoints at a stride of four from the low corner:
+    // eleven samples a side, the last at +24.
+    CHECK((origin.maxX - origin.minX) / stratum::aquifer::kYSkipSampleStride + 1 == 11);
+}
+
+TEST_CASE("a chunk's y_skip reads its whole rectangle at y = 0 and no other column", "[aquifer]") {
+    using stratum::aquifer::chunkYSkip;
+    // A flat -92 everywhere, and one column raised to -80: the step from -50
+    // to -38 says whether that column is read.
+    const auto spike = [](std::int32_t atX, std::int32_t atZ) {
+        return [atX, atZ](std::int32_t x, std::int32_t y, std::int32_t z) {
+            CHECK(y == stratum::aquifer::kPreliminarySurfaceSampleY);
+            return (x == atX && z == atZ) ? -80.0 : -92.0;
+        };
+    };
+    CHECK(chunkYSkip(spike(1000, 1000), 0, 0) == -50);
+    // Both corners of the rectangle, and its far sample row.
+    CHECK(chunkYSkip(spike(-16, -16), 0, 0) == -38);
+    CHECK(chunkYSkip(spike(24, 24), 0, 0) == -38);
+    CHECK(chunkYSkip(spike(24, -16), 0, 0) == -38);
+    // One stride past either end, and a column between two samples.
+    CHECK(chunkYSkip(spike(-20, 0), 0, 0) == -50);
+    CHECK(chunkYSkip(spike(28, 0), 0, 0) == -50);
+    CHECK(chunkYSkip(spike(2, 2), 0, 0) == -50);
+    // A chunk off the origin, on the negative side: the same offsets.
+    CHECK(chunkYSkip(spike(-48 + 24, -48 - 16), -48, -48) == -38);
+    CHECK(chunkYSkip(spike(-48 + 28, -48), -48, -48) == -50);
+
+    // Floored, not truncated: -92.5 is -93, a step below -92.
+    const auto flat = [](double value) {
+        return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+    };
+    CHECK(chunkYSkip(flat(-92.0), 0, 0) == -50);
+    CHECK(chunkYSkip(flat(-92.5), 0, 0) == -62);
+}
+
+TEST_CASE("the lattice is consulted at y_skip itself and not above it", "[aquifer]") {
+    using stratum::aquifer::consultsLattice;
+    CHECK(consultsLattice(-50, -50));
+    CHECK(consultsLattice(-51, -50));
+    CHECK_FALSE(consultsLattice(-49, -50));
+}
+
+TEST_CASE("the deep-dark override needs both thresholds, both strict", "[aquifer]") {
+    using stratum::aquifer::isDeepDark;
+    CHECK(isDeepDark(-0.3, 1.0));
+    CHECK_FALSE(isDeepDark(-0.225, 1.0)); // erosion AT the threshold is not below it
+    CHECK_FALSE(isDeepDark(-0.3, 0.9));   // depth AT the threshold is not above it
+    CHECK_FALSE(isDeepDark(0.0, 1.0));
+    CHECK_FALSE(isDeepDark(-0.3, 0.0));
+    CHECK(isDeepDark(std::nextafter(-0.225, -1.0), std::nextafter(0.9, 2.0)));
+}
+
+TEST_CASE("a deep-dark cell is dry, except on the near-surface return", "[aquifer]") {
+    // Q5.9 forces both floodedness comparands to -1. The ladder below floods
+    // at floodedness 0.5 and would flood the same at 1.0; with the override
+    // neither reading clears a threshold, so the cell is the dry sentinel.
+    CellFluid ladder = cellWith(constantSurface(150), 240, 90, 0.5, 3.0);
+    REQUIRE(cellFluidLevel(ladder) == 130);
+    ladder.deepDark = true;
+    CHECK(cellFluidLevel(ladder) == kNeverLevel);
+    ladder.floodedness = 1.0;
+    CHECK(cellFluidLevel(ladder) == kNeverLevel);
+
+    // The ocean branch's sea outcome goes the same way.
+    CellFluid sea = cellWith(constantSurface(40), 68, 20, 1.0);
+    REQUIRE(cellFluidLevel(sea) == 68);
+    sea.deepDark = true;
+    CHECK(cellFluidLevel(sea) == kNeverLevel);
+
+    // The near-surface return compares no floodedness, so there is no
+    // comparand to force: a deep-dark cell three blocks under the surface
+    // still takes the sea.
+    CellFluid shallow = cellWith(constantSurface(150), 200, 147, -2.0);
+    shallow.deepDark = true;
+    CHECK(cellFluidLevel(shallow) == 200);
+
+    // Nor an aborting sample that fires: its A_lava status precedes the level
+    // rule, and so the override (aquifer-ddfloor-probe.sh; over three seeds
+    // the sentinel built 10 577 blocks of barrier the server does not). Wet or
+    // dry without the override, it reads lambda's -54 with it.
+    const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    for (const double floodedness : {-2.0, 0.6, 0.9}) {
+        CellFluid fired = cellWith(aborted, 63, -50, floodedness);
+        REQUIRE(cellFluidLevel(fired) == lambdaLevel(63));
+        fired.deepDark = true;
+        CHECK(cellFluidLevel(fired) == lambdaLevel(63));
+    }
+    // A centre four or more below every sample fires none, and the level rule
+    // runs (spec Q5.4-Q5.6), override and all: the sentinel. Engine v12 gave
+    // it A_lava; the ties probe's `td` world sides with the level rule on the
+    // few blocks where Π can tell (SPEC §11).
+    CellFluid none = cellWith(aborted, 63, -150, 0.9);
+    REQUIRE(cellFluidLevel(none) == lambdaLevel(63)); // the sea, then the trailing guard
+    none.deepDark = true;
+    CHECK(cellFluidLevel(none) == kNeverLevel);
+}
+
+TEST_CASE("a datapack's NaN or out-of-range router value is defined, as Java's int makes it",
+          "[aquifer]") {
+    // No vanilla router comes near these; the point is that no input is
+    // undefined behaviour. Java's `(int) Math.floor` maps NaN to 0 and
+    // saturates out-of-range values, and its int arithmetic wraps.
+    using stratum::aquifer::spreadOffset;
+    constexpr std::int32_t kMax = std::numeric_limits<std::int32_t>::max();
+    constexpr std::int32_t kMin = std::numeric_limits<std::int32_t>::min();
+    CHECK(spreadOffset(std::numeric_limits<double>::quiet_NaN()) == 0);
+    CHECK(spreadOffset(1e300) == 3 * (kMax / 3)); // 2147483646
+    // floorDiv(INT_MIN, 3) * 3 is one below INT_MIN, and wraps to INT_MAX.
+    CHECK(spreadOffset(-1e300) == kMax);
+
+    // The scan's three readings saturate, and a NaN field reads 0.
+    const CellIndex centre{.x = 10, .y = 0, .z = 10};
+    const auto flat = [](double value) {
+        return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+    };
+    const PslRead huge = readPreliminarySurface(flat(1e300), centre, 63);
+    CHECK(huge.gate == kMax);
+    CHECK(huge.cap == kMax);
+    CHECK(huge.anchor == kMax);
+    CHECK_FALSE(huge.aborted);
+    const PslRead nan =
+        readPreliminarySurface(flat(std::numeric_limits<double>::quiet_NaN()), centre, 63);
+    CHECK(nan.gate == 0);
+    CHECK(nan.cap == 0);
+    CHECK(nan.anchor == 0);
+    CHECK_FALSE(nan.aborted);
+
+    // And the level rule's own arithmetic on a saturated reading wraps
+    // rather than trapping. Q5.3(a)'s threshold `anchor + 20` wraps as
+    // Java's int would: under a surface at INT_MAX it is INT_MIN + 19, so a
+    // cell centred at 0 sits "more than twenty above" it and takes the sea.
+    CHECK(cellFluidLevel(cellWith(huge, 63, 0, 0.5)) == 63);
+    // A surface at INT_MIN is an ocean cell, and every cell above
+    // INT_MIN + 20 is more than twenty above it: the sea, by Q5.3(a), before
+    // the depth path is reached — aborted or not, since Q5.3(a) precedes
+    // every sample's test.
+    const PslRead floor{.gate = kMin, .cap = kMin, .anchor = kMin, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(floor, 63, 0, -1.0)) == 63);
+    CHECK(cellFluidLevel(cellWith(floor, 63, 1, -1.0)) == 63);
+    const PslRead abortedFloor{.gate = kMin, .cap = kMin, .anchor = kMin, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(abortedFloor, 63, 1, -1.0)) == 63);
+    // Under a land anchor the INT_MIN minimum is the only sample that can
+    // fire, and `cap - centreY` wraps: one block above it INT_MIN - 1 is
+    // INT_MAX, as Java's would be, and no sample fires; at it, the
+    // difference is 0 and the aborting sample fires.
+    const PslRead deepWindow{.gate = 100, .cap = kMin, .anchor = 100, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(deepWindow, 63, kMin, -1.0)) == lambdaLevel(63));
+    CHECK(cellFluidLevel(cellWith(deepWindow, 63, 1, -2.0)) == kNeverLevel);
+}
+
+TEST_CASE("a cell more than twenty above a land surface takes the sea, Q5.3(a)", "[aquifer]") {
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    // Off the ocean branch (surface 87, sea 95: 87 >= 95 - 8), floodedness
+    // 0.25 is under both gates, so a cell is dry — unless it is centred more
+    // than twenty above the surface, where the global picker's status, the
+    // sea, is taken first (aquifer-level-probe.sh, SPEC §11).
+    const PslRead land = constantSurface(87);
+    CHECK(cellFluidLevel(cellWith(land, 95, 107, 0.25)) == kNeverLevel); // twenty above
+    CHECK(cellFluidLevel(cellWith(land, 95, 108, 0.25)) == 95);          // twenty-one
+    // Whatever the floodedness would have given: the ladder, at 0.6.
+    CHECK(cellFluidLevel(cellWith(land, 95, 107, 0.6)) == 87);
+    CHECK(cellFluidLevel(cellWith(land, 95, 108, 0.6)) == 95);
+    // It is the global picker's status, typed the default fluid as both
+    // near-surface seas are: the lava override does not reach it.
+    const auto level = cellLevel(cellWith(land, 95, 108, 0.25));
+    CHECK(level.origin == LevelOrigin::NearSurfaceSea);
+    // And before Q5.9's override, which forces only the gates' comparands.
+    CellFluid deep = cellWith(land, 95, 108, 0.95);
+    deep.deepDark = true;
+    CHECK(cellFluidLevel(deep) == 95);
+    deep.centreY = 107;
+    CHECK(cellFluidLevel(deep) == kNeverLevel);
+    // The threshold reads the surface, not the sea: with the sea well under
+    // the surface (psl 87, sea 65) a cell 21 above the surface takes the sea
+    // and one 13 above the sea does not.
+    CHECK(cellFluidLevel(cellWith(land, 65, 108, 0.25)) == 65);
+    CHECK(cellFluidLevel(cellWith(land, 65, 78, 0.25)) == kNeverLevel);
+    // An aborted scan takes it too: Q5.3(a) precedes every sample's test, so
+    // a land anchor clears the abort that a later sample arms. Engine v12
+    // gave such a source A_lava; the ties probe's tp and tc worlds hold the
+    // sea, at sea 43, 51 and -70 (SPEC §11).
+    const PslRead aborted{.gate = 87, .cap = -70, .anchor = 87, .aborted = true};
+    CHECK(cellFluidLevel(cellWith(aborted, 95, 108, 0.25)) == 95);
+    CHECK(cellFluidLevel(cellWith(aborted, 95, 107, 0.25)) == lambdaLevel(95));
+}
+
+TEST_CASE("Q5.3(a) reads the anchor, not the scan's minimum", "[aquifer]") {
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    // A land window (sea 63, every sample at or above 55) whose anchor reads
+    // 64 and another sample 55: twenty-one above the minimum is not enough;
+    // twenty-one above the anchor is. The ties probe's tl worlds part the two
+    // through the sea's lid, and the server takes the anchor on every block
+    // (engine v12 read the minimum).
+    const PslRead land{.gate = 55, .cap = 55, .anchor = 64, .aborted = false};
+    CHECK(cellFluidLevel(cellWith(land, 63, 76, -2.0)) == kNeverLevel);
+    CHECK(cellFluidLevel(cellWith(land, 63, 84, -2.0)) == kNeverLevel);
+    CHECK(cellLevel(cellWith(land, 63, 85, -2.0)).origin == LevelOrigin::NearSurfaceSea);
+    // The same over an aborting anchor at -63 with -100 later in the window:
+    // engine v12's exemption read -100 and gave the sea from -79 up; the
+    // anchor gives A_lava to -43 (the anchor fires first) and the sea above
+    // (the ties probe's ta worlds, in blocks).
+    const PslRead abortAnchor{.gate = -63, .cap = -100, .anchor = -63, .aborted = true};
+    for (std::int32_t centreY = -54; centreY <= -43; ++centreY) {
+        INFO("centre " << centreY);
+        CHECK(cellLevel(cellWith(abortAnchor, 63, centreY, -2.0)).origin ==
+              LevelOrigin::GlobalLava);
+    }
+    CHECK(cellFluidLevel(cellWith(abortAnchor, 63, -42, -2.0)) == 63);
+    // Below lambda Q5.3(a)'s global status is A_lava itself.
+    const PslRead deep{.gate = -100, .cap = -100, .anchor = -100, .aborted = true};
+    CHECK(cellLevel(cellWith(deep, 63, -79, -2.0)).origin == LevelOrigin::GlobalLava);
+}
+
+TEST_CASE("the first sample in scan order to fire decides, Q5.3(b)", "[aquifer]") {
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::LevelOrigin;
+    using stratum::aquifer::sourceStatus;
+    // An anchor at -60, submerged and clean, with -64 aborting later in the
+    // window (the ties probe's tb worlds): within four of -60 the clean
+    // sample fires first and the source takes the sea — below lambda too,
+    // typed the default fluid. Engine v12 gave A_lava to every centre from
+    // -63 to -44, dry in the server's ice.
+    const PslRead cleanFirst{.gate = -60, .cap = -64, .anchor = -60, .aborted = true};
+    for (std::int32_t centreY = -63; centreY <= -40; ++centreY) {
+        INFO("centre " << centreY);
+        const auto level = cellLevel(cellWith(cleanFirst, 63, centreY, -2.0));
+        CHECK(level.level == 63);
+        CHECK(level.origin == LevelOrigin::NearSurfaceSea);
+        CHECK(sourceStatus(cellWith(cleanFirst, 63, centreY, -2.0), 0.9).type ==
+              stratum::aquifer::FluidType::Default);
+    }
+    // Four below the clean sample it no longer fires, and the aborting one
+    // does: A_lava.
+    CHECK(cellLevel(cellWith(cleanFirst, 63, -64, -2.0)).origin == LevelOrigin::GlobalLava);
+    // An aborting anchor leaves no clean sample before it: the scan's gate
+    // is then the anchor itself, below the threshold, and does not count.
+    const PslRead abortFirst{.gate = -64, .cap = -64, .anchor = -64, .aborted = true};
+    CHECK(cellLevel(cellWith(abortFirst, 63, -60, -2.0)).origin == LevelOrigin::GlobalLava);
+    // At a sea under -54 no clean sample is submerged (the abort threshold
+    // IS the ocean gate there), so every sample that fires aborts: a land
+    // prefix of -78 at sea -70 before -90 (the tc worlds) gives A_lava up to
+    // twenty above the anchor, and the sea above it.
+    const PslRead lowSea{.gate = -78, .cap = -90, .anchor = -78, .aborted = true};
+    CHECK(cellLevel(cellWith(lowSea, -70, -58, 0.0)).origin == LevelOrigin::GlobalLava);
+    const auto above = cellLevel(cellWith(lowSea, -70, -57, 0.0));
+    CHECK(above.level == -70);
+    CHECK(above.origin == LevelOrigin::NearSurfaceSea);
+}
+
+TEST_CASE("the scan's reduction decides as the samples do, first match in scan order",
+          "[aquifer]") {
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::kNearSurfaceDepth;
+    using stratum::aquifer::kNearSurfaceFloorOffset;
+    using stratum::aquifer::kOceanGateOffset;
+    using stratum::aquifer::kPslAnchorQuantum;
+    using stratum::aquifer::kPslWindow;
+    using stratum::aquifer::kPslWindowSize;
+    using stratum::aquifer::LevelOrigin;
+    // `cellLevel` reads four values of the scan; the clean-room spec's Q5.3
+    // reads the thirteen samples in order. Over random scans whose samples
+    // straddle every threshold, the two agree on every source: Q5.3(a) on
+    // the anchor, then the first sample to fire (A_lava if it aborts, the sea
+    // if not), then the level rule on the minimum — which is checked against
+    // `levelRuleOf`, so this case pins the short-circuits and nothing else.
+    constexpr std::array<std::int32_t, 6> kSeas{63, 0, -50, -56, -60, -70};
+    constexpr std::array<double, 4> kFloodedness{-2.0, 0.3, 0.6, 0.95};
+    constexpr std::array<double, 19> kValues{-120.0, -100.0, -90.0, -80.5, -79.0, -78.0, -77.0,
+                                             -66.0,  -63.0,  -62.5, -62.0, -61.0, -60.0, -54.0,
+                                             -40.0,  -10.0,  54.0,  55.5,  70.0};
+    stratum::rng::JavaRandom random(0x5eedL);
+    std::size_t fired = 0;
+    std::size_t aboveAnchor = 0;
+    std::size_t none = 0;
+    for (int trial = 0; trial < 20000; ++trial) {
+        std::array<double, kPslWindowSize + 1> samples{};
+        for (double& sample : samples) {
+            sample = kValues.at(static_cast<std::size_t>(
+                random.nextInt(static_cast<std::int32_t>(kValues.size()))));
+        }
+        const std::int32_t sea = kSeas.at(
+            static_cast<std::size_t>(random.nextInt(static_cast<std::int32_t>(kSeas.size()))));
+        const CellIndex centre{.x = random.nextInt(64) - 32,
+                               .y = random.nextInt(260) - 160,
+                               .z = random.nextInt(64) - 32};
+        const std::int32_t anchorX =
+            stratum::javamath::floorDiv(centre.x, kPslAnchorQuantum) * kPslAnchorQuantum;
+        const std::int32_t anchorZ =
+            stratum::javamath::floorDiv(centre.z, kPslAnchorQuantum) * kPslAnchorQuantum;
+        const auto field = [&](std::int32_t x, std::int32_t, std::int32_t z) {
+            for (std::size_t i = 0; i < kPslWindowSize; ++i) {
+                if (x == anchorX + kPslWindow.at(i).dx && z == anchorZ + kPslWindow.at(i).dz) {
+                    return samples.at(i + 1);
+                }
+            }
+            return samples[0];
+        };
+        const double floodedness = kFloodedness.at(static_cast<std::size_t>(
+            random.nextInt(static_cast<std::int32_t>(kFloodedness.size()))));
+        const CellFluid cell =
+            cellWith(readPreliminarySurface(field, centre, sea), sea, centre.y, floodedness);
+        const auto got = cellLevel(cell);
+
+        // The spec, sample by sample (floored, as the scan floors).
+        const std::int32_t lambda = lambdaLevel(sea);
+        const std::int32_t qy = centre.y;
+        std::optional<stratum::aquifer::CellLevel> expected;
+        const std::int32_t anchor = stratum::javamath::floorToInt(samples[0]);
+        if (qy > anchor + kNearSurfaceFloorOffset) {
+            expected = qy < lambda ? stratum::aquifer::CellLevel{.level = kLavaLevel,
+                                                                 .origin = LevelOrigin::GlobalLava}
+                                   : stratum::aquifer::CellLevel{
+                                         .level = sea, .origin = LevelOrigin::NearSurfaceSea};
+            ++aboveAnchor;
+        } else {
+            for (const double sample : samples) {
+                const std::int32_t p = stratum::javamath::floorToInt(sample);
+                if (p < sea - kOceanGateOffset && qy > p - kNearSurfaceDepth) {
+                    expected = p < lambda - kOceanGateOffset
+                                   ? stratum::aquifer::CellLevel{.level = kLavaLevel,
+                                                                 .origin = LevelOrigin::GlobalLava}
+                                   : stratum::aquifer::CellLevel{
+                                         .level = sea, .origin = LevelOrigin::NearSurfaceSea};
+                    ++fired;
+                    break;
+                }
+            }
+        }
+        INFO("trial " << trial << ", sea " << sea << ", centre " << qy);
+        if (expected.has_value()) {
+            CHECK(got.level == expected->level);
+            CHECK(got.origin == expected->origin);
+        } else {
+            ++none;
+            // No short-circuit: the level rule, on the minimum.
+            CHECK(got.origin != LevelOrigin::NearSurfaceSea);
+            if (sea == 63) {
+                const std::int32_t minimum =
+                    stratum::javamath::floorToInt(*std::ranges::min_element(samples));
+                if (minimum < -62) {
+                    CHECK(got.level == levelRuleOf(minimum, anchor, qy, floodedness));
+                }
+            }
+        }
+    }
+    // Every branch is live in the sweep.
+    CHECK(aboveAnchor > 1000);
+    CHECK(fired > 1000);
+    CHECK(none > 1000);
+}
+
+TEST_CASE("an aborted scan no sample of which fires takes the level rule", "[aquifer]") {
+    // A centre four or more below every sample: the spec's level rule on the
+    // whole minimum (Q5.4-Q5.6), exactly as if the scan had not aborted.
+    const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    const PslRead quiet{.gate = -70, .cap = -70, .anchor = -20, .aborted = false};
+    for (std::int32_t centreY = -200; centreY <= -74; ++centreY) {
+        for (const double floodedness : {-2.0, 0.0, 0.5, 0.9}) {
+            INFO("centre " << centreY << ", floodedness " << floodedness);
+            CHECK(cellFluidLevel(cellWith(aborted, 63, centreY, floodedness, 0.4)) ==
+                  cellFluidLevel(cellWith(quiet, 63, centreY, floodedness, 0.4)));
+        }
+    }
+}
+
+TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
+    // The code does not clamp (lattice.hpp, by the thresholds). This is the
+    // proof that it need not: every out-of-range floodedness gives the same
+    // level as its clamp, over every depth the ocean branch can see, both
+    // gating sides of `sea_level - 8`, and an aborting scan or not.
+    const double outside[] = {
+        std::nextafter(1.0, 2.0),   1.5,  2.0,  1e6,  std::numeric_limits<double>::infinity(),
+        std::nextafter(-1.0, -2.0), -1.5, -2.0, -1e6, -std::numeric_limits<double>::infinity()};
+    std::size_t compared = 0;
+    for (const double floodedness : outside) {
+        const double clamped = std::clamp(floodedness, -1.0, 1.0);
+        for (const std::int32_t anchor : {40, 60}) { // sea 68: gate at 60
+            for (const bool aborted : {false, true}) {
+                for (std::int32_t depth = 0; depth <= 64; ++depth) {
+                    const PslRead surface{
+                        .gate = 40, .cap = 40, .anchor = anchor, .aborted = aborted};
+                    const std::int32_t centreY = 40 - depth;
+                    INFO("floodedness " << floodedness << " anchor " << anchor << " aborted "
+                                        << aborted << " depth " << depth);
+                    CHECK(cellFluidLevel(cellWith(surface, 68, centreY, floodedness)) ==
+                          cellFluidLevel(cellWith(surface, 68, centreY, clamped)));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared == 10U * 2U * 2U * 65U);
+}
+
+TEST_CASE("an aborting sample that fires reads -54, and nothing else is floored", "[aquifer]") {
+    // At sea 63, measured through the barrier, the only consumer that sees a
+    // level below lambda there: over an aborting surface with vanilla's
+    // barrier on (aquifer-nsfloor-probe.sh) the unfloored levels build 7 690
+    // blocks of stone the server does not, and -54 builds none; on worlds
+    // whose scans never reach below lambda (water/lava, deep-floor,
+    // capfloor's cf200) the ladder stays unclamped, and a floor there breaks
+    // them. At sea 63 -54 is lambda; the case below this one has the seas
+    // where it is not.
+    const std::int32_t lambda = lambdaLevel(63);
+    REQUIRE(lambda == stratum::aquifer::kLavaLevel);
+    const PslRead aborted{.gate = -20, .cap = -70, .anchor = -20, .aborted = true};
+    // Sixteen below the clean anchor, which does not fire, and within four of
+    // the -70 that does: A_lava, refused the sea and the ladder alike.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, 0.9)) == lambda);
+    // Whatever the level rule would have said: at floodedness -0.5 it gives
+    // the ladder capped at -70 (the reach of 66 carries it past 0.4 and short
+    // of 0.8), and the aborting sample overrides the rule as a whole.
+    CHECK(levelRuleOf(aborted.cap, aborted.anchor, -60, -0.5) == -70);
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -60, -0.5)) == lambda);
+    // And a source that nothing floods reads -54 too, not the dry sentinel:
+    // at floodedness 0 the server sides with -54 on all 3 770 blocks where
+    // the two part.
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -36, -2.0)) == lambda);
+    // So every source whose aborting sample fires — centred from four below
+    // it (-73) up to twenty above the anchor (0), short of the clean
+    // anchor's own reach — reads exactly -54, whatever its floodedness and
+    // spread: A_lava, before the level rule (spec Q5.3(b)).
+    for (std::int32_t centreY = -73; centreY <= -24; centreY += 7) {
+        for (const double floodedness : {-2.0, 0.0, 0.3, 0.5, 0.9, 2.0}) {
+            for (const double spread : {-1.0, 0.0, 1.0}) {
+                CHECK(cellFluidLevel(cellWith(aborted, 63, centreY, floodedness, spread)) ==
+                      lambda);
+            }
+        }
+    }
+    // Deeper, no sample fires and the level rule runs on the minimum: 130
+    // blocks down, the ladder's own rung (-140) sits below the cap.
+    const std::int32_t rung = ladderLevel(-150, aborted.cap, 0.0);
+    REQUIRE(rung < aborted.cap);
+    CHECK(cellFluidLevel(cellWith(aborted, 63, -150, 0.6)) == rung);
+
+    // Without the abort a cap below lambda is NOT floored: psl -58 sits below
+    // lambda without reaching the -62 that aborts the scan. This is the
+    // documented reading (spec Q5.3(b) ties the A_lava status to the abort),
+    // and capfloor's cf58l arm bears it out, thinly: on the 4 blocks over two
+    // seeds where it and a floor on the cap part, the server takes this one
+    // (vanilla_aquifer_nsfloor_test.cpp).
+    // A cell deep enough that no sea bonus reaches it takes the ladder.
+    const PslRead low{.gate = -58, .cap = -58, .anchor = -58, .aborted = false};
+    const std::int32_t unfloored = cellFluidLevel(cellWith(low, 63, -150, 0.6));
+    CHECK(unfloored < lambda);
+    CHECK(unfloored != kNeverLevel);
+    // ... and its dry outcome stays the sentinel.
+    CHECK(cellFluidLevel(cellWith(low, 63, -150, -2.0)) == kNeverLevel);
+}
+
+TEST_CASE("below a sea under -54 an aborted scan reads -54 and lava, deep-dark or not",
+          "[aquifer]") {
+    // Where lambda is `sea_level` the reading engines v5 and v6 took (lambda)
+    // and A_lava part in blocks: at sea -70 an aborted cell off the
+    // near-surface path holds lava to y = -55, with Q5.9's override and
+    // without (aquifer-lowfloor-probe.sh's lf_v5, lf_v5w and lf_dd).
+    using stratum::aquifer::cellLevel;
+    using stratum::aquifer::FluidType;
+    using stratum::aquifer::LevelOrigin;
+    using stratum::aquifer::sourceStatus;
+    // Anchor -20 clears the sea's -78 gate; a -88 in the window aborts, and
+    // fires for every centre from -91 to twenty above the anchor.
+    const PslRead aborted{.gate = -20, .cap = -88, .anchor = -20, .aborted = true};
+    for (const bool deepDark : {false, true}) {
+        for (const double floodedness : {0.0, 0.6, 0.9}) {
+            for (const std::int32_t centreY : {-74, -66, -40, 0}) {
+                CellFluid cell = cellWith(aborted, -70, centreY, floodedness);
+                cell.deepDark = deepDark;
+                INFO("deep dark " << deepDark << ", floodedness " << floodedness << ", centre "
+                                  << centreY);
+                const auto level = cellLevel(cell);
+                CHECK(level.level == stratum::aquifer::kLavaLevel);
+                CHECK(level.origin == LevelOrigin::GlobalLava);
+                // `lava` 0.0: a cell's own fluid would be water at a centre
+                // at or above lambda.
+                CHECK(sourceStatus(cell, 0.0).type == FluidType::Lava);
+            }
+        }
+    }
+    // Twenty-one above the anchor, Q5.3(a) takes the global picker's sea at
+    // the centre first — dry above -70, deep-dark or not (the ties probe's
+    // tc worlds, where engine v12 held lava to -55).
+    for (const bool deepDark : {false, true}) {
+        CellFluid cell = cellWith(aborted, -70, 1, 0.0);
+        cell.deepDark = deepDark;
+        const auto sea = cellLevel(cell);
+        CHECK(sea.level == -70);
+        CHECK(sea.origin == LevelOrigin::NearSurfaceSea);
+    }
+    // The same cells without the abort keep the level rule: the ladder at
+    // 0.6 (water, centred above lambda), the dry sentinel under the override.
+    const PslRead quiet{.gate = -20, .cap = -20, .anchor = -20, .aborted = false};
+    const auto ladder = sourceStatus(cellWith(quiet, -70, -66, 0.6), 0.0);
+    CHECK(ladder.level == -60);
+    CHECK(ladder.type == FluidType::Default);
+    CellFluid dark = cellWith(quiet, -70, -66, 0.9);
+    dark.deepDark = true;
+    CHECK(cellFluidLevel(dark) == kNeverLevel);
+    // And the trailing guard's sea below lambda is the same status.
+    const auto guarded = cellLevel(cellWith(quiet, -70, -74, 0.9));
+    CHECK(guarded.level == stratum::aquifer::kLavaLevel);
+    CHECK(guarded.origin == LevelOrigin::GlobalLava);
 }

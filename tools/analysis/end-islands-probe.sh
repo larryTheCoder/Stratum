@@ -80,7 +80,9 @@ command -v jq   >/dev/null 2>&1 || die "jq is needed to build the terrain-only d
 fixtures="${repo_root}/.fixtures/${MINECRAFT_VERSION}"
 worldgen_dir="${fixtures}/worldgen"
 [[ -d "${worldgen_dir}/biome" ]] || die "no worldgen tree at ${worldgen_dir}; run tools/fetch-vanilla"
-jar="$(find "${fixtures}" -maxdepth 2 -name 'server*.jar' | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find "${fixtures}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar under ${fixtures}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 

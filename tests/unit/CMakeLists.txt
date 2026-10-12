@@ -5,12 +5,17 @@ add_executable(stratum_unit_tests
     chunk_test.cpp
     chunk_writer_test.cpp
     cli_test.cpp
+    deepslate_aquifer_oracle_test.cpp
+    deepslate_legacy_noise_oracle_test.cpp
     deepslate_oracle_test.cpp
     density_graph_test.cpp
     density_interpreter_test.cpp
+    fluid_flow_test.cpp
     surface_executor_test.cpp
     surface_rule_test.cpp
     surface_schema_test.cpp
+    surface_column_test.cpp
+    legacy_goldens_decoder_test.cpp
     aquifer_barrier_test.cpp
     aquifer_fluid_type_test.cpp
     aquifer_lattice_test.cpp
@@ -23,6 +28,7 @@ add_executable(stratum_unit_tests
     fdlibm_test.cpp
     java_random_test.cpp
     javamath_test.cpp
+    legacy_climate_test.cpp
     mapping_biome_test.cpp
     mapping_block_state_test.cpp
     md5_test.cpp
@@ -49,6 +55,10 @@ add_executable(stratum_unit_tests
 target_include_directories(stratum_unit_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    # legacy_goldens_decoder_test.cpp holds the golden decoder's column
+    # reconstruction without fixtures; it includes the analyzer's own header,
+    # as the conformance case does, rather than a copy.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/analysis"
 )
 
 target_link_libraries(stratum_unit_tests PRIVATE
@@ -66,9 +76,11 @@ if(TARGET stratum_cli)
     add_dependencies(stratum_unit_tests stratum_cli)
 endif()
 
-# ext/'s plain C++ half: the sub-chunk encoding, fixture-free.
+# ext/'s plain C++ half: the sub-chunk encoding and the fluid-update
+# hand-over, fixture-free.
 target_sources(stratum_unit_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/chunk_encoder_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ext/tests/fluid_updates_test.cpp"
 )
 target_link_libraries(stratum_unit_tests PRIVATE stratum::pmmp_core)
 

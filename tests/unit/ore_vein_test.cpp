@@ -1,26 +1,31 @@
-// Stratum — ore veins: the gate, the three draws, and the flag coupling.
+// Stratum — ore veins: the gate, the three draws, and how each meets its threshold.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // The per-block agreement against real server output lives in
-// `tests/conformance/vanilla_ore_vein_test.cpp`, which needs probe worlds.
-// This file is fixture-free: known-answer vectors for the RNG the derivation
-// rests on, and the deterministic gate's own boundaries, which are the pieces
-// a wrong edge case would silently shift.
+// `tests/conformance/vanilla_ore_vein_test.cpp` and
+// `tests/conformance/vanilla_orevein_legacy_test.cpp`, which need probe
+// worlds. This file is fixture-free: known-answer vectors for the RNG the
+// derivation rests on, the deterministic gate's own boundaries, and the
+// single positions at which the server settled each draw's comparison —
+// the pieces a wrong edge case would silently shift.
+#include <stratum/density/random_source.hpp>
 #include <stratum/ore/vein.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <bit>
 #include <cstdint>
+#include <limits>
 
+using stratum::density::RandomSource;
 using stratum::ore::clearsRichness;
 using stratum::ore::inAnyVeinRange;
 using stratum::ore::Vein;
 using stratum::ore::VeinBlock;
 using stratum::ore::VeinInputs;
 using stratum::ore::VeinSource;
-using stratum::ore::veinsPlaceBlocks;
 using stratum::ore::VeinType;
 
 namespace {
@@ -134,17 +139,8 @@ TEST_CASE("the deterministic gate matches the measured ranges", "[ore][vein]") {
     }
 }
 
-TEST_CASE("ore veins need aquifers enabled too", "[ore][vein]") {
-    // Measured, not assumed: a probe with veins on and aquifers off came back
-    // as 6291456 of 6291456 plain stone blocks (SPEC §11).
-    CHECK(veinsPlaceBlocks(true, true));
-    CHECK_FALSE(veinsPlaceBlocks(true, false));
-    CHECK_FALSE(veinsPlaceBlocks(false, true));
-    CHECK_FALSE(veinsPlaceBlocks(false, false));
-}
-
 TEST_CASE("a position failing the gate is never touched, whatever the RNG says", "[ore][vein]") {
-    const VeinSource source(42);
+    const VeinSource source(42, RandomSource::Xoroshiro);
     // vein_ridged >= 0 is the one gate that is not about y or the toggle, and
     // it is necessary with zero exceptions across every real vein block
     // measured.
@@ -155,7 +151,7 @@ TEST_CASE("a position failing the gate is never touched, whatever the RNG says",
 }
 
 TEST_CASE("the metal follows y, not the RNG", "[ore][vein]") {
-    const VeinSource source(100);
+    const VeinSource source(100, RandomSource::Xoroshiro);
     for (std::int32_t y = 0; y <= 50; ++y) {
         const Vein vein = source.at(7, y, 9, passing(1.0));
         if (vein.placed()) {
@@ -171,7 +167,7 @@ TEST_CASE("the metal follows y, not the RNG", "[ore][vein]") {
 }
 
 TEST_CASE("vein_gap at or below -0.3 forces filler over ore", "[ore][vein]") {
-    const VeinSource source(42);
+    const VeinSource source(42, RandomSource::Xoroshiro);
     // A toggle of 1.0 maps to the TOP of the ore chance (0.3), so a position
     // that comes out as ore with an open gap is the sharpest test that the
     // gap alone closed it.
@@ -199,14 +195,16 @@ TEST_CASE("the three draws come from one generator, in order", "[ore][vein][rng]
     // generator — which would still look random, still read ~70/30/2 in
     // aggregate, and be wrong on every block.
     const std::int64_t seed = 424242;
-    const VeinSource source(seed);
+    const VeinSource source(seed, RandomSource::Xoroshiro);
     const auto raw = stratum::rng::positionalSourceFor(seed, "minecraft:ore");
     int touched = 0;
     int ore = 0;
     for (std::int32_t x = 0; x < 500; ++x) {
         const VeinInputs inputs{.toggle = 0.5, .ridged = -1.0, .gap = 0.0};
         auto generator = raw.at(x, 25, 0);
-        const bool expectTouched = generator.nextFloat() < 0.7F;
+        // Widened to double, as the server compares it: see "a first draw of
+        // exactly 0.7F is a member" below.
+        const bool expectTouched = static_cast<double>(generator.nextFloat()) < 0.7;
         // |toggle| 0.5 sits halfway along [0.4, 0.6], so the ore chance is
         // halfway along [0.1, 0.3].
         const bool expectOre = expectTouched && generator.nextFloat() < 0.2F;
@@ -222,4 +220,159 @@ TEST_CASE("the three draws come from one generator, in order", "[ore][vein][rng]
     // Guards against the loop above passing vacuously.
     CHECK(touched > 0);
     CHECK(ore > 0);
+}
+
+TEST_CASE("under the legacy source the three draws come from legacyPositionalSourceFor",
+          "[ore][vein][rng][legacy]") {
+    // The derivation measured on tools/analysis/legacy-orevein-probe.sh's
+    // legacy arms (SPEC §11, "Ore veins under the legacy source"):
+    // java.util.Random through the legacy positional primitive salted
+    // "minecraft:ore", three nextFloat draws in the modern order. Reproduced
+    // by hand from rng::legacyPositionalSourceFor, whose own JVM vectors live
+    // in java_random_test.cpp, so this pins the WIRING — the source, the
+    // salt, one generator, nextFloat rather than nextDouble — with no vector
+    // of its own to go stale.
+    constexpr std::int64_t kSeed = 31337;
+    const VeinSource legacy(kSeed, RandomSource::Legacy);
+    const VeinSource modern(kSeed, RandomSource::Xoroshiro);
+    CHECK(legacy.source() == RandomSource::Legacy);
+    CHECK(modern.source() == RandomSource::Xoroshiro);
+    const auto raw = stratum::rng::legacyPositionalSourceFor(kSeed, "minecraft:ore");
+    int touched = 0;
+    int ore = 0;
+    int differ = 0;
+    for (std::int32_t x = -250; x < 250; ++x) {
+        for (const std::int32_t y : {-40, 25}) {
+            const VeinInputs inputs{.toggle = y < 0 ? -0.5 : 0.5, .ridged = -1.0, .gap = 0.0};
+            stratum::rng::JavaRandom generator = raw.at(x, y, 7);
+            const bool expectTouched = static_cast<double>(generator.nextFloat()) < 0.7;
+            const bool expectOre = expectTouched && generator.nextFloat() < 0.2F;
+            const bool expectRaw = expectOre && generator.nextFloat() < 0.02F;
+
+            const Vein vein = legacy.at(x, y, 7, inputs);
+            CHECK(vein.placed() == expectTouched);
+            CHECK((vein.block == VeinBlock::Ore || vein.block == VeinBlock::RawBlock) == expectOre);
+            CHECK((vein.block == VeinBlock::RawBlock) == expectRaw);
+            touched += expectTouched ? 1 : 0;
+            ore += expectOre ? 1 : 0;
+            differ += modern.at(x, y, 7, inputs).block != vein.block ? 1 : 0;
+        }
+    }
+    CHECK(touched > 500);
+    CHECK(ore > 100);
+    // The two sources are different fields: about 63% of positions part.
+    CHECK(differ > 400);
+}
+
+TEST_CASE("the legacy vein source keeps 48 bits of the world seed, the modern one 64",
+          "[ore][vein][rng][legacy]") {
+    // java.util.Random keeps the low 48 bits of a seed, so 42 and 42 with the
+    // sign bit set are one legacy world — measured on the probe, whose twin
+    // world's legacy arm replays exactly with seed 42's source — and two
+    // modern ones.
+    constexpr std::int64_t kTwin = 42 ^ std::numeric_limits<std::int64_t>::min();
+    const VeinSource legacy(42, RandomSource::Legacy);
+    const VeinSource legacyTwin(kTwin, RandomSource::Legacy);
+    const VeinSource modern(42, RandomSource::Xoroshiro);
+    const VeinSource modernTwin(kTwin, RandomSource::Xoroshiro);
+    int differModern = 0;
+    for (std::int32_t x = 0; x < 400; ++x) {
+        CHECK(legacy.at(x, 25, 3, passing(0.7)).block ==
+              legacyTwin.at(x, 25, 3, passing(0.7)).block);
+        differModern +=
+            modern.at(x, 25, 3, passing(0.7)).block != modernTwin.at(x, 25, 3, passing(0.7)).block
+                ? 1
+                : 0;
+    }
+    CHECK(differModern > 100);
+}
+
+TEST_CASE("a first draw of exactly 0.7F is a member, under either source", "[ore][vein][rng]") {
+    // The one 24-bit draw at which `draw < 0.7F` and `(double) draw < 0.7`
+    // part is 0.7F itself (next(24) = 11744051), and the server took it as a
+    // MEMBER every time it came up in a probe window: under the legacy source
+    // at seed 31337 (38, -31, 7), 14 (47, -38, 94) and 15 (62, 31, 113), and
+    // under Xoroshiro at seed 2 (24, -45, 22) and (24, 45, 22) — positions
+    // found from the RNG alone before those worlds were generated, all but
+    // the first (SPEC §11, "Ore veins under the legacy source"). Engine v13
+    // compared in float and left all five as the default block. Each row
+    // here is the block the server wrote there, under the probe's inputs
+    // (toggle -0.7 below y 0 and +0.7 above, ridged -1, gap 0).
+    const auto bits = [](const float value) { return std::bit_cast<std::uint32_t>(value); };
+
+    struct Row {
+        RandomSource source;
+        std::int64_t seed;
+        std::int32_t x, y, z;
+        VeinBlock block;
+    };
+
+    static constexpr Row kRows[] = {
+        {RandomSource::Legacy, 31337, 38, -31, 7, VeinBlock::Ore},
+        {RandomSource::Legacy, 14, 47, -38, 94, VeinBlock::Ore},
+        {RandomSource::Legacy, 15, 62, 31, 113, VeinBlock::Filler},
+        {RandomSource::Xoroshiro, 2, 24, -45, 22, VeinBlock::Ore},
+        {RandomSource::Xoroshiro, 2, 24, 45, 22, VeinBlock::Ore},
+    };
+    for (const Row& row : kRows) {
+        INFO("seed " << row.seed << " (" << row.x << ", " << row.y << ", " << row.z << ")");
+        // The position really is the bucket: its first draw is 0.7F exactly.
+        const float first = row.source == RandomSource::Legacy
+                                ? stratum::rng::legacyPositionalSourceFor(row.seed, "minecraft:ore")
+                                      .at(row.x, row.y, row.z)
+                                      .nextFloat()
+                                : stratum::rng::positionalSourceFor(row.seed, "minecraft:ore")
+                                      .at(row.x, row.y, row.z)
+                                      .nextFloat();
+        CHECK(bits(first) == bits(0.7F));
+        const Vein vein = VeinSource(row.seed, row.source)
+                              .at(row.x, row.y, row.z, passing(row.y < 0 ? -0.7 : 0.7));
+        CHECK(vein.block == row.block);
+        CHECK(vein.type == (row.y < 0 ? VeinType::Iron : VeinType::Copper));
+    }
+}
+
+TEST_CASE("the ore roll compares its draw with the chance rounded to float", "[ore][vein][rng]") {
+    // The other way round from membership. A draw f and a chance c part in
+    // float and in double only where (float) c rounds DOWN onto f; the probe's
+    // `or` and `lr` arms each set a constant toggle whose chance sits a
+    // quarter of a float ulp above one member position's second draw at seed
+    // 42, chosen before the world existed. In double the roll is won there;
+    // the server wrote granite, filler, at both (SPEC §11).
+    struct Row {
+        RandomSource source;
+        std::int32_t x, y, z;
+        double toggle;
+    };
+
+    static constexpr Row kRows[] = {
+        {RandomSource::Xoroshiro, 58, 20, 0, 0.59730469733476643},
+        {RandomSource::Legacy, 20, 20, 0, 0.57947951108217244},
+    };
+    for (const Row& row : kRows) {
+        INFO("(" << row.x << ", " << row.y << ", " << row.z << ")");
+        // The position is what the arm was built for: a member whose second
+        // draw is the chance rounded to float, and below the chance itself.
+        float first = 0.0F;
+        float second = 0.0F;
+        if (row.source == RandomSource::Legacy) {
+            auto generator = stratum::rng::legacyPositionalSourceFor(42, "minecraft:ore")
+                                 .at(row.x, row.y, row.z);
+            first = generator.nextFloat();
+            second = generator.nextFloat();
+        } else {
+            auto generator =
+                stratum::rng::positionalSourceFor(42, "minecraft:ore").at(row.x, row.y, row.z);
+            first = generator.nextFloat();
+            second = generator.nextFloat();
+        }
+        // clampedMap(toggle, 0.4, 0.6 -> 0.1, 0.3), spelled as the library spells it.
+        const double chance = 0.1 + (((row.toggle - 0.4) / (0.6 - 0.4)) * (0.3 - 0.1));
+        CHECK(static_cast<double>(first) < 0.7);
+        CHECK(static_cast<double>(second) < chance);
+        CHECK_FALSE(second < static_cast<float>(chance));
+        const Vein vein = VeinSource(42, row.source).at(row.x, row.y, row.z, passing(row.toggle));
+        CHECK(vein.block == VeinBlock::Filler);
+        CHECK(vein.type == VeinType::Copper);
+    }
 }

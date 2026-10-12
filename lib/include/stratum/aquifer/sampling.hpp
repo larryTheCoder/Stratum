@@ -1,12 +1,14 @@
 // Stratum — where the aquifer reads its router inputs.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The level rule in `lattice.hpp` is settled to 99.99% per cell. Every probe
-// behind it, though — about 1370 dimensions — held `preliminary_surface_level`
-// and `fluid_level_floodedness` at CONSTANTS. So the predicate was settled and
-// the positions its inputs are read AT were not, and in a real world the
-// surface varies per column and feeds the depth directly. This header is the
-// answer to that question, for the two inputs where there is one.
+// The level rule in `lattice.hpp` holds block for block on a constant surface
+// (`aquifer-level-probe.sh`). Every probe behind it, though — the old
+// campaign's 1370 dimensions and the 255 that hold it now — held
+// `preliminary_surface_level` and `fluid_level_floodedness` at CONSTANTS. So
+// the predicate was settled and the positions its inputs are read AT were not,
+// and in a real world the surface varies per column and feeds the depth
+// directly. This header is the answer to that question, for the two inputs
+// where there is one.
 //
 // Measured by six agents across eleven world seeds, on instruments built
 // independently of each other. The headline is that the inputs DO NOT share a
@@ -30,6 +32,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <utility>
+#include <vector>
 
 namespace stratum::aquifer {
 
@@ -132,6 +137,30 @@ struct SamplePos {
 /// Excluded: `min_y`, `min_y + 64`, `sea_level`, and the cell's own centre y.
 inline constexpr std::int32_t kPreliminarySurfaceSampleY = 0;
 
+/// Q2.5's cutoff for the chunk whose minimum block corner is (@p baseX,
+/// @p baseZ): `ySkip` of the highest FLOORED `preliminary_surface_level` over
+/// `ySkipRectangle`, every `kYSkipSampleStride` blocks on both axes with both
+/// endpoints included, each read at `kPreliminarySurfaceSampleY`. The one
+/// spelling of the loop: `ChunkFiller` and the conformance cases call it.
+///
+/// @param psl anything callable as `double(std::int32_t x, std::int32_t y,
+///            std::int32_t z)`, as for `readPreliminarySurface`.
+template<typename Sampler>
+[[nodiscard]] std::int32_t chunkYSkip(const Sampler& psl, const std::int32_t baseX,
+                                      const std::int32_t baseZ) {
+    const YSkipRectangle rectangle = ySkipRectangle(baseX, baseZ);
+    std::int32_t maxSurface = std::numeric_limits<std::int32_t>::min();
+    for (std::int32_t z = rectangle.minZ; z <= rectangle.maxZ; z += kYSkipSampleStride) {
+        for (std::int32_t x = rectangle.minX; x <= rectangle.maxX; x += kYSkipSampleStride) {
+            // Java's `(int) Math.floor`: a datapack's psl may be NaN or out
+            // of range, and a bare cast of either is undefined.
+            maxSurface =
+                std::max(maxSurface, javamath::floorToInt(psl(x, kPreliminarySurfaceSampleY, z)));
+        }
+    }
+    return ySkip(maxSurface);
+}
+
 /// How `preliminary_surface_level`'s read is anchored: the cell's own jittered
 /// centre, quantised down to a multiple of four. `floorDiv`, never `/` — the
 /// two agree everywhere the probe harness looked, because it hardcodes a
@@ -175,7 +204,7 @@ inline constexpr std::int32_t kPslStride = 16;
 /// "world floor plus two" reading outright — at `min_y` -128 that would put
 /// the constant at -126, so a -70 arm would not abort, and it does.
 [[nodiscard]] constexpr double abortThreshold(const std::int32_t seaLevel) noexcept {
-    return static_cast<double>(lambdaLevel(seaLevel) - kOceanGateOffset);
+    return static_cast<double>(javamath::wrappingSub(lambdaLevel(seaLevel), kOceanGateOffset));
 }
 
 /// The window, as offsets from the anchor, IN SCAN ORDER. The anchor itself is
@@ -223,6 +252,13 @@ inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
     {.dx = 16, .dz = 16},
 }};
 
+// Every offset sits on the measured pitch — the table is written out for
+// readability, and this is what ties it to `kPslStride`.
+static_assert(std::ranges::all_of(kPslWindow, [](const PslOffset offset) {
+    return javamath::floorMod(offset.dx, kPslStride) == 0 &&
+           javamath::floorMod(offset.dz, kPslStride) == 0;
+}));
+
 // `PslRead` — the four values one scan yields — lives in `lattice.hpp`,
 // because it is what the level rule consumes.
 
@@ -252,6 +288,19 @@ inline constexpr std::array<PslOffset, kPslWindowSize> kPslWindow{{
 /// `psl >= sea_level - 8`. No single psl value satisfies both. Constant-psl
 /// controls at -70, -64, -63, -62, -58, -54, -40, 0, 40 and 100 all flood
 /// those same cells, so it is the spike and not the value that empties them.
+///
+/// EACH SAMPLE IS THE RAW ENTRY AT ITS OWN COLUMN — not the value the surface
+/// rule gets, which reads this same entry through a 16-block lattice, blended
+/// and floored twice (`terrain::ChunkFiller::preliminarySurfaceIn`). Scored
+/// head to head with the anchor, window, order and abort unchanged, on the
+/// blocks where the two readings predict different categories: 802 159 on
+/// the varying-surface probe, where the server sides with the per-column
+/// reading on 679 973 and with the lattice on none, and 1 564 944 over three
+/// seeds with the barrier on, 1 340 616 to none; every other block is solid
+/// or fluid flow may have moved. The lattice taken at the unquantised centre
+/// loses the same way. A source whose anchor is 16-aligned on both axes
+/// reads the same under either, for every field, so all of the evidence is
+/// from the others (`vanilla_aquifer_varying_surface_test.cpp`).
 ///
 /// @param psl      anything callable as `double(std::int32_t x,
 ///                 std::int32_t y, std::int32_t z)` — the router entry, or a
@@ -310,31 +359,172 @@ template<typename Sampler>
 
     // Floor toward negative infinity, on the double, once. Not round (0.4855),
     // not truncation toward zero (0.9209 — failing exactly on the negatives).
-    return PslRead{.gate = static_cast<std::int32_t>(std::floor(prefix)),
-                   .cap = static_cast<std::int32_t>(std::floor(aborted ? whole : prefix)),
-                   .anchor = static_cast<std::int32_t>(std::floor(seed)),
+    // Java's `(int) Math.floor`, saturating and NaN -> 0: a datapack's psl can
+    // be either, and a bare cast of them is undefined.
+    // `cap` is the whole minimum whether or not the scan aborted: without an
+    // abort every sample folded into the prefix too, and the two are one.
+    return PslRead{.gate = javamath::floorToInt(prefix),
+                   .cap = javamath::floorToInt(whole),
+                   .anchor = javamath::floorToInt(seed),
                    .aborted = aborted};
 }
 
-/// WHAT REMAINS A PERMANENT TIE, rather than an open measurement. `cap`'s value
-/// on an aborting cell is only ever consumed through `max(lambda, min(ladder,
-/// ·))` and every aborting sample is below -62, so "the whole window's
-/// minimum", "the aborting sample" and "any sentinel at or below the lava
-/// level" cannot be told apart by any consumer that exists.
+/// One router read, memoized by position: the first call at a position asks
+/// the wrapped sampler, and every later call at the same position returns
+/// what it said then. For a read that is a pure function of its position —
+/// and nothing else — this changes how often the sampler runs and nothing
+/// about what any caller gets back.
+///
+/// Built for `preliminary_surface_level`, whose every read is a
+/// `find_top_surface` column scan: a source's thirteen scan positions all sit
+/// on the 4-aligned lattice its anchor quantum and the window's 16-block
+/// pitch make, so neighbouring sources, and the sources of one cell column at
+/// different layers, read many of the same positions — and `chunkYSkip`'s
+/// own samples, 4-aligned over the same rectangle, cover every anchor a
+/// chunk's sources can have. Measured on the shipped overworld (SPEC §11,
+/// "What the aquifer costs").
+///
+/// Per-task scratch, like `StatusCache`: the caller owns one for as long as
+/// the wrapped read stays the same function — in `ChunkFiller::fill`, one
+/// chunk, since its reads go through that chunk's flat_cache window — and
+/// never shares it between threads. Not callable through a const reference:
+/// a caller hands `readPreliminarySurface` a lambda that calls it.
+template<typename Sampler>
+class MemoizedRead {
+public:
+    explicit MemoizedRead(Sampler sampler) : sampler_(std::move(sampler)) {}
+
+    [[nodiscard]] double operator()(const std::int32_t x, const std::int32_t y,
+                                    const std::int32_t z) {
+        const Key key{.x = x, .y = y, .z = z};
+        if (slots_.empty()) {
+            slots_.resize(kInitialSlots);
+        }
+        std::size_t slot = probe(key);
+        if (slots_[slot].used) {
+            return slots_[slot].value;
+        }
+        // Asked first and stored after: a read that throws stores nothing,
+        // and the next call at the same position asks again.
+        const double value = sampler_(x, y, z);
+        if ((size_ + 1) * 2 > slots_.size()) {
+            grow();
+            slot = probe(key);
+        }
+        slots_[slot] = Slot{.key = key, .value = value, .used = true};
+        ++size_;
+        return value;
+    }
+
+    /// How many distinct positions the wrapped sampler has been asked for.
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+
+private:
+    struct Key {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t z = 0;
+
+        [[nodiscard]] bool operator==(const Key&) const noexcept = default;
+    };
+
+    struct Slot {
+        Key key{};
+        double value = 0.0;
+        bool used = false;
+    };
+
+    /// Open addressing in ONE vector, grown by doubling at half full: a
+    /// node-per-entry map scatters small allocations between the
+    /// interpreter's own per-read ones, and measured, that cost the terrain
+    /// reads around it more than the map saved.
+    static constexpr std::size_t kInitialSlots = 1024;
+
+    /// Where @p key sits, or the empty slot it would take. Any mix will do —
+    /// the hash decides where an entry is stored, never what it holds.
+    /// Unsigned throughout, so it wraps by definition.
+    [[nodiscard]] std::size_t probe(const Key& key) const noexcept {
+        constexpr std::uint64_t kMix = 0x9e3779b97f4a7c15ULL;
+        std::uint64_t h = static_cast<std::uint32_t>(key.x);
+        h = (h * kMix) ^ static_cast<std::uint32_t>(key.y);
+        h = (h * kMix) ^ static_cast<std::uint32_t>(key.z);
+        h *= kMix;
+        const std::size_t mask = slots_.size() - 1;
+        auto slot = static_cast<std::size_t>(h >> 32U) & mask;
+        while (slots_[slot].used && !(slots_[slot].key == key)) {
+            slot = (slot + 1) & mask;
+        }
+        return slot;
+    }
+
+    void grow() {
+        std::vector<Slot> old(slots_.size() * 2);
+        old.swap(slots_);
+        for (const Slot& entry : old) {
+            if (entry.used) {
+                slots_[probe(entry.key)] = entry;
+            }
+        }
+    }
+
+    Sampler sampler_;
+    std::vector<Slot> slots_;
+    std::size_t size_ = 0;
+};
+
+/// WHAT THE FOUR VALUES ANSWER. The clean-room spec's Q5.3 is a first match
+/// over the thirteen samples in scan order — Q5.3(a) on the anchor, then the
+/// first sample that is submerged and that the centre sits above less four —
+/// and `cellLevel` answers it from this reduction without the samples:
+/// `anchor` is Q5.3(a)'s comparand; `gate` fires exactly when a clean sample
+/// before the first abort does (the minimum fires when any does), and sits
+/// below the threshold, firing nothing clean, when the anchor itself aborts;
+/// past the abort only an aborting sample can fire, and the lowest does if
+/// any does, so `cap - centreY < 4` says one fired; and `cap` is Q5.4's
+/// minimum for the level rule. `aquifer-ties-probe.sh` measured that reading
+/// against the one engine v12 made of the same values, on every kind of
+/// source where they part, and the server sides with the spec on every block
+/// (SPEC §11, "The surface scan, sample by sample").
+///
+/// THREE TIES THIS NOTE CARRIED, now measured. The near-surface exemption's
+/// comparand (`centreY > cap + 20`) was called a permanent tie between the
+/// whole window's minimum, the aborting sample and any sentinel at or below
+/// -54, on the argument that `cap` reached a level only through a clamped
+/// ladder; once the clamp went it reached the barrier as a number, and the
+/// comparand is neither — it is Q5.3(a)'s anchor, which is the aborting
+/// sample exactly when the anchor aborts (the ties probe's `ta` and `tab`
+/// worlds: 106 393 blocks for the anchor over the minimum; `tb` and `tab`:
+/// 69 935 against the aborting sample where it is not the anchor). Q5.3(a)'s
+/// comparand for a scan that did not abort, `cap` or the anchor, which a
+/// constant surface makes one number: the anchor (`tl35`, `tl43`, through
+/// the sea's lid, 1 780 blocks). And whether the first submerged sample in
+/// scan order decides, which the abort flag had stood in for: it does (`tb`,
+/// `tbr`, `tab`, 64 913 blocks; a land prefix before an abort, `tc`, `tcr`,
+/// `tp35`, `tp43`, 26 389 blocks and 6 472 marks).
 ///
 /// Whether the anchor arms the abort was ALSO listed here as undecidable, and
 /// it is not: 329 cells over seventeen seeds decide it, and the armed reading
-/// is right on every one. What is genuinely tied is only where the flag is
-/// TESTED — "the anchor arms it" and "the near-surface return additionally
-/// requires the anchor to clear the threshold" are indistinguishable, because
-/// reaching the other branch with a low anchor forces `sea_level <= -55`,
-/// where lambda IS `sea_level` and both outcomes are the same number. The
-/// simpler spelling is taken.
+/// is right on every one. Where the flag is TESTED was carried here as a
+/// permanent tie — "the anchor arms it" against "the near-surface return
+/// additionally requires the anchor to clear the threshold" — and it is not
+/// one either: on `aquifer-lowfloor-probe.sh`'s worlds the server sides with
+/// the first on every sampled block where they part, at sea -70, -60 and 63
+/// alike (vanilla_aquifer_lowfloor_test.cpp). Under the spec's reading the
+/// question does not arise: an aborting anchor is simply the first sample.
+///
+/// What no world can part, and why: a source four or more below every
+/// sample of an aborting scan fires none, and takes the level rule where v12
+/// gave A_lava; such a centre sits at least thirteen below lambda, so only Π
+/// just above lambda reaches it, and the ties probe's `td` world, built for
+/// it, shows 14 blocks over two seeds, all on row lambda (the spec's on all
+/// 14). That is a thin
+/// measurement, not a tie. The permanent ties that remain are arithmetic:
+/// `kPslAnchorQuantum`'s before-or-after offset and `spreadSample`'s two
+/// spellings.
 ///
 /// With the anchor armed, `aborted` and `cap <= -63` are the SAME predicate
-/// over every field that can exist — `cap` is the whole window's minimum
-/// always, and -62 is an integer, so `floor(m) <= -63` exactly when `m < -62`.
-/// The tests assert that identity, because it is a one-line guard against ever
-/// reintroducing the exemption.
+/// over every field that can exist at an ordinary sea — `cap` is the whole
+/// window's minimum always, and -62 is an integer, so `floor(m) <= -63`
+/// exactly when `m < -62`. The tests assert that identity.
 
 } // namespace stratum::aquifer

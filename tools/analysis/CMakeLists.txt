@@ -14,7 +14,8 @@
 # and tidy.sh name it explicitly -- they list the analysis sources that are
 # build targets rather than sweeping tools/analysis, the rest of which is
 # one-shot investigation code nothing compiles. Adding another target here
-# means adding it to those two lists.
+# means adding it to those two lists (and to the lint job's own copy of
+# tidy's list in .github/workflows/ci.yml).
 #
 # The test below is the other half: it RUNS the analyzer's --control, which is
 # where the hand-rolled forward model and its valueFactor are compared against
@@ -53,6 +54,61 @@ target_include_directories(stratum_legacy_goldens_surface_analyze PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
 stratum_configure_target(stratum_legacy_goldens_surface_analyze)
 
+# The aquifer analyzers, for the same reason as the three above: each scores
+# a probe world through the library's own aquifer code, and a file nothing
+# builds can stop agreeing with the library it calls without a gate noticing.
+# They are investigation tools rather than tests (each prints its own
+# figures), so building them is the gate; tests/conformance holds the
+# assertions.
+foreach(tool IN ITEMS
+        aquifer-barrier-analyze
+        aquifer-cells
+        aquifer-cost-bench
+        aquifer-deepfloor-analyze
+        aquifer-fluidtype-analyze
+        aquifer-level-analyze
+        aquifer-nearsurface-analyze
+        aquifer-presets-scout
+        aquifer-waterlava-analyze)
+    string(REPLACE "-" "_" target "stratum_${tool}")
+    add_executable(${target} ${tool}.cpp)
+    target_link_libraries(${target} PRIVATE stratum::core ZLIB::ZLIB)
+    stratum_configure_target(${target})
+endforeach()
+
+# The legacy-source aquifer probe's readback. It scores each arm through the
+# library's own aquifer and through tests/support/fluid_flow.hpp's flow
+# classifier, the one the conformance cases use, so it includes tests/.
+add_executable(stratum_legacy_aquifer_analyze legacy-aquifer-analyze.cpp)
+target_link_libraries(stratum_legacy_aquifer_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_legacy_aquifer_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_legacy_aquifer_analyze)
+
+# The legacy-source ore-vein probe's readback (legacy-orevein-probe.sh). It
+# scores each arm through the library's own vein gate and VeinSource, so it
+# is a target for the same reason the aquifer analyzers are.
+add_executable(stratum_legacy_orevein_analyze legacy-orevein-analyze.cpp)
+target_link_libraries(stratum_legacy_orevein_analyze PRIVATE stratum::core ZLIB::ZLIB)
+stratum_configure_target(stratum_legacy_orevein_analyze)
+
+# The surface scan's readings (aquifer-ties-probe.sh). Its scorer reads probe
+# regions through the conformance cases' own support headers, and
+# tests/conformance/vanilla_aquifer_ties_test.cpp runs the same scorer, so it
+# includes tests/ too.
+add_executable(stratum_aquifer_ties_analyze aquifer-ties-analyze.cpp)
+target_link_libraries(stratum_aquifer_ties_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_aquifer_ties_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_aquifer_ties_analyze)
+
+# The tie-break's visibility over the golden overworld regions, whole. It
+# replays the filler through tests/support/aquifer_tiebreak.hpp, the same
+# replay golden_aquifer_tiebreak_test.cpp pins a sample of, so it includes
+# tests/ too.
+add_executable(stratum_aquifer_tiebreak_analyze aquifer-tiebreak-analyze.cpp)
+target_link_libraries(stratum_aquifer_tiebreak_analyze PRIVATE stratum::core ZLIB::ZLIB)
+target_include_directories(stratum_aquifer_tiebreak_analyze PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+stratum_configure_target(stratum_aquifer_tiebreak_analyze)
+
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()
@@ -71,6 +127,7 @@ add_test(NAME conformance.legacy_seed_control_tool
 set_tests_properties(conformance.legacy_seed_control_tool PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )
 
 # The same idea for the goldens-biome readback: its --control (the decoder on
@@ -88,4 +145,5 @@ add_test(NAME conformance.legacy_goldens_biome_control
 set_tests_properties(conformance.legacy_goldens_biome_control PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )

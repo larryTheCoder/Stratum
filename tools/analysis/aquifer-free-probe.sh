@@ -28,6 +28,8 @@
 set -euo pipefail
 
 readonly MINECRAFT_VERSION="1.21.11"
+readonly PACK_FORMAT_MAJOR=94
+readonly PACK_FORMAT_MINOR=1
 readonly CHUNKS=8
 
 accept_eula=0
@@ -49,18 +51,44 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 command -v java >/dev/null 2>&1 || die "java is needed"
 settings=".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings/overworld.json"
 [[ -f "${settings}" ]] || die "no ${settings}; run tools/fetch-vanilla first"
-jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
+# The trap takes the server down with the work directory: an interrupted run
+# otherwise leaves a JVM holding its heap (density-probe.sh, same trap).
+cleanup() {
+    if [[ -n "${server_pid:-}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
+        kill "${server_pid}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "${server_pid}" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "${server_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${work}"
+}
+trap cleanup EXIT INT TERM
 server="${work}/server"
 pack="${server}/world/datapacks/stratum-no-aquifer/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome"
 
-cat > "${server}/world/datapacks/stratum-no-aquifer/pack.mcmeta" <<'META'
-{"pack": {"pack_format": 94, "description": "stratum aquifer-free overworld"}}
+# min_format/max_format, not pack_format: given pack_format alone at this pack
+# format the server logs "Couldn't load file/stratum-no-aquifer pack metadata: ...
+# missing mandatory fields min_format and max_format", then loads the pack
+# anyway. So it was only noise: a world generated either way decodes to the
+# same blocks. The same shape as tools/fetch-vanilla and density-probe.sh.
+cat > "${server}/world/datapacks/stratum-no-aquifer/pack.mcmeta" <<META
+{
+  "pack": {
+    "description": "stratum aquifer-free overworld",
+    "min_format": [${PACK_FORMAT_MAJOR}, ${PACK_FORMAT_MINOR}],
+    "max_format": ${PACK_FORMAT_MAJOR}
+  }
+}
 META
 
 cat > "${pack}/worldgen/biome/probe.json" <<'BIOME'
@@ -109,7 +137,8 @@ PROPERTIES
 pipe="${work}/console"
 mkfifo "${pipe}"
 log "starting the server (seed ${seed})"
-( cd "${server}" && java -Xmx4G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
+# `exec` so $! is the JVM itself, which is what the trap has to stop.
+( cd "${server}" && exec java -Xmx4G -jar "${jar}" --nogui < "${pipe}" > "${work}/server.log" 2>&1 ) &
 server_pid=$!
 exec 3> "${pipe}"
 
@@ -120,6 +149,15 @@ while (( waited < 180 )); do
     sleep 5; waited=$((waited + 5))
 done
 grep -q 'Done (' "${work}/server.log" || { tail -30 "${work}/server.log" >&2; die "server did not start"; }
+
+# Frozen before any chunk generates, as tools/fetch-vanilla freezes the
+# goldens (SPEC §7, property 1): otherwise the region records generation plus
+# however far the fluids flowed before the save, which varies run to run.
+log "freezing the world before generating"
+printf 'tick freeze\n' >&3
+sleep 2
+grep -q -i 'frozen' "${work}/server.log" \
+    || { printf 'stop\n' >&3; die "'tick freeze' was not acknowledged"; }
 
 log "forceloading ${CHUNKS}x${CHUNKS} chunks"
 printf 'execute in stratum:no_aquifer run forceload add 0 0 %d %d\n' \
@@ -148,5 +186,11 @@ wait "${server_pid}" 2>/dev/null || true
 out="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/no-aquifer/seed-${seed}"
 mkdir -p "${out}"
 cp "${region}" "${out}/r.0.0.mca"
+# What produced the region, read by the conformance cases: a corpus generated
+# before the world was frozen records a different, timing-dependent amount of
+# fluid flow and is refused rather than scored.
+cat > "${out}/manifest.json" <<MANIFEST
+{"seed": ${seed}, "chunks": ${CHUNKS}, "version": "${MINECRAFT_VERSION}", "ticks_frozen": true}
+MANIFEST
 log "wrote ${out}/r.0.0.mca"
 log "now run: ctest --preset conformance -R 'without aquifers'"

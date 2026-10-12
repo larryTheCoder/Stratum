@@ -30,6 +30,8 @@
 // boundary actually produces rather than one lucky configuration.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -149,6 +151,7 @@ constexpr std::array<double, 9> kFloodednessComb{
 
 struct Score {
     long long discriminating = 0;
+    long long ties = 0;
     long long matchesGate = 0;
     long long matchesAnchor = 0;
     long long matchesNeither = 0;
@@ -163,8 +166,11 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
         SKIP("no depth-gate aquifer probe at "
              << readout << "; generate it with tools/analysis/aquifer-depthgate-probe.sh");
     }
+    stratum::test::requireFrozen(fixtures() / "probes" / "depthgate",
+                                 "tools/analysis/aquifer-depthgate-probe.sh");
+    stratum::test::requireSeed(fixtures() / "probes" / "depthgate", 42);
     const Field field{readout};
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
 
     // Enumerate the candidate cell indices once; the field and geometry are
     // shared across every floodedness dimension.
@@ -243,12 +249,13 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
             }
             const std::int32_t chunkX = stratum::javamath::floorDiv(centre.x, 16);
             const std::int32_t chunkZ = stratum::javamath::floorDiv(centre.z, 16);
-            if (chunkX < 0 || chunkX >= 8 || chunkZ < 0 || chunkZ >= 8 ||
-                !file.hasChunk(chunkX, chunkZ)) {
-                continue;
+            if (chunkX < 0 || chunkX >= 8 || chunkZ < 0 || chunkZ >= 8) {
+                continue; // a centre off the probe's window is out of scope
             }
-            const std::int32_t localX = centre.x >= 0 ? centre.x % 16 : ((centre.x % 16) + 16) % 16;
-            const std::int32_t localZ = centre.z >= 0 ? centre.z % 16 : ((centre.z % 16) + 16) % 16;
+            // Inside it, a missing chunk is a broken corpus.
+            REQUIRE(file.hasChunk(chunkX, chunkZ));
+            const std::int32_t localX = stratum::javamath::floorMod(centre.x, 16);
+            const std::int32_t localZ = stratum::javamath::floorMod(centre.z, 16);
             const auto chunk = stratum::chunk::Chunk::decode(
                 stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root);
             const auto* block = chunk.blockAt(localX, centre.y, localZ);
@@ -261,6 +268,14 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
                 continue; // barrier stone
             }
 
+            // A cell whose predicted level IS its own centre puts the
+            // readout on the first air block itself — a tie in the
+            // instrument, not a verdict on either hypothesis. Counted apart
+            // and pinned, rather than averaged into a bound.
+            if (gateLevel == centre.y || anchorLevel == centre.y) {
+                ++total.ties;
+                continue;
+            }
             ++total.discriminating;
             const bool matchesGate = predictedFluidGate == observedFluid;
             const bool matchesAnchor = predictedFluidAnchor == observedFluid;
@@ -271,14 +286,19 @@ TEST_CASE("the aquifer's depth path is gated by the anchor, not the window minim
     }
 
     REQUIRE(total.discriminating > 150);
-    INFO("discriminating " << total.discriminating << ", matches gate-hyp " << total.matchesGate
-                           << ", matches anchor-hyp " << total.matchesAnchor << ", matches neither "
-                           << total.matchesNeither);
+    INFO("discriminating " << total.discriminating << ", ties " << total.ties
+                           << ", matches gate-hyp " << total.matchesGate << ", matches anchor-hyp "
+                           << total.matchesAnchor << ", matches neither " << total.matchesNeither);
 
-    // 202/210 (96.2%) when this was written; the eight exceptions are two
-    // specific cells whose ladder level exactly equals their own centreY, a
-    // boundary tie in the readout rather than a rival pattern.
-    CHECK(total.matchesAnchor * 10 > total.discriminating * 9);
+    // 202 of 210 when this was written, and the eight exceptions were all
+    // ties: two cells whose level exactly equals their own centre, read
+    // across four floodedness values. With the ties set apart by that
+    // cause, the anchor hypothesis is exact on everything else — where a
+    // 90% bound used to let any eight misses through, whatever caused them.
+    CHECK(total.matchesAnchor == total.discriminating);
+    // The corpus itself, exactly: 202 cells and 8 ties.
+    CHECK(total.discriminating == 202);
+    CHECK(total.ties == 8);
     // And the rival hypothesis has to actually lose, not merely not-win.
     CHECK(total.matchesGate * 4 < total.discriminating);
 }

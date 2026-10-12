@@ -92,6 +92,22 @@ public:
     [[nodiscard]] static OctaveNoise create(rng::Xoroshiro128PlusPlus& random, int firstOctave,
                                             std::span<const double> amplitudes);
 
+    /// The legacy construction: @p octaveCount octaves of amplitude one,
+    /// from @p firstOctave up, drawn in sequence from one Java LCG with no
+    /// per-octave salting. Adapted from cubiomes (MIT, Cubitect) noise.c
+    /// `octaveInit`, at the commit tools/vectors pins (e61f905): the
+    /// generator first discards 262 raw steps — one Perlin block's worth —
+    /// for every octave above the top one, then draws the octaves HIGHEST
+    /// frequency first, and they are summed in that order too. This is the
+    /// opposite order to create()'s, and the order is part of the result
+    /// (SPEC §11, "The legacy Nether's climate, read from cubiomes").
+    ///
+    /// Throws std::invalid_argument unless @p octaveCount >= 1 and the top
+    /// octave, @p firstOctave + @p octaveCount - 1, is at most 0 — the only
+    /// shape `octaveInit` defines.
+    [[nodiscard]] static OctaveNoise createLegacy(rng::JavaRandom& random, int firstOctave,
+                                                  int octaveCount);
+
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
     [[nodiscard]] std::size_t octaveCount() const noexcept { return octaves_.size(); }
@@ -115,6 +131,20 @@ class NormalNoise {
 public:
     [[nodiscard]] static NormalNoise create(rng::Xoroshiro128PlusPlus& random, int firstOctave,
                                             std::span<const double> amplitudes);
+
+    /// Two OctaveNoise::createLegacy stacks drawn in sequence from @p random,
+    /// scaled by cubiomes' `doublePerlinInit` factor, `(10/6) * n / (n + 1)`,
+    /// spelled as cubiomes spells it. That spelling is one ulp from create()'s
+    /// at n = 2, and the goldens cannot tell the two apart: all 131072 golden
+    /// Nether cells score identically under both (SPEC §11). cubiomes'
+    /// is kept because it is the documented one and the vectors pin it.
+    [[nodiscard]] static NormalNoise createLegacy(rng::JavaRandom& random, int firstOctave,
+                                                  int octaveCount);
+
+    /// Zero everywhere: two empty stacks. What `minecraft:offset` is in a
+    /// legacy dimension, where vanilla's Nether climate takes no shift
+    /// (SPEC §11).
+    [[nodiscard]] static NormalNoise zero();
 
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 

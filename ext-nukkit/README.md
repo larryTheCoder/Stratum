@@ -96,6 +96,13 @@ worth knowing if you are diffing build flags.
   pattern in Nukkit's own source, so it gave no concrete template to
   follow. Standard JNI packaging (a per-platform native library on
   `java.library.path`) applies instead, unimplemented so far.
+- **Aquifer fluid updates.** `ext/` carries each chunk's fluid updates (the
+  positions a Java server keeps in `PostProcessing` and ticks) from the
+  generating thread to the main thread and has the PocketMine-MP plugin
+  schedule them (SPEC §11). `fill()` here returns blocks and biomes only; once it places
+  real blocks it needs the same: `terrain::ChunkBuffer::fluidUpdates()`
+  out through JNI, scheduled by the Java side through whatever Nukkit gives
+  a world for block updates — not read yet.
 - **`populateChunk` is a deliberate, permanent no-op** for as long as M6
   (features/decorations) stays out of scope — not a gap specific to this
   binding.

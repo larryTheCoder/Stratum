@@ -80,6 +80,10 @@
 //   direction is decisive alone, which is why both are run.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+#include "support/probe_region.hpp"
+#include "support/probe_spec.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -87,7 +91,6 @@
 #include <stratum/nbt/reader.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/region/region_file.hpp>
-#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -107,6 +110,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -114,6 +118,7 @@ namespace {
 
 using stratum::data::ResourceLocation;
 using stratum::terrain::ChunkFiller;
+using stratum::test::probeNoise;
 
 constexpr std::int32_t kPitch = ChunkFiller::kPreliminarySurfacePitch;
 
@@ -365,30 +370,31 @@ struct Field {
     return field;
 }
 
-[[nodiscard]] std::map<std::string, Field> readSpec(const std::filesystem::path& root) {
+/// The field the dimension named @p name drives the router entry with, from
+/// @p spec, the spec.json of the corpus in @p root (support/probe_spec.hpp's
+/// readSpec). Fails the case, naming the file and the dimension, unless
+/// exactly one entry carries that name: a corpus without the dimension a case
+/// scores must not have it score another.
+[[nodiscard]] Field fieldNamed(const nlohmann::json& spec, const std::filesystem::path& root,
+                               std::string_view name) {
+    return readField(
+        stratum::test::specEntry(spec, root, name).at("router").at("preliminary_surface_level"));
+}
+
+/// Every dimension of the corpus in @p root whose spec entry drives the
+/// router entry, by name, each read through fieldNamed.
+[[nodiscard]] std::map<std::string, Field> readFields(const std::filesystem::path& root) {
+    const nlohmann::json spec = stratum::test::readSpec(root);
     std::map<std::string, Field> fields;
-    const auto spec = nlohmann::json::parse(std::ifstream(root / "spec.json"));
     for (const auto& entry : spec) {
         if (!entry.contains("router") ||
             !entry.at("router").contains("preliminary_surface_level")) {
             continue;
         }
-        fields.emplace(entry.at("name").get<std::string>(),
-                       readField(entry.at("router").at("preliminary_surface_level")));
+        const std::string name = entry.at("name").get<std::string>();
+        fields.emplace(name, fieldNamed(spec, root, name));
     }
     return fields;
-}
-
-/// The probe's own noise, rebuilt from the manifest the probe wrote — one
-/// octave, so nothing about the replica is in doubt.
-[[nodiscard]] stratum::noise::NormalNoise probeNoise(const std::filesystem::path& root) {
-    const auto manifest = nlohmann::json::parse(std::ifstream(root / "manifest.json"));
-    const auto& declared = manifest.at("probe_noise");
-    auto random = stratum::rng::XoroshiroPositionalFactory(manifest.at("seed").get<std::int64_t>())
-                      .fromHashOf(declared.at("id").get<std::string>());
-    return stratum::noise::NormalNoise::create(
-        random, declared.at("first_octave").get<int>(),
-        declared.at("amplitudes").get<std::vector<double>>());
 }
 
 /// How a candidate turns four lattice samples into a column's integer. The
@@ -719,10 +725,10 @@ TEST_CASE("the lattice is anchored at the world origin and nowhere else",
         SKIP("no psllat probe at " << root);
     }
     const World world{42};
-    const auto fields = readSpec(root);
+    const nlohmann::json spec = stratum::test::readSpec(root);
     const auto probe = probeNoise(root);
     const Readback back(world, root / "s_c00");
-    const Field& field = fields.at("s_c00");
+    const Field field = fieldNamed(spec, root, "s_c00");
 
     int perfect = 0;
     long long runnerUp = 0;
@@ -778,7 +784,7 @@ TEST_CASE("the four samples are blended linearly and the floor falls twice",
         SKIP("no psllat probe at " << root);
     }
     const World world{42};
-    const auto fields = readSpec(root);
+    const nlohmann::json spec = stratum::test::readSpec(root);
     const auto probe = probeNoise(root);
 
     struct Row {
@@ -794,7 +800,7 @@ TEST_CASE("the four samples are blended linearly and the floor falls twice",
     for (const Row& row : std::vector<Row>{{"f_half", 20423, 3119, 4764, 22010, 21039, 21103},
                                            {"f_quart", 12121, 3119, 4764, 22010, 21039, 21103}}) {
         const Readback back(world, root / row.entry);
-        const Field& field = fields.at(row.entry);
+        const Field field = fieldNamed(spec, root, row.entry);
         const Score measured = score(back, field, probe, Model::Measured);
         INFO(row.entry << ": measured " << measured.hits << " of " << measured.total);
         CHECK(measured.total == 36864);
@@ -812,7 +818,7 @@ TEST_CASE("the four samples are blended linearly and the floor falls twice",
     // driving noise's own features are half and twice the size.
     for (const char* entry : {"g_s2", "g_s05", "a_3arm", "s_c07"}) {
         const Readback back(world, root / entry);
-        const Score got = score(back, fields.at(entry), probe, Model::Measured);
+        const Score got = score(back, fieldNamed(spec, root, entry), probe, Model::Measured);
         INFO(entry << ": " << got.hits << " of " << got.total);
         CHECK(got.total == 36864);
         CHECK(got.hits == 36864);
@@ -883,10 +889,10 @@ TEST_CASE("the floor placement, at a second seed and in a second window",
         SKIP("no psllat2 probe at " << root);
     }
     const World world{31337};
-    const auto fields = readSpec(root);
+    const nlohmann::json spec = stratum::test::readSpec(root);
     const auto probe = probeNoise(root);
     const Readback back(world, root / "f_half");
-    const Field& field = fields.at("f_half");
+    const Field field = fieldNamed(spec, root, "f_half");
 
     const Score measured = score(back, field, probe, Model::Measured);
     INFO("f_half at seed 31337: " << measured.hits << " of " << measured.total);
@@ -920,8 +926,10 @@ TEST_CASE("the lattice cell is found with floorDiv, measured below zero",
                                        "--accept-eula");
     }
     const World world{42};
-    const auto fields = readSpec(root);
+    const nlohmann::json spec = stratum::test::readSpec(root);
     const auto probe = probeNoise(root);
+    const Field baseField = fieldNamed(spec, root, "s_c00");
+    const Field halfField = fieldNamed(spec, root, "f_half");
 
     const Readback base(world, root / "s_c00");
     REQUIRE(base.columns() == 65536);
@@ -929,18 +937,18 @@ TEST_CASE("the lattice cell is found with floorDiv, measured below zero",
     REQUIRE(base.baseX() == -512);
     REQUIRE(base.baseZ() == -512);
 
-    const Score measured = score(base, fields.at("s_c00"), probe, Model::Measured);
+    const Score measured = score(base, baseField, probe, Model::Measured);
     INFO("floorDiv: " << measured.hits << " of " << measured.total);
     CHECK(measured.total == 65536);
     CHECK(measured.hits == 65536);
     // The refutation, with its own denominator. On the positive side this
     // number is 65536 too; below zero the lattice would fold at x = 0.
-    CHECK(score(base, fields.at("s_c00"), probe, Model::TruncatingCell).hits == 4216);
+    CHECK(score(base, baseField, probe, Model::TruncatingCell).hits == 4216);
 
     // The floor placement holds below zero as well, on its own 65536 columns.
     const Readback half(world, root / "f_half");
-    CHECK(score(half, fields.at("f_half"), probe, Model::Measured).hits == 65536);
-    CHECK(score(half, fields.at("f_half"), probe, Model::FloorAfter).hits == 34387);
+    CHECK(score(half, halfField, probe, Model::Measured).hits == 65536);
+    CHECK(score(half, halfField, probe, Model::FloorAfter).hits == 34387);
 
     // And the pitch, by translation, at negative coordinates.
     for (const auto& [by, hits] : std::vector<std::pair<int, bool>>{
@@ -1036,7 +1044,7 @@ TEST_CASE("every dimension of the sweep, scored twice and with its extent measur
             SKIP("no " << spec.name << " probe at " << root);
         }
         const World world{spec.seed};
-        const auto fields = readSpec(root);
+        const auto fields = readFields(root);
         const auto probe = probeNoise(root);
         INFO(spec.name << ": " << fields.size() << " dimensions carrying the entry");
         CHECK(static_cast<int>(fields.size()) == spec.dimensions);
@@ -1090,7 +1098,7 @@ TEST_CASE("the model-free reading holds where the cell geometry varies too",
         SKIP("no apsb4 probe at " << root);
     }
     const World world{42};
-    const auto fields = readSpec(root);
+    const auto fields = readFields(root);
     CHECK(fields.size() == 6);
 
     long long total = 0;
@@ -1237,6 +1245,7 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
     long long surfaceGatedColumn = 0;
     long long surfaceBandLattice = 0;
     long long surfaceGatedLattice = 0;
+    long long flowMadeSurfaces = 0;
     std::map<std::string, long long> latticeSurfaceBlocks;
     int scored = 0;
     for (const auto& row : seeds) {
@@ -1300,6 +1309,9 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
                                 name == "minecraft:water" || name == "minecraft:lava") {
                                 continue;
                             }
+                            flowMadeSurfaces +=
+                                static_cast<long long>(stratum::test::flowMadeSurface(
+                                    found, chunk.blockAt(localX, y + 1, localZ)));
                             if (y >= blended + depth - 8 && y < blended) {
                                 ++seedSurfaceBand;
                                 ++latticeSurfaceBlocks[name];
@@ -1349,6 +1361,11 @@ TEST_CASE("the lattice on real terrain, both directions and every grass block",
         SKIP("no golden overworld regions under " << (fixtures() / "regions"));
     }
     REQUIRE(scored == 8);
+    // The counts are pinned exactly because the server's post-generation
+    // flow (SPEC §7) never reaches what they count: a grass_block is never
+    // flow's, and no column surface in these regions is. CI regenerates the
+    // regions, so that is checked here, not assumed.
+    CHECK(flowMadeSurfaces == 0);
 
     INFO(grass << " grass_blocks in all, " << belowOld << " below the old boundary, " << perColumn
                << " explained per column, " << lattice << " explained by the lattice, "

@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dimension's declared random source — measured under `legacy_random_source` with `legacy-orevein-probe.sh` and lifted from refusal; a first draw of exactly 0.7F is a member; veins are placed whatever `aquifers_enabled` says, the M3 coupling retracted as a seed confound; a non-stone `default_block` takes the same veins. M4: a legacy `vertical_gradient` draws the measured legacy coin and is no longer refused. The audit's docs sweep closed; the psl-lattice and weird-scaled cases read their spec through `probe_spec.hpp`; five probe scripts write `min_format`/`max_format`, `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, seven probes say why they stop; the barrier-at-lambda case classifies flow with the shared rule. CI run 37954735377 on the previous batch read, its budgets closed. Where the next session starts: "Handoff" below). Before it, 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) off the ocean branch, then the surface scan read sample by sample as the clean-room Q5.3 is written; the near-surface, ties, fluid-ceiling and far-cell probes are CI corpora with cases; the tie-break's reach counted on the goldens; Q8's fluid updates written into `PostProcessing` in the server's order and scheduled by the PocketMine-MP plugin; the aquifer's per-block cost measured — `tools/analysis/aquifer-cost-bench.cpp` — and cut by about four fifths with every block and fluid-update mark byte-identical. What is left, and where the next session starts: "Handoff" below). Earlier the same day (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; green on both legs in run 37890579708). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -15,14 +15,152 @@ Last swept: 2026-09-19 (M4: the legacy refusal narrowed to what is actually unso
 | M0 — repo scaffolding | Closed |
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
-| M3 — 3D density | Closed for the overworld²; ore veins closed too (below) |
-| M4 — biomes + surface | Open — the legacy RNG blocks climate and surface rules in 3 legacy dimensions and nothing in the 4th: the End generates at the ChunkFiller level exactly, the legacy Nether's terrain measures 99.99591% vs the goldens |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Nearly closed — 1 constant unpinned, 1 golden residual unattributed |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk) |
+| M3 — 3D density | Closed for the overworld²; ore veins closed too (below), under both random sources and with no aquifer coupling since pipeline engine v14. Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
+| M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk with biomes and packing; the fill alone 174, the aquifer about 1% of it since its per-block cost was cut; still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
 ² `weird_scaled_sampler`'s End-dimension remainder has not been re-surveyed since M3 closed for the overworld.
+
+## Handoff — where the next session starts (2026-10-12)
+
+Written at the end of a session on the owner's machine. The 2026-10-09
+handoff (169e4a7) it continued is closed item by item below; what is still
+open is listed at the end, carried or new.
+
+**State of the branch.** This batch is on `claude/nice-davinci-9889tw` on
+top of 169e4a7:
+
+- the 2026-10-09 CI run read and both of its budgets closed;
+- a legacy `vertical_gradient` draws the measured legacy coin, and the
+  executor, the filler and validate no longer refuse it (SPEC §11, "The
+  gradient's refusal, lifted");
+- the audit's docs sweep, all eight items, then seven more superseded
+  aquifer statements and the selection layer's "not yet landed" note;
+- test hygiene: the psl-lattice and weird-scaled cases on
+  `probe_spec.hpp`; `min_format`/`max_format` in `density-probe.sh` and
+  the four other probe packs (every world shown block-identical old against
+  new); `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, so a worktree can
+  generate into the main checkout's fixtures (`tools/probe-worlds` clears
+  it, so CI is unchanged); seven probe scripts no longer exit silently
+  without a server jar;
+- "which source levels the barrier weighs at lambda" counts what the shared
+  flow rule explains, after one infinite-source water block in a
+  regenerated corpus broke its flowing-only pin;
+- **pipeline engine v14** (SPEC §6 row 14; §11, "Ore veins under the legacy
+  source"): ore veins under the legacy source, measured and lifted; a first
+  draw of exactly 0.7F is a vein member; veins no longer need
+  `aquifers_enabled` — the M3 coupling was a seed confound (the stone world
+  was seed 42, whose window holds no vein-eligible position; its contrast
+  changed the seed and the fluid with the flag); a non-stone
+  `default_block` takes stone's vein blocks. Verified adversarially before
+  merging: five independent lenses and a critic (every code claim
+  re-measured independently, no golden block moved), then three rounds of
+  fixes to the written record, each re-verified on the exact commit.
+
+**Checked on this machine before the push**, on the merged tree: format
+(243 files); a build with no warnings; unit and lint 524 / 524;
+`warnings.sh`, `clang.sh` (clang++ 21, -Werror), clang-tidy 18 (58
+files) and `optimised.sh` clean; the `ext` preset 1 / 1; the gradient and
+legacy ore-vein cases skip without fixtures; and the whole conformance
+preset at `-j 4`, **168 of 168 passed, none skipped**, 1903 s in Debug —
+the first local run with every case executing.
+
+**Fixtures on this machine.** Its probe corpora were stale (100 problems
+in `tools/probe-worlds verify`: worlds from before probe worlds were
+frozen, or missing), which read as 27 conformance failures and about 37
+skips that were not code. All seven probe shards were regenerated
+2026-10-12 and verify clean (113 outputs). Run `tools/probe-worlds verify`
+before trusting a local conformance run on any machine.
+
+**The CI run on this push: read, green.** Run 38192289975 on 4f94594,
+every job green, read from the logs. All seven probe shards regenerated
+cold and verify complete (the `legacy` shard now 20 units, 23.5 min; the
+longest, `end`, 30.4 min of 90). Both conformance legs: 168 cases, 159 run
+and passed, the 9 skips exactly the listed ones ("159 ran, 9 did not;
+expected: 9 no-generator") — the two new ore-vein cases among those run.
+clang-tidy 18 processed all 58 files. The x86-64 leg took 100 min of its
+150 (ctest 5713 s), up from 69: every case over a minute slowed 1.26-1.68x,
+the untouched ones too, so a slower runner, plus about 250 s of new
+ore-vein cases. ARM64 58 min. Still inside budget, but the x86-64 leg is
+now the long pole; if it nears 150, shard it or build it optimised (the
+owner's call).
+
+**Engine follow-ups (each its own change).**
+
+- [x] Lift the legacy `vertical_gradient` refusal (above).
+- [x] Ore veins under the legacy source and over a non-stone
+      `default_block`. Done 2026-10-12, pipeline engine v14:
+      `legacy-orevein-probe.sh`'s legacy arms are exact under
+      `legacyPositionalSourceFor(worldSeed, "minecraft:ore")` at seven
+      seeds (six legacy worlds: 42 and its 48-bit twin are one), three of
+      them held out; its netherrack and deepslate[axis=x] arms take their
+      stone control's vein blocks and keep their own state at every other
+      solid position. The refusal, validate's warning and
+      `legacyConstructRefusal` are gone; `terrain_filler_test.cpp` guards
+      the default-block half with no corpus.
+- [ ] Surface rules' own `preliminary_surface_level` reads
+      (`above_preliminary_surface`) still use the Block context with no
+      window — unmeasured, outside the aquifer.
+- [ ] The legacy Nether decoder's remaining contradictions: 55 353
+      unexplained positions and 828 contradicting netherrack columns,
+      unattributed (hole-placed lava a candidate, unmeasured). Its
+      `vertical_gradient` branches could now be evaluated with the legacy
+      coin rather than enumerated.
+- [ ] `CornerCache` keys `interpolated` corners by cell, not by the
+      `flat_cache` window they were read through. Only an exotic
+      datapack could tell; the cost cut keeps today's behaviour
+      bit-exact (`BarrierReads::Always`) rather than change it.
+- [ ] M5's biggest speed lever, measured during the cost work: the
+      interpreter zeroes a whole-graph scope on every router read — 41%
+      of all instructions in a first pass. The compiled program M5 owes
+      removes it.
+
+**New follow-ups from this batch.**
+
+- [ ] `aquifers_enabled: false` reaching the server through
+      `density-probe.sh` is measured only on three local corpora no case
+      reads (`stdep2` `w_fl0`, `hsbA` `stw`, `hsbB` `sw40`: the server is
+      the aquifers-off fill on every block, where the library's aquifers-on
+      twin differs on 483 083 / 887 / 745). Give it a `tools/probe-worlds`
+      unit and a case: an aquifers-off arm over non-solid density with a
+      raised sea, beside its aquifers-on twin in one world.
+- [ ] Veins without aquifers are measured over solid columns only; over
+      caves, a sea or real terrain, unmeasured.
+- [ ] Re-measure `aquifer-cost-bench`'s "veins off" against "aquifers off"
+      split: it was taken under v13's coupling.
+- [ ] The held-out corpora `orevlegacy_s8675309`, `_s14`, `_s15` and the
+      `orevcoupling_scratch_*` worlds are local only, and no case reads
+      them.
+- [ ] The four standalone probe scripts (`aquifer-free`, `aquifer-on`,
+      `aquifer-presets`, `blended-datapack`) still write under
+      `<repo>/.fixtures` only.
+- [ ] Optional, carried from 2026-10-09: the remaining loose
+      minimum-population floors in the aquifer cases could become exact
+      corpus pins, as `barrier3source` and `depthgate` have. Mind the
+      flow: a regeneration moves flow-dependent counts (one water source
+      did, above), so a pin belongs on what flow cannot touch.
+- [ ] clang-tidy 18 over `tests/` (measured in an earlier round at 196
+      findings in 90 files; includes three `char name[8]` in the
+      psl-lattice case that CI never sees).
+
+**Owner flags (decisions or settings only the owner can make).**
+
+- The fork-PR approval setting (the `[ ]` owner item under MA, CI).
+- The clean-room spec's Q5.3 prose contradicts its own formula; and its
+  coverage claim that rank 2-3 ties never change a block is refuted (a
+  unit case builds one; the deep-floor probe has 27, all later-wins).
+  `spec/` was left untouched.
+- `cache_2d` over a y-varying `flat_cache` is refused by name; the
+  server's behaviour there is unmeasured.
+- Q8's tick order is measured at cell width 4 only (no marking probe
+  dimension has another), and the plugin's fluid-update scheduling has
+  never run inside a real PocketMine-MP server.
+- Thin evidence, recorded: the ties probe's `td` arm scores 14 blocks;
+  deepslate's legacy-noise construction is scored on one golden Nether
+  noise (`nether_state_selector`) only.
 
 ## MA — Aquifers
 
@@ -33,6 +171,451 @@ pressure, and the fluid type rule. `ChunkFiller` now calls all of it
 directly — the old refusal is gone.
 
 Open:
+
+- [x] **The surface pass wrote over the aquifer — the shipped overworld had no
+      lava — found and fixed (pipeline engine v2).** Nothing had ever run the
+      SHIPPED overworld (CompiledDimension: aquifers, veins, biomes, the whole
+      surface tree) against the golden overworld regions. Doing so: the raw
+      aquifer is 805305057 / 805306368 categories right, but the surface pass
+      turned all of vanilla's 127700 lava blocks into deepslate (127531) or
+      left them air (169), and painted 4215 open-water blocks deepslate.
+      `categorize` called the aquifer's lava Solid, and open water above the
+      first solid stayed in the rules' reach. Measured predicate: a rule
+      writes over `default_block` and nothing else (vanilla changes none of
+      6619641 raw water positions). Now: lava kept, exact blocks 99.9942%
+      (every second chunk). Held by `golden_overworld_test.cpp`, a
+      fixture-free unit case that fails on the old pass
+      (`terrain_filler_test.cpp`, "a surface rule writes over the default
+      block and nothing else"; the psl lattice wired in the same version has
+      its own, under M4), and a pinned cross-architecture fill hash that runs
+      in CI. SPEC §11.
+- [x] **Aquifers-off dimensions keep the global lava sea** (spec Q1.2/Q2.1):
+      1005 positions at y -58..-55 of the aquifer-free probe were written
+      water where the server has lava; invisible to category-only goldens.
+      Fixed in v2, held by `golden_fill_test.cpp` by name.
+- [x] **Q5.9's deep-dark override — implemented, and read through the
+      chunk's `flat_cache` window (pipeline engine v3).** 440 golden blocks
+      on seed 9223372036854775807 were aquifer the server does not have.
+      Erosion and depth sit behind `flat_cache`; relocating every read to
+      its 4x4 corner leaves 16 wrong, reading every column exactly leaves 2,
+      and relocating only inside the generating chunk's window leaves 0 —
+      one source centre reads wet for the chunk it lies off and dry for the
+      chunk it lies in, and the server agrees on both. SPEC §11.
+- [x] **The `y_skip` cutoff (spec Q2.3/Q2.5) — implemented.** Invisible on
+      every golden block, and pinned as invisible on any flat surface from
+      96 to -80; visible from -81 down (244 of 21870 blocks under one stub
+      field), which a unit case also pins.
+- [x] **The "192-block fluid-extent residual" — attributed: it is not the
+      aquifer.** Every one of the 192 is FLOWING water (`level` 1+), left by
+      the server's own fluid ticks after generation. Across all eight golden
+      overworld regions the raw first pass's 871 remaining disagreements are
+      all fluid that moved — flowing water and lava, rebuilt water sources,
+      obsidian where water met the lava sea — and
+      `tests/support/fluid_flow.hpp` now attributes them block by block in
+      `golden_overworld_test.cpp` and in `golden_fill_aquifer_test.cpp`'s new
+      64-chunk case (6291264 of 6291456, 192 flowing; on the probe frozen,
+      6291454 and 2 — bounded now, since the remnant varies by run).
+- [x] **The `flat_cache` window's extent — and every cache marker a
+      datapack can put in an aquifer entry.** `aquifer-markers-probe.sh` (37
+      dimensions a seed, two seeds): the window is the chunk's own columns
+      and one quart past them, [16c, 16c + 19], as taken — 16 columns, a
+      quart further, and a quart below all refuted. Off the window
+      `flat_cache` reads its argument at the read's own y, not y = 0;
+      `interpolated` blends only for the block being generated and is its
+      argument at every point the aquifer reads elsewhere (the old blend was
+      wrong on 5 139 104 blocks); `cache_all_in_cell`, `cache_once` and
+      `cache_2d` are transparent, as built. Output changes for datapacks
+      only — no golden block moves. SPEC §11.
+- [x] **`y_skip` against the server — the closed form holds; the rectangle
+      was wrong and is fixed.** On flat psl from -200 to -80 the cutoff read
+      off the server is the closed form's to the row (-62, -50, -38; floored,
+      read at y = 0, inclusive); every rival constant, boundary, rounding and
+      read height is refuted on 13 006 blocks or more. On a two-valued psl
+      the server reads offsets -16..+24 from the chunk corner, not -16..+16:
+      the old rectangle is refuted on 8 646 blocks in 71 chunks, and only
+      -16..+24..27 at stride 4 fits. Exact on every untouched block, marks
+      included, end to end through `ChunkFiller`. Pipeline output changes for
+      a datapack world, not for any golden block (the goldens read the same
+      with no cutoff at all). SPEC §11.
+- [x] **An aborted scan's status is A_lava, -54 and lava (pipeline engine
+      v11).** Found by the above: the
+      low-sea probe's 0/251229 for a lambda floor was `y_skip`'s global
+      picker; where the lattice is consulted (psl -85, sea -70) all 135 716
+      blocks the floor governs are lava to -55 or barrier.
+      `aquifer-lowfloor-probe.sh` (two seeds) measures all three paths below
+      a sea of -54 — the near-surface floor, the aborted cell off the path
+      (v5) and under the override (v6): the build is exact on every sampled
+      block and mark, and v9's lambda, lambda with lava, -54 with the cell's
+      own type, the near-surface-only reading and lambda + 16 are each
+      refuted wherever it differs, on 6 092 to 18 209 sampled blocks an arm
+      (two seeds). At a sea at or above -54 the type reaches no block and
+      no mark (pinned by a unit case, and the sea-63 control ties every
+      floor reading). Also refuted there: sampling.hpp's "permanent tie" on
+      whether the near-surface return needs the anchor above the abort
+      threshold (1 726 to 3 585 sampled blocks an arm, sea 63 included). No
+      golden block moves. SPEC §11.
+- [x] **Aquifer hygiene.** Java int semantics at every aquifer narrowing
+      and level sum (no datapack input is undefined behaviour); Q1.4's
+      sentinel derived from the spec's arithmetic; Q5.6's clamp proven inert
+      by sweep; dead API (`baseLevel`, `fluidLevel`, the two-source reach)
+      removed; the vacuous waterlava and lattice assertions replaced; the
+      legacy-source refusals tested; probe chunks REQUIREd; the six aquifer
+      analyzers built, formatted and tidied, their output unchanged. SPEC §11.
+- [x] **Every aquifer probe case runs.** The comb worlds have a committed
+      generator (`aquifer-comb-probe.sh`), reproducing the jitter (256/256,
+      34/34) and selection (637 252 barriers) records exactly; the fluid
+      type's 0.3 strictness and -10 ceiling are replayed block for block on
+      the fluid-type probe, and -9 and the ceiling's absoluteness on the
+      fluid-ceiling probe; deep-floor needs all three seeds; depth-gate's
+      ties are set apart and the rest held exact. Every other case that
+      scored whichever seeds were on disk now needs the seeds
+      `tools/probe-worlds` generates, a spec dimension with no region fails
+      (water/lava, three-source), and every case reads `spec.json` and builds
+      a probe's settings through one shared helper each. SPEC §11.
+- [x] **The centre jitter in CI.** deepslate was meant to be the CI oracle
+      and measures as only a partial one: its aquifer disagrees with the
+      frozen server on 19-25% of blocks on the five open-void worlds
+      (`fill` does not run it at all), and its `PositionalRandom.at` does
+      not wrap the mix (the server's jitter readout: 256/256 for the wrapped
+      mix, 193/255 for deepslate's). What it gets right runs in the unit
+      binary: 72 vectors on the y axis, the base and the mix's y term exact,
+      every base ablation missing all 72. The rest is the server's, on
+      corpora CI generates: the comb
+      worlds are a unit, so the jitter readout and the block-level cases run
+      there — the "skip in CI" this item said was stale when written. The
+      x term's 32-bit product, which no cell index near the origin can show
+      (it parts from a 64-bit one past |x| 686), is pinned at block level
+      through the surface depth's jitter on the clamp probe's 180224 columns
+      at x 2176..6911: shipped right on all, x in 64 bits wrong on 15477, z
+      in 32 bits on 15330, a logical shift on 8054. And on the aquifer's own
+      cells, measured rather than inferred: `aquifer-farcell-probe.sh` (unit
+      `farcell_s42`, shard `end`) puts the legacy probe's all-constant
+      Xoroshiro and legacy arms at cells 704..711 and -712..-705 on both
+      axes. The comb's readout places 128 of 128 cells (Xoroshiro) and 127
+      of 127 (legacy) under the shipped mix; x in 64 bits misses 39 and 23,
+      z in 32 bits 29 and 25, a logical shift 21 under Xoroshiro and none
+      under the legacy source, where it changes only seed bits
+      java.util.Random drops. Block for block, the shipped lattice agrees
+      on 98304 of 98304 per arm and window and the filler end to end is
+      wrong on 0 of 1572864. No library change. SPEC §11.
+- [x] **Everything else taken from deepslate, audited.** Only those 72
+      vectors involve its `at()`, and nothing uses its aquifer or `fill`;
+      the blended-noise vectors draw nothing per position; the legacy
+      tables' by-name rule 182 is a legacy seeding the server refutes, with
+      no per-position draw (and not deepslate's, next item), and the
+      `deepslate` surface rule is the block's gradient, measured on the
+      server. Re-run on this tree, the trust script and the vector files
+      reproduce exactly. SPEC §11.
+- [x] **The "deepslate's own derivation" label, observed and withdrawn.**
+      Rule 182 (290 in `legacy-seed-analyze.cpp`) carried it from 4d646e0
+      with nothing recording how it was known. Settled by running deepslate
+      0.26.2 through its public API:
+      `tools/vectors/deepslate_legacy_noise_vectors.mjs` records its
+      legacy-source named noise (`legacy-seed-probe.sh`'s four noises, seeds
+      42, 31337, 0, -1: 56 octaves and 128 router values, plus 128 flag-off
+      values), and
+      `tests/unit/deepslate_legacy_noise_oracle_test.cpp` scores rule 182's
+      prediction against it. The seed half matches (16 of 16: the rule's
+      seed is the first long deepslate's generator yields), the noise does
+      not: **0 of 56** octave permutations among the blocks rule 182 draws
+      at any offset 0-299, **0 of 128** values within 1e-5 (closest 0.0082).
+      deepslate draws from the unforked generator in cubiomes' `octaveInit`
+      order — 56 of 56 permutations exact, 128 of 128 values within 5.9e-6,
+      the residue its `LegacyRandom.nextDouble` (not Java's, by under 2^-26)
+      — with the flag-off control 128 of 128 bit-exact. The rule stays as an
+      anonymous candidate (`kForkedMd5Rule`); the label is gone from code,
+      scripts, SPEC and here. deepslate's own construction, outside both
+      scanned spaces, is refuted separately on the golden Nether's
+      `nether_state_selector`: 3655 of 7651 (47.77%) against a 50.45% null.
+      SPEC §11.
+- [x] **The aquifer under `legacy_random_source` — measured, and no longer
+      refused.** No vanilla dimension has the pair, so this build refused it
+      on "no oracle can exist"; the server generates it from a datapack.
+      `tools/analysis/legacy-aquifer-probe.sh` puts a legacy open-void
+      aquifer, its flag-off control and a named-noise positive control in
+      one world, at seeds 42, 31337 and 42's 48-bit twin. The flag reaches
+      the lattice (390759-429106 of 6291456 blocks differ), and of 7200
+      enumerated rules exactly one survives seed 42 alone (192/192, next
+      148/192): `new Random(seed ^ positionSeed)` with
+      `seed = fork(fork(worldSeed) ^ "minecraft:aquifer".hashCode())`,
+      JDK `nextInt(10/9/10)`. Frozen before the other two worlds were
+      generated, it replays all three block for block (0 unexplained of
+      5904384 a world), the twin is seed 42's legacy world and not its modern
+      one, and the same primitive is exact on the golden Nether's bedrock
+      gradients (65536/65536, four seeds, floor and roof). `CentreSource`
+      takes the dimension's random source as a required argument; the
+      filler passes the registry's. Pinned by
+      `vanilla_aquifer_legacy_test.cpp` (CI generates its corpora, legacy
+      shard) and, in every CI run, `terrain_filler_test.cpp`'s wiring case.
+      A legacy aquifer that names vanilla's aquifer noises is still refused,
+      for those noises' seeding. SPEC §11.
+- [x] **The probe residuals were flow, or attribution.** Varying surface
+      (34 878 blocks) and selection readout two (999) are every block fluid
+      that moved after generating. The fluid type's "4% mixed" and its four
+      misses were the case crediting flowing water and other bodies' fluid
+      to a source: on its own source blocks the rule is 3160 of 3160. 8
+      water blocks inside lava bodies stay named. SPEC §11.
+- [x] **The near-surface probe is a CI corpus and a case; its 0.6-1.9%
+      residual was flow.** MA blocker 2's last two findings (the floor reads
+      `cap`; an aborted scan is refused the sea) lived in an analyzer.
+      `nearsurface_s42` / `_s31337` are now `tools/probe-worlds` units (end
+      shard) and `vanilla_aquifer_nearsurface_test.cpp` re-derives them on
+      the frozen worlds: cap 1.0000 against gate's 0.9351-0.9358, refusing
+      the sea 0.9979-0.9996 against 0.066-0.651 for ignoring the abort, and
+      on 785 245 sampled blocks where the readings part the server holds the
+      build's on all but 863, every one fluid that moved (859 the rival's,
+      854 of them on the four unwalled contact rows). The old 0.9812-0.9941
+      came off an unfrozen
+      corpus; retired. Q5.3(a) off the ocean branch reaches no source there.
+      SPEC §11.
+- [x] **Probe worlds are frozen.** Every probe harness now runs
+      `/tick freeze` before any chunk generates, as `fetch-vanilla` does, and
+      records `ticks_frozen` in the corpus manifest; fluid-scoring cases
+      refuse an unfrozen corpus. Flow falls by 97-99% (varying surface 34 878
+      -> 3 586, selection 999 -> 25, the aquifer-on sweep 192 -> 2), but a
+      remnant survives that differs between two frozen runs of one seed (7 of
+      the varying-surface probe's 12 arms identical, the rest 5-918 blocks
+      apart, all fluid products), so flow is bounded, never pinned; every
+      disagreement must still be flow-shaped. A corpus of another seed is
+      refused too, and no longer silently overwritten. SPEC §7, §11.
+- [x] **CI generates the probe worlds — green on both legs.** Dispatch run
+      37870578800 (dd899b6, 2026-10-09) is the first wholly green run with
+      CI-generated probe worlds: every shard generated or restored, both
+      conformance legs scored them (x86-64 about 50 minutes of ctest, ARM64
+      about 30, the ARM64 leg restoring the x86-64 shards' caches), and the
+      skip gate read "107 ran, 34 did not; expected: 9 no-generator, 25
+      regions". The owner accepted Mojang's EULA for this repository's CI
+      (2026-10-08, SPEC §12). One table, `tools/probe-worlds`, names every
+      probe world a committed generator makes for a conformance case (45
+      units and 59 corpora in six shards at that run; 50 and 72, in seven,
+      since the cache-markers, lowfloor and default_block units), generated
+      on x86-64 beside the build, each shard cached by a hash of its own
+      generators. The worlds travel between jobs only through the
+      repository-scoped Actions cache, never as an artifact. A skip not
+      listed in `tests/conformance/expected-skips.txt` fails CI, and so does
+      a listed case that ran. The runs before it failed on real defects,
+      each fixed: flow-dependent pins exact against one local generation
+      (now bounded, with their flow shape required), MSVC's C4702 after an
+      unconditional FAIL (lint rule 9), and a golden-region walk that took
+      a probe corpus for a golden. SPEC §7, §12.
+- [ ] **Owner: require approval for every fork pull request's CI run.**
+      Fork pull-request runs restore the Actions cache, probe worlds
+      included, and run the pull request's own `ci.yml`; GitHub's default
+      approves only first-time contributors' runs. Set Settings → Actions →
+      General → "Approval for running fork pull request workflows from
+      contributors" to "Require approval for all external contributors",
+      and tick this once it is confirmed. SPEC §12.
+- [x] **Region goldens in CI — green on both legs.** Dispatch run
+      37890579708 (64e052a, 2026-10-09) generated them cold (goldens-nether
+      9 minutes, goldens-overworld 14) and every golden case passed on
+      x86-64 and ARM64; the skip gate read "141 ran, 9 did not; expected: 9
+      no-generator". Three `fetch-vanilla` units in two shards of
+      `tools/probe-worlds` (25 region files), restored by both conformance
+      legs beside the probe worlds; `expected-skips.txt` keeps only the 9
+      cases whose corpus no committed script produces. The x86-64 leg now
+      takes 96 minutes of its 150.
+      (a) A second golden set, generated locally with CI's exact commands,
+      agrees with the first on all but 2 of 1 879 048 192 blocks: a water
+      source and a level-1 flowing block on one shoreline traded places, so
+      the 871-block flow remnant is nearly, not exactly, the same each run,
+      and SPEC §7 property 1's "agree exactly" is corrected. Every golden
+      case passes on the second set with its pins unchanged. (b) So the pins
+      flow could move are bounds with shapes now (CI also runs another
+      JDK): `golden_overworld_test.cpp`'s raw flow, golden lava and exact
+      count, and the deep-dark case's flow, with the model's own counts
+      (1 191 lava, 415 surface misses, 21 veins over fluid) pinned exactly;
+      the three cases that count column surfaces or stored floors check
+      that none is flow-made. (c) `fetch-vanilla --with-structures` only
+      extracts NBT now; `--generate-structures` is refused without
+      `--with-features`. `verify` also requires every golden chunk at full
+      status, which covers the settle time the plan left optional. Found on
+      the way: `golden_heightmaps_test.cpp` walked the whole fixture tree and
+      took the aquifer-presets probe regions for goldens, so both its cases
+      failed beside them (CI's `end` shard restores them); it reads
+      `regions/` only now. The 25 `regions` lines left
+      `expected-skips.txt`. SPEC §7, §11.
+- [x] **The aborting near-surface floor is lambda, not the sentinel.**
+      Measured through the barrier, the only place the two differ: 1666 of
+      1666 contested blocks on three seeds side with lambda. SPEC §11.
+- [x] **Sub-lambda source levels, and the near-surface sea's type
+      (pipeline engine v4).** An aborted scan's wet level reads lambda (7 690
+      false barrier blocks closed over an aborting surface); a near-surface
+      sea is not typed lava for its centre (20 462 closed at psl -58). The
+      near-surface and capfloor corpora are exact; no golden block moves.
+      SPEC §11.
+- [x] **An aborted cell that nothing floods reads lambda, not dry (engine
+      v5).** The near-surface probe's floodedness-0 arms: 3 770 of 3 770
+      contested blocks side with lambda. SPEC §11.
+- [x] **The floor follows the abort, not a cap below lambda.** The spec
+      says the abort, and that is built; capfloor's floodedness -0.3 arm
+      (cf58l) is the one that can see it, and on the 4 blocks over two seeds
+      where the readings part the server takes the abort's every time. Thin,
+      but each block is decisive on an otherwise exact arm, and the case
+      requires the arm to keep at least one. SPEC §11.
+- [x] **The deep-dark override does not reach an aborted scan (engine
+      v6).** `aquifer-ddfloor-probe.sh` puts the aborting field under Q5.9:
+      10 577 of 10 577 contested blocks over three seeds take the abort's
+      lambda over the override's sentinel, as the spec's order says. SPEC §11.
+- [x] **The near-surface type shows in blocks, not only the barrier.** The
+      capfloor case now scores the fluid wherever the model fills one above
+      lambda: right on every source block of every arm (cf58 holds 51 422
+      water blocks the v3 rule would type lava), with 382 flowing blocks at
+      lava-water contact the only disagreements; cf200 shows a centre below
+      lambda typing its ladder lava above lambda on 14 494 blocks. SPEC §11.
+- [x] **Q5.8's lava override does not reach a short-circuit sea.** Both
+      seas of the near-surface path (the near-surface return, and an
+      aborted scan's sea) are the default fluid, as the spec's Q5.3 says;
+      the build had typed them lava at a sea at or under -10 with `|lava| >
+      0.3`. `aquifer-fluidnear-probe.sh`, two seeds: 742 856 / 155 533 /
+      129 304 contested server sources (within twenty of the surface / above
+      it / aborted sea), water on every one; the cell's own sea control is
+      lava on all 241 896. Changes output only where `sea_level <= -10`; no
+      golden block moves. SPEC §11.
+- [x] **The level rule's old per-cell score is retired; on a constant
+      surface the rule now holds block for block, with Q5.3(a) off the ocean
+      branch (engine v12).** The 99.9806-99.9902% figures came from ~1370
+      dimensions nobody can regenerate (specs never committed, readout gone,
+      model since changed), so their remainder is retired, not attributed.
+      `aquifer-level-probe.sh` rebuilds the regime frozen, in packed ice: 255
+      dimensions over three seeds, generated in CI, and every block from
+      y -51 up at every column, 556 964 848, matches the server. The one
+      clause v9 lacked there: a cell whose scan did not abort, centred more
+      than twenty above its surface, takes the sea before any floodedness is
+      weighed (spec Q5.3(a)). No clause at all off the ocean branch parts
+      from it on 3 324 blocks, margins 19 and 21 on 5 536 and 2 807, a
+      threshold on the sea instead of the surface on 480 493, and the server
+      takes the clause's side on every one. Its comparand (`cap`, as the
+      aborted floor measured, or the spec's anchor) is not separated by a
+      constant surface. No golden block moves. Also in committed worlds now:
+      the bonus spelling at both exact crossings, `psl` floored rather than
+      truncated or rounded, and packed ice standing where water stands.
+      SPEC §11.
+- [x] **The surface scan, sample by sample: the clean-room Q5.3 as written
+      (pipeline engine v13).** Three readings were carried, not
+      measured: the near-surface exemption's comparand (`cap` or the
+      aborting sample), Q5.3(a)'s for a scan that did not abort (`cap` or
+      the anchor), and whether the first submerged sample in scan order
+      decides. `aquifer-ties-probe.sh` (fourteen dimensions a seed, packed
+      ice, seeds 42 and 31337, CI's end shard) builds surfaces that part
+      each, and the server takes the spec's side on every scored block and
+      mark: v12's readings part from it on 106 393 blocks (the exemption on
+      `cap` over an aborting anchor), 64 913 (the abort flag over a clean
+      sample that fires first), 26 389 and 6 472 marks (Q5.3(a) over an
+      aborted scan's land prefix, at sea -70 in blocks and at seas 43 and 51
+      through the lid), 1 780 (Q5.3(a) on `cap` on land, through the lid)
+      and 14 (a scan no sample of which fires, row lambda only); the
+      aborting sample in `cap`'s place is wrong on 69 935. `cellLevel` now
+      reads Q5.3(a) on the anchor, then the first sample to fire, then the
+      level rule on the whole minimum; a unit sweep checks the four-value
+      reduction against the thirteen samples. SPEC §11.
+- [x] **A vein never replaces aquifer fluid — measured on the goldens.**
+      21 of 21 positions where the chain would place a vein over the first
+      pass's fluid hold fluid in the server; the filler's guard was chosen,
+      and is now observed. SPEC §11.
+- [x] **amplified and large_biomes, against the server.** Neither preset
+      had been compiled or filled. The frozen blob fills and assigns what the
+      pack does on both (14 chunks, 0 blocks or quart biomes apart), and
+      `aquifer-presets-probe.sh` runs each beside an overworld control at
+      windows `aquifer-presets-scout` chose: seed 322 (76 cells gated above
+      psl 141 change 15 231 blocks and decide 48 521 above the sea; Q5.9
+      decides 47 151) and seed 163 (9 043 aquifer blocks above the sea on
+      amplified, 20 214 on large_biomes). Over 6 x 6 291 456 blocks every raw
+      disagreement is flow-shaped (0-86 per arm, bounded over two runs),
+      every surfaced name agrees where the category does, and the server
+      takes the override's side on every Q5.9 block not flow-shaped. SPEC
+      §8, §11.
+- [x] **The barrier is the preset's `default_block` (Q6.7) — measured on
+      presets where that is not stone.** Every probe had run stone.
+      `aquifer-defaultblock-probe.sh` (seed 42, one frozen world): netherrack
+      and deepslate[axis=x] stand at exactly the stone control's 4 110
+      barrier positions, with no stone and no other solid; at density +1,
+      deepslate[axis=x] on all 5 242 880 blocks. The shipped filler matches
+      every solid state; air against water is flow-shaped (134 per arm). A
+      fixture-free unit case catches a literal-stone barrier (which every
+      earlier unit case passed), a dropped property and literal stone for
+      positive density. No output changes. SPEC §8, §11.
+- [x] **Aquifers over a `default_fluid` other than water are refused by
+      name** (`ChunkFiller::compile`; `stratum validate` warns). Q6.3 and
+      Q6.4 are written for water, and no vanilla dimension that enables
+      aquifers has another default fluid, so nothing measures what the
+      server does there. SPEC §8.
+- [x] **Q4.1's window, against the symmetric 27-cell set — the server
+      picks the spec's.** On the frozen deep-floor corpora the rival changes
+      39 barrier verdicts, and the server sides with the twelve-cell window
+      on all 39. SPEC §11.
+- [x] **The varying-surface probe's constant controls are scored.** c96,
+      cm20 and cm70 run through the varying arms' own path: exact but for
+      flow, one gate value each, prefix minimum equal to the window's. SPEC
+      §11.
+- [x] **The row-lambda barrier residual was flow.** Frozen, the water/lava
+      predicate misses no server barrier (mixed 1096 -> 0, pure 0), and the
+      unfrozen fluid-type probe's 42 row-lambda stones were lava that fell
+      onto water (`explainedByFlow`'s fifth shape). SPEC §11.
+- [x] **Lava in the surface pass's stone-depth run — measured, and the
+      bottom-up run was wrong for water too.** `aquifer-lavarun-probe.sh`
+      (12 frozen dimensions of marker ladders over flat pools, 16 384
+      columns each, 0 flow): top down every fluid holds the run, lava of the
+      lattice and of the sea exactly as water; bottom up every fluid resets
+      it, water included, where the filler skipped water; lava latches the
+      water height. The old filler wrote 2 392 064 of 74 973 184 probe blocks
+      wrong, the new one none. Golden overworld exact 12 582 372 -> 12 582 474:
+      102 blocks over water fixed, none lost. SPEC §11.
+- [x] **Q8's fluid-update flag — implemented, exact against the server's
+      own post-processing lists.** Un-ticked probe chunks keep vanilla's
+      `PostProcessing` lists, which in a probe are the aquifer's flag alone:
+      255 457 of 255 457 marks on the comb worlds, 213 552 of 213 552 on
+      the water/lava rows, 1964 of 1964 through `ChunkFiller` on real
+      overworld settings. Q6.3's exit, which the spec does not cover,
+      measured: past Q6.2 it always marks. Rank 4 is now read, by the flag's
+      last clause. Exposed as `ChunkBuffer::fluidUpdates()`, which
+      `ChunkFiller::fill` clears first, so a reused buffer no longer carries
+      an earlier chunk's marks. SPEC §11.
+- [x] **The tie-break's reach on the goldens, and open question 9.** The
+      spec's Q4.7 swap, run through the shipped decision at every lattice
+      consultation of the eight golden overworld regions (72 889 063):
+      ties 797 131 / 1 075 059 / 1 283 696 at ranks 1-2 / 2-3 / 3-4 change
+      65 / 0 / 1552 blocks. The golden decides 33 of the 65 and all 1552,
+      every one the later-wins way; none goes the other way. Open question
+      9: a rank 2-3 swap only reweights the same three statuses, so it can
+      move a block only past Q6.2 with all three distinct (1880 ties), and
+      there the densities that would part the orders lie outside the
+      overworld's reach on all but 15, whose own densities miss them — about
+      0.35 expected in 8192 chunks (an estimate). Rarity, not structure: on
+      the deep-floor probe, where three distinct levels meet at density
+      -0.3, rank 2-3 ties decide 27 blocks on three seeds and rank 3-4 1131,
+      the server's stone the later-wins verdict on all of them. SPEC §11.
+- [x] **Q8's fluid updates written out — into the region encoder's
+      `PostProcessing`, and to PocketMine-MP.** `chunk::encode` writes
+      them as the server writes its own lists (one per section from `yPos`,
+      `x | y << 4 | z << 8` shorts, empty lists typed End) and
+      `Chunk::decode` reads them back; `fill()` now leaves them in the
+      server's own order, cell column by cell column top-down, which is not
+      the order its loop visits — read off all 757 probe region files on
+      disk, 77 046 un-ticked lists (17 805 977 marks), every one in that
+      order at cell width 4. Through the filler the encoded lists equal the
+      server's on all 576 lists of the aquifer-on probe's 24 marked chunks,
+      order included (the case takes 17 s in a Debug build), and `generate-world` writes
+      them for every chunk. Other cell widths are the same reading,
+      unmeasured: no probe dimension that marks anything has them. For
+      PocketMine-MP, `encodeChunk` leaves them in the extension and the
+      plugin's `FluidUpdateScheduler` schedules a block update at each
+      liquid when the chunk is populated (M5 below). Block output
+      unchanged. SPEC §11 (the Q8 entry, and M5's fluid-update entry).
+- [x] **What the aquifer costs — measured, and cut by four fifths with no
+      block moved.** `tools/analysis/aquifer-cost-bench.cpp` (release
+      build, aquifers / veins / surface switchable, byte dump of every
+      block and mark). Before: 6.2% of the first pass's instructions, half
+      of it `barrier` reads. Now the `barrier` value is read only where the
+      predicate weighs it, the twelve candidate centres once per home cell,
+      and the surface scans once per position per chunk: 493 M -> 103 M
+      instructions on four chunks; by CPU time the aquifer's part of a
+      whole overworld fill is 7.4 -> 2.1 ms/chunk and of `amplified`'s
+      14.9 -> 2.8, the fills 183.5 -> 174.0 and 242.9 -> 220.8 ms/chunk
+      (release build, noise up to 3%). 816 chunks over 11 seeds, both
+      signs, three presets: every block and all 33 974 fluid-update marks
+      byte-identical. Sharing statuses across chunks was
+      dropped: a status depends on the chunk's flat_cache window. SPEC §11,
+      "What the aquifer costs".
 
 - [x] **Q6.3's water-over-lava exception — closed, and smaller than it
       read.** It can only ever fire on ONE row, `y = min(-54, sea_level)`,
@@ -113,7 +696,8 @@ Open:
       below), leaving 192.
 - [x] **The fluid-type level ceiling.** PINNED at `-10`, inclusive — the
       value the code already carried, now measured rather than assumed, and
-      no source change. `aquifer-fluidtype-probe.sh --group d` reaches level
+      no source change. `aquifer-fluidceiling-probe.sh` (once
+      `aquifer-fluidtype-probe.sh --group d`) reaches level
       `-9` by the two routes the ladder's mod-3 lattice does not constrain
       (the sea branch; the psl cap at two different sea levels) and reads
       `-12/-11/-10` lava and `-9/-8/-7` water on the two six-dimension arms
@@ -129,7 +713,12 @@ Open:
       nothing and only the global lava sea was left (SPEC §11). Pinned in
       `aquifer_fluid_type_test.cpp` by a literal `-9` assertion, the one the
       old suite lacked: every other assertion there is phrased relative to
-      `kLavaLevelCeiling` and so survived either value.
+      `kLavaLevelCeiling` and so survived either value. Replayed in CI since
+      by `vanilla_aquifer_fluid_ceiling_test.cpp` on seed 42 (unit
+      `fluidceiling_s42`, shard `end`): 0 unexplained blocks, every
+      dimension again 16384 of 16384 columns at its level in one fluid, and
+      the -9, strict -10, sea-relative and lambda-relative rivals each wrong
+      by name.
 - [x] **Q6.4's fourth divisor (the "/10" branch).** CONFIRMED at 10 on real
       server data, bracketed to within 1%. The "0 uses" was never a
       world-shape problem, which is why any number of further probe seeds
@@ -149,8 +738,8 @@ Open:
       stone: guarded 480354 misses, both-air lifted 457970, both-fluid
       lifted 22384, un-gated **0 misses and 0 false stone**. The four older
       worlds order the same way (161/46/154/39 of 243887). The control arm,
-      real floodedness with nothing rescaled, reproduces `barrier3way`
-      exactly.
+      real floodedness with nothing rescaled, IS `barrier3way`'s world (0 of
+      5242880 blocks differ at seed 42) and is exact on all three seeds.
       *The divisor.* The arm decides 96292 blocks; on the 65231 where 10 and
       3 disagree the server has stone on 65231 of 65231. The bracket is
       two-sided and monotone — 9.9 leaves 937 barriers unwritten, 10 is
@@ -163,7 +752,11 @@ Open:
       residual is a strict subset (192, 0 introduced) and is all "we say air,
       the server says water" — a fluid-extent question, not a barrier one.
       Pinned by `vanilla_aquifer_deepfloor_test.cpp`, which fails loudly if
-      the arm ever stops deciding blocks.
+      the arm ever stops deciding blocks, and which brackets both divisors
+      from both sides on every seed of its own window (9.9 160/0, 10.1
+      0/159, 2.4 194/0, 2.6 0/193); the unit brackets are now (2.459, 2.542]
+      and (9.924, 10.078]. The seven-dimension figures above are the
+      analyzer's, reproduced unchanged on the frozen corpora.
 
 ## Ore veins (SPEC's M3 section)
 
@@ -179,8 +772,11 @@ A separate PLACEMENT probe agrees on its 11455 solid candidates, its other
 25509 being air; those are seed-100 positions already inside the 79790,
 re-measured at a different density, so they are reported beside the RNG
 figure rather than added to it. All three draws come from one generator,
-`rng::positionalSourceFor(worldSeed, "minecraft:ore").at(x, y, z)`:
-`nextFloat() < 0.7` for membership, then the mapped-probability ore/filler
+`rng::positionalSourceFor(worldSeed, "minecraft:ore").at(x, y, z)` (under
+`legacy_random_source`, `rng::legacyPositionalSourceFor`: measured since,
+engine v14, SPEC §11 "Ore veins under the legacy source"):
+`nextFloat() < 0.7` for membership (a draw of exactly 0.7F a member, since
+engine v14), then the mapped-probability ore/filler
 roll against `vein_gap > -0.3`, then `nextFloat() < 0.02` for raw metal.
 `ore_veins_enabled` is no longer refused; `lib/src/ore_vein.cpp` implements
 it and `ChunkFiller` calls it. Coverage: `tests/unit/ore_vein_test.cpp` and
@@ -210,22 +806,35 @@ confidently as the wrong ones.
 
 Open:
 
-- [ ] `nextFloat()` vs `nextDouble()` for the three thresholds, and whether
-      draw 2 is consumed when `vein_gap <= -0.3`. Both pairs read 100.000%
-      on all 79790 rows — one `nextLong()` backs both precisions and no row
-      lands between them, and nothing downstream reads a position's stream.
-      Separating either needs a probe that takes a FOURTH draw from the same
-      generator. Recorded in `lib/include/stratum/ore/vein.hpp` beside the
-      code; neither can change a block this build places.
+- [ ] Draw 3's method, and whether draw 2 is consumed when `vein_gap <=
+      -0.3`. Draws 1 and 2 are settled (2026-10-12): under the legacy
+      source a nextDouble takes two LCG steps where a nextFloat takes one,
+      so their method shows in every later draw — nextFloat for both is
+      exact, where nextDouble reads 70% and 99.2% — and under Xoroshiro
+      seed 2's two 0.7F positions refute nextDouble for draw 1. Membership
+      itself was corrected: a first draw of exactly 0.7F is a member, which
+      engine v14 places and v13 did not, so this item did change blocks.
+      Draw 3's method cannot show (nothing follows it), and draw 2's
+      consumption is unobservable (nothing downstream reads a position's
+      stream); neither can change a block this build places. Recorded in
+      `lib/include/stratum/ore/vein.hpp` beside the code.
 
 ## M4 — Biomes + surface
 
-- [ ] **`legacy_random_source` for the CONSTRUCTS that are not noises —
+- [x] **`legacy_random_source` for the CONSTRUCTS that are not noises —
       `vertical_gradient`, the aquifer lattice, the ore-vein source.** Opened
       by the narrowing below, and closed for safety rather than for
-      correctness: all three are now REFUSED BY NAME where they are built
+      correctness: all three were REFUSED BY NAME where they are built
       (`surface::Executor::compile`, `ChunkFiller::compile`), not silently
-      derived the modern way.
+      derived the modern way. **The aquifer lattice is since measured and
+      derived, not refused** (MA, above: the legacy positional primitive,
+      `rng::LegacyPositionalSource`); the same primitive reproduces the
+      golden Nether's bedrock gradients exactly, so the gradient's refusal
+      now waits on the executor running it; the vein source is still
+      refused, with no oracle. *(Since closed, all three: the gradient's
+      refusal lifted 2026-10-11 and the vein source measured and lifted
+      2026-10-12, engine v14 — SPEC §11, "The gradient's refusal, lifted"
+      and "Ore veins under the legacy source".)*
 
       The narrowed refusal's predicate is "this dimension names a
       worldgen/noise". These three draw on the dimension's declared random
@@ -255,13 +864,20 @@ Open:
       band, 0% at the impossible one — is asserted, so the band being scored
       is pinned to the band the anchors name.
 
-      **The aquifer and ore sources are UNTESTED**, and that is the boundary:
-      both draw a positional random from the same primitive under the same
-      declared source, but every vanilla legacy dimension has
+      **The legacy primitive, out of sample, is exact on the same bedrock**:
+      measured on the aquifer's lattice (MA, above) and salted with each
+      gradient's `random_name`, it scores 65536 / 65536 on every row of the
+      table above, where the Xoroshiro coin is at chance.
+
+      **The aquifer source was UNTESTED and is now measured; the ore source
+      is still UNTESTED.** Every vanilla legacy dimension has
       `aquifers_enabled` and `ore_veins_enabled` false, so no oracle for
-      either is on disk and none can be produced from vanilla data. They are
-      refused on the structural argument — same source, same primitive, one
-      member of the class measured wrong — not on a measurement of their own.
+      either is on disk — but the server generates the pair from a datapack,
+      and `legacy-aquifer-probe.sh` asked it for the aquifer. The vein source
+      is still refused on the structural argument alone. *(Since closed
+      2026-10-12: `legacy-orevein-probe.sh` asked the server for the vein
+      source too — the legacy positional primitive salted "minecraft:ore",
+      exact at seven seeds — and engine v14 lifts the refusal.)*
 
       *What this closed.* A legacy dimension naming no noise whose surface
       rule used vanilla's bedrock-floor gradient compiled clean
@@ -276,10 +892,35 @@ Open:
       dimension naming noises only in its surface rule validated clean and
       then did not generate. It now also reports, as warnings beside the
       router counts rather than folded into them, the surface tree's
-      `requiredNoises` and the three constructs — the router counts keep
+      `requiredNoises` and the constructs it refuses — the router counts keep
       answering the narrower question on purpose.
 
-- [ ] **`legacy_random_source` for NAMED noises (the Java LCG derivation).**
+- [x] **The legacy CLIMATE noises — `temperature`, `vegetation`, `offset` —
+      derived, from cubiomes, and measured.** cubiomes' `setNetherSeed`
+      (MIT, §2's reference, at the pinned e61f905) builds them from
+      `java.util.Random(worldSeed)` and `(worldSeed + 1)`, two octaves at a
+      fixed first octave of -7 drawn highest frequency first after 262-step
+      skips, the pack's parameters unread, and no shift — outside both scanned
+      spaces on four axes. Through the SHIPPED registry and Interpreter:
+      **32765 / 32768** golden Nether cells over eight regions (six worlds),
+      interior 31436 / 31436, every chunk 131061 / 131072; the same
+      construction at wrong seeds scores 22.69%, under chance. **All 11
+      residual cells are exact fitness ties**, and in all 11 vanilla took the
+      EARLIER row (evidence for the tie-break item below; not acted on).
+      Pinned by `tests/unit/legacy_climate_test.cpp` (96 cubiomes vectors, bit
+      for bit) and `vanilla_legacy_nether_climate_gap_test.cpp`'s second case.
+      Carried, not measured: the rule is keyed on the noise NAME (caves and
+      floating islands take it with no oracle), and a datapack redefining the
+      three is not read — both settle with one `density-probe.sh` world. SPEC
+      §11, "The legacy Nether's climate, read from cubiomes".
+- [ ] **`legacy_random_source` for the remaining NAMED noises — now the
+      surface rules' only** (the Nether's eight; nine each for caves and
+      floating islands). The next hypothesis to test, before widening any seed
+      scan: the climate's own shape — cubiomes' `octaveInit`, highest
+      frequency first after 262-step skips, and whether the pack's parameters
+      are read at all — applied to the surface noises, against the existing
+      golden surface readback (`legacy-goldens-surface-analyze.cpp`).
+      The history below is the item as it stood before the climate closed.
       Still open — but it never blocked a legacy dimension's DENSITY CHAIN,
       and the previous wording here was wrong about that. **No longer blocks
       4 of 7 dimensions — it blocks parts of 3.** Measured per router entry
@@ -330,15 +971,20 @@ Open:
 
       The derivation itself remains a searched wall with a reproducible
       apparatus rather than an untried gap, and the old wording here ("no
-      oracle exists yet") was wrong twice over.
+      oracle exists yet") was wrong twice over: another implementation
+      exists to compare with, deepslate, and it disagrees with vanilla — its
+      legacy named noise, observed long after this entry, scores 47.77%
+      against a 50.45% null on the golden Nether's `nether_state_selector`
+      (the deepslate items above).
 
-      An oracle exists and it disagrees with vanilla. deepslate's
-      derivation — base = `JavaRandom(worldSeed).nextLong()`, XOR
-      `md5_first8("ns:path")`, one further LCG fork — is a member of this
-      project's own scanned candidate space (rule 182, block 0) and scores
-      10-25 of 2304 columns, 0.43-1.09%, on the legacy probe dimensions at
-      two world seeds, against a measured null mean of 0.64-0.72%. That is
-      the null.
+      One candidate is scored by name. base =
+      `JavaRandom(worldSeed).nextLong()`, XOR `md5_first8("ns:path")`, one
+      further LCG fork — rule 182, block 0, a member of this project's own
+      scanned space, written up here at the time as deepslate's derivation,
+      which observing deepslate later refuted (the label is withdrawn) —
+      scores 10-25 of 2304 columns, 0.43-1.09%, on the legacy probe
+      dimensions at two world seeds, against a measured null mean of
+      0.64-0.72%. That is the null.
 
       The scan around it: 900 seed rules x 300 block offsets = 270,000
       candidates per dimension, over 9 probe dimensions and 2 seeds, no
@@ -408,7 +1054,7 @@ Open:
       | p50 / p90 / p99 / p99.9 | 26.56 / 38.02 / 44.21 / 49.48 % |
       | the same 270,000 at the full **24576 cells** | mean **25.54%**, sd 7.25 pts; p90 35.73%, p99.9 45.82% |
       | best in the whole space, full 24576 cells | **53.16%** (rule 387 block 2) |
-      | deepslate's rule 182, best block | 49.81% |
+      | the by-name rule 182, best block | 49.81% |
       | what a correct rule would score | ~**100%** (measured: the control's 99.94%) |
 
       **~100% against 53.16% is the comparison.** The stage-1 maximum (56.84%)
@@ -487,8 +1133,8 @@ Open:
       bits, so `0`/`Long.MIN_VALUE` and `-1`/`Long.MAX_VALUE` are one world
       each, and **a fifth to two fifths of every pooled column count below is
       a second copy of a column already in it** (measured per noise at stride
-      4: `netherrack` 21.73%, `nether_state_selector` 25.58%, `patch`
-      31.27%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%) (measured: the two members of
+      4: `netherrack` 21.73%, `nether_state_selector` 25.41%, `patch`
+      32.14%, `soul_sand_layer` 38.47%, `gravel_layer` 40.59%) (measured: the two members of
       a pair agree on the category of all 67108864 block positions and on
       every biome, and differ in 11914 block names, 0.0178%, all
       feature-placed). Every one of them painted by the real legacy seeding
@@ -504,18 +1150,18 @@ Open:
 
       *The control passes, and it was the hard part.* The identical decoder
       over the golden OVERWORLD regions, whose surface-rule noises are
-      modern-seeded and exact here: at stride 1, **262581476 positions**,
-      the library's own `surface::Executor` reproduces **262406910 /
-      262581476 = 99.9335%** of golden blocks from the RECONSTRUCTED Context
+      modern-seeded and exact here: at stride 1, **239040392 positions**,
+      the library's own `surface::Executor` reproduces **239002099 /
+      239040392 = 99.9840%** of golden blocks from the RECONSTRUCTED Context
       (an independent check on the reconstruction, added because the first
       control failed at 99.77%), **0** of those positions are unexplained by
-      the tree, and the decoded bits recover the true seeding at **30104 /
-      30104 = 100.0000%** against a trivial-predictor null of 86.37%, with
-      worldSeed + 1 at **78.97% — below the trivial predictor**. That arm is
+      the tree, and the decoded bits recover the true seeding at **30077 /
+      30077 = 100.0000%** against a trivial-predictor null of 86.36%, with
+      worldSeed + 1 at **78.95% — below the trivial predictor**. That arm is
       HANDED each column's surface depth, though, and the Nether run cannot
       be; the arm that ENUMERATES it, as the Nether run must, is the one the
-      Nether numbers lean on and is now run too: at stride 4, **16470418
-      positions**, replay 99.9316%, 0 unexplained, recovery **1766 / 1766 =
+      Nether numbers lean on and is now run too: at stride 4, **14994348
+      positions**, replay 99.9836%, 0 unexplained, recovery **1766 / 1766 =
       100.0000%** against a trivial predictor of 77.41%, worldSeed + 1 at
       **73.39%**. Both arms are asserted in the conformance case.
 
@@ -533,10 +1179,10 @@ Open:
       measurement of it. Independent confirmation of `--twin`, on the
       server's own regions.
 
-      *And no candidate survives.* **176537818 positions decoded**, 0.1489%
+      *And no candidate survives.* **176537818 positions decoded**, 0.0314%
       of them unexplained by the tree; the readback decides **688833**
-      columns for `netherrack`, **545395** for `nether_state_selector`,
-      **56330** for `patch`, **41448** for `soul_sand_layer`, **5182** for
+      columns for `netherrack`, **550906** for `nether_state_selector`,
+      **50991** for `patch`, **41448** for `soul_sand_layer`, **5182** for
       `gravel_layer` — and **674596** for `nether_wart`, whose bit is
       CONSTANT (its 1.17 threshold is reached by no column of any golden
       region), so its null equals its signal and it is reported rather than
@@ -545,11 +1191,11 @@ Open:
       columns are spatially clustered and a candidate noise is spatially
       smooth, so `sqrt(n)` would call every leader an impossible outlier. On
       the two big ones nothing in the space clears the null's own observed
-      maximum: `nether_state_selector` best **51.36%** against a null of
-      50.02% ± 0.61 (max 52.21%) and a trivial predictor of 50.63%;
+      maximum: `nether_state_selector` best **51.86%** against a null of
+      50.02% ± 0.61 (max 52.15%) and a trivial predictor of 50.48%;
       `netherrack` best **96.02%** against 95.66% ± 0.32 (max 96.66%) and a
       trivial predictor of 97.77%. A planted candidate comes back **rank 1
-      at 100.0000% on every decoded column** against a runner-up at 66.1% —
+      at 100.0000% on every decoded column** against a runner-up at 67.1% —
       RANK in the same sweep, which is the claim, rather than recovery of
       bits the plant just wrote — so the null result is a measurement. And
       `--scan` now refuses to print a headline unless a `--control` ran and
@@ -557,6 +1203,30 @@ Open:
       readback does and does not exclude, in SPEC §11; asserted in
       `tests/conformance/vanilla_legacy_goldens_surface_test.cpp`, which
       INCLUDES the analyzer's decoder rather than copying it.
+
+      *The decoder now runs the filler's own run counting, and no verdict
+      moved.* It had kept a copy of the surface pass's rules from before
+      pipeline engine v2 and v7. The copy called overworld lava solid, held
+      the bottom-up run (`stone_depth` ceiling) through fluid, and visited a
+      column's first non-solid stretch. It now calls `terrain::categorize`
+      and `terrain::SurfaceColumn`, which the filler runs (the refactor
+      leaves the filler's output unchanged on every case that pins it: the
+      FNV-1a hash of four shipped chunks, 12582474 golden-exact blocks, the
+      lava-run probe). It visits only positions the first pass left as
+      `default_block`, and reads fluid that moved after generation as air.
+      Every figure above is re-measured on the same fixtures; the old
+      decoder reproduces its old control, census, identity and calibration
+      figures exactly. Overworld: 23541084 fewer positions (23413197 water,
+      all 127700 lava, 187 moved fluid and air), and the replay rises from
+      99.9335% to 99.9840%. Nether: the same positions, and the bottom-up
+      run now restarts over the lava ocean. Unexplained positions fall from
+      262795 to 55353. One `nether_state_selector` condition's 8514
+      contradicting columns fall to 0, so the `hole`-lava cause SPEC §11 had
+      named for them was mostly wrong. The identity table, and the censuses
+      and scans of `netherrack`, `soul_sand_layer` and `gravel_layer`, are
+      unchanged. Fixture-free cases for the reconstruction are in
+      `tests/unit/legacy_goldens_decoder_test.cpp` and
+      `surface_column_test.cpp`.
 - [x] **The half of it that is settled: legacy `old_blended_noise`.** A
       dimension declaring the flag seeds it with
       `new java.util.Random(worldSeed)` — no fork, no name salt — read the
@@ -921,8 +1591,25 @@ Open:
       overworlds, the surface-pass control, the depth census, the four
       negative-depth columns, the bottom clamp, and the varying-psl counts
       below.
-- [ ] **Where a spatially varying `preliminary_surface_level` is sampled —
-      open, and found by the sweep above.** `terrain::ChunkFiller` evaluates
+- [x] **Where a spatially varying `preliminary_surface_level` is sampled —
+      measured below, and WIRED into the engine since pipeline engine v2.**
+      Until v2 this box's text was the code's truth even after the
+      measurement landed: `ChunkFiller::preliminarySurfaceIn` existed and the
+      conformance cases scored it as a replica, while `applySurfaceRules`
+      still read the raw entry per column — so the engine never produced what
+      the cases credited it with. Wired now: four samples a chunk, and on the
+      eight golden overworld regions exact blocks go 99.9915% -> 99.9942%
+      (`golden_overworld_test.cpp`). Held in CI with no fixture by
+      `terrain_filler_test.cpp`, "above_preliminary_surface reads the
+      16-block lattice through the whole filler, not the column": a varying
+      entry, 768 of 768 columns exact, against pinned counts of the columns
+      each regression would move (per column 672, swapped samples 304, far
+      sample at +15 369, single floor 363, truncation 768, truncating cell
+      index 488 of 512). Substituting the per-column read into the engine
+      fails it (96 of 768) and moves the golden count 12582372 -> 12582029,
+      but leaves the CI fill hash in `vanilla_compiled_dimension_test.cpp`
+      unchanged: that hash is blind to this wiring, and the unit case is its
+      only CI guard. The original finding: `terrain::ChunkFiller` evaluated
       the entry per column. The server does not: driven by a three-valued
       `range_choice` (-40 / 0 / 60), the value that reaches the condition
       takes 101 distinct integer values — every integer from -40 to 60, both
@@ -1008,7 +1695,9 @@ Open:
       {-40, 0, 60} — no fixture — and pitch 16 gives exactly 101, -40 to 60,
       contiguous. As a bound it refuses pitch 4 (57 values, 44 gaps) and 2
       (15, 86 gaps) and says nothing against 8 or 32; those die to the
-      translation family, which is why the pitch was measured that way.
+      translation family, which is why the pitch was measured that way. All
+      five counts are asserted in `terrain_filler_test.cpp`'s known-answer
+      case for `preliminarySurfaceIn`, pitch 16 through the helper itself.
 
       `tools/analysis/psl-lattice-probe.sh` + `psl-lattice-analyze.cpp`
       (43 dimensions, 3 specs, 2 seeds, both signs of the origin);
@@ -1022,28 +1711,36 @@ Open:
       is copied.
       `tools/analysis/density-probe.sh` gained `--origin`, without which the
       negative-coordinate half could not have been generated at all.
-- [ ] **Whether the AQUIFER reads the same entry through the same lattice —
-      open, and untouched by the item above.** SPEC §11 now says this in the
-      specification itself rather than only here: the shipped engine reads
-      this one router entry two different ways on purpose, and the aquifer
-      half is unmeasured. `above_preliminary_surface` is
-      where the lattice was measured; `aquifer::` reads
-      `preliminary_surface_level` at its own cell centres and still reads it
-      per column here. Nothing in this sweep says whether that is right, and
-      the two readings are NOT close: on the three-valued field the
-      per-column reading matches the server on 3600 of 36864 columns, so the
-      aquifer is reading a different number from the surface rule on about
-      nine columns in ten. That figure is an ANALYZER measurement, not one a
-      conformance case holds — reproduce it with
-      `build/psl-lattice-analyze fit .fixtures/1.21.11/worldgen 42
-      .fixtures/1.21.11/probes/apsb v_psl` and read the pitch-1 rows, which
-      are the per-column reading. That the aquifer's own conformance cases pass under it is
-      therefore worth something — but those cases were fitted under it, and
-      the aquifer's four surface consumers are gates and caps that quantise
-      hard, so passing is weak evidence rather than none. What would settle
-      it: re-score `probes/pslvar`'s six aquifer dimensions under BOTH
-      readings and report the two counts. The readout dimensions naming each
-      column's arm are already on disk beside them.
+- [x] **Whether the AQUIFER reads the same entry through the same lattice —
+      closed: it does not, it reads per column.** The shipped engine reads
+      this one router entry two different ways on purpose (SPEC §11), and
+      the aquifer half is now measured rather than assumed, by the re-score
+      this item asked for and no server run:
+      `vanilla_aquifer_varying_surface_test.cpp` puts each of the scan's
+      thirteen samples through the surface rule's lattice
+      (`preliminarySurfaceIn`, anchor, window, order and abort unchanged) and
+      scores both readings on every block where they predict different
+      categories, from the lava sea's top to the lower of the two readings'
+      `y_skip`. On `probes/pslvar` (seed 42): 802159 such blocks (778125
+      before engine v8's `y_skip` rectangle, 781897 under v12's reading of
+      the scan), 679973 to the per-column reading, 0 to the lattice, 106836
+      solid and 15350 that flow may have moved — 13578 of those still
+      sources beside two more,
+      the infinite-source shape the interior of any pool the lattice would
+      leave dry satisfies, so the case bounds them at 5% of the per-column
+      reading's blocks rather than 1%. On the barrier-on nsfloor corpus at
+      seeds 42, 31337 and 8675309: 1564944 blocks, 1340616 to the per-column
+      reading, 0 to the lattice — and no other case asserts that corpus's
+      air and fluid, so that 0 is not implied by anything else in the
+      suite. The lattice at the unquantised centre loses the same way (0 of
+      906228 on pslvar). A source anchored on the lattice on both axes
+      cannot separate the two
+      (378 of 2446 sources, none of the blocks), so the evidence is the
+      other 2068. The analyzer figure this item used to quote — the
+      surface rule's per-column reading matching the server on 3600 of 36864
+      `apsb` columns — stands, and is about the surface rule, not this.
+      `y_skip`'s own read of the entry is a third consumer the case sidesteps
+      (it scores only below both readings' cutoffs) rather than settles.
 - [x] **Surface-rule mcdoc schema generation debt — closed.** All 10 of the
       types mcdoc declares are now generated (`tools/mcdoc/surface.py`,
       `lib/src/surface_schema.inc`), and the loader reads them through the
@@ -1100,18 +1797,26 @@ Open:
       table and may not be taken from the source. 20 cells in 131072 are
       attributed and unfixed, and `[biome]`'s "exact" now reads "exact over
       the 98304-cell corner".
+- [ ] **Full-biome goldens for amplified and large_biomes.** Their probe
+      fixes the biome, so large_biomes' biome assignment (`temperature_large`,
+      `vegetation_large` through the search) and either preset's surface over
+      its real biomes are checked against the pack path only
+      (`vanilla_compiled_dimension_test.cpp`). Needs a `tools/fetch-vanilla
+      --world-preset` that sets server.properties' `level-type`; the aquifer
+      does not (SPEC §11).
 
 ## M5 — Integration
 
-Started. `ext/` (the PocketMine-MP zend binding — the actual point of this
-project) is still an empty stub, waiting on block state mapping below —
-which is back in `lib/mapping/` as a platform-neutral Java → Bedrock
-blockstate table, with each binding doing only the last step through its
-platform's own resolver (see the corrected architecture bullet). Also
-unstarted: chunkutils2 output, the PMMP world-load path, the performance
-pass. `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) is further
-along than `ext/` itself — a real, compiling, tested JNI interface exists —
-but waits on the same table and is untested against a real Nukkit build.
+Started. `ext/` (the PocketMine-MP binding — the actual point of this
+project) is written end to end: the chunkutils2 sub-chunk encoder, the zend
+module, and the plugin, which registers the generator, freezes the pipeline
+into a new world's folder, and translates block states through
+PocketMine-MP's own upgrader and deserializer (slices 1-5 below). None of it
+has executed inside a real PocketMine-MP server, and that run is the largest
+unretired risk in the project. Still open: that run, and the performance
+pass. `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) has a compiling,
+tested JNI interface, but its block state mapping is not started and its
+Java side has never been compiled.
 
 - [x] **Biome mapping — landed.** `lib/mapping/` is a real CMake target
       (`stratum_mapping`) now, downstream of the conformance boundary by
@@ -1201,28 +1906,56 @@ but waits on the same table and is untested against a real Nukkit build.
          independently re-verified (SPEC §11); **never run** — PocketMine-MP
          cannot be installed here. CI checks every file parses and runs the
          options test.
+- [x] **Aquifer fluid updates reach PocketMine-MP — written, never run in
+      it.** A Java server ticks a generated chunk's `PostProcessing`
+      positions once it loads; PocketMine-MP has no such list, and a
+      generator's worker can return nothing but terrain
+      (`FastChunkSerializer::serializeTerrain`). So `encodeChunk` leaves the
+      positions in a per-world outbox inside the extension, and the main
+      thread takes them with `Stratum\takeFluidUpdates` (by the world's
+      options and seed, once) when PocketMine-MP fires `ChunkPopulateEvent`
+      — a populated chunk's neighbours all exist, so the flow never reaches
+      ungenerated terrain, where `setBlockAt()` throws. The plugin's
+      `FluidUpdateScheduler` schedules each liquid after its own
+      `tickRate()`, as `Liquid::onNearbyBlockChange()` does. Unit-tested
+      (threads included) and PHPT-tested on PHP 8.2.30 ZTS against the real
+      extension, the scheduler against stand-ins for PocketMine-MP's
+      classes. Not carried, by construction: a chunk generated as a
+      neighbour in one server run and populated in a later one, and a flow
+      the server stops mid-way. SPEC §4.3, §11.
 - [ ] **Run the plugin against a real PocketMine-MP server.** The one thing
-      no check here can stand in for: registration, chunk assembly and block
-      translation have never executed. Needs a PMMP install (its PHP build
-      needs pmmpthread, leveldb, igbinary, morton and more, which
-      `tools/php-dev` does not build) — the same shape of gap
-      `ext-nukkit/`'s Java side has.
+      no check here can stand in for: registration, chunk assembly, block
+      translation and fluid-update scheduling have never executed. Needs a
+      PMMP install (its PHP build needs pmmpthread, leveldb, igbinary,
+      morton and more, which `tools/php-dev` does not build) — the same
+      shape of gap `ext-nukkit/`'s Java side has.
 - [ ] **Generation speed.** Measured at **237 ms/chunk** for the overworld
       in an optimised build on this box (freeze 0.06 s, compiling a
       dimension 0.01 s, peak 2 MB). Fine for background generation, slow
       next to PocketMine-MP's own generators; M5's performance pass has a
       real number to work against now. Most of it is the density evaluation
-      and the per-quart biome search, not the packing.
-- [ ] **Block state resolution in the bindings — not started.**
-      1. **`ext/` resolves the table through PMMP** — upgrader then
-         deserializer, once per distinct state at generator start, catching
-         `UnsupportedBlockStateException` itself so SPEC §9's explicit
-         fallback table applies rather than PMMP's silent `info_update`.
-         Needs a fallback entry for `minecraft:powder_snow` from day one:
-         PMMP `stable` has no powder snow block, and the overworld's
-         surface rules emit it (measured, not hypothetical).
-      2. **`ext-nukkit/` resolves it through `BlockStateMapping`** — see
-         that binding's own bullet below.
+      and the per-quart biome search, not the packing. The density half
+      still runs through the per-point `density::Interpreter`: the compiled
+      flat execution program SPEC §4.1 calls for was due in M3, was never
+      built, and is this item's main lever (SPEC §10, M3). Measured since
+      (SPEC §11, "What the aquifer costs"; `ChunkFiller::fill` alone, which
+      leaves out the biome fill and packing this figure includes):
+      174 ms/chunk for the overworld, 221 for `amplified`, the aquifer
+      1-2% of either. The interpreter's own per-read scope — allocated and
+      zeroed for every evaluation — is about two fifths of every instruction
+      a fill executes.
+- [x] **Block state resolution in `ext/` — landed with the plugin (slice
+      5), never executed.** `ext/plugin/src/BlockStateTranslator.php`
+      resolves each Java state through PMMP's `BlockStateUpgrader` then
+      `BlockStateToObjectDeserializer`, once per distinct state per worker
+      thread (memoized on first use, not at generator start), and catches
+      `BlockStateDeserializeException` itself so SPEC §9's explicit fallback
+      table applies rather than PMMP's silent `info_update`. The table maps
+      `minecraft:powder_snow` to snow from day one — PMMP `stable` has no
+      powder snow block and the overworld's surface rules emit it — and any
+      other miss falls back to `info_update` with a warning naming the
+      block, logged once. `ext-nukkit/`'s side is still not started: see
+      that binding's own bullet below.
 - [x] **Biome mapping's placement re-checked against the same three
       codebases — confirmed correct, not merely assumed by analogy to
       blocks.** A real biome id reassignment exists (GeyserMC/mappings:
@@ -1330,8 +2063,6 @@ escape hatch.
 - The loader's strict-rejection-by-default policy for user-supplied
   datapacks is an explicitly open question in SPEC.md — not blocking
   anything, just undecided.
-- `README.md` is stale relative to this session's work: it still describes
-  aquifers as unwired and most surface rules as refused. Worth a pass.
 - **Whether the `dev` test preset should pass `-j` is still open, and is a
   separate decision from the fix above.** It never has, so nothing regresses
   by leaving it; the change only means `-j` is now *available*. For: the
@@ -1339,15 +2070,11 @@ escape hatch.
   push. Against: parallel is the mode that hides shared-state bugs rather
   than reporting them — serial is what caught this one, and a preset that
   defaults to `-j` would have turned a reproducible 418/418 into a green
-  tick over a real defect. Three `tests/conformance/` files still hold fixed
-  scratch paths (below), so a `-j` default is in any case premature for the
-  conformance preset. Suggested: leave `dev` serial, let the developer pass
-  `-j` deliberately, and revisit once conformance is clean too.
-- Three fixed scratch paths remain in `tests/conformance/`, outside this
-  change's ownership: `golden_fill_test.cpp:169`
-  (`stratum-golden-fill-probe-biome`), `golden_fill_aquifer_test.cpp:157`
-  (`stratum-golden-fill-aquifer-probe-biome`) and
-  `vanilla_legacy_gradient_gap_test.cpp:509`. They are the same defect and
-  `tests/support/temp_path.hpp` is already on that target's include path.
-  Not measured: those cases skip without fixtures, so no claim is made here
-  about whether they currently collide.
+  tick over a real defect. Suggested: leave `dev` serial, let the developer
+  pass `-j` deliberately. The conformance cases' last fixed scratch paths
+  are gone too (below), so that preset no longer rules `-j` out either.
+- [x] The last fixed scratch paths in `tests/conformance/`
+      (`golden_fill_test.cpp`, `golden_fill_aquifer_test.cpp`,
+      `vanilla_legacy_gradient_gap_test.cpp`) and one in
+      `tests/unit/cli_test.cpp` use `stratum::test::tempPath` since
+      28fc802.

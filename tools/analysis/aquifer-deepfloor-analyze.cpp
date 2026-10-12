@@ -28,7 +28,9 @@
 // `aquifer::placesBarrier` on every block it scores (the mismatch counter
 // must print 0).
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-deepfloor-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-deepfloor-analyze
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated -I
+//   build/dev/_deps/nlohmann_json-src/single_include tools/analysis/aquifer-deepfloor-analyze.cpp
+//   -L build/dev/lib -lstratum_core -lz -o build/aquifer-deepfloor-analyze
 //   build/aquifer-deepfloor-analyze .fixtures/1.21.11/probes/aqdeep
 //
 // Nothing this reads is committed: the worlds are Mojang-derived (SPEC §12).
@@ -37,6 +39,7 @@
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
 #include <stratum/aquifer/selection.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -46,15 +49,17 @@
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -248,8 +253,9 @@ std::vector<Dim> readSpec(const std::filesystem::path& path) {
         // need the contracted `lavaSample` indices, so refuse rather than
         // quietly score the wrong thing — SPEC §8.
         if (!router.at("lava").is_number()) {
-            std::fprintf(stderr, "dimension %s drives `lava` through a node; this analyzer "
-                                 "reads it as a constant only\n",
+            std::fprintf(stderr,
+                         "dimension %s drives `lava` through a node; this analyzer "
+                         "reads it as a constant only\n",
                          d.name.c_str());
             std::exit(2);
         }
@@ -266,14 +272,14 @@ std::vector<Dim> readSpec(const std::filesystem::path& path) {
 /// entries below the measured value must miss, those above must write false
 /// stone, and only the measured one may do neither.
 const std::vector<double>& d10Ladder() {
-    static const std::vector<double> ladder{1.5, 2.5, 3.0,  5.0,  8.0,  9.0,  9.5,
-                                            9.9, 10.0, 10.1, 10.5, 11.0, 12.0, 20.0};
-    return ladder;
+    static const std::vector<double> kLadder{1.5, 2.5,  3.0,  5.0,  8.0,  9.0,  9.5,
+                                             9.9, 10.0, 10.1, 10.5, 11.0, 12.0, 20.0};
+    return kLadder;
 }
 
 const std::vector<double>& d25Ladder() {
-    static const std::vector<double> ladder{1.5, 2.0, 2.4, 2.5, 2.6, 3.0, 10.0};
-    return ladder;
+    static const std::vector<double> kLadder{1.5, 2.0, 2.4, 2.5, 2.6, 3.0, 10.0};
+    return kLadder;
 }
 
 struct Totals {
@@ -291,8 +297,7 @@ struct Totals {
 };
 
 void report(const char* label, const Totals& t) {
-    std::printf("%s blocks=%lld serverStone=%lld\n", label, t.shipped.total,
-                t.shipped.serverStone);
+    std::printf("%s blocks=%lld serverStone=%lld\n", label, t.shipped.total, t.shipped.serverStone);
     std::printf("    guarded (as it was)   miss=%-8lld falseStone=%-8lld\n", t.shipped.miss,
                 t.shipped.falseStone);
     std::printf("    lift both-air only    miss=%-8lld falseStone=%-8lld\n", t.liftAir.miss,
@@ -343,7 +348,9 @@ void merge(Totals& into, const Totals& from) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+
+int run(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: aquifer-deepfloor-analyze <probe-dir>\n");
         return 2;
@@ -385,7 +392,7 @@ int main(int argc, char** argv) {
             density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
         const density::Interpreter interp(graph, noises);
         density::Interpreter::CornerCache cache(interp.cacheSize());
-        const aquifer::CentreSource centres(seed);
+        const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
         const aquifer::PslRead surface =
             aquifer::constantSurface(static_cast<std::int32_t>(std::floor(dim.psl)));
 
@@ -433,15 +440,11 @@ int main(int argc, char** argv) {
                                                               .seaLevel = dim.seaLevel,
                                                               .floodedness = flood,
                                                               .spread = spread};
-                                const std::int32_t level = aquifer::cellFluidLevel(cell);
-                                src[r] = aquifer::BarrierSource{
-                                    .level = level,
-                                    .distanceSq = s.distanceSq,
-                                    .type = aquifer::fluidTypeOf(
-                                        aquifer::FluidTypeAt{.centreY = s.centre.y,
-                                                             .level = level,
-                                                             .seaLevel = dim.seaLevel,
-                                                             .lava = dim.lava})};
+                                const aquifer::SourceStatus status =
+                                    aquifer::sourceStatus(cell, dim.lava);
+                                src[r] = aquifer::BarrierSource{.level = status.level,
+                                                                .distanceSq = s.distanceSq,
+                                                                .type = status.type};
                             }
 
                             aquifer::BarrierAt at;
@@ -455,9 +458,11 @@ int main(int argc, char** argv) {
 
                             Params p;
                             p.guard = Guard::Shipped;
-                            add(here.shipped, observedStone, placesBarrier(at, p, nullptr, nullptr));
+                            add(here.shipped, observedStone,
+                                placesBarrier(at, p, nullptr, nullptr));
                             p.guard = Guard::LiftAir;
-                            add(here.liftAir, observedStone, placesBarrier(at, p, nullptr, nullptr));
+                            add(here.liftAir, observedStone,
+                                placesBarrier(at, p, nullptr, nullptr));
                             p.guard = Guard::LiftFluid;
                             add(here.liftFluid, observedStone,
                                 placesBarrier(at, p, nullptr, nullptr));
@@ -501,14 +506,27 @@ int main(int argc, char** argv) {
             }
         }
 
-        char label[256];
-        std::snprintf(label, sizeof(label), "=== %s (D=%g, psl=%g)", dim.name.c_str(), dim.density,
-                      dim.psl);
-        report(label, here);
+        std::array<char, 256> label{};
+        std::snprintf(label.data(), label.size(), "=== %s (D=%g, psl=%g)", dim.name.c_str(),
+                      dim.density, dim.psl);
+        report(label.data(), here);
         merge(pooled, here);
     }
 
     std::printf("\n");
     report("=== POOLED", pooled);
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // A missing fixture or a malformed region surfaces as an exception;
+    // report it and fail rather than terminate.
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
 }
