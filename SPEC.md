@@ -669,10 +669,10 @@ mapping has two halves, split at a platform-neutral midpoint:
   one ore, filler or raw block, despite the vein inputs themselves clearing
   their documented gates on a measurable fraction of positions (*corrected
   since:* of the deterministic gate only `vein_ridged < 0` was counted, on
-  4.21% of a coarse sample, beside `vein_gap > -0.3`, which picks ore over
-  filler and admits nothing. The type/sign and richness gate was never
-  counted, and on its own it admits no position of that world's window; see
-  the retraction below). Setting
+  4.21% of a coarse sample, beside `vein_gap > -0.3` (83.6%), which is no
+  part of the gate: it only picks ore over filler. The type/sign and
+  richness gate was never counted, and on its own it admits no position of
+  that world's window; see the retraction below). Setting
   `aquifers_enabled` true as well — with density still a constant positive,
   so the aquifer's own fluid decision can never apply to any block (Q2.2)
   — immediately produced real vein output. The two flags are not
@@ -681,23 +681,24 @@ mapping has two halves, split at a platform-neutral midpoint:
   `ore::veinsPlaceBlocks` is that observation and nothing more; it is a
   measured coupling, not a claim about why. **Retracted since: a seed
   confound, not a coupling** (§11, "Ore veins under the legacy source", holds
-  the evidence). The stone world ran at `ore-vein-probe.sh`'s default seed,
-  42 (the first run's session record, not in the repository; the commit that
+  the evidence). The stone world ran at `ore-vein-probe.sh`'s default seed, 42
+  (the first run's session record, not in the repository; the commit that
   recorded it names no seed). No position of seed 42's window clears the
   type/sign and richness gate under vanilla's vein router — the library finds
-  none of 1 818 624 — so that world is stone with aquifers on as well (the
-  library's prediction for its recipe; two scratch worlds at 42, with
-  `size_vertical` 1 and water, read stone with aquifers on and off). The
-  contrast that "immediately produced real vein output" changed three things
-  at once: `aquifers_enabled` false to true, `default_fluid` air to water, and
-  the seed, 42 to 43. Its 48 + 290 + 1 = 339 vein blocks are exactly what the
-  library predicts at 43, where 468 positions of the window clear the gate
-  and the draws place 339 of them. So the stone world replicates; only the
-  inference "veins need aquifers" was wrong. With aquifers off, veins are
-  placed: the recipe at 13579, whose window holds veins, is block for block
-  the aquifers-on world (14 373 vein blocks in each), and so are the legacy
-  probe's aquifers-off arms. `ore::veinsPlaceBlocks` is gone and engine v14
-  places veins wherever `ore_veins_enabled` is set.
+  none of 1 818 624 — so the library predicts that world stone with aquifers
+  on as well (no server world holds its recipe at 42 with aquifers on; two
+  scratch worlds at 42, with `size_vertical` 1 and water, read stone with
+  aquifers on and off). The contrast that "immediately produced real vein
+  output" changed three things at once: `aquifers_enabled` false to true,
+  `default_fluid` air to water, and the seed, 42 to 43. Its 48 + 290 + 1 = 339
+  vein blocks are exactly what the library predicts at 43, where 468 positions
+  of the window clear the gate and the draws place 339 of them. So the library
+  reproduces both worlds, the stone and the veins; only the inference "veins
+  need aquifers" was wrong. With aquifers off, veins are placed: the recipe at
+  13579, whose window holds veins, is block for block the aquifers-on world
+  (14 373 vein blocks in each), and so are the legacy probe's aquifers-off
+  arms. `ore::veinsPlaceBlocks` is gone and engine v14 places veins wherever
+  `ore_veins_enabled` is set.
 
   *The deterministic gate, confirmed with ZERO exceptions.* The y-range
   (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
@@ -7278,33 +7279,34 @@ Open:
   Xoroshiro worlds but three legacy ones, since 42 and its 48-bit twin are
   one (their `lv`, and their `la`, are identical block for block).
 
-  The stone world was a seed confound, and it replicates. It ran at
-  `ore-vein-probe.sh`'s default seed, 42 (the first run's session record,
+  The stone world was a seed confound, and the library reproduces it. It ran
+  at `ore-vein-probe.sh`'s default seed, 42 (the first run's session record,
   not in the repository; commit 386535f, which recorded the result, names no
   seed). No position of seed 42's window clears the type/sign and richness
   gate under vanilla's vein router: the library, evaluating that router over
   the window's 1 818 624 positions in y -60..50, finds none at the probe's
-  cell height (8) or at half of it (4), so `vein_ridged < 0`, true at
-  77 328 of them at the probe's (4.25%), has nothing to admit. The
-  "measurable fraction" the M3 entry saw was, of the deterministic gate,
-  `vein_ridged < 0` alone — 4.21% of a coarse sample, 113 664 positions on
-  every fourth x and z — beside `vein_gap > -0.3` (83.6%), which picks ore
-  over filler and admits nothing; the toggle's range was printed, and the
-  type/sign and richness gate was never counted. With aquifers on the recipe
-  would be stone too: the gate reads no aquifer, so that is the library's
-  prediction, and no server world holds the recipe at 42 with aquifers on.
-  What the server did generate at 42 agrees: two scratch worlds, aquifers on
-  and off (with `size_vertical` 1 and `default_fluid` water, not the
-  original's 2 and air), read 6 291 456 of 6 291 456 stone each, and so does
-  the discovery set's seed 200 with aquifers on (the library: no position
-  there either). The aquifers-on contrast changed three things at once —
-  `aquifers_enabled` false to true, `default_fluid` air to water, and the
-  seed, 42 to 43 — and its 48 `copper_ore`, 290 `granite` and one
-  `raw_copper_block` are exactly the 339 vein blocks the library predicts at
-  43, where 468 positions of the window clear the deterministic gate and the
-  draws place 339 of them; the session archived that world as
-  `probes/orevein-multi/seed-43`, which still reads 48 + 290 + 1. Only the
-  inference, "veins need aquifers", was wrong.
+  cell height (8) or at half of it (4), so `vein_ridged < 0`, true at 77 328
+  of them at the probe's (4.25%), has nothing to admit. The "measurable
+  fraction" the M3 entry saw was, of the deterministic gate, `vein_ridged < 0`
+  alone — 4.21% of a coarse sample, 113 664 positions on every fourth x and z
+  — beside `vein_gap > -0.3` (83.6%), which is no part of the gate and only
+  picks ore over filler; the toggle's range was printed, and the type/sign and
+  richness gate was never counted. With aquifers on the recipe would be stone
+  too: the gate reads no aquifer, so that is the library's prediction, and no
+  server world holds the recipe at 42 with aquifers on. What the server did
+  generate at 42 agrees: two scratch worlds, aquifers on and off (with
+  `size_vertical` 1 and `default_fluid` water, not the original's 2 and air),
+  read 6 291 456 of 6 291 456 stone each, and so does the discovery set's seed
+  200 with aquifers on (the library: no position there either). The
+  aquifers-on contrast changed three things at once — `aquifers_enabled`
+  false to true, `default_fluid` air to water, and the seed, 42 to 43 — and
+  its 48 `copper_ore`, 290 `granite` and one `raw_copper_block` are exactly
+  the 339 vein blocks the library predicts at 43, where 468 positions of the
+  window clear the deterministic gate and the draws place 339 of them; the
+  session archived that world as `probes/orevein-multi/seed-43`, which still
+  reads 48 + 290 + 1, and the library agrees with it block for block at all
+  of the window's 1 818 624 positions. Only the inference, "veins need
+  aquifers", was wrong.
 
   To rule out the legacy probe's constant inputs, the original recipe
   (vanilla's real vein entries, `size_vertical` 2, `default_fluid` air) was
