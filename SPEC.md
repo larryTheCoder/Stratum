@@ -4292,9 +4292,18 @@ Open:
   stat -e instructions:u`; one pass of the window is a `--repeat 2` run
   less a `--repeat 1` run, which leaves out the pack load, the compile and
   the dump, averaged with `--repeat 3` less `--repeat 2`), which no load
-  moves. A chunk of the overworld fill executes 1 718 M instructions with
-  everything on and 1 679 M with veins off: the aquifer is 22.9 M of the
-  1 679 M (1.4%), the veins 39.4 M of the 1 718 M (2.3%). Its first pass
+  moves. Every instruction figure here is from runs WITHOUT `--dump`.
+  Writing the dump falls outside that window and still moves the count
+  inside it, by up to 2.5 M a chunk on a veins-on configuration — and by
+  the dump path's length too: the first pass with veins off reads
+  1 037.4 M without a dump and 1 037.2 M or 1 034.9 M with one, by path,
+  which puts the first pass's aquifer at 22.9 M rather than 25.9 M (an
+  adversarial re-count's figures; the cause, likely allocator state, is
+  unmeasured). So instruction counts compare only between runs made the
+  same way, as all of these are. A chunk of the overworld fill executes
+  1 718 M instructions with everything on and 1 679 M with veins off: the
+  aquifer is 22.9 M of the 1 679 M (1.4%), the veins 39.4 M of the 1 718 M
+  (2.3%). Its first pass
   executes 1 078 M and 1 037 M, the aquifer 25.9 M (2.5%) and the veins
   41.1 M (3.8%); `amplified`'s fill 2 122 M and 2 083 M, the aquifer
   18.3 M (0.9%) and the veins 38.7 M (1.8%). A configuration's second and
