@@ -56,7 +56,8 @@ TEST_CASE("the flow classifier accepts what fluid leaves behind, and nothing els
     constexpr std::uint16_t kFallingLava = 6;
     std::vector<std::uint16_t> blocks(4096, kAir);
     const auto put = [&blocks](int x, int y, int z, std::uint16_t block) {
-        blocks[static_cast<std::size_t>((((y * 16) + z) * 16) + x)] = block;
+        blocks[(((static_cast<std::size_t>(y) * 16U) + static_cast<std::size_t>(z)) * 16U) +
+               static_cast<std::size_t>(x)] = block;
     };
     // Flowing water.
     put(2, 5, 2, kFlowing);

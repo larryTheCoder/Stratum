@@ -118,7 +118,12 @@ public:
                             }
                         }
                         empty += static_cast<std::int32_t>(top == -65);
-                        const double arm = top < 100 ? kLow : (top < 160 ? kMid : kHigh);
+                        double arm = kHigh;
+                        if (top < 100) {
+                            arm = kLow;
+                        } else if (top < 160) {
+                            arm = kMid;
+                        }
                         values_[index((cx * 16) + lx, (cz * 16) + lz)] = arm;
                     }
                 }

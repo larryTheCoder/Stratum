@@ -292,8 +292,8 @@ TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
     std::array<int, 16> seenX{};
     std::array<int, 16> seenY{};
     std::array<int, 16> seenZ{};
-    for (std::int32_t cx = -20; cx < 20; ++cx)
-        for (std::int32_t cy = -6; cy < 14; ++cy)
+    for (std::int32_t cx = -20; cx < 20; ++cx) {
+        for (std::int32_t cy = -6; cy < 14; ++cy) {
             for (std::int32_t cz = -20; cz < 20; ++cz) {
                 const auto jitter = source.jitterOf(cx, cy, cz);
                 REQUIRE(jitter.x >= 0);
@@ -306,12 +306,17 @@ TEST_CASE("the jitter fills its per-axis bounds and no more", "[aquifer]") {
                 ++seenY.at(static_cast<std::size_t>(jitter.y));
                 ++seenZ.at(static_cast<std::size_t>(jitter.z));
             }
-    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundX); ++v)
+        }
+    }
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundX); ++v) {
         CHECK(seenX.at(v) > 0);
-    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundY); ++v)
+    }
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundY); ++v) {
         CHECK(seenY.at(v) > 0);
-    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundZ); ++v)
+    }
+    for (std::size_t v = 0; v < static_cast<std::size_t>(stratum::aquifer::kJitterBoundZ); ++v) {
         CHECK(seenZ.at(v) > 0);
+    }
     CHECK(seenY.at(9) == 0); // nine values vertically, so 9 never appears
     CHECK(seenX.at(10) == 0);
     CHECK(seenZ.at(10) == 0);
@@ -1376,7 +1381,7 @@ TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
     // proof that it need not: every out-of-range floodedness gives the same
     // level as its clamp, over every depth the ocean branch can see, both
     // gating sides of `sea_level - 8`, and an aborting scan or not.
-    const double outside[] = {
+    const std::array<double, 10> outside = {
         std::nextafter(1.0, 2.0),   1.5,  2.0,  1e6,  std::numeric_limits<double>::infinity(),
         std::nextafter(-1.0, -2.0), -1.5, -2.0, -1e6, -std::numeric_limits<double>::infinity()};
     std::size_t compared = 0;
@@ -1397,7 +1402,7 @@ TEST_CASE("the Q5.6 floodedness clamp is inert", "[aquifer]") {
             }
         }
     }
-    CHECK(compared == 10U * 2U * 2U * 65U);
+    CHECK(compared == std::size_t{10} * 2U * 2U * 65U);
 }
 
 TEST_CASE("an aborting sample that fires reads -54, and nothing else is floored", "[aquifer]") {

@@ -323,9 +323,11 @@ TEST_CASE("the decoder recovers a known-correct seeding and rejects a known-wron
                                 if (chosen == stored) {
                                     ++positive;
                                 } else {
+                                    std::string miss = stored;
+                                    miss += " -> ";
+                                    miss += chosen;
                                     misses[std::to_string(seed) + " (" + std::to_string(at.x) +
-                                           "," + std::to_string(at.z) + ")"] =
-                                        stored + " -> " + chosen;
+                                           "," + std::to_string(at.z) + ")"] = miss;
                                 }
                                 if (overworld.find(evaluate(wrongInterpreter)).toString() ==
                                     stored) {

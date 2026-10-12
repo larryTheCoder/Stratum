@@ -65,10 +65,15 @@ constexpr double kAgreement = 1e-5;
 }
 
 [[nodiscard]] const DeepslateLegacyNoiseParameters& parametersOf(std::string_view id) {
-    const auto found =
-        std::ranges::find(kDeepslateLegacyNoises, id, &DeepslateLegacyNoiseParameters::id);
-    REQUIRE(found != kDeepslateLegacyNoises.end());
-    return *found;
+    // An offset rather than an iterator: std::array's iterator is a raw pointer
+    // in libstdc++ and a class type in MSVC's library, so neither `const auto`
+    // (clang-tidy's readability-qualified-auto) nor `const auto* const` (MSVC)
+    // holds on both.
+    const std::ptrdiff_t found =
+        std::ranges::find(kDeepslateLegacyNoises, id, &DeepslateLegacyNoiseParameters::id) -
+        kDeepslateLegacyNoises.begin();
+    REQUIRE(found != std::ssize(kDeepslateLegacyNoises));
+    return kDeepslateLegacyNoises[static_cast<std::size_t>(found)];
 }
 
 [[nodiscard]] std::vector<double> amplitudesOf(const DeepslateLegacyNoiseParameters& noise) {

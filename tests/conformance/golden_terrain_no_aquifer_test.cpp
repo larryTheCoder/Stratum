@@ -123,7 +123,8 @@ TEST_CASE("the terrain chain, compared without aquifers in the way", "[conforman
             // set beside each other.
             for (int localZ = 0; localZ < 16; localZ += 8) {
                 for (int localX = 0; localX < 16; localX += 8) {
-                    const auto stored = (*floor)[static_cast<std::size_t>((localZ * 16) + localX)];
+                    const auto stored = (*floor)[(static_cast<std::size_t>(localZ) * 16U) +
+                                                 static_cast<std::size_t>(localX)];
                     if (!stored.has_value()) {
                         continue;
                     }

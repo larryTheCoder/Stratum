@@ -81,7 +81,7 @@ TEST_CASE("chunks round-trip through every supported framing", "[region]") {
     const std::vector<std::byte> small = payloadOfLength(1024, 7);
     // Larger than the reader's inflate buffer, so the streaming loop runs
     // more than once.
-    const std::vector<std::byte> large = payloadOfLength(300U * 1024U, 19);
+    const std::vector<std::byte> large = payloadOfLength(std::size_t{300} * 1024U, 19);
 
     RegionBuilder builder;
     addCompressed(builder, 0, 0, Compression::Zlib, small);
@@ -161,7 +161,7 @@ TEST_CASE("a region file on disk reads the same as one in memory", "[region]") {
 
 TEST_CASE("malformed sector tables are rejected at open, not at read", "[region][malformed]") {
     SECTION("a truncated header") {
-        std::vector<std::byte> bytes(100, std::byte{0});
+        const std::vector<std::byte> bytes(100, std::byte{0});
         CHECK_THROWS_AS(RegionFile::fromBytes(bytes, "r.0.0.mca"), FormatError);
     }
 

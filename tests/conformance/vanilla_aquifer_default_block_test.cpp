@@ -47,6 +47,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -175,13 +176,11 @@ void requireDesign(const nlohmann::json& spec) {
     if (!namedAs(ours.name, served.name) || ours.properties.size() != served.properties.size()) {
         return false;
     }
-    for (const auto& [key, value] : served.properties) {
+    return std::ranges::all_of(served.properties, [&ours](const auto& property) {
+        const auto& [key, value] = property;
         const auto found = ours.properties.find(key);
-        if (found == ours.properties.end() || found->second != value) {
-            return false;
-        }
-    }
-    return true;
+        return found != ours.properties.end() && found->second == value;
+    });
 }
 
 /// How one treatment's blocks sit against the control's, position by
