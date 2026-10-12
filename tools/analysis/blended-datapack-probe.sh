@@ -49,10 +49,17 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ ${accept_eula} -eq 1 ]] || die "this runs the Minecraft server, so it needs --accept-eula"
 command -v java >/dev/null 2>&1 || die "java is needed"
 
+# STRATUM_FIXTURES_DIR, as the CMake cache and density-probe.sh read it: a
+# git worktree sharing the main checkout's fixtures takes the jar from that
+# tree and writes its region into it, rather than needing a second copy of
+# either. tools/probe-worlds clears it for every generator it runs (and
+# PROBE_OUT with it), so a corpus it generates lands under <repo>/.fixtures
+# whatever the environment.
+fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}"
 # `|| true`: under pipefail a find over a directory that is not there fails
 # the assignment, and `set -e` would exit here without the message below.
-jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
-[[ -n "${jar}" ]] || die "no server jar under .fixtures/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
+jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
+[[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
 work="$(mktemp -d)"
@@ -229,7 +236,7 @@ log "generated $(wc -c < "${region}") bytes"
 # committed (SPEC §12), and read by the conformance suite when it is present.
 # Generating it takes minutes and reading it takes none, so it is written where
 # `ctest --preset conformance` will find it rather than thrown away.
-out="${PROBE_OUT:-${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/blended-noise/seed-${seed}/r.0.0.mca}"
+out="${PROBE_OUT:-${fixtures}/${MINECRAFT_VERSION}/probes/blended-noise/seed-${seed}/r.0.0.mca}"
 mkdir -p "$(dirname "${out}")"
 cp "${region}" "${out}"
 log "wrote ${out}"
