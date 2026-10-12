@@ -41,12 +41,8 @@ struct GoldenRegion {
 /// carry no xPos/zPos. The container reader handles all three; only terrain
 /// belongs to the chunk decoder.
 [[nodiscard]] bool isCollectedGolden(const std::filesystem::path& path) {
-    for (const std::filesystem::path& part : path) {
-        if (part == "regions") {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(path.begin(), path.end(),
+                       [](const std::filesystem::path& part) { return part == "regions"; });
 }
 
 [[nodiscard]] std::vector<GoldenRegion> findGoldenRegions() {
@@ -66,7 +62,7 @@ struct GoldenRegion {
         const std::string stem = entry.path().stem().string(); // r.0.0
         const std::size_t firstDot = stem.find('.');
         const std::size_t lastDot = stem.rfind('.');
-        if (stem.rfind("r.", 0) != 0 || firstDot == lastDot) {
+        if (!stem.starts_with("r.") || firstDot == lastDot) {
             continue;
         }
 

@@ -283,7 +283,12 @@ private:
                     }
                     // K * F + gradient = 0 puts the -1 / 0 / +1 arms near
                     // y 61, 128 and 195.
-                    const double arm = top < 100 ? kLow : (top < 160 ? kMid : kHigh);
+                    double arm = kHigh;
+                    if (top < 100) {
+                        arm = kLow;
+                    } else if (top < 160) {
+                        arm = kMid;
+                    }
                     ++corners;
                     mismatches += static_cast<long long>(
                         !same(arm, field.at((cx * 16) + lx, (cz * 16) + lz)));
@@ -470,7 +475,7 @@ private:
     const Field* field_;
     std::map<Key, SourceInfo> memo_;
     long long inconsistent_ = 0;
-    Key lastKey_{};
+    Key lastKey_;
     const SourceInfo* last_ = nullptr;
 };
 
@@ -502,7 +507,7 @@ public:
 private:
     const aquifer::CentreSource* centres_;
     std::map<Key, std::array<aquifer::Candidate, aquifer::kCandidateCount>> candidates_;
-    Key lastKey_{};
+    Key lastKey_;
     const std::array<aquifer::Candidate, aquifer::kCandidateCount>* last_ = nullptr;
 };
 

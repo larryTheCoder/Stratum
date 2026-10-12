@@ -32,23 +32,35 @@ struct CliResult {
     std::string output;
 };
 
+/// The exit code in what std::system returned. A by-value parameter rather
+/// than read off a const local: Apple's WIFEXITED and WEXITSTATUS expand to
+/// *(int *)&(x), which drops the qualifier off a const int and trips
+/// -Wcast-qual.
+[[nodiscard]] int exitCodeOf(int status) {
+#ifdef _WIN32
+    return status;
+#else
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
 [[nodiscard]] CliResult runCli(const std::string& arguments) {
     const std::filesystem::path outputPath =
         stratum::test::tempPath("stratum-cli-test-output", ".txt");
-    std::string command = std::string("\"") + STRATUM_CLI_PATH + "\" " + arguments + " > \"" +
-                          outputPath.string() + "\" 2>&1";
 
 #ifdef _WIN32
     // std::system runs `cmd /c <command>`, and cmd strips the outer quotes
     // when a command line both begins with a quote and contains more of
     // them, so the executable is never found. Wrapping the whole thing in
     // one more pair is the documented way round that.
-    command = "\"" + command + "\"";
+    constexpr const char* kWrap = "\"";
+#else
+    constexpr const char* kWrap = "";
 #endif
+    const std::string command = std::string(kWrap) + "\"" + STRATUM_CLI_PATH + "\" " + arguments +
+                                " > \"" + outputPath.string() + "\" 2>&1" + kWrap;
 
-    // Not const: Apple's WIFEXITED and WEXITSTATUS expand to *(int *)&(x),
-    // which drops the qualifier off a const int and trips -Wcast-qual.
-    int status = std::system(command.c_str());
+    const int status = std::system(command.c_str());
 
     std::string output;
     {
@@ -68,11 +80,7 @@ struct CliResult {
     }
     std::filesystem::remove(outputPath);
 
-#ifdef _WIN32
-    return CliResult{status, output};
-#else
-    return CliResult{WIFEXITED(status) ? WEXITSTATUS(status) : -1, output};
-#endif
+    return CliResult{exitCodeOf(status), output};
 }
 
 [[nodiscard]] SectionSpec stoneSection(bool withDirt) {

@@ -570,17 +570,20 @@ TEST_CASE("temperature compares a height-adjusted value, not the biome's own", "
 
     double total = 0.0;
     int counted = 0;
-    for (std::int32_t x = 0; x < 48; ++x)
+    for (std::int32_t x = 0; x < 48; ++x) {
         for (std::int32_t z = 0; z < 48; ++z) {
             const auto at = [&](float t) {
-                for (std::int32_t y = -64; y <= 319; ++y)
-                    if (executor.freezing(x, y, z, t))
+                for (std::int32_t y = -64; y <= 319; ++y) {
+                    if (executor.freezing(x, y, z, t)) {
                         return y;
+                    }
+                }
                 return 1 << 20;
             };
             total += static_cast<double>(at(0.31F) - at(0.29F));
             ++counted;
         }
+    }
     // Two steps of 0.01, so sixteen blocks across 2304 columns.
     CHECK(total / counted > 15.9);
     CHECK(total / counted < 16.1);

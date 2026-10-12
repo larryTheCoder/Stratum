@@ -54,7 +54,7 @@ TEST_CASE("packIndices is unpackIndices' exact inverse", "[chunk][writer]") {
                 continue;
             }
             std::vector<std::uint16_t> indices;
-            const std::uint16_t maxValue = static_cast<std::uint16_t>((1U << bits) - 1U);
+            const auto maxValue = static_cast<std::uint16_t>((1U << bits) - 1U);
             for (std::size_t i = 0; i < count; ++i) {
                 indices.push_back(static_cast<std::uint16_t>(i % (maxValue + 1U)));
             }

@@ -44,7 +44,8 @@ namespace {
     return {.name = name, .type = BedrockTagType::String, .integer = 0, .string = value};
 }
 
-constexpr std::int32_t kVersion1_21_60_33 = (1 << 24) | (21 << 16) | (60 << 8) | 33;
+/// Bedrock 1.21.60.33, one byte per part.
+constexpr std::int32_t kStateVersion = (1 << 24) | (21 << 16) | (60 << 8) | 33;
 
 } // namespace
 
@@ -75,10 +76,10 @@ TEST_CASE("a block whose ids are not numbered in its report's property order", "
 
 TEST_CASE("Bedrock states carry the names, tag types and version GeyserMC gives", "[mapping]") {
     CHECK(bedrockBlockState(java("minecraft:air")) ==
-          BedrockBlockState{.name = "minecraft:air", .states = {}, .version = kVersion1_21_60_33});
-    CHECK(bedrockBlockState(java("minecraft:grass_block")) ==
-          BedrockBlockState{
-              .name = "minecraft:grass_block", .states = {}, .version = kVersion1_21_60_33});
+          BedrockBlockState{.name = "minecraft:air", .states = {}, .version = kStateVersion});
+    CHECK(
+        bedrockBlockState(java("minecraft:grass_block")) ==
+        BedrockBlockState{.name = "minecraft:grass_block", .states = {}, .version = kStateVersion});
     // Renamed on Bedrock.
     CHECK(bedrockBlockState(java("minecraft:terracotta")).name == "minecraft:hardened_clay");
     CHECK(bedrockBlockState(java("minecraft:snow_block")).name == "minecraft:snow");
@@ -86,13 +87,13 @@ TEST_CASE("Bedrock states carry the names, tag types and version GeyserMC gives"
     CHECK(bedrockBlockState(java("minecraft:snow")) ==
           BedrockBlockState{.name = "minecraft:snow_layer",
                             .states = {byteValue("covered_bit", 0), intValue("height", 0)},
-                            .version = kVersion1_21_60_33});
+                            .version = kStateVersion});
     CHECK(bedrockBlockState(java("minecraft:bedrock")).states ==
           std::vector{byteValue("infiniburn_bit", 0)});
     CHECK(bedrockBlockState(java("minecraft:water", {{"level", "1"}})) ==
           BedrockBlockState{.name = "minecraft:flowing_water",
                             .states = {intValue("liquid_depth", 1)},
-                            .version = kVersion1_21_60_33});
+                            .version = kStateVersion});
     CHECK(bedrockBlockState(java("minecraft:oak_log", {{"axis", "x"}})).states ==
           std::vector{stringValue("pillar_axis", "x")});
     CHECK(bedrockBlockState(java("minecraft:chest", {{"facing", "east"}})).states ==
@@ -100,7 +101,7 @@ TEST_CASE("Bedrock states carry the names, tag types and version GeyserMC gives"
 }
 
 TEST_CASE("the table covers every state at one blockstate version", "[mapping]") {
-    CHECK(bedrockBlockStateVersion() == kVersion1_21_60_33);
+    CHECK(bedrockBlockStateVersion() == kStateVersion);
     REQUIRE(javaBlockStateCount() > 0);
     const auto last = static_cast<std::uint32_t>(javaBlockStateCount() - 1);
     CHECK_FALSE(bedrockBlockState(last).name.empty());

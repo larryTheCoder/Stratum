@@ -30,7 +30,6 @@ using Catch::Matchers::ContainsSubstring;
 using stratum::data::ResourceLocation;
 using stratum::surface::ConditionType;
 using stratum::surface::FieldKind;
-using stratum::surface::RuleError;
 using stratum::surface::RuleGraph;
 using stratum::surface::RuleType;
 using stratum::surface::SchemaField;
@@ -69,16 +68,16 @@ template<typename Type, typename Naming>
         }
         case FieldKind::Selector:
             REQUIRE_FALSE(field.values.empty());
-            return nlohmann::json(std::string(field.values.front()));
+            return std::string(field.values.front());
         case FieldKind::Id:
         case FieldKind::String:
-            return nlohmann::json("minecraft:test");
+            return "minecraft:test";
         case FieldKind::Int:
-            return nlohmann::json(0);
+            return 0;
         case FieldKind::Number:
-            return nlohmann::json(0.5);
+            return 0.5;
         case FieldKind::Boolean:
-            return nlohmann::json(false);
+            return false;
         case FieldKind::List:
             // One element, not none: `biome_is` is refused empty.
             return nlohmann::json::array({sampleFor(field.elementKind, field)});

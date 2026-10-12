@@ -136,7 +136,8 @@ struct Comparison {
             }
             for (int localZ = 0; localZ < 16; localZ += kStride) {
                 for (int localX = 0; localX < 16; localX += kStride) {
-                    const auto stored = (*floor)[static_cast<std::size_t>((localZ * 16) + localX)];
+                    const auto stored = (*floor)[(static_cast<std::size_t>(localZ) * 16U) +
+                                                 static_cast<std::size_t>(localX)];
                     if (!stored.has_value()) {
                         continue;
                     }

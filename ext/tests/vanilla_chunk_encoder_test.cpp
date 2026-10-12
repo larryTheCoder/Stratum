@@ -29,7 +29,6 @@
 #include <vector>
 
 using stratum::data::ResourceLocation;
-using stratum::pmmp::kSubChunkVolume;
 using stratum::pmmp::PalettedLayer;
 
 namespace {

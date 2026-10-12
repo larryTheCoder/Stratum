@@ -652,12 +652,12 @@ TEST_CASE("the stone-depth run and the water height through aquifer lava, read o
             }
         }
         CHECK(exact.size() == power.exactReadings);
-        if (survivors.count(ladder) == 0U) {
+        if (!survivors.contains(ladder)) {
             survivors[ladder] = exact;
         } else {
             std::set<std::size_t> both;
             for (const std::size_t r : exact) {
-                if (survivors[ladder].count(r) != 0U) {
+                if (survivors[ladder].contains(r)) {
                     both.insert(r);
                 }
             }
