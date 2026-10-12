@@ -24,6 +24,8 @@
 // rarity works; this shows that ours does.
 //
 // The fixture is Mojang-derived and never committed. Without it this skips.
+#include "support/probe_spec.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/nbt/reader.hpp>
@@ -61,7 +63,7 @@ TEST_CASE("the rarity ladders the server itself uses are the ones this build use
     }
 
     const auto manifest = nlohmann::json::parse(std::ifstream(root / "manifest.json"));
-    const auto spec = nlohmann::json::parse(std::ifstream(root / "spec.json"));
+    const nlohmann::json spec = stratum::test::readSpec(root);
     const double scale = manifest.at("k").get<double>();
     const double minY = manifest.at("min_y").get<double>();
     const double height = manifest.at("height").get<double>();

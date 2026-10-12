@@ -71,6 +71,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/interpreter.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/noise_parameters.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/noise_registry.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/random_source.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/registry.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/resource_location.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/javamath.hpp"

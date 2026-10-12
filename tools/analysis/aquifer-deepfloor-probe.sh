@@ -77,7 +77,17 @@ seed="${args[0]:-42}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-spec="${work}/aqdeep.json"
+# density-probe.sh names the output directory after the spec file, so the
+# name is what keeps one seed's worlds from overwriting another's. The three
+# seeds vanilla_aquifer_deepfloor_test.cpp reads have the names it reads
+# (kProbeDirs); any other seed gets its own.
+case "${seed}" in
+    42) probe_name="aqdeep" ;;
+    31337) probe_name="aqdeep2" ;;
+    8675309) probe_name="aqdeep3" ;;
+    *) probe_name="aqdeep_s${seed}" ;;
+esac
+spec="${work}/${probe_name}.json"
 
 python3 - "${spec}" <<'PY'
 import json, sys

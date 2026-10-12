@@ -1,5 +1,6 @@
 // Stratum — vanilla's per-position random source.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 namespace stratum::rng {
@@ -25,6 +26,22 @@ PositionalSource positionalSourceFor(const std::int64_t worldSeed,
     const auto lo = static_cast<std::uint64_t>(named.nextLong());
     const auto hi = static_cast<std::uint64_t>(named.nextLong());
     return PositionalSource{Seed128{.lo = lo, .hi = hi}};
+}
+
+JavaRandom LegacyPositionalSource::at(const std::int32_t x, const std::int32_t y,
+                                      const std::int32_t z) const noexcept {
+    return JavaRandom{seed_ ^ positionSeed(x, y, z)};
+}
+
+LegacyPositionalSource legacyPositionalSourceFor(const std::int64_t worldSeed,
+                                                 const std::string_view name) noexcept {
+    // Two forks around one salt, as the modern derivation above, each fork a
+    // fresh java.util.Random's first nextLong. Sequenced through named
+    // locals, as every derivation here is.
+    JavaRandom world{worldSeed};
+    const std::int64_t forked = world.nextLong();
+    JavaRandom named{forked ^ static_cast<std::int64_t>(javaStringHashCode(name))};
+    return LegacyPositionalSource{named.nextLong()};
 }
 
 } // namespace stratum::rng

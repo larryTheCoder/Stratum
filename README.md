@@ -9,12 +9,13 @@ Snowcapped, Spyglass) work as content for a Bedrock server.
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
-- **Status:** Milestone **M3** closing, **M4** under way, and **MA**
-  (aquifers) is now a parallel track rather than a step inside M3 — it had
-  become an open research programme, and nothing behind it in the plan needed
-  it. Terrain SHAPE generates and is checked against the vanilla server;
-  terrain MATERIALS are partly done. See
-  [What generates today](#what-generates-today) for the honest breakdown.
+- **Status:** the shipped overworld generates end to end — terrain, ore
+  veins, biomes, aquifers and surface rules — and matches the vanilla server
+  block for block on 99.9957% of the golden positions scored. **M4** stays
+  open for the legacy dimensions' surface rules and the End's biome source;
+  **M5** (PocketMine integration) is written but has never run inside a
+  server. See [What generates today](#what-generates-today) for the honest
+  breakdown.
   Subcommands that are not implemented fail loudly with the milestone that
   owns them.
 
@@ -56,15 +57,33 @@ That runs the server, so it requires accepting
 without `--accept-eula` and will not accept it on your behalf. The defaults
 generate SPEC §7's fixed seed set across all three dimensions; `--seeds`,
 `--dimensions` and `--regions` narrow it. The world is frozen before
-generation and carvers and features are stripped, so the goldens isolate
-Tier A and two runs of the same seed agree exactly — see SPEC §7 for why
-both matter.
+generation and carvers, features and structures are left out, so the
+goldens isolate Tier A and two runs of the same seed agree on all but a
+few fluid blocks — see SPEC §7 for why both matter, and for the flow
+remnant the cases still allow for.
+`--with-structures` only extracts structure NBT; it never puts structures
+in a generated world.
+
+Probe worlds — the purpose-built worlds many conformance cases read — come
+from the generators under `tools/analysis`, which `tools/probe-worlds` names
+in one table, with the seeds the cases expect; the same table carries the
+region goldens, as `fetch-vanilla --generate-regions` units:
+
+```bash
+tools/probe-worlds generate --accept-eula   # every corpus and golden, one server at a time; hours
+tools/probe-worlds verify                   # what is there, checked without a server
+```
+
+This repository's own CI passes `--accept-eula` to generate probe worlds and
+region goldens, on the owner's recorded acceptance (SPEC §12); a fork's CI
+does not.
 
 | Preset | Purpose |
 |--------|---------|
 | `dev` | Debug, warnings visible but not fatal |
 | `release` | RelWithDebInfo; identical determinism flags to `dev` |
 | `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
+| `ci-conformance` | Build and test presets on `dev`'s tree: the conformance suite four cases at a time, an hour per case, as CI runs it |
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
 zlib, and network access on first configure so Catch2 v3 can be fetched (or
@@ -155,106 +174,62 @@ tests/     Catch2 v3 unit suites; conformance driven via `cli diff` + CTest
 This section is the honest counterpart to the capability matrix below: the
 matrix states the v1 contract, this states how much of it is finished. Every
 number here is against output from the vanilla 1.21.11 server, not against a
-reimplementation.
+reimplementation. `PROGRESS.md` is the at-a-glance tracker, and SPEC §10-§11
+carry the measurements.
+
+**The shipped overworld — generated end to end, and 99.9957% block-exact.**
+`CompiledDimension` runs the whole of vanilla's overworld: density, ore veins,
+the multi-noise biome source, aquifers, and the full surface-rule tree. On a
+4 x 4 grid of chunks in each of the eight golden overworld regions (12.6
+million positions), it places the exact block the server did at all but 540.
+Those are mostly surface materials near biome borders, which is M4's.
 
 **Terrain shape — done, and checked.** The density pipeline evaluates all 34
 node types, the full noise router (all 45 of the overworld's entries), cell
-sampling with trilinear interpolation and every cache node type. The chunk
-filler turns that field into blocks: over four chunks and 393216 blocks of an
-aquifer-free world, **every block is in the right category** — solid, fluid or
-air — and 82.0% are the exact right block. All of the missing 18% is surface
-rules, below.
+sampling with trilinear interpolation and every cache node type. Over four
+chunks and 393216 blocks of an aquifer-free world, **every block is in the
+right category**: solid, fluid or air.
 
 **Biomes — done, and exact.** The multi-noise biome source matches vanilla on
 every one of 98304 sampled cells across four seeds. Getting there needed two
 things together: climate values quantised to fixed point, and ties broken
 toward the later entry.
 
-**Aquifers — derived, not yet wired.** Vanilla's overworld enables them, so
-the filler refuses that dimension by name rather than flooding every cave
-below sea level. The geometry is now measured against the server: cells of
-16 x 12 x 16 anchored on multiples of their pitch, centres jittered per 3D
-cell — recovered, and pinned by a conformance case that predicts 256 of 256
-threshold cells across four seeds — the fluid level
-`base + 3 * floorDiv(floor(spread * 10), 3)` over a base lattice of pitch 40,
-floodedness gating at exactly 0.4 and 0.8, and barriers written at every cell
-interface whose two sides place different blocks. The last unrecovered number
-is the barrier THRESHOLD, whose optimum moves between probes; the centres
-themselves are settled, and where only two sources compete the rule is 97%
-block-exact.
+**Aquifers — wired, and exact wherever the server's fluid did not move.**
+`ChunkFiller` calls the whole aquifer: the 16 x 12 x 16 cell lattice and its
+jittered centres, the fluid level rule (ladder, ocean branch, depth gate),
+four-way source selection, the three-source barrier, the fluid type, the
+deep-dark override and the `y_skip` cutoff. On all eight golden regions, every
+raw block disagrees with the server only where the server's own fluid moved
+after generating: flowing water and lava, rebuilt sources, and obsidian where
+water met lava. A test credits each such block by its shape, never by a count.
+The `amplified` and `large_biomes` presets match the server the same way, on
+probe windows chosen for what the goldens lack: aquifer fluid above the sea,
+cells under a preliminary surface above 141, and the deep-dark override on
+large_biomes' own erosion and depth.
+Vanilla also marks some fluid positions to tick once a chunk loads. That flag
+is computed too, and it is exact against the server's own lists
+(255457 of 255457 marks on one probe set). A datapack that wraps an aquifer
+entry in a cache marker gets the reading the server takes, measured marker by
+marker (SPEC §11). Still open: handing those marks to PocketMine.
 
-**Surface rules — loaded, not run, and this is the largest gap.** The graph
-resolves completely — 287 rules over 141 conditions for the overworld alone —
-but 7 of the 11 condition types are refused by name, so a generated column is
-bare stone where grass, dirt, gravel, deepslate and bedrock belong. That is a
-visibly incomplete world rather than a quietly wrong one, which is the
-trade-off SPEC §8 endorses. The blockers are not equal:
+**Surface rules — run.** The overworld's whole tree executes (287 rules over
+141 conditions), and the shipped overworld figure above includes it. The
+legacy dimensions are the exception. Where a dimension uses
+`legacy_random_source`, its surface rules and the noises they name are refused
+by name rather than derived wrongly. That covers the Nether, `caves` and
+`floating_islands`.
+The legacy Nether's climate and terrain are measured (32765 of 32768 golden
+biome cells, every miss an exact tie). The End's terrain generates exactly,
+but its `the_end` biome source is not implemented.
 
-| Blocker | Why it is stuck |
-|---|---|
-| `stone_depth`, `water`, `y_above` | All three need a surface-depth computation that no part of this build has yet. Buildable work, not a derivation problem. |
-| `steep` | Needs neighbouring columns, which the filler's per-column shape cannot reach. |
-| `hole`, `bandlands` | Undocumented and rare; measured but not settled. |
-
-**PocketMine integration — not started.** `ext/` is an empty directory with a
-README by design (M5), and the Java-to-Bedrock mapping layer that belongs at
-`lib/mapping/` does not exist yet. Pipeline freeze storage is the only piece
-of M5 that is in place.
-
-So: shape is finished, materials are perhaps a third finished, and
-integration is ahead of us. `vertical_gradient`'s random source — nineteen
-refuted derivations, and the project's longest-standing open problem — is now
-settled: it turned out to be the same primitive the aquifer's cell centres
-use, and it is checked against the server on 27 million blocks.
-
-The aquifer is close behind it. Its lattice, its centre jitter, the fluid
-level a cell takes — ocean branch included — and the barrier predicate are all
-derived from the server's own output and implemented, and two of the three
-router inputs now have measured sample positions: the floodedness is read at
-the cell's own jittered centre, and the spread at the cell's lattice indices,
-which are different spaces and were established separately.
-
-The third took three campaigns. `preliminary_surface_level` is read at
-absolute y = 0, and horizontally it is **not a point sample at all**: it is a
-minimum over thirteen positions on a 16-block lattice, anchored on the cell's
-own quantised centre, scanned in a fixed order and abandoned the moment a
-sample falls below −62. The window is not a square — it reaches 48 blocks west
-and 16 east, north and south — and nobody can say why. One scan feeds two
-different values to two different consumers.
-
-The instructive part is how the wrong answer looked on the way there. A point
-read scored exactly 1.00000 on 21,461 cells across six seeds, because every
-probe ever run against this input — about 1,370 dimensions — had held one of
-its two values fixed, and on a two-valued field an aborting minimum and a point
-read are the same function. A readout that varies a quantity's spatial pattern
-and never its values cannot see a value-dependent path, and reports perfect
-confidence in a law that is wrong. Three values separate them instantly.
-
-That scan yields four values, and the ocean branch reads a different one in
-each place — the near surface on the window's prefix minimum, the ladder's cap
-on the whole window's, the depth path's own gate on the anchor sample alone,
-and the trailing guard on none of them. Getting that wrong is what made the
-branch look broken: a run reported the depth term scoring 0.21 where it should
-have been exact, this project recorded the two slopes as suspect for a day, and
-the real cause was that a cell whose scan aborts is refused the sea outcome
-entirely. Three independent instruments on nine seeds then confirmed the slopes
-to within 1e-6 at every depth.
-
-That scan was then suspected of only working on surfaces that vary slowly, and
-it was re-derived at twenty feature scales from half a block to a hundred, on
-23 seeds, by three model-free sieves over as many as 103,041 candidate
-positions. It comes back the same thirteen positions every time, with zero
-unexplained cells. The suspicion was a wrong consumer model in the measuring
-harness — and, underneath it, the fact that below `min(-54, sea_level)` the
-world is lava whatever the aquifer decides, so an instrument can paint a whole
-world with something the aquifer never chose and still pass a corruption check.
-
-So the aquifer's geometry, its levels, its barriers and all its router reads
-are derived. The filler still refuses `aquifers_enabled` by name, and the
-reason has now moved four times as each blocker closed and the next surfaced.
-Today it is the fluid TYPE: the `lava` router entry has never been measured by
-anybody, and a correct level with a wrong lava read still writes the wrong
-block. SPEC §10 lists the rest.
+**PocketMine integration — written, and never run inside a server.** The
+Java-to-Bedrock mapping tables, the sub-chunk encoder, the zend module and the
+plugin are all in place. The plugin registers the generator, freezes the
+pipeline into a new world's folder, and translates block states through
+PocketMine-MP's own upgrader. None of it has run inside a real PocketMine-MP
+server, and that is the largest risk left in the project. Performance is
+untouched at about 237 ms per chunk, on a per-point interpreter.
 
 ## Capability matrix (v1)
 
@@ -268,6 +243,7 @@ that was rejected**.
 | `worldgen/density_function` | Supported | Including all cache node types |
 | `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
+| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
 | Multi-noise biome source | Supported | |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |
@@ -285,10 +261,9 @@ fatal.
 
 This matrix states the v1 contract, not what is finished — see
 [What generates today](#what-generates-today) for that. The build in progress
-refuses two density function types outright, `end_islands` and `slide`, and
-two more only when it is asked to evaluate them without a cell lattice, which
-noise settings now supply — by name and with a reason, rather than
-approximating them. It refuses a noise written inline
+refuses one density function type outright, `slide`, and two more only when
+it is asked to evaluate them without a cell lattice, which noise settings now
+supply — by name and with a reason, rather than approximating them. It refuses a noise written inline
 for a narrower reason: a noise is seeded from the MD5 of its identifier, and
 one written in place has none. SPEC §11 lists why each is where it is.
 
@@ -312,16 +287,16 @@ health — it would catch a type being badly wrong, not subtly.
 | `blend_density` | Supported — passthrough | 7 | golden terrain; the no-blending reading (SPEC §11) |
 | `blend_offset` | Supported — constant `0.0` | 3 | golden terrain; the no-blending value (SPEC §11) |
 | `cache_2d` | Supported | 24 | golden terrain, cubiomes |
-| `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors only — unused at 1.21.11 |
+| `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors; the vanilla server, via datapack aquifer probe — unused at 1.21.11 |
 | `cache_once` | Supported | 12 | golden terrain |
 | `clamp` | Supported | 14 | golden terrain, cubiomes |
 | `constant` | Supported | — | golden terrain; written as a bare number, so pervasive |
 | `cube` | Supported | 2 | golden terrain, cubiomes |
-| `end_islands` | **Not implemented** | 2 | — the End's terrain (SPEC §10, M3) |
+| `end_islands` | Supported | 2 | golden End regions plus two far probes: every block exact (SPEC §11) |
 | `find_top_surface` | Supported | 3 | the vanilla server, via datapack probe: 1024/1024 columns |
-| `flat_cache` | Supported | 16 | golden terrain, cubiomes |
+| `flat_cache` | Supported | 16 | golden terrain, cubiomes; its chunk window, via datapack aquifer probe |
 | `half_negative` | Supported | 3 | golden terrain |
-| `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings) |
+| `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings); the vanilla server's aquifer reads, via datapack probe |
 | `invert` | Supported | 3 | golden `preliminary_surface_level`, since `find_top_surface` landed |
 | `max` | Supported | 9 | golden terrain, cubiomes |
 | `min` | Supported | 13 | golden terrain, cubiomes |
@@ -382,8 +357,10 @@ including that vendored licence notices are still intact.
 
 This repository ships **no Mojang data and no Mojang source code**, in any
 form (SPEC §12). Vanilla worldgen definitions and conformance fixtures are
-produced on your machine by `tools/fetch-vanilla` from an official jar you
-download yourself; they are gitignored and never redistributed here.
+produced on your machine, or on this repository's CI runners, by
+`tools/fetch-vanilla` and the probe generators, from an official jar
+downloaded from Mojang; they are gitignored and never redistributed here:
+not committed, and not published as CI artifacts.
 Behaviour is implemented from minecraft.wiki / datapack.wiki documentation,
 mcdoc schemas, licensed references (cubiomes, MIT; Cuberite, Apache-2.0) and
 the observed input/output of the vanilla server.

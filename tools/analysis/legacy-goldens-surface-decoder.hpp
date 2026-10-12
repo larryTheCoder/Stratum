@@ -49,12 +49,25 @@
 //
 // WHAT "the block the golden holds" MEANS WHERE THE RULES PLACE NOTHING. The
 // leaf that places nothing is consistent exactly when the golden still holds
-// what the chunk filler left: the dimension's `default_block` at a solid
-// position, its `default_fluid` at a fluid one, air at air. That is why the
-// terrain chain has to be right before this means anything, and in the
-// Nether it is right to 99.99591% (vanilla_legacy_nether_terrain_test.cpp).
-// Positions where NO assignment reproduces the golden are counted and
-// excluded, never bent into the nearest bucket (SPEC §8).
+// what the chunk filler left — and the surface pass only ever visits a
+// position the filler left as `default_block` (SPEC §11, pipeline engine
+// v2), so that is the dimension's `default_block`. That is why the terrain
+// chain has to be right before this means anything, and in the Nether it is
+// right to 99.99591% (vanilla_legacy_nether_terrain_test.cpp). Positions
+// where NO assignment reproduces the golden are counted and excluded, never
+// bent into the nearest bucket (SPEC §8).
+//
+// WHAT THE FILLER READ, RECONSTRUCTED BY THE FILLER'S OWN CODE. The
+// stone-depth runs, the water height and the topmost non-air block are
+// counted by `stratum::terrain::SurfaceColumn` from each block's
+// `stratum::terrain::categorize` — the code terrain::ChunkFiller runs, not a
+// copy of it. This file kept a copy until pipeline engine v7 measured lava
+// to be fluid to the surface pass and the bottom-up run to reset on every
+// fluid (SPEC §11, "Lava in the surface pass's runs"); the copy kept the old
+// rules — lava Solid in the overworld, fluid holding the bottom-up run — and
+// the old position set, every block of a column's first non-solid stretch
+// included. The one step that is this file's own is undoing what a saved
+// world adds to the first pass: see `firstPassCategory`.
 //
 // THE SURFACE DEPTH ENUMERATION, bounded rather than guessed. `minecraft:surface`
 // is itself a NAMED noise, so under a legacy source its own seeding is exactly
@@ -91,18 +104,21 @@
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
 #include <stratum/terrain/filler.hpp>
+#include <stratum/terrain/surface_column.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -206,12 +222,63 @@ inline constexpr std::int32_t kDepthHi = 11;
 
 // ------------------------------------------------------- one golden chunk
 
-/// Solid, fluid or air — the three the chunk filler's first pass can leave,
-/// rederived from the block a position holds. The same three-way split
-/// terrain::ChunkFiller uses to build a surface::Context, and it has to be,
-/// or the stone-depth runs this decoder reconstructs would not be the ones
-/// the server counted.
-enum class Category : std::uint8_t { Air, Fluid, Solid };
+/// Raised when the decoder is asked for something it will not approximate.
+class DecodeError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+/// Solid, fluid or air — the three the chunk filler's first pass can leave.
+/// Not this file's own three-way split: the filler's, `terrain::categorize`,
+/// called rather than restated (see the header's "WHAT THE FILLER READ").
+using Category = stratum::terrain::Category;
+
+/// What the FIRST pass left at a position whose golden block is @p block, as
+/// the surface pass categorised it: `terrain::categorize` on the golden's own
+/// state, after undoing the one thing a saved region adds to it that is
+/// neither the first pass, the ore veins nor a surface rule (these goldens
+/// are generated without carvers or features).
+///
+/// THAT ONE THING IS FLUID THAT MOVED. A golden region is what the server
+/// saved, and its fluid ticks have spread some water and lava by then
+/// (tests/support/fluid_flow.hpp). The first pass writes only sources, level
+/// 0, and a spread fluid only ever enters a block the first pass left as air,
+/// so a fluid at any other level stands where the surface pass read AIR.
+/// Counted on the local generation, not supposed: 667 such blocks over the
+/// eight golden overworld regions (water at levels 1 and 8, lava at 2 and 8;
+/// flow is run-dependent, so another generation holds a different few
+/// hundred) and none over the eight Nether regions, which hold lava at level
+/// 0 only. Left to `categorize` as they are, they would read Solid — the
+/// filler compares whole states — and so count toward both runs and be
+/// visited as surface positions.
+///
+/// Air the first pass never writes (`cave_air`, `void_air`) is REFUSED rather
+/// than guessed at: none appears in any of the sixteen golden regions, and a
+/// region holding one was made by a generator this reconstruction does not
+/// describe.
+[[nodiscard]] inline Category firstPassCategory(const stratum::chunk::BlockState* block,
+                                                const stratum::settings::NoiseSettings& settings) {
+    if (block == nullptr) {
+        return Category::Air;
+    }
+    if (block->name == "minecraft:cave_air" || block->name == "minecraft:void_air") {
+        throw DecodeError("a golden region holds " + block->toString() +
+                          ", which neither the first pass nor a surface rule writes; this "
+                          "decoder reconstructs noise-and-surface-only regions");
+    }
+    stratum::settings::BlockState state{.name = stratum::data::ResourceLocation::parse(block->name),
+                                        .properties = {}};
+    for (const auto& [key, value] : block->properties) {
+        state.properties.emplace(key, value);
+    }
+    if (block->name == "minecraft:water" || block->name == "minecraft:lava") {
+        const auto level = state.properties.find("level");
+        if (level != state.properties.end() && level->second != "0") {
+            return Category::Air;
+        }
+    }
+    return stratum::terrain::categorize(state, settings);
+}
 
 /// One golden chunk, flattened for random access: a palette lookup per block
 /// costs a search, and this is read 32768 times a chunk.
@@ -267,6 +334,15 @@ public:
         buildColumns(settings);
     }
 
+    // Every pointer above points into chunk_'s own palettes. A move keeps
+    // them valid (the vectors hand their buffers over); a copy would leave
+    // the copy's pointers in the original's palettes, so there is none.
+    GoldenChunk(const GoldenChunk&) = delete;
+    GoldenChunk& operator=(const GoldenChunk&) = delete;
+    GoldenChunk(GoldenChunk&&) noexcept = default;
+    GoldenChunk& operator=(GoldenChunk&&) noexcept = default;
+    ~GoldenChunk() = default;
+
     [[nodiscard]] std::int32_t chunkX() const noexcept { return chunkX_; }
 
     [[nodiscard]] std::int32_t chunkZ() const noexcept { return chunkZ_; }
@@ -290,39 +366,44 @@ public:
         return biomes_[biomeIndexOf(localX, y, localZ)];
     }
 
+    /// `firstPassCategory` of the block here.
     [[nodiscard]] Category categoryAt(int localX, std::int32_t y, int localZ) const {
         return category_[indexOf(localX, y, localZ)];
     }
 
+    /// The top-down stone-depth run, as terrain::SurfaceColumn counts it.
     [[nodiscard]] std::int32_t depthAbove(int localX, std::int32_t y, int localZ) const {
-        return depthAbove_[indexOf(localX, y, localZ)];
+        return column(localX, localZ).stoneDepthAbove(y);
     }
 
+    /// The bottom-up stone-depth run, as terrain::SurfaceColumn counts it:
+    /// RESET by every fluid, measured (SPEC §11).
     [[nodiscard]] std::int32_t depthBelow(int localX, std::int32_t y, int localZ) const {
-        return depthBelow_[indexOf(localX, y, localZ)];
+        return column(localX, localZ).stoneDepthBelow(y);
     }
 
     /// The topmost non-air y of a column, or minY - 1 for a column of air —
     /// where terrain::ChunkFiller's own surface-rule scan starts, and what
     /// `steep` compares between neighbours.
     [[nodiscard]] std::int32_t scanFrom(int localX, int localZ) const {
-        return scanFrom_[(static_cast<std::size_t>(localZ) * 16U) +
-                         static_cast<std::size_t>(localX)];
+        return column(localX, localZ).top();
     }
 
     /// The LOWEST water height consistent with this column: one above the
     /// golden's own topmost fluid block, which is what the chunk filler left
     /// wherever no rule froze it.
     [[nodiscard]] std::optional<std::int32_t> waterHeightLow(int localX, int localZ) const {
-        return water_[(static_cast<std::size_t>(localZ) * 16U) + static_cast<std::size_t>(localX)];
+        return column(localX, localZ).waterHeight();
     }
 
-    /// The HIGHEST one: a rule that freezes a water surface to ice turns a
-    /// fluid position solid, and the golden then shows the fluid one block
-    /// lower than the server measured it. Every solid, non-default block
-    /// sitting directly above the topmost fluid could be such a position, so
-    /// the true height lies in [low, high] and a `water` condition is only
-    /// read where both ends answer it the same way.
+    /// The HIGHEST one: every solid, non-default block sitting directly above
+    /// the topmost fluid, which a rule that froze a water surface to ice would
+    /// have left there, and a `water` condition is only read where both ends
+    /// answer it the same way. Written before SPEC §11 measured that the
+    /// rules write over `default_block` and nothing else (pipeline engine
+    /// v2), which leaves no rule able to freeze a fluid position; kept as it
+    /// is because a wider interval can only ever turn a decided `water`
+    /// condition into a branched one — lose a bit, never invent one.
     [[nodiscard]] std::optional<std::int32_t> waterHeightHigh(int localX, int localZ) const {
         return waterHigh_[(static_cast<std::size_t>(localZ) * 16U) +
                           static_cast<std::size_t>(localX)];
@@ -342,51 +423,37 @@ private:
                static_cast<std::size_t>(localX / 4);
     }
 
+    [[nodiscard]] const stratum::terrain::SurfaceColumn& column(int localX, int localZ) const {
+        return columns_[(static_cast<std::size_t>(localZ) * 16U) +
+                        static_cast<std::size_t>(localX)];
+    }
+
     void buildColumns(const stratum::settings::NoiseSettings& settings) {
         const std::size_t span = static_cast<std::size_t>(height_) * 16U * 16U;
         category_.assign(span, Category::Air);
-        depthAbove_.assign(span, 0);
-        depthBelow_.assign(span, 0);
-        scanFrom_.assign(256U, minY_ - 1);
-        water_.assign(256U, std::nullopt);
+        columns_.assign(256U, {});
         waterHigh_.assign(256U, std::nullopt);
+        // A golden chunk holds a few dozen distinct states and 98304 blocks,
+        // so each state is categorised once, keyed by where it lives in its
+        // section's palette.
+        std::unordered_map<const stratum::chunk::BlockState*, Category> seen;
+        std::vector<Category> categories(static_cast<std::size_t>(height_));
         for (int localZ = 0; localZ < 16; ++localZ) {
             for (int localX = 0; localX < 16; ++localX) {
-                std::int32_t run = 0;
-                std::optional<std::int32_t> water;
-                std::int32_t top = minY_ - 1;
-                for (std::int32_t y = minY_ + height_ - 1; y >= minY_; --y) {
-                    const Category category = categorise(blockAt(localX, y, localZ), settings);
-                    category_[indexOf(localX, y, localZ)] = category;
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else {
-                        if (top < minY_) {
-                            top = y;
-                        }
-                        if (category == Category::Solid) {
-                            ++run;
-                        } else if (!water.has_value()) {
-                            water = y + 1;
-                        }
-                    }
-                    depthAbove_[indexOf(localX, y, localZ)] = run;
-                }
-                run = 0;
                 for (std::int32_t y = minY_; y < minY_ + height_; ++y) {
-                    const Category category = category_[indexOf(localX, y, localZ)];
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else if (category == Category::Solid) {
-                        ++run;
+                    const stratum::chunk::BlockState* block = blockAt(localX, y, localZ);
+                    auto found = seen.find(block);
+                    if (found == seen.end()) {
+                        found = seen.emplace(block, firstPassCategory(block, settings)).first;
                     }
-                    depthBelow_[indexOf(localX, y, localZ)] = run;
+                    categories[static_cast<std::size_t>(y - minY_)] = found->second;
+                    category_[indexOf(localX, y, localZ)] = found->second;
                 }
-                const std::size_t column =
+                const std::size_t slot =
                     (static_cast<std::size_t>(localZ) * 16U) + static_cast<std::size_t>(localX);
-                scanFrom_[column] = top;
-                water_[column] = water;
-                waterHigh_[column] = water;
+                columns_[slot].read(categories, minY_);
+                const std::optional<std::int32_t> water = columns_[slot].waterHeight();
+                waterHigh_[slot] = water;
                 if (water.has_value()) {
                     std::int32_t high = *water;
                     while (high < minY_ + height_) {
@@ -398,21 +465,10 @@ private:
                         }
                         ++high;
                     }
-                    waterHigh_[column] = high;
+                    waterHigh_[slot] = high;
                 }
             }
         }
-    }
-
-    [[nodiscard]] static Category categorise(const stratum::chunk::BlockState* block,
-                                             const stratum::settings::NoiseSettings& settings) {
-        if (block == nullptr || block->name == "minecraft:air") {
-            return Category::Air;
-        }
-        if (block->name == settings.defaultFluid.name.toString()) {
-            return Category::Fluid;
-        }
-        return Category::Solid;
     }
 
     stratum::chunk::Chunk chunk_;
@@ -423,30 +479,30 @@ private:
     std::vector<const stratum::chunk::BlockState*> blocks_;
     std::vector<const std::string*> biomes_;
     std::vector<Category> category_;
-    std::vector<std::int32_t> depthAbove_;
-    std::vector<std::int32_t> depthBelow_;
-    std::vector<std::int32_t> scanFrom_;
-    std::vector<std::optional<std::int32_t>> water_;
+    std::vector<stratum::terrain::SurfaceColumn> columns_;
     std::vector<std::optional<std::int32_t>> waterHigh_;
 };
 
-/// Reads every chunk of one region, or throws naming the file.
-[[nodiscard]] inline std::vector<GoldenChunk>
-readRegion(const std::filesystem::path& path, const stratum::settings::NoiseSettings& settings,
-           std::int32_t stride) {
+/// Calls @p body with every chunk of one region, one at a time, at the given
+/// stride; throws naming the file. One at a time rather than a vector of all
+/// of them: a stride-1 overworld region is 1024 chunks of 98304 positions,
+/// gigabytes held for nothing when each is walked once and dropped.
+template<typename Fn>
+void forEachChunk(const std::filesystem::path& path,
+                  const stratum::settings::NoiseSettings& settings, std::int32_t stride,
+                  Fn&& body) {
     const stratum::region::RegionFile file = stratum::region::RegionFile::open(path);
-    std::vector<GoldenChunk> chunks;
     for (std::int32_t chunkZ = 0; chunkZ < 32; chunkZ += stride) {
         for (std::int32_t chunkX = 0; chunkX < 32; chunkX += stride) {
             if (!file.hasChunk(chunkX, chunkZ)) {
                 continue;
             }
-            chunks.emplace_back(stratum::chunk::Chunk::decode(
-                                    stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root),
-                                settings);
+            const GoldenChunk chunk{stratum::chunk::Chunk::decode(
+                                        stratum::nbt::read(file.readChunk(chunkX, chunkZ)).root),
+                                    settings};
+            body(chunk);
         }
     }
-    return chunks;
 }
 
 // ------------------------------------------------------------- the decoder
@@ -478,12 +534,6 @@ struct Known {
 /// -1 not observed, 0 observed false, 1 observed true — one entry per
 /// condition index of the graph.
 using Observed = std::vector<std::int8_t>;
-
-/// Raised when the decoder is asked for something it will not approximate.
-class DecodeError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
 
 class Decoder {
 public:
@@ -899,7 +949,7 @@ using stratum::surface::RuleGraph;
 /// system never repaints one. Listed here rather than reached through the
 /// filler because the list is private to it — a position it skips is a
 /// position whose golden block says nothing at all about any noise.
-[[nodiscard]] bool isVeinBlock(const stratum::chunk::BlockState& block) {
+[[nodiscard]] inline bool isVeinBlock(const stratum::chunk::BlockState& block) {
     static constexpr std::array<std::string_view, 6> kVeinBlocks{
         "minecraft:granite", "minecraft:copper_ore",         "minecraft:raw_copper_block",
         "minecraft:tuff",    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block"};
@@ -907,39 +957,44 @@ using stratum::surface::RuleGraph;
 }
 
 /// Every position terrain::ChunkFiller's second pass would hand the surface
-/// rules, in its order: from the column's topmost NON-AIR block down, and
-/// once solid has been crossed, non-solid positions are skipped for good.
-/// Reproduced rather than approximated — a decoder that scored positions
-/// vanilla never visited would be reading blocks the rules never decided.
+/// rules, in its order: from the column's topmost non-air block down, and
+/// ONLY where the first pass left `default_block` — no fluid, no air, no vein
+/// block (SPEC §11, pipeline engine v2: on every second chunk of the golden
+/// overworld regions the server changed none of 6619641 water and 31491 lava
+/// positions, and on a probe an unconditional rule left every vein block
+/// standing). Reproduced rather than approximated — a decoder that scored
+/// positions vanilla never visited would be reading blocks the rules never
+/// decided.
+///
+/// In a golden region `default_block` is no longer visible where a rule
+/// replaced it, so a position the first pass left as `default_block` is read
+/// as one whose category is Solid and whose block is not a vein block:
+/// nothing else the first pass writes is solid, and the rules write over
+/// nothing else. Until this file followed the filler it also visited every
+/// position of a column's first non-solid stretch — the water of every ocean
+/// column, from its surface to its floor — where the leaf that places nothing
+/// "reproduces" the golden fluid whatever the noises say: positions the
+/// server never decided, scored as if it had.
 template<typename Fn>
 void forEachSurfacePosition(const GoldenChunk& chunk, int localX, int localZ, bool oreVeins,
                             Fn&& body) {
-    const std::int32_t from = chunk.scanFrom(localX, localZ);
-    if (from < chunk.minY()) {
-        return;
-    }
-    bool crossedSolid = false;
-    for (std::int32_t y = from; y >= chunk.minY(); --y) {
-        const Category category = chunk.categoryAt(localX, y, localZ);
-        if (category != Category::Solid) {
-            if (crossedSolid) {
-                continue;
-            }
-        } else {
-            crossedSolid = true;
-            const stratum::chunk::BlockState* block = chunk.blockAt(localX, y, localZ);
-            if (oreVeins && block != nullptr && isVeinBlock(*block)) {
-                continue;
-            }
+    for (std::int32_t y = chunk.scanFrom(localX, localZ); y >= chunk.minY(); --y) {
+        if (chunk.categoryAt(localX, y, localZ) != Category::Solid) {
+            continue;
         }
-        body(y, category);
+        const stratum::chunk::BlockState* block = chunk.blockAt(localX, y, localZ);
+        if (oreVeins && block != nullptr && isVeinBlock(*block)) {
+            continue;
+        }
+        body(y, Category::Solid);
     }
 }
 
 /// Builds the surface::Context for one position from the golden region alone.
 /// `steep`'s four neighbour heights are clamped into the chunk exactly as
 /// surface::fillSteepNeighbours does, so no neighbouring chunk is read.
-[[nodiscard]] Context contextFor(const GoldenChunk& chunk, int localX, int localZ, std::int32_t y) {
+[[nodiscard]] inline Context contextFor(const GoldenChunk& chunk, int localX, int localZ,
+                                        std::int32_t y) {
     Context at;
     at.x = (chunk.chunkX() * 16) + localX;
     at.z = (chunk.chunkZ() * 16) + localZ;
@@ -958,8 +1013,8 @@ void forEachSurfacePosition(const GoldenChunk& chunk, int localX, int localZ, bo
 }
 
 /// A condition's human name: the noise it reads and the interval it tests.
-[[nodiscard]] std::string describeCondition(const RuleGraph& graph,
-                                            stratum::surface::ConditionIndex index) {
+[[nodiscard]] inline std::string describeCondition(const RuleGraph& graph,
+                                                   stratum::surface::ConditionIndex index) {
     const stratum::surface::Condition& condition = graph.condition(index);
     std::string text = condition.noise.has_value() ? condition.noise->toString() : std::string{"?"};
     char buffer[64];
@@ -973,8 +1028,8 @@ void forEachSurfacePosition(const GoldenChunk& chunk, int localX, int localZ, bo
 }
 
 /// Does a rule's block state name the same thing the golden holds?
-[[nodiscard]] bool sameState(const stratum::settings::BlockState& rule,
-                             const stratum::chunk::BlockState& golden) {
+[[nodiscard]] inline bool sameState(const stratum::settings::BlockState& rule,
+                                    const stratum::chunk::BlockState& golden) {
     if (rule.name.toString() != golden.name || rule.properties.size() != golden.properties.size()) {
         return false;
     }
@@ -1082,13 +1137,11 @@ template<typename KnownFor>
 void walkRegion(const std::filesystem::path& regionPath, const NoiseSettings& settings,
                 const Decoder& decoder, std::int32_t stride, bool trustSteep, const Replay& replay,
                 KnownFor&& knownFor, Walk& into) {
-    const std::vector<GoldenChunk> chunks =
-        legacy_goldens::readRegion(regionPath, settings, stride);
     Observed observed;
     std::vector<std::uint8_t> touched;
     const stratum::settings::BlockState air{.name = ResourceLocation::parse("minecraft:air"),
                                             .properties = {}};
-    for (const GoldenChunk& chunk : chunks) {
+    forEachChunk(regionPath, settings, stride, [&](const GoldenChunk& chunk) {
         for (int localZ = 0; localZ < 16; ++localZ) {
             for (int localX = 0; localX < 16; ++localX) {
                 const std::int32_t worldX = (chunk.chunkX() * 16) + localX;
@@ -1169,7 +1222,7 @@ void walkRegion(const std::filesystem::path& regionPath, const NoiseSettings& se
                     });
             }
         }
-    }
+    });
     if (into.keepFields) {
         for (std::size_t i = 0; i < into.fields.size(); ++i) {
             into.tallies[i].contradictions += into.fields[i].contradictions;
@@ -1182,7 +1235,7 @@ void walkRegion(const std::filesystem::path& regionPath, const NoiseSettings& se
     }
 }
 
-[[nodiscard]] double percent(std::size_t part, std::size_t whole) {
+[[nodiscard]] inline double percent(std::size_t part, std::size_t whole) {
     return whole == 0 ? 0.0 : 100.0 * static_cast<double>(part) / static_cast<double>(whole);
 }
 
@@ -1200,9 +1253,9 @@ struct ControlArm {
 /// Scores the decoded bits of one region against a noise registry. @p noises
 /// may be built at the world seed (the recovery arm) or at worldSeed + 1 (the
 /// negative arm); everything else about the run is identical.
-void scoreAgainstRegistry(const RuleGraph& graph, const Decoder& decoder,
-                          const stratum::density::NoiseRegistry& noises, const Walk& walk,
-                          std::map<std::string, ControlArm>& into) {
+inline void scoreAgainstRegistry(const RuleGraph& graph, const Decoder& decoder,
+                                 const stratum::density::NoiseRegistry& noises, const Walk& walk,
+                                 std::map<std::string, ControlArm>& into) {
     for (std::size_t i = 0; i < walk.fields.size(); ++i) {
         const auto index = static_cast<stratum::surface::ConditionIndex>(i);
         if (decoder.noiseOf(index) < 0) {
@@ -1297,16 +1350,18 @@ private:
 // -------------------------------------------------------- the candidate space
 //
 // THE SAME 270,000 CANDIDATES tools/analysis/legacy-seed-analyze.cpp
-// enumerates, in the SAME index order, so that a rule number printed by one
-// tool names the same rule in the other — 5 bases x 10 salts x 3 combines x
-// 3 fork counts x 2 generators = 900 seed rules, times 300 block offsets.
-// That file owns the scan over synthetic probe worlds and is not edited here;
-// this is a second SCORER for the same space, against a different oracle (the
-// golden Nether regions rather than a probe dimension's terrain height), and
-// it re-states the enumeration rather than sharing it because the two tools
-// have to be able to disagree for the comparison between them to mean
-// anything. If they ever diverge, the candidate named by `--candidate 182 0`
-// — deepslate's own derivation — is the fixed point that says so.
+// enumerated before its widening, in the SAME index order — 5 bases x 10
+// salts x 3 combines x 3 fork counts x 2 generators = 900 seed rules, times
+// 300 block offsets. The widening (two salt spellings and a fourth fork
+// count) re-indexed that file's rules, so a number carried between the two
+// has to be translated: its rule 290 is rule 182 here. That file owns the
+// scan over synthetic probe worlds and is not edited here; this is a second
+// SCORER for the same space, against a different oracle (the golden Nether
+// regions rather than a probe dimension's terrain height), and it re-states
+// the enumeration rather than sharing it because the two tools have to be
+// able to disagree for the comparison between them to mean anything. If they
+// ever diverge, the candidate both score by name — kForkedMd5Rule below — is
+// the fixed point that says so.
 //
 // The same two gaps apply, unchanged and restated so they are not assumed
 // away: ONE stack rule (every octave's Perlin block drawn in order from a
@@ -1322,10 +1377,18 @@ inline constexpr std::size_t kGenerators = 2;
 inline constexpr std::size_t kSeedRules = kBases * kSalts * kCombines * kForks * kGenerators;
 inline constexpr std::size_t kBlockOffsets = 300;
 
-/// deepslate's own derivation, as legacy-seed-analyze.cpp names it:
-/// JavaRandom(worldSeed).nextLong(), XORed with the first eight bytes of
-/// MD5("ns:path") big-endian, one further fork, driving the LCG, at offset 0.
-inline constexpr std::size_t kDeepslateRule = 182;
+/// The one candidate every legacy scorer also scores by name, block offset
+/// 0: JavaRandom(worldSeed).nextLong(), XORed with the first eight bytes of
+/// MD5("ns:path") big-endian, one further fork, driving the LCG
+/// (legacy-seed-analyze.cpp's rule 290). An anonymous candidate: it was once
+/// labelled deepslate's derivation, and observing deepslate refutes that
+/// (tests/unit/deepslate_legacy_noise_oracle_test.cpp; SPEC §11).
+inline constexpr std::size_t kForkedMd5Rule = 182;
+
+/// The same rule with no further fork: base XOR salt handed to the LCG as it
+/// is. It is the generator deepslate's legacy named noise is built from —
+/// with the blocks in octaveInitLayout's order, which no candidate here takes.
+inline constexpr std::size_t kUnforkedMd5Rule = 180;
 
 enum class Base : std::uint8_t { WorldSeed, LcgLong, XoroLo, Scrambled, Zero };
 
@@ -1574,6 +1637,50 @@ blocksFor(const SeedRule& rule, std::int64_t seed, std::size_t needed) {
         }
     }
     return blocks;
+}
+
+/// The block declared octave @p slot of stack @p stack takes in cubiomes'
+/// `octaveInit` draw order (noise.c, MIT, Cubitect, at e61f905 — the order
+/// lib's OctaveNoise::createLegacy follows): each stack first passes over one
+/// block per octave above its top, octaves 0 down to top + 1, then draws its
+/// octaves highest frequency first; the second stack continues where the
+/// first stopped. A declared zero amplitude still takes its block: cubiomes'
+/// octaveInit has no zero amplitudes, and that part is deepslate's. This is
+/// the order deepslate draws a legacy named noise in, observed
+/// (tests/unit/deepslate_legacy_noise_oracle_test.cpp); it is not a candidate
+/// of the enumeration above, whose stacks are sequential and skip nothing.
+[[nodiscard]] inline std::size_t octaveInitBlock(int firstOctave, std::size_t count,
+                                                 std::size_t stack, std::size_t slot) {
+    const int top = firstOctave + static_cast<int>(count) - 1;
+    if (count == 0 || top > 0 || slot >= count || stack > 1) {
+        throw std::invalid_argument("octaveInit order needs a top octave of at most 0, got first "
+                                    "octave " +
+                                    std::to_string(firstOctave) + " and " + std::to_string(count) +
+                                    " octave(s)");
+    }
+    const auto skipped = static_cast<std::size_t>(-top);
+    return (stack * (skipped + count)) + skipped + (count - 1 - slot);
+}
+
+/// layoutFor's persistence schedule and valueFactor, with the blocks in
+/// octaveInitBlock's order, so sampleNormal evaluates it unchanged.
+[[nodiscard]] inline Layout octaveInitLayout(int firstOctave,
+                                             const std::vector<double>& amplitudes) {
+    Layout layout = layoutFor(firstOctave, amplitudes);
+    for (std::size_t stack = 0; stack < 2; ++stack) {
+        std::vector<Octave>& octaves = stack == 0 ? layout.first : layout.second;
+        std::size_t next = 0;
+        for (std::size_t slot = 0; slot < amplitudes.size(); ++slot) {
+            if (nonZero(amplitudes[slot])) {
+                octaves.at(next).block =
+                    octaveInitBlock(firstOctave, amplitudes.size(), stack, slot);
+                ++next;
+            }
+        }
+    }
+    // The last block drawn is the second stack's lowest octave.
+    layout.blocksPerNoise = octaveInitBlock(firstOctave, amplitudes.size(), 1, 0) + 1;
+    return layout;
 }
 
 } // namespace legacy_goldens

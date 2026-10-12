@@ -96,16 +96,21 @@
 // arithmetic into an apparent signal; it is how a score that is merely at its
 // own dimension's null reads as an outlier.
 //
-// DEEPSLATE'S OWN DERIVATION IS A MEMBER OF THIS SPACE, not something outside
-// it: base = JavaRandom(worldSeed).nextLong(), salted with the first eight
-// bytes of MD5("ns:path") big-endian, XORed, then one further round of
-// seed = JavaRandom(seed).nextLong(), driving the LCG, at block offset 0.
-// That is rule 290 at the baseline shape and frequency, and
+// ONE CANDIDATE IS SCORED BY NAME: base = JavaRandom(worldSeed).nextLong(),
+// salted with the first eight bytes of MD5("ns:path") big-endian, XORed, then
+// one further round of seed = JavaRandom(seed).nextLong(), driving the LCG, at
+// block offset 0. That is rule 290 at the baseline shape and frequency, and
 // `--candidate 290 0` scores it by name rather than leaving it to be inferred
 // from a list of survivors it is absent from. It was rule 182 before the
 // widening: adding two salt spellings and a fourth fork count re-indexes
 // every rule, and quoting the old index against the new tool would name a
-// different rule (SPEC §11 carries both).
+// different rule (SPEC §11 carries both). It is an anonymous candidate. It
+// was once labelled deepslate's own derivation, and deepslate, observed
+// through its public API, does not build a legacy named noise this way: it
+// draws from the unforked generator, in cubiomes' `octaveInit` order — each
+// stack passing over a block per octave above its top, which no block offset
+// shared by both stacks reproduces for any noise this probe carries
+// (tests/unit/deepslate_legacy_noise_oracle_test.cpp).
 //
 // `--twin` ASKS ABOUT THE QUESTION RATHER THAN A CANDIDATE. `leg_single` and
 // `leg_twin` carry `stratum:na` and `stratum:nb`: the same parameters under
@@ -1969,9 +1974,8 @@ int main(int argc, char** argv) {
         if (mode == "--candidate") {
             // One named candidate, full-scored on every dimension. A
             // refutation is worth more as a number than as an absence from a
-            // list of survivors, and the derivation deepslate uses is a
-            // member of this space (rule 290 at the baseline shape and
-            // frequency) rather than something outside it.
+            // list of survivors; the header's by-name candidate is rule 290
+            // at the baseline shape and frequency.
             if (argc < 6) {
                 std::fprintf(stderr, "--candidate needs a rule index and a block offset\n");
                 return 2;

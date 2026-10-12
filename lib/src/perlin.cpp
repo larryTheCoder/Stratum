@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <numeric>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -277,6 +278,45 @@ OctaveNoise OctaveNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
     return octaveNoise;
 }
 
+OctaveNoise OctaveNoise::createLegacy(rng::JavaRandom& random, int firstOctave, int octaveCount) {
+    // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
+    // Cubitect), noise.c `octaveInit`, at e61f905.
+    const int top = firstOctave + octaveCount - 1;
+    if (octaveCount < 1 || top > 0) {
+        throw std::invalid_argument("legacy octave noise needs at least one octave and a top "
+                                    "octave of at most 0, got first octave " +
+                                    std::to_string(firstOctave) + " and " +
+                                    std::to_string(octaveCount) + " octave(s)");
+    }
+
+    // One Perlin block is three nextDoubles at two raw steps each plus a
+    // 256-entry shuffle at one each: 262 steps (SPEC §11, measured at 4096
+    // of 4096 seeds). cubiomes skips that many raw steps per octave above
+    // the top one — octaves 0 down to top + 1 — rather than drawing and
+    // discarding blocks, and so does this.
+    constexpr int kStepsPerBlock = 262;
+    for (int step = 0; step < -top * kStepsPerBlock; ++step) {
+        static_cast<void>(random.nextInt());
+    }
+
+    // Highest frequency first, in the draw AND in octaves_, because sample()
+    // sums in storage order and cubiomes' `sampleOctave` sums in this one.
+    // Amplitude one throughout, so `(sample * 1.0) * persistence` is
+    // cubiomes' `amplitude * sample` to the bit.
+    OctaveNoise octaveNoise;
+    double frequency = std::ldexp(1.0, top);
+    double persistence = 1.0 / (std::ldexp(1.0, octaveCount) - 1.0);
+    for (int octave = 0; octave < octaveCount; ++octave) {
+        octaveNoise.octaves_.push_back(Octave{.noise = PerlinNoise::fromRandom(random),
+                                              .amplitude = 1.0,
+                                              .persistence = persistence,
+                                              .frequency = frequency});
+        frequency *= 0.5;
+        persistence *= 2.0;
+    }
+    return octaveNoise;
+}
+
 double OctaveNoise::sample(double x, double y, double z) const noexcept {
     double total = 0.0;
     for (const Octave& octave : octaves_) {
@@ -340,6 +380,26 @@ NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
                          // server painted all 120 of this form and none of the other (SPEC §11).
         (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / effective)));
     return noise;
+}
+
+NormalNoise NormalNoise::createLegacy(rng::JavaRandom& random, int firstOctave, int octaveCount) {
+    // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
+    // Cubitect), noise.c `doublePerlinInit`, at e61f905. Sequenced through
+    // named locals for the reason create() gives: both stacks draw from the
+    // same generator, and the second continues where the first stopped,
+    // including its own 262-step skips.
+    OctaveNoise firstStack = OctaveNoise::createLegacy(random, firstOctave, octaveCount);
+    OctaveNoise secondStack = OctaveNoise::createLegacy(random, firstOctave, octaveCount);
+    // `(10.0 / 6.0) * len / (len + 1)`, evaluated in cubiomes' order. One ulp
+    // from create()'s spelling at two octaves; the goldens do not separate
+    // them (SPEC §11), the vectors pin this one.
+    const auto length = static_cast<double>(octaveCount);
+    return NormalNoise{std::move(firstStack), std::move(secondStack),
+                       (10.0 / 6.0) * length / (length + 1.0)};
+}
+
+NormalNoise NormalNoise::zero() {
+    return NormalNoise{OctaveNoise{}, OctaveNoise{}, 1.0};
 }
 
 double NormalNoise::sample(double x, double y, double z) const noexcept {

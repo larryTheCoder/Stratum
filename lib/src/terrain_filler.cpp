@@ -5,13 +5,16 @@
 #include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
 #include <stratum/terrain/filler.hpp>
+#include <stratum/terrain/surface_column.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -78,38 +81,6 @@ constexpr int kChunkWidth = 16;
     throw FillError("veinBlock asked for a block for a position the vein system did not place");
 }
 
-/// Whether the first pass put this block here as part of an ore vein.
-///
-/// Asked by the surface pass, which must not repaint one. Identified by the
-/// block itself rather than by remembering the positions: a chunk holds at
-/// most six of these and the comparison is against a six-entry table, which
-/// is cheaper than a parallel 98304-entry mask and cannot fall out of step
-/// with what `fill()` actually wrote.
-///
-/// A dimension whose own `default_block` is one of the six would make this
-/// ambiguous — it would shield that dimension's plain terrain from its own
-/// surface rules. Vanilla's is `minecraft:stone`, which is not in the table,
-/// and the caller checks `default_block` first regardless.
-[[nodiscard]] bool isVeinBlock(const settings::BlockState& block) {
-    return std::ranges::find(veinBlocks(), block) != veinBlocks().end();
-}
-
-/// Solid, fluid or air — what the FIRST pass decided, read back for the
-/// second. Not stored anywhere: rederived from the block a position already
-/// holds, which is exact because only these three ever come out of it.
-enum class Category : std::uint8_t { Air, Fluid, Solid };
-
-[[nodiscard]] Category categorize(const settings::BlockState& block,
-                                  const settings::NoiseSettings& settings) {
-    if (block == air()) {
-        return Category::Air;
-    }
-    if (block == settings.defaultFluid) {
-        return Category::Fluid;
-    }
-    return Category::Solid;
-}
-
 /// What one dimension's surface rules ask of the caller, beyond the block
 /// the first pass already placed. Scanning the tree once at compile is
 /// cheaper than guessing, and safer: a field left unpopulated because a
@@ -161,6 +132,75 @@ struct SurfaceNeeds {
 
 } // namespace
 
+// THE CATEGORY. The surface pass's WRITE does not rely on this — it writes
+// over `default_block` only (`applySurfaceRules`) — but its two stone-depth
+// runs and its water height do, and the server treats lava there exactly as
+// water: measured on `tools/analysis/aquifer-lavarun-probe.sh` (SPEC §11),
+// where this called lava Solid and so counted it toward both runs. Here, next
+// to `air()` and `lava()`, so the blocks it compares against are the very
+// ones the first pass writes.
+Category categorize(const settings::BlockState& block, const settings::NoiseSettings& settings) {
+    if (block == air()) {
+        return Category::Air;
+    }
+    if (block == settings.defaultFluid || block == lava()) {
+        return Category::Fluid;
+    }
+    return Category::Solid;
+}
+
+void SurfaceColumn::read(const std::span<const Category> categories, const std::int32_t minY) {
+    const std::size_t height = categories.size();
+    minY_ = minY;
+    above_.resize(height);
+    below_.resize(height);
+    waterHeight_.reset();
+    top_ = minY - 1;
+    // Top down: the run counting from the world's top, and the water height
+    // latched at the first fluid block met descending. Air resets the run;
+    // fluid — water or lava alike — neither breaks it nor counts toward it,
+    // and lava latches the height as water does (surface::Context's own doc,
+    // measured).
+    std::int32_t run = 0;
+    for (std::size_t i = height; i-- > 0;) {
+        const Category category = categories[i];
+        const std::int32_t y = minY + static_cast<std::int32_t>(i);
+        if (category == Category::Air) {
+            run = 0;
+        } else {
+            if (top_ < minY) {
+                top_ = y;
+            }
+            if (category == Category::Solid) {
+                ++run;
+            } else if (!waterHeight_.has_value()) {
+                waterHeight_ = y + 1;
+            }
+        }
+        above_[i] = run;
+    }
+    // The run counted from the world's floor, for `surface_type: ceiling` —
+    // and NOT the mirror image of the one above: bottom up, fluid RESETS the
+    // run exactly as air does, water as much as lava. Measured
+    // (aquifer-lavarun-probe.sh, SPEC §11): stone over an enclosed pool reads
+    // depth 0 from the pool's roof up, on every column of every pool, where a
+    // run that skipped the fluid — the filler's reading until then, for water
+    // too — left it stone.
+    run = 0;
+    for (std::size_t i = 0; i < height; ++i) {
+        run = categories[i] == Category::Solid ? run + 1 : 0;
+        below_[i] = run;
+    }
+}
+
+std::int32_t SurfaceColumn::stoneDepthAbove(const std::int32_t y) const {
+    return above_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+}
+
+std::int32_t SurfaceColumn::stoneDepthBelow(const std::int32_t y) const {
+    return below_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+}
+
 ChunkBuffer::ChunkBuffer(const settings::NoiseGeometry& geometry)
     : minY_(geometry.minY), height_(geometry.height) {
     if (height_ <= 0) {
@@ -208,6 +248,38 @@ void ChunkBuffer::set(int localX, std::int32_t y, int localZ, const settings::Bl
     blocks_[index] = intern(block);
 }
 
+void ChunkBuffer::clear() {
+    // Entry 0 is air in every buffer (the constructor's), so zeroing the
+    // indices is "every block air" whatever else the palette held.
+    palette_.erase(palette_.begin() + 1, palette_.end());
+    std::ranges::fill(blocks_, std::uint16_t{0});
+    fluidUpdates_.clear();
+}
+
+void ChunkBuffer::markFluidUpdate(int localX, std::int32_t y, int localZ) {
+    static_cast<void>(indexOf(localX, y, localZ)); // the bounds check, nothing more
+    fluidUpdates_.push_back(FluidUpdate{.localX = static_cast<std::uint8_t>(localX),
+                                        .y = y,
+                                        .localZ = static_cast<std::uint8_t>(localZ)});
+}
+
+void ChunkBuffer::orderFluidUpdatesByCells(const std::int32_t cellWidth) {
+    if (cellWidth < 1) {
+        throw FillError("cannot order fluid updates by cells " + std::to_string(cellWidth) +
+                        " blocks wide");
+    }
+    // Local x and z are 0..15, so plain division and remainder are exact
+    // here; y is the only signed coordinate, and it is only compared.
+    const auto key = [cellWidth](const FluidUpdate& update) {
+        const std::int32_t x = update.localX;
+        const std::int32_t z = update.localZ;
+        return std::tuple{x / cellWidth, z / cellWidth, -update.y, x % cellWidth, z % cellWidth};
+    };
+    std::ranges::sort(fluidUpdates_, [&key](const FluidUpdate& lhs, const FluidUpdate& rhs) {
+        return key(lhs) < key(rhs);
+    });
+}
+
 ChunkFiller::ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                          const settings::NoiseSettings& settings)
     : settings_(&settings),
@@ -238,36 +310,27 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     // chunk: a caller that cannot generate should learn so before it starts.
     filler.interpreter_.requireEvaluable(filler.finalDensity_);
 
-    // Ore veins, wired (SPEC §10, M3; SPEC §11). Both flags, not just
-    // `ore_veins_enabled`: the coupling is measured, and a dimension with
-    // veins on and aquifers off really does come back as unbroken stone, so
-    // leaving the source unbuilt here reproduces the server exactly rather
-    // than approximating it.
-    // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11). The vein
-    // source is a positional random derived from the world seed through the
-    // DIMENSION'S declared random source, not from any named noise, so it
-    // never reaches NoiseRegistry::create's `wanted` list. Under a legacy
-    // source this build has only the modern derivation, and it is UNTESTED
-    // there: every vanilla legacy dimension has `ore_veins_enabled` false, so
-    // no oracle for it exists on disk. It is the same primitive whose gradient
-    // use is measured WRONG under a legacy source, so running it would be the
-    // plausible-but-wrong world SPEC §8 forbids.
+    // Ore veins, wired (SPEC §10, M3; SPEC §11), on `ore_veins_enabled`
+    // ALONE since pipeline engine v14. They were gated on `aquifers_enabled`
+    // too, from one probe world that came back unbroken stone with aquifers
+    // off; its seed's window holds no position the vein gate admits, so the
+    // library predicts it stone with aquifers on as well, and the contrast
+    // that showed veins had moved the seed with the flag. With aquifers off
+    // the recipe at a seed that has veins is the aquifers-on world block for
+    // block, and so are the legacy probe's aquifers-off arms under both
+    // sources, so the gate is gone (ore/vein.hpp).
     //
-    // On the FLAG, deliberately, and outside the veinsPlaceBlocks gate below.
-    // With aquifers off the vein source is never built and no random is ever
-    // drawn — a legacy pack with veins alone fills a chunk bit-identical to
-    // the undoctored one (measured: FNV-1a 2b9f4b6af4ed174a both ways). But
-    // `validatePack` warns on the flag alone, and SPEC §11 says each of the
-    // three constructs is refused by name; a refusal that fires on one path
-    // and not the other is the disagreement this build exists to avoid.
-    if (settings.oreVeinsEnabled && noises.source() == density::RandomSource::Legacy) {
-        throw FillError(density::legacyConstructRefusal(
-            "ore_veins_enabled",
-            "the vein source is a positional random drawn from that source, and no vanilla "
-            "legacy dimension enables veins, so nothing on disk can say what it should be"));
-    }
-    if (ore::veinsPlaceBlocks(settings.oreVeinsEnabled, settings.aquifersEnabled)) {
-        filler.oreVeins_.emplace(noises.worldSeed());
+    // NOT refused under a legacy source any more. The vein source is a
+    // positional random drawn through the dimension's declared source, not
+    // from any named noise, so it never reaches NoiseRegistry::create's
+    // `wanted` list; it was refused by name here while nothing said how it
+    // draws under the legacy source. `tools/analysis/legacy-orevein-probe.sh`
+    // asked the server: the legacy positional primitive salted
+    // "minecraft:ore", nextFloat thrice, exact on every block of its legacy
+    // arms (SPEC §11, "Ore veins under the legacy source"). So the source is
+    // built from the registry's own, as the aquifer's centres are below.
+    if (settings.oreVeinsEnabled) {
+        filler.oreVeins_.emplace(noises.worldSeed(), noises.source());
         for (const settings::RouterEntry entry :
              {settings::RouterEntry::VeinToggle, settings::RouterEntry::VeinRidged,
               settings::RouterEntry::VeinGap}) {
@@ -276,28 +339,73 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
     }
 
     if (settings.aquifersEnabled) {
-        // Same refusal, same reason (SPEC §8, §11): the aquifer lattice's
-        // centre jitter is a positional random from the dimension's declared
-        // random source and names no noise. UNTESTED under a legacy source
-        // for the same reason as the veins — every vanilla legacy dimension
-        // has `aquifers_enabled` false.
-        if (noises.source() == density::RandomSource::Legacy) {
-            throw FillError(density::legacyConstructRefusal(
-                "aquifers_enabled",
-                "the lattice's centre jitter is a positional random drawn from that source, and "
-                "no vanilla legacy dimension enables aquifers, so nothing on disk can say what "
-                "it should be"));
+        // NOT refused under a legacy source, as the veins above are not. The
+        // lattice's centre jitter is a positional random from the
+        // dimension's declared source, and no vanilla legacy dimension
+        // enables aquifers — but the server generates one when a datapack
+        // asks, and `tools/analysis/legacy-aquifer-probe.sh` asked: the
+        // legacy derivation is measured (SPEC §11, "The aquifer under the
+        // legacy source") and `aquiferCentres_` below is built from the
+        // registry's own source. A legacy dimension whose aquifer router
+        // names vanilla's aquifer noises is still refused, by
+        // NoiseRegistry::create, for its noises' seeding.
+        //
+        // The aquifer types a source as the dimension's default fluid or as
+        // lava, and two of its rules are written for WATER specifically:
+        // Q6.3's exception is water resting on the lava sea, and Q6.4's
+        // mixed-type constant is lava against water. With any other default
+        // fluid those two readings part from "default fluid", and no
+        // world has ever been measured to say which the server takes —
+        // every vanilla dimension that enables aquifers uses water. Refused
+        // by name rather than guessed (SPEC §8).
+        if (settings.defaultFluid.name != data::ResourceLocation::parse("minecraft:water")) {
+            throw FillError("aquifers_enabled with default_fluid " +
+                            settings.defaultFluid.name.toString() +
+                            " is refused: the aquifer's water-over-lava exception and its "
+                            "lava-against-water pressure are measured only for a water "
+                            "default fluid, and no vanilla dimension enables aquifers with "
+                            "any other");
         }
         // The salted positional source (SPEC §4) is per-world, not per-block
-        // — built once here from the registry's own seed rather than
-        // re-derived on every call to fill().
-        filler.aquiferCentres_.emplace(noises.worldSeed());
+        // — built once here from the registry's own seed AND its own random
+        // source rather than re-derived on every call to fill().
+        filler.aquiferCentres_.emplace(noises.worldSeed(), noises.source());
         for (const settings::RouterEntry entry :
              {settings::RouterEntry::Barrier, settings::RouterEntry::FluidLevelFloodedness,
               settings::RouterEntry::FluidLevelSpread, settings::RouterEntry::Lava,
-              settings::RouterEntry::PreliminarySurfaceLevel}) {
+              settings::RouterEntry::PreliminarySurfaceLevel, settings::RouterEntry::Erosion,
+              settings::RouterEntry::Depth}) {
+            // Erosion and depth for Q5.9's deep-dark override, read at every
+            // source centre — required whenever aquifers are, not only when a
+            // surface tree happens to read the biome.
             filler.interpreter_.requireEvaluable(settings.router.at(entry));
         }
+        // Where the barrier is read. computeSubstance skips the read where
+        // Q6.2 decides without it, which no block can see — provided the
+        // read has no effect but its value. Two node types make that
+        // unprovable, and a barrier reaching either keeps every read it
+        // always had (aquifer::BarrierReads::Always):
+        //
+        //   * `interpolated`. The barrier is the one aquifer read made in
+        //     the BLOCK context, so its cells' corners are read from, and
+        //     written to, the CornerCache the terrain's own reads share —
+        //     keyed by cell, not by the flat_cache window a corner was read
+        //     through. Every other aquifer read is detached and never
+        //     touches the cache.
+        //   * `find_top_surface`, which refuses a scan longer than its step
+        //     bound when it is evaluated, on a value — a chunk that threw
+        //     because of one skippable read must still throw.
+        //
+        // Vanilla's barrier is a bare noise, so every vanilla preset reads it
+        // only where it is weighed.
+        const std::vector<density::NodeIndex> barrierTree =
+            graph.reachableFrom(settings.router.at(settings::RouterEntry::Barrier));
+        filler.barrierReadsAlways_ =
+            std::ranges::any_of(barrierTree, [&graph](const density::NodeIndex index) {
+                const density::NodeType type = graph.node(index).type;
+                return type == density::NodeType::Interpolated ||
+                       type == density::NodeType::FindTopSurface;
+            });
     }
 
     if (surfaceRules != nullptr) {
@@ -343,41 +451,6 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                 "minecraft:surface (this dimension's rules read a column's surface depth, and no "
                 "minecraft:surface noise was built into the registry supplied to "
                 "ChunkFiller::compile)");
-        }
-        if (noises.source() == density::RandomSource::Legacy) {
-            // THE LEGACY REFUSAL, BY NAME OF THE CONSTRUCT (SPEC §8, §11) —
-            // and it THROWS, exactly as the aquifer and ore-vein refusals
-            // above do. A first version of this recorded the refusal as an
-            // entry in blockedBy_ instead, which is the shape this function
-            // uses for "a caller did not supply something". That was the
-            // wrong shape for "this dimension is underivable": nothing on the
-            // public path (`world::CompiledDimension::compile`, which every
-            // native binding generates through) consults blockedBy_, so a
-            // doctored legacy pack with a gradient compiled clean and filled
-            // 13549 blocks with its surface rules silently dropped — the
-            // best-effort partial load SPEC §8 forbids. Measured, not
-            // supposed; the conformance case below drives that pack through
-            // CompiledDimension and asserts the throw.
-            //
-            // MEASURED WRONG, not merely unverified: this build's Xoroshiro
-            // vertical_gradient against the golden NETHER's bedrock agrees
-            // at chance, while the identical code on the modern overworld is
-            // exact — see tests/conformance/
-            // vanilla_legacy_gradient_gap_test.cpp.
-            const std::vector<std::string> names = surface::verticalGradientNames(*surfaceRules);
-            if (!names.empty()) {
-                std::string list;
-                for (const std::string& name : names) {
-                    list += (list.empty() ? "'" : ", '") + name + "'";
-                }
-                throw FillError(density::legacyConstructRefusal(
-                    "minecraft:vertical_gradient",
-                    "its random_name(s) " + list +
-                        " salt this dimension's own random source, which declares "
-                        "legacy_random_source; this build can only derive the modern one, and "
-                        "for this construct that derivation is measured to agree with vanilla "
-                        "at chance"));
-            }
         }
         if (needs.bandlands &&
             noises.find(data::ResourceLocation::parse("minecraft:clay_bands_offset")) == nullptr) {
@@ -426,6 +499,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                         std::to_string(into.minY()) + ", and the dimension is " +
                         std::to_string(geometry.height) + " from " + std::to_string(geometry.minY));
     }
+    // The pass below writes every block, but only appends to the palette and
+    // to the fluid updates: a reused buffer would otherwise carry an earlier
+    // chunk's marks into this one's list.
+    into.clear();
 
     const std::int32_t baseX = chunkX * kChunkWidth;
     const std::int32_t baseZ = chunkZ * kChunkWidth;
@@ -460,22 +537,74 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
         settings_->aquifersEnabled
             ? settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel)
             : density::NodeIndex{};
+    // Every aquifer read goes through THIS chunk's flat_cache window: a
+    // source centre in a neighbouring chunk reads its router values where it
+    // is, not at a 4x4 corner this chunk's grid does not hold. Measured
+    // through Q5.9 (`deepDarkAt` below), the one read in the vanilla presets
+    // that can tell, and through every entry a datapack can wrap; see
+    // `flatCacheWindow`.
+    //
+    // And every read but the barrier's is DETACHED: it is a point this block
+    // reads somewhere else — a source's centre, its contracted spread and
+    // lava indices, its surface anchors — so an `interpolated` there reads
+    // its argument at that point rather than blending over a cell. The
+    // barrier is read at the block itself and blends like terrain does.
+    // Measured, both halves (density::ReadContext, SPEC §11).
+    const density::FlatCacheWindow window = flatCacheWindow(chunkX, chunkZ);
+    const auto aquiferRead = [&](density::NodeIndex node, std::int32_t x, std::int32_t y,
+                                 std::int32_t z) {
+        return interpreter_.evaluate(node, density::Point{.x = x, .y = y, .z = z}, cache, window,
+                                     density::ReadContext::Detached);
+    };
     const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return interpreter_.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache,
+                                     window, density::ReadContext::Block);
     };
     const auto floodednessAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(floodednessNode, density::Point{.x = x, .y = y, .z = z},
-                                     cache);
+        return aquiferRead(floodednessNode, x, y, z);
     };
     const auto spreadAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(spreadNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(spreadNode, x, y, z);
     };
     const auto lavaAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(lavaNode, density::Point{.x = x, .y = y, .z = z}, cache);
+        return aquiferRead(lavaNode, x, y, z);
     };
-    const auto pslAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
-        return interpreter_.evaluate(pslNode, density::Point{.x = x, .y = y, .z = z}, cache);
+    // The raw entry at each scan sample's own column — NOT through the
+    // 16-block lattice the surface rule reads this same entry through
+    // (`preliminarySurfaceIn`, below). Two readings of one entry, on purpose:
+    // head to head, the server sides with the lattice on no block where the
+    // two part (aquifer::readPreliminarySurface, SPEC §11).
+    //
+    // Memoized by position for this chunk: each read is a whole
+    // `find_top_surface` column scan, and the y_skip samples and the
+    // sources' anchors and windows land on the same 4-aligned positions
+    // again and again. Exact by construction: a detached read is a function
+    // of its position and this chunk's window alone, never of the
+    // CornerCache (aquifer::MemoizedRead).
+    aquifer::MemoizedRead pslMemo([&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return aquiferRead(pslNode, x, y, z);
+    });
+    const auto pslAt = [&pslMemo](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return pslMemo(x, y, z);
     };
+    const density::NodeIndex erosionNode =
+        settings_->aquifersEnabled ? settings_->router.at(settings::RouterEntry::Erosion)
+                                   : density::NodeIndex{};
+    const density::NodeIndex depthNode = settings_->aquifersEnabled
+                                             ? settings_->router.at(settings::RouterEntry::Depth)
+                                             : density::NodeIndex{};
+    const auto deepDarkAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+        return aquifer::isDeepDark(aquiferRead(erosionNode, x, y, z),
+                                   aquiferRead(depthNode, x, y, z));
+    };
+
+    // Q2.3/Q2.5: above `y_skip` the local aquifer is never consulted and the
+    // global picker decides. One height per chunk, from the highest floored
+    // `preliminary_surface_level` over the chunk's lattice rectangle, sampled
+    // every four blocks with both endpoints included.
+    const std::int32_t ySkipLevel = settings_->aquifersEnabled
+                                        ? aquifer::chunkYSkip(pslAt, baseX, baseZ)
+                                        : std::numeric_limits<std::int32_t>::max();
 
     // Only ever read when oreVeins_ holds a source, same as the aquifer's
     // five above, and looked up once per fill() rather than per block.
@@ -526,6 +655,17 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // replaces what would otherwise be
                                 // non-solid, or adds solid via the barrier.
                                 block = &settings_->defaultBlock;
+                            } else if (aquiferCentres_.has_value() &&
+                                       !aquifer::consultsLattice(y, ySkipLevel)) {
+                                // Q2.3: the global picker, as with aquifers
+                                // off (below) — lava under min(-54,
+                                // sea_level), default_fluid under sea_level,
+                                // air above.
+                                if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+                                    block = &lava();
+                                } else if (y < settings_->seaLevel) {
+                                    block = &settings_->defaultFluid;
+                                }
                             } else if (aquiferCentres_.has_value()) {
                                 const aquifer::AquiferQuery query{.x = blockX,
                                                                   .y = y,
@@ -534,7 +674,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                                                   .seaLevel = settings_->seaLevel};
                                 const aquifer::SubstanceAt result = aquifer::computeSubstance(
                                     *aquiferCentres_, query, aquiferStatusCache, barrierAt,
-                                    floodednessAt, spreadAt, lavaAt, pslAt);
+                                    floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt,
+                                    barrierReadsAlways_ ? aquifer::BarrierReads::Always
+                                                        : aquifer::BarrierReads::WhereWeighed);
                                 switch (result.substance) {
                                     case aquifer::Substance::Solid:
                                         block = &settings_->defaultBlock;
@@ -543,10 +685,25 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                         block = (result.fluidType == aquifer::FluidType::Lava)
                                                     ? &lava()
                                                     : &settings_->defaultFluid;
+                                        if (result.fluidUpdate) {
+                                            into.markFluidUpdate(localX, y, localZ);
+                                        }
                                         break;
                                     case aquifer::Substance::Air:
                                         break;
                                 }
+                            } else if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+                                // Aquifers off still has a global lava sea:
+                                // non-solid ground below min(-54, sea_level)
+                                // is lava, not default_fluid (spec Q1.2,
+                                // Q2.1). Measured on the aquifer-free probe
+                                // (tools/analysis/aquifer-free-probe.sh):
+                                // 1005 positions at y -58..-55 the server
+                                // filled with lava, all of which this branch
+                                // used to write as water — invisible to every
+                                // category-only comparison, where both are
+                                // "fluid".
+                                block = &lava();
                             } else if (y < settings_->seaLevel) {
                                 block = &settings_->defaultFluid;
                             }
@@ -593,6 +750,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
             }
         }
     }
+    // This loop runs z-major and bottom-up, which is what keeps the corner
+    // cache warm; the server's fill runs x-major and top-down, and its
+    // `PostProcessing` lists hold the marks in that order.
+    into.orderFluidUpdatesByCells(cellWidth);
 
     if (surfaceExecutor_.has_value()) {
         applySurfaceRules(chunkX, chunkZ, into);
@@ -639,10 +800,14 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
         return worldSurface[(lz * kChunkWidth) + lx];
     };
 
-    // Scratch for the two stone-depth runs, sized once and overwritten whole
-    // by every column rather than reallocated 256 times a chunk.
-    std::vector<std::int32_t> stoneDepthAbove(static_cast<std::size_t>(geometry.height));
-    std::vector<std::int32_t> stoneDepthBelow(static_cast<std::size_t>(geometry.height));
+    // Scratch for one column's categories and the reads drawn from them
+    // (`SurfaceColumn`: the two stone-depth runs, the water height, the
+    // topmost non-air block), sized once and overwritten whole by every
+    // column rather than reallocated 256 times a chunk. Each block is
+    // categorised ONCE here, where the three loops this replaced each did it
+    // again.
+    std::vector<Category> categories(static_cast<std::size_t>(geometry.height));
+    SurfaceColumn column;
 
     // One cache for every density read this whole second pass makes —
     // `preliminarySurface` and the six climate router entries alike — shared
@@ -654,6 +819,31 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // so leaving this uncached here cost the same multiple across the whole
     // chunk rather than one cell.
     density::Interpreter::CornerCache surfaceCache(interpreter_.cacheSize());
+
+    // `preliminary_surface_level` reaches `above_preliminary_surface` through
+    // a 16-block lattice, not per column: sampled at the lattice corners,
+    // each sample floored, blended linearly, floored again — measured, SPEC
+    // §11. The lattice is anchored at the world origin through floorDiv and
+    // its pitch is a chunk's width, so a chunk is exactly one cell and its
+    // four samples are the chunk's own corner and its three +16 neighbours.
+    // Four evaluations a chunk where the per-column read made 256 — and the
+    // per-column read was the WRONG value: `ChunkFiller::preliminarySurfaceIn`
+    // existed and was measured on 1871872 columns (vanilla_psl_lattice_test)
+    // while this pass still read the raw entry at every column, so the
+    // engine itself never reproduced what that test credited it with.
+    static_assert(kPreliminarySurfacePitch == kChunkWidth,
+                  "one lattice cell per chunk is what makes four samples enough");
+    std::array<double, 4> pslCorners{};
+    if (surfaceNeedsPreliminarySurface_) {
+        const auto pslSample = [&](const std::int32_t dx, const std::int32_t dz) {
+            return interpreter_.evaluate(
+                settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
+                density::Point{.x = baseX + dx, .y = 0, .z = baseZ + dz}, surfaceCache);
+        };
+        pslCorners = {pslSample(0, 0), pslSample(kPreliminarySurfacePitch, 0),
+                      pslSample(0, kPreliminarySurfacePitch),
+                      pslSample(kPreliminarySurfacePitch, kPreliminarySurfacePitch)};
+    }
 
     // Cached across the WHOLE chunk, not just down one column: a chunk is
     // only 4 quart-cells wide, so up to 16 of its 256 columns share the same
@@ -677,52 +867,23 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 surface::fillSteepNeighbours(context, heightAt);
             }
             if (surfaceNeedsPreliminarySurface_) {
-                // FLOOR, not a `static_cast` — measured, and the two are only
-                // separable on a router that hands this entry a negative
-                // fraction. Vanilla's own `find_top_surface` never does, so
-                // this never bites in a vanilla world; a datapack whose
-                // `preliminary_surface_level` is -0.5 gets -1 from the server
-                // and used to get 0 from here (SPEC §11).
-                context.preliminarySurface =
-                    static_cast<std::int32_t>(std::floor(interpreter_.evaluate(
-                        settings_->router.at(settings::RouterEntry::PreliminarySurfaceLevel),
-                        density::Point{.x = x, .y = 0, .z = z}, surfaceCache)));
+                // FLOORED at each sample and after the blend, not truncated:
+                // the two are only separable on a router that hands this
+                // entry a negative fraction, which vanilla's own
+                // `find_top_surface` never does, so it is a data-pack-only
+                // distinction — and a measured one (preliminarySurfaceIn).
+                context.preliminarySurface = preliminarySurfaceIn(pslCorners, localX, localZ);
             }
 
-            // Top-down: the stone-depth run counting from the world's top,
-            // and the water height latched at the first fluid block met
-            // descending. Air resets the run; fluid neither breaks it nor
-            // counts toward it (surface::Context's own doc, measured).
-            std::optional<std::int32_t> waterHeight;
-            {
-                std::int32_t run = 0;
-                for (std::int32_t y = topY - 1; y >= minY; --y) {
-                    const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else if (category == Category::Solid) {
-                        ++run;
-                    }
-                    stoneDepthAbove[static_cast<std::size_t>(y - minY)] = run;
-                    if (category == Category::Fluid && !waterHeight.has_value()) {
-                        waterHeight = y + 1;
-                    }
-                }
+            // The column's reads — both stone-depth runs, the water height
+            // and the topmost non-air block — counted by `SurfaceColumn`
+            // (surface_column.hpp carries the measured rules), the same code
+            // the golden decoder reconstructs them with.
+            for (std::int32_t y = minY; y < topY; ++y) {
+                categories[static_cast<std::size_t>(y - minY)] =
+                    categorize(into.at(localX, y, localZ), *settings_);
             }
-            // The same run counted from the world's floor, for
-            // `surface_type: ceiling`.
-            {
-                std::int32_t run = 0;
-                for (std::int32_t y = minY; y < topY; ++y) {
-                    const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                    if (category == Category::Air) {
-                        run = 0;
-                    } else if (category == Category::Solid) {
-                        ++run;
-                    }
-                    stoneDepthBelow[static_cast<std::size_t>(y - minY)] = run;
-                }
-            }
+            column.read(categories, minY);
 
             // The biome grid is quarter-resolution and constant within a
             // cell, so this is resolved once per four y levels rather than
@@ -739,96 +900,42 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             data::ResourceLocation biomeId{"minecraft", "plains"};
-            // Monotonic, NOT the resetting stone-depth run: once solid has
-            // been crossed anywhere above the current position in this
-            // column, every non-solid (fluid OR air) position from there on
-            // down stays out of surface rules' reach, no matter how many
-            // more solid runs and non-solid gaps follow — real vanilla only
-            // ever rewrites the column's FIRST (topmost, reached straight
-            // from the sky) non-solid stretch, plus whatever solid it
-            // crosses at any depth. `stoneDepthAbove` cannot stand in for
-            // this: air resets IT on purpose (Context's own doc), which is
-            // exactly what a deep cave's own air needs to NOT look like open
-            // sky here.
+            // ONLY THE DEFAULT BLOCK IS A SURFACE-RULE POSITION. A rule's
+            // block replaces `default_block` and nothing else: not fluid, not
+            // air, not lava the aquifer placed, not a vein block. Measured on
+            // the eight golden overworld regions (every second chunk, 6619641
+            // positions where the first pass holds water and 31491 where it
+            // holds lava): vanilla changes NONE of the water — not the open
+            // water reached straight from the sky, which an earlier reading
+            // here left in reach of the rules, and not water below solid rock.
+            // The same predicate is what the ore-vein placement probe measured
+            // first, from the other side: an unconditional rule left all 12934
+            // vein blocks untouched and repainted all 5548 default-block
+            // positions (SPEC §11).
             //
-            // Confirmed against the real server (tools/analysis, see SPEC
-            // §11): a datapack whose ENTIRE surface_rule is the overworld's
-            // own bare, unconditioned `deepslate` vertical_gradient — no
-            // above_preliminary_surface, no bedrock floor, nothing else
-            // gating it — still leaves exactly the same 475 fluid blocks
-            // untouched that vanilla's full 287-rule tree does, in the same
-            // aquifer-free probe golden_fill_test.cpp reads, every one of
-            // them inside a fluid-filled cave-void with solid rock already
-            // crossed above it. With a real aquifer's own air pockets in
-            // play (golden_fill_aquifer_test.cpp), most of that same gap is
-            // air, not fluid — solid crossed above a drained cell, painted
-            // over the same way. The topmost/open case (real ocean straight
-            // from the sky, nothing solid crossed yet) stays reachable,
-            // which is what a rule keyed on `water` — freezing ice onto a
-            // lake's own surface — needs.
+            // What this replaced, and what it cost. The pass used to rewrite
+            // every position of the column's first non-solid stretch plus
+            // every Solid one, exempting only the six vein blocks — and
+            // `categorize` then called the aquifer's lava Solid, because lava
+            // is not the overworld's `default_fluid`. So the overworld's own
+            // unconditioned `deepslate` gradient (true at y <= 0) turned every
+            // aquifer lava block into deepslate, 127531 of the goldens' 127700
+            // lava blocks, and painted the bottom of open water in the
+            // gradient's band, 4215 blocks; the first pass had all of those
+            // right. Nothing caught it, because every aquifer probe ran with
+            // surface rules off and the one surface-on aquifer case held no
+            // lava (golden_overworld_test.cpp now holds both).
             //
-            // AND THE SCAN DOES NOT START AT THE SKY. It starts at the
-            // column's topmost NON-AIR block — fluid counting as non-air, so
-            // an ocean column still starts at its water surface and the ice
-            // case above is untouched. The open air above the terrain is
-            // never a surface-rule position at all.
-            //
-            // Invisible in every overworld fixture, because vanilla's own
-            // overworld tree is gated top to bottom and fires nothing up
-            // there; catastrophic the moment a tree is NOT gated. Vanilla's
-            // End is exactly that tree — its entire `surface_rule` is one
-            // unconditioned `block` placing end_stone — and without this
-            // bound it paints end_stone from the island's surface to y 127
-            // in every column. Measured as such: golden_end_test.cpp scored
-            // 441481 of 2097152 blocks at seed 0 with the scan starting at
-            // the sky, and 2097152 of 2097152 with it starting here.
-            //
-            // THE TOPMOST NON-AIR BLOCK, not the one above it. The obvious
-            // rival reading — start one higher, at the first air — is
-            // REFUTED rather than merely unchosen: that position is air with
-            // no solid crossed above it, so an unconditioned rule would fire
-            // there, and the End's tree is unconditioned. Under that reading
-            // every island in the End would carry one extra end_stone block
-            // on top, and the eight golden regions say it does not.
-            //
+            // THE SCAN STILL STARTS AT THE COLUMN'S TOPMOST NON-AIR BLOCK. Air
+            // is never the default block, so this is a bound on work rather
+            // than on correctness now; the End's unconditioned end_stone rule
+            // (golden_end_test.cpp, 2097152 of 2097152) is safe under either.
             // A column of nothing but air leaves `scanFrom` below `minY` and
-            // the loop below runs zero times, which is the right answer for
-            // it: the End's void is most of the dimension.
-            std::int32_t scanFrom = minY - 1;
-            for (std::int32_t y = topY - 1; y >= minY; --y) {
-                if (categorize(into.at(localX, y, localZ), *settings_) != Category::Air) {
-                    scanFrom = y;
-                    break;
-                }
-            }
-            bool crossedSolid = false;
+            // the loop runs zero times.
+            const std::int32_t scanFrom = column.top();
             for (std::int32_t y = scanFrom; y >= minY; --y) {
-                const Category category = categorize(into.at(localX, y, localZ), *settings_);
-                if (category != Category::Solid) {
-                    if (crossedSolid) {
-                        continue;
-                    }
-                } else {
-                    crossedSolid = true;
-                    // A block the VEIN system placed is solid but is not the
-                    // default block, and the surface system does not repaint
-                    // it. Measured, because it had to be: a probe with ore
-                    // veins on and an unconditional surface rule painting
-                    // every repaintable block left all 12934 vein blocks
-                    // untouched while repainting all 5548 non-vein candidate
-                    // positions. Without this the overworld's own `deepslate`
-                    // rule — unconditionally true below y = -8 — would erase
-                    // every iron vein in the world, iron's whole range being
-                    // [-60, -8].
-                    //
-                    // Keyed on the vein blocks themselves, not on "anything
-                    // that is not the default block": `categorize` counts
-                    // lava as solid too, and shielding THAT from the surface
-                    // rules would quietly move the aquifer results this file
-                    // already has exact.
-                    if (oreVeins_.has_value() && isVeinBlock(into.at(localX, y, localZ))) {
-                        continue;
-                    }
+                if (!(into.at(localX, y, localZ) == settings_->defaultBlock)) {
+                    continue;
                 }
                 if (needsBiomeIdentity) {
                     const std::int32_t quartY = quartSnap(y);
@@ -873,9 +980,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 }
 
                 context.y = y;
-                context.stoneDepthAbove = stoneDepthAbove[static_cast<std::size_t>(y - minY)];
-                context.stoneDepthBelow = stoneDepthBelow[static_cast<std::size_t>(y - minY)];
-                context.waterHeight = waterHeight;
+                context.stoneDepthAbove = column.stoneDepthAbove(y);
+                context.stoneDepthBelow = column.stoneDepthBelow(y);
+                context.waterHeight = column.waterHeight();
 
                 if (const settings::BlockState* placed = executor.apply(context);
                     placed != nullptr) {

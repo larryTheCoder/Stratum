@@ -5,8 +5,8 @@
 // `final_density` evaluates end to end for the first time — climate, splines,
 // the blended noise, the cell lattice, and the caves that reach terrain
 // through `min`s nested deep inside it. This is the test that says how close
-// that is to vanilla, and the answer is now CLOSE, AND RIGHT EXCEPT WHERE A
-// WHOLE UNIMPLEMENTED FEATURE SAYS SO.
+// that is to vanilla, and the answer is now CLOSE, AND RIGHT EXCEPT WHERE THE
+// AQUIFER PLACES A BLOCK THAT `final_density` ALONE CANNOT SEE.
 //
 // A chunk's stored OCEAN_FLOOR heightmap is the highest block that is neither
 // air nor fluid. That is NOT the same as where `final_density` last crossed
@@ -17,9 +17,12 @@
 // aquifer places a stone BARRIER between two bodies of water at different
 // levels — solid blocks no density function produced. Where that happens,
 // OCEAN_FLOOR reports the barrier, high above the terrain, and a comparison
-// against `final_density` reads it as the terrain being wrong. This build
-// does not implement the aquifer fill decision at all (SPEC §10, milestone
-// MA) — this gap is real, and it is the whole remaining reason this test's
+// against `final_density` reads it as the terrain being wrong. This test
+// scans `final_density` alone, so it cannot see a barrier: the aquifer
+// decides those after the density, in `ChunkFiller` (SPEC §10, milestone MA),
+// and golden_overworld_test.cpp scores that decision against the same
+// regions. That blind spot — not an unimplemented step; this comment once
+// said the build had no aquifer — is the whole remaining reason this test's
 // seed -1 section does not read 256 of 256.
 //
 // **The density chain's own residual — RESOLVED.** golden_terrain_no_aquifer_
@@ -32,7 +35,8 @@
 // Fixed: this build's own arithmetic now agrees with the server exactly,
 // everywhere that test looks.
 //
-// So what the two sections below measure, now, is ONLY the aquifer gap:
+// So what the two sections below measure, now, is ONLY the barriers the
+// density scan cannot see:
 //
 //   seed 42: 256 of 256 columns exact — no aquifer barriers on this seed
 //   seed -1: 252 of 256 exact, worst 28 blocks — every remaining miss is a
@@ -44,16 +48,18 @@
 // density does turn positive, correctly, once the aquifer is out of the way.
 //
 // Do not read a 256-of-256 seed as "terrain works end to end" — it means this
-// particular seed has no aquifer barriers to expose the gap that still
-// exists. golden_terrain_no_aquifer_test.cpp is what actually certifies the
-// density chain, and MA's own tests are what will certify the aquifer once
-// it exists.
+// particular seed has no aquifer barriers for the scan to miss.
+// golden_terrain_no_aquifer_test.cpp is what actually certifies the density
+// chain, and MA's own tests — golden_overworld_test.cpp among them — are what
+// certify the aquifer.
 //
 // Sampling: every eighth column over 8x8 chunks, so 256 columns spread across
 // 128x128 blocks rather than packed into one chunk. That matters — a single
 // chunk of seed 42 comes out 256 of 256 and would have hidden the residual
 // entirely. Full coverage costs six minutes a seed, which is why this samples;
 // the wider runs are in SPEC.
+#include "support/fluid_flow.hpp"
+
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -85,6 +91,10 @@ struct Comparison {
     /// column only changes answer on a last-bit difference if it sits within
     /// a few ULP of a tie, and none of them do.
     double margin = 1.0e30;
+    /// Sampled columns whose stored OCEAN_FLOOR block is one fluid flow made
+    /// after generation: the counts above are pinned only because there are
+    /// none (support/fluid_flow.hpp, `flowMadeSurface`).
+    std::size_t flowMadeFloors = 0;
 };
 
 [[nodiscard]] std::filesystem::path fixtures() {
@@ -150,6 +160,10 @@ struct Comparison {
                         std::min(result.margin, std::min(std::abs(below), std::abs(above)));
 
                     ++result.columns;
+                    result.flowMadeFloors +=
+                        static_cast<std::size_t>(stratum::test::flowMadeSurface(
+                            decoded.blockAt(localX, *stored, localZ),
+                            decoded.blockAt(localX, *stored + 1, localZ)));
                     const long long diff = ours - *stored;
                     if (diff == 0) {
                         ++result.exact;
@@ -177,6 +191,10 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
     SECTION("seed 42") {
         const Comparison result = compare(42);
         REQUIRE(result.columns == 256U);
+        // The server's post-generation flow (SPEC §7) reaches no sampled
+        // floor, so it cannot move the counts; CI regenerates the regions,
+        // so that is checked rather than assumed.
+        CHECK(result.flowMadeFloors == 0U);
         // Pinning exact counts is only sound if no column is near a tie.
         // Measured, the closest is 1.4e-05 from zero — six orders of
         // magnitude above double rounding — so an x86-64/ARM64 contraction
@@ -198,13 +216,15 @@ TEST_CASE("the terrain chain runs end to end, and is close but not right",
         }
         const Comparison result = compare(-1);
         REQUIRE(result.columns == 256U);
+        CHECK(result.flowMadeFloors == 0U);
         CHECK(result.margin > 1.0e-9);
-        // What is left, now, is ENTIRELY the aquifer gap: this seed has
-        // barriers, and 28 blocks is a column whose terrain this build gets
-        // wrong specifically because it does not place them (SPEC §10,
-        // milestone MA) — not a density error. Before the fold epsilon:
-        // 249 of 256, 252 within one; the four newly-exact columns were
-        // ordinary density misses, distinct from the barrier gap below.
+        // What is left, now, is ENTIRELY aquifer barriers the density scan
+        // cannot see: this seed has them, and 28 blocks is a column whose
+        // OCEAN_FLOOR is a barrier the aquifer places after `final_density`
+        // (SPEC §10, milestone MA) — not a density error, and not a step
+        // this build lacks. Before the fold epsilon: 249 of 256, 252 within
+        // one; the four newly-exact columns were ordinary density misses,
+        // distinct from the barriers below.
         CHECK(result.exact == 252U);
         CHECK(result.withinOne == 252U);
         CHECK(result.worst == 28);

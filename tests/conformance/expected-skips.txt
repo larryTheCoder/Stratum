@@ -1,0 +1,30 @@
+# Conformance cases CI expects to SKIP, and why (SPEC §7).
+#
+# tools/check-skips fails the conformance job on any skip this does not
+# list, and on any case listed here that ran, so the list stays exact: when
+# a fixture starts arriving, its lines go in the same change. One per line:
+# <reason> <full ctest name>. A case that starts skipping in CI either gets
+# its corpus generated (a unit in tools/probe-worlds) or a reviewed line here.
+#
+#   no-generator  reads a probe corpus that no committed script produces.
+#
+# Every region-golden case runs in CI: tools/probe-worlds' goldens shards
+# generate the regions they read (r.4.3 at seed -4172144997902289642
+# included), so none is listed here.
+
+# probes/surf (entries aps, bandlands, steep)
+no-generator conformance.the band's lower edge is the condition going false, not the surface pass stopping
+# probes/apsb4 (SPEC §11 describes it; no script makes it)
+no-generator conformance.neither the cell geometry nor flat_cache moves the lattice
+no-generator conformance.the model-free reading holds where the cell geometry varies too
+# probes/orevein-multi and probes/orevein-heldout: ore-vein-probe.sh writes
+# probes/orevein/{ov,ova} instead, and density-probe.sh refuses its second seed
+no-generator conformance.ore veins match the server on the discovery worlds
+no-generator conformance.ore veins match the server on worlds generated after the fact
+# probes/psl/psl_overworld
+no-generator conformance.the surface level the server itself computes is the one this build computes
+# probes/cellsize/cell1 and probes/tall/t00..t54
+no-generator conformance.vertical_gradient fires where the server fired it
+no-generator conformance.vertical_gradient holds across every band of the bracket sweep
+# probes/wss-edges
+no-generator conformance.the rarity ladders the server itself uses are the ones this build uses

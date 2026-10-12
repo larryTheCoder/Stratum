@@ -1,8 +1,9 @@
 # tests/conformance/ — Tier-A golden diffs against vanilla output (SPEC §7).
 #
 # Fixtures are Mojang-derived and are NEVER committed (SPEC §12): they are
-# produced locally or in CI by tools/fetch-vanilla from an official jar the
-# user downloads themselves. The repo ships the scripts, not the data.
+# produced locally or in CI by tools/fetch-vanilla and tools/probe-worlds
+# from an official jar downloaded from Mojang. The repo ships the scripts,
+# not the data.
 #
 # M0 wires the label, the fixture location and the guard. The real cases
 # (cli diff over a fixed seed set) arrive with the harness in M1.
@@ -19,6 +20,7 @@ add_test(NAME conformance.fixtures_present
 set_tests_properties(conformance.fixtures_present PROPERTIES
     LABELS "conformance"
     SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
 )
 
 # --- The NBT reader against real, vanilla-written files ---------------------
@@ -29,21 +31,40 @@ add_executable(stratum_conformance_tests
     golden_terrain_test.cpp
     golden_terrain_no_aquifer_test.cpp
     golden_end_test.cpp
+    golden_overworld_test.cpp
+    golden_aquifer_tiebreak_test.cpp
     golden_regions_test.cpp
     nbt_structures_test.cpp
     nbt_writer_test.cpp
     vanilla_above_preliminary_surface_test.cpp
     vanilla_ore_vein_test.cpp
     vanilla_ore_vein_placement_test.cpp
+    vanilla_aquifer_fluid_boundaries_test.cpp
+    vanilla_aquifer_fluid_ceiling_test.cpp
+    vanilla_aquifer_fluidnear_test.cpp
     vanilla_aquifer_fluid_type_test.cpp
+    vanilla_aquifer_fluid_update_test.cpp
     vanilla_aquifer_depthgate_test.cpp
     vanilla_aquifer_jitter_test.cpp
+    vanilla_aquifer_level_test.cpp
     vanilla_aquifer_lowsea_test.cpp
+    vanilla_aquifer_lowfloor_test.cpp
+    vanilla_aquifer_ties_test.cpp
     vanilla_aquifer_varying_surface_test.cpp
     vanilla_aquifer_selection_test.cpp
     vanilla_aquifer_barrier3source_test.cpp
+    vanilla_aquifer_default_block_test.cpp
     vanilla_aquifer_deepfloor_test.cpp
     vanilla_aquifer_waterlava_test.cpp
+    vanilla_aquifer_nsfloor_test.cpp
+    vanilla_aquifer_nearsurface_test.cpp
+    vanilla_aquifer_lava_run_test.cpp
+    vanilla_aquifer_legacy_test.cpp
+    vanilla_orevein_legacy_test.cpp
+    vanilla_aquifer_farcell_test.cpp
+    vanilla_aquifer_presets_test.cpp
+    vanilla_aquifer_yskip_test.cpp
+    vanilla_aquifer_markers_test.cpp
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_biome_tie_break_test.cpp

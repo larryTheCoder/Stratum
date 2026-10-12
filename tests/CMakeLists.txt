@@ -82,6 +82,39 @@ if(UNIX)
     set_tests_properties(unit.tools.mcdoc_generator PROPERTIES
         LABELS "unit" SKIP_RETURN_CODE 77)
 
+    # tools/probe-worlds: its table against tools/analysis and ci.yml (every
+    # *-probe.sh a unit or exempt, the CI matrix and restores in step), and
+    # generate/verify/key end to end against stub generators. Offline.
+    add_test(NAME unit.tools.probe_worlds
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/probe_worlds_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.probe_worlds PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
+
+    # tools/check-skips, the conformance job's gate: ctest counts a skip as a
+    # pass, so without it a fixture that stopped arriving leaves CI green.
+    add_test(NAME unit.tools.check_skips
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_skips_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.check_skips PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
+
+    # check-determinism.sh rule 8 against every YAML spelling of an artifact
+    # upload: lint.determinism only sees that today's tree has none.
+    add_test(NAME unit.tools.no_artifact_upload
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/no_artifact_upload_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.no_artifact_upload PROPERTIES LABELS "unit")
+
+    # check-determinism.sh rule 9, a line scan, against the spellings it must
+    # accept and refuse: lint.determinism only sees today's tree.
+    add_test(NAME unit.tools.after_fail
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/after_fail_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.after_fail PROPERTIES LABELS "unit")
+
     add_test(NAME lint.determinism
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../tools/lint/check-determinism.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."

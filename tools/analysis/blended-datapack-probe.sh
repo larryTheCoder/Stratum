@@ -25,6 +25,8 @@
 set -euo pipefail
 
 readonly MINECRAFT_VERSION="1.21.11"
+readonly PACK_FORMAT_MAJOR=94
+readonly PACK_FORMAT_MINOR=1
 readonly K="1.5"          # scales N so it spans most of the y range
 readonly MIN_Y=-64
 readonly HEIGHT=384
@@ -47,7 +49,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ ${accept_eula} -eq 1 ]] || die "this runs the Minecraft server, so it needs --accept-eula"
 command -v java >/dev/null 2>&1 || die "java is needed"
 
-jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find "${repo_root}/.fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar under .fixtures/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
@@ -57,8 +61,19 @@ server="${work}/server"
 pack="${server}/world/datapacks/stratum-probe/data/stratum"
 mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome"
 
-cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<'META'
-{"pack": {"pack_format": 94, "description": "stratum old_blended_noise probe"}}
+# min_format/max_format, not pack_format: given pack_format alone at this pack
+# format the server logs "Couldn't load file/stratum-probe pack metadata: ...
+# missing mandatory fields min_format and max_format", then loads the pack
+# anyway. So it was only noise: a world generated either way decodes to the
+# same blocks. The same shape as tools/fetch-vanilla and density-probe.sh.
+cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<META
+{
+  "pack": {
+    "description": "stratum old_blended_noise probe",
+    "min_format": [${PACK_FORMAT_MAJOR}, ${PACK_FORMAT_MINOR}],
+    "max_format": ${PACK_FORMAT_MAJOR}
+  }
+}
 META
 
 cat > "${pack}/dimension/probe.json" <<'DIM'

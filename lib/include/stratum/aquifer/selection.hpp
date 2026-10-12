@@ -2,11 +2,11 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // `lattice.hpp` says what fluid ONE cell holds. `barrier.hpp` says what
-// happens where TWO of them disagree. Nothing said which cells those are, and
-// that gap is why the filler still refuses aquifers: `placesBarrier` has only
-// ever been called with two levels handed to it by a caller that does not
-// exist in this tree, and about 13% of the server's real barriers come from a
-// THIRD source that no two-source caller could ever supply.
+// happens where TWO of them disagree. This says which cells those are — the
+// layer whose absence once kept the filler refusing aquifers, since about 13%
+// of the server's real barriers come from a THIRD source that no two-source
+// caller could ever supply. `ChunkFiller` calls it through
+// `computeSubstance` (substance.hpp).
 //
 // This file is that missing layer. It is the first code in `lib/` written
 // against the clean-room specification of SPEC §12 rather than derived here
@@ -22,26 +22,34 @@
 //     own position — not from its centre (spec Q4.2). 1742/1742 and 1690/1690
 //     against 0/n for a `+0.5` variant.
 //   * Four ranks are kept, and the fourth never reaches the substance
-//     decision (spec Q4.3). 2582 blocks chosen because two models disagree on
-//     rank 4 alone.
+//     decision (spec Q4.3): 2582 blocks chosen because two models disagree on
+//     rank 4 alone. Only Q8's fluid-update flag reads it (substance.hpp).
 //   * Ties displace toward the LATER candidate, at every rank (spec Q4.4).
 //     228/228 and 334/334, where this project's own earlier "first wins"
-//     scores 12.3%.
+//     scores 12.3%. And on real generation: over the eight golden overworld
+//     regions, swapping a tied pair changes 1617 blocks (65 at ranks 1-2,
+//     none at 2-3, 1552 at 3-4); the golden holds what only this order
+//     leaves on 1585 of them, what either could on 32, and what only the
+//     swap leaves on none (golden_aquifer_tiebreak_test.cpp). On the
+//     deep-floor probe a swap moves 27 barrier verdicts at ranks 2-3 and
+//     1131 at 3-4, every one the server's way for this order
+//     (vanilla_aquifer_deepfloor_test.cpp).
 //
-// WHAT IS NOT, and is marked rather than passed through:
-//
-//   * The WINDOW itself (spec Q4.1). The asymmetric set below and the
-//     symmetric 27-cell set agree on the NEAREST source on all but about two
-//     blocks in a million, and where they part at rank 2 the nearest pair has
-//     already stopped competing — so Q6.2's short-circuit hides the difference
-//     in every block the server writes. That is why 6291456-block barrier
-//     corpora scored the two identically, and it is reproduced here from this
-//     build's own centres. It is adopted as the spec's hypothesis, and
-//     `kWindowIsUntested` says so at the call site.
+//   * The WINDOW (spec Q4.1), against its obvious rival, the symmetric 27
+//     cells. The two agree on the NEAREST source on all but about two blocks
+//     in a million, and where they part at rank 2 the nearest pair has
+//     usually stopped competing — so on the two-source barrier corpora, where
+//     neighbouring sources held one level, Q6.2's short-circuit hid every
+//     difference and 6291456 blocks scored the two identically. The deep-floor
+//     corpora hold neighbours at DIFFERENT levels, and there the three-source
+//     barrier reaches rank 3: over 7.9 million blocks on three seeds the
+//     rival's first three ranks differ on 118980, its verdict on 39, and the
+//     server sides with this window on all 39 (vanilla_aquifer_deepfloor_test).
+//     Only that rival is refuted; another asymmetric set has not been tried.
 //
 // WHAT THE WHOLE LAYER SCORES AGAINST THE SERVER, which is the part no unit
 // vector can supply. Two readouts of the open-void probe, neither of them
-// touching the refuted barrier predicate (tests/conformance):
+// touching the barrier predicate at all (tests/conformance):
 //
 //   * 637252 barrier blocks the server wrote, on four seeds. Every one has
 //     `d2 - d1 < 25`, which is the only separation at which any of Q6.6's
@@ -80,13 +88,6 @@ struct CandidateOffset {
 };
 
 inline constexpr std::size_t kCandidateCount = 12;
-
-/// UNTESTED, deliberately flagged. The window is the one part of the selection
-/// layer no instrument in this project has separated from its rivals: the
-/// asymmetric set and the symmetric 27-cell set produce the same first two
-/// ranks everywhere a barrier can form, so every barrier measurement scores
-/// them identically. It is here as the spec's claim, not as a finding.
-inline constexpr bool kWindowIsUntested = true;
 
 /// The candidate cells, as offsets from the home cell, IN ITERATION ORDER.
 ///
@@ -175,10 +176,12 @@ struct Source {
 ///
 /// Rank 4 is retained and must NOT be fed to the substance decision: it
 /// reaches only the fluid-update flag (spec Q4.3, confirmed on 2582 blocks
-/// chosen because two models disagree on rank 4 alone). This build has no
-/// fluid-update flag yet, so rank 4 is currently carried and unused — kept
-/// because dropping it would change which cell occupies rank 3 the moment a
-/// rank 3-4 tie arises, and those are the ties that move the most blocks.
+/// chosen because two models disagree on rank 4 alone). The flag's last
+/// clause is its one reader (substance.hpp's `fluidUpdateFlag`). It would
+/// be kept even without one: dropping it would change which cell occupies
+/// rank 3 the moment a rank 3-4 tie arises, and those are the ties that move
+/// the most blocks — 1552 of the 1617 tie swaps that change a block over the
+/// eight golden overworld regions (golden_aquifer_tiebreak_test.cpp).
 struct Selection {
     std::array<Source, kRankCount> ranked{};
 
@@ -199,8 +202,11 @@ struct Selection {
 /// distance EQUALS the value standing at a rank takes that rank and cascades
 /// the previous occupant down, and this holds independently at all four —
 /// spec Q4.4, confirmed here at 228/228 and 334/334 against the server, where
-/// this project's own "first wins" reading scores 12.3%. Which is to say the
-/// comparisons below are `<=` and every one of them matters.
+/// this project's own "first wins" reading scores 12.3%, and on the goldens
+/// at every block a swap changes that the golden can decide (this file's
+/// header). Which is to say the comparisons below are `<=` and every one of
+/// them matters — though a rank 2-3 tie reaches a block far more rarely
+/// than the other two (SPEC §11, open question 9).
 ///
 /// Spelled to take a span rather than the window so that the ranking rule can
 /// be given known-answer vectors without a world seed anywhere in the loop.

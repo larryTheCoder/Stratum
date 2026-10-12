@@ -189,7 +189,7 @@ TEST_CASE("the tie rule holds independently at every one of the four ranks", "[a
 }
 
 TEST_CASE("selection over a real seed is ordered and reaches its own cell", "[aquifer]") {
-    const CentreSource centres{42};
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
 
     std::size_t blocks = 0;
     for (std::int32_t x = -40; x < 40; x += 3) {
@@ -227,7 +227,7 @@ TEST_CASE("every candidate lies within the window's own distance bound", "[aquif
     // The header claims the squared distance cannot exceed 1284, which is what
     // lets it be an int32 rather than the int64 a general distance needs.
     // Checked over enough blocks to cover every residue of the shift.
-    const CentreSource centres{-1};
+    const CentreSource centres{-1, stratum::density::RandomSource::Xoroshiro};
     std::int32_t worst = 0;
     for (std::int32_t x = 0; x < 32; ++x) {
         for (std::int32_t z = 0; z < 32; ++z) {
@@ -258,7 +258,7 @@ TEST_CASE("the shift is what makes a forward-only window bracket the block", "[a
     // Without the shift the same measurement gives 0.855 to 0.888, which is
     // what gives this case its teeth.
     for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{-1}}) {
-        const CentreSource centres{seed};
+        const CentreSource centres{seed, stratum::density::RandomSource::Xoroshiro};
         long long blocks = 0;
         long long bracketedXZ = 0;
         long long bracketedY = 0;
@@ -294,22 +294,21 @@ TEST_CASE("the shift is what makes a forward-only window bracket the block", "[a
     }
 }
 
-TEST_CASE("the symmetric window is why Q4.1 is the one part still untested", "[aquifer]") {
+TEST_CASE("the symmetric window parts from the spec's rarely, and where a barrier can form",
+          "[aquifer]") {
     // The spec's window is asymmetric; the obvious rival is the symmetric
-    // 27-cell set. This case is not an assertion that ours is right — nothing
-    // in this project has shown that — it is the SHAPE OF THE BLOCKER, kept
-    // executable so that it speaks up if it ever stops being true.
+    // 27-cell set. This case is the shape of why the two were so hard to
+    // separate, kept executable: they agree on the NEAREST source essentially
+    // always (about two blocks in a million disagree), and where they part at
+    // rank 2 the nearest pair has usually stopped competing, so the spec's
+    // Q6.2 short-circuit hides the difference. That is why 6291456-block
+    // two-source barrier corpora scored the two identically.
     //
-    // The two sets agree on the NEAREST source essentially always (about two
-    // blocks in a million disagree), and where they part at rank 2 the nearest
-    // pair has already stopped competing, so the spec's Q6.2 short-circuit
-    // makes the difference invisible in any block the server writes. That is
-    // exactly why 6291456-block barrier corpora scored the two identically.
-    //
-    // If a rank-2 disagreement ever lands INSIDE the barrier-reachable shell
-    // often enough to measure, Q4.1 becomes testable and this case is the
-    // place that says so.
-    const CentreSource centres{42};
+    // The server has since separated them where the three-source barrier
+    // reaches rank 3 on sources of different levels: 39 blocks whose verdict
+    // the rival changes, all 39 decided the spec's way
+    // (tests/conformance/vanilla_aquifer_deepfloor_test.cpp).
+    const CentreSource centres{42, stratum::density::RandomSource::Xoroshiro};
     long long blocks = 0;
     long long differAtRankOne = 0;
     long long differAtRankTwo = 0;
@@ -350,12 +349,7 @@ TEST_CASE("the symmetric window is why Q4.1 is the one part still untested", "[a
                    << differAtRankTwo << ", of those in the barrier shell " << differInShell);
     REQUIRE(blocks > 90000);
 
-    // The marker the header points at. It is not decoration: while it stands,
-    // the window below is the spec's hypothesis rather than this project's
-    // finding, and anything that leans on it inherits that.
-    STATIC_REQUIRE(stratum::aquifer::kWindowIsUntested);
-
-    // The two sets DO differ, or there would be nothing to be untested about.
+    // The two sets DO differ, or there would be nothing to separate.
     CHECK(differAtRankTwo > 0);
     // And essentially never where a barrier could form. Measured at 44 of 3993
     // over 3538944 blocks on this seed, so a handful is expected here rather

@@ -26,9 +26,11 @@
 // barrier.hpp's header and `vanilla_aquifer_waterlava_test.cpp`.
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/fluid_type.hpp>
+#include <stratum/aquifer/lattice.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 
 using stratum::aquifer::BarrierAt;
@@ -141,6 +143,19 @@ TEST_CASE("the barrier's LID is the /2.5 arm, and only a both-air pair reaches i
     CHECK_FALSE(placesBarrier(lid));
     lid.barrier = 1.2;
     CHECK(placesBarrier(lid));
+
+    // The pair above separates /2.5 from /1.5 only: it accepts any divisor
+    // d with 1.5/d in [0.5, 0.7), i.e. (2.143, 3.0], so the /3 arm's own
+    // constant passed it on the boundary. The block fires iff
+    // b > 0.5 + 1.5/d, and 1.09/1.11 narrows that to (2.459, 2.542] —
+    // inside the server's own bracket, rejecting both neighbours: on the
+    // deepfloor worlds 2.4 leaves real barriers unwritten and 2.6 writes
+    // stone the server does not (vanilla_aquifer_deepfloor_test.cpp). At
+    // d = 2.5 each side sits 0.02 from the threshold, far above rounding.
+    lid.barrier = 1.09;
+    CHECK_FALSE(placesBarrier(lid));
+    lid.barrier = 1.11;
+    CHECK(placesBarrier(lid));
 }
 
 TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reaches it",
@@ -154,7 +169,7 @@ TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reache
     // t = -9.5, `3 + t = -6.5`, so `u = -6.5/10 = -0.65` and Π = 2·(b −
     // 0.65), firing at weight 1 and D = -1 for b > 1.15. The divisor is
     // what the case pins: on `/3` the same block gives u = -2.1667, which
-    // is outside `kBarrierReachAbove` so the router value is zeroed
+    // is outside `kBarrierNoiseReach` (|u| <= 2) so the router value is zeroed
     // entirely and NO value of `barrier` can fire it. 10 is the measured
     // one — it beats 3 on 65 231 of 65 231 server blocks where they differ.
     BarrierAt floor;
@@ -166,6 +181,16 @@ TEST_CASE("the barrier's FLOOR is the /10 arm, and only a both-fluid pair reache
     floor.barrier = 1.1;
     CHECK_FALSE(placesBarrier(floor));
     floor.barrier = 1.2;
+    CHECK(placesBarrier(floor));
+    // 1.1/1.2 accepts any d with 6.5/d in [0.6, 0.7), i.e. (9.286, 10.833].
+    // The block fires iff b > 0.5 + 6.5/d, so 1.145/1.155 narrows it to
+    // (9.924, 10.078] — inside the server's bracket, rejecting 9.9 (real
+    // barriers left unwritten on the deepfloor worlds) and 10.1 (stone the
+    // server does not have). At d = 10 each side sits 0.01 from the
+    // threshold.
+    floor.barrier = 1.145;
+    CHECK_FALSE(placesBarrier(floor));
+    floor.barrier = 1.155;
     CHECK(placesBarrier(floor));
 
     // And the arm's own boundary, four blocks under the lower level. At
@@ -358,4 +383,173 @@ TEST_CASE("a third source rescues a block the nearest two alone would miss", "[a
 
     // With the third source, the A2-A3 disagreement rescues it.
     CHECK(placesBarrier(at));
+}
+
+TEST_CASE("retyping every source alike changes no barrier", "[aquifer]") {
+    // The property the waterlava case used to assert against the server,
+    // where it was true by construction and so measured nothing: Π reads
+    // the TYPES only through a pair that both read fluid and differ, so a
+    // junction whose sources all share one type answers the same whichever
+    // type that is. Swept here over levels on both sides of the block, the
+    // three distance gaps either side of the similarity range, densities
+    // and barrier values.
+    std::size_t compared = 0;
+    std::size_t placed = 0;
+    for (const std::int32_t first : {-30, -2, 0, 3, 12}) {
+        for (const std::int32_t second : {-20, -1, 1, 4, 40}) {
+            for (const std::int32_t third : {-8, 2, 25}) {
+                for (const std::int64_t gap12 : {0, 6, 13, 24, 26}) {
+                    for (const std::int64_t gap23 : {0, 10, 30}) {
+                        for (const double density : {-1.0, -0.2}) {
+                            for (const double barrier : {-1.0, 0.0, 1.5}) {
+                                BarrierAt at;
+                                at.y = 0;
+                                at.density = density;
+                                at.barrier = barrier;
+                                at.nearest = {.level = first, .distanceSq = 100};
+                                at.second = {.level = second, .distanceSq = 100 + gap12};
+                                at.third = {.level = third, .distanceSq = 100 + gap12 + gap23};
+                                const bool water = placesBarrier(at);
+                                at.nearest.type = FluidType::Lava;
+                                at.second.type = FluidType::Lava;
+                                at.third.type = FluidType::Lava;
+                                CHECK(placesBarrier(at) == water);
+                                ++compared;
+                                placed += water ? 1U : 0U;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared == 5U * 5U * 3U * 5U * 3U * 2U * 3U);
+    // Not vacuous: the sweep reaches both answers.
+    CHECK(placed > 0U);
+    CHECK(placed < compared);
+}
+
+TEST_CASE("Q6.2's gate is one function, strict at a separation of 25", "[aquifer][barrier]") {
+    // computeSubstance leaves the `barrier` value unread wherever this is
+    // false, so it has to be exactly the predicate's own short-circuit.
+    using stratum::aquifer::nearestPairCompetes;
+    using stratum::aquifer::similarity;
+    for (const std::int64_t nearest : {std::int64_t{0}, std::int64_t{1}, std::int64_t{100}}) {
+        CHECK(nearestPairCompetes(nearest, nearest));
+        CHECK(nearestPairCompetes(nearest, nearest + 24));
+        CHECK_FALSE(nearestPairCompetes(nearest, nearest + 25));
+        CHECK_FALSE(nearestPairCompetes(nearest, nearest + 400));
+        int agree = 0;
+        for (std::int64_t gap = 0; gap <= 30; ++gap) {
+            agree += static_cast<int>(nearestPairCompetes(nearest, nearest + gap) ==
+                                      (similarity(nearest, nearest + gap) > 0.0));
+        }
+        CHECK(agree == 31);
+    }
+    // And the predicate agrees with it at the edge, whatever the router
+    // value says.
+    BarrierAt at = between(1, 1, 25, 100.0);
+    CHECK_FALSE(placesBarrier(at));
+    at.second.distanceSq = 24;
+    CHECK(placesBarrier(at));
+}
+
+TEST_CASE("the barrier value read on demand decides every block as the stored one does",
+          "[aquifer][barrier]") {
+    // The on-demand overload reads the router value at most once, and only
+    // where a term weighs it. Over a grid of three-source configurations the
+    // two overloads must agree on every block; and wherever the on-demand one
+    // did not read, the stored one must give the same answer for ANY value —
+    // the value really was not weighed there, which is what makes leaving
+    // the read out invisible.
+    using stratum::aquifer::BarrierNoise;
+    constexpr std::array<std::int32_t, 6> kLevels{-30, -4, 0, 3, 40, stratum::aquifer::kNeverLevel};
+    constexpr std::array<std::int64_t, 5> kSecond{0, 3, 12, 24, 25};
+    constexpr std::array<std::int64_t, 4> kThirdOffset{0, 5, 30, 100};
+    constexpr std::array<double, 3> kNoise{-1.0, 0.3, 2.5};
+    constexpr std::array<std::array<FluidType, 3>, 4> kTypes{{
+        {FluidType::Default, FluidType::Default, FluidType::Default},
+        {FluidType::Lava, FluidType::Default, FluidType::Default},
+        {FluidType::Default, FluidType::Lava, FluidType::Default},
+        {FluidType::Default, FluidType::Default, FluidType::Lava},
+    }};
+    long long blocks = 0;
+    long long read = 0;
+    long long placed = 0;
+    long long disagreements = 0;
+    long long readTwice = 0;
+    long long flagWrong = 0;
+    long long unreadButWeighed = 0;
+    long long readWithoutCompeting = 0;
+    const auto decide = [&](const BarrierAt& at) {
+        const bool stored = placesBarrier(at);
+        int calls = 0;
+        const double noise = at.barrier;
+        const auto counted = [&calls, noise] {
+            ++calls;
+            return noise;
+        };
+        BarrierNoise onDemand(counted);
+        BarrierAt blind = at;
+        blind.barrier = 1.0e9; // this overload never reads the stored field
+        const bool demanded = placesBarrier(blind, onDemand);
+
+        ++blocks;
+        read += static_cast<long long>(calls > 0);
+        placed += static_cast<long long>(stored);
+        disagreements += static_cast<long long>(stored != demanded);
+        readTwice += static_cast<long long>(calls > 1);
+        flagWrong += static_cast<long long>(onDemand.wasRead() != (calls > 0));
+        readWithoutCompeting +=
+            static_cast<long long>(calls > 0 && !stratum::aquifer::nearestPairCompetes(
+                                                    at.nearest.distanceSq, at.second.distanceSq));
+        if (calls == 0) {
+            BarrierAt low = at;
+            low.barrier = -1000.0;
+            BarrierAt high = at;
+            high.barrier = 1000.0;
+            unreadButWeighed += static_cast<long long>(placesBarrier(low) != stored ||
+                                                       placesBarrier(high) != stored);
+        }
+    };
+    for (const std::int32_t l1 : kLevels) {
+        for (const std::int32_t l2 : kLevels) {
+            for (const std::int32_t l3 : kLevels) {
+                for (std::int32_t y = -6; y <= 6; y += 2) {
+                    for (const std::int64_t d2 : kSecond) {
+                        for (const std::int64_t d3 : kThirdOffset) {
+                            for (const auto& types : kTypes) {
+                                for (const double density : {-1.0, -0.2}) {
+                                    for (const double noise : kNoise) {
+                                        BarrierAt at;
+                                        at.y = y;
+                                        at.density = density;
+                                        at.nearest = BarrierSource{
+                                            .level = l1, .distanceSq = 0, .type = types[0]};
+                                        at.second = BarrierSource{
+                                            .level = l2, .distanceSq = d2, .type = types[1]};
+                                        at.third = BarrierSource{
+                                            .level = l3, .distanceSq = d2 + d3, .type = types[2]};
+                                        at.barrier = noise;
+                                        decide(at);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(blocks == 6LL * 6 * 6 * 7 * 5 * 4 * 4 * 2 * 3);
+    CHECK(disagreements == 0);
+    CHECK(readTwice == 0);
+    CHECK(flagWrong == 0);
+    CHECK(unreadButWeighed == 0);
+    CHECK(readWithoutCompeting == 0);
+    // Not vacuous: the grid places stone, reads the value, and leaves the
+    // read out on most of it.
+    CHECK(placed > 0);
+    CHECK(read > 0);
+    CHECK(read < blocks / 2);
 }

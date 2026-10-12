@@ -10,6 +10,9 @@
 //   function freezePipeline(string $versionRoot, string $blobPath): void
 //   function bedrockBlockState(int $javaStateId): array
 //   function javaBlockStateCount(): int
+//   function takeFluidUpdates(string $blobPath, string $noiseSettings,
+//                             string $biomeParameterList, int $seed,
+//                             int $chunkX, int $chunkZ): array
 //   final class Dimension {
 //       static function open(string $blobPath, string $noiseSettings,
 //                            string $biomeParameterList, int $seed): Dimension
@@ -26,6 +29,12 @@
 // compiling, never while generating. PHP objects themselves never cross
 // threads; each thread's Dimension object holds its own shared_ptr.
 //
+// FLUID UPDATES cross threads the same way and no other: a worker's
+// `encodeChunk` leaves the chunk's fluid updates in its world's outbox
+// (stratum_pmmp/fluid_updates.hpp), and the main thread's
+// `takeFluidUpdates` removes them, by the world's options and seed, without
+// opening or compiling anything.
+//
 // EXCEPTIONS never cross into the engine: a C++ exception unwinding through
 // zend frames is undefined behaviour, so every entry point catches and
 // rethrows as Stratum\GenerationException.
@@ -37,6 +46,7 @@
 #include <stratum/world/dimension.hpp>
 
 #include <stratum_pmmp/chunk_encoder.hpp>
+#include <stratum_pmmp/fluid_updates.hpp>
 
 // php.h has to come first — the others use macros it defines — and
 // clang-format would sort it last.
@@ -127,6 +137,18 @@ Registry& registry() {
     return instance;
 }
 
+/// Every world's fluid-update outbox. Keyed by the world's own generator
+/// options and seed, not by the blob's content as the registry above is
+/// (fluidUpdateWorldKey's doc says why).
+stratum::pmmp::FluidUpdateOutboxes& outboxes() {
+    static stratum::pmmp::FluidUpdateOutboxes instance;
+    return instance;
+}
+
+[[nodiscard]] std::string fromZend(const zend_string* text) {
+    return {ZSTR_VAL(text), ZSTR_LEN(text)};
+}
+
 // --- errors -----------------------------------------------------------------
 
 /// Rethrows the in-flight C++ exception as Stratum\GenerationException.
@@ -145,6 +167,10 @@ void throwAsPhp() {
 
 struct DimensionObject {
     std::shared_ptr<const stratum::world::CompiledDimension> dimension;
+    /// Where encodeChunk leaves each chunk's fluid updates for the main
+    /// thread. Attached for as long as this object lives, which is as long
+    /// as PocketMine-MP keeps the world's generator on this thread.
+    std::shared_ptr<stratum::pmmp::FluidUpdateOutbox> fluidUpdates;
     zend_object std;
 };
 
@@ -158,6 +184,7 @@ zend_object* dimensionCreate(zend_class_entry* classType) {
     auto* object = static_cast<DimensionObject*>(
         ecalloc(1, sizeof(DimensionObject) + zend_object_properties_size(classType)));
     new (&object->dimension) std::shared_ptr<const stratum::world::CompiledDimension>();
+    new (&object->fluidUpdates) std::shared_ptr<stratum::pmmp::FluidUpdateOutbox>();
     zend_object_std_init(&object->std, classType);
     object_properties_init(&object->std, classType);
     object->std.handlers = &dimensionHandlers;
@@ -166,6 +193,7 @@ zend_object* dimensionCreate(zend_class_entry* classType) {
 
 void dimensionFree(zend_object* object) {
     DimensionObject* intern = fetchDimension(object);
+    intern->fluidUpdates.~shared_ptr();
     intern->dimension.~shared_ptr();
     zend_object_std_dtor(&intern->std);
 }
@@ -203,6 +231,15 @@ ZEND_ARG_TYPE_INFO(0, javaStateId, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_javaBlockStateCount, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_takeFluidUpdates, 0, 6, IS_ARRAY, 0)
+ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeParameterList, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, seed, IS_LONG, 0)
+ZEND_ARG_TYPE_INFO(0, chunkX, IS_LONG, 0)
+ZEND_ARG_TYPE_INFO(0, chunkZ, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_Dimension___construct, 0, 0, 0)
@@ -286,6 +323,50 @@ static ZEND_FUNCTION(stratum_javaBlockStateCount) {
     RETURN_LONG(static_cast<zend_long>(stratum::mapping::javaBlockStateCount()));
 }
 
+static ZEND_FUNCTION(stratum_takeFluidUpdates) {
+    zend_string* blobPath = nullptr;
+    zend_string* noiseSettings = nullptr;
+    zend_string* biomeParameterList = nullptr;
+    zend_long seed = 0;
+    zend_long chunkX = 0;
+    zend_long chunkZ = 0;
+    ZEND_PARSE_PARAMETERS_START(6, 6)
+    Z_PARAM_STR(blobPath)
+    Z_PARAM_STR(noiseSettings)
+    Z_PARAM_STR(biomeParameterList)
+    Z_PARAM_LONG(seed)
+    Z_PARAM_LONG(chunkX)
+    Z_PARAM_LONG(chunkZ)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        // The same narrowing encodeChunk applies, so the two agree on which
+        // chunk a coordinate names.
+        const auto x = static_cast<std::int32_t>(chunkX);
+        const auto z = static_cast<std::int32_t>(chunkZ);
+        std::vector<stratum::pmmp::FluidUpdate> updates;
+        // No world open under this key means no worker generated anything
+        // for it: nothing to take, and nothing is created by asking.
+        if (const auto outbox = outboxes().find(stratum::pmmp::fluidUpdateWorldKey(
+                fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeParameterList),
+                static_cast<std::int64_t>(seed)));
+            outbox != nullptr) {
+            updates = outbox->take(x, z);
+        }
+        array_init_size(return_value, static_cast<std::uint32_t>(updates.size()));
+        for (const stratum::pmmp::FluidUpdate& update : updates) {
+            // World coordinates, as World::scheduleDelayedBlockUpdate takes.
+            zval position;
+            array_init_size(&position, 3);
+            add_next_index_long(&position, (static_cast<zend_long>(x) * 16) + update.localX);
+            add_next_index_long(&position, static_cast<zend_long>(update.y));
+            add_next_index_long(&position, (static_cast<zend_long>(z) * 16) + update.localZ);
+            add_next_index_zval(return_value, &position);
+        }
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
 static ZEND_METHOD(Stratum_Dimension, __construct) {
     ZEND_PARSE_PARAMETERS_NONE();
 }
@@ -303,12 +384,15 @@ static ZEND_METHOD(Stratum_Dimension, open) {
     ZEND_PARSE_PARAMETERS_END();
     try {
         auto dimension =
-            registry().open(std::string(ZSTR_VAL(blobPath), ZSTR_LEN(blobPath)),
-                            std::string(ZSTR_VAL(noiseSettings), ZSTR_LEN(noiseSettings)),
-                            std::string(ZSTR_VAL(biomeParameterList), ZSTR_LEN(biomeParameterList)),
-                            static_cast<std::int64_t>(seed));
+            registry().open(fromZend(blobPath), fromZend(noiseSettings),
+                            fromZend(biomeParameterList), static_cast<std::int64_t>(seed));
+        auto fluidUpdates = outboxes().attach(stratum::pmmp::fluidUpdateWorldKey(
+            fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeParameterList),
+            static_cast<std::int64_t>(seed)));
         object_init_ex(return_value, dimensionEntry);
-        fetchDimension(Z_OBJ_P(return_value))->dimension = std::move(dimension);
+        DimensionObject* object = fetchDimension(Z_OBJ_P(return_value));
+        object->dimension = std::move(dimension);
+        object->fluidUpdates = std::move(fluidUpdates);
     } catch (...) {
         throwAsPhp();
     }
@@ -332,11 +416,12 @@ static ZEND_METHOD(Stratum_Dimension, encodeChunk) {
     Z_PARAM_LONG(chunkZ)
     ZEND_PARSE_PARAMETERS_END();
     try {
-        const auto& dimension = *fetchDimension(Z_OBJ_P(ZEND_THIS))->dimension;
-        const std::vector<stratum::pmmp::EncodedSubChunk> encoded = stratum::pmmp::encodeChunk(
-            dimension, static_cast<std::int32_t>(chunkX), static_cast<std::int32_t>(chunkZ));
-        array_init_size(return_value, static_cast<std::uint32_t>(encoded.size()));
-        for (const stratum::pmmp::EncodedSubChunk& sub : encoded) {
+        DimensionObject* object = fetchDimension(Z_OBJ_P(ZEND_THIS));
+        const auto x = static_cast<std::int32_t>(chunkX);
+        const auto z = static_cast<std::int32_t>(chunkZ);
+        stratum::pmmp::EncodedChunk encoded = stratum::pmmp::encodeChunk(*object->dimension, x, z);
+        array_init_size(return_value, static_cast<std::uint32_t>(encoded.subChunks.size()));
+        for (const stratum::pmmp::EncodedSubChunk& sub : encoded.subChunks) {
             zval entry;
             array_init_size(&entry, 2);
             if (sub.blocks.has_value()) {
@@ -351,6 +436,9 @@ static ZEND_METHOD(Stratum_Dimension, encodeChunk) {
             add_index_zval(return_value, static_cast<zend_ulong>(static_cast<zend_long>(sub.index)),
                            &entry);
         }
+        // Left for the main thread, which alone can schedule them; taken by
+        // takeFluidUpdates once PocketMine-MP reports the chunk populated.
+        object->fluidUpdates->put(x, z, std::move(encoded.fluidUpdates));
     } catch (...) {
         throwAsPhp();
     }
@@ -362,7 +450,9 @@ static const zend_function_entry stratum_functions[] = {
         ZEND_NS_NAMED_FE("Stratum", bedrockBlockState, ZEND_FN(stratum_bedrockBlockState),
                          arginfo_bedrockBlockState)
             ZEND_NS_NAMED_FE("Stratum", javaBlockStateCount, ZEND_FN(stratum_javaBlockStateCount),
-                             arginfo_javaBlockStateCount) ZEND_FE_END};
+                             arginfo_javaBlockStateCount)
+                ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates, ZEND_FN(stratum_takeFluidUpdates),
+                                 arginfo_takeFluidUpdates) ZEND_FE_END};
 
 static const zend_function_entry dimension_methods[] = {
     ZEND_ME(Stratum_Dimension, __construct, arginfo_Dimension___construct, ZEND_ACC_PRIVATE)
