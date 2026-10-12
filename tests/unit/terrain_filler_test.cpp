@@ -710,90 +710,112 @@ TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the re
     // aquifer: every other vein case here runs stone, where a filler that
     // placed veins only over minecraft:stone, or wrote the default block
     // without its properties, passes unseen.
-    const auto withDefault = [](const nlohmann::json& defaultBlock) {
+    //
+    // The plane is solid only below y = 0, so the dimension's y 0..31 is open,
+    // and that is what `wrongOther` reads, at two floodednesses so that it
+    // sees both kinds of open block: at 0 the aquifer drains all of it to air
+    // ("a dimension with aquifers now fills, draining where floodedness says
+    // to"), and at 0.9 it reproduces the plain sea, water below sea level 8 and
+    // air above ("an aquifer above its own floodedness gate reproduces the
+    // plain sea, through the real mechanism").
+    const auto withDefault = [](const nlohmann::json& defaultBlock, double floodedness) {
         nlohmann::json settings = veinSettings(/*aquifers=*/true);
         settings["default_block"] = defaultBlock;
+        settings["noise_router"]["fluid_level_floodedness"] = floodedness;
         return settings;
     };
-    const TempTree tree;
-    tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}))
-        .defineSettings("test_netherrack", withDefault({{"Name", "minecraft:netherrack"}}))
-        .defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
-                                                       {"Properties", {{"axis", "x"}}}}));
-    const LoadedSettings loaded = tree.load();
-    // The flat router names no noise, so this registry is empty; one of the
-    // tree's own rather than compileFrom()'s, which is built once per process.
-    const auto noises =
-        stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 42,
-                                                stratum::density::RandomSource::Xoroshiro);
-    const auto settingsOf = [&](const char* name) -> const stratum::settings::NoiseSettings& {
-        return loaded.settings.at(stratum::data::ResourceLocation::parse(name));
-    };
-    const auto& stoneSettings = settingsOf("minecraft:test_stone");
-    const auto& stone = stoneSettings.defaultBlock;
-    const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
     const std::set<std::string> veinNames{
         "minecraft:granite", "minecraft:copper_ore",         "minecraft:raw_copper_block",
         "minecraft:tuff",    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block"};
+    for (const auto& [floodedness, waterLayers] : {std::pair{0.0, 0}, std::pair{0.9, 8}}) {
+        INFO("fluid_level_floodedness " << floodedness);
+        const TempTree tree;
+        tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}, floodedness))
+            .defineSettings("test_netherrack",
+                            withDefault({{"Name", "minecraft:netherrack"}}, floodedness))
+            .defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
+                                                           {"Properties", {{"axis", "x"}}}},
+                                                          floodedness));
+        const LoadedSettings loaded = tree.load();
+        // The flat router names no noise, so this registry is empty; one of the
+        // tree's own rather than compileFrom()'s, which is built once per
+        // process.
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(),
+                                                    42, stratum::density::RandomSource::Xoroshiro);
+        const auto settingsOf = [&](const char* name) -> const stratum::settings::NoiseSettings& {
+            return loaded.settings.at(stratum::data::ResourceLocation::parse(name));
+        };
+        const auto& stoneSettings = settingsOf("minecraft:test_stone");
+        const auto& stone = stoneSettings.defaultBlock;
+        const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
 
-    // Each dimension with the properties its default_block must parse to: the
-    // "without its properties" half of this case means nothing unless the
-    // deepslate the filler is held to really carries its axis.
-    const std::array<std::pair<const char*, std::map<std::string, std::string>>, 2> dimensions{{
-        {"minecraft:test_netherrack", {}},
-        {"minecraft:test_deepslate", {{"axis", "x"}}},
-    }};
-    for (const auto& [name, properties] : dimensions) {
-        INFO("dimension " << name);
-        const auto& settings = settingsOf(name);
-        const auto& declared = settings.defaultBlock;
-        REQUIRE(declared.name != stone.name);
-        REQUIRE(declared.properties == properties);
-        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings);
-        long long veinBlocks = 0;
-        long long defaultBlocks = 0;
-        long long wrongVein = 0;
-        long long wrongDefault = 0;
-        long long wrongOther = 0;
-        long long otherBlocks = 0;
-        for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{3, -2}}) {
-            ChunkBuffer stoneBuffer(stoneSettings.geometry);
-            ChunkBuffer buffer(settings.geometry);
-            stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
-            filler.fill(chunkX, chunkZ, buffer);
-            for (std::int32_t y = settings.geometry.minY;
-                 y < settings.geometry.minY + settings.geometry.height; ++y) {
-                for (int z = 0; z < 16; ++z) {
-                    for (int x = 0; x < 16; ++x) {
-                        const auto& control = stoneBuffer.at(x, y, z);
-                        const auto& ours = buffer.at(x, y, z);
-                        if (veinNames.contains(control.name.toString())) {
-                            ++veinBlocks;
-                            wrongVein += ours == control ? 0 : 1;
-                        } else if (control == stone) {
-                            ++defaultBlocks;
-                            wrongDefault += ours == declared ? 0 : 1;
-                        } else {
-                            ++otherBlocks;
-                            wrongOther += ours == control ? 0 : 1;
+        // Each dimension with the properties its default_block must parse to:
+        // the "without its properties" half of this case means nothing unless
+        // the deepslate the filler is held to really carries its axis.
+        const std::array<std::pair<const char*, std::map<std::string, std::string>>, 2> dimensions{{
+            {"minecraft:test_netherrack", {}},
+            {"minecraft:test_deepslate", {{"axis", "x"}}},
+        }};
+        for (const auto& [name, properties] : dimensions) {
+            INFO("dimension " << name);
+            const auto& settings = settingsOf(name);
+            const auto& declared = settings.defaultBlock;
+            REQUIRE(declared.name != stone.name);
+            REQUIRE(declared.properties == properties);
+            const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings);
+            long long veinBlocks = 0;
+            long long defaultBlocks = 0;
+            long long waterBlocks = 0;
+            long long airBlocks = 0;
+            long long wrongVein = 0;
+            long long wrongDefault = 0;
+            long long wrongOther = 0;
+            for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{3, -2}}) {
+                ChunkBuffer stoneBuffer(stoneSettings.geometry);
+                ChunkBuffer buffer(settings.geometry);
+                stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
+                filler.fill(chunkX, chunkZ, buffer);
+                for (std::int32_t y = settings.geometry.minY; y < settings.geometry.maxY(); ++y) {
+                    for (int z = 0; z < 16; ++z) {
+                        for (int x = 0; x < 16; ++x) {
+                            const auto& control = stoneBuffer.at(x, y, z);
+                            const auto& ours = buffer.at(x, y, z);
+                            const std::string controlName = control.name.toString();
+                            if (veinNames.contains(controlName)) {
+                                ++veinBlocks;
+                                wrongVein += ours == control ? 0 : 1;
+                            } else if (control == stone) {
+                                ++defaultBlocks;
+                                wrongDefault += ours == declared ? 0 : 1;
+                            } else {
+                                waterBlocks += controlName == "minecraft:water" ? 1 : 0;
+                                airBlocks += controlName == "minecraft:air" ? 1 : 0;
+                                wrongOther += ours == control ? 0 : 1;
+                            }
                         }
                     }
                 }
             }
+            INFO(veinBlocks << " vein blocks, " << defaultBlocks << " default blocks, "
+                            << waterBlocks << " water, " << airBlocks << " air");
+            CHECK(wrongVein == 0);
+            CHECK(wrongDefault == 0);
+            CHECK(wrongOther == 0);
+            // About 70% of 2 * 9 * 256 iron candidates, and the solid rest:
+            // not vacuous either way.
+            CHECK(veinBlocks > 2000);
+            CHECK(defaultBlocks > 2000);
+            // The open y 0..31 of both chunks, pinned per kind so the comment
+            // above cannot drift from what `wrongOther` reads; with the
+            // partition below, nothing else is there.
+            const long long openBlocks = 2LL * 16 * 16 * settings.geometry.maxY();
+            const long long water = 2LL * 16 * 16 * waterLayers;
+            CHECK(waterBlocks == water);
+            CHECK(airBlocks == openBlocks - water);
+            CHECK(veinBlocks + defaultBlocks + waterBlocks + airBlocks ==
+                  2LL * 16 * 16 * settings.geometry.height);
         }
-        INFO(veinBlocks << " vein blocks, " << defaultBlocks << " default blocks, " << otherBlocks
-                        << " water or air");
-        CHECK(wrongVein == 0);
-        CHECK(wrongDefault == 0);
-        CHECK(wrongOther == 0);
-        // About 70% of 2 * 9 * 256 iron candidates, and the solid rest: not
-        // vacuous either way. The plane is solid only below y = 0, so the
-        // dimension's y 0..31 (water to sea level 8, air above) is what
-        // `wrongOther` reads; the three branches cover every position.
-        CHECK(veinBlocks > 2000);
-        CHECK(defaultBlocks > 2000);
-        CHECK(otherBlocks > 2000);
-        CHECK(veinBlocks + defaultBlocks + otherBlocks == 2LL * 16 * 16 * settings.geometry.height);
     }
 }
 
