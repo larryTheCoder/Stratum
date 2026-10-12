@@ -251,8 +251,8 @@ TEST_CASE("vanilla's routers gain the cell-structured entries once there is a la
 
     // The lattice comes from the dimension: 4x8 in the overworld, 8x4 in the
     // End, and the same function sampled on both is two different functions.
-    CHECK(withCells.cells()->width == 4);
-    CHECK(withCells.cells()->height == 8);
+    CHECK(withCells.cells().value().width == 4);
+    CHECK(withCells.cells().value().height == 8);
     const NoiseSettings& end = get(loaded, "minecraft:end");
     CHECK(end.geometry.cellWidth() == 8);
     CHECK(end.geometry.cellHeight() == 4);
