@@ -4257,12 +4257,12 @@ Open:
   Under engine v13 the controls ran no aquifer code and no vein code in
   either build, so they were the noise: up to 3% between builds. Read
   within each build — under v13, "veins off" minus "aquifers off", which
-  then differed in the aquifer alone — the aquifer cost 7.7 ms of the
-  overworld's first pass (7.0%) and costs 1.1 (1.1%); 7.4 ms of the whole
-  overworld fill (4.1%), now 2.1 (1.2%); 14.9 ms of `amplified`'s (6.2%),
-  now 2.8 (1.3%). Two earlier runs of three passes agree on the first-pass
-  rows within 6 ms and put the whole overworld at 188 to 190 before and
-  176 after.
+  then differed in the aquifer alone, each share of the "veins off" run —
+  the aquifer cost 7.7 ms of the overworld's first pass (7.0%) and costs
+  1.1 (1.1%); 7.4 ms of the whole overworld fill (4.1%), now 2.1 (1.2%);
+  14.9 ms of `amplified`'s (6.2%), now 2.8 (1.3%). Two earlier runs of
+  three passes agree on the first-pass rows within 6 ms and put the whole
+  overworld at 188 to 190 before and 176 after.
 
   *Re-measured under engine v14 (2026-10-13).* Since v14 the "aquifers
   off" rows pay for the veins, so they are no control for the aquifer:
@@ -4280,25 +4280,44 @@ Open:
   engine v13's tree (bac7033) built the same way and run beside v14, so
   the two engines compare on one machine.
 
-  By those medians the aquifer costs 2.3 ms of the overworld fill (2.4%),
-  1.8 of its first pass (2.8%) and 2.5 of `amplified`'s (2.1%), and the
-  veins 2.4 (2.4%), 2.8 (4.2%) and 2.6 (2.1%). Differences that size are
-  this machine's noise: a configuration's middle five runs span 1 to
-  10 ms, and a run caught under the heaviest load sat up to 47 ms above
-  its median. So the split is also taken as user-space instructions
-  retired (`perf stat -e instructions:u`; one pass of the window is a
-  `--repeat 2` run less a `--repeat 1` run, which leaves out the pack load,
-  the compile and the dump, averaged with `--repeat 3` less `--repeat 2`),
-  which no load moves. A chunk of the overworld fill executes 1 718 M
-  instructions, the aquifer 22.9 M of them (1.3%) and the veins 39.4 M
-  (2.3%); of its first pass 1 078 M, the aquifer 25.9 M (2.4%) and the
-  veins 41.1 M (3.8%); of `amplified`'s 2 122 M, the aquifer 18.3 M
-  (0.9%) and the veins 38.7 M (1.8%). A configuration's second and third
-  passes differ by up to 10 M a chunk (the first pass's two aquifer
+  Every share from here on is of the run of its pair that has the part
+  on, as the record's are: the aquifer's of "veins off", the veins' of
+  "everything". By those medians the aquifer costs 2.3 ms of the overworld
+  fill's 96.9 (2.4%), 1.8 of its first pass's 64.6 (2.8%) and 2.5 of
+  `amplified`'s 118.5 (2.1%), and the veins 2.4 of 99.3 (2.4%), 2.8 of
+  67.4 (4.2%) and 2.6 of 121.1 (2.1%). Differences that size are this
+  machine's noise: a configuration's middle five runs span 1 to 10 ms, and
+  a run caught under the heaviest load sat up to 47 ms above its median.
+  So the split is also taken as user-space instructions retired (`perf
+  stat -e instructions:u`; one pass of the window is a `--repeat 2` run
+  less a `--repeat 1` run, which leaves out the pack load, the compile and
+  the dump, averaged with `--repeat 3` less `--repeat 2`), which no load
+  moves. A chunk of the overworld fill executes 1 718 M instructions with
+  everything on and 1 679 M with veins off: the aquifer is 22.9 M of the
+  1 679 M (1.4%), the veins 39.4 M of the 1 718 M (2.3%). Its first pass
+  executes 1 078 M and 1 037 M, the aquifer 25.9 M (2.5%) and the veins
+  41.1 M (3.8%); `amplified`'s fill 2 122 M and 2 083 M, the aquifer
+  18.3 M (0.9%) and the veins 38.7 M (1.8%). A configuration's second and
+  third passes differ by up to 10 M a chunk (the first pass's two aquifer
   readings are 21.9 and 29.9 M), so each share is good to a few M.
-  Without aquifers the veins cost the same, 37.8, 40.7 and 40.7 M. The
-  first pass's 25.9 M a chunk is also what the four-chunk callgrind sample
-  above came to after the cuts (103 M).
+  Without aquifers the veins cost the same, 37.8, 40.7 and 40.7 M.
+
+  These are perf's counts, not callgrind's, and the two instruments count
+  the same chunks differently, so no share carries from one to the other.
+  On the four-chunk sample above (one first pass, v14; callgrind counting
+  inside `ChunkFiller::fill`, as the record's did) callgrind counts the
+  fill with veins off at 7 389 M where perf counts 4 176 M, the veins
+  at 830 M where perf counts 142 M, and the aquifer at 121 M where perf
+  counts 104 M. 45% of callgrind's veins-off count is glibc's `memset` (the
+  AVX2 variant, which glibc picks under valgrind), against 6% of perf's
+  instruction samples over a native run of the same window (the AVX-512
+  variant). Callgrind's own counts also differ from one machine to
+  another: the record's tree (3e3e805), under callgrind here, gives the
+  aquifer 120 M of 7 389 M, not the 103 M of 7 512 M it gave on the
+  4-core box. So the record's 1.4% after the cuts is callgrind's share on
+  that box and the 2.5% above is perf's on this one, and perf's 104 M
+  lying near the record's 103 M is a coincidence of two instruments, not
+  an agreement.
 
   v14 costs what v13 did. With everything on, and with veins off, the two
   engines execute the same instructions to within 0.01 M a chunk, and
@@ -4308,11 +4327,27 @@ Open:
   two engines with everything on for the overworld and `amplified` (v14's
   0.7F membership moves no block there). Only the "aquifers off" rows
   changed, by the veins they now place: 2.8, 2.9 and 3.4 ms by the
-  medians, 38 to 41 M instructions a chunk. So the conclusion holds: the
-  aquifer is 1.3% of the overworld fill and 0.9% of `amplified`'s by
-  instructions, and the veins 2.3% and 1.8%.
-  The one figure that moves is the first pass's: 1.1% in the record, by
-  CPU time, and 2.4% by instructions here, on both engines.
+  medians, 38 to 41 M instructions a chunk. So the conclusion holds: by
+  instructions the aquifer is 1.4% of the overworld fill without veins and
+  0.9% of `amplified`'s, and the veins 2.3% and 1.8% of the fill with
+  everything on.
+
+  Set beside the record, the first pass's share reads 1.1% there and 2.5%
+  here, and no cost moved between them. The record's own tree (3e3e805),
+  built and counted here the same way, executes both runs of the first
+  pass's pair exactly as v13 does, to within 0.01 M a chunk: 1 037.4 M
+  with veins off, 1 011.6 M with aquifers off, the aquifer 25.75 M
+  (2.5%); v14's are within 0.2 M of those. The two figures differ in unit
+  and machine: the record's 1.1 ms is CPU time on the 4-core box, inside
+  its own 3% noise, while here the same pair is 2.5% by instructions and,
+  by CPU medians, 2.8% under v14 and 2.3% under v13. The whole fills read
+  1.2% and 1.3% in the record by CPU time and 1.4% and 0.9% here by
+  instructions, and there the trees do differ a little: counted here, the
+  record's own tree has them at 1.6% and 1.0% (26.9 M and 21.6 M a chunk,
+  against v13's 23.0 M and 17.7 M, each good to a few M as above). All of
+  that lies past the first pass, which executes the same in both trees
+  for `amplified` too, in the surface pass, whose executor changed between
+  them (d22578a's `vertical_gradient` source).
 
   The 237 ms/chunk on record (M5) was measured with the binding's work,
   before engines v3 to v12, and by its own note includes the per-quart
