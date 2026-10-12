@@ -75,11 +75,18 @@ skips that were not code. All seven probe shards were regenerated
 2026-10-12 and verify clean (113 outputs). Run `tools/probe-worlds verify`
 before trusting a local conformance run on any machine.
 
-**First, next session: the CI run on this push.** It regenerates all seven
-probe shards cold (their scripts changed), and the `legacy` shard gains the
-four `orevlegacy_*` units (eight arms a world). Watch the probes job's 90
-minutes: the aquifer shard took about 33 cold, the legacy shard 15 before
-the new units.
+**The CI run on this push: read, green.** Run 38192289975 on 4f94594,
+every job green, read from the logs. All seven probe shards regenerated
+cold and verify complete (the `legacy` shard now 20 units, 23.5 min; the
+longest, `end`, 30.4 min of 90). Both conformance legs: 168 cases, 159 run
+and passed, the 9 skips exactly the listed ones ("159 ran, 9 did not;
+expected: 9 no-generator") — the two new ore-vein cases among those run.
+clang-tidy 18 processed all 58 files. The x86-64 leg took 100 min of its
+150 (ctest 5713 s), up from 69: every case over a minute slowed 1.26-1.68x,
+the untouched ones too, so a slower runner, plus about 250 s of new
+ore-vein cases. ARM64 58 min. Still inside budget, but the x86-64 leg is
+now the long pole; if it nears 150, shard it or build it optimised (the
+owner's call).
 
 **Engine follow-ups (each its own change).**
 
