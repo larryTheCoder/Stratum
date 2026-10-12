@@ -705,7 +705,7 @@ mapping has two halves, split at a platform-neutral midpoint:
 
   *The deterministic gate, confirmed with ZERO exceptions.* The y-range
   (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
-  `[-8, 0)` between them produces neither), the type/sign correspondence
+  between them, y -7..-1, produces neither), the type/sign correspondence
   (`vein_toggle > 0` for copper, `<= 0` for iron), the richness threshold
   (`|vein_toggle|` must clear 0.6 at either y limit, falling linearly to
   0.4 at 20 blocks inside), and `vein_ridged < 0` as necessary for any vein
