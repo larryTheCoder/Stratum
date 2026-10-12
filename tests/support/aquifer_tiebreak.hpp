@@ -475,7 +475,7 @@ public:
                                 if (mirroredMark) {
                                     ++mirroredMarks;
                                     tally.mirrorFlagMismatch += static_cast<std::uint64_t>(
-                                        marks.count(std::make_tuple(localX, y, localZ)) == 0U);
+                                        !marks.contains(std::make_tuple(localX, y, localZ)));
                                 }
                             }
                         }

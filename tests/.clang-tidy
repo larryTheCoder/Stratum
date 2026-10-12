@@ -1,0 +1,37 @@
+# Lint policy for tests/: the root .clang-tidy, with two differences.
+#
+# HeaderFilterRegex adds the shared support headers to the root's lib/cli/ext.
+# A suite reaches them through its parent directory, so clang-tidy sees
+# tests/unit/../support/<name>.hpp rather than tests/support/<name>.hpp, and
+# the pattern matches on the directory name. The tools/analysis headers two
+# tests include the same way (tests/unit/../../tools/analysis/...) stay out,
+# as they are for the analysis tools' own sources under the root pattern.
+#
+# bugprone-unchecked-optional-access is off, because Catch2's REQUIRE is
+# invisible to it. The check is a flow analysis: it accepts `if (!x) return;`
+# before `*x`, and `if (!x) { FAIL(...); }` (FAIL ends in
+# Catch::Detail::Unreachable()), but REQUIRE stops a case only when it fails,
+# by throwing from inside Catch2's AssertionHandler, which the analysis cannot
+# see, so it follows the failing branch on into the access. `.value()` does
+# not help; the check counts it as an access too. Measured with clang-tidy 18
+# over every tests/ source, it reported 67 accesses, 62 of them correct:
+#   48  `REQUIRE(x.has_value())` (or `REQUIRE(x)`), then `*x`;
+#   10  guarded by an `if` or `continue` the analysis lost: 2 because the
+#       optional is reached through a call (`points[k].value`), 8 on a local
+#       inside loops (both shapes reproduce in a dozen-line function);
+#    4  guarded by an invariant another class enforces (the legacy surface
+#       Decoder throws on a noise_threshold without a noise, so
+#       `noiseOf(i) >= 0` implies the noise is there);
+#    5  real, and fixed in the commit that wrote this: four `cells()->`
+#       read the very lattice their case is checking, now `.value()`, so an
+#       empty one fails the CHECK instead of being undefined behaviour; one
+#       `*b` was guarded by a CHECK that carries on when it fails, now a
+#       REQUIRE, as vanilla_freeze_test.cpp already has it.
+# Keeping it on would mean rewriting the 48 REQUIREs as if/FAIL, which moves
+# every such case's assertion count (a REQUIRE that holds is an assertion; an
+# `if` that does not fire is none), and a NOLINT on each of the other 14.
+# ext/tests sit under the root config, where the check stays on (they trip
+# it nowhere).
+InheritParentConfig: true
+Checks: '-bugprone-unchecked-optional-access'
+HeaderFilterRegex: '.*/((lib|cli|ext)/.*|support/[^/]*)\.(hpp|h)$'
