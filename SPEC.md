@@ -698,7 +698,10 @@ mapping has two halves, split at a platform-neutral midpoint:
   13579, whose window holds veins, is block for block the aquifers-on world
   (14 373 vein blocks in each), and so are the legacy probe's aquifers-off
   arms. `ore::veinsPlaceBlocks` is gone and engine v14 places veins wherever
-  `ore_veins_enabled` is set.
+  `ore_veins_enabled` is set. Over open ground below a raised sea as well:
+  there the aquifers-off world's veins are the aquifers-on world's wherever
+  the former is solid, and the latter's barriers carry veins of their own
+  (§11, "`aquifers_enabled: false` reaches the server, pinned").
 
   *The deterministic gate, confirmed with ZERO exceptions.* The y-range
   (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
@@ -7332,10 +7335,17 @@ Open:
   refuses a run with no seed unless `STRATUM_PROBE_OVERWRITE=1`.
 
   *The flag's path through `density-probe.sh` — measured on three local
-  corpora, pinned by no case.* `la`, `ma` and the 13579 rebuild's `mr2` read
+  corpora, pinned by no case; pinned since.* (*Since pinned*:
+  `tools/analysis/aquifer-flag-probe.sh` builds the control in CI-generated
+  corpora, two aquifers-off arms over open ground below a sea raised to 32,
+  each beside its aquifers-on twin in one world, at three seeds, and
+  `tests/conformance/vanilla_aquifer_flag_test.cpp` reads them: each off arm
+  is the global picker on every open block of its window, each on arm misses
+  it on 755 404-910 599 blocks — next entry, "`aquifers_enabled: false`
+  reaches the server, pinned".) `la`, `ma` and the 13579 rebuild's `mr2` read
   exactly as their aquifers-on twins do, which is also what they would read
   if `aquifers_enabled: false` never reached the server. No conformance case
-  is a control for that. Of the 184 aquifers-off arms in `tools/probe-worlds`'
+  was a control for that. Of the 184 aquifers-off arms in `tools/probe-worlds`'
   density corpora, 114 are solid columns and the other 70 leave `sea_level`
   at the dimension's floor with the default air `default_fluid`, so none is
   known to separate the flag: on thirteen of the 70, from eleven of their
@@ -7397,13 +7407,92 @@ Open:
   `tools/probe-worlds`' legacy shard; 8675309, 14 and 15 confirmed the rule
   and are not.
 
-  *Still open.* Draw 3's method; whether draw 2 is taken when
-  `vein_gap <= -0.3` (nothing downstream reads the stream); and a
-  conformance case for the control that `aquifers_enabled: false` reaches
-  the server through `density-probe.sh` — measured on three local corpora
-  (above), but no `tools/probe-worlds` unit generates one and no case reads
-  it. Why the first coupling world read stone is answered: a seed with no
-  admissible position in its window.
+  *Still open.* Draw 3's method; and whether draw 2 is taken when
+  `vein_gap <= -0.3` (nothing downstream reads the stream). A conformance
+  case for the control that `aquifers_enabled: false` reaches the server
+  through `density-probe.sh` — *since closed*: three `tools/probe-worlds`
+  units generate it and a case reads it (next entry). Why the first coupling
+  world read stone is answered: a seed with no admissible position in its
+  window.
+
+- **`aquifers_enabled: false` reaches the server, pinned; and veins with
+  aquifers off over open ground, measured (MA/M3, no engine change).** Two
+  gaps the previous entry left. Every aquifers-off arm a case read was a
+  solid column or kept `sea_level` at the dimension's floor with an air
+  default fluid — worlds the flag cannot change — so nothing a case read
+  showed `density-probe.sh`'s `aquifers_enabled` line reaching the server.
+  And veins with aquifers off had been measured over solid columns only.
+
+  *The probe.* `tools/analysis/aquifer-flag-probe.sh` builds the world where
+  the flag must show: one world a seed, four dimensions, two pairs that
+  differ ONLY in `aquifers_enabled` — `mon`/`moff`, the modern source over 3D
+  caves (`stratum:probe_noise` at `xz_scale` = `y_scale` = 0.5, about half of
+  every layer open, walls in every direction), and `lon`/`loff`, the legacy
+  source over a noise-free layering (four `abs` folds of
+  `y_clamped_gradient` make a triangle wave in y: seven solid rows and nine
+  open in every sixteen from -64 to 64, open above, never within 0.125 of
+  zero; a legacy dimension may name no noise but the three climate ones).
+  Everything else is a constant and the same in all four: `sea_level` 32,
+  inside copper's vein range, so vein blocks meet both the sea and the air
+  above it with aquifers off; water `default_fluid`; a surface rule that
+  never fires; the legacy aquifer probe's aquifer inputs but the barrier
+  (`barrier` 0, `fluid_level_floodedness` 0.5, `fluid_level_spread` 0,
+  `lava` -1, `preliminary_surface_level` 96, so y_skip is 130 and the
+  lattice is consulted over both vein ranges); and the legacy ore-vein
+  probe's vein inputs, so every `default_block` position of both ranges is
+  a candidate. Generated at 42, 31337 and 8675309 (about a minute each
+  locally), frozen as every probe is.
+
+  *The flag, library-free.* Over every block of each 8x8 window
+  (6 291 456 an arm), read off the server's regions alone: each off arm is
+  the global picker on EVERY open block — lava below min(-54, sea_level),
+  water below `sea_level`, air above — 0 misses of 3 138 654-5 373 952 open
+  blocks, none of them flowing, at all three seeds and in both pairs. Each
+  on arm misses the picker on 755 404-910 599 of its open blocks (air, water
+  or lava that is not its row's), and differs from its twin on
+  843 148-1 025 059 blocks, its barriers among them: the positive control. A
+  run where the flag never reached the server would have made each pair two
+  copies of one world. On the on arms 1-6 blocks of the window are flowing
+  fluid, the frozen world's remnant.
+
+  *Each arm its own setting, through the shipped filler.* Each arm's
+  settings rebuilt from its `spec.json` through `probe_settings.hpp`, the
+  registry its source selects and `ChunkFiller::compile`, against the server
+  state for state on all 144 chunks the server generated of each arm
+  (14 155 776 blocks an arm, twelve arms): 0 blocks wrong. What differs is
+  fluid flow, classified by `support/fluid_flow.hpp`'s shared rule — 1-9
+  blocks an on arm, every one in a chunk that ticked, and 0 on every off arm.
+  Every post-processing mark of the 63 chunks that never ticked is exact:
+  28 246-46 386 an on arm, 0 an off arm, where the filler writes none.
+
+  *Veins with aquifers off, over open ground.* 527 203-595 440 vein blocks
+  an off arm's window, 84 241-126 185 of them beside water or lava and
+  18 479-23 038 beside air; every one is where the filler puts it (0 vein
+  positions wrong over the 144 chunks, 1 186 375-1 359 192 vein blocks an
+  off arm), and none lies outside the two vein ranges. Against the twin:
+  wherever the off arm is solid the on arm holds the same block, vein blocks
+  included (0 positions otherwise), so the aquifer only ever adds solid. The
+  on arm's extra vein blocks are exactly the ones standing on its barriers:
+  33 475-38 403 vein blocks of 79 901-114 459 barrier blocks, and the on
+  arm's vein count less the off arm's is that number at every seed and pair.
+  So veins read no aquifer and replace the `default_block` the filler holds
+  when they look, the aquifer's barrier included — as the filler already
+  did; no engine change, no bump.
+
+  *What ships.* The probe, its three corpora as units of
+  `tools/probe-worlds`' water shard (the lightest shard but the markers'
+  own, 15 minutes cold in CI run 38192289975), and
+  `tests/conformance/vanilla_aquifer_flag_test.cpp`: the library-free pass
+  over every block of each window at every seed (about 17 s in a debug
+  build), and the shipped filler state for state on six chunks an arm — three
+  in the window, one in its ring and two that never ticked, whose marks it
+  also holds exact (about 20 s). It skips with no corpus and fails on a
+  partial set.
+
+  *Still open.* Veins with aquifers off over vanilla's own router: every
+  corpus with real terrain and aquifers off (`aquifer-free-probe.sh`'s)
+  turns the veins off too. And the three local corpora above (`w_fl0`,
+  `stw`, `sw40`) stay outside every unit; the case does not need them.
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is

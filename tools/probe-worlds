@@ -176,6 +176,15 @@ UNITS = [
          own('aquifer-on/seed--1', ['r.0.0.mca'], FROZEN_MANIFEST)),
     unit('no-aquifer', 'water', ['aquifer-free-probe.sh', '-1'],
          own('no-aquifer/seed--1', ['r.0.0.mca'], FROZEN_MANIFEST)),
+    # aquifers_enabled false against true over open ground below a raised
+    # sea, veins on: one start of four dimensions per seed, about a minute
+    # each locally. Here because this was the lightest shard but the
+    # markers' own (15 minutes cold in CI run 38192289975).
+    unit('aqflag_s42', 'water', ['aquifer-flag-probe.sh', '42'], density(('aqflag_s42', 42))),
+    unit('aqflag_s31337', 'water', ['aquifer-flag-probe.sh', '31337'],
+         density(('aqflag_s31337', 31337))),
+    unit('aqflag_s8675309', 'water', ['aquifer-flag-probe.sh', '8675309'],
+         density(('aqflag_s8675309', 8675309))),
     # capfloor: two 10 GB runs per seed (four arms, then the fifth alone);
     # capfloor_s<seed> and capfloorl_s<seed> are one unit, as the case pairs them.
     unit('capfloor_s42', 'capfloor', ['aquifer-capfloor-probe.sh', '42'],
