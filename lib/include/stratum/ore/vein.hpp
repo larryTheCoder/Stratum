@@ -84,26 +84,27 @@
 // 0.7F bucket above narrows the bottom of it to 0.7F exclusive. The raw
 // roll brackets to (0.0199925, 0.0200130] the same way.
 //
-// NO AQUIFER COUPLING — a measurement retracted. This header used to say
-// veins place nothing unless `aquifers_enabled` is also true, from one probe
-// world with veins on and aquifers off that came back 6291456 of 6291456
-// stone. That world was a seed confound, and it replicates: it ran at seed 42,
+// NO AQUIFER COUPLING — a measurement retracted. This header used to say veins
+// place nothing unless `aquifers_enabled` is also true, from one probe world
+// with veins on and aquifers off that came back 6291456 of 6291456 stone. That
+// world was a seed confound, and the library reproduces it: it ran at seed 42,
 // whose probe window holds no position the deterministic gate admits under
 // vanilla's vein router, so the library predicts it stone with aquifers on as
 // well (no server world holds that recipe at 42 with aquifers on). The
 // aquifers-on world that "produced veins" also moved the seed to 43 (and the
 // default fluid to water), where the gate admits 468 positions of the window
 // and the draws place 339 vein blocks among them, the 48 copper_ore, 290
-// granite and 1 raw_copper_block that world held (the library, at the
-// probe's cell height of 8). With aquifers off veins ARE placed: the same
-// recipe at 13579, whose window has veins, is block for block the
+// granite and 1 raw_copper_block that world held, at the same positions (the
+// library, at the probe's cell height of 8, agrees with that world on all
+// 1818624 positions of the window). With aquifers off veins ARE placed: the
+// same recipe at 13579, whose window has veins, is block for block the
 // aquifers-on world (14373 vein blocks in each), and the legacy probe's `la`
 // and `ma` arms (aquifers off) are their `lv` and `mv` exactly at four seeds
 // (three distinct legacy worlds: 42's 48-bit twin is 42's), under both
 // sources. Engine v14 places veins wherever `ore_veins_enabled` is set (SPEC
-// §11, "Ore veins under the legacy source", which also records the control
-// for the aquifers-off flag reaching the server through density-probe.sh:
-// measured on three local corpora, pinned by no case yet).
+// §11, "Ore veins under the legacy source", which also records the control for
+// the aquifers-off flag reaching the server through density-probe.sh: measured
+// on three local corpora, pinned by no case yet).
 //
 // WHAT THIS DELIBERATELY DOES NOT DECIDE, recorded rather than guessed
 // (SPEC §11), and two that were chosen first and measured since:
