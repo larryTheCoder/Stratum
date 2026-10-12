@@ -175,7 +175,7 @@ TEST_CASE("a malformed table is refused by row and axis", "[biome][parameters]")
     CHECK_THROWS_WITH(parse(backwards),
                       ContainsSubstring("humidity") && ContainsSubstring("minimum above"));
 
-    nlohmann::json badBiome = nlohmann::json{{"biomes", {entry("Not An Id", 0.0, 0.0)}}};
+    const nlohmann::json badBiome = nlohmann::json{{"biomes", {entry("Not An Id", 0.0, 0.0)}}};
     CHECK_THROWS_WITH(parse(badBiome), ContainsSubstring("entry 0"));
 
     // An empty table has no right answer, and a world full of one wrong

@@ -131,7 +131,7 @@ TEST_CASE("lists of compounds nest, as chunk sections do", "[nbt]") {
     NbtWriter writer;
     writer.named(TagType::Compound, "");
     writer.named(TagType::List, "sections").type(TagType::Compound).u32(2);
-    for (std::uint8_t y : {std::uint8_t{0}, std::uint8_t{1}}) {
+    for (const std::uint8_t y : {std::uint8_t{0}, std::uint8_t{1}}) {
         writer.named(TagType::Byte, "Y").u8(y);
         writer.named(TagType::Compound, "block_states");
         writer.named(TagType::List, "palette").type(TagType::Compound).u32(1);

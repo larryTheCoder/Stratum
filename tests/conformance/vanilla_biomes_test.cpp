@@ -152,7 +152,10 @@ struct Comparison {
                             if (chosen == golden) {
                                 ++result.exact;
                             } else {
-                                ++result.misses[golden + " -> " + chosen];
+                                std::string miss = golden;
+                                miss += " -> ";
+                                miss += chosen;
+                                ++result.misses[miss];
                             }
                         }
                     }
@@ -182,7 +185,7 @@ TEST_CASE("the biome source reproduces vanilla's biomes over the 64x64 corner",
              "--generate-regions --accept-eula");
     }
 
-    std::ifstream file(parameters);
+    const std::ifstream file(parameters);
     std::stringstream contents;
     contents << file.rdbuf();
     const ParameterList table = ParameterList::fromJson(
@@ -215,7 +218,7 @@ TEST_CASE("three other seeds match over the same corner too", "[conformance][bio
         SKIP("no extracted vanilla worldgen or biome parameters under " << STRATUM_FIXTURES_DIR);
     }
 
-    std::ifstream file(parameters);
+    const std::ifstream file(parameters);
     std::stringstream contents;
     contents << file.rdbuf();
     const ParameterList table = ParameterList::fromJson(

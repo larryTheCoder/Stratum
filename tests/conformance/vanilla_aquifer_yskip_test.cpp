@@ -551,7 +551,9 @@ void requireProbeConstants(const nlohmann::json& entry) {
             }
             const auto chunk = stratum::chunk::Chunk::decode(doc.root);
             const auto marks = stratum::test::postProcessingMarks(doc.root, kMinY);
-            const auto index = static_cast<std::size_t>((cz * kChunks) + cx);
+            const std::size_t index =
+                (static_cast<std::size_t>(cz) * static_cast<std::size_t>(kChunks)) +
+                static_cast<std::size_t>(cx);
             // The build's own cutoff — the filler's call, on this
             // dimension's own field.
             const std::int32_t cutoff = aquifer::chunkYSkip(psl, cx * 16, cz * 16);
@@ -651,8 +653,9 @@ void requireProbeConstants(const nlohmann::json& entry) {
     int differ = 0;
     for (std::int32_t cz = 0; cz < kChunks; ++cz) {
         for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-            const std::int32_t built =
-                score.builtCutoff[static_cast<std::size_t>((cz * kChunks) + cx)];
+            const std::int32_t built = score.builtCutoff[(static_cast<std::size_t>(cz) *
+                                                          static_cast<std::size_t>(kChunks)) +
+                                                         static_cast<std::size_t>(cx)];
             differ +=
                 cutoffOf(reading, psl, cx, cz) == std::clamp(built, kLambda - 1, kModelTop) ? 0 : 1;
         }
@@ -1019,7 +1022,7 @@ TEST_CASE("y_skip's rectangle and stride against the server on a two-valued surf
             }
             INFO("readout " << readout << ": " << agree << " of " << columns << " columns, " << high
                             << " at -80");
-            REQUIRE(columns == 48 * 48);
+            REQUIRE(columns == 48LL * 48);
             REQUIRE(agree == columns);
             REQUIRE(high > 0);
 
@@ -1062,7 +1065,7 @@ TEST_CASE("y_skip's rectangle and stride against the server on a two-valued surf
             // Both cutoffs occur, or the field separates nothing; and every
             // chunk the server shows is one or the other.
             REQUIRE(lattice38 > 0);
-            REQUIRE(lattice38 < kChunks * kChunks);
+            REQUIRE(lattice38 < static_cast<std::ptrdiff_t>(kChunks) * kChunks);
             CHECK(classes[static_cast<std::size_t>(ChunkClass::Inconsistent)] == 0);
             CHECK(score.exactWrong == 0);
             CHECK(score.exactContact == score.contactOnFull);

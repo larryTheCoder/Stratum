@@ -303,7 +303,7 @@ struct Column {
 /// `stratum:na` and `stratum:nb` differ only in their identifier, so they are
 /// the same shape reached through two different seeds; the q4 and q16
 /// dimensions are the skip shape read back at a coarser output scale.
-enum class Shape : std::size_t { Single = 0, Multi = 1, Skip = 2 };
+enum class Shape : std::uint8_t { Single = 0, Multi = 1, Skip = 2 };
 constexpr std::size_t kShapeCount = 3;
 constexpr std::array<const char*, kShapeCount> kShapeNames{"1-octave", "3-octave", "skip"};
 

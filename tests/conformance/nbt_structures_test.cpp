@@ -70,7 +70,7 @@ using stratum::nbt::TagType;
     stream.avail_in = static_cast<uInt>(input.size());
 
     std::vector<std::byte> output;
-    std::vector<std::byte> buffer(64U * 1024U);
+    std::vector<std::byte> buffer(std::size_t{64} * 1024U);
     int status = Z_OK;
     do {
         stream.next_out = reinterpret_cast<Bytef*>(buffer.data());

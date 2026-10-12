@@ -27,7 +27,6 @@
 #include <string_view>
 
 using Catch::Matchers::ContainsSubstring;
-using stratum::biome::TemperatureError;
 using stratum::biome::TemperatureTable;
 using stratum::data::Pack;
 using stratum::data::ResourceLocation;
@@ -52,10 +51,9 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
-    const TempBiomeTree& define(std::string_view name, const nlohmann::json& json) const {
+    void define(std::string_view name, const nlohmann::json& json) const {
         std::ofstream out(path_ / "biome" / (std::string(name) + ".json"));
         out << json.dump();
-        return *this;
     }
 
     [[nodiscard]] Pack pack() const { return Pack::openWorldgenTree(path_); }
