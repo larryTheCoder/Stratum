@@ -2,11 +2,17 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #include "support/temp_path.hpp"
 
+#include <stratum/aquifer/lattice.hpp>
+#include <stratum/aquifer/substance.hpp>
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/ore/vein.hpp>
+#include <stratum/rng/java_random.hpp>
+#include <stratum/rng/xoroshiro128.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -18,11 +24,19 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <array>
 #include <bit>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <map>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -85,6 +99,16 @@ public:
         return *this;
     }
 
+    /// Writes `worldgen/noise/<name>.json`, for a router entry that reads a
+    /// noise of its own (density_interpreter_test.cpp's helper of the same
+    /// name).
+    const TempTree& defineNoise(std::string_view name, std::string_view json) const {
+        std::filesystem::create_directories(path_ / "noise");
+        std::ofstream out(path_ / "noise" / (std::string(name) + ".json"));
+        out << json;
+        return *this;
+    }
+
     /// Writes `worldgen/biome/<name>.json` declaring only `temperature`, so
     /// a `biome::TemperatureTable` built from this tree's own Pack has
     /// something to read back for `minecraft:temperature`.
@@ -136,6 +160,47 @@ private:
         {"spawn_target", nlohmann::json::array()},
         {"surface_rule", {{"type", "minecraft:bandlands"}}},
     };
+}
+
+/// Deep enough to reach the global lava sea: stone at y <= -61, then every
+/// non-solid position below min(-54, sea_level) is lava (spec Q1.2/Q2.1, with
+/// aquifers off), water from there up to the sea level of 8, open air above.
+[[nodiscard]] nlohmann::json lavaSeaSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 1}};
+    settings["noise_router"]["final_density"] =
+        nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                       {"from_y", -61},
+                       {"to_y", -59},
+                       {"from_value", 1.0},
+                       {"to_value", -1.0}};
+    return settings;
+}
+
+/// `lavaSeaSettings()`'s depth with `flatSettings()`'s plane — solid stone
+/// from y -64 to -1, water above it to sea level — and a
+/// `preliminary_surface_level` that VARIES from column to column:
+/// `-28 + 12 * psl_field`, a two-octave noise on 8- and 4-block octaves
+/// against the lattice's 16, read with `y_scale` 0 so the entry is
+/// y-independent. Nothing below the plane is open, so no lava sea forms and
+/// every block from -64 to -1 is the default block a surface rule may write.
+[[nodiscard]] nlohmann::json varyingPslSettings() {
+    nlohmann::json settings = flatSettings(false, false);
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 1}};
+    settings["noise_router"]["preliminary_surface_level"] =
+        nlohmann::json{{"type", "minecraft:add"},
+                       {"argument1", -28.0},
+                       {"argument2",
+                        {{"type", "minecraft:mul"},
+                         {"argument1", 12.0},
+                         {"argument2",
+                          {{"type", "minecraft:noise"},
+                           {"noise", "minecraft:psl_field"},
+                           {"xz_scale", 1.0},
+                           {"y_scale", 0.0}}}}}};
+    return settings;
 }
 
 /// `flatSettings` with the three vein router entries pinned to constants that
@@ -276,6 +341,40 @@ private:
     return TemperatureTable::fromPack(tree.pack());
 }
 
+/// `a + (b - a) * t` in x, then in z, over four samples ordered (x0,z0),
+/// (x1,z0), (x0,z1), (x1,z1) — the blend `ChunkFiller::preliminarySurfaceIn`
+/// uses, with every floor left to the caller. Test-only, and it exists to
+/// spell the readings the engine must NOT implement next to the one it must;
+/// the known-answer case below ties it back to the engine's own helper.
+[[nodiscard]] double bilerp(const std::array<double, 4>& samples, double u, double v) {
+    const double low = samples[0] + ((samples[1] - samples[0]) * u);
+    const double high = samples[2] + ((samples[3] - samples[2]) * u);
+    return low + ((high - low) * v);
+}
+
+[[nodiscard]] std::array<double, 4> floored(const std::array<double, 4>& samples) {
+    return {std::floor(samples[0]), std::floor(samples[1]), std::floor(samples[2]),
+            std::floor(samples[3])};
+}
+
+/// Each sample through Java's `(int)` cast, which truncates toward zero.
+[[nodiscard]] std::array<double, 4> truncated(const std::array<double, 4>& samples) {
+    return {static_cast<double>(stratum::javamath::doubleToInt(samples[0])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[1])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[2])),
+            static_cast<double>(stratum::javamath::doubleToInt(samples[3]))};
+}
+
+/// SPEC §11's psl lattice at an arbitrary @p pitch: each sample floored,
+/// blended, floored again. At 16 it must be `preliminarySurfaceIn` exactly.
+[[nodiscard]] std::int32_t latticeAtPitch(const std::array<double, 4>& samples,
+                                          std::int32_t offsetX, std::int32_t offsetZ,
+                                          std::int32_t pitch) {
+    return stratum::javamath::floorToInt(bilerp(floored(samples),
+                                                static_cast<double>(offsetX) / pitch,
+                                                static_cast<double>(offsetZ) / pitch));
+}
+
 } // namespace
 
 TEST_CASE("a dimension with aquifers now fills, draining where floodedness says to",
@@ -340,24 +439,382 @@ TEST_CASE("an aquifer above its own floodedness gate reproduces the plain sea, t
     CHECK(buffer.paletteSize() == 3U);
 }
 
-TEST_CASE("ore veins place nothing without aquifers", "[terrain][filler][ore]") {
-    // Measured coupling, not a refusal: a probe with veins on and aquifers
-    // off came back 6291456 of 6291456 plain stone (SPEC §11). Reproducing
-    // that means compiling happily and placing nothing, which is what the
-    // server does — an exception here would be this build inventing a
-    // failure vanilla does not have.
+TEST_CASE("an aquifer's source reads are detached: an interpolated floodedness reads exactly",
+          "[terrain][filler][aquifer]") {
+    // A source's floodedness is read at its centre, a point the generating
+    // block reads elsewhere, and `interpolated` there is its argument at that
+    // point — measured (density::ReadContext, SPEC §11). So wrapping the
+    // entry changes no block. The argument is a step in y the cell blend
+    // smears: 0.9 (past the sea gate) from y = 1 up, 0.0 (dry) below.
+    const nlohmann::json step{{"type", "minecraft:range_choice"},
+                              {"input",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", -2048},
+                                {"to_y", 2048},
+                                {"from_value", -2048.0},
+                                {"to_value", 2048.0}}},
+                              {"min_inclusive", 0.5},
+                              {"max_exclusive", 1000.0},
+                              {"when_in_range", 0.9},
+                              {"when_out_of_range", 0.0}};
+    nlohmann::json bare = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    bare["noise_router"]["fluid_level_floodedness"] = step;
+    nlohmann::json wrapped = bare;
+    wrapped["noise_router"]["fluid_level_floodedness"] =
+        nlohmann::json{{"type", "minecraft:interpolated"}, {"argument", step}};
+
+    const TempTree bareTree;
+    bareTree.defineSettings("test", bare);
+    const TempTree wrappedTree;
+    wrappedTree.defineSettings("test", wrapped);
+    const LoadedSettings bareLoaded = bareTree.load();
+    const LoadedSettings wrappedLoaded = wrappedTree.load();
+    const ChunkFiller bareFiller = compileFrom(bareTree, bareLoaded);
+    const ChunkFiller wrappedFiller = compileFrom(wrappedTree, wrappedLoaded);
+    const auto& settings =
+        wrappedLoaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+
+    long long water = 0;
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{1, -1}}) {
+        ChunkBuffer bareBuffer(settings.geometry);
+        ChunkBuffer wrappedBuffer(settings.geometry);
+        bareFiller.fill(chunkX, chunkZ, bareBuffer);
+        wrappedFiller.fill(chunkX, chunkZ, wrappedBuffer);
+        long long differing = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = -16; y < 32; ++y) {
+                    const std::string name = wrappedBuffer.at(x, y, z).name.toString();
+                    differing +=
+                        static_cast<long long>(name != bareBuffer.at(x, y, z).name.toString());
+                    water += static_cast<long long>(name == "minecraft:water");
+                }
+            }
+        }
+        CAPTURE(chunkX, chunkZ);
+        CHECK(differing == 0);
+    }
+    CHECK(water > 0);
+
+    // Not vacuous: at some of these chunks' source centres the blend and the
+    // argument fall on opposite sides of the sea gate, so a filler that
+    // blended there would read those sources differently.
+    const auto noises = stratum::density::NoiseRegistry::create(
+        wrappedTree.pack(), wrappedLoaded.graph.referencedNoises(), 0,
+        stratum::density::RandomSource::Xoroshiro);
+    const stratum::density::Interpreter interpreter(
+        wrappedLoaded.graph, noises,
+        stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                       .height = settings.geometry.cellHeight()});
+    stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
+    const auto node = settings.router.at(RouterEntry::FluidLevelFloodedness);
+    const stratum::aquifer::CentreSource centres(0, stratum::density::RandomSource::Xoroshiro);
+    long long straddling = 0;
+    for (std::int32_t i = -1; i <= 2; ++i) {
+        for (std::int32_t k = -2; k <= 1; ++k) {
+            const stratum::aquifer::CellIndex centre = centres.centreOf(i, 0, k);
+            const stratum::density::Point at{.x = centre.x, .y = centre.y, .z = centre.z};
+            const auto read = [&](stratum::density::ReadContext context) {
+                return interpreter.evaluate(node, at, cache,
+                                            stratum::density::FlatCacheWindow::none(), context);
+            };
+            straddling +=
+                static_cast<long long>((read(stratum::density::ReadContext::Block) > 0.8) !=
+                                       (read(stratum::density::ReadContext::Detached) > 0.8));
+        }
+    }
+    CHECK(straddling > 0);
+}
+
+TEST_CASE("a buffer reused across chunks holds only the last chunk and its fluid updates",
+          "[terrain][filler][aquifer]") {
+    // fill() writes every block but only ever appends to the palette and to
+    // the fluid-update list, so it clears the buffer first: one buffer filled
+    // chunk after chunk is, after each, exactly a fresh buffer filled with
+    // that chunk. Without the clear the second chunk's list carried the
+    // first chunk's marks (and the palette the first chunk's states).
+    // Floodedness steps from dry to past the sea gate at y = 1, so wet and
+    // dry sources meet and the aquifer marks where they do.
+    const nlohmann::json step{{"type", "minecraft:range_choice"},
+                              {"input",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", -2048},
+                                {"to_y", 2048},
+                                {"from_value", -2048.0},
+                                {"to_value", 2048.0}}},
+                              {"min_inclusive", 0.5},
+                              {"max_exclusive", 1000.0},
+                              {"when_in_range", 0.9},
+                              {"when_out_of_range", 0.0}};
+    nlohmann::json wet = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    wet["noise_router"]["fluid_level_floodedness"] = step;
+    // The same geometry with another default block: a palette entry the
+    // later fills never write, there to leak if the palette is kept.
+    nlohmann::json deepslate = wet;
+    deepslate["default_block"] = {{"Name", "minecraft:deepslate"}};
+
     const TempTree tree;
-    tree.defineSettings("test", veinSettings(/*aquifers=*/false));
+    tree.defineSettings("test", wet).defineSettings("other", deepslate);
     const LoadedSettings loaded = tree.load();
-    const ChunkFiller filler = compileFrom(tree, loaded);
+    const auto& wetSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    const auto& deepslateSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:other"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
+    const ChunkFiller wetFiller = ChunkFiller::compile(loaded.graph, noises, wetSettings);
+    const ChunkFiller deepslateFiller =
+        ChunkFiller::compile(loaded.graph, noises, deepslateSettings);
+    const auto& geometry = wetSettings.geometry;
 
-    ChunkBuffer buffer(
-        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
-    filler.fill(0, 0, buffer);
+    const auto fresh = [&](const std::int32_t chunkX, const std::int32_t chunkZ) {
+        ChunkBuffer buffer(geometry);
+        wetFiller.fill(chunkX, chunkZ, buffer);
+        return buffer;
+    };
+    const auto differing = [](const ChunkBuffer& a, const ChunkBuffer& b) {
+        long long count = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = a.minY(); y < a.minY() + a.height(); ++y) {
+                    count += static_cast<long long>(!(a.at(x, y, z) == b.at(x, y, z)));
+                }
+            }
+        }
+        return count;
+    };
+    const ChunkBuffer first = fresh(0, 0);
+    const ChunkBuffer second = fresh(1, -1);
+    // Not vacuous: the first chunk has marks a kept list would carry over,
+    // and the two chunks' lists differ.
+    REQUIRE(!first.fluidUpdates().empty());
+    REQUIRE(!(first.fluidUpdates() == second.fluidUpdates()));
 
-    for (std::int32_t y = -16; y < 0; ++y) {
-        for (int localX = 0; localX < 16; ++localX) {
-            CHECK(buffer.at(localX, y, 0).name.toString() == "minecraft:stone");
+    ChunkBuffer reused(geometry);
+    deepslateFiller.fill(0, 0, reused);
+    REQUIRE(std::ranges::any_of(reused.palette(), [](const auto& state) {
+        return state.name.toString() == "minecraft:deepslate";
+    }));
+    wetFiller.fill(0, 0, reused);
+    CHECK(reused.fluidUpdates() == first.fluidUpdates());
+    CHECK(reused.palette() == first.palette());
+    CHECK(differing(reused, first) == 0);
+    wetFiller.fill(1, -1, reused);
+    CHECK(reused.fluidUpdates() == second.fluidUpdates());
+    CHECK(reused.palette() == second.palette());
+    CHECK(differing(reused, second) == 0);
+    // The same chunk twice: each position still marked once.
+    wetFiller.fill(1, -1, reused);
+    CHECK(reused.fluidUpdates() == second.fluidUpdates());
+
+    // And clear() on its own is the constructor's state.
+    reused.clear();
+    const ChunkBuffer untouched(geometry);
+    CHECK(reused.fluidUpdates().empty());
+    CHECK(reused.palette() == untouched.palette());
+    CHECK(differing(reused, untouched) == 0);
+}
+
+TEST_CASE("the barrier is read on every block only where its read is not provably pure",
+          "[terrain][filler][aquifer]") {
+    // computeSubstance reads the `barrier` entry only where the predicate
+    // weighs it, which no block can see — unless the read itself has an
+    // effect. An `interpolated` reads and fills the chunk's shared corner
+    // cache, and a `find_top_surface` can refuse a scan on a value; a barrier
+    // reaching either, however deep, keeps every read (BarrierReads::Always).
+    const nlohmann::json gradient{{"type", "minecraft:y_clamped_gradient"},
+                                  {"from_y", -16},
+                                  {"to_y", 32},
+                                  {"from_value", -1.0},
+                                  {"to_value", 1.0}};
+    const nlohmann::json interpolated{{"type", "minecraft:interpolated"}, {"argument", gradient}};
+    const nlohmann::json findTop{{"type", "minecraft:find_top_surface"},
+                                 {"density", gradient},
+                                 {"upper_bound", 32.0},
+                                 {"lower_bound", -16},
+                                 {"cell_height", 8}};
+    const nlohmann::json nested{
+        {"type", "minecraft:add"}, {"argument1", 0.25}, {"argument2", interpolated}};
+
+    struct Case {
+        const char* name;
+        nlohmann::json barrier;
+        bool aquifers;
+        bool always;
+    };
+
+    for (const Case& c :
+         {Case{"constant", 0.0, true, false}, Case{"gradient", gradient, true, false},
+          Case{"interpolated", interpolated, true, true},
+          Case{"find_top_surface", findTop, true, true},
+          Case{"interpolated under add", nested, true, true},
+          Case{"interpolated, aquifers off", interpolated, false, false}}) {
+        INFO(c.name);
+        nlohmann::json settings = flatSettings(c.aquifers, /*oreVeins=*/false);
+        settings["noise_router"]["barrier"] = c.barrier;
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        CHECK(filler.readsBarrierOnEveryBlock() == c.always);
+    }
+}
+
+TEST_CASE("ore veins place without aquifers too, the same blocks", "[terrain][filler][ore]") {
+    // Since pipeline engine v14. Veins were gated on aquifers_enabled from one
+    // probe world with veins on and aquifers off that came back unbroken
+    // stone; its seed's window holds no position the vein gate admits, so the
+    // library predicts it stone with aquifers on too, and the contrast that
+    // showed veins had changed the seed with the flag. The recipe at a seed
+    // whose window has veins is the aquifers-on world block for block with
+    // aquifers off, and tools/analysis/legacy-orevein-probe.sh's `la` and `ma`
+    // arms are their aquifers-on twins exactly at four seeds, under both
+    // sources (SPEC §11). So a fill with aquifers off holds the same vein
+    // blocks as one with them on.
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool aquifers : {false, true}) {
+        INFO("aquifers " << aquifers);
+        const TempTree tree;
+        tree.defineSettings("test", veinSettings(aquifers));
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        ChunkBuffer buffer(
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+        filler.fill(0, 0, buffer);
+        auto& names = filled.at(aquifers ? 1U : 0U);
+        for (std::int32_t y = -16; y <= -8; ++y) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    names.push_back(buffer.at(localX, y, localZ).name.toString());
+                }
+            }
+        }
+    }
+    int veinBlocks = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        CHECK(filled[0][i] == filled[1][i]);
+        veinBlocks += static_cast<int>(filled[0][i] != "minecraft:stone");
+    }
+    // About 70% of 9 * 256 candidates: not vacuous.
+    CHECK(veinBlocks > 1000);
+}
+
+TEST_CASE("ore veins over a non-stone default_block are the stone fill's, the rest that block",
+          "[terrain][filler][ore]") {
+    // Measured against the server: tools/analysis/legacy-orevein-probe.sh's
+    // `nv` (netherrack) and `dv` (deepslate[axis=x]) arms hold exactly the
+    // vein blocks of their stone control, and their own default_block, whole
+    // state, everywhere else (SPEC §11, "Ore veins under the legacy source";
+    // vanilla_orevein_legacy_test.cpp). This is the fixture-free guard, as
+    // "the aquifer's barrier is the dimension's default_block" is for the
+    // aquifer: every other vein case here runs stone, where a filler that
+    // placed veins only over minecraft:stone, or wrote the default block
+    // without its properties, passes unseen.
+    //
+    // The plane is solid only below y = 0, so the dimension's y 0..31 is open,
+    // and that is what `wrongOther` reads, at two floodednesses so that it
+    // sees both kinds of open block: at 0 the aquifer drains all of it to air
+    // ("a dimension with aquifers now fills, draining where floodedness says
+    // to"), and at 0.9 it reproduces the plain sea, water below sea level 8 and
+    // air above ("an aquifer above its own floodedness gate reproduces the
+    // plain sea, through the real mechanism").
+    const auto withDefault = [](const nlohmann::json& defaultBlock, double floodedness) {
+        nlohmann::json settings = veinSettings(/*aquifers=*/true);
+        settings["default_block"] = defaultBlock;
+        settings["noise_router"]["fluid_level_floodedness"] = floodedness;
+        return settings;
+    };
+    const std::set<std::string> veinNames{
+        "minecraft:granite", "minecraft:copper_ore",         "minecraft:raw_copper_block",
+        "minecraft:tuff",    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block"};
+    for (const auto& [floodedness, waterLayers] : {std::pair{0.0, 0}, std::pair{0.9, 8}}) {
+        INFO("fluid_level_floodedness " << floodedness);
+        const TempTree tree;
+        tree.defineSettings("test_stone", withDefault({{"Name", "minecraft:stone"}}, floodedness))
+            .defineSettings("test_netherrack",
+                            withDefault({{"Name", "minecraft:netherrack"}}, floodedness))
+            .defineSettings("test_deepslate", withDefault({{"Name", "minecraft:deepslate"},
+                                                           {"Properties", {{"axis", "x"}}}},
+                                                          floodedness));
+        const LoadedSettings loaded = tree.load();
+        // The flat router names no noise, so this registry is empty; one of the
+        // tree's own rather than compileFrom()'s, which is built once per
+        // process.
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(),
+                                                    42, stratum::density::RandomSource::Xoroshiro);
+        const auto settingsOf = [&](const char* name) -> const stratum::settings::NoiseSettings& {
+            return loaded.settings.at(stratum::data::ResourceLocation::parse(name));
+        };
+        const auto& stoneSettings = settingsOf("minecraft:test_stone");
+        const auto& stone = stoneSettings.defaultBlock;
+        const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
+
+        // Each dimension with the properties its default_block must parse to:
+        // the "without its properties" half of this case means nothing unless
+        // the deepslate the filler is held to really carries its axis.
+        const std::array<std::pair<const char*, std::map<std::string, std::string>>, 2> dimensions{{
+            {"minecraft:test_netherrack", {}},
+            {"minecraft:test_deepslate", {{"axis", "x"}}},
+        }};
+        for (const auto& [name, properties] : dimensions) {
+            INFO("dimension " << name);
+            const auto& settings = settingsOf(name);
+            const auto& declared = settings.defaultBlock;
+            REQUIRE(declared.name != stone.name);
+            REQUIRE(declared.properties == properties);
+            const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings);
+            long long veinBlocks = 0;
+            long long defaultBlocks = 0;
+            long long waterBlocks = 0;
+            long long airBlocks = 0;
+            long long wrongVein = 0;
+            long long wrongDefault = 0;
+            long long wrongOther = 0;
+            for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{3, -2}}) {
+                ChunkBuffer stoneBuffer(stoneSettings.geometry);
+                ChunkBuffer buffer(settings.geometry);
+                stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
+                filler.fill(chunkX, chunkZ, buffer);
+                for (std::int32_t y = settings.geometry.minY; y < settings.geometry.maxY(); ++y) {
+                    for (int z = 0; z < 16; ++z) {
+                        for (int x = 0; x < 16; ++x) {
+                            const auto& control = stoneBuffer.at(x, y, z);
+                            const auto& ours = buffer.at(x, y, z);
+                            const std::string controlName = control.name.toString();
+                            if (veinNames.contains(controlName)) {
+                                ++veinBlocks;
+                                wrongVein += ours == control ? 0 : 1;
+                            } else if (control == stone) {
+                                ++defaultBlocks;
+                                wrongDefault += ours == declared ? 0 : 1;
+                            } else {
+                                waterBlocks += controlName == "minecraft:water" ? 1 : 0;
+                                airBlocks += controlName == "minecraft:air" ? 1 : 0;
+                                wrongOther += ours == control ? 0 : 1;
+                            }
+                        }
+                    }
+                }
+            }
+            INFO(veinBlocks << " vein blocks, " << defaultBlocks << " default blocks, "
+                            << waterBlocks << " water, " << airBlocks << " air");
+            CHECK(wrongVein == 0);
+            CHECK(wrongDefault == 0);
+            CHECK(wrongOther == 0);
+            // About 70% of 2 * 9 * 256 iron candidates, and the solid rest:
+            // not vacuous either way.
+            CHECK(veinBlocks > 2000);
+            CHECK(defaultBlocks > 2000);
+            // The open y 0..31 of both chunks, pinned per kind so the comment
+            // above cannot drift from what `wrongOther` reads; with the
+            // partition below, nothing else is there.
+            const long long openBlocks = 2LL * 16 * 16 * settings.geometry.maxY();
+            const long long water = 2LL * 16 * 16 * waterLayers;
+            CHECK(waterBlocks == water);
+            CHECK(airBlocks == openBlocks - water);
+            CHECK(veinBlocks + defaultBlocks + waterBlocks + airBlocks ==
+                  2LL * 16 * 16 * settings.geometry.height);
         }
     }
 }
@@ -378,7 +835,7 @@ TEST_CASE("ore veins replace solid blocks inside the iron range", "[terrain][fil
     // module directly rather than against a hard-coded block list: what this
     // case exists to catch is the WIRING — a filler reading the wrong router
     // entry, passing x/z in the wrong order, or replacing the wrong block.
-    const stratum::ore::VeinSource veins(0);
+    const stratum::ore::VeinSource veins(0, stratum::density::RandomSource::Xoroshiro);
     int placed = 0;
     for (std::int32_t y = -16; y <= -8; ++y) {
         for (int localX = 0; localX < 16; ++localX) {
@@ -418,7 +875,7 @@ TEST_CASE("ore veins never replace air", "[terrain][filler][ore]") {
         loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
     filler.fill(0, 0, buffer);
 
-    const stratum::ore::VeinSource veins(0);
+    const stratum::ore::VeinSource veins(0, stratum::density::RandomSource::Xoroshiro);
     int wouldHavePlaced = 0;
     for (std::int32_t y = 8; y < 32; ++y) { // above sea level, so air not water
         for (int localX = 0; localX < 16; ++localX) {
@@ -472,6 +929,47 @@ TEST_CASE("a buffer refuses positions outside the chunk or the dimension", "[ter
     CHECK_THROWS_WITH(buffer.at(-1, 0, 0), ContainsSubstring("outside the chunk"));
     CHECK_THROWS_WITH(buffer.at(0, -17, 0), ContainsSubstring("outside this dimension"));
     CHECK_THROWS_WITH(buffer.at(0, 32, 0), ContainsSubstring("outside this dimension"));
+}
+
+TEST_CASE("fluid updates are put in the server's fill order, cell column by cell column",
+          "[terrain][filler]") {
+    // Known answer for the order the server's PostProcessing lists hold
+    // (SPEC §11's Q8 entry): cell columns x-major, each from the top down,
+    // x then z within one layer of a cell — so (0,5,3) before (1,5,0), y 5
+    // before y -3 in one column, and every mark of column (0, 0) before any
+    // of column (0, 1), whatever their heights.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    using Update = ChunkBuffer::FluidUpdate;
+    // Through a cast: MSVC warns (C4242, an error here) on brace-initialising
+    // the uint8_t members from an int.
+    const auto at = [](int x, std::int32_t y, int z) {
+        return Update{
+            .localX = static_cast<std::uint8_t>(x), .y = y, .localZ = static_cast<std::uint8_t>(z)};
+    };
+    const std::vector<Update> marked = {
+        at(1, 5, 0), at(0, -3, 0),    at(2, 30, 4), at(0, 5, 3),
+        at(4, 7, 0), at(15, -16, 15), at(3, 5, 2),
+    };
+    for (const Update& update : marked) {
+        buffer.markFluidUpdate(update.localX, update.y, update.localZ);
+    }
+
+    buffer.orderFluidUpdatesByCells(4);
+    CHECK(buffer.fluidUpdates() == std::vector<Update>{at(0, 5, 3), at(1, 5, 0), at(3, 5, 2),
+                                                       at(0, -3, 0), at(2, 30, 4), at(4, 7, 0),
+                                                       at(15, -16, 15)});
+
+    // Eight wide, x 4 joins column (0, 0) and z 4 does too.
+    buffer.orderFluidUpdatesByCells(8);
+    CHECK(buffer.fluidUpdates() == std::vector<Update>{at(2, 30, 4), at(4, 7, 0), at(0, 5, 3),
+                                                       at(1, 5, 0), at(3, 5, 2), at(0, -3, 0),
+                                                       at(15, -16, 15)});
+
+    CHECK_THROWS_WITH(buffer.orderFluidUpdatesByCells(0), ContainsSubstring("0 blocks wide"));
 }
 
 TEST_CASE("the corner cache changes speed and not values", "[terrain][filler]") {
@@ -562,9 +1060,12 @@ TEST_CASE("bandlands runs through the whole filler pipeline, not just the execut
         return name == "minecraft:terracotta" || name.ends_with("_terracotta");
     };
     // The flat plane: stone below y 0, water up to the sea level of 8, open
-    // air above it.
+    // air above it. Only the stone is a surface-rule position: a rule's block
+    // replaces the default block and nothing else (SPEC §11, measured on the
+    // eight golden overworld regions), so the water at y 0 stays water.
     CHECK(isClay(buffer.at(0, -16, 0).name.toString()));
-    CHECK(isClay(buffer.at(0, 0, 0).name.toString()));
+    CHECK(isClay(buffer.at(0, -1, 0).name.toString()));
+    CHECK(buffer.at(0, 0, 0).name.toString() == "minecraft:water");
     // AND THE OPEN AIR IS NOT REACHED. The pass starts at the column's
     // topmost non-air block — here the water at y 7 — so an unconditioned
     // rule cannot paint the sky. This assertion read `isClay` at y 8 until
@@ -597,6 +1098,89 @@ TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pi
     // y = -15 is at-and-above the certain ceiling: always false, so the
     // filler's own stone stands.
     CHECK(buffer.at(0, -15, 0).name.toString() == "minecraft:stone");
+}
+
+TEST_CASE("a legacy dimension's vertical_gradient draws the legacy coin through the whole filler",
+          "[terrain][filler][surface][legacy]") {
+    // NOT refused any more: the legacy coin is the aquifer lattice's
+    // primitive salted with the gradient's random_name, exact on the golden
+    // Nether's bedrock where the Xoroshiro coin is at chance (SPEC §11;
+    // vanilla_legacy_gradient_gap_test.cpp scores the executor there). What
+    // this pins, with no fixture and so in every CI run, is the WIRING: the
+    // filler's executor must draw from the registry's declared source. The
+    // flat plane is stone from the floor to y = -1, so every position of the
+    // band is solid and its block is the gradient's decision alone. Filled
+    // under each source, each must follow its own coin at every position,
+    // and the two must differ. A chunk off the origin on both axes, one of
+    // them negative, so the coordinates the coin is drawn at are absolute.
+    constexpr std::int32_t kTrueAtAndBelow = -16;
+    constexpr std::int32_t kFalseAtAndAbove = -8;
+    constexpr std::int32_t kChunkX = 1;
+    constexpr std::int32_t kChunkZ = -2;
+    const std::string name = "minecraft:bedrock_floor";
+    for (const std::int64_t seed : {std::int64_t{42}, std::int64_t{-7}}) {
+        std::size_t differ = 0;
+        for (const bool legacy : {false, true}) {
+            INFO("seed " << seed << ", legacy " << legacy);
+            nlohmann::json settings = flatSettings(false, false);
+            settings["legacy_random_source"] = legacy;
+            const TempTree tree;
+            tree.defineSettings("test", settings);
+            const LoadedSettings loaded = tree.load();
+            const RuleGraph surface = resolveSurface(condition(
+                gradient(name, kTrueAtAndBelow, kFalseAtAndAbove), block("minecraft:bedrock")));
+            // The flat router names no noise, so a legacy registry builds
+            // empty and the gradient is the dimension's only draw on it.
+            const auto noises = stratum::density::NoiseRegistry::create(
+                tree.pack(), loaded.graph.referencedNoises(), seed,
+                legacy ? stratum::density::RandomSource::Legacy
+                       : stratum::density::RandomSource::Xoroshiro);
+            const auto& dimension =
+                loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+            const ChunkFiller filler =
+                ChunkFiller::compile(loaded.graph, noises, dimension, &surface);
+            REQUIRE(filler.runsSurfaceRules());
+            CHECK(filler.surfaceRulesBlockedBy().empty());
+
+            ChunkBuffer buffer(dimension.geometry);
+            filler.fill(kChunkX, kChunkZ, buffer);
+            const auto modern = stratum::rng::positionalSourceFor(seed, name);
+            const auto legacySource = stratum::rng::legacyPositionalSourceFor(seed, name);
+            std::size_t mismatches = 0;
+            std::size_t fired = 0;
+            for (std::int32_t lz = 0; lz < 16; ++lz) {
+                for (std::int32_t lx = 0; lx < 16; ++lx) {
+                    const std::int32_t x = (kChunkX * 16) + lx;
+                    const std::int32_t z = (kChunkZ * 16) + lz;
+                    for (std::int32_t y = kTrueAtAndBelow + 1; y < kFalseAtAndAbove; ++y) {
+                        const bool legacyFires = stratum::surface::verticalGradientFires(
+                            legacySource, x, y, z, kTrueAtAndBelow, kFalseAtAndAbove);
+                        const bool modernFires = stratum::surface::verticalGradientFires(
+                            modern, x, y, z, kTrueAtAndBelow, kFalseAtAndAbove);
+                        const bool bedrock =
+                            buffer.at(lx, y, lz).name.toString() == "minecraft:bedrock";
+                        mismatches += static_cast<std::size_t>(
+                            bedrock != (legacy ? legacyFires : modernFires));
+                        fired += static_cast<std::size_t>(bedrock);
+                        if (legacy) {
+                            differ += static_cast<std::size_t>(legacyFires != modernFires);
+                        }
+                    }
+                }
+            }
+            CHECK(mismatches == 0U);
+            // 1792 band positions at p from 7/8 down to 1/8: half fire on
+            // average, so neither "always" nor "never" can pass the check
+            // above by accident.
+            CHECK(fired > 600U);
+            CHECK(fired < 1200U);
+        }
+        // The two coins are different fields, so they part on 2p(1 - p) of
+        // each level: 672 of the 1792 positions expected, the standard
+        // deviation about 20.
+        INFO("seed " << seed);
+        CHECK(differ > 400U);
+    }
 }
 
 TEST_CASE("stone_depth reads the run the filler itself placed, not a fresh scan",
@@ -636,7 +1220,7 @@ TEST_CASE("water reads the filler's own latched height, not sea_level directly",
     const LoadedSettings loaded = tree.load();
     const RuleGraph surface =
         resolveSurface(condition(nlohmann::json{{"type", "minecraft:water"},
-                                                {"offset", -2},
+                                                {"offset", -9},
                                                 {"surface_depth_multiplier", 0},
                                                 {"add_stone_depth", false}},
                                  block("minecraft:ice")));
@@ -648,11 +1232,22 @@ TEST_CASE("water reads the filler's own latched height, not sea_level directly",
     filler.fill(0, 0, buffer);
 
     // Water fills y = 0..7, so the latched height is 8 — one above the
-    // topmost fluid block, not sea_level compared directly. offset -2 moves
-    // the fired boundary down to y = 6.
-    CHECK(buffer.at(0, 5, 0).name.toString() == "minecraft:water");
-    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:ice");
-    CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:ice");
+    // topmost fluid block. offset -9 puts the fired boundary at y = -1, the
+    // plane's top solid block: the condition is true there and false one
+    // below. (Here the latched height equals sea_level, so this pins the
+    // latch's arithmetic, not its independence from sea_level.)
+    //
+    // The rule fires only on default-block positions. This case used to
+    // assert ice painted INTO the water at y 6 and 7, on the reading that a
+    // column's open fluid stays in reach of the rules for exactly this — a
+    // rule keyed on `water` freezing a lake's surface. Refuted on the golden
+    // overworld regions: vanilla's own unconditioned deepslate gradient
+    // leaves every one of 6619641 open and buried water positions alone, so
+    // no rule reaches a fluid position at all (SPEC §11).
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:ice");
+    CHECK(buffer.at(0, -2, 0).name.toString() == "minecraft:stone");
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:water");
+    CHECK(buffer.at(0, 7, 0).name.toString() == "minecraft:water");
 }
 
 TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own fluid",
@@ -689,11 +1284,13 @@ TEST_CASE("an unconditioned rule never rewrites a buried fluid pocket's own flui
     // The notch itself — solid rock already crossed above it on the way
     // down — keeps its own fluid untouched.
     CHECK(buffer.at(0, -8, 0).name.toString() == "minecraft:water");
-    // The column's OWN topmost fluid, reached with no solid crossed above
-    // it yet, stays reachable — the same distinction "water reads the
-    // filler's own latched height" exercises through a condition instead of
-    // a bare rule.
-    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:end_stone");
+    // And so does the column's OWN topmost fluid, reached with no solid
+    // crossed above it. An earlier reading kept that one in reach of the
+    // rules; the golden overworld regions refute it — vanilla's
+    // unconditioned deepslate gradient leaves open water alone exactly as it
+    // leaves buried water alone (SPEC §11). A rule writes over the default
+    // block and nothing else.
+    CHECK(buffer.at(0, 6, 0).name.toString() == "minecraft:water");
 }
 
 TEST_CASE("an unconditioned rule never rewrites a buried air pocket either",
@@ -758,10 +1355,12 @@ TEST_CASE("biome reads the biome the climate router and parameter list compute",
 
     // The flat dimension's climate router is constant zero everywhere, and
     // the table's one entry matches it everywhere, so the biome is
-    // "minecraft:plains" at every position the pass reaches — solid and
-    // fluid alike.
+    // "minecraft:plains" at every position the pass reaches — every
+    // default-block position, at any depth.
     CHECK(buffer.at(0, -16, 0).name.toString() == "minecraft:podzol");
-    CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:podzol");
+    CHECK(buffer.at(3, -4, 9).name.toString() == "minecraft:podzol");
+    // The water above the plane is not a surface-rule position at all.
+    CHECK(buffer.at(3, 4, 9).name.toString() == "minecraft:water");
     // Open sky above the water is not reached at all; see the scan bound in
     // ChunkFiller::applySurfaceRules. What this case is about is the BIOME
     // lookup, and the two positions above exercise it.
@@ -869,7 +1468,7 @@ TEST_CASE("temperature reads the biome's own declared value, not a made-up one",
     CHECK(buffer.at(15, -1, 9).name.toString() == "minecraft:packed_ice");
 }
 
-TEST_CASE("above_preliminary_surface reads the column's own level, not a per-block guess",
+TEST_CASE("above_preliminary_surface's edge carries surfaceDepth - 8 under a constant level",
           "[terrain][filler][surface]") {
     // Built directly rather than through compileFrom()'s shared registry for
     // the same reason the bandlands case above is: this condition reads a
@@ -902,6 +1501,9 @@ TEST_CASE("above_preliminary_surface reads the column's own level, not a per-blo
     // condition is named after, and different from column to column. The
     // Executor computes the same depth the filler's own does, so this asks
     // it rather than hard-coding a number the noise parameters would move.
+    // A constant level makes the 16-block lattice and the column the same
+    // number, so this case is blind to WHERE the level is sampled; the next
+    // two cases hold that.
     const auto executor = stratum::surface::Executor::compile(
         surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
     for (const auto& [x, z] : {std::pair{0, 0}, std::pair{7, 3}, std::pair{15, 15}}) {
@@ -912,6 +1514,288 @@ TEST_CASE("above_preliminary_surface reads the column's own level, not a per-blo
         // And well above it, where the old reading and this one agree.
         CHECK(buffer.at(x, -1, z).name.toString() == "minecraft:glowstone");
     }
+}
+
+TEST_CASE("the psl lattice: each sample floored, blended, floored again (known answers)",
+          "[terrain][filler][surface]") {
+    // ChunkFiller::preliminarySurfaceIn on its own, against SPEC §11's
+    // formula worked by hand. The filler case below proves the WIRING (where
+    // the four samples are taken, in what order, and that the result reaches
+    // the condition); this one proves the arithmetic the wiring hands them to.
+    const auto at = [](const std::array<double, 4>& samples, std::int32_t offsetX,
+                       std::int32_t offsetZ) {
+        return ChunkFiller::preliminarySurfaceIn(samples, offsetX, offsetZ);
+    };
+
+    // The sample order is (x0,z0), (x1,z0), (x0,z1), (x1,z1): a sample in the
+    // wrong slot blends along the wrong axis.
+    CHECK(at({0.0, 16.0, 0.0, 0.0}, 5, 0) == 5);
+    CHECK(at({0.0, 16.0, 0.0, 0.0}, 0, 5) == 0);
+    CHECK(at({0.0, 0.0, 16.0, 0.0}, 5, 0) == 0);
+    CHECK(at({0.0, 0.0, 16.0, 0.0}, 0, 5) == 5);
+
+    // At the cell's own corner the value is that sample, floored.
+    CHECK(at({-3.5, 9.0, 9.0, 9.0}, 0, 0) == -4);
+
+    // Where the floor falls. Floors -> 0, -1, 0, -1; blended at u = 1/4 that
+    // is -0.25, floored -1. Every alternative filler.hpp lists as refused by
+    // the server (`f_half` / `f_quart`) gives 0 on this one vector, so the
+    // vector alone separates the measured reading from all six.
+    const std::array<double, 4> halves{0.5, -0.5, 0.5, -0.5};
+    CHECK(at(halves, 4, 0) == -1);
+    // Floored only after the blend: 0.25.
+    CHECK(stratum::javamath::floorToInt(bilerp(halves, 0.25, 0.0)) == 0);
+    // Truncated at the sample (both halves truncate to 0), then after.
+    CHECK(stratum::javamath::doubleToInt(bilerp(truncated(halves), 0.25, 0.0)) == 0);
+    // Truncated, or rounded, only after the blend.
+    CHECK(stratum::javamath::doubleToInt(bilerp(halves, 0.25, 0.0)) == 0);
+    CHECK(std::lround(bilerp(halves, 0.25, 0.0)) == 0L);
+    // The cell's lower corner, which at offset 4 of 16 is also the nearest.
+    CHECK(stratum::javamath::floorToInt(halves[0]) == 0);
+
+    // Mixed signs and both axes at once. Floors -2, -18, -34, -9; u = 3/16
+    // gives low -5 and high -29.3125; v = 11/16 gives -21.71484375.
+    CHECK(at({-1.25, -17.75, -33.5, -9.0}, 3, 11) == -22);
+
+    // The census SPEC §11 quotes. Every assignment of the three arms
+    // {-40, 0, 60} of `probes/apsb/v_psl`'s range_choice to the four samples,
+    // at every offset inside a cell: pitch 16 reaches every integer from -40
+    // to 60, which is the 101 the server's own band shows, while pitch 4 and
+    // 2 leave gaps — and 8 and 32 do not, which is why the pitch was
+    // measured by translation (vanilla_psl_lattice_test.cpp) rather than by
+    // this count. At 16 the formula is held equal to the engine's helper on
+    // every one of those inputs.
+    struct Census {
+        std::int32_t pitch;
+        std::size_t values;
+        std::size_t gaps;
+    };
+
+    const std::array<double, 3> arms{-40.0, 0.0, 60.0};
+    for (const Census& expected :
+         {Census{2, 15, 86}, Census{4, 57, 44}, Census{8, 101, 0},
+          Census{ChunkFiller::kPreliminarySurfacePitch, 101, 0}, Census{32, 101, 0}}) {
+        CAPTURE(expected.pitch);
+        std::set<std::int32_t> reached;
+        std::size_t helperDisagrees = 0;
+        for (std::size_t assignment = 0; assignment < 81; ++assignment) {
+            std::array<double, 4> samples{};
+            std::size_t digits = assignment;
+            for (double& sample : samples) {
+                sample = arms.at(digits % 3);
+                digits /= 3;
+            }
+            for (std::int32_t offsetZ = 0; offsetZ < expected.pitch; ++offsetZ) {
+                for (std::int32_t offsetX = 0; offsetX < expected.pitch; ++offsetX) {
+                    const std::int32_t value =
+                        latticeAtPitch(samples, offsetX, offsetZ, expected.pitch);
+                    if (expected.pitch == ChunkFiller::kPreliminarySurfacePitch) {
+                        helperDisagrees += static_cast<std::size_t>(
+                            ChunkFiller::preliminarySurfaceIn(samples, offsetX, offsetZ) != value);
+                    }
+                    reached.insert(value);
+                }
+            }
+        }
+        CHECK(helperDisagrees == 0U);
+        REQUIRE_FALSE(reached.empty());
+        CHECK(reached.size() == expected.values);
+        CHECK(*reached.begin() == -40);
+        CHECK(*reached.rbegin() == 60);
+        CHECK(101U - reached.size() == expected.gaps);
+    }
+}
+
+TEST_CASE("above_preliminary_surface reads the 16-block lattice through the whole filler, not "
+          "the column",
+          "[terrain][filler][surface]") {
+    // The fixture-free guard on the WIRING of SPEC §11's psl lattice. The
+    // server measurement lives in vanilla_psl_lattice_test.cpp and the
+    // engine's own reproduction of it in golden_overworld_test.cpp, and both
+    // need server-generated worlds — probe worlds and region goldens, which
+    // only CI's Linux conformance legs have; the constant-level case above
+    // is blind to it by construction. Here the entry varies by at least 8
+    // blocks inside every chunk (required below), so a filler that samples it
+    // anywhere else, in any other order, or floors it anywhere else, moves
+    // the band's lower edge in a counted share of the columns — and the plane
+    // being solid stone from -64 to -1, a moved edge is a different block.
+    //
+    // The reference is computed beside the engine, not by it: a separate
+    // Interpreter for the raw entry at y = 0, the surface Executor for the
+    // depth, and the lattice cell found per column through floorDiv rather
+    // than from the chunk = cell shortcut the filler takes. It shares
+    // preliminarySurfaceIn and the interpreter with the engine, so it proves
+    // where the samples go, not that the arithmetic is right — the case
+    // above does that.
+    const TempTree tree;
+    tree.defineSettings("test", varyingPslSettings());
+    tree.defineSurfaceNoises();
+    tree.defineNoise("psl_field", R"({"firstOctave": -3, "amplitudes": [1.0, 1.0]})");
+    const LoadedSettings loaded = tree.load();
+    const auto& settings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    auto wanted = loaded.graph.referencedNoises();
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface"));
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface_secondary"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+                                 block("minecraft:glowstone")));
+    const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, settings, &surface);
+    REQUIRE(filler.surfaceRulesBlockedBy().empty());
+    REQUIRE(filler.runsSurfaceRules());
+
+    const auto executor = stratum::surface::Executor::compile(
+        surface, noises.worldSeed(), settings.geometry, &noises, settings.seaLevel);
+    const stratum::density::Interpreter reference(loaded.graph, noises);
+    const auto entry = settings.router.at(RouterEntry::PreliminarySurfaceLevel);
+    const auto raw = [&](std::int32_t x, std::int32_t z) {
+        return reference.evaluate(entry, stratum::density::Point{.x = x, .y = 0, .z = z});
+    };
+    // The four samples of the cell whose low corner is (x0, z0), @p span
+    // blocks on a side, in preliminarySurfaceIn's order.
+    const auto cell = [&](std::int32_t x0, std::int32_t z0, std::int32_t span) {
+        return std::array<double, 4>{raw(x0, z0), raw(x0 + span, z0), raw(x0, z0 + span),
+                                     raw(x0 + span, z0 + span)};
+    };
+
+    // Readings a regression could bring back, each scored by how many
+    // columns it would have put the edge somewhere else. The per-column read
+    // is what the engine did before pipeline engine v2.
+    enum Reading : std::size_t {
+        kPerColumn,      // floor(R(x, 0, z))
+        kTransposed,     // the (16, 0) and (0, 16) samples swapped
+        kFarCornerAt15,  // the chunk's own last column as the far sample, /15
+        kSingleFloor,    // floored only after the blend
+        kTruncated,      // truncated at the sample and after the blend
+        kTruncatingCell, // the cell found by truncating division, (x / 16) * 16
+        kReadings
+    };
+
+    constexpr std::int32_t kPitch = ChunkFiller::kPreliminarySurfacePitch;
+    const std::int32_t minY = settings.geometry.minY;
+    std::array<std::int32_t, kReadings> separates{};
+    std::int32_t columns = 0;
+    std::int32_t negativeColumns = 0;
+    std::int32_t exact = 0;
+    std::int32_t steps = 0;
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{-1, -1}, std::pair{3, -2}}) {
+        CAPTURE(chunkX, chunkZ);
+        ChunkBuffer buffer(settings.geometry);
+        filler.fill(chunkX, chunkZ, buffer);
+        const bool negative = chunkX < 0 || chunkZ < 0;
+
+        std::int32_t lowestColumn = std::numeric_limits<std::int32_t>::max();
+        std::int32_t highestColumn = std::numeric_limits<std::int32_t>::min();
+        for (int localZ = 0; localZ < kPitch; ++localZ) {
+            for (int localX = 0; localX < kPitch; ++localX) {
+                const std::int32_t x = (chunkX * kPitch) + localX;
+                const std::int32_t z = (chunkZ * kPitch) + localZ;
+                CAPTURE(x, z);
+                const std::int32_t depth = executor.surfaceDepth(x, z);
+                const auto edge = [depth](std::int32_t psl) { return psl + depth - 8; };
+
+                const std::int32_t x0 = stratum::javamath::floorDiv(x, kPitch) * kPitch;
+                const std::int32_t z0 = stratum::javamath::floorDiv(z, kPitch) * kPitch;
+                const auto samples = cell(x0, z0, kPitch);
+                const std::int32_t expected =
+                    edge(ChunkFiller::preliminarySurfaceIn(samples, x - x0, z - z0));
+                // The edge must land inside the plane, or this column could
+                // not show it.
+                REQUIRE(minY < expected);
+                REQUIRE(expected <= -1);
+
+                // The lowest glowstone, and whether the column is a clean
+                // step: stone below it, glowstone from it up to the plane's
+                // top.
+                std::int32_t observed = 0;
+                for (std::int32_t y = minY; y <= -1; ++y) {
+                    if (buffer.at(localX, y, localZ).name.toString() == "minecraft:glowstone") {
+                        observed = y;
+                        break;
+                    }
+                }
+                bool step = observed != 0;
+                for (std::int32_t y = minY; y <= -1 && step; ++y) {
+                    step = buffer.at(localX, y, localZ).name.toString() ==
+                           (y < observed ? "minecraft:stone" : "minecraft:glowstone");
+                }
+                ++columns;
+                negativeColumns += static_cast<std::int32_t>(negative);
+                exact += static_cast<std::int32_t>(observed == expected);
+                steps += static_cast<std::int32_t>(step);
+
+                const std::int32_t perColumn = stratum::javamath::floorToInt(raw(x, z));
+                lowestColumn = std::min(lowestColumn, perColumn);
+                highestColumn = std::max(highestColumn, perColumn);
+                if (localX == 0 && localZ == 0) {
+                    // At the cell's own corner the two readings are one.
+                    CHECK(edge(perColumn) == expected);
+                }
+
+                const double u = static_cast<double>(x - x0) / kPitch;
+                const double v = static_cast<double>(z - z0) / kPitch;
+                std::array<std::int32_t, kReadings> predicted{};
+                predicted[kPerColumn] = edge(perColumn);
+                predicted[kTransposed] = edge(ChunkFiller::preliminarySurfaceIn(
+                    {samples[0], samples[2], samples[1], samples[3]}, x - x0, z - z0));
+                predicted[kFarCornerAt15] = edge(stratum::javamath::floorToInt(bilerp(
+                    floored(cell(x0, z0, kPitch - 1)), static_cast<double>(x - x0) / (kPitch - 1),
+                    static_cast<double>(z - z0) / (kPitch - 1))));
+                predicted[kSingleFloor] =
+                    edge(stratum::javamath::floorToInt(bilerp(samples, u, v)));
+                predicted[kTruncated] =
+                    edge(stratum::javamath::doubleToInt(bilerp(truncated(samples), u, v)));
+                // Deliberately the WRONG division: the regression this
+                // reading stands for is exactly a truncating cell index.
+                const std::int32_t xt = stratum::javamath::truncDiv(x, kPitch) * kPitch;
+                const std::int32_t zt = stratum::javamath::truncDiv(z, kPitch) * kPitch;
+                predicted[kTruncatingCell] =
+                    edge(ChunkFiller::preliminarySurfaceIn(cell(xt, zt, kPitch), x - xt, z - zt));
+                for (std::size_t reading = 0; reading < kReadings; ++reading) {
+                    // A truncating division is floorDiv at x, z >= 0.
+                    if (reading == kTruncatingCell && !negative) {
+                        continue;
+                    }
+                    separates.at(reading) +=
+                        static_cast<std::int32_t>(predicted.at(reading) != observed);
+                }
+            }
+        }
+        // The field must actually vary inside the chunk, or every reading
+        // would agree and this case would pass on any of them.
+        REQUIRE(highestColumn - lowestColumn >= 8);
+    }
+
+    // The semantic claim: every column's edge is where the lattice puts it.
+    CHECK(columns == 768);
+    CHECK(exact == columns);
+    CHECK(steps == columns);
+
+    // And how many columns each rejected reading would have moved: the
+    // power of this case, kept separate from the claim above. The floors are
+    // what keep it from going vacuous under a smoother field: every reading
+    // must move some column, and the per-column read most of them.
+    CHECK(negativeColumns == 512);
+    CHECK(separates[kPerColumn] >= 512);
+    for (std::size_t reading = 0; reading < kReadings; ++reading) {
+        CAPTURE(reading);
+        CHECK(separates.at(reading) > 0);
+    }
+    // The exact counts are pure engine arithmetic over a fixed noise and a
+    // fixed surface depth, so they double as a cross-architecture check: a
+    // change to either noise moves them, and nothing else should. Truncation
+    // moves every column because the field is negative throughout, where
+    // truncating rounds up; the truncating cell index is scored on the 512
+    // columns of the two chunks with a negative coordinate only, since it is
+    // floorDiv everywhere else.
+    CHECK(separates[kPerColumn] == 672);
+    CHECK(separates[kTransposed] == 304);
+    CHECK(separates[kFarCornerAt15] == 369);
+    CHECK(separates[kSingleFloor] == 363);
+    CHECK(separates[kTruncated] == 768);
+    CHECK(separates[kTruncatingCell] == 488);
 }
 
 TEST_CASE("a tree reading a surface depth without minecraft:surface built is blocked, not crashed",
@@ -958,4 +1842,580 @@ TEST_CASE("steep reads neighbours clamped to this chunk, never a block outside i
     CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
     CHECK(buffer.at(15, -1, 15).name.toString() == "minecraft:stone");
     CHECK(buffer.paletteSize() == 3U);
+}
+
+TEST_CASE("a surface rule writes over the default block and nothing else",
+          "[terrain][filler][surface]") {
+    // The fixture-free guard for what golden_overworld_test.cpp measured on
+    // the real overworld (SPEC §11): an unconditioned rule — the shape of the
+    // overworld's own deepslate gradient — replaces the default block at any
+    // depth, and leaves lava, open water and air exactly as the first pass
+    // left them. The pass used to repaint lava (categorised Solid, because it
+    // is not this dimension's default_fluid) and the column's open water.
+    const TempTree tree;
+    tree.defineSettings("test", lavaSeaSettings());
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(block("minecraft:diamond_block"));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    for (int x : {0, 7, 15}) {
+        CAPTURE(x);
+        CHECK(buffer.at(x, -64, x).name.toString() == "minecraft:diamond_block");
+        CHECK(buffer.at(x, -61, x).name.toString() == "minecraft:diamond_block");
+        // The aquifers-off global lava sea: below min(-54, sea_level).
+        CHECK(buffer.at(x, -60, x).name.toString() == "minecraft:lava");
+        CHECK(buffer.at(x, -55, x).name.toString() == "minecraft:lava");
+        // ... and default_fluid from -54 up to sea_level.
+        CHECK(buffer.at(x, -54, x).name.toString() == "minecraft:water");
+        CHECK(buffer.at(x, 7, x).name.toString() == "minecraft:water");
+        CHECK(buffer.at(x, 8, x).name.toString() == "minecraft:air");
+    }
+}
+
+TEST_CASE("a chunk's flat_cache window is its own columns and one quart beyond",
+          "[terrain][aquifer]") {
+    // Twenty columns a side from the chunk's own corner — measured
+    // (filler.hpp, SPEC §11): a read up to four columns past the chunk's far
+    // edge relocates, one past that does not, and neither does one below
+    // its own corner.
+    constexpr auto window = ChunkFiller::flatCacheWindow(3, 3);
+    CHECK(window.minX == 48);
+    CHECK(window.maxX == 67);
+    CHECK(window.minZ == 48);
+    CHECK(window.maxZ == 67);
+    CHECK(window.covers(48, 67));
+    CHECK_FALSE(window.covers(47, 50));
+    CHECK_FALSE(window.covers(50, 68));
+
+    // The measurement turned on one source centre: off chunk (3, 3)'s
+    // window, where the server read it wet, and inside chunk (3, 4)'s, where
+    // it read it dry.
+    CHECK_FALSE(ChunkFiller::flatCacheWindow(3, 3).covers(57, 70));
+    CHECK(ChunkFiller::flatCacheWindow(3, 4).covers(57, 70));
+
+    // Below zero the window still starts at the chunk's own corner.
+    constexpr auto negative = ChunkFiller::flatCacheWindow(-1, -2);
+    CHECK(negative.minX == -16);
+    CHECK(negative.maxX == 3);
+    CHECK(negative.minZ == -32);
+    CHECK(negative.maxZ == -13);
+}
+
+TEST_CASE("a legacy dimension's ore veins draw from the legacy source",
+          "[terrain][filler][ore][legacy]") {
+    // NOT refused any more: the server's own legacy vein worlds measured the
+    // derivation (SPEC §11, "Ore veins under the legacy source";
+    // vanilla_orevein_legacy_test.cpp holds the filler to them block for
+    // block). What this pins, with no corpus and so in every CI run, is the
+    // WIRING: the filler must build its vein source from the registry's
+    // declared source. `veinSettings` makes every solid block of [-16, -8] an
+    // iron candidate, so the filler under each source must equal
+    // ore::VeinSource with that source there, and the two fills must differ.
+    constexpr std::int64_t kSeed = 42;
+    constexpr std::int32_t kChunkX = 3;
+    constexpr std::int32_t kChunkZ = -2;
+    const auto ironName = [](const stratum::ore::Vein& vein) -> std::string {
+        switch (vein.block) {
+            case stratum::ore::VeinBlock::Filler:
+                return "minecraft:tuff";
+            case stratum::ore::VeinBlock::Ore:
+                return "minecraft:deepslate_iron_ore";
+            case stratum::ore::VeinBlock::RawBlock:
+                return "minecraft:raw_iron_block";
+            case stratum::ore::VeinBlock::None:
+                break;
+        }
+        return "minecraft:stone";
+    };
+
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool legacy : {false, true}) {
+        INFO("legacy " << legacy);
+        const auto source = legacy ? stratum::density::RandomSource::Legacy
+                                   : stratum::density::RandomSource::Xoroshiro;
+        nlohmann::json settings = veinSettings(/*aquifers=*/true);
+        settings["legacy_random_source"] = legacy;
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        // The flat router names no noise, so the legacy registry is empty and
+        // builds.
+        const auto noises = stratum::density::NoiseRegistry::create(
+            tree.pack(), loaded.graph.referencedNoises(), kSeed, source);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        REQUIRE(dimension.legacyRandomSource == legacy);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, dimension);
+        ChunkBuffer buffer(dimension.geometry);
+        filler.fill(kChunkX, kChunkZ, buffer);
+
+        const stratum::ore::VeinSource veins{kSeed, source};
+        int mismatches = 0;
+        int placed = 0;
+        auto& names = filled.at(legacy ? 1U : 0U);
+        for (std::int32_t y = -16; y <= -8; ++y) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int localX = 0; localX < 16; ++localX) {
+                    const stratum::ore::Vein vein = veins.at(
+                        (kChunkX * 16) + localX, y, (kChunkZ * 16) + localZ,
+                        stratum::ore::VeinInputs{.toggle = -1.0, .ridged = -1.0, .gap = 0.0});
+                    const std::string ours = buffer.at(localX, y, localZ).name.toString();
+                    names.push_back(ours);
+                    mismatches += static_cast<int>(ours != ironName(vein));
+                    placed += static_cast<int>(vein.placed());
+                }
+            }
+        }
+        CHECK(mismatches == 0);
+        // About 70% of 9 * 256 candidates: the loop cannot pass vacuously.
+        CHECK(placed > 1000);
+    }
+    // The source reached the veins: unrelated fields agree on about 37% of
+    // candidates (measured on the probe), so most of these 2304 part.
+    int differ = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        differ += static_cast<int>(filled[0][i] != filled[1][i]);
+    }
+    CHECK(differ > 1000);
+}
+
+TEST_CASE("a legacy dimension's aquifer draws its lattice from the legacy source",
+          "[terrain][filler][aquifer][legacy]") {
+    // NOT refused any more: the server's own legacy aquifer worlds measured
+    // the derivation (SPEC §11; vanilla_aquifer_legacy_test.cpp holds the
+    // filler to them block for block). What this pins, with no corpus and so
+    // in every CI run, is the WIRING: the filler must build its lattice from
+    // the registry's declared source. The probe's open-void world — every
+    // input a constant, so a block is the lattice's decision alone — filled
+    // through ChunkFiller under each source must equal computeSubstance with
+    // that source's centres, and the two fills must differ.
+    nlohmann::json router = nlohmann::json::object();
+    for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
+        router[std::string(stratum::settings::routerEntryName(static_cast<RouterEntry>(i)))] = 0.0;
+    }
+    router["final_density"] = -1.0;
+    router["barrier"] = -2.0;
+    router["fluid_level_floodedness"] = 0.5;
+    router["fluid_level_spread"] = 0.0;
+    router["lava"] = -1.0;
+    router["preliminary_surface_level"] = 96.0;
+    constexpr std::int64_t kSeed = 42;
+    constexpr std::int32_t kChunkX = 1;
+    constexpr std::int32_t kChunkZ = 2;
+
+    std::array<std::vector<std::string>, 2> filled;
+    for (const bool legacy : {false, true}) {
+        INFO("legacy " << legacy);
+        const auto source = legacy ? stratum::density::RandomSource::Legacy
+                                   : stratum::density::RandomSource::Xoroshiro;
+        const nlohmann::json settings{
+            {"default_block", {{"Name", "minecraft:stone"}}},
+            {"default_fluid", {{"Name", "minecraft:water"}, {"Properties", {{"level", "0"}}}}},
+            {"sea_level", 63},
+            {"disable_mob_generation", true},
+            {"aquifers_enabled", true},
+            {"ore_veins_enabled", false},
+            {"legacy_random_source", legacy},
+            {"noise",
+             {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 1}}},
+            {"noise_router", router},
+            {"spawn_target", nlohmann::json::array()},
+            {"surface_rule",
+             {{"type", "minecraft:block"}, {"result_state", {{"Name", "minecraft:stone"}}}}},
+        };
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const auto noises = stratum::density::NoiseRegistry::create(
+            tree.pack(), loaded.graph.referencedNoises(), kSeed, source);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        REQUIRE(dimension.legacyRandomSource == legacy);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, dimension);
+        ChunkBuffer buffer(dimension.geometry);
+        filler.fill(kChunkX, kChunkZ, buffer);
+
+        const stratum::aquifer::CentreSource centres{kSeed, source};
+        stratum::aquifer::StatusCache statuses;
+        const auto constant = [](double value) {
+            return [value](std::int32_t, std::int32_t, std::int32_t) { return value; };
+        };
+        int mismatches = 0;
+        auto& names = filled.at(legacy ? 1U : 0U);
+        for (std::int32_t lz = 0; lz < 16; ++lz) {
+            for (std::int32_t lx = 0; lx < 16; ++lx) {
+                for (std::int32_t y = -64; y < 320; ++y) {
+                    const std::string ours = buffer.at(lx, y, lz).name.toString();
+                    names.push_back(ours);
+                    const auto expected = stratum::aquifer::computeSubstance(
+                        centres,
+                        stratum::aquifer::AquiferQuery{.x = (kChunkX * 16) + lx,
+                                                       .y = y,
+                                                       .z = (kChunkZ * 16) + lz,
+                                                       .density = -1.0,
+                                                       .seaLevel = 63},
+                        statuses, constant(-2.0), constant(0.5), constant(0.0), constant(-1.0),
+                        constant(96.0), stratum::aquifer::NoDeepDark{});
+                    std::string name = "minecraft:stone";
+                    if (expected.substance == stratum::aquifer::Substance::Air) {
+                        name = "minecraft:air";
+                    } else if (expected.substance == stratum::aquifer::Substance::Fluid) {
+                        name = expected.fluidType == stratum::aquifer::FluidType::Lava
+                                   ? "minecraft:lava"
+                                   : "minecraft:water";
+                    }
+                    mismatches += static_cast<int>(ours != name);
+                }
+            }
+        }
+        CHECK(mismatches == 0);
+    }
+    // The source reached the lattice: a 16x16 chunk of this world differs
+    // between the two by a few thousand blocks (about 7% of the window on
+    // the server's worlds).
+    int differ = 0;
+    for (std::size_t i = 0; i < filled[0].size(); ++i) {
+        differ += static_cast<int>(filled[0][i] != filled[1][i]);
+    }
+    CHECK(differ > 1000);
+}
+
+TEST_CASE("aquifers over a default fluid other than water are refused by name",
+          "[terrain][filler][aquifer]") {
+    // Q6.3's exception is written for WATER over the lava sea and Q6.4's
+    // mixed-type constant for lava against WATER; with any other default
+    // fluid those part from "the dimension's default fluid", and nothing has
+    // measured which the server takes. Refused, not guessed.
+    for (const char* fluid : {"minecraft:lava", "minecraft:air"}) {
+        INFO("default_fluid " << fluid);
+        nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+        settings["default_fluid"] = nlohmann::json{{"Name", fluid}};
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 0,
+                                                    stratum::density::RandomSource::Xoroshiro);
+        const auto& dimension =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        CHECK_THROWS_WITH(ChunkFiller::compile(loaded.graph, noises, dimension),
+                          ContainsSubstring("aquifers_enabled") &&
+                              ContainsSubstring(std::string("default_fluid ") + fluid));
+    }
+    // The control: the same settings with water compile.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(/*aquifers=*/true, /*oreVeins=*/false));
+    const LoadedSettings loaded = tree.load();
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), loaded.graph.referencedNoises(), 0, stratum::density::RandomSource::Xoroshiro);
+    CHECK_NOTHROW(ChunkFiller::compile(
+        loaded.graph, noises,
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"))));
+}
+
+namespace {
+
+/// An aquifer whose barrier fires: `barrier`, floodedness and spread each
+/// read a noise of their own, made up here (no vanilla data), so neighbouring
+/// sources disagree on their level. Density is positive on the six rows
+/// -48..-43 and -0.3 above, so every column holds both kinds of solid the
+/// filler writes as `default_block`: positive density, and the barrier.
+[[nodiscard]] nlohmann::json barrierSettings(const nlohmann::json& defaultBlock) {
+    nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    settings["default_block"] = defaultBlock;
+    settings["sea_level"] = 63;
+    settings["noise"] = {
+        {"min_y", -48}, {"height", 128}, {"size_horizontal", 1}, {"size_vertical", 2}};
+    const auto noise = [](const char* name, double yScale) {
+        return nlohmann::json{
+            {"type", "minecraft:noise"}, {"noise", name}, {"xz_scale", 1.0}, {"y_scale", yScale}};
+    };
+    nlohmann::json& router = settings["noise_router"];
+    router["barrier"] = noise("minecraft:test_barrier", 0.5);
+    router["fluid_level_floodedness"] = noise("minecraft:test_floodedness", 0.67);
+    router["fluid_level_spread"] = noise("minecraft:test_spread", 0.7142857142857143);
+    router["preliminary_surface_level"] = 96.0;
+    router["final_density"] = nlohmann::json{{"type", "minecraft:y_clamped_gradient"},
+                                             {"from_y", -44},
+                                             {"to_y", -42},
+                                             {"from_value", 1.0},
+                                             {"to_value", -0.3}};
+    return settings;
+}
+
+} // namespace
+
+TEST_CASE("the aquifer's barrier is the dimension's default_block, properties and all",
+          "[terrain][filler][aquifer]") {
+    // Spec Q6.7, the fixture-free guard for
+    // tests/conformance/vanilla_aquifer_default_block_test.cpp: the aquifer
+    // never names a block, and where it decides solid the filler writes the
+    // preset's own default_block, whole state. Two dimensions identical but
+    // for that block must come out identical but for that block. Every
+    // aquifer case elsewhere runs stone, where a filler writing literal
+    // stone for the barrier, or the bare block without its properties,
+    // passes unseen.
+    const TempTree tree;
+    tree.defineNoise("test_barrier", R"({"firstOctave": -4, "amplitudes": [1.0, 1.0]})")
+        .defineNoise("test_floodedness", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})")
+        .defineNoise("test_spread", R"({"firstOctave": -5, "amplitudes": [1.0, 1.0]})");
+    tree.defineSettings("test_stone", barrierSettings({{"Name", "minecraft:stone"}}));
+    tree.defineSettings("test_deepslate", barrierSettings({{"Name", "minecraft:deepslate"},
+                                                           {"Properties", {{"axis", "x"}}}}));
+    const LoadedSettings loaded = tree.load();
+    // A registry of this tree's own: compileFrom()'s is built once per
+    // process, from whichever tree reached it first.
+    const auto noises =
+        stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 42,
+                                                stratum::density::RandomSource::Xoroshiro);
+    const auto& stoneSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test_stone"));
+    const auto& deepslateSettings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test_deepslate"));
+    const auto& stone = stoneSettings.defaultBlock;
+    const auto& deepslateX = deepslateSettings.defaultBlock;
+    REQUIRE(deepslateX.properties == std::map<std::string, std::string>{{"axis", "x"}});
+    const ChunkFiller stoneFiller = ChunkFiller::compile(loaded.graph, noises, stoneSettings);
+    const ChunkFiller deepslateFiller =
+        ChunkFiller::compile(loaded.graph, noises, deepslateSettings);
+
+    constexpr std::int32_t kLastPositiveRow = -43;
+    long long differing = 0;
+    long long stoneLeft = 0;
+    long long positiveRows = 0;
+    long long barriers = 0;
+    long long fluid = 0;
+    ChunkBuffer stoneBuffer(stoneSettings.geometry);
+    ChunkBuffer deepslateBuffer(deepslateSettings.geometry);
+    for (const auto& [chunkX, chunkZ] :
+         {std::pair{0, 0}, std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+        stoneFiller.fill(chunkX, chunkZ, stoneBuffer);
+        deepslateFiller.fill(chunkX, chunkZ, deepslateBuffer);
+        for (int z = 0; z < 16; ++z) {
+            for (int x = 0; x < 16; ++x) {
+                for (std::int32_t y = -48; y < 80; ++y) {
+                    const auto& ours = deepslateBuffer.at(x, y, z);
+                    const auto& control = stoneBuffer.at(x, y, z);
+                    const auto& expected = control == stone ? deepslateX : control;
+                    differing += ours == expected ? 0 : 1;
+                    stoneLeft += ours.name == stone.name ? 1 : 0;
+                    if (y <= kLastPositiveRow) {
+                        positiveRows += ours == deepslateX ? 1 : 0;
+                    } else if (ours == deepslateX) {
+                        ++barriers;
+                    } else if (ours == deepslateSettings.defaultFluid) {
+                        ++fluid;
+                    }
+                }
+            }
+        }
+    }
+    INFO(barriers << " barrier blocks and " << fluid << " fluid above the positive rows");
+    CHECK(differing == 0);
+    CHECK(stoneLeft == 0);
+    CHECK(positiveRows == 4LL * 256LL * 6LL);
+    // Not vacuous: the barrier fires, beside fluid, in these four chunks.
+    REQUIRE(barriers > 100);
+    REQUIRE(fluid > 100);
+}
+
+namespace {
+
+/// `tools/analysis/aquifer-lavarun-probe.sh`'s terrain G1, corner for corner:
+/// stone 319..4, an open pool 3..-24 (air to -12, fluid below), stone
+/// -25..-32, an enclosed pool -33..-40, stone -41..-58, the lava sea
+/// -59..-64. A constant plus one `y_clamped_gradient` per 8-block cell, each
+/// boundary at a half-integer y; the script derives these values and checks
+/// its own layout before it writes them.
+[[nodiscard]] nlohmann::json lavaRunTerrain() {
+    nlohmann::json node{{"type", "minecraft:constant"}, {"argument", -5.5}};
+    const std::array<std::pair<int, double>, 9> steps{{{-64, 8.0},
+                                                       {-56, 1685.0},
+                                                       {-48, -1800.0},
+                                                       {-40, 120.0},
+                                                       {-32, -8.0},
+                                                       {-24, -7.5},
+                                                       {-8, 4.5},
+                                                       {0, 8.0},
+                                                       {8, 3.5}}};
+    for (const auto& [fromY, step] : steps) {
+        node = nlohmann::json{{"type", "minecraft:add"},
+                              {"argument1", node},
+                              {"argument2",
+                               {{"type", "minecraft:y_clamped_gradient"},
+                                {"from_y", fromY},
+                                {"to_y", fromY + 8},
+                                {"from_value", 0.0},
+                                {"to_value", step}}}};
+    }
+    return node;
+}
+
+/// The probe's aquifer: the fluid-type probe's arm P, so every source's
+/// level is -12 and no barrier is ever placed; `lava` 0.5 types every source
+/// lava, 0.0 water.
+[[nodiscard]] nlohmann::json lavaRunSettings(bool lavaPools, const nlohmann::json& surfaceRule) {
+    nlohmann::json settings = flatSettings(/*aquifers=*/true, /*oreVeins=*/false);
+    settings["sea_level"] = -16;
+    settings["default_fluid"] = {{"Name", "minecraft:water"}, {"Properties", {{"level", "0"}}}};
+    settings["noise"] = {
+        {"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}};
+    settings["noise_router"]["barrier"] = -2.0;
+    settings["noise_router"]["lava"] = lavaPools ? 0.5 : 0.0;
+    settings["noise_router"]["preliminary_surface_level"] = -12.0;
+    settings["noise_router"]["fluid_level_floodedness"] = 0.5;
+    settings["noise_router"]["fluid_level_spread"] = 6.0;
+    settings["noise_router"]["final_density"] = lavaRunTerrain();
+    settings["surface_rule"] = surfaceRule;
+    return settings;
+}
+
+constexpr std::array<const char*, 16> kWool{
+    "white",      "orange", "magenta", "light_blue", "yellow", "lime",  "pink", "gray",
+    "light_gray", "cyan",   "purple",  "blue",       "brown",  "green", "red",  "black"};
+
+[[nodiscard]] std::string wool(std::size_t k) {
+    return std::string("minecraft:") + kWool.at(k) + "_wool";
+}
+
+/// The probe's ladders: sixteen rungs, the k-th placing the k-th wool, so a
+/// stone block shows its 0-based depth in the run (`floor`, `ceiling`) or how
+/// far below the water height it sits (`water`), and stays stone past 15.
+[[nodiscard]] nlohmann::json woolLadder(const std::string& kind) {
+    nlohmann::json rungs = nlohmann::json::array();
+    for (std::size_t k = 0; k < kWool.size(); ++k) {
+        const auto offset = static_cast<int>(k);
+        const nlohmann::json test = kind == "water"
+                                        ? nlohmann::json{{"type", "minecraft:water"},
+                                                         {"offset", -offset},
+                                                         {"surface_depth_multiplier", 0},
+                                                         {"add_stone_depth", false}}
+                                        : nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                         {"offset", offset},
+                                                         {"add_surface_depth", false},
+                                                         {"secondary_depth_range", 0},
+                                                         {"surface_type", kind}};
+        rungs.push_back(condition(test, block(wool(k))));
+    }
+    return nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", rungs}};
+}
+
+/// One chunk of the lava-run terrain under @p ladder, column (0, 0).
+[[nodiscard]] std::vector<std::string> lavaRunColumn(bool lavaPools, const std::string& ladder) {
+    const TempTree tree;
+    tree.defineSettings("test", lavaRunSettings(lavaPools, woolLadder(ladder)));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(woolLadder(ladder));
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface);
+    REQUIRE(filler.runsSurfaceRules());
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    filler.fill(0, 0, buffer);
+    std::vector<std::string> column;
+    for (std::int32_t y = -64; y < 320; ++y) {
+        column.push_back(buffer.at(0, y, 0).name.toString());
+    }
+    return column;
+}
+
+[[nodiscard]] const std::string& at(const std::vector<std::string>& column, std::int32_t y) {
+    return column.at(static_cast<std::size_t>(y + 64));
+}
+
+} // namespace
+
+TEST_CASE("the lava-run probe's terrain fills as its script records it",
+          "[terrain][filler][aquifer][surface]") {
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const TempTree tree;
+        tree.defineSettings("test", lavaRunSettings(lavaPools, block("minecraft:stone")));
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        ChunkBuffer buffer(
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+        filler.fill(0, 0, buffer);
+        const std::string pool = lavaPools ? "minecraft:lava" : "minecraft:water";
+        long long wrong = 0;
+        for (int x = 0; x < 16; ++x) {
+            for (int z = 0; z < 16; ++z) {
+                for (std::int32_t y = -64; y < 320; ++y) {
+                    std::string expected = "minecraft:stone";
+                    if (y <= -59) {
+                        expected = "minecraft:lava";
+                    } else if ((y >= -40 && y <= -33) || (y >= -24 && y <= -13)) {
+                        expected = pool;
+                    } else if (y >= -12 && y <= 3) {
+                        expected = "minecraft:air";
+                    }
+                    if (buffer.at(x, y, z).name.toString() != expected && ++wrong <= 10) {
+                        UNSCOPED_INFO("x " << x << " y " << y << " z " << z << ": "
+                                           << buffer.at(x, y, z).name.toString());
+                    }
+                }
+            }
+        }
+        CHECK(wrong == 0);
+    }
+}
+
+TEST_CASE("the top-down stone-depth run holds through lava as through water",
+          "[terrain][filler][aquifer][surface]") {
+    // The fixture-free guard for what aquifer-lavarun-probe.sh measured
+    // (SPEC §11): top down, lava neither counts toward the run nor breaks it,
+    // exactly as water. Cave A's 12 blocks of pool sit under air, so the
+    // stone below them starts at depth 0 whatever the pool does — unless the
+    // pool COUNTS, which is what the filler did while it called lava Solid
+    // (depth 12 there). Cave B's enclosed pool then carries the run on
+    // (depth 8 at its floor) where a reset would restart it at 0.
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "floor");
+        CHECK(at(column, 319) == wool(0));
+        CHECK(at(column, -25) == wool(0));
+        CHECK(at(column, -32) == wool(7));
+        CHECK(at(column, -41) == wool(8));
+        CHECK(at(column, -48) == wool(15));
+        CHECK(at(column, -49) == "minecraft:stone");
+        CHECK(at(column, -58) == "minecraft:stone");
+    }
+}
+
+TEST_CASE("the bottom-up stone-depth run resets on every fluid, water included",
+          "[terrain][filler][aquifer][surface]") {
+    // Bottom up, fluid resets the run as air does — lava of the sea, lava of
+    // the lattice and water alike (SPEC §11). The lava sea at the world's
+    // floor would put depth 6 at y -58 had it counted; cave B's enclosed pool
+    // would leave y -32 stone had it held (the run there would be past 16).
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "ceiling");
+        CHECK(at(column, -58) == wool(0));
+        CHECK(at(column, -43) == wool(15));
+        CHECK(at(column, -42) == "minecraft:stone");
+        CHECK(at(column, -32) == wool(0));
+        CHECK(at(column, -25) == wool(7));
+        CHECK(at(column, 4) == wool(0));
+        CHECK(at(column, 19) == wool(15));
+        CHECK(at(column, 20) == "minecraft:stone");
+    }
+}
+
+TEST_CASE("lava latches the water height as water does", "[terrain][filler][aquifer][surface]") {
+    // A column whose only fluid is lava has a water height, one above its
+    // topmost lava block (-13), exactly as with water (SPEC §11). While the
+    // filler called lava Solid the column had none, and `water` was true
+    // everywhere: rung 0 on every stone block.
+    for (const bool lavaPools : {true, false}) {
+        INFO((lavaPools ? "lava" : "water") << " pools");
+        const std::vector<std::string> column = lavaRunColumn(lavaPools, "water");
+        CHECK(at(column, 4) == wool(0));
+        CHECK(at(column, -25) == wool(13));
+        CHECK(at(column, -27) == wool(15));
+        CHECK(at(column, -28) == "minecraft:stone");
+        CHECK(at(column, -41) == "minecraft:stone");
+    }
 }

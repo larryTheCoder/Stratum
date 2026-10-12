@@ -8,7 +8,9 @@
 // agree once boundary noise (the barrier predicate's own per-cell draw)
 // is averaged out.
 //
-// TWO READOUTS, because group D's arm S cannot be read by the first one.
+// TWO READOUTS, because the old group D's arm S (aquifer-fluidtype-probe.sh's,
+// since retired; its other arms are aquifer-fluidceiling-probe.sh now) could
+// not be read by the first one.
 // A source whose level sits far ABOVE its own cell floods its entire
 // territory, so the column has no body top at the level and the per-level
 // histogram sees nothing to key on. For those dimensions the discriminator is
@@ -22,8 +24,10 @@
 // informative reading of the last pass — a 68-cell level -10 — behind a
 // threshold that had no measurement behind it.
 //
-//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz -o build/aquifer-fluidtype-analyze
-//   build/aquifer-fluidtype-analyze .fixtures/1.21.11/probes/fluidtype
+//   g++ -std=c++20 -O2 -I lib/include -I build/dev/lib/generated
+//   tools/analysis/aquifer-fluidtype-analyze.cpp -L build/dev/lib -lstratum_core -lz -o
+//   build/aquifer-fluidtype-analyze build/aquifer-fluidtype-analyze
+//   .fixtures/1.21.11/probes/fluidtype
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
@@ -86,9 +90,10 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 const auto ch = chunk::Chunk::decode(nbt::read(file.readChunk(cx, cz)).root);
-                // The chunk's own extent, not a constant: group D's arm P'
-                // runs at `sea_level` -70 and therefore at `min_y` -192, and
-                // a hard-coded -64 would read none of it.
+                // The chunk's own extent, not a constant: the ceiling
+                // probe's arm P' (fluidceilingl_s<seed>) runs at `sea_level`
+                // -70 and therefore at `min_y` -192, and a hard-coded -64
+                // would read none of it.
                 const int minY = ch.minY();
                 const int maxY = ch.maxY();
                 for (int lz = 0; lz < 16; ++lz) {
@@ -104,8 +109,8 @@ int main(int argc, char** argv) {
                                     ++counts.highObsidian;
                                 }
                             }
-                            const bool fluid =
-                                b && (b->name == "minecraft:water" || b->name == "minecraft:lava");
+                            const bool fluid = (b != nullptr) && (b->name == "minecraft:water" ||
+                                                                  b->name == "minecraft:lava");
                             if (fluid && top == INT32_MIN) {
                                 top = y;
                                 lava = b->name == "minecraft:lava";
@@ -130,13 +135,18 @@ int main(int argc, char** argv) {
         std::printf("%-12s total=%lld water=%lld lava=%lld", name.c_str(), total, counts.water,
                     counts.lava);
         if (total > 0) {
-            std::printf(" (%.2f%% lava)", 100.0 * static_cast<double>(counts.lava) /
-                                              static_cast<double>(total));
+            std::printf(" (%.2f%% lava)",
+                        100.0 * static_cast<double>(counts.lava) / static_cast<double>(total));
         }
         std::printf(" hiLava=%lld hiObs=%lld", counts.highLava, counts.highObsidian);
         std::printf(" levels:");
         for (const auto& [level, at] : counts.byLevel) {
-            const char* verdict = at.lava == 0 ? "water" : (at.water == 0 ? "LAVA" : "MIXED");
+            const char* verdict = "MIXED";
+            if (at.lava == 0) {
+                verdict = "water";
+            } else if (at.water == 0) {
+                verdict = "LAVA";
+            }
             std::printf(" %d:%s(w%lld/l%lld)", level, verdict, at.water, at.lava);
         }
         std::printf("\n");

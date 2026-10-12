@@ -112,7 +112,9 @@ void defineWorkingPack(const TempTree& tree) {
 
 /// A valid settings file whose `final_density` points at @p finalDensity.
 void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity,
-                    bool legacyRandomSource = false) {
+                    bool legacyRandomSource = false,
+                    std::string_view defaultFluid = "minecraft:water",
+                    const nlohmann::json& surfaceRule = {{"type", "minecraft:bandlands"}}) {
     nlohmann::json router = nlohmann::json::object();
     for (std::size_t i = 0; i < stratum::settings::kRouterEntryCount; ++i) {
         router[std::string(stratum::settings::routerEntryName(
@@ -122,7 +124,7 @@ void defineSettings(const TempTree& tree, std::string_view name, std::string_vie
 
     const nlohmann::json json{
         {"default_block", {{"Name", "minecraft:stone"}}},
-        {"default_fluid", {{"Name", "minecraft:water"}}},
+        {"default_fluid", {{"Name", std::string(defaultFluid)}}},
         {"sea_level", 63},
         {"disable_mob_generation", false},
         {"aquifers_enabled", true},
@@ -131,7 +133,7 @@ void defineSettings(const TempTree& tree, std::string_view name, std::string_vie
         {"noise", {{"min_y", -64}, {"height", 384}, {"size_horizontal", 1}, {"size_vertical", 2}}},
         {"noise_router", router},
         {"spawn_target", nlohmann::json::array()},
-        {"surface_rule", {{"type", "minecraft:bandlands"}}},
+        {"surface_rule", surfaceRule},
     };
     tree.defineIn("noise_settings", name, json.dump());
 }
@@ -498,6 +500,68 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
     CHECK(finding->severity == Severity::Warning);
     CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
 
+    // Of what the dimension needs besides its router, neither the vein
+    // source nor the aquifer lattice is warned about: both legacy
+    // derivations are measured (SPEC §11). The vein source was the last to
+    // be, and was warned about by name until it was.
+    int veins = 0;
+    int aquifers = 0;
+    for (const Finding& each : report.findings) {
+        if (each.subject != "minecraft:nether") {
+            continue;
+        }
+        veins += static_cast<int>(each.message.find("'ore_veins_enabled'") != std::string::npos);
+        aquifers += static_cast<int>(each.message.find("aquifers_enabled") != std::string::npos);
+    }
+    CHECK(veins == 0);
+    CHECK(aquifers == 0);
+
     // And nothing was said about the dimension that is fine.
+    CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
+}
+
+TEST_CASE("a legacy dimension with veins on is reported only for a surface rule that does not "
+          "resolve",
+          "[validate]") {
+    // The vein flag drew a warning of its own while the legacy vein source
+    // was refused by name, and this case once held that warning outside the
+    // `try` that resolves the rule tree, where a rule's error had swallowed
+    // it. The legacy vein source is measured now (SPEC §11, "Ore veins under
+    // the legacy source"), so the flag draws nothing, and the rule's error
+    // is still the one finding.
+    const TempTree tree;
+    defineWorkingPack(tree);
+    // A `block` rule with no result_state: loads, and does not resolve.
+    defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true, "minecraft:water",
+                   {{"type", "minecraft:block"}});
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    const Finding* rule = findingAbout(report, "minecraft:nether surface_rule");
+    REQUIRE(rule != nullptr);
+    CHECK(rule->severity == Severity::Error);
+    int veins = 0;
+    for (const Finding& each : report.findings) {
+        veins += static_cast<int>(each.message.find("ore_veins_enabled") != std::string::npos);
+    }
+    CHECK(veins == 0);
+}
+
+TEST_CASE("aquifers over a default fluid other than water are a warning, named", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    defineSettings(tree, "overworld", "field");
+    defineSettings(tree, "lava_sea", "field", /*legacyRandomSource=*/false, "minecraft:lava");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    // The pack loads and its router evaluates; it is the filler that will
+    // refuse the dimension, so this is said up front rather than at the
+    // first chunk.
+    CHECK(report.count(Severity::Error) == 0U);
+    const Finding* finding = findingAbout(report, "minecraft:lava_sea");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Warning);
+    CHECK_THAT(finding->message, ContainsSubstring("default_fluid minecraft:lava"));
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
 }

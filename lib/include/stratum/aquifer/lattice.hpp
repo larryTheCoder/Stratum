@@ -24,18 +24,20 @@
 //     the centre at `16k + j` with `E[j]` about 4.4 — in the LOWER HALF of its
 //     own cell — which places the grid itself on multiples of sixteen.
 //
-// WHAT IS NOT SETTLED, and is deliberately absent rather than guessed:
-//
-//   * The jitter's distribution and the random source behind it. Only its
-//     mean is measured, and `cellOf` below is the grid, not the centre.
-//   * What sets the `base` the level is measured from. It tracks
-//     `preliminary_surface_level` and does so non-linearly.
-//   * The floodedness gate, the barrier rule, and the per-cell randomness that
-//     moves 27% of columns with all four router inputs held constant.
+// SINCE SETTLED, each below and in SPEC §11, where this header used to list
+// them as open: the jitter's draw and its random source (`CentreSource`), the
+// ladder the level is measured from (`ladderLevel`, capped by the scan of
+// `preliminary_surface_level` in sampling.hpp), the floodedness gates and the
+// ocean branch (`cellFluidLevel`), and the barrier rule (barrier.hpp). The
+// per-cell randomness that moved 27% of columns with all four router inputs
+// held constant was the jitter.
 #pragma once
 
+#include <stratum/density/random_source.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <bit>
 #include <cstdint>
 
 namespace stratum::aquifer {
@@ -86,7 +88,28 @@ inline constexpr std::int32_t kLavaLevel = -54;
 /// saturates at K = 32: K = 32 through K = 256 and this sentinel are
 /// byte-identical, K = 16 is not. So the corpus MEASURES "at least 32 below
 /// lambda"; the specific -32512 is Q1.4's arithmetic and is carried as such.
-inline constexpr std::int32_t kMinYLimit = -2032;
+///
+/// Carried as Q1.4's DERIVATION, not its product — the spec's own open
+/// question 4 asks for exactly that, since the value is composed from four
+/// separately-read definitions: a position encoding that gives each
+/// horizontal axis `1 + ceil(log2 30000000)` bits leaves 12 for `y`; the y
+/// span is `2^12 - 32`; its upper bound half that less one; and the limit
+/// the bottom of the span. The unit test checks the spec's transcribed
+/// -2032 and -32512 against this, rather than the literal against itself.
+namespace detail {
+inline constexpr std::uint32_t kHorizontalLimit = 30000000U;
+// `std::bit_width` returns `int` since LWG 3656 (libstdc++ 14, MSVC) and the
+// argument's own unsigned type before it (libstdc++ 13): the cast is needed
+// on one and redundant on the other, so the check that flags it is silenced
+// here rather than the code made to depend on the library version.
+// NOLINTNEXTLINE(readability-redundant-casting)
+inline constexpr int kHorizontalBits = 1 + static_cast<int>(std::bit_width(kHorizontalLimit - 1U));
+inline constexpr int kYBits = 64 - (2 * kHorizontalBits);
+inline constexpr std::int32_t kYSpan = (std::int32_t{1} << kYBits) - 32;
+inline constexpr std::int32_t kYUpper = (kYSpan / 2) - 1;
+} // namespace detail
+
+inline constexpr std::int32_t kMinYLimit = detail::kYUpper - detail::kYSpan + 1;
 inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
 
 /// `fluid_level_floodedness` gates which level a cell takes, against two
@@ -96,6 +119,16 @@ inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
 /// Both comparisons are strict, and the gate is DETERMINISTIC — every cell in
 /// a world flips across that ten-thousandth, so no per-cell threshold wider
 /// than 1e-4 can exist.
+///
+/// NOT CLAMPED, and deliberately: spec Q5.6 clamps floodedness to [-1, 1]
+/// before comparing, and here that clamp is a permanent tie — inert by
+/// construction, so nothing can measure it. Every effective threshold this
+/// rule compares against lies strictly inside (-1, 1): 0.4 and 0.8 off the
+/// ocean branch, and on it the bonus is `reach * 3/160` or `reach * 11/640`
+/// with `reach <= 52` (the near-surface return takes every depth under 4),
+/// which moves the thresholds no lower than -0.575 and -0.09375. A value
+/// outside [-1, 1] therefore lands on the same side of every comparison as
+/// its clamp. "the Q5.6 floodedness clamp is inert" sweeps that.
 inline constexpr double kFloodedLocalThreshold = 0.4;
 inline constexpr double kFloodedSeaThreshold = 0.8;
 
@@ -117,11 +150,6 @@ inline constexpr double kFloodedSeaThreshold = 0.8;
 /// is the failure §5's `floorDiv` rule exists to prevent — hence the helper
 /// rather than the operator.
 [[nodiscard]] std::int32_t spreadOffset(double spread) noexcept;
-
-/// `base + spreadOffset(spread)`, which is the whole level once the base is
-/// known. Spelled separately so that the part which IS derived can be tested
-/// on its own while the base is still open.
-[[nodiscard]] std::int32_t fluidLevel(std::int32_t base, double spread) noexcept;
 
 /// Which lattice cell a block belongs to.
 struct CellIndex {
@@ -183,8 +211,8 @@ inline constexpr std::int32_t kCellShiftZ = -5;
 /// world seeds**, with 34 predicted positive and the same 34 observed. Block
 /// level, with no fitted table anywhere in the loop, it reproduces 78.4% of
 /// the probe's barrier slabs exactly and places 99.3% of Voronoi boundaries
-/// inside the observed slab; the shortfall is the barrier threshold, which is
-/// still unrecovered, not the centres. Every ablation collapses to a 3-5% null
+/// inside the observed slab; the shortfall was the barrier threshold — since
+/// recovered (barrier.hpp) — not the centres. Every ablation collapses to a 3-5% null
 /// band: a different salt, dropping either fork, swapping the MD5 halves,
 /// adding a third fork, or shifting by 15 or 17 instead of 16.
 inline constexpr std::int32_t kJitterBoundX = 10;
@@ -201,28 +229,52 @@ struct Jitter {
 };
 
 /// The per-world source of cell centres. Immutable once built, and cheap to
-/// query: the world seed is folded down to a 128-bit base once, and each cell
-/// then costs one position mix and three draws.
+/// query: the world seed is folded down once, and each cell then costs one
+/// position mix and three draws.
+///
+/// THE DIMENSION'S DECLARED RANDOM SOURCE IS REQUIRED, with no default, for
+/// the reason `density::RandomSource` gives: under `legacy_random_source`
+/// the centres are drawn from java.util.Random rather than Xoroshiro128++,
+/// and a one-argument constructor that meant "modern" was the shape that
+/// would have let the filler hand a legacy dimension the wrong lattice.
 class CentreSource {
 public:
-    /// Forks the world seed, salts it with the MD5 of `minecraft:aquifer`, and
-    /// forks again — the same two-step derivation the noise registry uses,
-    /// which is why `XoroshiroPositionalFactory` does the first half here.
-    explicit CentreSource(std::int64_t worldSeed) noexcept;
+    /// Xoroshiro: forks the world seed, salts it with the MD5 of
+    /// `minecraft:aquifer`, and forks again — the same two-step derivation
+    /// the noise registry uses, which is why `XoroshiroPositionalFactory`
+    /// does the first half here.
+    ///
+    /// Legacy: the same two forks around one salt with java.util.Random,
+    /// String.hashCode for the MD5, and the position mix XORed into the
+    /// 64-bit stream seed (`rng::legacyPositionalSourceFor`). Measured on
+    /// the server's own legacy aquifer worlds (SPEC §11, "The aquifer under
+    /// the legacy source"): the one survivor of 7200 candidate rules, then
+    /// exact block for block on a seed generated after it was frozen.
+    CentreSource(std::int64_t worldSeed, density::RandomSource source) noexcept;
 
     /// The three draws for one cell, in the order x, y, z from one generator.
     /// The order is not free: the other five assignments of draw slots to axes
-    /// score 3.9-15.3% against this one's 78.9% at block level.
+    /// score 3.9-15.3% against this one's 78.9% at block level. Under the
+    /// legacy source each draw is java.util.Random's own nextInt(bound).
     [[nodiscard]] Jitter jitterOf(std::int32_t cx, std::int32_t cy, std::int32_t cz) const noexcept;
 
     /// The centre in absolute block coordinates.
     [[nodiscard]] CellIndex centreOf(std::int32_t cx, std::int32_t cy,
                                      std::int32_t cz) const noexcept;
 
+    [[nodiscard]] constexpr density::RandomSource source() const noexcept { return source_; }
+
+    /// The Xoroshiro derivation's 128-bit base; zero under the legacy source,
+    /// whose whole state is `legacySeed()`.
     [[nodiscard]] constexpr rng::Seed128 base() const noexcept { return base_; }
 
+    /// The legacy derivation's 64-bit stream seed; zero under Xoroshiro.
+    [[nodiscard]] constexpr std::int64_t legacySeed() const noexcept { return legacySeed_; }
+
 private:
-    rng::Seed128 base_;
+    density::RandomSource source_;
+    rng::Seed128 base_{};
+    std::int64_t legacySeed_ = 0;
 };
 
 /// The mix and the two-fork derivation live in `stratum::rng`: surface rules'
@@ -248,36 +300,17 @@ inline constexpr std::int32_t kBasePhase = 20;
 /// what an implementer writes by mistake.
 [[nodiscard]] std::int32_t levelBand(std::int32_t centreY) noexcept;
 
-/// The base a cell's fluid level is measured from, before the spread moves it.
-///
-/// Measured by pinning the spread to zero — which makes the offset exactly
-/// zero, so the level read out of a chunk IS the base — and reading every cell
-/// rather than one number per world. The levels then land on a lattice of
-/// pitch 40 anchored at `y = 20 (mod 40)`: -20, 20, 60, 100, 140. The
-/// preliminary surface caps it, and does so exactly: across psl 56, 80, 96,
-/// 128 and 160 the topmost level was 56, 80, 96, 128 and 160.
-///
-/// The lattice is the aquifer's own. It does not move with `sea_level` (32 and
-/// 96 give an identical ladder), and raising the sea through it merges bodies
-/// rather than shifting them.
-///
-/// APPROXIMATE IN ONE RESPECT, deliberately. A cell takes the lattice point
-/// nearest its own CENTRE, and centres are jittered, so the transition between
-/// two lattice points is smeared rather than sharp. Taking @p y as the centre
-/// predicts 96.1% of blocks over 6.1 million, and every disagreement is within
-/// about ten blocks of a lattice boundary — 78% wrong at y = -40, 0, 40 and 80
-/// and under 2% by ten blocks away.
-///
-/// That residual is now ACCOUNTED FOR rather than merely bounded: it is the
-/// vertical centre jitter (see `kJitterValues`) plus the aquifer's own stone
-/// floor, about 2.4 blocks thick. Spending it needs the centre, which needs
-/// the jitter DRAW — the one part of the geometry still unrecovered.
-[[nodiscard]] std::int32_t baseLevel(std::int32_t y, std::int32_t preliminarySurface) noexcept;
-
 /// The complete ladder level a cell takes when the floodedness gate sends it
 /// there: the lattice point below the cell's own centre, moved by the spread,
 /// capped by the preliminary surface. NOT floored anywhere — Q5.7 is a `min`
 /// with the surface and nothing else.
+///
+/// The lattice was measured by pinning the spread to zero, which makes the
+/// offset exactly zero, so the level read out of a chunk IS the lattice point:
+/// pitch 40, anchored at `y = 20 (mod 40)` — -20, 20, 60, 100, 140 — and the
+/// aquifer's own, not moving with `sea_level` (32 and 96 give an identical
+/// ladder). The cap is exact: across psl 56, 80, 96, 128 and 160 the topmost
+/// level was 56, 80, 96, 128 and 160.
 ///
 /// The order is measured, not assumed. The cap is applied AFTER the spread
 /// offset: at psl 67 a cell whose lattice point plus offset came to 69 was
@@ -329,15 +362,22 @@ inline constexpr std::int32_t kBasePhase = 20;
 //
 // What replaced it was measured over roughly 1370 probe dimensions on 12 world
 // seeds, preliminary surfaces from -54 to 141, sea levels 32 to 200, with the
-// spread, the barrier and the lava level all varied. Four whole-model per-cell
-// scores, never pooled across seeds: 99.9902%, 99.9806%, 99.9902%, 99.9858%.
-// The same cells score 13-77% under the honest null (no ocean branch) and
-// 86-97% under the K model this replaces.
+// spread, the barrier and the lava level all varied, and scored per cell:
+// 99.9806-99.9902% a seed, against 13-77% under the honest null (no ocean
+// branch) and 86-97% under the K model this replaces. That corpus was never
+// committed and its readout is gone, so those figures are retired rather than
+// attributed. The rule is now held block for block on a committed corpus over
+// the same axes (`aquifer-level-probe.sh`, three seeds, frozen, generated in
+// CI): every block from y -51 up matches the server, and the one clause the
+// rule lacked there — Q5.3(a) off the ocean branch — is in `cellLevel`
+// (tests/conformance/vanilla_aquifer_level_test.cpp, SPEC §11).
 
 /// How near the preliminary surface a cell's centre must be for the ocean
 /// branch to flood it whatever the floodedness says. Bracketed to one block:
 /// at a floodedness of -2.0, two full below any gate, depths 0 to 3 are still
-/// the sea and depth 4 is dry.
+/// the sea and depth 4 is dry. It is Q5.3(b)'s margin, `qy + 12 > p + 8`,
+/// applied to each sample in scan order: the first submerged sample the
+/// centre sits above less this decides.
 inline constexpr std::int32_t kNearSurfaceDepth = 4;
 
 /// How far below `sea_level` the preliminary surface must fall for the ocean
@@ -403,16 +443,30 @@ inline constexpr double kSeaBonusDenominator = 640.0;
 inline constexpr double kLocalBonusNumerator = 3.0;
 inline constexpr double kLocalBonusDenominator = 160.0;
 
-/// How far above the surface read an aborting near-surface cell must sit to
-/// still take the sea. Exactly 20, pinned on eight purpose-built dimensions
-/// where 19 and 21 each lose more than forty cells and are right on at most
-/// one; the term reads the scan's `cap`, and it is independent of `sea_level`,
-/// of the surface's high value and of the floodedness.
+/// Q5.3(a)'s margin: a cell centred more than this above its ANCHOR's surface
+/// takes the global picker's status at its centre (the sea at or above
+/// lambda) before any sample is weighed. Exactly 20, pinned twice: over an
+/// aborting surface on eight purpose-built dimensions, where 19 and 21 each
+/// lose more than forty cells and are right on at most one, and on
+/// `aquifer-level-probe.sh`'s land arms, where each is refuted wherever it
+/// parts from 20. Independent of `sea_level`, of the surface's high value and
+/// of the floodedness.
+///
+/// Both of those held the surface constant, where the anchor, the scan's
+/// minimum and the aborting sample are one number, and engine v12 read the
+/// minimum (`cap`) here. `aquifer-ties-probe.sh` parts them, aborted scan
+/// and land alike: the anchor (SPEC §11, "The surface scan, sample by
+/// sample"). The constant keeps the near-surface floor's name, which is what
+/// it was first measured as.
 inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
 
-/// The level a cell falls to when nothing floods it — and it is NOT always the
-/// lava level. Every "-54" in this rule that is a LEVEL rather than a
-/// threshold moves with `sea_level`.
+/// Lambda: where the global picker's lava sea tops out, and the threshold the
+/// level and type rules compare a centre against. It is NOT always the lava
+/// level — it moves with `sea_level` below -54 — and it is a threshold, not a
+/// status: the global picker's two statuses are `sea_level` (which lambda
+/// equals below -54) and A_lava's literal -54 (spec Q1.1), which an aborted
+/// scan and the trailing guard take even where -54 sits above lambda
+/// (`cellLevel`). The dry outcome is the sentinel (`kNeverLevel`).
 ///
 /// Invisible until somebody mapped the global fluid picker with aquifers
 /// disabled: below `min(-54, sea_level)` the world is lava unconditionally,
@@ -426,34 +480,121 @@ inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
     return kLavaLevel < seaLevel ? kLavaLevel : seaLevel;
 }
 
+/// Q5.9, the deep-dark override's thresholds, read as router values at a
+/// source's centre (spec/aquifer-constants.json `deep_dark_override`). Both
+/// comparisons strict.
+inline constexpr double kDeepDarkErosionBelow = -0.225;
+inline constexpr double kDeepDarkDepthAbove = 0.9;
+
+[[nodiscard]] constexpr bool isDeepDark(const double erosion, const double depth) noexcept {
+    return erosion < kDeepDarkErosionBelow && depth > kDeepDarkDepthAbove;
+}
+
+/// Q2.5: above this height a chunk never consults its local aquifer — the
+/// global picker decides (Q2.3). @p maxSurface is the maximum FLOORED
+/// `preliminary_surface_level` over the chunk's lattice rectangle
+/// (`ySkipRectangle`); the `+ 8` is Q2.6's surface adjustment.
+[[nodiscard]] constexpr std::int32_t ySkip(const std::int32_t maxSurface) noexcept {
+    constexpr std::int32_t kCellHeight = 12;
+    constexpr std::int32_t kSurfaceAdjustment = 8;
+    constexpr std::int32_t kOne = 1;
+    constexpr std::int32_t kTen = 10;
+    // floorDiv, not `/`: a surface below -20 makes the dividend negative.
+    // Wrapping, not `+`: a datapack's psl saturates at the int range, and
+    // signed overflow is undefined where Java's int wraps.
+    const std::int32_t quotient = javamath::floorDiv(
+        javamath::wrappingAdd(maxSurface, kSurfaceAdjustment + kCellHeight), kCellHeight);
+    return javamath::wrappingAdd(
+        javamath::wrappingMul(kCellHeight, javamath::wrappingAdd(quotient, kOne)), kTen);
+}
+
+/// Q2.3: whether the local aquifer is consulted at height @p y in a chunk
+/// whose cutoff is @p ySkipLevel (`chunkYSkip`, sampling.hpp) — at and below
+/// it, inclusive. Above it the global picker decides.
+[[nodiscard]] constexpr bool consultsLattice(const std::int32_t y,
+                                             const std::int32_t ySkipLevel) noexcept {
+    return y <= ySkipLevel;
+}
+
+/// The horizontal rectangle `ySkip`'s maximum is taken over, for the chunk
+/// whose minimum block corner is (@p baseX, @p baseZ): every point a source
+/// centre of Q3.5's lattice extent can occupy. The extent runs over cells `i`
+/// from `floorDiv(xMin - 5, 16)` to `floorDiv(xMax - 5, 16) + 1`, so the
+/// rectangle runs from the first cell's origin, `16 * i`, to the last cell's
+/// origin plus the centre jitter's reach, `16 * i + 9` — offsets -16 to +25
+/// from a chunk's corner. Both endpoints included, sampled every
+/// `kYSkipSampleStride` blocks from the low corner: eleven samples a side.
+///
+/// MEASURED (`aquifer-yskip-probe.sh --group rect`, SPEC §11): this used to
+/// stop at the last cell's ORIGIN (+16, nine samples a side), and the server
+/// reads the two sample rows beyond it — that reading is refuted on 8646
+/// blocks in 71 chunks over two seeds, and among every square from -28..-4
+/// to +12..+36 at strides 1, 2, 4 and 8, and each axis alone at stride 4,
+/// only a low end of -16 and a high end of +24..+27 at stride 4 leaves no
+/// chunk wrong. Any
+/// high end in +24..+27 reads the same samples, so the jitter's +25 is one
+/// spelling of a permanent tie, not a measured constant.
+struct YSkipRectangle {
+    std::int32_t minX = 0;
+    std::int32_t maxX = 0;
+    std::int32_t minZ = 0;
+    std::int32_t maxZ = 0;
+};
+
+inline constexpr std::int32_t kYSkipSampleStride = 4;
+
+[[nodiscard]] constexpr YSkipRectangle ySkipRectangle(const std::int32_t baseX,
+                                                      const std::int32_t baseZ) noexcept {
+    constexpr std::int32_t kCell = 16;
+    constexpr std::int32_t kShift = 5;
+    constexpr std::int32_t kChunk = 16;
+    return YSkipRectangle{
+        .minX = kCell * javamath::floorDiv(baseX - kShift, kCell),
+        .maxX = (kCell * (javamath::floorDiv(baseX + kChunk - 1 - kShift, kCell) + 1)) +
+                (kJitterBoundX - 1),
+        .minZ = kCell * javamath::floorDiv(baseZ - kShift, kCell),
+        .maxZ = (kCell * (javamath::floorDiv(baseZ + kChunk - 1 - kShift, kCell) + 1)) +
+                (kJitterBoundZ - 1),
+    };
+}
+
 /// What one scan of `preliminary_surface_level` yields. Four values, because
 /// the ocean branch has four consumers and they do not agree on which to read
 /// (see `sampling.hpp` for how the scan produces them, and for why it is a
 /// scan at all rather than a sample).
 struct PslRead {
-    /// The window's prefix minimum, stopping before any aborting sample. Read
-    /// by the near-surface gate, the near-surface depth test, and the reach.
+    /// The minimum of the samples before the first aborting one: the clean
+    /// samples Q5.3(b) weighs first, which fire exactly when this does. When
+    /// the anchor itself aborts there is no such sample, and this is the
+    /// anchor, below the abort threshold (`cellLevel` tells by that).
     std::int32_t gate = 0;
 
-    /// The whole window's minimum, aborting sample included. Read by the
-    /// ladder's cap and by the aborting near-surface floor.
+    /// The whole window's minimum, aborting samples included: Q5.4's minimum,
+    /// read by the level rule (the depth and the ladder's cap), and, on an
+    /// aborted scan, the test of whether any sample at or past the abort
+    /// fires (only an aborting one can, and the lowest fires first if any
+    /// does).
     std::int32_t cap = 0;
 
     /// The anchor sample alone — the first read, before the window. Read by
-    /// the DEPTH PATH's gate, and by nothing else.
+    /// Q5.3(a) (a centre more than twenty above it takes the global picker's
+    /// status) and by the DEPTH PATH's gate.
     ///
-    /// SINGLE-SOURCED. One agent, one instrument family, and an asymmetry
-    /// (near-surface on the minimum, depth path on the anchor) of exactly the
-    /// shape that has been wrong twice in this codebase. Its controls are good
-    /// — worlds where the two models coincide score 1.0000 for both, and the
-    /// effect moves one-for-one with `sea_level` — but it needs a second
-    /// instrument before the filler leans on it.
+    /// CONFIRMED BY A SECOND INSTRUMENT. The asymmetry (near-surface on the
+    /// minimum, depth path on the anchor) is exactly the shape that had been
+    /// wrong twice in this codebase, so it stayed open on one instrument's
+    /// word until `aquifer-depthgate-probe.sh` built the separating
+    /// configuration independently: 202 of 210 discriminating cells back the
+    /// anchor, the other eight being two cells whose ladder level exactly
+    /// equals their own centre — a readout tie, not a rival pattern (SPEC
+    /// §11, "A second instrument for the depth path's gate").
     std::int32_t anchor = 0;
 
-    /// Whether a window sample fell below the scan's threshold. When it did,
-    /// the floodedness-gated `sea_level` outcome is REFUSED — which is the
-    /// entire explanation of a failure this project first read as the slopes
-    /// being wrong in the middle of the band.
+    /// Whether a sample (the anchor included) fell below the scan's
+    /// threshold. When one did and it fires before any clean sample, the
+    /// source takes A_lava and the floodedness-gated `sea_level` outcome is
+    /// never weighed — which is the entire explanation of a failure this
+    /// project first read as the slopes being wrong in the middle of the band.
     bool aborted = false;
 
     [[nodiscard]] constexpr bool operator==(const PslRead&) const noexcept = default;
@@ -494,6 +635,46 @@ struct CellFluid {
 
     /// `fluid_level_spread`.
     double spread = 0.0;
+
+    /// Q5.9's deep-dark override, read at the centre: `erosion < -0.225` AND
+    /// `depth > 0.9` (`isDeepDark`). When set, both floodedness comparisons
+    /// fail and the cell is dry — in the level rule only: Q5.3's two
+    /// short-circuits compare no floodedness at all.
+    bool deepDark = false;
+};
+
+/// Where a cell's level came from, where that decides more than the level.
+enum class LevelOrigin : std::uint8_t {
+    /// Everything but the two cases below: the cell's own lattice and
+    /// floodedness, or the dry sentinel.
+    Cell,
+    /// A sea that Q5.3 short-circuits to: a cell whose first firing sample
+    /// is a clean submerged one takes the sea from THAT surface (spec
+    /// Q5.3(b)), and a cell centred at or above lambda more than twenty
+    /// blocks above its anchor takes the global picker's sea at its own
+    /// centre (Q5.3(a)). All are the global picker's status at or above
+    /// lambda, so `fluidTypeOf` types them the default fluid — even for a
+    /// centre below the lava sea (cf58 of `aquifer-capfloor-probe.sh`,
+    /// 20 462 blocks of false barrier otherwise), and whatever the `lava`
+    /// override reads (`aquifer-fluidnear-probe.sh`). The name predates
+    /// Q5.3(a).
+    NearSurfaceSea,
+    /// The global picker's status below lambda: spec Q1.1's
+    /// A_lava = (`kLavaLevel`, lava), the literal -54 whatever `sea_level`
+    /// is, and lava whatever the cell's own `lava` reads. A cell takes it
+    /// from the first sample to fire when that sample aborts — the surface
+    /// met submerged in the lava sea (spec Q5.3(b)), deep-dark or not — and
+    /// from Q5.3(a) when centred below lambda more than twenty above its
+    /// anchor; a cell centred below lambda also takes it when its floodedness
+    /// gives it the sea (Q5.6's `Global(Q)`, the trailing guard).
+    /// `fluidTypeOf` types it lava.
+    GlobalLava,
+};
+
+/// A cell's level and where it came from (`cellLevel`).
+struct CellLevel {
+    std::int32_t level = 0;
+    LevelOrigin origin = LevelOrigin::Cell;
 };
 
 /// The level a cell's fluid body tops out at: fluid occupies `y < level`, so
@@ -515,17 +696,84 @@ struct CellFluid {
 /// -0.125, 0.4), so the strictness is settled with no floating-point
 /// ambiguity at all.
 ///
-/// FLOATING POINT, and it matters here. `floodedness + reach * slope` is
-/// exactly the shape a fused multiply-add contracts, and with contraction on,
-/// the outcome flips at sea-gate depths 6 and 11 precisely at the crossing.
-/// §5's `-ffp-contract=off` / `/fp:precise` is load-bearing for this
-/// expression, and those two depths are the natural x86-64/ARM64 canary.
+/// FLOATING POINT, and it matters here — through the SPELLING. At sea-gate
+/// depths 6 and 11 (reaches 50 and 45) the crossing is decided by the last
+/// bit of the bonus, and only a product over a divisor gets it right (see
+/// `kSeaBonusNumerator`; SPEC §11, "The bonus is a product over a divisor,
+/// never a pre-divided constant"). Written so, there is no multiply-add to
+/// contract: §5's `-ffp-contract=off` / `/fp:precise` stays project policy,
+/// but it is not what makes this expression right. This comment used to call
+/// contraction load-bearing here and those two depths the x86-64/ARM64
+/// canary; that was the pre-divided constant, with which the contracted form
+/// happened to agree with the server where the uncontracted one did not.
 ///
 /// The integer restatements `11*d < 640*f + 104` and `3*d < 160*f + 104` are
 /// an oracle for reasoning, NOT the predicate: they agree with the form below
 /// across the whole ten-thousandth grid except within about an ulp of a
 /// crossing, where they differ because the crossing floodedness is not itself
 /// representable.
-[[nodiscard]] std::int32_t cellFluidLevel(const CellFluid& cell) noexcept;
+///
+/// THE CLEAN-ROOM SPEC'S Q5.3, AS WRITTEN, measured as written
+/// (`aquifer-ties-probe.sh`, SPEC §11 "The surface scan, sample by sample"):
+/// (a) a centre more than `kNearSurfaceFloorOffset` above the ANCHOR's
+/// surface takes the global picker's status at the centre; (b) otherwise
+/// the FIRST sample in scan order that is submerged and that the centre sits
+/// above less `kNearSurfaceDepth` decides, the sea if it is clean and A_lava
+/// if it aborts; and only if no sample fires does the level rule run, on the
+/// whole minimum (Q5.4). Engine v12 read the same four values differently —
+/// Q5.3(a) on `cap`, the abort flag over a clean sample that fires first,
+/// A_lava for an aborted scan nothing fires on — and the server sides with
+/// the spec on every block where they part, on all five kinds of source.
+///
+/// AN ABORTING SAMPLE THAT FIRES GIVES A_LAVA. The source has met a surface
+/// submerged in the lava sea, and takes that surface's global status before
+/// its floodedness is weighed (spec Q5.3(b)): Q1.1's A_lava, the literal
+/// -54 and lava (`LevelOrigin::GlobalLava`), whatever its ladder, its
+/// floodedness, Q5.9's override or its own `lava` reading say. Measured
+/// three ways:
+///
+///   * At sea 63, where -54 is lambda, through the barrier: over an aborting
+///     surface with vanilla's barrier on (`aquifer-nsfloor-probe.sh`) the
+///     unfloored ladder writes 7 690 blocks of stone the server does not,
+///     the dry sentinel 3 770 more at floodedness 0, and under the override
+///     (`aquifer-ddfloor-probe.sh`) the sentinel 10 577; -54 writes none.
+///     Pipeline engines v4-v9 read it as lambda, the same number there.
+///   * Below a sea of -54, in blocks: at sea -70 the near-surface floor
+///     holds lava to y = -55 on every block it governs (lowsea's a_lo,
+///     135 716 blocks), and on `aquifer-lowfloor-probe.sh`'s worlds so do
+///     the aborted cells off the path, with the override and without, and
+///     the near-surface floor at sea -60 — where lambda, lambda with lava,
+///     -54 with the cell's own type and lambda + 16 are each refuted.
+///   * Its TYPE is unseen at a sea at or above -54: the floor then reads
+///     fluid nowhere the lattice is consulted, and no barrier or
+///     fluid-update mark compares it with anything of its own level
+///     (aquifer_substance_test.cpp pins this).
+///
+/// A cell no sample of which fires keeps its unclamped ladder and its
+/// sentinel. Where its minimum is above lambda that is measured (the
+/// water/lava and deep-floor worlds). Where its minimum is below lambda
+/// without an abort (psl in [lambda - 8, lambda)) it is the documented
+/// reading — the spec ties A_lava to the submerged surface, not to the
+/// minimum — and `aquifer-capfloor-probe.sh`'s cf58l arm bears it out on the
+/// only 4 blocks over two seeds where the two readings part. Where the scan
+/// aborted on a sample the centre sits four or more below, it is the spec's
+/// reading too, and the ties probe's `td` world bears it out on the 14
+/// blocks over two seeds, all on row lambda, where it parts from v12's
+/// A_lava: such a centre sits at least thirteen below lambda, where only Π
+/// just above lambda can reach it.
+///
+/// Q5.3(a) is the land branch's as much as the aborted scan's: off the ocean
+/// branch a cell centred more than twenty above its anchor takes the sea
+/// (`LevelOrigin::NearSurfaceSea`) whatever its floodedness; on
+/// `aquifer-level-probe.sh`'s constant surfaces the floodedness gates alone
+/// are wrong exactly where it parts from them (SPEC §11), and on the ties
+/// probe's varying ones the scan's minimum in the anchor's place is wrong
+/// exactly where it parts from the anchor.
+[[nodiscard]] CellLevel cellLevel(const CellFluid& cell) noexcept;
+
+/// `cellLevel(cell).level`, for the callers that need nothing else.
+[[nodiscard]] inline std::int32_t cellFluidLevel(const CellFluid& cell) noexcept {
+    return cellLevel(cell).level;
+}
 
 } // namespace stratum::aquifer

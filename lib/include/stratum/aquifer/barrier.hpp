@@ -133,9 +133,11 @@
 //     no guard at all (Q6.4 as written)          0 misses   0 false stone
 //
 // Exact, on every block of every arm. The control dimension — real
-// floodedness, nothing rescaled — reproduces `barrier3way` exactly (6
-// guarded misses, 0 un-gated, 0 false stone either way), so the recipe
-// distorts nothing but the level diversity it was built to create.
+// floodedness, nothing rescaled — IS `barrier3way`'s `d_neg0_3`: at seed 42
+// the server wrote the two identically, 0 of 5 242 880 blocks differing.
+// On all three seeds the predicate is exact on it as well (62 642 blocks
+// of server stone, none missed, none invented), so the recipe distorts
+// nothing but the level diversity it was built to create.
 //
 // AND THE DIVISOR ITSELF IS 10, bracketed two-sided. The `/10` arm decides
 // 96 292 blocks across the three seeds; on the 65 231 where divisor 10 and
@@ -151,12 +153,22 @@
 // The `/2.5` arm, dead under the same guard, brackets the same way and
 // confirms 2.5: 2.4 leaves 1104 misses, 2.5 is exact, 2.6 writes 1111
 // blocks of false stone. That bracket is corroborated on a world NOT built
-// for it — on `barrier3way`, 1.5 and 2.0 leave 5 and 1 misses, 2.4/2.5/2.6
-// are all exact, 3.0 writes 3 blocks of false stone and 10 writes 37 — so
-// `/2.5` is not an artefact of the deepfloor recipe. Both arms mean
-// something now that they can be stated: `/2.5` is the barrier's LID a few
-// blocks above the higher of two levels, `/10` its FLOOR four or more
-// blocks below the lower.
+// for it — on the control's real noise over three seeds, 1.5 and 2.0 leave
+// 82 and 33 misses, 3.0 writes 28 blocks of false stone and 10 writes 386
+// (2.4 and 2.6 move 1 and 5 blocks, too few to weigh) — so `/2.5` is not an
+// artefact of the deepfloor recipe. Both arms mean something now that they
+// can be stated: `/2.5` is the barrier's LID a few blocks above the higher
+// of two levels, `/10` its FLOOR four or more blocks below the lower.
+//
+// The seven-dimension figures above are the analyzer's
+// (`tools/analysis/aquifer-deepfloor-analyze.cpp`), and re-running it on the
+// frozen corpora reproduces every one. `vanilla_aquifer_deepfloor_test.cpp`
+// repeats them on its own window, two dimensions x 4x4 chunks x three seeds:
+// 9.9 / 10.1 at 160/0 and 0/159, 2.4 / 2.6 at 194/0 and 0/193, each side
+// non-empty on every seed; the guard reinstated on both-air pairs at 3824
+// misses, on both-fluid pairs 69 811; and the control's figures in full.
+// The unit cases bracket each divisor arithmetically inside the server's
+// interval, (2.459, 2.542] and (9.924, 10.078].
 //
 // WHAT THE GUARD COST ELSEWHERE: 425 of the 617-block golden-fill residual
 // (`golden_fill_aquifer_test.cpp`), which SPEC §11 carried as unattributed
@@ -178,7 +190,9 @@
 
 #include <stratum/aquifer/fluid_type.hpp>
 
+#include <concepts>
 #include <cstdint>
+#include <type_traits>
 
 namespace stratum::aquifer {
 
@@ -189,12 +203,38 @@ namespace stratum::aquifer {
 /// `barrier` input of -1.0.
 inline constexpr std::int32_t kSimilarityRange = 25;
 
-/// How near the nearer plane a block must sit for the `barrier` router value
-/// to enter Π at all — the old two-source rule's own reach, still exact at
-/// D=-1 (see this file's own header): thirteen barrier constants from -1.0 to
-/// +4.0 give byte-identical output beyond it.
-inline constexpr std::int32_t kBarrierReachAbove = 2; ///< on the air side, u <= 2
-inline constexpr std::int32_t kBarrierReachBelow = 3; ///< on the fluid side, v <= 3
+/// Q6.1's similarity, on squared distances: 1 at equality, decreasing as the
+/// pair separates, zero at `kSimilarityRange`. Shared by the barrier and the
+/// fluid-update flag (substance.hpp), which must compare the same doubles.
+[[nodiscard]] constexpr double similarity(const std::int64_t di, const std::int64_t dj) noexcept {
+    return 1.0 - (static_cast<double>(dj - di) / static_cast<double>(kSimilarityRange));
+}
+
+/// Q6.2's short-circuit, on its own: whether the nearest pair is close enough
+/// for ANY of Q6.6's three terms to fire. Every term carries `s12` as a
+/// factor, so where this is false `placesBarrier` returns false before it
+/// reads anything else — the `barrier` router value included, which is why
+/// `computeSubstance` never asks the router for that value there
+/// (`BarrierNoise`). The predicate spells the test through this one
+/// function, and the unit cases hold it to `similarity > 0` at every gap
+/// either side of the range.
+[[nodiscard]] constexpr bool nearestPairCompetes(const std::int64_t nearestSq,
+                                                 const std::int64_t secondSq) noexcept {
+    return similarity(nearestSq, secondSq) > 0.0;
+}
+
+/// Q8.3's `θ_flow`: the similarity of a pair at distances 10 and 12, carried
+/// as that derivation rather than as its value (-0.76) so that a comparison
+/// against a similarity computed the same way is exact at the boundary.
+inline constexpr double kFlowSimilarity = similarity(std::int64_t{10} * 10, std::int64_t{12} * 12);
+
+/// How near the pair's boundary, in Π's own `u`, a block must sit for the
+/// `barrier` router value to enter Π at all: `|u| <= 2`, on both sides.
+/// Beyond it the router value is zeroed, and thirteen barrier constants from
+/// -1.0 to +4.0 give byte-identical output there (see this file's header).
+/// The old two-source rule's asymmetric reach — 2 on the air side, 3 on the
+/// fluid side — went with that rule; nothing in the current Π reads a 3.
+inline constexpr double kBarrierNoiseReach = 2.0;
 
 /// Q6.4's pressure where two sources BOTH read fluid at the block and the
 /// two fluids differ — a lava body against a water body: a constant, with
@@ -254,11 +294,71 @@ struct BarrierAt {
 /// with `s_ij = 1 - (dj-di)/25` on squared distances and `Π` per Q6.4. `s12
 /// <= 0` short-circuits to false outright (Q6.2: the nearest point wins,
 /// no barrier evaluation at all) before any term is tried. What a term
-/// does then depends on what its pair READS at `y`: one fluid and one air
-/// takes the level formula, whatever the two types; both fluid of
-/// DIFFERENT types takes the constant `kMixedTypePressure`; both air, or
-/// both the same fluid, does not fire at all. Each of those is measured
-/// separately against the server (this file's own header).
+/// does then depends on what its pair READS at `y`: both fluid of DIFFERENT
+/// types takes the constant `kMixedTypePressure`; every other pair — one
+/// fluid and one air whatever the two types, both air, or both the same
+/// fluid — takes the level formula, which is where the `/10` floor below a
+/// pair of fluids and the `/2.5` lid above them live. The guard that once
+/// refused a pair reading the same thing is gone: the server refutes it
+/// (this file's own header). Each of those is measured separately.
 [[nodiscard]] bool placesBarrier(const BarrierAt& at) noexcept;
+
+/// The `barrier` router value at one block, read on first use and at most
+/// once. The predicate weighs that value in one place only — Π's level
+/// branch, within `kBarrierNoiseReach` of a pair's boundary — and on most
+/// blocks it never gets there: Q6.2 has returned, the pair's levels are
+/// equal (Π = 0 with no noise in it), it is the mixed-type constant, or the
+/// block is too far from the boundary. Reading the router only when asked
+/// changes nothing a block can see; on the shipped overworld those reads
+/// were about half of the aquifer's cost, and almost none of them are left
+/// (SPEC §11, "What the aquifer costs").
+///
+/// Type-erased rather than a template so that the predicate's arithmetic
+/// stays in aquifer_barrier.cpp, compiled once under the project's own
+/// floating-point flags. @p read must outlive this object and be callable as
+/// `double()`; a temporary is refused at compile time.
+class BarrierNoise {
+public:
+    template<typename Read>
+        requires(!std::same_as<std::remove_cvref_t<Read>, BarrierNoise>)
+    explicit BarrierNoise(const Read& read) noexcept
+        : context_(&read),
+          thunk_([](const void* context) { return (*static_cast<const Read*>(context))(); }) {}
+
+    template<typename Read>
+        requires(!std::same_as<std::remove_cvref_t<Read>, BarrierNoise>)
+    explicit BarrierNoise(const Read&& read) = delete;
+
+    BarrierNoise(const BarrierNoise&) = delete;
+    BarrierNoise& operator=(const BarrierNoise&) = delete;
+    BarrierNoise(BarrierNoise&&) = delete;
+    BarrierNoise& operator=(BarrierNoise&&) = delete;
+    ~BarrierNoise() = default;
+
+    /// The value, read on the first call and remembered.
+    [[nodiscard]] double value() {
+        if (!readDone_) {
+            value_ = thunk_(context_);
+            readDone_ = true;
+        }
+        return value_;
+    }
+
+    /// Whether `value()` has been asked for — what a test checks to see
+    /// that a block the predicate decides without the noise never read it.
+    [[nodiscard]] bool wasRead() const noexcept { return readDone_; }
+
+private:
+    const void* context_;
+    double (*thunk_)(const void*);
+    double value_ = 0.0;
+    bool readDone_ = false;
+};
+
+/// `placesBarrier`, with the `barrier` value read through @p barrierNoise —
+/// at most once, and only where a term weighs it — instead of from
+/// `at.barrier`, which this overload does not read. Same terms, same order,
+/// same arithmetic: the two overloads share one implementation.
+[[nodiscard]] bool placesBarrier(const BarrierAt& at, BarrierNoise& barrierNoise);
 
 } // namespace stratum::aquifer

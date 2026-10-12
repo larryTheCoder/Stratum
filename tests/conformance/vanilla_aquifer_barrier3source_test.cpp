@@ -31,6 +31,9 @@
 // scoring the wrong world against the right seed's math.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+#include "support/probe_spec.hpp"
+
 #include <stratum/aquifer/barrier.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -46,6 +49,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -92,6 +96,8 @@ struct Score {
     long long realBarriers = 0;
     long long twoSourceMisses = 0;
     long long threeSourceMisses = 0;
+    long long openBesideBarrier = 0;
+    long long falseStoneBesideBarrier = 0;
 };
 
 } // namespace
@@ -105,6 +111,7 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
                                                 << "; generate it with "
                                                    "tools/analysis/aquifer-barrier-probe.sh");
     }
+    stratum::test::requireFrozen(probeDir, "tools/analysis/aquifer-barrier-probe.sh");
     std::ifstream manifestFile(manifestPath);
     const nlohmann::json manifest = nlohmann::json::parse(manifestFile);
     const std::int64_t seed = manifest.at("seed").get<std::int64_t>();
@@ -136,20 +143,54 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
         density::NoiseRegistry::create(pack, wanted, seed, density::RandomSource::Xoroshiro);
     const density::Interpreter interp(graph, noises);
     density::Interpreter::CornerCache cache(interp.cacheSize());
-    const aquifer::CentreSource centres(seed);
+    const aquifer::CentreSource centres(seed, stratum::density::RandomSource::Xoroshiro);
+
+    // The worlds on disk are the ones kDimensions describes, and no others.
+    const nlohmann::json spec = stratum::test::readSpec(probeDir);
+    REQUIRE(spec.size() == kDimensions.size());
 
     Score total;
     for (const Dimension& dim : kDimensions) {
         const std::filesystem::path region = probeDir / dim.name / "r.0.0.mca";
-        if (!std::filesystem::is_regular_file(region)) {
-            continue;
-        }
+        // Every dimension the script writes: one without a region is a broken
+        // corpus, not a smaller sample.
+        INFO("corpus " << probeDir << ", dimension " << dim.name
+                       << " — regenerate it with tools/analysis/aquifer-barrier-probe.sh");
+        REQUIRE(stratum::test::specEntry(spec, probeDir, dim.name)
+                    .at("raw_final_density")
+                    .at("argument")
+                    .get<double>() == Catch::Approx(dim.density));
+        REQUIRE(std::filesystem::is_regular_file(region));
         const auto file = region::RegionFile::open(region);
+        // The whole three-source answer at one block, as the filler computes it.
+        const auto barrierAt = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+            const aquifer::Selection selection = aquifer::selectSources(centres, x, y, z);
+            std::array<aquifer::BarrierSource, 3> ranked{};
+            for (int r = 0; r < 3; ++r) {
+                const auto& src = selection.ranked[static_cast<std::size_t>(r)];
+                const double flood = interp.evaluate(
+                    floodNode,
+                    density::Point{.x = src.centre.x, .y = src.centre.y, .z = src.centre.z}, cache);
+                const aquifer::SamplePos pos = aquifer::spreadSample(src.cell, src.centre);
+                const double spread = interp.evaluate(
+                    spreadNode, density::Point{.x = pos.x, .y = pos.y, .z = pos.z}, cache);
+                ranked[static_cast<std::size_t>(r)] = sourceOf(src, flood, spread);
+            }
+            aquifer::BarrierAt at;
+            at.y = y;
+            at.density = dim.density;
+            at.nearest = ranked[0];
+            at.second = ranked[1];
+            at.third = ranked[2];
+            at.barrier =
+                interp.evaluate(barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
+            return at;
+        };
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto ch = chunk::Chunk::decode(nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {
                     for (std::int32_t lx = 0; lx < 16; ++lx) {
@@ -162,36 +203,27 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
                             }
                             ++total.realBarriers;
 
-                            const aquifer::Selection selection =
-                                aquifer::selectSources(centres, x, y, z);
-                            std::array<aquifer::BarrierSource, 3> ranked{};
-                            for (int r = 0; r < 3; ++r) {
-                                const auto& src = selection.ranked[static_cast<std::size_t>(r)];
-                                const double flood = interp.evaluate(
-                                    floodNode,
-                                    density::Point{
-                                        .x = src.centre.x, .y = src.centre.y, .z = src.centre.z},
-                                    cache);
-                                const aquifer::SamplePos pos =
-                                    aquifer::spreadSample(src.cell, src.centre);
-                                const double spread = interp.evaluate(
-                                    spreadNode, density::Point{.x = pos.x, .y = pos.y, .z = pos.z},
-                                    cache);
-                                ranked[static_cast<std::size_t>(r)] = sourceOf(src, flood, spread);
-                            }
-                            const double barrierNoise = interp.evaluate(
-                                barrierNode, density::Point{.x = x, .y = y, .z = z}, cache);
-
-                            aquifer::BarrierAt at;
-                            at.y = y;
-                            at.density = dim.density;
-                            at.nearest = ranked[0];
-                            at.second = ranked[1];
-                            at.third = ranked[2];
-                            at.barrier = barrierNoise;
+                            const aquifer::BarrierAt at = barrierAt(x, y, z);
 
                             if (!aquifer::placesBarrier(at)) {
                                 ++total.threeSourceMisses;
+                            }
+                            // False stone where a wrong model would put it
+                            // first: the open blocks right beside a real
+                            // barrier, two either side vertically.
+                            for (const std::int32_t dy : {-2, -1, 1, 2}) {
+                                const std::int32_t ny = y + dy;
+                                if (ny < kMinY || ny > kMaxY) {
+                                    continue;
+                                }
+                                const auto* next = ch.blockAt(lx, ny, lz);
+                                if (next == nullptr || next->name == "minecraft:stone") {
+                                    continue;
+                                }
+                                ++total.openBesideBarrier;
+                                if (aquifer::placesBarrier(barrierAt(x, ny, z))) {
+                                    ++total.falseStoneBesideBarrier;
+                                }
                             }
                             aquifer::BarrierAt twoSourceOnly = at;
                             twoSourceOnly.third.distanceSq = kInertDistanceSq;
@@ -205,10 +237,12 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
         }
     }
 
-    REQUIRE(total.realBarriers > 2000);
-
     INFO("seed " << seed << ", real barriers " << total.realBarriers << ", two-source misses "
-                 << total.twoSourceMisses << ", three-source misses " << total.threeSourceMisses);
+                 << total.twoSourceMisses << ", three-source misses " << total.threeSourceMisses
+                 << ", open blocks beside a barrier " << total.openBesideBarrier
+                 << ", false stone there " << total.falseStoneBesideBarrier);
+    // The corpus itself, exactly: a missing dimension or chunk changes it.
+    REQUIRE(total.realBarriers == 11923);
 
     // The control: the old two-source-only rule really is still measurably
     // incomplete on real barriers (SPEC §11 measured 11.5-17.6% per
@@ -216,18 +250,15 @@ TEST_CASE("the three-source barrier explains real barriers the two-source rule m
     // not the finding.
     CHECK(total.twoSourceMisses * 100 > total.realBarriers * 8);
 
-    // The three-source rule, re-anchored after the dry sentinel and the
-    // unclamped ladder landed in `cellFluidLevel`: 6 misses of 11 923 real
-    // barriers here (0.050%), down from 121 (1.015%), and 0 of 4110 and 0 of
-    // 3147 on the other two densities — the 6 all on `d_neg0_3`. The old
-    // build's 121 mismatching blocks and the new 6 were compared as SETS of
-    // coordinates over all 15 728 640 blocks: the 6 are a strict subset, 115
-    // fixed and none introduced.
-    //
-    // The bound was 5% against a measured 1.01-1.02%; at 0.050% that is 100x
-    // slack and would no longer flag anything. Tightened to 0.5%, still an
-    // order of magnitude above the reading so seed-to-seed drift does not
-    // trip it, but tight enough that a regression to the old contract fails
-    // here.
-    CHECK(total.threeSourceMisses * 1000 < total.realBarriers * 5);
+    // The three-source rule: EXACT. It read 121 misses (1.015%) before the
+    // dry sentinel and the unclamped ladder, 6 after them, and 0 of 11 923
+    // since the barrier's `/10` floor lost its agree-guard — on all three
+    // densities. A rate bound had 100x slack by then and flagged nothing; a
+    // corpus this fixed is held exactly.
+    CHECK(total.threeSourceMisses == 0);
+    // And the other direction, never checked before: no stone where the
+    // server left the block open, on every open block within two of a real
+    // barrier vertically — where a shifted or thickened barrier would land.
+    REQUIRE(total.openBesideBarrier > 10000);
+    CHECK(total.falseStoneBesideBarrier == 0);
 }

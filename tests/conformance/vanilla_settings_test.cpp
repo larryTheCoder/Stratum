@@ -19,11 +19,14 @@
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 
@@ -143,10 +146,21 @@ TEST_CASE("vanilla's routers resolve into the graph the pack already had",
     CHECK(overworld.router.at(RouterEntry::Ridges) == root("overworld/ridges"));
     CHECK(overworld.router.at(RouterEntry::Depth) == root("overworld/depth"));
 
-    // large_biomes shares those same four with the overworld: it differs in
-    // its noises, not in the shape of its router.
+    // The two other overworld presets differ from it in exactly these named
+    // entries, and the aquifer reads two of them (Q5.9's erosion and depth).
+    // large_biomes has its own continents, erosion and depth — built on the
+    // `*_large` noises — and shares only ridges; amplified has its own depth
+    // and shares the other three.
     const NoiseSettings& large = get(loaded, "minecraft:large_biomes");
+    CHECK(large.router.at(RouterEntry::Continents) == root("overworld_large_biomes/continents"));
+    CHECK(large.router.at(RouterEntry::Erosion) == root("overworld_large_biomes/erosion"));
     CHECK(large.router.at(RouterEntry::Depth) == root("overworld_large_biomes/depth"));
+    CHECK(large.router.at(RouterEntry::Ridges) == root("overworld/ridges"));
+    const NoiseSettings& amplified = get(loaded, "minecraft:amplified");
+    CHECK(amplified.router.at(RouterEntry::Continents) == root("overworld/continents"));
+    CHECK(amplified.router.at(RouterEntry::Erosion) == root("overworld/erosion"));
+    CHECK(amplified.router.at(RouterEntry::Depth) == root("overworld_amplified/depth"));
+    CHECK(amplified.router.at(RouterEntry::Ridges) == root("overworld/ridges"));
 
     // Every entry of every router points somewhere real.
     for (const auto& [id, settings] : loaded.settings) {
@@ -167,6 +181,45 @@ TEST_CASE("vanilla's routers resolve into the graph the pack already had",
         CAPTURE(id.toString());
         CHECK(loaded.graph.rootOf(id) == index);
     }
+}
+
+TEST_CASE("the three overworld presets give the aquifer and the veins the same router entries",
+          "[conformance][settings][aquifer]") {
+    // Read as the files say, not as the loader resolved them: these entries
+    // are written inline, and the text is what says two presets carry the
+    // same function. vanilla_aquifer_presets_test.cpp leans on this. The
+    // aquifer's own four inputs are the overworld's in all three presets;
+    // what the presets change for it is the terrain it decides over and its
+    // other reads — preliminary_surface_level everywhere, and on
+    // large_biomes Q5.9's erosion and depth.
+    const std::filesystem::path tree = findWorldgenTree();
+    if (tree.empty()) {
+        SKIP("no extracted vanilla worldgen under " << STRATUM_FIXTURES_DIR);
+    }
+    const auto router = [&tree](std::string_view preset) {
+        std::ifstream in(tree / "noise_settings" / (std::string(preset) + ".json"));
+        REQUIRE(in.good());
+        return nlohmann::json::parse(in).at("noise_router");
+    };
+    const nlohmann::json overworld = router("overworld");
+    const nlohmann::json amplified = router("amplified");
+    const nlohmann::json large = router("large_biomes");
+    for (const char* entry : {"barrier", "fluid_level_floodedness", "fluid_level_spread", "lava",
+                              "vein_toggle", "vein_ridged", "vein_gap"}) {
+        CAPTURE(entry);
+        CHECK(amplified.at(entry) == overworld.at(entry));
+        CHECK(large.at(entry) == overworld.at(entry));
+    }
+    // And the entries they do not share, so the comparison above is known to
+    // be able to fail.
+    for (const char* entry : {"depth", "final_density", "preliminary_surface_level"}) {
+        CAPTURE(entry);
+        CHECK(amplified.at(entry) != overworld.at(entry));
+        CHECK(large.at(entry) != overworld.at(entry));
+    }
+    CHECK(large.at("temperature").at("noise") == "minecraft:temperature_large");
+    CHECK(large.at("vegetation").at("noise") == "minecraft:vegetation_large");
+    CHECK(amplified.at("temperature") == overworld.at("temperature"));
 }
 
 TEST_CASE("vanilla's routers gain the cell-structured entries once there is a lattice",

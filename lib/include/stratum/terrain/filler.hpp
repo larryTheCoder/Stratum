@@ -11,8 +11,9 @@
 // lattice, the fluid level rule, source selection and the three-source
 // barrier, SPEC §10 milestone MA); otherwise the old shortcut, `default_fluid`
 // at or below `sea_level` and air above it. Then, over solid ground only and
-// where `ore_veins_enabled` and `aquifers_enabled` are BOTH set, the vein
-// system's own replacement (`ore::VeinSource` — SPEC §10 milestone M3).
+// where `ore_veins_enabled` is set, the vein system's own replacement
+// (`ore::VeinSource` — SPEC §10 milestone M3), drawn from the dimension's
+// declared random source, whatever `aquifers_enabled` says.
 //
 // ORE VEINS, wired (SPEC §11). The RNG derivation is confirmed per block
 // against the vanilla server on 79790 of 79790 candidate positions across 11
@@ -23,11 +24,16 @@
 // Those 11455 are seed-100 positions already among the 79790, re-measured at
 // a different density — evidence about placement, not additional independent
 // confirmation of the derivation, so the two are not summed.
-// `ore/vein.hpp` carries the derivation, the brackets around each threshold,
-// and the two ambiguities the probes cannot separate.
+// Under `legacy_random_source` the same draws come from java.util.Random,
+// measured on tools/analysis/legacy-orevein-probe.sh's worlds (SPEC §11, "Ore
+// veins under the legacy source"). `ore/vein.hpp` carries the derivation, the
+// brackets around each threshold, how each draw meets it, and what the probes
+// cannot separate.
 //
 // The guard here is its own measured fact rather than a reading of the
-// derivation: veins replace only a block this filler has ALREADY made solid.
+// derivation: veins replace only a block this filler has ALREADY made the
+// dimension's default_block — stone or not, by the same blocks (netherrack
+// and deepslate[axis=x] measured, SPEC §11).
 // On the sign-varying probe the confirmed chain would have placed 17813 vein
 // blocks at positions the server left as air, and the server placed none of
 // them — while every position it left solid came back exact, including the
@@ -43,14 +49,15 @@
 //
 // WHAT THIS DOES NOT DO, and refuses rather than approximating (SPEC §8):
 //
-//   * **Two narrow pieces of the aquifer**, carried rather than guessed
-//     (`aquifer/substance.hpp`'s own header has the numbers): Q6.3's
-//     water-over-lava exception, and Pi's mixed-fluid-type branch. Measured
-//     against a real, aquifer-on overworld region
+//   * **The aquifer's fluid ticks** (spec Q8): the fill decision is
+//     implemented whole — Q6.3's water-over-lava exception and Π's
+//     mixed-fluid-type branch included — but no position is flagged for the
+//     post-processing that makes the server's fluids flow once a chunk
+//     loads. Measured against a real, aquifer-on overworld region
 //     (`golden_fill_aquifer_test.cpp`): EXACT on 393216 of 393216 blocks'
-//     category, before any surface rule runs, on the four chunks that test
-//     pins; over a wider 64-chunk sweep the residual — everything the two
-//     gaps above together could plausibly explain — is 733 of 6291456.
+//     category before any surface rule runs, and over a 64-chunk sweep
+//     6291264 of 6291456, every one of the 192 flowing water the server's
+//     ticks spread (`tests/support/fluid_flow.hpp`).
 //   * **Surface rules.** These are not refused, because they only ever
 //     REPLACE blocks this filler has already placed — a column filled without
 //     them is the same column with stone where grass, dirt, gravel, deepslate
@@ -124,6 +131,47 @@ public:
     /// ...)]` is `at(...)`. Throws FillError like `at`.
     [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const;
 
+    /// A position whose fluid the server ticks once the chunk loads — what
+    /// vanilla records in a chunk's `PostProcessing` list (spec Q8.1). Ticks
+    /// are what make aquifer water and lava flow after generation; a caller
+    /// that wants vanilla's settled terrain schedules a fluid update at each.
+    struct FluidUpdate {
+        std::uint8_t localX = 0;
+        std::int32_t y = 0;
+        std::uint8_t localZ = 0;
+
+        [[nodiscard]] bool operator==(const FluidUpdate&) const noexcept = default;
+    };
+
+    /// Records @p localX, @p y, @p localZ as a fluid update. Throws FillError
+    /// like `at` for a position outside the chunk.
+    void markFluidUpdate(int localX, std::int32_t y, int localZ);
+
+    /// Puts the marks in the order the server's own noise fill reaches them,
+    /// for cells @p cellWidth blocks wide: cell column by cell column, x the
+    /// outer index; each column from the top down; within one layer of a
+    /// cell, x then z. That is the order the server's `PostProcessing` lists
+    /// hold them, each section's restricted to that section — read off every
+    /// un-ticked list of every probe region on disk, 77 046 lists at cell
+    /// width 4, and matched through the filler list for list on the
+    /// aquifer-on probe (SPEC §11, the Q8 entry); other widths follow the
+    /// same reading, unmeasured. A pure function of the positions, so it is
+    /// exact whatever order they were marked in. ChunkFiller::fill() calls it.
+    void orderFluidUpdatesByCells(std::int32_t cellWidth);
+
+    /// Every position marked since the buffer was built or last cleared, each
+    /// once — after ChunkFiller::fill(), in the server's own order
+    /// (orderFluidUpdatesByCells).
+    [[nodiscard]] const std::vector<FluidUpdate>& fluidUpdates() const noexcept {
+        return fluidUpdates_;
+    }
+
+    /// Puts the buffer back as the constructor leaves it: every block air,
+    /// the palette air alone, no fluid updates. `ChunkFiller::fill` starts
+    /// with this, so a buffer reused from chunk to chunk holds the last
+    /// chunk's palette and marks only, never an earlier one's.
+    void clear();
+
 private:
     [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const;
     [[nodiscard]] std::uint16_t intern(const settings::BlockState& block);
@@ -132,6 +180,7 @@ private:
     std::int32_t height_ = 0;
     std::vector<settings::BlockState> palette_;
     std::vector<std::uint16_t> blocks_;
+    std::vector<FluidUpdate> fluidUpdates_;
 };
 
 /// A dimension's terrain, ready to fill chunks from.
@@ -166,11 +215,18 @@ public:
             const biome::TemperatureTable* biomeTemperatures = nullptr);
 
     /// Fills @p into with the chunk at chunk coordinates @p chunkX, @p chunkZ.
+    /// @p into is cleared first (`ChunkBuffer::clear`): what it held before,
+    /// blocks, palette and fluid updates alike, does not survive the call.
     ///
     /// Blocks are visited cell by cell rather than column by column, so the
     /// eight cell corners `interpolated` needs are computed once and reused
-    /// across the 128 blocks of a cell instead of once per block. Measured,
-    /// that is the difference between 39.7 and 0.46 seconds a chunk.
+    /// across the 128 blocks of a cell instead of once per block. Measured
+    /// when the order went in — the bare first pass, long before aquifers,
+    /// surface rules or veins ran here — that was 39.7 against 0.46 seconds
+    /// a chunk (SPEC §11), and those figures describe nothing current. What
+    /// the whole fill costs now, in an optimised build and with each of its
+    /// parts switched off in turn, is SPEC §11's "What the aquifer costs"
+    /// (tools/analysis/aquifer-cost-bench.cpp measures it).
     ///
     /// When `runsSurfaceRules()` is true, a second pass then walks every
     /// column top to bottom and bottom to top — for the stone-depth runs and
@@ -199,6 +255,15 @@ public:
     [[nodiscard]] const std::vector<std::string>& surfaceRulesBlockedBy() const noexcept {
         return surfaceRulesBlockedBy_;
     }
+
+    /// Whether the aquifer reads its `barrier` entry on every block past
+    /// Q6.3 (aquifer::BarrierReads::Always) rather than only where the
+    /// barrier predicate weighs it. True exactly when aquifers are enabled
+    /// and the entry reaches an `interpolated` or a `find_top_surface`, whose
+    /// reads are not provably free of effects (compile() says why); false for
+    /// every vanilla preset. Either way the blocks are the same — this says
+    /// how much work they cost.
+    [[nodiscard]] bool readsBarrierOnEveryBlock() const noexcept { return barrierReadsAlways_; }
 
     /// The horizontal pitch the router's `preliminary_surface_level` is
     /// SAMPLED on before it reaches `above_preliminary_surface` — measured,
@@ -239,7 +304,51 @@ public:
         return static_cast<std::int32_t>(std::floor(low + ((high - low) * v)));
     }
 
+    /// The columns chunk (@p chunkX, @p chunkZ)'s `flat_cache` grid holds,
+    /// which is where the aquifer's router reads relocate to a 4x4 corner at
+    /// y = 0; anywhere else they read where they were asked, their own y
+    /// included (density::FlatCacheWindow).
+    ///
+    /// MEASURED, first through Q5.9's deep-dark override — the one aquifer
+    /// read in the vanilla presets that lands on an unaligned column off the
+    /// chunk: erosion and depth at a source centre, both behind `flat_cache`.
+    /// On golden seed 9223372036854775807 one centre, (57, -33, 70), is
+    /// deep-dark at its corner (depth 0.9092) and not at its own column
+    /// (0.8620). The server keeps it WET for chunk (3, 3), which it lies off
+    /// — lava at y -32 and the barrier around it, 16 blocks — and DRY for
+    /// chunk (3, 4), which it lies in — air at (51..52, -32, 64). Relocating
+    /// every read misses the first 16; reading every column exactly misses
+    /// the second two; this window gets all 18, and over all eight golden
+    /// overworld regions (805306368 blocks) leaves no disagreement that is
+    /// not fluid moving after generation.
+    ///
+    /// THE EXTENT, measured by `tools/analysis/aquifer-markers-probe.sh`,
+    /// whose datapack arms wrap every aquifer entry in `flat_cache` over a
+    /// fast, y-varying argument (SPEC §11): the chunk's own sixteen columns
+    /// and one quart beyond its far edge, [16c, 16c + 19] — five quart
+    /// columns, the chunk's own reads reaching the corner column at +16. The
+    /// high side, where source centres land: a centre at chunk-local 16..19
+    /// relocates (the chunk's own sixteen columns alone are wrong there) and
+    /// one at 20..23 does not. The low side, which no source centre reaches
+    /// (a centre in the cell below sits at most at local -7): only the
+    /// contracted spread and lava indices land there, at -1 in chunk (0, 0),
+    /// and the server reads them where they are — a lava source indexed -1
+    /// holds lava, which a read relocated to y = 0 could not give. In the
+    /// vanilla presets the low side is unobservable: no read lands on it.
+    [[nodiscard]] static constexpr density::FlatCacheWindow
+    flatCacheWindow(const std::int32_t chunkX, const std::int32_t chunkZ) noexcept {
+        constexpr std::int32_t kGridColumns = kChunkWidthBlocks + 4;
+        const std::int32_t baseX = chunkX * kChunkWidthBlocks;
+        const std::int32_t baseZ = chunkZ * kChunkWidthBlocks;
+        return density::FlatCacheWindow{.minX = baseX,
+                                        .maxX = baseX + kGridColumns - 1,
+                                        .minZ = baseZ,
+                                        .maxZ = baseZ + kGridColumns - 1};
+    }
+
 private:
+    static constexpr std::int32_t kChunkWidthBlocks = 16;
+
     ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                 const settings::NoiseSettings& settings);
 
@@ -258,10 +367,10 @@ private:
     std::optional<surface::Executor> surfaceExecutor_;
     std::vector<std::string> surfaceRulesBlockedBy_;
 
-    // Present only when BOTH ore_veins_enabled and aquifers_enabled are
-    // set (ore::veinsPlaceBlocks): the coupling is measured, not assumed.
-    // Built at compile() from the registry's own worldSeed, same as the
-    // aquifer's centres below and for the same reason.
+    // Present only when ore_veins_enabled is set, whatever aquifers_enabled
+    // says (since engine v14; ore/vein.hpp, "NO AQUIFER COUPLING"). Built at
+    // compile() from the registry's own worldSeed and declared random
+    // source, same as the aquifer's centres below and for the same reason.
     std::optional<ore::VeinSource> oreVeins_;
 
     // Present only when settings_->aquifersEnabled — its own RNG derivation
@@ -269,6 +378,12 @@ private:
     // once at compile() from the registry's own worldSeed() rather than
     // re-derived per block.
     std::optional<aquifer::CentreSource> aquiferCentres_;
+
+    // Whether every block past Q6.3 reads the `barrier` entry, as before the
+    // read was gated on Q6.2 (aquifer::BarrierReads::Always): true when the
+    // entry reaches a node whose read is not provably a pure, total function
+    // of the block. Decided once, at compile(); see there.
+    bool barrierReadsAlways_ = false;
 };
 
 } // namespace stratum::terrain

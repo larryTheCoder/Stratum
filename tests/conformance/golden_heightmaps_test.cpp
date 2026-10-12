@@ -35,15 +35,24 @@ namespace {
 using stratum::chunk::Chunk;
 using stratum::chunk::Heightmap;
 
+/// The collected goldens, `regions/seed-<n>/<dimension>/r.<x>.<z>.mca`, and
+/// nothing else. A probe corpus has the same shape in places
+/// (`probes/aquifer-presets/seed-322/amplified/r.0.0.mca`): walking the
+/// whole fixture tree for it counted six of those as goldens and scored a
+/// probe world's heightmaps as the overworld's, which held only while no
+/// probe world sat beside the goldens.
 [[nodiscard]] std::vector<std::filesystem::path> findGoldenRegions() {
-    const std::filesystem::path root{STRATUM_FIXTURES_DIR};
+    const std::filesystem::path root =
+        std::filesystem::path(STRATUM_FIXTURES_DIR) / "1.21.11" / "regions";
     std::vector<std::filesystem::path> regions;
     if (!std::filesystem::is_directory(root)) {
         return regions;
     }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        const std::filesystem::path seedDir = entry.path().parent_path().parent_path();
         if (entry.is_regular_file() && entry.path().extension() == ".mca" &&
-            entry.path().parent_path().parent_path().filename().string().starts_with("seed-")) {
+            seedDir.filename().string().starts_with("seed-") &&
+            seedDir.parent_path().filename() == "regions") {
             regions.push_back(entry.path());
         }
     }

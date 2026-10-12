@@ -90,7 +90,9 @@ command -v jq >/dev/null 2>&1 || die "jq is needed"
 # checkout that keeps its fixtures elsewhere — a git worktree sharing one
 # 300MB download, say — does not need a second copy of the server jar.
 fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}"
-jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1)"
+# `|| true`: under pipefail a find over a directory that is not there fails
+# the assignment, and `set -e` would exit here without the message below.
+jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
 [[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
@@ -140,10 +142,12 @@ build_pack() {
     mkdir -p "${pack}/dimension" "${pack}/worldgen/noise_settings" "${pack}/worldgen/biome" \
              "${pack}/worldgen/noise" "${pack}/worldgen/density_function"
 
-    # min_format/max_format, not pack_format: at this pack format the server
-    # answers pack_format with "missing mandatory fields min_format and
-    # max_format" and marks the pack incompatible, which is a second variable
-    # this experiment does not want.
+    # min_format/max_format, not pack_format: given pack_format alone at this
+    # pack format the server logs "Couldn't load file/stratum-probe pack
+    # metadata: ... missing mandatory fields min_format and max_format", then
+    # loads the pack anyway (observed with density-probe.sh's pack, whose
+    # worlds decode to the same blocks either way). An error in the log is
+    # still a second variable this experiment does not want.
     cat > "${server}/world/datapacks/stratum-probe/pack.mcmeta" <<META
 {
   "pack": {

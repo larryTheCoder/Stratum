@@ -1,0 +1,462 @@
+// Stratum — the overworld, end to end, against the blocks the vanilla server wrote.
+// Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// WHY THIS FILE EXISTS. Until it did, no conformance case ran the SHIPPED
+// overworld — `world::CompiledDimension`, the path both native bindings
+// generate through, with aquifers, ore veins, real biomes and the whole
+// 287-rule surface tree — against the eight golden overworld regions. Every
+// aquifer case used a probe world with surface rules OFF, and the one
+// surface-on aquifer case (golden_fill_aquifer_test.cpp) read four chunks that
+// hold no lava. So when the surface pass turned every lava block the aquifer
+// placed into deepslate — 127531 of the goldens' 127700, through `categorize`
+// calling lava Solid and an unconditioned deepslate gradient repainting it —
+// and painted the bottom of open water in the same band (4215 blocks), the
+// suite stayed green. Measured, then fixed (SPEC §11): the first pass had all
+// of those blocks right.
+//
+// WHAT IT COMPARES, per golden seed, on a fixed 4x4 grid of chunks (every
+// eighth chunk on each axis of r.0.0 — 16 chunks, 1572864 blocks a seed,
+// sized for the Debug build `ctest --preset conformance` runs):
+//
+//   raw       ChunkFiller with no surface rules — the aquifer's own decision —
+//             in four categories (air, water, lava, solid)
+//   shipped   CompiledDimension::fillBlocks, block for block by name
+//
+// and two invariants that hold on every block, asserted per seed rather than
+// as a rate: the surface pass never writes over a fluid the first pass
+// placed, and every lava block the first pass got right survives it.
+//
+// What the model alone decides is pinned EXACTLY, and it is not all 100%:
+// the shipped residual over solid ground is surface MATERIAL near biome
+// borders (M4), and a pinned count is the point — any change to it, in
+// either direction, fails here and has to be explained. The rest of the
+// residual is fluid the SERVER moved after generating — flowing water and
+// lava, sources the infinite-source rule rebuilt from flow, obsidian where
+// water met the lava sea — and `explainedByFlow` attributes every block of
+// it, per seed, with nothing left over; Stratum schedules no fluid ticks
+// (spec Q8), so a first pass that is right leaves exactly this. How much of
+// it there is depends on the run (SPEC §7), and CI regenerates these
+// regions, so it is bounded and its shape required, never pinned.
+//
+// The second case is Q5.9's deep-dark override on the one golden region
+// where it decides blocks, and the flat_cache window it is read through.
+//
+// The fixtures are Mojang-derived and never committed (SPEC §12). Without
+// them this skips; CI generates them (tools/probe-worlds' goldens shards).
+#include "support/fluid_flow.hpp"
+
+#include <stratum/chunk/chunk.hpp>
+#include <stratum/data/pack.hpp>
+#include <stratum/data/resource_location.hpp>
+#include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
+#include <stratum/freeze/pipeline.hpp>
+#include <stratum/nbt/reader.hpp>
+#include <stratum/ore/vein.hpp>
+#include <stratum/region/region_file.hpp>
+#include <stratum/settings/noise_settings.hpp>
+#include <stratum/terrain/filler.hpp>
+#include <stratum/world/dimension.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <string>
+
+namespace {
+
+using stratum::data::ResourceLocation;
+using stratum::test::Category;
+using stratum::test::categoryOf;
+using stratum::test::explainedByFlow;
+using stratum::test::GoldenRegion;
+using stratum::test::isFluid;
+
+[[nodiscard]] std::filesystem::path versionDir() {
+    return std::filesystem::path(STRATUM_FIXTURES_DIR) / "1.21.11";
+}
+
+constexpr std::array<std::int64_t, 8> kSeeds = {0,
+                                                1,
+                                                -1,
+                                                42,
+                                                2891948927356891LL,
+                                                -4172144997902289642LL,
+                                                9223372036854775807LL,
+                                                -9223372036854775807LL - 1};
+
+/// Every eighth chunk on each axis of r.0.0.
+constexpr std::array<std::int32_t, 4> kChunkGrid = {0, 8, 16, 24};
+
+struct Score {
+    std::size_t blocks = 0;
+    /// The shipped pipeline's block NAME equals the golden's.
+    std::size_t exact = 0;
+    /// ... does not, where the first pass placed something solid: the
+    /// surface pass's own residual. Flow cannot reach these positions (it
+    /// fills air and meets fluid; it replaces nothing solid), so this is the
+    /// model alone.
+    std::size_t shippedMissOverSolid = 0;
+    /// ... does not, anywhere else: where the first pass placed air or fluid
+    /// and the server holds something of another category. Every one is a
+    /// flow position (the shipped output keeps the first pass's air and
+    /// fluid: `fluidOverwritten` below), and the case requires exactly that.
+    std::size_t shippedMissElsewhere = 0;
+    /// The raw first pass's category equals the golden's.
+    std::size_t rawSameCategory = 0;
+    /// Lava the first pass placed: the model alone.
+    std::size_t rawLava = 0;
+    std::size_t goldenLava = 0;
+    /// Golden lava where the raw first pass also placed lava.
+    std::size_t rawLavaRight = 0;
+    /// ... and where the shipped pipeline still has it.
+    std::size_t shippedLavaRight = 0;
+    /// Positions where the first pass placed a fluid and the shipped output
+    /// holds something else: the surface pass wrote over a fluid.
+    std::size_t fluidOverwritten = 0;
+    /// Raw-category disagreements that `explainedByFlow` attributes to the
+    /// server's post-generation fluid flow, and the ones it cannot.
+    std::size_t rawFlow = 0;
+    std::size_t rawUnexplained = 0;
+    /// Positions where the first pass placed fluid and the vein chain, run
+    /// there anyway, would place a vein block (the model alone); and of
+    /// those, the ones where the server holds that fluid's category, and the
+    /// ones where it holds something `explainedByFlow` accepts. A vein
+    /// block there would be neither.
+    std::size_t veinOverFluid = 0;
+    std::size_t veinOverFluidServerFluid = 0;
+    std::size_t veinOverFluidFlowed = 0;
+
+    void absorb(const Score& other) {
+        blocks += other.blocks;
+        exact += other.exact;
+        shippedMissOverSolid += other.shippedMissOverSolid;
+        shippedMissElsewhere += other.shippedMissElsewhere;
+        rawSameCategory += other.rawSameCategory;
+        rawLava += other.rawLava;
+        goldenLava += other.goldenLava;
+        rawLavaRight += other.rawLavaRight;
+        shippedLavaRight += other.shippedLavaRight;
+        fluidOverwritten += other.fluidOverwritten;
+        rawFlow += other.rawFlow;
+        rawUnexplained += other.rawUnexplained;
+        veinOverFluid += other.veinOverFluid;
+        veinOverFluidServerFluid += other.veinOverFluidServerFluid;
+        veinOverFluidFlowed += other.veinOverFluidFlowed;
+    }
+};
+
+} // namespace
+
+TEST_CASE("the shipped overworld against the golden regions: the aquifer survives the surface "
+          "pass",
+          "[conformance][aquifer][surface][world]") {
+    const std::filesystem::path worldgen = versionDir() / "worldgen";
+    const std::filesystem::path parameters = versionDir() / "biome_parameters";
+    if (!std::filesystem::is_directory(worldgen / "noise_settings") ||
+        !std::filesystem::is_regular_file(parameters / "minecraft" / "overworld.json")) {
+        SKIP("no worldgen or biome_parameters fixtures under " << versionDir()
+                                                               << "; run tools/fetch-vanilla");
+    }
+    const auto overworld = ResourceLocation::parse("minecraft:overworld");
+    const stratum::data::Pack pack = stratum::data::Pack::open(worldgen);
+    const auto loaded = stratum::settings::loadAll(pack);
+    const auto& settings = loaded.settings.at(overworld);
+    REQUIRE(settings.aquifersEnabled);
+    REQUIRE(settings.oreVeinsEnabled);
+    const auto blob = stratum::freeze::write(stratum::freeze::resolve(pack, parameters));
+
+    Score total;
+    std::size_t seedsScored = 0;
+    for (const std::int64_t seed : kSeeds) {
+        CAPTURE(seed);
+        const std::filesystem::path region =
+            versionDir() / "regions" / ("seed-" + std::to_string(seed)) / "overworld" / "r.0.0.mca";
+        if (!std::filesystem::is_regular_file(region)) {
+            SKIP("no golden overworld region at "
+                 << region << "; generate it with tools/fetch-vanilla --generate-regions");
+        }
+        const auto shipped = stratum::world::CompiledDimension::compile(stratum::freeze::read(blob),
+                                                                        overworld, overworld, seed);
+        const auto noises = stratum::density::NoiseRegistry::create(
+            pack, loaded.graph.referencedNoises(), seed, stratum::density::RandomSource::Xoroshiro);
+        const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, settings);
+        GoldenRegion goldenRegion(region);
+        // The vein chain on its own, for positions the filler never offers
+        // it: the filler runs a vein only over `default_block`.
+        stratum::density::Interpreter veinReader(
+            loaded.graph, noises,
+            stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                           .height = settings.geometry.cellHeight()});
+        stratum::density::Interpreter::CornerCache veinCache(veinReader.cacheSize());
+        const stratum::ore::VeinSource veins(seed, stratum::density::RandomSource::Xoroshiro);
+        const auto toggleNode = settings.router.at(stratum::settings::RouterEntry::VeinToggle);
+        const auto ridgedNode = settings.router.at(stratum::settings::RouterEntry::VeinRidged);
+        const auto gapNode = settings.router.at(stratum::settings::RouterEntry::VeinGap);
+
+        Score score;
+        for (const std::int32_t cz : kChunkGrid) {
+            for (const std::int32_t cx : kChunkGrid) {
+                REQUIRE(goldenRegion.hasChunk(cx, cz));
+                const stratum::chunk::Chunk& golden = goldenRegion.chunk(cx, cz);
+                stratum::terrain::ChunkBuffer first(settings.geometry);
+                raw.fill(golden.x(), golden.z(), first);
+                stratum::terrain::ChunkBuffer ours(shipped->geometry());
+                shipped->fillBlocks(golden.x(), golden.z(), ours);
+
+                for (std::int32_t y = first.minY(); y < first.minY() + first.height(); ++y) {
+                    for (int z = 0; z < 16; ++z) {
+                        for (int x = 0; x < 16; ++x) {
+                            const stratum::chunk::BlockState* theirs = golden.blockAt(x, y, z);
+                            REQUIRE(theirs != nullptr);
+                            const std::string rawName = first.at(x, y, z).name.toString();
+                            const std::string shippedName = ours.at(x, y, z).name.toString();
+                            const Category goldenCategory = categoryOf(theirs->name);
+                            const Category rawCategory = categoryOf(rawName);
+
+                            ++score.blocks;
+                            if (shippedName == theirs->name) {
+                                ++score.exact;
+                            } else if (rawCategory == Category::Solid) {
+                                ++score.shippedMissOverSolid;
+                            } else {
+                                ++score.shippedMissElsewhere;
+                            }
+                            score.rawSameCategory +=
+                                static_cast<std::size_t>(rawCategory == goldenCategory);
+                            score.rawLava +=
+                                static_cast<std::size_t>(rawCategory == Category::Lava);
+                            bool flowed = false;
+                            if (rawCategory != goldenCategory) {
+                                const std::int32_t worldX = (cx * 16) + x;
+                                const std::int32_t worldZ = (cz * 16) + z;
+                                if (explainedByFlow(goldenRegion, worldX, y, worldZ, goldenCategory,
+                                                    rawCategory)) {
+                                    ++score.rawFlow;
+                                    flowed = true;
+                                } else {
+                                    ++score.rawUnexplained;
+                                    UNSCOPED_INFO("unexplained: golden "
+                                                  << theirs->name << ", raw " << rawName << " at "
+                                                  << worldX << " " << y << " " << worldZ);
+                                }
+                            }
+                            if (goldenCategory == Category::Lava) {
+                                ++score.goldenLava;
+                                if (rawCategory == Category::Lava) {
+                                    ++score.rawLavaRight;
+                                    score.shippedLavaRight +=
+                                        static_cast<std::size_t>(shippedName == "minecraft:lava");
+                                }
+                            }
+                            if (isFluid(rawCategory) && shippedName != rawName) {
+                                ++score.fluidOverwritten;
+                            }
+                            if (isFluid(rawCategory) && y >= stratum::ore::kLowestVeinY &&
+                                y <= stratum::ore::kHighestVeinY) {
+                                const stratum::density::Point point{
+                                    .x = (cx * 16) + x, .y = y, .z = (cz * 16) + z};
+                                const double toggle =
+                                    veinReader.evaluate(toggleNode, point, veinCache);
+                                if (stratum::ore::clearsRichness(y, toggle)) {
+                                    const double ridged =
+                                        veinReader.evaluate(ridgedNode, point, veinCache);
+                                    if (ridged < 0.0 && veins
+                                                            .at(point.x, y, point.z,
+                                                                stratum::ore::VeinInputs{
+                                                                    .toggle = toggle,
+                                                                    .ridged = ridged,
+                                                                    .gap = veinReader.evaluate(
+                                                                        gapNode, point, veinCache)})
+                                                            .placed()) {
+                                        ++score.veinOverFluid;
+                                        score.veinOverFluidServerFluid +=
+                                            static_cast<std::size_t>(goldenCategory == rawCategory);
+                                        score.veinOverFluidFlowed +=
+                                            static_cast<std::size_t>(flowed);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // THE TWO INVARIANTS, per seed: the surface pass writes only over the
+        // default block.
+        CHECK(score.fluidOverwritten == 0U);
+        CHECK(score.shippedLavaRight == score.rawLavaRight);
+        // And the first pass itself: every disagreement is fluid that moved.
+        CHECK(score.rawUnexplained == 0U);
+        WARN("seed " << seed << ": shipped exact " << score.exact << " / " << score.blocks
+                     << ", raw category " << score.rawSameCategory << ", golden lava "
+                     << score.goldenLava << " (raw right " << score.rawLavaRight << ")");
+        total.absorb(score);
+        ++seedsScored;
+    }
+
+    REQUIRE(seedsScored == kSeeds.size());
+    WARN("total: shipped exact " << total.exact << ", over solid missed "
+                                 << total.shippedMissOverSolid << ", elsewhere missed "
+                                 << total.shippedMissElsewhere << "; raw lava " << total.rawLava
+                                 << ", golden lava " << total.goldenLava << ", raw right "
+                                 << total.rawLavaRight << "; raw flow " << total.rawFlow);
+    CHECK(total.blocks == 12582912U);
+
+    // What the model alone decides is pinned exactly: flow cannot move it.
+    // What the server's flow remnant decides is bounded, and its shape
+    // required, because CI regenerates these regions and the remnant is
+    // run-dependent (SPEC §7: two frozen sets of the same seeds differ, by
+    // flow and by nothing else).
+    //
+    // The aquifer's own residual: 23 of 12582912 categories on the region
+    // set first measured, every one of them fluid that moved after
+    // generation (the invariant above). Bounded at under 1 in 100 000
+    // blocks, as the probe cases' remnants are; and every other category
+    // agrees.
+    CHECK(total.rawSameCategory + total.rawFlow == total.blocks);
+    CHECK(total.rawFlow * 100000U < total.blocks);
+
+    // The lava the first pass places, all of it the server's where flow has
+    // not reached it, and every block of it surviving the surface pass (the
+    // invariant above). Before the v2 fix the shipped count was 0: all of
+    // it was deepslate. Golden lava differs from the first pass's only by
+    // flow: lava that ran into air, or a source water met.
+    CHECK(total.rawLava == 1191U);
+    CHECK(total.rawLava - total.rawLavaRight <= total.rawFlow);
+    CHECK(total.goldenLava - total.rawLavaRight <= total.rawFlow);
+
+    // The shipped residual over solid ground, 415 blocks, is surface
+    // MATERIAL near biome borders (sand/dirt, sandstone/stone) — M4, not the
+    // aquifer — and flow cannot reach it. It was 517 while the bottom-up
+    // stone-depth run skipped water: 102 blocks directly over water — 60
+    // stone the filler made gravel, 42 sandstone it made sand — are the
+    // `stone_depth` ceiling rules firing once water resets the run, as
+    // aquifer-lavarun-probe.sh measured; none got worse (SPEC §11).
+    CHECK(total.shippedMissOverSolid == 415U);
+    // Everywhere else the shipped output keeps the first pass's air and
+    // fluid, so it misses exactly the flow positions: the shape, exactly,
+    // with the count bounded above. 12582474 exact on the first set.
+    CHECK(total.shippedMissElsewhere == total.rawFlow);
+    CHECK(total.exact + total.shippedMissOverSolid + total.shippedMissElsewhere == total.blocks);
+
+    // A vein never replaces the aquifer's fluid. The filler runs the vein
+    // chain only over `default_block`, which was a choice (ore/vein.hpp):
+    // the placement probe held no fluid at all. Here the chain is run at
+    // every position the first pass made fluid inside the vein ranges — 21
+    // on this grid, the model alone — and wherever it would place a vein
+    // block the server kept the fluid, or flow moved it: 21 of 21 kept on
+    // the first set. Few, but not a sample: placement is deterministic, so
+    // under the other reading every one of them would be a vein block, which
+    // is neither.
+    INFO("vein over fluid " << total.veinOverFluid << ", server fluid "
+                            << total.veinOverFluidServerFluid << ", flowed "
+                            << total.veinOverFluidFlowed);
+    CHECK(total.veinOverFluid == 21U);
+    CHECK(total.veinOverFluidServerFluid + total.veinOverFluidFlowed == total.veinOverFluid);
+    CHECK(total.veinOverFluidFlowed <= total.rawFlow);
+}
+
+TEST_CASE("the deep-dark override reads erosion and depth through the chunk's flat_cache window",
+          "[conformance][aquifer]") {
+    // Q5.9 on the one golden region where it decides blocks: seed
+    // 9223372036854775807, chunks x 2..3, z 3..5, around y -64..-17. Three
+    // readings were run over the whole region (filler.hpp's
+    // `flatCacheWindow`): no override leaves 440 blocks of aquifer the server
+    // does not have, relocating every read to its 4x4 corner leaves 16,
+    // reading every column exactly leaves 2 — and only the window, which
+    // gives one source centre two statuses depending on which chunk is
+    // generating, leaves none. So this pins the whole of it as "nothing
+    // that is not fluid moving after generation", plus the two blocks that
+    // decide between the last two readings.
+    const std::filesystem::path worldgen = versionDir() / "worldgen";
+    const std::filesystem::path region =
+        versionDir() / "regions" / "seed-9223372036854775807" / "overworld" / "r.0.0.mca";
+    if (!std::filesystem::is_directory(worldgen / "noise_settings") ||
+        !std::filesystem::is_regular_file(region)) {
+        SKIP("no worldgen fixtures or golden region under " << versionDir()
+                                                            << "; run tools/fetch-vanilla");
+    }
+    const auto overworld = ResourceLocation::parse("minecraft:overworld");
+    const stratum::data::Pack pack = stratum::data::Pack::open(worldgen);
+    const auto loaded = stratum::settings::loadAll(pack);
+    const auto& settings = loaded.settings.at(overworld);
+    const auto noises = stratum::density::NoiseRegistry::create(
+        pack, loaded.graph.referencedNoises(), 9223372036854775807LL,
+        stratum::density::RandomSource::Xoroshiro);
+    const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, settings);
+    GoldenRegion golden(region);
+
+    std::size_t blocks = 0;
+    std::size_t agree = 0;
+    std::size_t flow = 0;
+    std::size_t unexplained = 0;
+    std::size_t rawLavaDeep = 0;
+    std::size_t goldenLavaDeep = 0;
+    for (std::int32_t cz = 3; cz <= 5; ++cz) {
+        for (std::int32_t cx = 2; cx <= 3; ++cx) {
+            stratum::terrain::ChunkBuffer first(settings.geometry);
+            raw.fill(cx, cz, first);
+            for (std::int32_t y = first.minY(); y < first.minY() + first.height(); ++y) {
+                for (int z = 0; z < 16; ++z) {
+                    for (int x = 0; x < 16; ++x) {
+                        const std::int32_t worldX = (cx * 16) + x;
+                        const std::int32_t worldZ = (cz * 16) + z;
+                        const stratum::chunk::BlockState* theirs =
+                            golden.blockAt(worldX, y, worldZ);
+                        REQUIRE(theirs != nullptr);
+                        const Category g = categoryOf(theirs->name);
+                        const Category r = categoryOf(first.at(x, y, z).name.toString());
+                        ++blocks;
+                        const bool deep = y >= -40 && y <= -17;
+                        rawLavaDeep += static_cast<std::size_t>(r == Category::Lava && deep);
+                        goldenLavaDeep += static_cast<std::size_t>(g == Category::Lava && deep);
+                        if (g == r) {
+                            ++agree;
+                        } else if (explainedByFlow(golden, worldX, y, worldZ, g, r)) {
+                            ++flow;
+                        } else {
+                            ++unexplained;
+                            UNSCOPED_INFO("unexplained: golden "
+                                          << theirs->name << ", raw "
+                                          << first.at(x, y, z).name.toString() << " at " << worldX
+                                          << " " << y << " " << worldZ);
+                        }
+                    }
+                }
+            }
+            if (cx == 3 && cz == 3) {
+                // Source (57, -33, 70) lies OFF this chunk's window: wet.
+                CHECK(first.at(4, -32, 14).name.toString() == "minecraft:lava"); // (52, -32, 62)
+            }
+            if (cx == 3 && cz == 4) {
+                // ... and INSIDE this one's: dry.
+                CHECK(first.at(3, -32, 0).name.toString() == "minecraft:air"); // (51, -32, 64)
+                CHECK(first.at(4, -32, 0).name.toString() == "minecraft:air"); // (52, -32, 64)
+            }
+        }
+    }
+    CHECK(unexplained == 0U);
+    CHECK(blocks == 6U * 16U * 16U * 384U);
+    // On the region set first measured not one block of fluid moved in these
+    // six chunks, so every category agreed outright — where the three
+    // rejected readings leave 440, 16 and 2 disagreements, all of them
+    // inside this footprint. Flow is the server's and run-dependent (SPEC
+    // §7), so it is bounded rather than pinned at 0, at the probe cases'
+    // under 1 in 100 000 blocks: 5 here, fewer than the 16 or 440 of the
+    // rejected readings that are not flow-shaped anyway, which
+    // `unexplained` already refuses.
+    INFO("agree " << agree << ", flow " << flow << ", raw lava " << rawLavaDeep << ", golden lava "
+                  << goldenLavaDeep);
+    CHECK(agree + flow == blocks);
+    CHECK(flow * 100000U < blocks);
+    // The lava the window keeps: the pool at y -32 the corner reading dried
+    // — the model's own 9 blocks, and the server's, but for flow.
+    CHECK(rawLavaDeep == 9U);
+    CHECK((goldenLavaDeep > rawLavaDeep ? goldenLavaDeep - rawLavaDeep
+                                        : rawLavaDeep - goldenLavaDeep) <= flow);
+}

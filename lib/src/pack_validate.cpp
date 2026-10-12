@@ -205,6 +205,15 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // Xoroshiro in the overworld and by the Java LCG in the Nether.
         const auto source = dimension.legacyRandomSource ? density::RandomSource::Legacy
                                                          : density::RandomSource::Xoroshiro;
+        // Refused where it is built (ChunkFiller::compile), whatever the
+        // random source and whether or not the surface rules load.
+        if (dimension.aquifersEnabled &&
+            dimension.defaultFluid.name != data::ResourceLocation::parse("minecraft:water")) {
+            add(report, Severity::Warning, id.toString(),
+                "aquifers_enabled with default_fluid " + dimension.defaultFluid.name.toString() +
+                    " cannot be generated: the aquifer is measured only for a water default "
+                    "fluid");
+        }
         // WHAT A ROUTER CHECK DOES NOT COVER, reported rather than left for
         // the first chunk to discover, and reported BEFORE the router
         // registry is built on purpose: a dimension whose router registry is
@@ -212,17 +221,18 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // dimensions that most need this answer. `wanted`, below, is the
         // router's reach, which is the right question for the fifteen
         // entries and the wrong one for "will this dimension generate".
-        // Generation additionally needs:
+        // Generation additionally needs the surface rule tree's noises —
+        // surface::requiredNoises(), which is a SUPERSET of what the tree
+        // spells, since `minecraft:surface`, `surface_secondary` and
+        // `clay_bands_offset` appear in no field of it.
         //
-        //   * the surface rule tree's noises — surface::requiredNoises(),
-        //     which is a SUPERSET of what the tree spells, since
-        //     `minecraft:surface`, `surface_secondary` and
-        //     `clay_bands_offset` appear in no field of it;
-        //   * and, under a legacy source, a random for every
-        //     `vertical_gradient` in that tree, for the aquifer lattice and
-        //     for the ore-vein source. None of those three is a noise, none
-        //     passes through `wanted`, and all three are refused by name
-        //     where they are built (SPEC §11).
+        // Nothing else a legacy dimension draws from its declared source is
+        // warned about: the aquifer lattice, every `vertical_gradient` and
+        // the ore-vein source each draw a positional random from it, none
+        // passes through `wanted`, and all three are measured and run under
+        // the legacy source (SPEC §11). A legacy aquifer that names
+        // vanilla's aquifer noises is reported below, by the router's noise
+        // refusal.
         //
         // Without this a legacy dimension naming noises only in its surface
         // rule validated clean and then did not generate. These are warnings
@@ -239,25 +249,6 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
                         density::NoiseRegistry::create(pack, surfaceWanted, options.seed, source));
                 } catch (const density::NoiseError& error) {
                     add(report, Severity::Warning, id.toString() + " surface_rule", error.what());
-                }
-            }
-            if (source == density::RandomSource::Legacy) {
-                for (const std::string& name : surface::verticalGradientNames(rules)) {
-                    add(report, Severity::Warning, id.toString() + " surface_rule",
-                        density::legacyConstructRefusal("minecraft:vertical_gradient",
-                                                        "its random_name '" + name +
-                                                            "' salts this dimension's own source"));
-                }
-                if (dimension.aquifersEnabled) {
-                    add(report, Severity::Warning, id.toString(),
-                        density::legacyConstructRefusal(
-                            "aquifers_enabled",
-                            "the lattice's centre jitter is drawn from that source"));
-                }
-                if (dimension.oreVeinsEnabled) {
-                    add(report, Severity::Warning, id.toString(),
-                        density::legacyConstructRefusal(
-                            "ore_veins_enabled", "the vein source is drawn from that source"));
                 }
             }
         } catch (const surface::RuleError& error) {

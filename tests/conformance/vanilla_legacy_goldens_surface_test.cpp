@@ -16,7 +16,7 @@
 // files are therefore a second copy of a world already in the pool: a QUARTER
 // of the files, and a comparable share of every pooled column count below —
 // measured per noise at stride 4, netherrack 21.73%, nether_state_selector
-// 25.58%, patch 31.27%, soul_sand_layer 38.47%, gravel_layer 40.59%.
+// 25.41%, patch 32.14%, soul_sand_layer 38.47%, gravel_layer 40.59%.
 // Measured rather than assumed — over one Nether region's 67108864 block
 // positions the two members of a pair agree on the air/fluid/solid CATEGORY of
 // every single one and on every biome, and differ in 11914 block NAMES
@@ -54,18 +54,27 @@
 //             the golden block. This is what says the reconstruction — the
 //             stone-depth runs, the water height, the visited positions — is
 //             right, independently of the symbolic walk.
-//             262406910 / 262581476 = 99.9335% at stride 1 over eight
+//             239002099 / 239040392 = 99.9840% at stride 1 over eight
 //             regions; the rest are where a rule changed a position's
 //             CATEGORY (the overworld tree places `minecraft:water` and
 //             `minecraft:air`) and a post-rule region cannot say what was
 //             underneath. Only the positions it reproduces are scored, and
 //             on those the tree explains EVERY golden block: 0 unexplained.
 //   recovery  the decoded bits against the TRUE modern noise.
-//             30104 of 30104 — 100.0000%.
+//             30077 of 30077 — 100.0000%.
 //   negative  the same bits against the same noises built at worldSeed + 1.
-//             78.97%, BELOW the 86.37% a constant answer already scores:
+//             78.95%, BELOW the 86.36% a constant answer already scores:
 //             the wrong seeding is indistinguishable from answering with a
 //             constant.
+//
+// Those are the figures since the decoder counts what the filler counts
+// (`terrain::SurfaceColumn`, SPEC §11): lava fluid in the overworld too, the
+// bottom-up run reset by every fluid, and only first-pass `default_block`
+// positions visited. Before, it visited 262581476 positions and the replay
+// reproduced 99.9335% of them; the extra 23541084 are 23413197 blocks of
+// water from the top of a column's first non-solid stretch, every one of the
+// goldens' 127700 lava blocks (read as solid), and 187 blocks of moved fluid
+// and air — none of them a position the server hands the rules.
 //
 // AND THEN THE SAME THREE ARMS WITH THE SURFACE DEPTH ENUMERATED, which is the
 // arm that matters and which this case did not have until now. The three
@@ -87,11 +96,11 @@
 // WHAT THE NETHER READBACK FINDS. Nothing survives. Over the whole committed
 // 270,000-candidate space (900 seed rules x 300 block offsets, the space
 // tools/analysis/legacy-seed-analyze.cpp enumerates, restated here so the two
-// tools can disagree), scored against the 545395 columns the readback decides
+// tools can disagree), scored against the 550906 columns the readback decides
 // for `minecraft:nether_state_selector` at stride 1, the BEST candidate
-// reaches 51.36% — against a trivial predictor of 50.63% and a null MEASURED
+// reaches 51.86% — against a trivial predictor of 50.48% and a null MEASURED
 // on those same columns of 50.02% +/- 0.61, whose own observed maximum is
-// 52.21%. Nothing in the space clears the null's own maximum. The same on
+// 52.15%. Nothing in the space clears the null's own maximum. The same on
 // `minecraft:netherrack`, 688833 columns: best 96.02%, null 95.66% +/- 0.32
 // max 96.66%, trivial predictor 97.77%. The null is measured rather than
 // computed because it has to be: the decoded columns are spatially clustered
@@ -172,14 +181,18 @@
 //     not scanned.
 //   * The Nether run has no replay arm — its tree cannot be compiled under a
 //     legacy source at all — so its reconstruction is bounded only by the
-//     overworld's 99.9335% and by its own two reported rates: 262795 of
-//     176537818 positions (0.1489%) the tree cannot explain, and columns
+//     overworld's 99.9840% and by its own two reported rates: 55353 of
+//     176537818 positions (0.0314%) the tree cannot explain, and columns
 //     where two positions decode one condition BOTH ways, which cannot
-//     honestly happen and are dropped whole (8514 of 238576 on the
-//     worst-affected condition, 0 on the best). Vanilla's `hole` branch
-//     replacing a solid block with LAVA below y = 32 is the named cause: a
-//     post-rule region cannot undo it, and the stone-depth run under it is
-//     then one short.
+//     honestly happen and are dropped whole (828 of 496013 on `netherrack`,
+//     the most of any condition, no condition above 0.18% of its columns,
+//     and 0 on the best). Both rates were several times larger — 262795
+//     unexplained, and 8514 of 238576 columns contradicting on one
+//     `nether_state_selector` condition — until the decoder reset the
+//     bottom-up stone-depth run on lava as the filler does (SPEC §11).
+//     Vanilla's `hole` branch, which replaces a solid block with LAVA below
+//     y = 32, was named as their likely cause then; that reading was wrong
+//     for most of them. What remains is not attributed.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12). Without
 // them this skips.
@@ -556,6 +569,9 @@ TEST_CASE("two Nether surface noises with identical parameters read different fi
     /// about seeding.
     std::size_t impossibleUnderTree = 0;
     std::size_t netherStateSelectorColumns = 0;
+    /// Columns where two positions decoded one nether_state_selector
+    /// condition BOTH ways — which a noise sampled at (x, 0, z) cannot do.
+    std::size_t netherStateSelectorContradictions = 0;
 
     for (const std::int64_t seed : kGoldenSeeds) {
         const std::filesystem::path region = legacy_goldens::regionOf(fixtures(), seed, "nether");
@@ -588,6 +604,7 @@ TEST_CASE("two Nether surface noises with identical parameters read different fi
                 continue;
             }
             netherStateSelectorColumns += walk.tallies[i].columns;
+            netherStateSelectorContradictions += walk.tallies[i].contradictions;
         }
         positions += walk.stats.positions;
         unexplained += walk.stats.unexplained;
@@ -601,7 +618,9 @@ TEST_CASE("two Nether surface noises with identical parameters read different fi
 
     INFO("regions " << regions << ", positions " << positions << ", unexplained " << unexplained
                     << ", columns deciding both " << both << ", (F,T) " << impossibleUnderIdentity
-                    << ", (T,*) " << impossibleUnderTree);
+                    << ", (T,*) " << impossibleUnderTree << ", nether_state_selector columns "
+                    << netherStateSelectorColumns << " contradicting "
+                    << netherStateSelectorContradictions);
 
     if (starved(positions, 100001) || starved(both, 51) ||
         starved(netherStateSelectorColumns, 10001)) {
@@ -614,11 +633,19 @@ TEST_CASE("two Nether surface noises with identical parameters read different fi
     }
     // The readback has to reach the Nether's surface at all.
     REQUIRE(positions > 100000);
-    // The decoder explains all but a small tail. That tail is not waved at:
-    // vanilla's `hole` branch replaces a solid block with LAVA below y = 32,
-    // which a post-rule region cannot undo, and those columns' stone-depth
-    // runs are then one short.
-    CHECK(percent(unexplained, positions) < 1.0);
+    // The decoder explains all but a small tail — and the tail is small
+    // because the decoder counts the bottom-up stone-depth run the way the
+    // filler does, RESET by every fluid (SPEC §11, "Lava in the surface
+    // pass's runs"). Lava is the Nether's default fluid, and while this
+    // decoder held that run through the lava ocean the netherrack above it
+    // read as deep in a run it was not in: 6280 of these 2755059 positions
+    // unexplained at the default stride (0.2279%), and 262795 of 176537818 at
+    // stride 1 (0.1489%). Resetting it, the positions and their order
+    // unchanged, leaves 1217 (0.0442%) and 55353 (0.0314%). The Nether goldens
+    // hold no fluid that moved — lava at level 0 only — so this is not a
+    // flow-dependent count; it is bounded rather than pinned all the same, at
+    // a level the old reading fails at both strides.
+    CHECK(percent(unexplained, positions) < 0.1);
 
     // THE TEST, and it is (F,T) alone. Soul below -0.012 and gravel at or
     // above it: under ONE field impossible, because both conditions test the
@@ -642,6 +669,12 @@ TEST_CASE("two Nether surface noises with identical parameters read different fi
 
     // And the readback the scan runs on is not a handful of columns.
     CHECK(netherStateSelectorColumns > 10000);
+    // Nor riddled with columns decoded both ways. Holding the bottom-up run
+    // through lava contradicted 43 of 12166 nether_state_selector columns
+    // here (0.35%), and at stride 1 8605 of 830151 (1.04%) — 8514 of them on
+    // one condition, the case for SPEC §11 once naming `hole`'s lava as the
+    // likely cause. The reset leaves 0 here and 90 of 826104 at stride 1.
+    CHECK(percent(netherStateSelectorContradictions, netherStateSelectorColumns) < 0.1);
 }
 
 TEST_CASE("no candidate legacy seeding reproduces the Nether's decoded surface noise",
@@ -770,12 +803,38 @@ TEST_CASE("no candidate legacy seeding reproduces the Nether's decoded surface n
     INFO("columns " << columns.size() << ", true " << trueBits << ", majority null " << majority);
     CHECK(majority < 60.0);
 
-    // deepslate's own derivation, BY NAME rather than left to be inferred
-    // from a list it is absent from: rule 182, block 0.
-    const std::size_t deepslate = score(legacy_goldens::kDeepslateRule, 0);
-    INFO("deepslate rule " << legacy_goldens::kDeepslateRule << " scores " << deepslate << "/"
-                           << columns.size());
-    CHECK(percent(deepslate, columns.size()) < majority);
+    // The forked-MD5 rule, BY NAME rather than left to be inferred from a
+    // list it is absent from: rule 182, block 0. An anonymous candidate (it
+    // is not deepslate's derivation; deepslate_legacy_noise_oracle_test.cpp).
+    const std::size_t named = score(legacy_goldens::kForkedMd5Rule, 0);
+    INFO("rule " << legacy_goldens::kForkedMd5Rule << " scores " << named << "/" << columns.size());
+    CHECK(percent(named, columns.size()) < majority);
+
+    // And what deepslate DOES build for a legacy named noise, observed there:
+    // the unforked generator (rule 180), blocks in cubiomes' octaveInit order,
+    // with java.util.Random's own nextDouble here. It is outside the
+    // enumeration, so it is scored here by name, and it is not vanilla's
+    // either: a correct seeding scores every column (the plant below).
+    const legacy_goldens::Layout observedLayout =
+        legacy_goldens::octaveInitLayout(parameters.firstOctave, parameters.amplitudes);
+    const legacy_goldens::SeedRule unforked =
+        legacy_goldens::ruleAt(legacy_goldens::kUnforkedMd5Rule);
+    std::map<std::int64_t, std::vector<stratum::noise::PerlinNoise>> observedBlocks;
+    for (const std::int64_t seed : seeds) {
+        observedBlocks.emplace(seed, legacy_goldens::blocksFor(
+                                         unforked, legacy_goldens::seedFor(unforked, seed, target),
+                                         observedLayout.blocksPerNoise));
+    }
+    std::size_t observed = 0;
+    for (const Column& column : columns) {
+        const double value = legacy_goldens::sampleNormal(
+            observedLayout, observedBlocks.at(column.seed), 0, static_cast<double>(column.x), 0.0,
+            static_cast<double>(column.z));
+        const bool holds = threshold <= value && value <= maxThreshold;
+        observed += holds == (column.bit == 1) ? 1U : 0U;
+    }
+    INFO("deepslate's observed construction scores " << observed << "/" << columns.size());
+    CHECK(percent(observed, columns.size()) < majority);
 
     // A BOUNDED SWEEP, not the whole space: all 900 seed rules at block
     // offsets 0..1, which is 1800 of the 270000 candidates. The full sweep

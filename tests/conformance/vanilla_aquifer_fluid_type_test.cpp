@@ -20,6 +20,9 @@
 // own centre sits below that line cannot be observed at all.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/fluid_flow.hpp"
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/fluid_type.hpp>
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/sampling.hpp>
@@ -41,6 +44,7 @@
 #include <map>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace {
 
@@ -71,11 +75,66 @@ constexpr std::array<World, 4> kWorlds{
 struct Score {
     long long sources = 0;
     long long mixed = 0;
+    long long flowing = 0;   ///< flowing blocks set aside, not attributed
+    long long intruding = 0; ///< source blocks above their nearest source's own level
+    long long minorityAtContact = 0;
+    long long minorityElsewhere = 0;
+    /// Of those, the ones without the shape of water that spread in (a water
+    /// source with two or more horizontal water-source neighbours and
+    /// flowing water beside it), and where they are.
+    long long minorityElsewhereUnshaped = 0;
+    long long minorityElsewhereOnEdge =
+        0; ///< the shape not observable: a neighbour is off the corpus
+    std::string unshapedSamples;
+    std::string mixedSamples;
+    std::string missSamples;
     long long lava = 0;
     long long agree = 0;
     long long nullAllDefault = 0; ///< the majority baseline
     long long pitch16 = 0;        ///< the same rule on the spread's lattice
 };
+
+} // namespace
+
+namespace {
+
+/// Whether a minority block has the shape water that spread into another
+/// body leaves: a water source with two or more horizontal water-source
+/// neighbours and flowing water beside it (any of the six).
+enum class SpreadIn : std::uint8_t { Shaped, Unshaped, Unobservable };
+
+[[nodiscard]] SpreadIn spreadIn(stratum::test::GoldenRegion& golden, const std::int32_t x,
+                                const std::int32_t y, const std::int32_t z) {
+    const auto isWater = [](const stratum::chunk::BlockState* b) {
+        return b != nullptr && b->name == "minecraft:water";
+    };
+    const stratum::chunk::BlockState* here = golden.blockAt(x, y, z);
+    if (!isWater(here) || stratum::test::fluidLevel(here) != 0) {
+        return SpreadIn::Unshaped;
+    }
+    int sourceNeighbours = 0;
+    bool flowingBeside = false;
+    bool offCorpus = false;
+    for (const auto& [dx, dy, dz] :
+         {std::tuple{1, 0, 0}, std::tuple{-1, 0, 0}, std::tuple{0, 0, 1}, std::tuple{0, 0, -1},
+          std::tuple{0, 1, 0}, std::tuple{0, -1, 0}}) {
+        const stratum::chunk::BlockState* next = golden.blockAt(x + dx, y + dy, z + dz);
+        offCorpus = offCorpus || next == nullptr;
+        if (!isWater(next)) {
+            continue;
+        }
+        const int level = stratum::test::fluidLevel(next);
+        sourceNeighbours += static_cast<int>(dy == 0 && level == 0);
+        flowingBeside = flowingBeside || level > 0;
+    }
+    if (sourceNeighbours >= 2 && flowingBeside) {
+        return SpreadIn::Shaped;
+    }
+    // On the corpus's own edge the flowing water may be the neighbour that
+    // was never generated: the shape can be neither shown nor refuted there.
+    // The source neighbours it can see must still be there.
+    return (offCorpus && sourceNeighbours >= 2) ? SpreadIn::Unobservable : SpreadIn::Unshaped;
+}
 
 } // namespace
 
@@ -100,8 +159,10 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             fixtures() / "probes" / world.dir / "elava" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no lava-noise aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, loaded.graph.referencedNoises(), world.seed,
@@ -110,15 +171,21 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             loaded.graph, noises,
             stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
                                            .height = overworld.geometry.cellHeight()});
-        const stratum::aquifer::CentreSource centres{world.seed};
+        const stratum::aquifer::CentreSource centres{world.seed,
+                                                     stratum::density::RandomSource::Xoroshiro};
         const auto file = stratum::region::RegionFile::open(region);
+        stratum::test::GoldenRegion golden(region);
 
-        std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::pair<long, long>> owned;
+        // Per source: the y of every source block it is nearest to, and
+        // whether that block is lava.
+        std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>,
+                 std::vector<std::tuple<std::int32_t, std::int32_t, std::int32_t, bool>>>
+            owned;
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz)) {
-                    continue;
-                }
+                // A probe region holds every chunk of its window: a missing one is
+                // a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (std::int32_t lz = 0; lz < 16; ++lz) {
@@ -132,28 +199,27 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                             if (!isLava && block->name != "minecraft:water") {
                                 continue;
                             }
+                            // SOURCE blocks only: a flowing one is fluid the
+                            // server's ticks moved after generating, from
+                            // whichever body it left — not this source's.
+                            if (stratum::test::fluidLevel(block) != 0) {
+                                ++total.flowing;
+                                continue;
+                            }
                             const CellIndex cell = stratum::aquifer::selectSources(
                                                        centres, (cx * 16) + lx, y, (cz * 16) + lz)
                                                        .nearest()
                                                        .cell;
-                            auto& tally = owned[{cell.x, cell.y, cell.z}];
-                            if (isLava) {
-                                ++tally.first;
-                            } else {
-                                ++tally.second;
-                            }
+                            owned[{cell.x, cell.y, cell.z}].emplace_back((cx * 16) + lx, y,
+                                                                         (cz * 16) + lz, isLava);
                         }
                     }
                 }
             }
         }
 
-        for (const auto& [key, tally] : owned) {
+        for (const auto& [key, blocks] : owned) {
             const auto [ix, iy, iz] = key;
-            if (tally.first > 0 && tally.second > 0) {
-                ++total.mixed;
-                continue;
-            }
             const CellIndex centre = centres.centreOf(ix, iy, iz);
             if (centre.y < globalLava) {
                 continue; // nothing observable below the lava sea
@@ -162,21 +228,75 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
                 stratum::aquifer::spreadSample(CellIndex{.x = ix, .y = iy, .z = iz}, centre);
             const double spread = interpreter.evaluate(
                 spreadNode, Point{.x = spreadAt.x, .y = spreadAt.y, .z = spreadAt.z});
-            const std::int32_t level = stratum::aquifer::cellFluidLevel(
+            const stratum::aquifer::CellLevel cellLevel = stratum::aquifer::cellLevel(
                 stratum::aquifer::CellFluid{.centreY = centre.y,
                                             .surface = stratum::aquifer::constantSurface(kSurface),
                                             .seaLevel = kSeaLevel,
                                             .floodedness = kFloodedness,
                                             .spread = spread});
+            const std::int32_t level = cellLevel.level;
+            // Only the blocks this source itself holds — below its own level.
+            // A source block at or above it is another body's fluid that
+            // reached this territory, which no type rule can be scored on.
+            std::pair<long, long> tally{0, 0};
+            for (const auto& [bx, y, bz, isLava] : blocks) {
+                if (y >= level) {
+                    ++total.intruding;
+                    continue;
+                }
+                ++(isLava ? tally.first : tally.second);
+            }
+            if (tally.first == 0 && tally.second == 0) {
+                continue;
+            }
+            if (tally.first > 0 && tally.second > 0) {
+                ++total.mixed;
+                // The minority fluid's blocks: does each touch what water
+                // meeting lava leaves behind?
+                const bool minorityIsWater = tally.second < tally.first;
+                for (const auto& [bx, y, bz, isLava] : blocks) {
+                    if (y >= level || isLava == minorityIsWater) {
+                        continue;
+                    }
+                    bool contact = false;
+                    for (const auto& [dx, dy, dz] :
+                         {std::tuple{1, 0, 0}, std::tuple{-1, 0, 0}, std::tuple{0, 1, 0},
+                          std::tuple{0, -1, 0}, std::tuple{0, 0, 1}, std::tuple{0, 0, -1}}) {
+                        contact = contact || stratum::test::fluidContactBlock(
+                                                 golden.blockAt(bx + dx, y + dy, bz + dz));
+                    }
+                    ++(contact ? total.minorityAtContact : total.minorityElsewhere);
+                    const SpreadIn shape = contact ? SpreadIn::Shaped : spreadIn(golden, bx, y, bz);
+                    total.minorityElsewhereOnEdge +=
+                        static_cast<long long>(shape == SpreadIn::Unobservable);
+                    if (shape == SpreadIn::Unshaped) {
+                        ++total.minorityElsewhereUnshaped;
+                        if (total.unshapedSamples.size() < 2000) {
+                            total.unshapedSamples += " [" + std::to_string(bx) + "," +
+                                                     std::to_string(y) + "," + std::to_string(bz) +
+                                                     " " + (isLava ? "lava" : "water") + "]";
+                        }
+                    }
+                }
+                if (total.mixed <= 18) {
+                    total.mixedSamples += " [" + std::to_string(ix) + "," + std::to_string(iy) +
+                                          "," + std::to_string(iz) + " lava " +
+                                          std::to_string(tally.first) + " water " +
+                                          std::to_string(tally.second) + "]";
+                }
+                continue;
+            }
 
             const auto lavaAt = stratum::aquifer::lavaSample(centre);
             const double lava =
                 interpreter.evaluate(lavaNode, Point{.x = lavaAt.x, .y = lavaAt.y, .z = lavaAt.z});
             const bool observed = tally.first > 0;
-            const bool predicted =
-                stratum::aquifer::fluidTypeOf(stratum::aquifer::FluidTypeAt{
-                    .centreY = centre.y, .level = level, .seaLevel = kSeaLevel, .lava = lava}) ==
-                FluidType::Lava;
+            const bool predicted = stratum::aquifer::fluidTypeOf(stratum::aquifer::FluidTypeAt{
+                                       .centreY = centre.y,
+                                       .level = level,
+                                       .seaLevel = kSeaLevel,
+                                       .lava = lava,
+                                       .origin = cellLevel.origin}) == FluidType::Lava;
 
             // The null that matters, in the same loop: the identical rule
             // reading the SPREAD's lattice instead of lava's own.
@@ -191,6 +311,14 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
             ++total.sources;
             total.lava += static_cast<int>(observed);
             total.agree += static_cast<int>(predicted == observed);
+            if (predicted != observed) {
+                total.missSamples += " [cell " + std::to_string(ix) + "," + std::to_string(iy) +
+                                     "," + std::to_string(iz) + " centre y " +
+                                     std::to_string(centre.y) + " level " + std::to_string(level) +
+                                     " lava " + std::to_string(lava) + " observed " +
+                                     (observed ? "lava " : "water ") +
+                                     std::to_string(observed ? tally.first : tally.second) + "]";
+            }
             total.nullAllDefault += static_cast<int>(!observed);
             total.pitch16 += static_cast<int>(asSixteen == observed);
         }
@@ -199,16 +327,45 @@ TEST_CASE("the aquifer's fluid is the type the server chose", "[conformance][aqu
     REQUIRE(total.sources > 2500);
     INFO("sources " << total.sources << " (lava " << total.lava << "), agree " << total.agree
                     << ", null " << total.nullAllDefault << ", on the spread's pitch "
-                    << total.pitch16 << ", mixed " << total.mixed);
+                    << total.pitch16 << ", mixed " << total.mixed << ", flowing set aside "
+                    << total.flowing << ", intruding " << total.intruding
+                    << ", minority at contact " << total.minorityAtContact << ", elsewhere "
+                    << total.minorityElsewhere << " (on the corpus edge "
+                    << total.minorityElsewhereOnEdge << ", without the spread-in shape "
+                    << total.minorityElsewhereUnshaped << ":" << total.unshapedSamples << ");"
+                    << total.mixedSamples << "; misses" << total.missSamples);
 
-    // The type IS a property of the source: sources holding both fluids are a
-    // few per cent, not the norm. Those are unexplained and named as such in
-    // SPEC §11 — the leading candidate is Q6.3's water-over-lava exception,
-    // which no instrument in this project has yet touched.
-    CHECK(total.mixed * 10 < total.sources);
+    // The type IS a property of the source. The "4% of sources hold both
+    // fluids" this case once carried was attribution, not the rule: count a
+    // source's own SOURCE blocks below its own level, and set aside flowing
+    // blocks and blocks above that level (another body's fluid in this
+    // territory), and on the frozen corpora 17 of 3177 sources still mix —
+    // every one a lava body holding a few water sources, 12 of those blocks
+    // beside the obsidian or cobblestone water leaves on meeting lava. That
+    // part is flow, and a run-dependent amount of it survives freezing
+    // (support/probe_corpus.hpp), so it is bounded rather than pinned (it
+    // read 15 sources and 14 blocks before the corpora were frozen): under
+    // 2% of sources, with room for the run-to-run movement of that remnant.
+    CHECK(total.mixed * 50 < total.sources);
+    // The others sit away from any contact block. Each has the shape of
+    // water that spread in: a water source with two or more horizontal
+    // water-source neighbours and flowing water beside it -- or, on the
+    // corpus's own edge, the two source neighbours with the rest of the
+    // shape off the corpus (1 of the 8 locally, at x = 0, in a cell centred
+    // outside the forceloaded square). That shape is also any water body's
+    // interior, so it is required of every one rather than credited, and
+    // their number is bounded, not pinned: it read 8 on every local
+    // generation of the comb worlds, frozen and unfrozen, and 6 on the first
+    // generation CI made (run 37843957334) -- a run-dependent remnant like
+    // the rest of the flow.
+    CHECK(total.minorityElsewhereUnshaped == 0);
+    CHECK(total.minorityElsewhere * 100 < total.sources);
 
-    // 0.99873 when this was written, against a 0.94176 majority baseline.
-    CHECK(total.agree * 1000 > total.sources * 997);
+    // And every pure source is typed as the rule says: 3160 of 3160 frozen
+    // (3162 of 3162 before), where the old attribution read 0.99873 — its
+    // four misses were two sources' worth of another body's water, which the
+    // rule was never asked about.
+    CHECK(total.agree == total.sources);
     CHECK(total.agree > total.nullAllDefault);
 
     // And the horizontal pitch is the finding. On the spread's lattice the

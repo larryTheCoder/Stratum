@@ -11,6 +11,7 @@
 
 #include <stratum/chunk/chunk.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -97,8 +98,27 @@ struct HeightmapSpec {
         writer.named(nbt::TagType::List, "palette")
             .type(nbt::TagType::Compound)
             .u32(static_cast<std::uint32_t>(section.palette.size()));
-        for (const std::string& name : section.palette) {
-            writer.named(nbt::TagType::String, "Name").str(name);
+        for (const std::string& entry : section.palette) {
+            // `name[key=value,...]` carries a Properties compound, the way
+            // BlockState::toString spells it; a bare name carries none.
+            const std::size_t open = entry.find('[');
+            writer.named(nbt::TagType::String, "Name").str(entry.substr(0, open));
+            if (open != std::string::npos && entry.back() == ']') {
+                writer.named(nbt::TagType::Compound, "Properties");
+                std::size_t at = open + 1;
+                while (at < entry.size() - 1) {
+                    std::size_t stop = entry.find(',', at);
+                    if (stop == std::string::npos) {
+                        stop = entry.size() - 1;
+                    }
+                    const std::string pair = entry.substr(at, stop - at);
+                    const std::size_t equals = pair.find('=');
+                    writer.named(nbt::TagType::String, pair.substr(0, equals))
+                        .str(pair.substr(equals + 1));
+                    at = stop + 1;
+                }
+                writer.end();
+            }
             writer.end();
         }
         if (!section.blocks.empty()) {

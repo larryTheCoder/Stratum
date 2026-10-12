@@ -2,9 +2,18 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // The unit vectors for `CentreSource` are self-consistent by construction:
-// they pin the algorithm, not its correctness. This is what ties it to
-// vanilla, and it does so through an observable with no fitted quantity
-// anywhere in it.
+// they pin the algorithm, not its correctness. deepslate's vectors
+// (deepslate_aquifer_oracle_test.cpp) check the base and the mix's y term
+// independently, but its at() does not wrap the mix and so cannot speak for
+// any cell off the y axis: on this case's readout its draws place 193 of 255
+// cells (tools/analysis/deepslate-aquifer-trust.sh). This is what ties the
+// whole derivation to vanilla, and it does so through an observable with no
+// fitted quantity anywhere in it. It runs in CI: the comb worlds are a unit
+// of tools/probe-worlds (shard `aquifer`). What it cannot see is the x
+// term's 32-bit product, which parts from a 64-bit one only past cell 686;
+// vanilla_aquifer_farcell_test.cpp reads this same readout on cells past
+// it, on both signs, and vanilla_above_preliminary_surface_test.cpp pins
+// the product at block level.
 //
 // In the open-void probe a cell at layer -4 spans y -48..-37 and takes the
 // -20 fluid level rather than the lava floor exactly when its centre clears
@@ -20,6 +29,8 @@
 // readout tests the vertical one.
 //
 // The fixture is Mojang-derived and never committed (SPEC §12).
+#include "support/probe_corpus.hpp"
+
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/nbt/reader.hpp>
@@ -69,17 +80,20 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
         const std::filesystem::path region = fixtures() / "probes" / world.dir / "jv" / "r.0.0.mca";
         if (!std::filesystem::is_regular_file(region)) {
             SKIP("no open-void aquifer probe at "
-                 << region << "; generate it with tools/analysis/density-probe.sh");
+                 << region << "; generate it with tools/analysis/aquifer-comb-probe.sh");
         }
+        stratum::test::requireFrozen(region.parent_path().parent_path(),
+                                     "tools/analysis/aquifer-comb-probe.sh");
 
-        const stratum::aquifer::CentreSource centres{world.seed};
+        const stratum::aquifer::CentreSource centres{world.seed,
+                                                     stratum::density::RandomSource::Xoroshiro};
         std::vector grid(kCells, std::vector<Tally>(kCells));
         const auto file = stratum::region::RegionFile::open(region);
 
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
-                if (!file.hasChunk(cx, cz))
-                    continue;
+                // A missing chunk is a broken corpus, not a smaller sample.
+                REQUIRE(file.hasChunk(cx, cz));
                 const auto chunk =
                     stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
                 for (int lz = 0; lz < 16; ++lz) {

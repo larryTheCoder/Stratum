@@ -9,8 +9,8 @@
 // and it was still armed here.
 //
 // It matters on its own. A correct level with a wrong type still writes the
-// wrong block, so this gates the filler's refusal by itself (SPEC §10,
-// milestone MA blocker 4).
+// wrong block — which is why it was MA's blocker 4 before the filler stopped
+// refusing aquifers (SPEC §10).
 //
 // WHAT IS MEASURED, on the `elava` probe arm across four world seeds — the one
 // arm that gives `lava` vanilla's own noise instead of a constant. 3125 cells
@@ -39,7 +39,8 @@
 // is water, the very next representable double above it is lava. Strict
 // `>`, confirmed to the ULP rather than assumed.
 //
-// THE LEVEL CEILING IS PINNED at -10 (same tool, group D). An earlier pass
+// THE LEVEL CEILING IS PINNED at -10 (same tool, group D, which is
+// `aquifer-fluidceiling-probe.sh` now). An earlier pass
 // had only bracketed it to {-10, -9}, because sweeping `fluid_level_spread`
 // steps the level in threes and skipped both candidates: it read -11 (LAVA,
 // 14150 cells), -10 (LAVA, 68 cells) and -8 (water, 14004 cells), and no
@@ -54,6 +55,11 @@
 //   arm P, the psl cap (`sea_level` -16, spread 6.0 so the cap binds
 //     everywhere): -12/-11/-10 LAVA, -9/-8/-7 water.
 //   arm P', the same at `sea_level` -70: -12/-10 LAVA, -9/-8 water.
+//
+// Replayed in CI since (`vanilla_aquifer_fluid_ceiling_test.cpp`, seed 42,
+// frozen): the build places every sampled block of the three arms the
+// server does, fluid that moved aside, and every dimension again reads its
+// level on 16384 of 16384 columns with 0 of the other fluid.
 //
 // So the ceiling is an ABSOLUTE constant, which is more than the item asked.
 // Three sea levels (63, -16, -70) and two level-producing branches put the
@@ -94,11 +100,45 @@
 // (-13..-42), i.e. a water/lava contact film where two territories abut, not
 // a source holding level -10. Only the near-16384 entries are readings.
 //
+// THE OVERRIDE DOES NOT REACH A SHORT-CIRCUIT SEA (`aquifer-fluidnear-probe.sh`,
+// `vanilla_aquifer_fluidnear_test.cpp`). The near-surface return and an
+// aborted scan's sea take `sea_level` before the level rule runs, and the
+// clean-room spec's Q5.3 returns the global picker's status from both — the
+// default fluid at any height at or above lambda — before Q5.8 types
+// anything. The server agrees. At sea levels -40, -20, -12 and -10 (the
+// ceiling itself) with `lava` 0.5 or -0.5, two seeds, every second column:
+// the server holds water on all 742 856 source blocks owned by a near-surface
+// sea centred within twenty blocks of its surface, all 155 533 owned by one
+// centred higher, and all 129 304 owned by an aborted scan's sea, and not
+// one lava source in the rows above lambda the aquifer decides on those
+// arms. This build typed every one of them lava (pipeline engine v6 and
+// earlier), and a rival that reaches only one of those classes is wrong on
+// every block of the class it reaches. The same worlds' control, the cell's
+// own sea branch at -20, is lava on all 241 896 of its sources, so the
+// override is in force there.
+//
+// AN ABORTED SCAN'S FLOOR IS LAVA (`aquifer-lowfloor-probe.sh`,
+// `vanilla_aquifer_lowfloor_test.cpp`). A cell whose scan aborted and that
+// takes no sea has the global picker's status at the submerged surface, spec
+// Q5.3(b): Q1.1's A_lava, -54 and lava, typed before either test below. At
+// sea -70 the floor holds lava to y = -55 on every block it governs, centred
+// above lambda with `lava` 0.0 or not — where a cell's own type (engine v9
+// and earlier) would be water. At a sea at or above -54 the type cannot be
+// seen at all: the floor reads fluid nowhere the lattice is consulted, and
+// the barrier's mixed-type constant and the fluid-update flag only ever
+// weigh it against a source of another level (aquifer_substance_test.cpp).
+//
+// ONE CONJUNCT THAT NEEDS NO MEASURING. Q5.8 exempts a source already
+// reading lava from the override, and that is a TAUTOLOGY, not a conjunct
+// hidden below the lava sea: the override turns a source to lava, and
+// overriding lava with lava returns lava, so exempt or not the source is
+// lava and no world could tell the two apart. `fluidTypeOf` returns `Lava`
+// for a centre below lambda, where the global picker reads lava, before the
+// override is weighed. This comment once carried it as unobservable and
+// taken on the spec's word alone; that was the wrong reason.
+//
 // WHAT IS STILL NOT MEASURED, and is marked rather than guessed:
 //
-//   * Whether a source already reading lava is exempt. Those cells sit below
-//     the global lava sea, where nothing can be observed, so the conjunct is
-//     carried on the spec's word alone.
 //   * Whether a DRY source is exempt (the spec's `L != never` conjunct).
 //     REPRESENTABLE NOW, and carried in the predicate below — but as spec
 //     hygiene, NOT as a measurement, and the difference is the whole point.
@@ -152,8 +192,10 @@ inline constexpr double kLavaThreshold = 0.3;
 /// -9 is water. Measured on three independent routes to the level (the sea
 /// branch, and the psl cap at two different sea levels) across three seeds,
 /// every dimension 16384 of 16384 columns with 0 of the other fluid
-/// (`aquifer-fluidtype-probe.sh --group d`). The same run shows the ceiling
-/// is ABSOLUTE, not sea- or lambda-relative — see this file's own header.
+/// (`aquifer-fluidceiling-probe.sh`, replayed by
+/// `vanilla_aquifer_fluid_ceiling_test.cpp`). The same worlds show the
+/// ceiling is ABSOLUTE, not sea- or lambda-relative — see this file's own
+/// header.
 inline constexpr std::int32_t kLavaLevelCeiling = -10;
 
 /// Which fluid a source holds. `Air` is not a case: this answers "given that
@@ -181,6 +223,14 @@ struct FluidTypeAt {
     /// The `lava` router entry, evaluated at `lavaSample(centre)` — the
     /// contracted indices, NOT the block position. See `sampling.hpp`.
     double lava = 0.0;
+
+    /// Where the level came from (`cellLevel`). The two global statuses are
+    /// typed by the global picker, before either test below: a short-circuit
+    /// sea (`LevelOrigin::NearSurfaceSea`) is the default fluid, and A_lava
+    /// (`LevelOrigin::GlobalLava`) is lava. Defaulted, so a hand-built status
+    /// that forgets it types either as a cell's own; build statuses with
+    /// `sourceStatus` (substance.hpp) instead.
+    LevelOrigin origin = LevelOrigin::Cell;
 };
 
 /// The fluid a source places.
@@ -191,6 +241,24 @@ struct FluidTypeAt {
 /// measurement rather than from this corpus, which cannot see below the lava
 /// sea at all.
 [[nodiscard]] constexpr FluidType fluidTypeOf(const FluidTypeAt& at) noexcept {
+    // A short-circuit sea is the global picker's status at a height at or
+    // above lambda (spec Q5.3): the default fluid, before either test below
+    // is reached. Not the centre's — cf58 built 20 462 blocks of false
+    // barrier typing such a sea lava for a centre below lambda — and not the
+    // override's: at a sea at or under -10 with `lava` past its threshold the
+    // server holds water on every source such a sea owns (this file's
+    // header).
+    if (at.origin == LevelOrigin::NearSurfaceSea) {
+        return FluidType::Default;
+    }
+    // A_lava is lava whatever the centre and the `lava` reading say: at sea
+    // -70 an aborted scan's floor holds lava to -55 where its own type, from
+    // a centre above lambda and `lava` 0.0, would be water (this file's
+    // header).
+    if (at.origin == LevelOrigin::GlobalLava) {
+        return FluidType::Lava;
+    }
+    // A centre below the lava sea makes a source lava.
     if (at.centreY < lambdaLevel(at.seaLevel)) {
         return FluidType::Lava;
     }

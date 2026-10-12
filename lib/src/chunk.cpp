@@ -204,6 +204,75 @@ template<typename PaletteEntry, typename EncodeEntry>
     return container;
 }
 
+[[nodiscard]] std::string describeMark(const PostProcessingMark& mark) {
+    return "post-processing mark (" + std::to_string(mark.localX) + ", " + std::to_string(mark.y) +
+           ", " + std::to_string(mark.localZ) + ")";
+}
+
+/// `PostProcessing` as the server writes it: one list per section, list i
+/// for section `lowestSection + i`, each entry `x | (y & 15) << 4 | z << 8`
+/// (PostProcessingMark's doc). An empty list keeps element type End — the
+/// type the server's own empty lists carry — and a non-empty one is Short.
+[[nodiscard]] nbt::Tag::List encodePostProcessing(const ChunkData& chunk) {
+    const std::size_t sectionCount = chunk.sections.size();
+    std::vector<nbt::Tag::List> lists(sectionCount);
+
+    if (!chunk.postProcessing.empty()) {
+        for (std::size_t i = 0; i < sectionCount; ++i) {
+            const std::int64_t expected =
+                static_cast<std::int64_t>(chunk.lowestSection) + static_cast<std::int64_t>(i);
+            if (chunk.sections[i].y != expected) {
+                throw FormatError(describe(chunk.x, chunk.z) + " has post-processing marks but " +
+                                  "its section " + std::to_string(i) + " is y " +
+                                  std::to_string(chunk.sections[i].y) + ", not " +
+                                  std::to_string(expected) +
+                                  ": the lists are indexed from yPos upward, so they need the " +
+                                  "sections to run contiguously from it");
+            }
+        }
+    }
+
+    // One bit per position the sections cover, to refuse a repeat: the
+    // server's own lists never hold one (SPEC §11's Q8 entry).
+    std::vector<bool> seen(sectionCount * kBlocksPerSection, false);
+    for (const PostProcessingMark& mark : chunk.postProcessing) {
+        if (mark.localX < 0 || mark.localX >= kSectionSize || mark.localZ < 0 ||
+            mark.localZ >= kSectionSize) {
+            throw FormatError(describe(chunk.x, chunk.z) + " has a " + describeMark(mark) +
+                              " outside the chunk's 16x16 columns");
+        }
+        const std::int64_t index =
+            static_cast<std::int64_t>(javamath::floorDiv(mark.y, kSectionSize)) -
+            static_cast<std::int64_t>(chunk.lowestSection);
+        if (index < 0 || index >= static_cast<std::int64_t>(sectionCount)) {
+            throw FormatError(describe(chunk.x, chunk.z) + " has a " + describeMark(mark) +
+                              " outside the " + std::to_string(sectionCount) +
+                              " section(s) it writes from section " +
+                              std::to_string(chunk.lowestSection));
+        }
+        const auto packed = static_cast<std::uint16_t>(
+            static_cast<unsigned>(mark.localX) |
+            (static_cast<unsigned>(javamath::floorMod(mark.y, kSectionSize)) << 4U) |
+            (static_cast<unsigned>(mark.localZ) << 8U));
+        const auto section = static_cast<std::size_t>(index);
+        const std::size_t bit = (section * kBlocksPerSection) + packed;
+        if (seen[bit]) {
+            throw FormatError(describe(chunk.x, chunk.z) + " marks the " + describeMark(mark) +
+                              " twice");
+        }
+        seen[bit] = true;
+        lists[section].elementType = nbt::TagType::Short;
+        lists[section].elements.emplace_back(static_cast<std::int16_t>(packed));
+    }
+
+    nbt::Tag::List postProcessing{.elementType = nbt::TagType::List, .elements = {}};
+    postProcessing.elements.reserve(sectionCount);
+    for (nbt::Tag::List& list : lists) {
+        postProcessing.elements.emplace_back(std::move(list));
+    }
+    return postProcessing;
+}
+
 } // namespace
 
 nbt::Tag encode(const ChunkData& chunk) {
@@ -244,7 +313,6 @@ nbt::Tag encode(const ChunkData& chunk) {
     }
 
     nbt::Tag::List sectionsList{.elementType = nbt::TagType::Compound, .elements = {}};
-    nbt::Tag::List postProcessing{.elementType = nbt::TagType::List, .elements = {}};
     for (const Section& section : chunk.sections) {
         nbt::Tag::Compound sectionCompound;
         sectionCompound.push_back(
@@ -264,10 +332,10 @@ nbt::Tag encode(const ChunkData& chunk) {
         sectionCompound.push_back(
             nbt::NamedTag{.name = "Y", .value = nbt::Tag{static_cast<std::int8_t>(section.y)}});
         sectionsList.elements.emplace_back(sectionCompound);
-        postProcessing.elements.emplace_back(nbt::Tag::List{});
     }
     root.push_back(nbt::NamedTag{.name = "sections", .value = nbt::Tag{sectionsList}});
-    root.push_back(nbt::NamedTag{.name = "PostProcessing", .value = nbt::Tag{postProcessing}});
+    root.push_back(
+        nbt::NamedTag{.name = "PostProcessing", .value = nbt::Tag{encodePostProcessing(chunk)}});
     root.push_back(nbt::NamedTag{.name = "block_entities", .value = nbt::Tag{nbt::Tag::List{}}});
     root.push_back(nbt::NamedTag{.name = "block_ticks", .value = nbt::Tag{nbt::Tag::List{}}});
     root.push_back(nbt::NamedTag{.name = "fluid_ticks", .value = nbt::Tag{nbt::Tag::List{}}});
@@ -349,6 +417,30 @@ Chunk Chunk::decode(const nbt::Tag& root) {
 
     std::ranges::sort(chunk.sections_,
                       [](const Section& lhs, const Section& rhs) { return lhs.y < rhs.y; });
+
+    // List i is section yPos + i (PostProcessingMark's doc). Entries are
+    // twelve bits of position in a short; anything above them is not a
+    // position this decoder can place, so it is refused rather than masked.
+    if (const nbt::Tag* lists = root.find("PostProcessing"); lists != nullptr) {
+        std::int32_t sectionY = chunk.lowestSection_;
+        for (const nbt::Tag& list : lists->asList().elements) {
+            for (const nbt::Tag& entry : list.asList().elements) {
+                const auto packed = static_cast<std::uint16_t>(entry.asShort());
+                if (packed > 0x0FFFU) {
+                    throw FormatError(describe(chunk.x_, chunk.z_) +
+                                      " has a PostProcessing entry " + std::to_string(packed) +
+                                      " in section " + std::to_string(sectionY) +
+                                      " with bits above the twelve a position packs into");
+                }
+                chunk.postProcessing_.push_back(
+                    PostProcessingMark{.localX = static_cast<int>(packed & 0x0FU),
+                                       .y = (sectionY * kSectionSize) +
+                                            static_cast<std::int32_t>((packed >> 4U) & 0x0FU),
+                                       .localZ = static_cast<int>((packed >> 8U) & 0x0FU)});
+            }
+            ++sectionY;
+        }
+    }
     return chunk;
 }
 

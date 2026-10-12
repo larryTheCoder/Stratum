@@ -77,6 +77,12 @@
       "configuration": "Debug"
     },
     {
+      "name": "ci-conformance",
+      "configurePreset": "dev",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
       "name": "release",
       "configurePreset": "release",
       "configuration": "RelWithDebInfo"
@@ -124,7 +130,7 @@
       "configurePreset": "dev",
       "configuration": "Debug",
       "displayName": "Tier-A golden diffs vs vanilla",
-      "description": "Requires locally generated fixtures; skips loudly when they are absent.",
+      "description": "Requires locally generated fixtures; skips loudly when they are absent. An hour per case, as CI allows: with the goldens present three cases outrun include(CTest)'s 1500 s default on a loaded 4-core machine.",
       "filter": {
         "include": {
           "label": "conformance"
@@ -134,7 +140,19 @@
         "outputOnFailure": true
       },
       "execution": {
-        "noTestsAction": "error"
+        "noTestsAction": "error",
+        "timeout": 3600
+      }
+    },
+    {
+      "name": "ci-conformance",
+      "inherits": "conformance",
+      "displayName": "conformance, as CI runs it",
+      "description": "The conformance suite four cases at a time, an hour per case: with the probe worlds present it is about 70 minutes of Debug test time serially, and its longest case has measured 1237 s against include(CTest)'s 1500 s default.",
+      "execution": {
+        "noTestsAction": "error",
+        "jobs": 4,
+        "timeout": 3600
       }
     },
     {

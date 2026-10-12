@@ -10,6 +10,18 @@
 #   3. lib/ never includes PHP or zend headers
 #   4. no Mojang-derived artefacts sitting in the tree (SPEC §12)
 #   5. the determinism flags themselves are still applied
+#   6. vendored license notices are preserved
+#   7. every Catch2 test name is ASCII: ctest hands the name back to the
+#      test binary as a filter, and through the Windows codepage a non-ASCII
+#      character arrives mangled, so the case matches nothing and fails on
+#      both Windows legs alone
+#   8. nothing in .github, nor any action.yml, names upload-artifact or
+#      upload-pages-artifact: CI's files can be Mojang-derived (probe
+#      worlds, server work directories), and on a public repository an
+#      artifact is a download for anyone signed in (SPEC §12)
+#   9. nothing follows an unconditional FAIL or SKIP in its block: both
+#      throw, so MSVC reports the next statement as unreachable (C4702),
+#      warnings are errors, and only the Windows legs fail
 #
 # NOT enforced here, on purpose: "no raw % or >> on possibly-negative
 # values". Detecting that textually produces false positives on streams and
@@ -159,6 +171,82 @@ if [[ -f lib/src/fdlibm_log.cpp ]]; then
     fi
 fi
 [[ ${vendored_notice_ok} -eq 1 ]] && echo "  ok"
+
+echo "== 7. test names are ASCII =="
+# catch_discover_tests registers each case under its own name and runs it
+# with that name as the filter. On Windows the name crosses the console
+# codepage on the way back, so a non-ASCII character (an em dash, measured)
+# reaches the binary mangled: "No test cases matched", a failure on both
+# Windows legs and a pass everywhere else.
+# A byte range in the C locale, not grep -P: BSD grep (the macOS legs) has no
+# -P, and an unsupported flag would make this check pass by erroring out.
+non_ascii_names="$(LC_ALL=C grep -rnE --include='*.cpp' --include='*.hpp' \
+    '(TEST_CASE|TEMPLATE_TEST_CASE|SCENARIO)[[:space:]]*\([[:space:]]*"[^"]*'$'[\x80-\xff]' \
+    tests ext/tests)"
+if [[ -n "${non_ascii_names}" ]]; then
+    fail "test names must be ASCII (ctest filters cross the Windows codepage):"
+    printf '%s\n' "${non_ascii_names}" >&2
+else
+    echo "  ok"
+fi
+
+echo "== 8. nothing published from CI =="
+# Jobs hand each other probe worlds, the jar and extracted data through the
+# repository-scoped Actions cache only. A workflow artifact on a public
+# repository is a download for anyone signed in, so no workflow may upload
+# one — not even "just the logs", which is how a .fixtures or server work
+# directory gets swept in. Any non-comment line that names either action
+# counts, in any case and in any YAML spelling (a quoted key, a folded
+# `uses: >-`), anywhere under .github (workflows and local actions alike)
+# or in an action.yml elsewhere in the tree. What a third-party action does
+# inside itself is beyond a grep, which is why ci.yml uses actions/* only.
+upload_pattern='^[^#]*upload-(pages-)?artifact'
+uploads="$( {
+    grep -rniE "${upload_pattern}" .github 2>/dev/null
+    find . -path ./.git -prune -o -path ./.github -prune -o -path ./.claude -prune -o \
+        -path ./.fixtures -prune -o -path ./fixtures -prune -o -path ./build -prune -o \
+        -path './cmake-build-*' -prune -o -path '*/_deps' -prune -o -path '*/node_modules' -prune -o \
+        -type f \( -name action.yml -o -name action.yaml \) \
+        -exec grep -niHE "${upload_pattern}" {} + 2>/dev/null
+} || true)"
+if [[ -n "${uploads}" ]]; then
+    fail "CI would upload an artifact; CI's files can be Mojang-derived (SPEC §12):"
+    printf '%s\n' "${uploads}" >&2
+else
+    echo "  ok"
+fi
+
+echo "== 9. nothing after an unconditional FAIL or SKIP =="
+# Catch2's FAIL and SKIP throw, and MSVC can see it: a `return` after one is
+# unreachable code (C4702, measured twice), an error under /WX, so the
+# Windows legs fail and nothing else does. A statement FAIL or SKIP that
+# starts its own line must be the last in its block; the next code line
+# closes the block. Record a flag and REQUIRE it instead. FAIL_CHECK does
+# not throw and is not matched; a FAIL under a braceless `if` would be, so
+# brace it.
+after_fail="$(find tests ext/tests -type f \( -name '*.cpp' -o -name '*.hpp' \) \
+        -not -path '*/_deps/*' -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r file; do
+    awk -v file="${file}" '
+        state == 0 && /^[[:space:]]*(FAIL|SKIP)[[:space:]]*\(/ { state = 1; start = FNR }
+        state == 1 {
+            line = $0
+            sub(/[[:space:]]*\/\/.*$/, "", line)
+            if (line ~ /;[[:space:]]*$/) { state = 2 }
+            next
+        }
+        state == 2 {
+            if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*\/\// || $0 ~ /^[[:space:]]*#/) { next }
+            if ($0 !~ /^[[:space:]]*}/) { printf "%s:%d: after FAIL/SKIP at line %d: %s\n", file, FNR, start, $0 }
+            state = 0
+        }
+    ' "${file}"
+done)"
+if [[ -n "${after_fail}" ]]; then
+    fail "code after an unconditional FAIL/SKIP is unreachable to MSVC (C4702):"
+    printf '%s\n' "${after_fail}" >&2
+else
+    echo "  ok"
+fi
 
 if [[ ${failures} -gt 0 ]]; then
     printf '\n%d determinism/policy check(s) failed.\n' "${failures}" >&2
