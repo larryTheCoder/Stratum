@@ -7345,14 +7345,17 @@ Open:
   reaches the server, pinned".) `la`, `ma` and the 13579 rebuild's `mr2` read
   exactly as their aquifers-on twins do, which is also what they would read
   if `aquifers_enabled: false` never reached the server. No conformance case
-  was a control for that. Of the 184 aquifers-off arms in `tools/probe-worlds`'
-  density corpora, 114 are solid columns and the other 70 leave `sea_level`
-  at the dimension's floor with the default air `default_fluid`, so none is
-  known to separate the flag: on thirteen of the 70, from eleven of their
-  twelve probes, the library's aquifers-on fill, with water standing in for
-  the air it refuses and read back as air, is their aquifers-off fill block
-  for block (a library prediction; the other 57 arms, the twelfth probe
-  `legacy-seed-probe.sh`'s among them, were not checked).
+  was a control for that. Of the 184 aquifers-off arms then in
+  `tools/probe-worlds`' density corpora, 114 were solid columns and the
+  other 70 left `sea_level` at the dimension's floor with the default air
+  `default_fluid`, so none was known to separate the flag: on thirteen of
+  the 70, from eleven of their twelve probes, the library's aquifers-on
+  fill, with water standing in for the air it refuses and read back as air,
+  was their aquifers-off fill block for block (a library prediction; the
+  other 57 arms, the twelfth probe `legacy-seed-probe.sh`'s among them, were
+  not checked). The corpora have held 190 since: the six added are the
+  `aqflag_s*` corpora's `moff` and `loff` at three seeds, and those separate
+  it (next entry).
 
   The control exists on disk, outside every unit: three `density-probe.sh`
   corpora with aquifers off and a water sea above the floor — `stdep2`'s
@@ -7461,23 +7464,29 @@ Open:
   state for state on all 144 chunks the server generated of each arm
   (14 155 776 blocks an arm, twelve arms): 0 blocks wrong. What differs is
   fluid flow, classified by `support/fluid_flow.hpp`'s shared rule — 1-9
-  blocks an on arm, every one in a chunk that ticked, and 0 on every off arm.
-  Every post-processing mark of the 63 chunks that never ticked is exact:
-  28 246-46 386 an on arm, 0 an off arm, where the filler writes none.
+  blocks an on arm, every one in a chunk that ticked, and 0 on every off arm,
+  whose every block is exact with no flow rule applied. Each of the 24 is
+  the server's fluid one step from a source of its own: 19 falling (level 8)
+  directly under one, and 3 level-1 water and 2 level-2 lava beside one;
+  none is a source, so none is the shared rule's water source between two
+  others. Every post-processing mark of the 63 chunks that never ticked is
+  exact: 28 246-46 386 an on arm, 0 an off arm, where the filler writes
+  none.
 
   *Veins with aquifers off, over open ground.* 527 203-595 440 vein blocks
   an off arm's window, 84 241-126 185 of them beside water or lava and
   18 479-23 038 beside air; every one is where the filler puts it (0 vein
   positions wrong over the 144 chunks, 1 186 375-1 359 192 vein blocks an
-  off arm), and none lies outside the two vein ranges. Against the twin:
-  wherever the off arm is solid the on arm holds the same block, vein blocks
-  included (0 positions otherwise), so the aquifer only ever adds solid. The
-  on arm's extra vein blocks are exactly the ones standing on its barriers:
-  33 475-38 403 vein blocks of 79 901-114 459 barrier blocks, and the on
-  arm's vein count less the off arm's is that number at every seed and pair.
-  So veins read no aquifer and replace the `default_block` the filler holds
-  when they look, the aquifer's barrier included — as the filler already
-  did; no engine change, no bump.
+  off arm), and none lies outside its own metal's range: copper's blocks
+  only in y 0..50, iron's only in -60..-8, none in the dead zone between.
+  Against the twin: wherever the off arm is solid the on arm holds the same
+  block, vein blocks included (0 positions otherwise), so the aquifer only
+  ever adds solid. The on arm's extra vein blocks are exactly the ones
+  standing on its barriers: 33 475-38 403 vein blocks of 79 901-114 459
+  barrier blocks, and the on arm's vein count less the off arm's is that
+  number at every seed and pair. So veins read no aquifer and replace the
+  `default_block` the filler holds when they look, the aquifer's barrier
+  included — as the filler already did; no engine change, no bump.
 
   *What ships.* The probe, its three corpora as units of
   `tools/probe-worlds`' water shard (the lightest shard but the markers'
@@ -7486,8 +7495,19 @@ Open:
   over every block of each window at every seed (about 17 s in a debug
   build), and the shipped filler state for state on six chunks an arm — three
   in the window, one in its ring and two that never ticked, whose marks it
-  also holds exact (about 20 s). It skips with no corpus and fails on a
-  partial set.
+  also holds exact (about 20 s). An off arm is scored with no flow rule,
+  every block exact: nothing in a frozen aquifers-off world moves, and
+  under the shared rule a missing sea block between two others reads as
+  flow, so a filler that placed no default fluid below `sea_level` with
+  aquifers off left each legacy off arm 0 blocks wrong (and each modern one
+  24-40), held only by the bounds on flow; scored this way it leaves 75 264
+  wrong on each legacy off arm and 67 570-68 121 on each modern one. On an
+  on arm every block the shared rule forgives must also be one step from a
+  source of its own fluid, as above, so a pool of wrong water sources is
+  never flow: a 3x3 of them written as air at y 5 inside the server's water
+  on seed 42's `mon` passed the case before (9 blocks of flow, 0 wrong) and
+  fails it now. Each metal's vein blocks are held to that metal's own range
+  in the window pass. It skips with no corpus and fails on a partial set.
 
   *Still open.* Veins with aquifers off over vanilla's own router: every
   corpus with real terrain and aquifers off (`aquifer-free-probe.sh`'s)

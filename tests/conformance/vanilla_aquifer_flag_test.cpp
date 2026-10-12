@@ -20,9 +20,11 @@
 // server, pinned"): each off arm is the global picker on every open block of
 // its window — lava below min(-54, sea_level), the default fluid below
 // sea_level, air above — and each on arm is not, by hundreds of thousands of
-// blocks; the shipped filler is each arm's own setting state for state, with
-// the flow it cannot run counted and bounded; the veins with aquifers off
-// are exactly the on arm's over solid ground, and the on arm's barriers
+// blocks; the shipped filler is each arm's own setting state for state, an
+// off arm on every block and an on arm on all but the flow it cannot run,
+// each block of which is one step of the server's fluid from a source of
+// its own; the veins with aquifers off are exactly the on arm's over solid
+// ground, each metal's inside its own range, and the on arm's barriers
 // carry veins of their own. Three seeds: 42, 31337 and 8675309.
 //
 // The fixtures are Mojang-derived and never committed (SPEC §12).
@@ -95,17 +97,49 @@ constexpr std::int32_t kWindow = 8 * 16;
 constexpr std::array<std::pair<std::int32_t, std::int32_t>, 6> kChunks{
     {{1, 1}, {6, 2}, {3, 6}, {8, 5}, {10, 3}, {4, 10}}};
 
-/// The six blocks a vein places.
-constexpr std::array<std::string_view, 6> kVeinBlocks{
-    "minecraft:copper_ore",         "minecraft:raw_copper_block", "minecraft:granite",
-    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block",   "minecraft:tuff"};
+/// Which metal's vein placed a block, if any.
+enum class Metal : std::uint8_t { None, Copper, Iron };
+
+/// The three blocks each metal's vein places, and the y-range each metal
+/// holds (SPEC §10, M3, "The deterministic gate"): copper in [0, 50], iron
+/// in [-60, -8], so neither in the dead zone [-7, -1] between them. The
+/// probe's surface rule never fires and its default block is stone, so
+/// nothing else in its worlds places any of the six.
+constexpr std::array<std::string_view, 3> kCopperVeinBlocks{
+    "minecraft:copper_ore", "minecraft:raw_copper_block", "minecraft:granite"};
+constexpr std::array<std::string_view, 3> kIronVeinBlocks{
+    "minecraft:deepslate_iron_ore", "minecraft:raw_iron_block", "minecraft:tuff"};
+
+struct VeinRange {
+    std::int32_t lowest;
+    std::int32_t highest;
+
+    [[nodiscard]] constexpr bool contains(std::int32_t y) const {
+        return y >= lowest && y <= highest;
+    }
+};
+
+constexpr VeinRange kCopperRange{.lowest = 0, .highest = 50};
+constexpr VeinRange kIronRange{.lowest = -60, .highest = -8};
+static_assert(kIronRange.lowest == stratum::ore::kLowestVeinY &&
+              kCopperRange.highest == stratum::ore::kHighestVeinY);
 
 [[nodiscard]] std::filesystem::path probes() {
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11" / "probes";
 }
 
+[[nodiscard]] Metal metalOf(std::string_view name) {
+    if (std::ranges::find(kCopperVeinBlocks, name) != kCopperVeinBlocks.end()) {
+        return Metal::Copper;
+    }
+    if (std::ranges::find(kIronVeinBlocks, name) != kIronVeinBlocks.end()) {
+        return Metal::Iron;
+    }
+    return Metal::None;
+}
+
 [[nodiscard]] bool isVein(const stratum::chunk::BlockState* block) {
-    return block != nullptr && std::ranges::find(kVeinBlocks, block->name) != kVeinBlocks.end();
+    return block != nullptr && metalOf(block->name) != Metal::None;
 }
 
 [[nodiscard]] bool isOpen(Category category) {
@@ -243,7 +277,7 @@ public:
         if (added) {
             REQUIRE(categories_.size() < kAbsent);
             categories_.push_back(stratum::test::categoryOf(key.name));
-            veins_.push_back(isVein(&key));
+            metals_.push_back(metalOf(key.name));
             flowing_.push_back(stratum::test::fluidLevel(&key) > 0);
         }
         return found->second;
@@ -251,14 +285,16 @@ public:
 
     [[nodiscard]] Category category(std::uint16_t id) const { return categories_.at(id); }
 
-    [[nodiscard]] bool vein(std::uint16_t id) const { return veins_.at(id); }
+    [[nodiscard]] Metal metal(std::uint16_t id) const { return metals_.at(id); }
+
+    [[nodiscard]] bool vein(std::uint16_t id) const { return metal(id) != Metal::None; }
 
     [[nodiscard]] bool flowing(std::uint16_t id) const { return flowing_.at(id); }
 
 private:
     std::map<std::string, std::uint16_t> ids_;
     std::vector<Category> categories_;
-    std::vector<bool> veins_;
+    std::vector<Metal> metals_;
     std::vector<bool> flowing_;
 };
 
@@ -337,13 +373,14 @@ private:
 /// What the server's window holds for one arm, read off its region alone.
 struct WindowCount {
     long long blocks = 0;
-    long long open = 0;          ///< air, water or lava, flowing or not
-    long long pickerMisses = 0;  ///< open blocks the global picker does not explain
-    long long flowing = 0;       ///< fluid with a level above 0
-    long long veins = 0;         ///< vein blocks
-    long long veinsByFluid = 0;  ///< of those, beside water or lava
-    long long veinsByAir = 0;    ///< of those, beside air
-    long long veinsOffRange = 0; ///< vein blocks outside both vein ranges
+    long long open = 0;           ///< air, water or lava, flowing or not
+    long long pickerMisses = 0;   ///< open blocks the global picker does not explain
+    long long flowing = 0;        ///< fluid with a level above 0
+    long long veins = 0;          ///< vein blocks
+    long long veinsByFluid = 0;   ///< of those, beside water or lava
+    long long veinsByAir = 0;     ///< of those, beside air
+    long long copperOffRange = 0; ///< copper-vein blocks outside [0, 50]
+    long long ironOffRange = 0;   ///< iron-vein blocks outside [-60, -8]
 };
 
 /// Each pair, block for block, over the window.
@@ -368,11 +405,18 @@ void tally(WindowCount& count, const Window& window, const States& states, std::
         count.flowing += static_cast<long long>(states.flowing(id));
         return;
     }
-    if (!states.vein(id)) {
+    const Metal metal = states.metal(id);
+    if (metal == Metal::None) {
         return;
     }
     ++count.veins;
-    count.veinsOffRange += static_cast<long long>(!stratum::ore::inAnyVeinRange(y));
+    // Each metal against its own range, so a block in the dead zone between
+    // them, or one metal's block in the other's range, counts here.
+    if (metal == Metal::Copper) {
+        count.copperOffRange += static_cast<long long>(!kCopperRange.contains(y));
+    } else {
+        count.ironOffRange += static_cast<long long>(!kIronRange.contains(y));
+    }
     bool byFluid = false;
     bool byAir = false;
     for (const auto& [dx, dy, dz] : kNeighbours) {
@@ -424,12 +468,17 @@ struct FillScore {
     long long exact = 0;
     long long flow = 0;          ///< differing, and shaped like fluid that moved
     long long flowUntouched = 0; ///< of those, in a chunk that never ticked
+    long long flowUnfed = 0;     ///< of those, not one step from a source
     long long wrong = 0;         ///< differing, and not
     long long veins = 0;         ///< the server's vein blocks, all of them exact
     long long veinsWrong = 0;    ///< positions where either side holds a vein block, differing
     long long marks = 0;         ///< the server's post-processing marks, untouched chunks
     long long marksExtra = 0;
     long long marksMissing = 0;
+    /// The first few blocks counted wrong or unfed, for the failure message:
+    /// carried out rather than UNSCOPED_INFO'd, which the next chunk's
+    /// passing REQUIRE would consume.
+    std::vector<std::string> examples;
 };
 
 [[nodiscard]] stratum::chunk::BlockState sorted(stratum::chunk::BlockState state) {
@@ -437,11 +486,48 @@ struct FillScore {
     return state;
 }
 
+/// Whether the server's @p served at (x, y, z) is fluid one step from a
+/// source of its own: flowing (a level above 0), with a source of the same
+/// fluid directly above it or beside it — fluid falls and spreads, never
+/// climbs. What a frozen world's remnant of flow is: measured, of the 24
+/// blocks the shared rule forgives over all 144 generated chunks of the six
+/// on arms (none on an off arm), 19 are falling (level 8) directly under a
+/// source of their own fluid, and 3 level-1 water and 2 level-2 lava lie
+/// beside one. A source is never one step of anything, so the shared rule's
+/// water source between two others — which would forgive a small pool of
+/// wrong water whole — is not this shape.
+[[nodiscard]] bool oneStepFromSource(stratum::test::GoldenRegion& region, std::int32_t x,
+                                     std::int32_t y, std::int32_t z,
+                                     const stratum::chunk::BlockState& served) {
+    if (!stratum::test::isFluid(stratum::test::categoryOf(served.name)) ||
+        stratum::test::fluidLevel(&served) <= 0) {
+        return false;
+    }
+    constexpr std::array<std::array<std::int32_t, 3>, 5> kFeeders{
+        {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}}};
+    return std::ranges::any_of(kFeeders, [&](const std::array<std::int32_t, 3>& step) {
+        const stratum::chunk::BlockState* next =
+            region.blockAt(x + step[0], y + step[1], z + step[2]);
+        return stratum::test::named(next, served.name) && stratum::test::fluidLevel(next) == 0;
+    });
+}
+
 /// The shipped filler, compiled from @p entry the way world::CompiledDimension
 /// compiles a dimension, against the arm's region on every chunk of kChunks.
+///
+/// Only an aquifers-on arm is scored with the shared flow rule. Only an
+/// aquifer marks fluid to tick, and the world is frozen, so in an
+/// aquifers-off arm nothing moved (measured: no flowing block in any off
+/// arm's window, nor in any of its 144 chunks), and every block that differs
+/// is wrong. That is what holds the off arms' default fluid below sea_level
+/// block for block: under the shared rule a missing water source between two
+/// others reads as flow, so a filler that placed no default fluid below
+/// sea_level with aquifers off left each legacy off arm 0 blocks wrong, held
+/// only by the bounds on flow; scored this way, 75 264.
 [[nodiscard]] FillScore scoreFiller(const nlohmann::json& entry, const std::filesystem::path& dir,
                                     std::int64_t seed) {
     const std::string name = entry.at("name").get<std::string>();
+    const bool flowPossible = entry.at("aquifers_enabled").get<bool>();
     const ArmPack armPack(entry, dir);
     const stratum::data::Pack pack = armPack.pack();
     const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
@@ -518,20 +604,30 @@ struct FillScore {
                     score.veinsWrong += static_cast<long long>(isVein(&served) || isVein(&ours));
                     const Category servedCategory = stratum::test::categoryOf(served.name);
                     const Category oursCategory = stratum::test::categoryOf(ours.name);
+                    const auto example = [&](std::string_view what) {
+                        if (score.examples.size() < 8) {
+                            score.examples.push_back(
+                                std::string{what} + " (" + std::to_string(x) + ", " +
+                                std::to_string(y) + ", " + std::to_string(z) + "): server " +
+                                served.toString() + ", ours " + ours.toString());
+                        }
+                    };
                     // The shared rule (support/fluid_flow.hpp), which never
                     // forgives a solid block on either side but the few that
-                    // water meeting lava leaves — so never a vein block.
-                    if (stratum::test::explainedByFlow(region, x, y, z, servedCategory,
-                                                       oursCategory)) {
+                    // water meeting lava leaves — so never a vein block —
+                    // and, on top of it, the shape a frozen world's flow has.
+                    if (flowPossible && stratum::test::explainedByFlow(
+                                            region, x, y, z, servedCategory, oursCategory)) {
                         ++score.flow;
                         score.flowUntouched += static_cast<long long>(!ticked);
+                        if (!oneStepFromSource(region, x, y, z, served)) {
+                            ++score.flowUnfed;
+                            example("flow not one step from a source");
+                        }
                         continue;
                     }
                     ++score.wrong;
-                    if (score.wrong <= 8) {
-                        UNSCOPED_INFO(name << " (" << x << ", " << y << ", " << z << "): server "
-                                           << served.toString() << ", ours " << ours.toString());
-                    }
+                    example("wrong");
                 }
             }
         }
@@ -573,11 +669,15 @@ TEST_CASE("aquifers_enabled reaches the server: off is the global picker and on 
             INFO("on: open " << onCount.open << ", picker misses " << onCount.pickerMisses
                              << ", flowing " << onCount.flowing << ", veins " << onCount.veins
                              << " (" << onCount.veinsByFluid << " beside fluid, "
-                             << onCount.veinsByAir << " beside air) of " << onCount.blocks);
+                             << onCount.veinsByAir << " beside air; out of range: copper "
+                             << onCount.copperOffRange << ", iron " << onCount.ironOffRange
+                             << ") of " << onCount.blocks);
             INFO("off: open " << offCount.open << ", picker misses " << offCount.pickerMisses
                               << ", flowing " << offCount.flowing << ", veins " << offCount.veins
                               << " (" << offCount.veinsByFluid << " beside fluid, "
-                              << offCount.veinsByAir << " beside air) of " << offCount.blocks);
+                              << offCount.veinsByAir << " beside air; out of range: copper "
+                              << offCount.copperOffRange << ", iron " << offCount.ironOffRange
+                              << ") of " << offCount.blocks);
             INFO("pair: differ " << both.differ << ", on solid over open " << both.onSolidOverOpen
                                  << " (veins " << both.onVeinOverOpen << "), off solid elsewhere "
                                  << both.offSolidElsewhere);
@@ -605,13 +705,15 @@ TEST_CASE("aquifers_enabled reaches the server: off is the global picker and on 
             CHECK(onCount.veins - offCount.veins == both.onVeinOverOpen);
             CHECK(both.onSolidOverOpen > 50000);
             CHECK(both.onVeinOverOpen > 20000);
-            // Veins over open ground, nowhere outside their ranges: beside
-            // the fluid and beside the air of both arms (measured, of
-            // 527 203-628 915 vein blocks an arm: on, 70 248-84 523 beside
-            // fluid and 60 503-93 354 beside air; off, 84 241-126 185 and
-            // 18 479-23 038).
+            // Veins over open ground, each metal inside its own range and
+            // none in the dead zone between: beside the fluid and beside the
+            // air of both arms (measured, of 527 203-628 915 vein blocks an
+            // arm: on, 70 248-84 523 beside fluid and 60 503-93 354 beside
+            // air; off, 84 241-126 185 and 18 479-23 038; none outside its
+            // metal's range).
             for (const WindowCount* arm : {&onCount, &offCount}) {
-                CHECK(arm->veinsOffRange == 0);
+                CHECK(arm->copperOffRange == 0);
+                CHECK(arm->ironOffRange == 0);
                 CHECK(arm->veins > 400000);
                 CHECK(arm->veinsByFluid > 50000);
                 CHECK(arm->veinsByAir > 10000);
@@ -624,14 +726,16 @@ TEST_CASE("the shipped filler generates the aquifer-flag probe block for block",
           "[conformance][aquifer][ore]") {
     // Each arm's own settings, rebuilt from its spec.json the way
     // density-probe.sh wrote them, through the registry its source selects
-    // and ChunkFiller::compile, against the server state for state —
-    // fluid flow classified by the shared rule, counted and bounded, and
-    // every vein block exact. Measured on all 144 chunks the server
-    // generated of every arm at every seed (14 155 776 blocks an arm): not
-    // one block wrong; 1-9 blocks of flow an on arm, all in ticked chunks,
-    // none on an off arm; every post-processing mark of the 63 untouched
-    // chunks exact (28 246-46 386 an on arm, none an off arm). The case
-    // reads six chunks an arm, where the filler is the slow part.
+    // and ChunkFiller::compile, against the server state for state — an off
+    // arm on every block, an on arm's fluid flow classified by the shared
+    // rule, held to one step from a source, counted and bounded — and every
+    // vein block exact. Measured on all 144 chunks the server generated of
+    // every arm at every seed (14 155 776 blocks an arm): not one block
+    // wrong; 1-9 blocks of flow an on arm, all in ticked chunks and each one
+    // step from a source of its own fluid, none on an off arm; every
+    // post-processing mark of the 63 untouched chunks exact (28 246-46 386
+    // an on arm, none an off arm). The case reads six chunks an arm, where
+    // the filler is the slow part; none of the 24 blocks of flow is in them.
     const std::vector<std::filesystem::path> dirs = corpora();
     if (dirs.empty()) {
         SKIP("no aquifer-flag probe under " << probes() << "; generate it with " << kRegenerate);
@@ -648,25 +752,35 @@ TEST_CASE("the shipped filler generates the aquifer-flag probe block for block",
             const bool aquifers = entry.at("aquifers_enabled").get<bool>();
             const FillScore score = scoreFiller(entry, dir, seed);
             INFO("exact " << score.exact << ", flow " << score.flow << " (" << score.flowUntouched
-                          << " untouched), wrong " << score.wrong << " of " << score.blocks
-                          << "; vein blocks " << score.veins << ", vein positions wrong "
-                          << score.veinsWrong << "; marks " << score.marks << " (extra "
-                          << score.marksExtra << ", missing " << score.marksMissing << ")");
+                          << " untouched, " << score.flowUnfed << " not one step from a source)"
+                          << ", wrong " << score.wrong << " of " << score.blocks << "; vein blocks "
+                          << score.veins << ", vein positions wrong " << score.veinsWrong
+                          << "; marks " << score.marks << " (extra " << score.marksExtra
+                          << ", missing " << score.marksMissing << ")");
+            std::string examples;
+            for (const std::string& line : score.examples) {
+                examples += "\n  " + line;
+            }
+            INFO("first blocks wrong or unfed:" << (examples.empty() ? " none" : examples));
             CHECK(score.wrong == 0);
             CHECK(score.exact + score.flow == score.blocks);
             CHECK(score.veinsWrong == 0);
             CHECK(score.veins > 10000);
-            // Only a chunk that ticked can hold moved fluid, and only an
-            // aquifer marks fluid to tick.
-            CHECK(score.flowUntouched == 0);
-            CHECK(score.flow <= 32);
             CHECK(score.marksExtra == 0);
             CHECK(score.marksMissing == 0);
             if (aquifers) {
                 CHECK(score.marks > 0);
+                // Only a chunk that ticked can hold moved fluid; and what
+                // moved is fluid that took one step from a source of its
+                // own, never a source, so never a pool of wrong water.
+                CHECK(score.flowUntouched == 0);
+                CHECK(score.flowUnfed == 0);
+                CHECK(score.flow <= 32);
             } else {
+                // Scored with no flow rule (scoreFiller): every block exact,
+                // the default fluid below sea_level included.
                 CHECK(score.marks == 0);
-                CHECK(score.flow == 0);
+                CHECK(score.exact == score.blocks);
             }
         }
     }
