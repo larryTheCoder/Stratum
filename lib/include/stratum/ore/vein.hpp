@@ -20,7 +20,8 @@
 //
 //   * `y` in [0, 50] with `vein_toggle > 0`   -> a candidate COPPER vein;
 //     `y` in [-60, -8] with `vein_toggle <= 0` -> a candidate IRON vein.
-//     The dead zone [-8, 0) produces neither, whatever the toggle says.
+//     The dead zone between them, y -7..-1, produces neither, whatever the
+//     toggle says (-8 is iron's, inclusive).
 //   * `|vein_toggle|` must clear a richness threshold that is 0.6 AT either
 //     end of its range and falls linearly to 0.4 at 20 blocks inside it.
 //   * `vein_ridged < 0`.
