@@ -869,8 +869,8 @@ TEST_CASE("the cell lattice is part of the answer", "[density][cells]") {
     // lattices. A dimension's cell size is not a performance knob.
     const Point at{.x = 5, .y = 5, .z = 5};
     CHECK(bits(overworld.at("smooth", at)) != bits(end.at("smooth", at)));
-    CHECK(overworld.interpreter().cells()->width == 4);
-    CHECK(end.interpreter().cells()->height == 4);
+    CHECK(overworld.interpreter().cells().value().width == 4);
+    CHECK(end.interpreter().cells().value().height == 4);
 }
 
 TEST_CASE("an unusable cell geometry is refused where it is given", "[density][cells]") {
