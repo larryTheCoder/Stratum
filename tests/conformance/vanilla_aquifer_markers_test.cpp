@@ -1043,20 +1043,23 @@ DimScore scoreDimension(const Dimension& dim, const std::filesystem::path& regio
                         const Point b{.x = x, .y = y, .z = z};
                         const auto outcomeUnder = [&](Reading r, std::int32_t ySkip) {
                             if (y > ySkip) {
-                                const Cat global = aquifer::globalReadsLava(y, kSeaLevel)
-                                                       ? Cat::Lava
-                                                       : (y < kSeaLevel ? Cat::Fluid : Cat::Air);
+                                Cat global = Cat::Air;
+                                if (aquifer::globalReadsLava(y, kSeaLevel)) {
+                                    global = Cat::Lava;
+                                } else if (y < kSeaLevel) {
+                                    global = Cat::Fluid;
+                                }
                                 return Outcome{.cat = global, .nearest = global};
                             }
                             if (!selection.has_value()) {
                                 selection = aquifer::selectSources(dim.centres(), x, y, z);
                             }
                             const auto status = chunk.statuses(r, *selection, b);
-                            const Cat nearest =
-                                y >= status[0].level
-                                    ? Cat::Air
-                                    : (status[0].type == aquifer::FluidType::Lava ? Cat::Lava
-                                                                                  : Cat::Fluid);
+                            Cat nearest = Cat::Air;
+                            if (y < status[0].level) {
+                                nearest = status[0].type == aquifer::FluidType::Lava ? Cat::Lava
+                                                                                     : Cat::Fluid;
+                            }
                             return Outcome{.cat =
                                                decide(*selection, status, chunk.barrier(r, b), y),
                                            .mixed = mixedPair(status, y),

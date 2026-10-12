@@ -113,7 +113,7 @@ TEST_CASE("a uniform section needs no data array", "[chunk]") {
     CHECK(chunk.status() == "minecraft:full");
     REQUIRE(chunk.sections().size() == 1U);
 
-    for (int y : {0, 7, 15}) {
+    for (const int y : {0, 7, 15}) {
         CAPTURE(y);
         const stratum::chunk::BlockState* state = chunk.blockAt(0, y, 0);
         REQUIRE(state != nullptr);
@@ -174,8 +174,8 @@ TEST_CASE("the highest non-air block is found, ignoring the air variants", "[chu
     section.y = 0;
     section.palette = {"minecraft:air", "minecraft:stone", "minecraft:cave_air"};
     section.blocks.assign(stratum::chunk::kBlocksPerSection, 0);
-    section.blocks[(4U * 256U)] = 1; // stone at y=4
-    section.blocks[(9U * 256U)] = 2; // cave_air at y=9 must not count
+    section.blocks[std::size_t{4} * 256U] = 1; // stone at y=4
+    section.blocks[std::size_t{9} * 256U] = 2; // cave_air at y=9 must not count
 
     const Chunk chunk = decode(buildChunkNbt(0, 0, {section}));
     REQUIRE(chunk.highestNonAir(0, 0).has_value());

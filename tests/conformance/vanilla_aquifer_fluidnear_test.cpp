@@ -135,9 +135,9 @@ constexpr std::array<const char*, kClasses> kClassNames{"near<=+20", "near>+20",
                                                         "cell"};
 
 /// The five readings of the override on a short-circuit sea.
-enum Reading : std::uint8_t { R0, R1, R2, R3, R4, kReadings };
+enum Reading : std::uint8_t { R0, R1, R2, R3, R4, ReadingCount };
 
-constexpr std::array<const char*, kReadings> kReadingNames{"R0", "R1", "R2", "R3", "R4"};
+constexpr std::array<const char*, ReadingCount> kReadingNames{"R0", "R1", "R2", "R3", "R4"};
 
 /// The reading this build implements; the case requires it, and requires the
 /// server to agree with it wherever the readings part.
@@ -189,7 +189,7 @@ constexpr Reading kBuilt = R1;
             return lavaIf(overridden && sea == SeaClass::NearB);
         case R4:
             return lavaIf(surface <= aquifer::kLavaLevelCeiling && pastThreshold);
-        case kReadings:
+        case ReadingCount:
             break;
     }
     return built.type;
@@ -207,8 +207,8 @@ struct Tally {
     std::array<long long, kClasses> scored{};
     /// ... and of those, where each reading types the source differently from
     /// the server's block, and how many of those are flow-shaped.
-    std::array<std::array<long long, kReadings>, kClasses> wrong{};
-    std::array<std::array<long long, kReadings>, kClasses> wrongFlow{};
+    std::array<std::array<long long, ReadingCount>, kClasses> wrong{};
+    std::array<std::array<long long, ReadingCount>, kClasses> wrongFlow{};
     /// Where R0 and R1 part: the item's own question.
     std::array<long long, kClasses> contested{};
     /// Sources the build types differently from `kBuilt`'s reading.
@@ -229,7 +229,7 @@ void add(Tally& into, const Tally& from) {
     for (std::size_t c = 0; c < kClasses; ++c) {
         into.scored[c] += from.scored[c];
         into.contested[c] += from.contested[c];
-        for (std::size_t r = 0; r < kReadings; ++r) {
+        for (std::size_t r = 0; r < ReadingCount; ++r) {
             into.wrong[c][r] += from.wrong[c][r];
             into.wrongFlow[c][r] += from.wrongFlow[c][r];
         }
@@ -255,7 +255,7 @@ void add(Tally& into, const Tally& from) {
         }
         out += "; " + std::string(kClassNames[c]) + ": scored " + std::to_string(t.scored[c]) +
                ", R0/R1 contested " + std::to_string(t.contested[c]) + ", wrong";
-        for (std::size_t r = 0; r < kReadings; ++r) {
+        for (std::size_t r = 0; r < ReadingCount; ++r) {
             out += " " + std::string(kReadingNames[r]) + "=" + std::to_string(t.wrong[c][r]) +
                    "(flow " + std::to_string(t.wrongFlow[c][r]) + ")";
         }
@@ -378,7 +378,7 @@ Tally scoreDimension(const std::filesystem::path& probeDir, const nlohmann::json
                 tally.contested[c] +=
                     static_cast<long long>(readingType(R0, sea, built, lava, surface) !=
                                            readingType(R1, sea, built, lava, surface));
-                for (std::size_t k = 0; k < kReadings; ++k) {
+                for (std::size_t k = 0; k < ReadingCount; ++k) {
                     const aquifer::FluidType type =
                         readingType(static_cast<Reading>(k), sea, built, lava, surface);
                     const Category claimed =
@@ -473,7 +473,7 @@ TEST_CASE("Q5.8's lava override on the near-surface and aborted seas", "[conform
     }
     // And every rival is wrong where it parts from the build — on the classes
     // that can separate it at all.
-    for (std::size_t k = 0; k < kReadings; ++k) {
+    for (std::size_t k = 0; k < ReadingCount; ++k) {
         if (k == kBuilt) {
             continue;
         }

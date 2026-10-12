@@ -123,7 +123,9 @@ TEST_CASE("workers put while the main thread takes, and nothing is lost or doubl
                 if (updates.empty()) {
                     continue;
                 }
-                const auto at = static_cast<std::size_t>((w * kChunksEach) + i);
+                const std::size_t at =
+                    (static_cast<std::size_t>(w) * static_cast<std::size_t>(kChunksEach)) +
+                    static_cast<std::size_t>(i);
                 CHECK_FALSE(seen[at]);
                 seen[at] = true;
                 ++chunksTaken;

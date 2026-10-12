@@ -175,6 +175,7 @@ TEST_CASE("the noises a world seed derives match cubiomes", "[conformance][densi
     // downstream").
     std::int64_t currentSeed = 0;
     std::vector<ResourceLocation> wanted;
+    wanted.reserve(kClimateNoiseVectors.size());
     for (const auto& vector : kClimateNoiseVectors) {
         wanted.push_back(ResourceLocation::parse(std::string(vector.noise)));
     }
