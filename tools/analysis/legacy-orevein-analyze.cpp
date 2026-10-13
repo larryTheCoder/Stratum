@@ -67,6 +67,7 @@
 // java.util.Random's documented nextFloat and nextDouble.
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/density/random_source.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/ore/vein.hpp>
 #include <stratum/region/region_file.hpp>
@@ -323,8 +324,10 @@ std::vector<Named> derivations(std::int64_t seed) {
             seed,
             Model{.legacy = true, .membership = method(2), .ore = method(1), .raw = method(0)}));
     }
-    out.push_back(modelled(seed + 1, Model{.legacy = true}));
-    out.push_back(modelled(seed + 1, Model{}));
+    // Wrapping, as Java's long is, so Long.MAX_VALUE is a seed like any other.
+    const std::int64_t wrongSeed = stratum::javamath::wrappingAdd(seed, std::int64_t{1});
+    out.push_back(modelled(wrongSeed, Model{.legacy = true}));
+    out.push_back(modelled(wrongSeed, Model{}));
     if (seed != 42) {
         out.push_back(modelled(42, Model{.legacy = true}));
         out.push_back(modelled(42, Model{}));

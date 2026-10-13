@@ -204,6 +204,7 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/noise_parameters.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
@@ -322,7 +323,9 @@ TEST_CASE("the golden-region surface readback recovers a known-correct modern se
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, wanted, seed, stratum::density::RandomSource::Xoroshiro);
         const auto wrong = stratum::density::NoiseRegistry::create(
-            pack, wanted, seed + 1, stratum::density::RandomSource::Xoroshiro);
+            // Wrapping, as Java's long is: the golden seeds include Long.MAX_VALUE.
+            pack, wanted, stratum::javamath::wrappingAdd(seed, std::int64_t{1}),
+            stratum::density::RandomSource::Xoroshiro);
         const stratum::surface::Executor executor = stratum::surface::Executor::compile(
             graph, seed, overworld.geometry, &noises, overworld.seaLevel);
         const stratum::noise::NormalNoise& secondary =

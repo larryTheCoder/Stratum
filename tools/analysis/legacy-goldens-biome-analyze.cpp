@@ -1930,7 +1930,8 @@ int main(int argc, char** argv) {
                                                       density::RandomSource::Xoroshiro);
             };
             const auto right = build(seed);
-            const auto wrong = build(seed + 1);
+            // Wrapping, as Java's long is: the golden seeds include Long.MAX_VALUE.
+            const auto wrong = build(javamath::wrappingAdd(seed, std::int64_t{1}));
             const density::CellGeometry geometry{.width = settings.geometry.cellWidth(),
                                                  .height = settings.geometry.cellHeight()};
             const density::Interpreter rightInterpreter(loaded.graph, right, geometry);

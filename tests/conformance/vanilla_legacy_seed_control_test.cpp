@@ -135,6 +135,7 @@
 // pass is the failure mode this file exists to refuse: one world seed
 // agreeing with an RNG-driven derivation is evidence that it agrees once.
 #include <stratum/chunk/chunk.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/noise/perlin.hpp>
 #include <stratum/region/region_file.hpp>
@@ -509,7 +510,8 @@ TEST_CASE("the legacy-seed scan recovers a named-noise rule that is known to be 
             const stratum::noise::NormalNoise reference = modernNoise(dimension.noise, seed);
             // THE NEGATIVE CONTROL. One thing varied — the world seed — with
             // the flag, the dimension, the readback and the band held fixed.
-            const stratum::noise::NormalNoise wrongSeed = modernNoise(dimension.noise, seed + 1);
+            const stratum::noise::NormalNoise wrongSeed =
+                modernNoise(dimension.noise, stratum::javamath::wrappingAdd(seed, std::int64_t{1}));
 
             std::size_t agreed = 0;
             std::size_t exact = 0;

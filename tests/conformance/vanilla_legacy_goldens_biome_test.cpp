@@ -124,6 +124,7 @@
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_parameters.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -264,7 +265,8 @@ TEST_CASE("the decoder recovers a known-correct seeding and rejects a known-wron
                 stratum::density::RandomSource::Xoroshiro);
         };
         const auto right = build(seed);
-        const auto wrong = build(seed + 1);
+        // Wrapping, as Java's long is: the golden seeds include Long.MAX_VALUE.
+        const auto wrong = build(stratum::javamath::wrappingAdd(seed, std::int64_t{1}));
         const stratum::density::CellGeometry geometry{.width = settings.geometry.cellWidth(),
                                                       .height = settings.geometry.cellHeight()};
         const stratum::density::Interpreter rightInterpreter(loaded.graph, right, geometry);

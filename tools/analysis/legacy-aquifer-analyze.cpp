@@ -831,7 +831,8 @@ int replay(const std::filesystem::path& probe, const std::string& name, std::int
 /// the synthetic world exactly as the classifier evaluates it on a region.
 int nullReplay(std::int64_t seed, std::int32_t stride) {
     const aquifer::CentreSource model{seed, density::RandomSource::Xoroshiro};
-    const aquifer::CentreSource truth{seed + 1, density::RandomSource::Xoroshiro};
+    const aquifer::CentreSource truth{javamath::wrappingAdd(seed, std::int64_t{1}),
+                                      density::RandomSource::Xoroshiro};
     aquifer::StatusCache modelStatuses;
     aquifer::StatusCache truthStatuses;
     const Arm& arm = kProbeArm;
@@ -864,7 +865,7 @@ int nullReplay(std::int64_t seed, std::int32_t stride) {
         }
     }
     print("null: modern at " + std::to_string(seed) + " against a world drawn at " +
-              std::to_string(seed + 1),
+              std::to_string(javamath::wrappingAdd(seed, std::int64_t{1})),
           tally);
     return 0;
 }
