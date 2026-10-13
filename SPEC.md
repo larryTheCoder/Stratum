@@ -149,9 +149,11 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   it opens and compiles nothing — and returns the source spelled in full,
   or throws with parse's reason. The plugin's options name the source as
   `"biomes"` and take it and `"settings"` together or not at all (neither
-  says which of the other goes with it), refuse any other key, and refuse a
-  source `parseBiomeSource` refuses, all on the main thread before a worker
-  opens the pipeline (`GeneratorOptions` lists exactly what it accepts).
+  says which of the other goes with it), refuse any other key, refuse
+  either that is not a string (a JSON `null` is a key given, not one left
+  out), and refuse a source `parseBiomeSource` refuses, all on the main
+  thread before a worker opens the pipeline (`GeneratorOptions` lists
+  exactly what it accepts).
 - Per chunk: `$dimension->encodeChunk($cx, $cz)` returns all 24 of
   PocketMine-MP's sub-chunks, keyed by sub-chunk index (-4 to 19), as
   `PalettedBlockArray::fromData` argument lists: block palettes hold Java

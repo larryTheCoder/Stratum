@@ -57,6 +57,12 @@ namespace {
 		// And a biome source with no settings would pair the End's biomes
 		// with the overworld's terrain, as quietly.
 		'{"blob":' . json_encode($blob) . ',"biomes":"minecraft:the_end"}',
+		// A null is a key that is present, not an absent one: read as
+		// absent it would become the overworld's half of the pair, the
+		// overworld's terrain under the End's biomes and the End's terrain
+		// under the overworld's.
+		'{"blob":' . json_encode($blob) . ',"settings":null,"biomes":"minecraft:the_end"}',
+		'{"blob":' . json_encode($blob) . ',"settings":"minecraft:end","biomes":null}',
 		// A misspelt key would be ignored, and the world would be the
 		// overworld's.
 		'{"blob":' . json_encode($blob) . ',"biome":"minecraft:the_end"}',
@@ -91,6 +97,8 @@ pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot read
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's "settings" and "biomes" options must be strings:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "settings" without "biomes", the biome source to go with them%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "biomes" without "settings", the noise settings to go with them%s
+pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's "settings" and "biomes" options must be strings: {"blob":%s,"settings":null,"biomes":"minecraft:the_end"}
+pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's "settings" and "biomes" options must be strings: {"blob":%s,"settings":"minecraft:end","biomes":null}
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options take "blob", "settings" and "biomes" and nothing else, so "biome" would be ignored:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot generate from the "biomes" option: biome source 'minecraft:fixed' is not implemented by this build (SPEC §8)%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot generate from the "biomes" option: biome source 'minecraft:checkerboard' is not implemented by this build (SPEC §8)%s
