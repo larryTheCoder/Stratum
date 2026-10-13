@@ -3,7 +3,7 @@
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
 #   tools/analysis/end-islands-probe.sh --accept-eula [--seeds 0,42] \
-#       [--regions "-1,-1 64,0"]
+#       [--regions "-1,-1 64,0"] [--name end-islands]
 #
 # THE QUESTION. `minecraft:end_islands` is now implemented and is exact
 # against every golden End region on disk (golden_end_test.cpp, eight seeds).
@@ -34,11 +34,24 @@
 # `end_islands`.
 #
 # WHAT IT WRITES, AND WHAT IT WILL NOT TOUCH. New files only, under
-# .fixtures/<version>/probes/end-islands/seed-<seed>/r.X.Z.mca. It never
+# .fixtures/<version>/probes/<name>/seed-<seed>/r.X.Z.mca, <name> being
+# --name (default end-islands). It never
 # extracts, never removes and never rewrites anything else under .fixtures —
 # the worldgen tree it reads is read-only here, unlike tools/fetch-vanilla,
 # which re-extracts it. A region that already exists is left alone and
 # skipped, so a second run costs nothing and cannot clobber a first.
+#
+# --name exists for the corpora of the End's biome source (probes/end-biomes):
+# the same End, the same pack, at other seeds and regions — far regions on
+# every sign, and regions straddling the 1024-block ring on a negative axis
+# — kept apart from end-islands so neither run can touch the other's files.
+# The region files carry each chunk's biomes as well as its blocks, which is
+# all the biome source needs.
+#
+# STRATUM_FIXTURES_DIR, as density-probe.sh reads it: a git worktree sharing
+# the main checkout's fixtures takes the jar and worldgen from that tree and
+# writes its regions into it. tools/probe-worlds clears it for every
+# generator it runs. STRATUM_PROBE_XMX sets the server's heap (default 3G).
 #
 # Its world is generated the same way the goldens are: vanilla's own End, the
 # server's own defaults, structures off, and a generated datapack emptying
@@ -57,12 +70,14 @@ readonly MARGIN=4
 accept_eula=0
 seeds="0,42"
 regions="-1,-1 64,0"
+name="end-islands"
 generation_timeout=2400
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --accept-eula) accept_eula=1; shift ;;
         --seeds)       seeds="${2:?--seeds needs a list}"; shift 2 ;;
         --regions)     regions="${2:?--regions needs a list}"; shift 2 ;;
+        --name)        name="${2:?--name needs a directory name}"; shift 2 ;;
         --timeout)     generation_timeout="${2:?--timeout needs seconds}"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -76,8 +91,11 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ ${accept_eula} -eq 1 ]] || die "this runs the Minecraft server, so it needs --accept-eula"
 command -v java >/dev/null 2>&1 || die "java is needed"
 command -v jq   >/dev/null 2>&1 || die "jq is needed to build the terrain-only datapack"
+command -v python3 >/dev/null 2>&1 || die "python3 is needed to read chunk statuses"
 
-fixtures="${repo_root}/.fixtures/${MINECRAFT_VERSION}"
+[[ "${name}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] \
+    || die "--name '${name}' is not a plain directory name"
+fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}/${MINECRAFT_VERSION}"
 worldgen_dir="${fixtures}/worldgen"
 [[ -d "${worldgen_dir}/biome" ]] || die "no worldgen tree at ${worldgen_dir}; run tools/fetch-vanilla"
 # `|| true`: under pipefail a find over a directory that is not there fails
@@ -91,7 +109,8 @@ for region in ${regions}; do
         || die "malformed region coordinate '${region}': expected X,Z"
 done
 
-out_root="${fixtures}/probes/end-islands"
+out_root="${fixtures}/probes/${name}"
+probe_xmx="${STRATUM_PROBE_XMX:-3G}"
 work="$(mktemp -d)"
 server_pid=""
 cleanup() {
@@ -106,6 +125,38 @@ cleanup() {
     rm -rf "${work}"
 }
 trap cleanup EXIT INT TERM
+
+# How many of a region file's 1024 chunks are absent, unreadable or short of
+# full status. Its size cannot say: an End chunk fits one 4 KiB sector, so
+# the file reaches its final size once every chunk has been saved at SOME
+# status, and a chunk promoted to full afterwards is rewritten in place.
+# The same reading as tools/probe-worlds' check of a golden region.
+unfinished_chunks() {
+    python3 -c '
+import re, sys, zlib
+data = open(sys.argv[1], "rb").read()
+status = re.compile(rb"\x08\x00\x06Status(..)", re.S)
+left = 0
+for index in range(1024):
+    location = int.from_bytes(data[index * 4:index * 4 + 4], "big")
+    start = (location >> 8) * 4096
+    if location == 0 or start + 5 > len(data):
+        left += 1
+        continue
+    length = int.from_bytes(data[start:start + 4], "big")
+    kind, raw = data[start + 4], data[start + 5:start + 4 + length]
+    try:
+        payload = zlib.decompress(raw, 47) if kind == 1 else zlib.decompress(raw) if kind == 2 else raw
+    except zlib.error:
+        left += 1
+        continue
+    found = status.search(payload)
+    size = int.from_bytes(found.group(1), "big") if found else 0
+    if not found or payload[found.end():found.end() + size] != b"minecraft:full":
+        left += 1
+print(left)
+' "$1"
+}
 
 # /forceload refuses more than 256 chunks at a time, so a region goes in as a
 # grid of 16x16-chunk commands.
@@ -182,7 +233,9 @@ PACK
     rm -f "${pipe}"
     mkfifo "${pipe}"
     log "seed ${seed}: starting the server"
-    ( cd "${server}" && java -Xmx3G -jar "${jar}" --nogui \
+    # `exec` so the subshell BECOMES java and the trap's kill reaches the JVM
+    # rather than orphaning it (density-probe.sh has the story).
+    ( cd "${server}" && exec java "-Xmx${probe_xmx}" -jar "${jar}" --nogui \
         < "${pipe}" > "${server_log}" 2>&1 ) &
     server_pid=$!
     exec 3> "${pipe}"
@@ -199,11 +252,22 @@ PACK
         (( waited < 600 )) || { exec 3>&-; die "seed ${seed}: the server never started"; }
     done
 
-    # The world ticks while chunks generate, and a ticking End has nothing to
-    # flow but the goldens froze ticks anyway; the same is done here so the
-    # probe and the goldens are produced under identical conditions.
-    printf 'gamerule randomTickSpeed 0\n' >&3
-    printf 'gamerule doFireTick false\n' >&3
+    # Frozen before any chunk generates, as tools/fetch-vanilla freezes the
+    # goldens (SPEC §7, property 1), so the probe and the goldens are produced
+    # under identical conditions. This used to set two gamerules instead, by
+    # names 1.21.11 no longer has: the server answered "Incorrect argument
+    # for command" to both, so the end-islands corpora on disk before this
+    # change were generated ticking. A terrain-only End has nothing to flow,
+    # which is why they scored exact all the same: seed 0's two regions,
+    # regenerated frozen, differ from them in 0 of 33554432 blocks each.
+    log "seed ${seed}: freezing the world before generating"
+    printf 'tick freeze\n' >&3
+    sleep 2
+    if ! grep -q -i 'frozen' "${server_log}"; then
+        printf 'stop\n' >&3 || true
+        exec 3>&-
+        die "seed ${seed}: 'tick freeze' was not acknowledged"
+    fi
 
     local expected=()
     for region in "${wanted[@]}"; do
@@ -231,7 +295,15 @@ PACK
         done
         if [[ ${all_present} -eq 1 && "${sizes}" == "${previous}" ]]; then
             stable=$((stable + 1))
-            (( stable < 2 )) || break
+            if (( stable >= 2 )); then
+                local left=0
+                for file in "${expected[@]}"; do
+                    left=$(( left + $(unfinished_chunks "${file}") ))
+                done
+                (( left == 0 )) && break
+                log "seed ${seed}: sizes steady but ${left} chunk(s) not yet at full status"
+                stable=0
+            fi
         else
             stable=0
         fi
@@ -267,7 +339,7 @@ PACK
     rm -rf "${server}"
 }
 
-log "probing the End at regions ${regions} for seeds ${seeds}"
+log "probing the End at regions ${regions} for seeds ${seeds} into ${out_root}"
 for seed in ${seeds//,/ }; do
     generate_for_seed "${seed}"
 done
