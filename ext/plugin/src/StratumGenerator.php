@@ -81,9 +81,11 @@ final class StratumGenerator extends Generator{
 			);
 		}
 
-		// Every sub-chunk the dimension covers is present: a key Chunk's
-		// constructor does not find becomes air AND an all-ocean biome
-		// array, which would be a visibly wrong world with no error.
+		// All 24 sub-chunks are present, whatever the dimension's height:
+		// a key Chunk's constructor does not find becomes air AND an
+		// all-ocean biome array, which would be a visibly wrong world with
+		// no error. encodeChunk returns every one — for the End, whose
+		// terrain is y 0..127, the rest as air with the End's own biomes.
 		$world->setChunk($chunkX, $chunkZ, new Chunk($subChunks, terrainPopulated: false));
 	}
 

@@ -4,7 +4,7 @@
 // See biome/source.hpp for the rule and where each part of it comes from.
 // The End's rule is adapted from cubiomes (MIT, Cubitect/cubiomes,
 // biomenoise.c: mapEndBiome and getEndBiome) and read off the server's own
-// router where the two part.
+// router where the two part. Recorded in NOTICE.
 
 #include <stratum/biome/source.hpp>
 #include <stratum/javamath.hpp>
@@ -158,8 +158,12 @@ void Source::fillEndChunk(const density::Interpreter& interpreter,
     // cache_2d(end_islands) there — one answer serves the whole chunk: the
     // value cannot differ from layer to layer, so reading it again could
     // only cost time. Interpreter::isColumnInvariant is conservative, so a
-    // y-varying erosion (a datapack's; end-biome-router-probe.sh's gradients)
-    // is read at every layer's own y.
+    // y-varying erosion (a datapack's: end-biome-router-probe.sh's
+    // gradients, or a 3D noise) is read at every layer's own y. This trusts
+    // it outright, so a node type that reads y and is reported invariant
+    // shows up here as one biome per chunk — old_blended_noise and
+    // weird_scaled_sampler once were; tests/unit/biome_source_test.cpp holds
+    // this against `at`, quart by quart.
     const density::NodeIndex erosion = router.at(settings::RouterEntry::Erosion);
     const bool sameEveryLayer = interpreter.isColumnInvariant(erosion);
     const data::ResourceLocation* biome = nullptr;

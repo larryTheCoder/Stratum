@@ -12,7 +12,9 @@ generators, Snowcapped, Spyglass) work as content for a Bedrock server.
 - **Status:** the shipped overworld generates end to end — terrain, ore
   veins, biomes, aquifers and surface rules — and matches the vanilla server
   block for block on 99.9957% of the golden positions scored, and the End
-  generates whole, blocks and biomes. **M4** stays open for the legacy
+  generates exactly — its blocks over its noise height (y 0..127), its
+  biomes over the whole column the server stores them for (y 0..255).
+  **M4** stays open for the legacy
   dimensions' surface rules;
   **M5** (PocketMine integration) is written but has never run inside a
   server. See [What generates today](#what-generates-today) for the honest
@@ -222,10 +224,13 @@ by name rather than derived wrongly. That covers the Nether, `caves` and
 `floating_islands`.
 The legacy Nether's climate and terrain are measured (32765 of 32768 golden
 biome cells, every miss an exact tie). The End generates exactly: its terrain
-block for block, and its biomes through its own `the_end` biome source, which
-reads the noise router's erosion at each chunk's centre — exact on every
-stored quart of 45 End regions, datapack variants of its router included
-(SPEC §11). A dimension names its biome source when it is compiled, since a
+block for block over its noise height (y 0..127), and its biomes through its
+own `the_end` biome source, which reads the noise router's erosion at each
+chunk's centre — exact on every quart the server stores, y 0..255, in 45 End
+regions, datapack variants of its router included (SPEC §11). The upper half
+of that column, above the noise height, comes from `fillBiomes`' range form,
+which is also what fills PocketMine-MP's sub-chunks above and below the End's
+terrain. A dimension names its biome source when it is compiled, since a
 frozen pipeline does not record one.
 
 **PocketMine integration — written, and never run inside a server.** The

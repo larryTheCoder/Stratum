@@ -22,12 +22,17 @@
 //   * and its `--set sample` pair: a dimension whose erosion differs from
 //     block to block, and the world's own End again.
 //
-// fillBiomes covers the dimension's NOISE height, y 0..127 (sections 0..7).
-// The server stores sixteen sections, its dimension type's 256, and assigns
-// every one a biome; those above 127 are scored through the same
-// biome::Source fillBiomes delegates to, read above the noise height. On
-// vanilla's End the column is one biome either way; the router probe's
-// y-varying erosions are what makes the upper half say something.
+// The server stores sixteen sections, its dimension type's 256 blocks, and
+// assigns every one a biome, where the End's NOISE height is 128. fillBiomes'
+// noise-height form scores y 0..127 and its range form — the one ext's
+// encoder fills PocketMine-MP's whole column with — y 128..255. On vanilla's
+// End the column is one biome either way; the router probe's y-varying
+// erosions are what makes the upper half say something.
+//
+// And every quart again through biome::Source::at at its own lowest block,
+// which is what ChunkFiller's surface pass calls: fillBiomes is handed a
+// chunk, so Source::at is the one shipped path where a position becomes its
+// chunk by floorDiv, and only this pass holds that to the server.
 //
 // CONTROLS. A case that only ever agreed could not tell a rule from its
 // neighbours, so each reading the rule takes is also scored WRONG, against
@@ -84,7 +89,7 @@ constexpr std::int32_t kRegionChunks = 32;
 constexpr std::size_t kChunksPerRegion = std::size_t{kRegionChunks} * kRegionChunks;
 /// Quart layers the server stores: its dimension type's 256 blocks.
 constexpr std::int32_t kStoredLayers = 64;
-/// Quart layers fillBiomes fills: the End's noise height, 128 blocks.
+/// Quart layers fillBiomes' noise-height form fills: the End's 128 blocks.
 constexpr std::int32_t kNoiseLayers = 32;
 constexpr std::size_t kQuartsPerLayer = 16;
 constexpr std::size_t kQuartsPerChunk = static_cast<std::size_t>(kStoredLayers) * kQuartsPerLayer;
@@ -212,9 +217,8 @@ void requireCorpus(const std::vector<RegionFile>& files, const std::string& make
 }
 
 /// What a dimension under test needs beside its CompiledDimension: its
-/// router read through an interpreter over the same pipeline, for the layers
-/// above fillBiomes' noise height and for the wrong readings the controls
-/// score.
+/// router read through an interpreter over the same pipeline, for
+/// biome::Source::at and for the wrong readings the controls score.
 struct Reader {
     stratum::freeze::Pipeline pipeline;
     const stratum::settings::NoiseSettings* settings;
@@ -251,14 +255,25 @@ struct Reader {
 };
 
 struct Score {
+    /// Quarts scored, and those exact, through CompiledDimension::fillBiomes.
     std::size_t quarts = 0;
     std::size_t exact = 0;
+    /// The same quarts through biome::Source::at, at each one's own corner.
+    std::size_t exactAt = 0;
     std::map<std::string, std::size_t> chunksByBiome;
     std::string firstMiss;
 };
 
-/// Every quart of @p stored against @p dimension's fillBiomes (layers
-/// 0..31) and @p reader's biome::Source above them (32..63).
+/// Every quart of @p stored, scored twice, both times on shipped code:
+///
+///   * through @p dimension's fillBiomes — its noise-height form for layers
+///     0..31 and its range form for 32..63, the half of the server's column
+///     above the End's noise height (the form ext's encoder uses);
+///   * through biome::Source::at at the quart's own lowest block, (16 chunkX
+///     + 4 qx, 4 layer, 16 chunkZ + 4 qz) — the lookup ChunkFiller's
+///     surface pass makes, and the one place a position becomes its chunk
+///     by floorDiv rather than arriving as one. fillBiomes is handed the
+///     chunk, so without this pass truncation there would go unscored.
 [[nodiscard]] Score score(const CompiledDimension& dimension, const Reader& reader,
                           const RegionFile& region, const std::vector<std::uint8_t>& stored,
                           Biomes& biomes) {
@@ -269,12 +284,19 @@ struct Score {
     std::vector<const ResourceLocation*> high(
         static_cast<std::size_t>(kStoredLayers - kNoiseLayers) * kQuartsPerLayer);
     Score result;
+    const auto miss = [&](std::int32_t chunkX, std::int32_t chunkZ, std::size_t quart,
+                          std::uint8_t server, const ResourceLocation& ours, const char* path) {
+        if (result.firstMiss.empty()) {
+            result.firstMiss = std::string(path) + ": chunk (" + std::to_string(chunkX) + ", " +
+                               std::to_string(chunkZ) + ") quart " + std::to_string(quart) +
+                               ": server " + biomes.name(server) + ", ours " + ours.toString();
+        }
+    };
     for (std::size_t chunk = 0; chunk < kChunksPerRegion; ++chunk) {
         const std::int32_t chunkX = region.chunkX(chunk);
         const std::int32_t chunkZ = region.chunkZ(chunk);
         dimension.fillBiomes(chunkX, chunkZ, low);
-        source.fillChunk(reader.interpreter, reader.settings->router, chunkX, chunkZ, kNoiseLayers,
-                         high, cache);
+        dimension.fillBiomes(chunkX, chunkZ, kNoiseLayers, high);
         const std::size_t base = chunk * kQuartsPerChunk;
         ++result.chunksByBiome[biomes.name(stored[base])];
         for (std::size_t i = 0; i < kQuartsPerChunk; ++i) {
@@ -282,11 +304,27 @@ struct Score {
             ++result.quarts;
             if (biomes.code(ours) == stored[base + i]) {
                 ++result.exact;
-            } else if (result.firstMiss.empty()) {
-                result.firstMiss = "chunk (" + std::to_string(chunkX) + ", " +
-                                   std::to_string(chunkZ) + ") quart " + std::to_string(i) +
-                                   ": server " + biomes.name(stored[base + i]) + ", ours " +
-                                   ours->toString();
+            } else {
+                miss(chunkX, chunkZ, i, stored[base + i], *ours, "fillBiomes");
+            }
+        }
+        for (std::int32_t layer = 0; layer < kStoredLayers; ++layer) {
+            for (std::int32_t qz = 0; qz < 4; ++qz) {
+                for (std::int32_t qx = 0; qx < 4; ++qx) {
+                    const ResourceLocation& ours =
+                        source.at(reader.interpreter, reader.settings->router,
+                                  Point{.x = (chunkX * 16) + (qx * 4),
+                                        .y = layer * 4,
+                                        .z = (chunkZ * 16) + (qz * 4)},
+                                  cache);
+                    const std::size_t i = (static_cast<std::size_t>(layer) * kQuartsPerLayer) +
+                                          static_cast<std::size_t>((qz * 4) + qx);
+                    if (biomes.code(&ours) == stored[base + i]) {
+                        ++result.exactAt;
+                    } else {
+                        miss(chunkX, chunkZ, i, stored[base + i], ours, "Source::at");
+                    }
+                }
             }
         }
     }
@@ -299,6 +337,17 @@ struct Score {
         out << " " << biome.substr(biome.find(':') + 1) << " " << chunks;
     }
     return out.str();
+}
+
+/// Every quart of a region exact, by both paths.
+void checkExact(const std::string& name, const Score& result) {
+    WARN(name << ": " << result.exact << " of " << result.quarts
+              << " quarts exact through fillBiomes, " << result.exactAt
+              << " through Source::at; chunks:" << census(result));
+    CHECK(result.firstMiss.empty());
+    CHECK(result.quarts == kQuartsPerRegion);
+    CHECK(result.exact == result.quarts);
+    CHECK(result.exactAt == result.quarts);
 }
 
 /// One dimension compiled through the public path, and a Reader over the
@@ -345,11 +394,7 @@ void scoreEnd(const std::vector<RegionFile>& files, const Also& also = nullptr) 
         const Compiled end(thawed, endId, region.seed);
         const std::vector<std::uint8_t> stored = storedBiomes(region, biomes);
         const Score result = score(*end.dimension, end.reader, region, stored, biomes);
-        WARN(region.name() << ": " << result.exact << " of " << result.quarts
-                           << " quarts exact; chunks:" << census(result));
-        CHECK(result.firstMiss.empty());
-        CHECK(result.quarts == kQuartsPerRegion);
-        CHECK(result.exact == result.quarts);
+        checkExact(region.name(), result);
         if (also) {
             also(region, end, result, stored, biomes);
         }
@@ -615,11 +660,7 @@ TEST_CASE("the End's biome source reads the router's erosion, at y = 4 * quartY,
         stored[name] = storedBiomes(files[i], biomes);
         const Score result =
             score(*dimension.dimension, dimension.reader, files[i], stored[name], biomes);
-        WARN(name << ": " << result.exact << " of " << result.quarts
-                  << " quarts exact; chunks:" << census(result));
-        CHECK(result.firstMiss.empty());
-        CHECK(result.quarts == kQuartsPerRegion);
-        CHECK(result.exact == result.quarts);
+        checkExact(name, result);
         scores.emplace(name, result);
 
         // WRONG READINGS of y, on the variants whose erosion varies with it:
@@ -640,12 +681,16 @@ TEST_CASE("the End's biome source reads the router's erosion, at y = 4 * quartY,
                         const ResourceLocation& elsewhere = dimension.reader.endBiome(
                             chunkX, chunkZ, Point{.x = centre(chunkX), .y = y, .z = centre(chunkZ)},
                             false, cache);
-                        wrong += biomes.code(&elsewhere) ==
-                                         stored[name]
-                                               [(chunk * kQuartsPerChunk) +
-                                                (static_cast<std::size_t>(layer) * kQuartsPerLayer)]
-                                     ? 0U
-                                     : 1U;
+                        const std::uint8_t code = biomes.code(&elsewhere);
+                        // Counted per QUART, all sixteen of the layer: one
+                        // sample serves them, so a wrong one is wrong sixteen
+                        // times over.
+                        const std::size_t first =
+                            (chunk * kQuartsPerChunk) +
+                            (static_cast<std::size_t>(layer) * kQuartsPerLayer);
+                        for (std::size_t column = 0; column < kQuartsPerLayer; ++column) {
+                            wrong += code == stored[name][first + column] ? 0U : 1U;
+                        }
                     }
                 }
             }
@@ -720,11 +765,7 @@ TEST_CASE("the End's biome source reads erosion at the chunk's centre, block 16c
         const std::vector<std::uint8_t> stored = storedBiomes(files[i], biomes);
         const Score result =
             score(*dimension.dimension, dimension.reader, files[i], stored, biomes);
-        WARN(name << ": " << result.exact << " of " << result.quarts
-                  << " quarts exact; chunks:" << census(result));
-        CHECK(result.firstMiss.empty());
-        CHECK(result.quarts == kQuartsPerRegion);
-        CHECK(result.exact == result.quarts);
+        checkExact(name, result);
         if (name != "xz") {
             continue;
         }
