@@ -2,7 +2,6 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
 #include <stratum/chunk/chunk.hpp>
-#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/render/region_render.hpp>
 
@@ -54,27 +53,6 @@ struct Column {
     std::string surfaceBlock;
     std::string surfaceBiome;
 };
-
-[[nodiscard]] std::string biomeAt(const chunk::Chunk& chunk, int localX, int y, int localZ) {
-    for (const chunk::Section& section : chunk.sections()) {
-        if (section.y != javamath::floorDiv(y, chunk::kSectionSize)) {
-            continue;
-        }
-        if (section.biomes.empty()) {
-            return {};
-        }
-        // Biomes are stored per 4x4x4 cell, so 64 to a section.
-        const std::size_t cellX = static_cast<std::size_t>(localX) / 4U;
-        const std::size_t cellY =
-            static_cast<std::size_t>(javamath::floorMod(y, chunk::kSectionSize)) / 4U;
-        const std::size_t cellZ = static_cast<std::size_t>(localZ) / 4U;
-        const std::size_t index = (cellY * 16U) + (cellZ * 4U) + cellX;
-        if (index < section.biomes.size()) {
-            return section.biomePalette[section.biomes[index]];
-        }
-    }
-    return {};
-}
 
 } // namespace
 
@@ -154,7 +132,10 @@ image::Image renderRegion(const region::RegionFile& region, Mode mode) {
                             column.surfaceBlock = state->name;
                         }
                     } else if (mode == Mode::Biome) {
-                        column.surfaceBiome = biomeAt(decoded, localX, *height, localZ);
+                        if (const std::string* biome = decoded.biomeAt(localX, *height, localZ);
+                            biome != nullptr) {
+                            column.surfaceBiome = *biome;
+                        }
                     }
                 }
             }

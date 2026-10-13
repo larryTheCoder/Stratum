@@ -396,9 +396,13 @@ cannot keep stamping the old number.
   listed case that ran: the list names every case CI does not check, and
   why.
 - `cli diff`: parses `.mca` region files and diffs vanilla output against
-  engine output block-for-block in Java block space (before Bedrock
-  mapping), reporting first divergence with coordinates and pipeline node
-  trace.
+  engine output in Java space (before Bedrock mapping): block for block,
+  and biome cell for biome cell — every 4x4x4 cell a section stores a biome
+  for, by name — reporting the first divergences of each, apart, with
+  coordinates. "Identical" (exit 0) means both agree; a pair whose blocks
+  agree and whose biomes do not exits 1 (it once compared blocks alone, and
+  called such a pair identical). A pipeline node trace per divergence is
+  not built yet.
 - Fixed seed set: at least 8 seeds × overworld/nether/end noise settings ×
   a spread of chunk regions including y-extremes and biome borders.
 - Fixtures are **generated, never committed** (they are derived from Mojang
@@ -881,7 +885,10 @@ mapping has two halves, split at a platform-neutral midpoint:
   dimensions' named surface-rule noises (the Nether's, `caves`',
   `floating_islands`'), refused by name for their seeding (§11).
 - **M5** — Integration: Bedrock mapping layer, zend binding, chunkutils2
-  output, per-world freeze storage, PocketMine world-load path, perf pass.
+  output, per-world freeze storage, PocketMine world-load path, perf pass,
+  and `stratum generate` — region files from the library, so a generated
+  world, its biomes included, can be diffed from the shell (the CLI
+  pointed it at M3, which closed without it).
 - **M6 (v2)** — Staged features/structures with declared read/write radii;
   scripting escape hatch evaluation.
 - **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
