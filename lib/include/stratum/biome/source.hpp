@@ -37,10 +37,15 @@
 // This build's own, and NOT cubiomes': the order of the last two tests.
 // cubiomes tests barrens before falling through to small islands, which in
 // erosion terms sends a NaN to `small_end_islands`; this tests small islands
-// first, so a NaN falls through to `end_barrens`, the biome cubiomes gives
-// its outer rings — the one place it models the island field going wrong,
-// through a separate overflow check (mapEndBiome's `(int)rsq < 0`), not
-// through this order. A choice, not a measurement: see below.
+// first, so a NaN falls through to `end_barrens`. Why that biome: cubiomes
+// models the server's empty outer rings with one test, `(int)rsq < 0` on the
+// square of the island-field cell coordinate (cells of 8 blocks; first true
+// past 46340 on an axis), made in two places — sampleNoiseColumnEnd makes
+// the End's density column NaN there, so it holds no block, and mapEndBiome
+// makes the biome `end_barrens`. Taken together, cubiomes' two checks model
+// a NaN island field reading `end_barrens`, which is what this order gives
+// a NaN erosion. A reading of cubiomes, not its order of the tests, and not
+// a measurement: see below.
 //
 // What cubiomes does not say, the server does, and where the two part the
 // server wins: cubiomes evaluates a hard-wired copy of the island field, and
@@ -51,12 +56,12 @@
 // five other climate entries): every erosion constant turns all 725 outer
 // chunks of r.-2.-2 into one biome while the 299 inside the ring stay
 // `the_end`; the other climate entries change nothing, nor does a constant
-// final_density; the edges hold to 1e-10 either side (so double, not
-// float), with 0.25 itself midlands, -0.0625 midlands and -0.21875
-// barrens; and a y-varying erosion is read at block y = 4 * qy. Its
-// `--set sample` routes a noise that differs from block to block there,
-// and of a chunk's 256 columns only (16c + 8, 16c + 8) reads all 725 outer
-// chunks (the next best, 228). Over every quart of every End region on
+// final_density; the edges are held to 1e-10 (so double, not float), with
+// 0.25 itself midlands, -0.0625 midlands and -0.21875 barrens; and a
+// y-varying erosion is read at block y = 4 * qy. Its `--set sample` routes
+// a noise that differs from block to block there, and of a chunk's 256
+// columns only (16c + 8, 16c + 8) reads all 725 outer chunks (the next
+// best, 228). Over every quart of every End region on
 // disk — eight golden r.0.0, end-islands' four, end-biomes' eight at four
 // seeds (two of them End worlds the goldens do not hold, so eight distinct
 // End worlds in all), and the two probes' 25 — the rule is exact, 47185920
@@ -68,14 +73,18 @@
 //
 //   * NaN. Nothing on disk produces one, nor can vanilla's erosion as this
 //     build computes it (noise::EndIslands takes square roots of 64-bit
-//     sums, never of a negative). Where one goes is the order of the tests
-//     above — this build's choice, unmeasured;
+//     sums, never of a negative). The rings past 46340 island-field cells
+//     (about 370 000 blocks), where cubiomes' column is NaN, are where one
+//     would arise if the server's field is NaN there; no probe reaches
+//     them. Where one goes is the order of the tests above — this build's
+//     choice, unmeasured;
 //   * the central test past 46340 chunks, where a 32-bit square would wrap.
 //     64-bit is cubiomes' reading; no probe reaches it;
 //   * an erosion strictly between an edge and 1e-10 past it. The probes pin
-//     each edge's own value and the values 1e-10 either side; the rule puts
-//     everything strictly past an edge on the far side, as cubiomes'
-//     thresholds do, and no value on disk falls in between.
+//     each edge's own value, on its own side, and the values 1e-10 and 1e-5
+//     past it, on the far side; the rule puts everything strictly past an
+//     edge on the far side, as cubiomes' thresholds do, and no value on
+//     disk falls in between.
 //
 // Nor does this source settle the island field it reads past about 38 000
 // blocks, where no probe goes; noise::EndIslands owns that (SPEC §11).

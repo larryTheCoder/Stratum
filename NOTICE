@@ -55,11 +55,15 @@ are erosion > 0.25, >= -0.0625 and >= -0.21875). NOT adapted from
 cubiomes: the order of the last two tests, which sends a NaN to
 end_barrens. That order is this project's own, unmeasured choice — in
 erosion terms cubiomes' own order would send a NaN to small_end_islands —
-made so that a NaN lands where cubiomes' separate overflow check
-(`(int)rsq < 0` in `mapEndBiome`) puts its outer rings. What the server
-answers differently — it reads the dimension's own router where cubiomes
-evaluates a fixed copy of the island field — follows the server (SPEC.md
-section 11, "The End's biome source").
+made so that a NaN lands where cubiomes puts its outer rings. cubiomes
+models those rings with one overflow test, `(int)rsq < 0` on the square of
+the island-field cell coordinate, in two places: `sampleNoiseColumnEnd`
+makes their density column NaN and `mapEndBiome` makes their biome
+end_barrens, so between them a NaN island field reads end_barrens. That
+is this project's reading of cubiomes, not code adapted from it. What the
+server answers differently — it reads the dimension's own router where
+cubiomes evaluates a fixed copy of the island field — follows the server
+(SPEC.md section 11, "The End's biome source").
 
 cubiomes is MIT-licensed:
 

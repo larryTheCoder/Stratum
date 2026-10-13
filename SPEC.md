@@ -6587,12 +6587,25 @@ Open:
   regions generated for the two parts of the field they cannot reach (see
   "The End generates, exactly" below). minecraft.wiki documents neither
   `weird_scaled_sampler`'s rarity mapping nor what `blend_density` returns
-  outside blending, and cubiomes models neither terrain density nor the End
-  islands. Implementing them from memory would produce a world that
-  generates and is quietly wrong, which §8 treats as the most severe class
-  of bug, so each stayed refused until a golden could tell right from
-  plausible — which is exactly how `end_islands`' first, analogy-based
-  seeding was caught and replaced.
+  outside blending, and cubiomes models neither of those two, nor the
+  1.18+ overworld's `final_density`. Implementing them from memory would
+  produce a world that generates and is quietly wrong, which §8 treats as
+  the most severe class of bug, so each stayed refused until a golden
+  could tell right from plausible — which is exactly how `end_islands`'
+  first, analogy-based seeding was caught and replaced.
+
+  This entry used to say cubiomes models "neither terrain density nor the
+  End islands". That was wrong at the pinned commit, and the End entries
+  below rest on the difference. cubiomes models the End's island field
+  (`getEndHeightNoise`, the height map in `mapEndBiome`, and `setEndSeed`'s
+  17292-step skip) and the End's density column (`sampleNoiseColumnEnd`),
+  both hard-wired rather than read from a router, and `old_blended_noise`'s
+  octave loop (`sampleSurfaceNoise`, which `blended.cpp` adapts; NOTICE).
+  "The End's biome source" uses its island model as corroboration (the
+  17292 literal) and as the source of the End biome rule's structure;
+  `end_islands` itself was settled on the server's own output
+  ("`end_islands`' simplex is seeded by a 17292-step skip"), not on
+  cubiomes.
 
   Two types *are* implemented on documentation alone: `squeeze` and `invert`
   (the latter documented only through its later rename to `reciprocal`).
@@ -6639,8 +6652,11 @@ Open:
   the order is part of the answer, not a detail of the loop.
 
   Nothing available here samples vanilla's terrain density — cubiomes models
-  climate and biomes, not this — so the order is the documented reading and
-  stands unverified. The unit suite pins it: it evaluates every block of one
+  climate and biomes, and of terrain only hard-wired columns of its own
+  (the End's, `sampleNoiseColumnEnd`, which its End surface height blends
+  y, then x, then z: cubiomes' reading, not an oracle), not the router this
+  interpolates — so the order is the documented reading and stands
+  unverified. The unit suite pins it: it evaluates every block of one
   cell against an explicitly composed y-then-x-then-z blend, and asserts that
   two other orders genuinely disagree, so the choice cannot be changed by
   accident and cannot quietly become a test of nothing. What settles it is
@@ -7981,18 +7997,19 @@ Open:
   The router probe (`tools/analysis/end-biome-router-probe.sh`) is what
   says the source reads the router. Each erosion constant turns all 725
   outer chunks of r.-2.-2 into one biome while the 299 inside the ring stay
-  the_end; the constants either side of each edge, 1e-10 apart, put 0.25 in
-  midlands, -0.0625 in midlands and -0.21875 in barrens, which is double
-  rather than float (the constants AT each edge, and ygrad's layers at
-  exactly 0.25 and -0.0625, put each edge's own value on its side; nothing
-  on disk lies strictly between an edge and 1e-10 past it, where the rule
-  puts everything on the far side, as cubiomes' thresholds do); constant
-  temperature, vegetation, continents, depth and ridges change no quart,
-  nor does a constant final_density; and a y-varying erosion is read at
-  block y = 4 qy. Its `--set sample`
-  dimension routes `noise(minecraft:ridge, xz_scale 64, y_scale 0)` there,
-  under the Xoroshiro source with no terrain, so each of a chunk's 256
-  columns is a separate reading: (16c + 8, 16c + 8) reads all 725 outer
+  the_end; the constants AT each edge, and ygrad's layers at exactly 0.25
+  and -0.0625, put 0.25 in midlands, -0.0625 in midlands and -0.21875 in
+  barrens, and the constants 1e-10 and 1e-5 past each edge, on its far
+  side (the sweep probes that side only), in the next biome over — which
+  is double rather than float, since as floats the 1e-10 ones are the edge
+  itself. Nothing on disk lies strictly between an edge and 1e-10 past it,
+  where the rule puts everything on the far side, as cubiomes' thresholds
+  do. Constant temperature, vegetation, continents, depth and ridges
+  change no quart, nor does a constant final_density; and a y-varying
+  erosion is read at block y = 4 qy. Its `--set sample` dimension routes
+  `noise(minecraft:ridge, xz_scale 64, y_scale 0)` there, under the
+  Xoroshiro source with no terrain, so each of a chunk's 256 columns is a
+  separate reading: (16c + 8, 16c + 8) reads all 725 outer
   chunks, and the best other column, (4, 7), 228 — chance on these four
   biomes' shares is 192.
 
@@ -8047,24 +8064,33 @@ Open:
   *Not measured.* NaN, where one goes being this build's own choice.
   Nothing on disk produces one, nor can vanilla's erosion as this build
   computes it; the order of the tests above sends it to `end_barrens`, the
-  biome cubiomes gives its outer rings through a separate overflow check
-  (`mapEndBiome`'s `(int)rsq < 0`) — not through its order of the tests,
-  which would send a NaN to `small_end_islands`. The central square in 64 bits rather than
-  32, which is cubiomes' reading: they part only past 46340 chunks, which no
-  probe reaches. And two things about the island field this source reads,
-  which belong to `noise::EndIslands` and change terrain as much as biomes:
+  biome cubiomes gives its outer rings by the ring test below — not by its
+  order of the tests, which would send a NaN to `small_end_islands`. The
+  central square in 64 bits rather than 32, which is cubiomes' reading:
+  they part only past 46340 chunks, which no probe reaches. And two things
+  about the island field this source reads, which belong to
+  `noise::EndIslands` and change terrain as much as biomes:
   cubiomes' steepness is `(|x| * 3439 + |z| * 147) % 13 + 9` computed in
   float, where `EndIslands` uses 64-bit integers — the float sum is exact
   below 2^24, which holds everywhere within about 4874 island cells
   (78 000 blocks) of the origin, so the two can part only further out — and
   the server's island field has empty outer rings from about 370 000
   blocks (the wiki describes them), which `EndIslands`' 64-bit square does
-  not reproduce. cubiomes models those rings as a 32-bit overflow on the
-  biome side, `mapEndBiome`'s ring test `(int)rsq < 0` on the island-grid
-  square, which first fires past grid coordinate 46340 on an axis and
-  turns them `end_barrens`; its own height function squares in 64 bits.
-  Every probe region is within 38 000 blocks; both are open, for a probe
-  past 78 000 blocks and one in a ring.
+  not reproduce. cubiomes models those rings on both sides with one test,
+  `(int)rsq < 0` on the square of the 8-block cell coordinate its height
+  function takes (the cell 2c + 1 holding a chunk's centre, on the biome
+  side), which first fires past 46340 on an axis: `sampleNoiseColumnEnd`
+  makes the End's density column NaN there, so it holds no block, and
+  `mapEndBiome` makes the biome `end_barrens`. Its height function itself,
+  `getEndHeightNoise`, squares in 64 bits, and the column skips it in the
+  rings; that terrain side is what `EndIslands` would need to reproduce.
+  If the server's field is NaN in the rings, as cubiomes' NaN column
+  suggests, its erosion is NaN there too, and that is where the order of
+  the tests above picks a biome: taken together, cubiomes' two checks
+  model a NaN island field reading `end_barrens`, which is what that order
+  gives — a reading of cubiomes, not a measurement. Every probe region is
+  within 38 000 blocks; both are open, for a probe past 78 000 blocks and
+  one in a ring.
 
   *A datapack's markers.* A `flat_cache` or `interpolated` under the End's
   erosion is read as the multi-noise path reads its climate: at the sample
