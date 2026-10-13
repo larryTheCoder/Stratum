@@ -201,15 +201,17 @@ TEST_CASE("two empty regions are identical, having compared nothing", "[diff]") 
 }
 
 TEST_CASE("a region pair differing only in its biomes is reported different", "[diff][biome]") {
-    // Every block the same; one biome cell differs. Cell 37 is y 2, z 1,
-    // x 1 of section 0 in chunk (1, 0): its lowest block is world (20, 8, 4).
+    // Every block the same; one biome cell differs. Cell 24 is y 1, z 2,
+    // x 0 of section 0 in chunk (1, 2): its lowest block is world
+    // (16, 4, 40). Neither the cell nor the chunk is the same on x and z, so
+    // a lookup that swapped them would name (24, 4, 32), or miss the cell.
     std::vector<std::uint16_t> cells(stratum::chunk::kBiomesPerSection, 0);
-    cells[37] = 1;
+    cells[24] = 1;
 
     RegionBuilder left;
     RegionBuilder right;
-    left.addChunk(1, 0, {withBiomes(stoneSection(), {"minecraft:the_end"})});
-    right.addChunk(1, 0,
+    left.addChunk(1, 2, {withBiomes(stoneSection(), {"minecraft:the_end"})});
+    right.addChunk(1, 2,
                    {withBiomes(stoneSection(), {"minecraft:the_end", "minecraft:plains"}, cells)});
 
     const DiffReport report = diff(left.build(), right.build());
@@ -220,11 +222,58 @@ TEST_CASE("a region pair differing only in its biomes is reported different", "[
     CHECK(report.biomeDifferenceCount == 1U);
     REQUIRE(report.biomeDifferences.size() == 1U);
     const stratum::region::BiomeDifference& difference = report.biomeDifferences.front();
-    CHECK(difference.x == 20);
-    CHECK(difference.y == 8);
-    CHECK(difference.z == 4);
+    CHECK(difference.x == 16);
+    CHECK(difference.y == 4);
+    CHECK(difference.z == 40);
     CHECK(difference.left == "minecraft:the_end");
     CHECK(difference.right == "minecraft:plains");
+}
+
+TEST_CASE("biome cells below y=0 are found in their own section", "[diff][biome][landmine]") {
+    // Sections -4, -1 and 0 on both sides, one cell differing in each of
+    // the two negative ones and none in section 0. Truncating division from
+    // y to section folds y -12..-1 onto section 0 and y -60..-49 onto
+    // section -3, so it would find neither; floorDiv finds both, each named
+    // by its lowest block in chunk (2, 1):
+    //   section -4, cell 57 (y 3, z 2, x 1): world (36, -52, 24);
+    //   section -1, cell 39 (y 2, z 1, x 3): world (44, -8, 20).
+    auto stoneAt = [](const int sectionY) {
+        SectionSpec section = stoneSection();
+        section.y = sectionY;
+        return section;
+    };
+    std::vector<std::uint16_t> deep(stratum::chunk::kBiomesPerSection, 0);
+    deep[57] = 1;
+    std::vector<std::uint16_t> shallow(stratum::chunk::kBiomesPerSection, 0);
+    shallow[39] = 1;
+
+    RegionBuilder left;
+    RegionBuilder right;
+    left.addChunk(2, 1,
+                  {withBiomes(stoneAt(-4), {"minecraft:the_end"}),
+                   withBiomes(stoneAt(-1), {"minecraft:the_end"}),
+                   withBiomes(stoneAt(0), {"minecraft:the_end"})});
+    right.addChunk(2, 1,
+                   {withBiomes(stoneAt(-4), {"minecraft:the_end", "minecraft:end_barrens"}, deep),
+                    withBiomes(stoneAt(-1), {"minecraft:the_end", "minecraft:plains"}, shallow),
+                    withBiomes(stoneAt(0), {"minecraft:the_end"})});
+
+    const DiffReport report = diff(left.build(), right.build());
+    CHECK_FALSE(report.identical());
+    CHECK(report.blockDifferenceCount == 0U);
+    // y -64..15: five sections' worth of cells, the two absent on both
+    // sides (-3, -2) included.
+    CHECK(report.biomesCompared == 5U * stratum::chunk::kBiomesPerSection);
+    CHECK(report.biomeDifferenceCount == 2U);
+    REQUIRE(report.biomeDifferences.size() == 2U);
+    CHECK(report.biomeDifferences[0].x == 36);
+    CHECK(report.biomeDifferences[0].y == -52);
+    CHECK(report.biomeDifferences[0].z == 24);
+    CHECK(report.biomeDifferences[0].right == "minecraft:end_barrens");
+    CHECK(report.biomeDifferences[1].x == 44);
+    CHECK(report.biomeDifferences[1].y == -8);
+    CHECK(report.biomeDifferences[1].z == 20);
+    CHECK(report.biomeDifferences[1].right == "minecraft:plains");
 }
 
 TEST_CASE("biomes are compared by name, not by palette index", "[diff][biome]") {
