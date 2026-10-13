@@ -68,10 +68,12 @@ endif()
 
 include(StratumWarnings)
 include(StratumDeterminism)
+include(StratumSanitize)
 include(StratumJson)
 include(StratumZlib)
 
 stratum_assert_no_banned_flags()
+stratum_check_sanitize_toolchain()
 
 # Provisioned here rather than in lib/: an imported target created inside a
 # subdirectory is not visible to sibling directories, and tests/ links zlib

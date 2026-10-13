@@ -75,6 +75,9 @@ function(stratum_configure_target target)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
     stratum_set_determinism(${target})
+    # A no-op unless STRATUM_SANITIZE (StratumSanitize.cmake, the `sanitize`
+    # preset). After the determinism flags, which it leaves untouched.
+    stratum_set_sanitizers(${target})
     set_target_properties(${target} PROPERTIES
         CXX_STANDARD 20
         CXX_STANDARD_REQUIRED ON

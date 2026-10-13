@@ -65,6 +65,8 @@ cmake --build --preset dev
 ctest --preset dev            # unit tests
 tools/fetch-vanilla --version 1.21.11   # fixtures (local only, gitignored)
 ctest --preset conformance    # golden diffs vs vanilla output
+cmake --preset sanitize && cmake --build --preset sanitize
+ctest --preset sanitize       # unit suite under Clang UBSan (SPEC §5.7; CI runs it)
 tools/php-dev                 # ZTS PHP for ext/ (local only, ~/.cache)
 STRATUM_PHP_CONFIG=$(tools/php-dev --print-config) cmake --preset ext
 cmake --build --preset ext --target stratum_php && ctest --preset ext

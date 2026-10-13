@@ -58,6 +58,18 @@
       "description": "CI configuration: warnings are errors. No generator is pinned so each platform uses its native default (Make, Ninja or MSBuild)."
     },
     {
+      "name": "sanitize",
+      "inherits": "base",
+      "displayName": "sanitize (Clang, UBSan, Debug)",
+      "description": "Every first-party target under UBSan (undefined plus float-cast-overflow, no recovery) with libstdc++'s assertions: cmake/StratumSanitize.cmake, SPEC 5.7. Clang is pinned because the checks are its; the determinism flags are unchanged.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "STRATUM_WERROR": "OFF",
+        "STRATUM_SANITIZE": "ON"
+      }
+    },
+    {
       "name": "ext",
       "displayName": "PocketMine-MP zend module",
       "description": "Debug, warnings as errors, with ext/'s zend module. Needs STRATUM_PHP_CONFIG in the environment: STRATUM_PHP_CONFIG=$(tools/php-dev --print-config) cmake --preset ext",
@@ -98,6 +110,11 @@
       "configurePreset": "ci-release",
       "configuration": "RelWithDebInfo",
       "jobs": 4
+    },
+    {
+      "name": "sanitize",
+      "configurePreset": "sanitize",
+      "configuration": "Debug"
     },
     {
       "name": "ext",
@@ -185,6 +202,42 @@
       },
       "execution": {
         "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "sanitize",
+      "configurePreset": "sanitize",
+      "configuration": "Debug",
+      "displayName": "unit suite under UBSan",
+      "description": "The unit suite on the sanitize build. A sanitizer report aborts the case (-fno-sanitize-recover=all), so a report is a failure with its stack in the output.",
+      "filter": {
+        "include": {
+          "label": "unit"
+        }
+      },
+      "environment": {
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
+    },
+    {
+      "name": "sanitize-conformance",
+      "inherits": "conformance",
+      "configurePreset": "sanitize",
+      "displayName": "conformance under UBSan",
+      "description": "The conformance suite on the sanitize build, when the fixtures are present (configure with -DSTRATUM_FIXTURES_DIR). About twice the Debug test time, so two hours per case.",
+      "environment": {
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 7200
       }
     },
     {

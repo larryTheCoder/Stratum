@@ -248,6 +248,41 @@ jobs:
       - name: Unit and lint suites
         run: ctest --preset ${{ matrix.preset }}
 
+  sanitize:
+    name: linux-x86_64 (clang, UBSan)
+    # SPEC §5.7: no input may reach undefined behaviour — an out-of-range
+    # float-to-int conversion is INT32_MIN on x86-64 and saturates on ARM64,
+    # so it is a cross-architecture divergence before it is anything else.
+    # So the unit suite also runs on the `sanitize` preset: every first-party
+    # target under Clang's UBSan, float-cast-overflow included, the first
+    # report fatal (cmake/StratumSanitize.cmake). Unit only: the conformance
+    # suite under it is about twice its Debug time, past this workflow's
+    # budget; it runs locally as `ctest --preset sanitize-conformance`.
+    # Measured on an x86-64 dev box: the build in about a minute at six jobs,
+    # the 559 unit cases in about ten seconds at four (38 s of test time).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clang and its UBSan runtime
+        # Ubuntu ships the sanitizer runtime as a package of its own; this is
+        # a no-op where the image already holds it. Pinned to one major, the
+        # one the configure step names.
+        run: sudo apt-get update && sudo apt-get install -y clang-18 libclang-rt-18-dev
+
+      - name: Configure
+        run: cmake --preset sanitize -DCMAKE_CXX_COMPILER=clang++-18
+
+      - name: Build
+        run: cmake --build --preset sanitize --parallel 4
+
+      - name: Unit suite under UBSan
+        run: ctest --preset sanitize --parallel 4
+
   probes:
     name: probe worlds (${{ matrix.shard }})
     # SPEC §7, §12. Generates the probe worlds and region goldens the
