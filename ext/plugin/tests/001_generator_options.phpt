@@ -42,6 +42,16 @@ namespace {
 	// A pairing vanilla does not make is the caller's to ask for, and is
 	// taken as asked: a datapack may pair settings with any source.
 	var_dump(GeneratorOptions::validate(GeneratorOptions::encode($blob, "minecraft:end", "minecraft:overworld")));
+	// encode() takes the pair together too: half of it is refused here, as
+	// parse() refuses it, rather than defaulted to the overworld's half.
+	foreach([["minecraft:end", null], [null, "minecraft:the_end"]] as [$settings, $biomes]){
+		try{
+			GeneratorOptions::encode($blob, $settings, $biomes);
+			echo "encode accepted half a pair\n";
+		}catch(\InvalidArgumentException $e){
+			echo "encode refused: ", $e->getMessage(), "\n";
+		}
+	}
 
 	// Every refusal names what is wrong: these messages are what a server
 	// operator sees when a world will not load.
@@ -90,6 +100,8 @@ string(13) "minecraft:end"
 string(17) "minecraft:the_end"
 string(7) "the_end"
 NULL
+encode refused: GeneratorOptions::encode() was given noise settings (minecraft:end) without the biome source to go with them
+encode refused: GeneratorOptions::encode() was given a biome source (minecraft:the_end) without the noise settings to go with it
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum needs a frozen pipeline to generate from.%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options are not a JSON object%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options have no "blob" path to a frozen pipeline:%s
