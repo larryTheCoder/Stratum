@@ -64,10 +64,11 @@ const data::ResourceLocation& EndRule::outer(const double erosion) {
     // The ORDER is this build's own choice, not cubiomes' (whose order
     // would send a NaN to small islands) and not measured: every
     // comparison is false for a NaN, so one falls through all three to
-    // barrens — the biome cubiomes gives its overflow rings, by a separate
-    // check (biomenoise.c, mapEndBiome). The edges themselves are the
-    // server's, to 1e-10 either side (end-biome-router-probe.sh): 0.25 is
-    // midlands, -0.0625 midlands, -0.21875 barrens.
+    // barrens — the biome cubiomes gives its overflow rings, where the same
+    // ring test makes its End density column NaN (biomenoise.c,
+    // mapEndBiome and sampleNoiseColumnEnd). The edges themselves are the
+    // server's, held to within 1e-10 of each (end-biome-router-probe.sh):
+    // 0.25 is midlands, -0.0625 midlands, -0.21875 barrens.
     if (erosion > kHighlandsAbove) {
         return endHighlands();
     }

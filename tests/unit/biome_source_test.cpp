@@ -259,9 +259,9 @@ TEST_CASE("the End's erosion edges are the server's, in double", "[biome][end]")
     }
     // NOT MEASURED, and this build's own choice: nothing on disk makes a
     // NaN. Testing small islands before the barrens fall-through sends one
-    // to end_barrens, where cubiomes' separate overflow check puts its outer
-    // rings; cubiomes' own order of these tests would send it to
-    // small_end_islands.
+    // to end_barrens, the biome cubiomes gives its outer rings, by the same
+    // overflow test that makes its End density column NaN there; cubiomes'
+    // own order of these tests would send it to small_end_islands.
     CHECK(EndRule::outer(std::numeric_limits<double>::quiet_NaN()).toString() ==
           "minecraft:end_barrens");
     CHECK(EndRule::outer(std::numeric_limits<double>::infinity()).toString() ==
