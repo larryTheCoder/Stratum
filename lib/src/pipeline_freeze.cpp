@@ -326,6 +326,12 @@ void writeSettings(Writer& out,
         for (std::uint32_t k = 0; k < amplitudes; ++k) {
             parameters.amplitudes.push_back(in.f64());
         }
+        // The bounds a pack's noise is held to, held of a blob's (SPEC §8).
+        try {
+            parameters.check("stored noise '" + id.toString() + "'");
+        } catch (const density::NoiseError& error) {
+            in.fail(error.what());
+        }
         noises.emplace(id, std::move(parameters));
     }
     return noises;
@@ -368,6 +374,11 @@ void writeSettings(Writer& out,
                 inlineNoise.amplitudes.reserve(amplitudes);
                 for (std::uint32_t k = 0; k < amplitudes; ++k) {
                     inlineNoise.amplitudes.push_back(in.f64());
+                }
+                try {
+                    inlineNoise.check("node " + std::to_string(i) + "'s inline noise");
+                } catch (const density::NoiseError& error) {
+                    in.fail(error.what());
                 }
                 node.inlineNoise = std::move(inlineNoise);
                 break;
@@ -470,6 +481,15 @@ void writeSettings(Writer& out,
         one.geometry.height = in.i32();
         one.geometry.sizeHorizontal = in.i32();
         one.geometry.sizeVertical = in.i32();
+        // What the settings loader holds a pack's geometry to, held of a
+        // blob's (SPEC §8): unchecked, a resealed blob's min_y or cell size
+        // overflowed maxY() and the cell arithmetic.
+        try {
+            settings::checkGeometry(one.geometry,
+                                    "stored noise settings '" + one.id.toString() + "': \"noise\"");
+        } catch (const settings::SettingsError& error) {
+            in.fail(error.what());
+        }
         for (density::NodeIndex& entry : one.router.entries) {
             entry = in.u32();
         }

@@ -514,6 +514,12 @@ ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
 }
 
 void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const {
+    if (!density::chunkInDomain(chunkX, chunkZ)) {
+        throw FillError("chunk (" + std::to_string(chunkX) + ", " + std::to_string(chunkZ) +
+                        ") is outside the ±" + std::to_string(density::kMaxChunkCoordinate) +
+                        " chunks whose block arithmetic stays in 32 bits; this build refuses "
+                        "it (SPEC §8)");
+    }
     const settings::NoiseGeometry& geometry = settings_->geometry;
     if (into.minY() != geometry.minY || into.height() != geometry.height) {
         throw FillError("this buffer is " + std::to_string(into.height()) + " blocks from " +
@@ -877,6 +883,18 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
         pslCorners = {pslSample(0, 0), pslSample(kPreliminarySurfacePitch, 0),
                       pslSample(0, kPreliminarySurfacePitch),
                       pslSample(kPreliminarySurfacePitch, kPreliminarySurfacePitch)};
+        // preliminarySurfaceIn's precondition, refused by name where it does
+        // not hold: a router's `preliminary_surface_level` is any function,
+        // and a floor that is not an int32 has no defined conversion (SPEC §8).
+        for (const double corner : pslCorners) {
+            const double floored = std::floor(corner);
+            if (std::isnan(floored) || floored < -2147483648.0 || floored > 2147483647.0) {
+                throw FillError("chunk (" + std::to_string(chunkX) + ", " + std::to_string(chunkZ) +
+                                ") reads preliminary_surface_level " + std::to_string(corner) +
+                                " at a lattice corner, whose floor is not a 32-bit integer; this "
+                                "build refuses it (SPEC §8)");
+            }
+        }
     }
 
     // Cached across the WHOLE chunk, not just down one column: a chunk is

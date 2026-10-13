@@ -136,7 +136,10 @@ public:
     [[nodiscard]] const settings::NoiseGeometry& geometry() const noexcept;
 
     /// The Java block states of chunk (@p chunkX, @p chunkZ). @p into must
-    /// have been built for `geometry()`.
+    /// have been built for `geometry()`. A chunk outside
+    /// density::kMaxChunkCoordinate, or one whose reads carry a noise past
+    /// its 32-bit lattice (vanilla's `jagged` does, about 2 812 333 blocks
+    /// out), is refused by name rather than generated (SPEC §8).
     void fillBlocks(std::int32_t chunkX, std::int32_t chunkZ, terrain::ChunkBuffer& into) const;
 
     /// The Java biome of every quart of the chunk over the dimension's noise
@@ -160,7 +163,9 @@ public:
     /// above and below the noise height as at it — which over the End's
     /// upper half is what the server stores, quart for quart
     /// (tests/conformance/vanilla_end_biome_source_test.cpp). Throws
-    /// DimensionError if @p into is not a whole number of layers.
+    /// DimensionError if @p into is not a whole number of layers, and
+    /// std::out_of_range for a chunk or layers outside the 32-bit domain
+    /// (biome::Source::fillChunk; SPEC §8).
     void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                     std::span<const data::ResourceLocation*> into) const;
 

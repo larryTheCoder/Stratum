@@ -301,7 +301,13 @@ struct BarrierAt {
 /// pair of fluids and the `/2.5` lid above them live. The guard that once
 /// refused a pair reading the same thing is gone: the server refutes it
 /// (this file's own header). Each of those is measured separately.
-[[nodiscard]] bool placesBarrier(const BarrierAt& at) noexcept;
+///
+/// Throws std::overflow_error, naming both levels, for a pair whose levels
+/// are more than 2^31 apart — reachable only through a datapack's
+/// `fluid_level_spread` in the hundreds of millions, where Π's `|L_A - L_B|`
+/// is no 32-bit integer and what the server computes is unmeasured
+/// (SPEC §8).
+[[nodiscard]] bool placesBarrier(const BarrierAt& at);
 
 /// The `barrier` router value at one block, read on first use and at most
 /// once. The predicate weighs that value in one place only — Π's level

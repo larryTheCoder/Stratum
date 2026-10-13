@@ -29,9 +29,13 @@
 #include <stratum/aquifer/lattice.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 
 using stratum::aquifer::BarrierAt;
 using stratum::aquifer::BarrierSource;
@@ -552,4 +556,28 @@ TEST_CASE("the barrier value read on demand decides every block as the stored on
     CHECK(placed > 0);
     CHECK(read > 0);
     CHECK(read < blocks / 2);
+}
+
+TEST_CASE("a pair of levels further apart than an int holds is refused, not wrapped",
+          "[aquifer][ub]") {
+    // Q6.4's |L_A - L_B| was a 32-bit subtraction. Levels that far apart need
+    // a datapack's fluid_level_spread in the hundreds of millions, which
+    // spreadOffset saturates to the int range — and then the subtraction
+    // overflowed (SPEC §8). Formed exactly now, and refused past int32.
+    constexpr std::int32_t kHighest = std::numeric_limits<std::int32_t>::max();
+    constexpr std::int32_t kLowest = std::numeric_limits<std::int32_t>::min();
+    BarrierAt at;
+    at.y = 0;
+    at.density = -1.0;
+    at.third = BarrierSource{.level = 0, .distanceSq = kInertDistanceSq};
+
+    at.nearest = BarrierSource{.level = kHighest, .distanceSq = 0};
+    at.second = BarrierSource{.level = kLowest, .distanceSq = 0};
+    CHECK_THROWS_WITH(placesBarrier(at), Catch::Matchers::ContainsSubstring("2147483647") &&
+                                             Catch::Matchers::ContainsSubstring("-2147483648"));
+    at.second.level = -1;
+    CHECK_THROWS_AS(placesBarrier(at), std::overflow_error);
+    // Exactly INT32_MAX apart is still an int, and the formula runs.
+    at.second.level = 0;
+    CHECK_NOTHROW(placesBarrier(at));
 }

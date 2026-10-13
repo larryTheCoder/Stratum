@@ -46,6 +46,14 @@ struct NoiseParameters {
     [[nodiscard]] static NoiseParameters fromInline(const nlohmann::json& json,
                                                     std::string_view where);
 
+    /// The bounds both parsers hold a noise to — `firstOctave` in
+    /// [-64, 64], between 1 and 64 amplitudes — as one check, so that a
+    /// frozen pipeline's noises are held to them too (freeze::read): a
+    /// resealed blob with a `firstOctave` of 2^31 - 1 overflowed the octave
+    /// name `octave_<firstOctave + i>` (SPEC §8). Throws NoiseError, with
+    /// @p subject leading the message.
+    void check(std::string_view subject) const;
+
     /// Written out rather than defaulted so that the amplitude comparison
     /// happens inside <vector> — the project builds with -Wfloat-equal, and
     /// this is a comparison of two declarations rather than of two computed

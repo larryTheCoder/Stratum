@@ -247,6 +247,11 @@ public:
     /// column top to bottom and bottom to top — for the stone-depth runs and
     /// the latched water height `surface::Context` needs — and asks the
     /// compiled `surface::Executor` what replaces what it just placed.
+    ///
+    /// Throws FillError for a chunk outside density::kMaxChunkCoordinate, or
+    /// one whose `preliminary_surface_level` corners floor to no int32; what
+    /// the interpreter, the executor and the aquifer refuse on the way
+    /// propagates as they raise it (SPEC §8).
     void fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const;
 
     [[nodiscard]] const settings::NoiseSettings& settings() const noexcept { return *settings_; }
@@ -305,6 +310,10 @@ public:
     /// four corners 21103. On vanilla's own router the difference is
     /// invisible — `find_top_surface` returns whole multiples of its cell
     /// height — so this is a data-pack-only distinction, and it is measured.
+    ///
+    /// PRECONDITION: each corner's floor is an int32 (NaN excluded); the blend
+    /// of four such integers is then one too. fill() refuses a chunk whose
+    /// corners are not, by name.
     [[nodiscard]] static std::int32_t preliminarySurfaceIn(const std::array<double, 4>& corners,
                                                            std::int32_t offsetX,
                                                            std::int32_t offsetZ) noexcept {

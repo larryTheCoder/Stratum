@@ -914,6 +914,28 @@ TEST_CASE("the fill rule is density, then sea level, then air", "[terrain][fille
     CHECK(buffer.paletteSize() == 3U);
 }
 
+TEST_CASE("a chunk whose block arithmetic leaves int32 is refused by name",
+          "[terrain][filler][ub]") {
+    // 16 * chunk plus the reads past a chunk's edge are formed in int32;
+    // chunk 134217727's flat_cache window, 2147483632 + 19, used to overflow
+    // (SPEC §8). The domain keeps a margin of more than a hundred blocks.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const ChunkFiller filler = compileFrom(tree, loaded);
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+
+    constexpr std::int32_t kEdge = stratum::density::kMaxChunkCoordinate;
+    CHECK(kEdge == (1 << 27) - 8);
+    CHECK_NOTHROW(filler.fill(kEdge, -kEdge, buffer));
+    CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
+    CHECK_THROWS_WITH(filler.fill(kEdge + 1, 0, buffer),
+                      ContainsSubstring("chunk (134217721, 0)") && ContainsSubstring("32 bits"));
+    CHECK_THROWS_WITH(filler.fill(0, -kEdge - 1, buffer), ContainsSubstring("(0, -134217721)"));
+    CHECK_THROWS(filler.fill(std::numeric_limits<std::int32_t>::max(), 0, buffer));
+}
+
 TEST_CASE("a buffer refuses positions outside the chunk or the dimension", "[terrain][filler]") {
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));

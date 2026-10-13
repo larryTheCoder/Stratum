@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
 
 namespace stratum::biome {
 
@@ -124,6 +127,27 @@ void Source::fillChunk(const density::Interpreter& interpreter, const settings::
                        const std::int32_t minQuartY, std::span<const data::ResourceLocation*> into,
                        density::Interpreter::CornerCache& cache) const {
     const std::size_t layers = into.size() / kQuartsPerLayer;
+    // The chunk's and the layers' block coordinates are formed in int32
+    // below; outside these they are not int32s at all (SPEC §8). The layers
+    // keep a margin of 1024 blocks for the reads a cell lattice makes above
+    // its sample.
+    if (!density::chunkInDomain(chunkX, chunkZ)) {
+        throw std::out_of_range("chunk (" + std::to_string(chunkX) + ", " + std::to_string(chunkZ) +
+                                ") is outside the ±" +
+                                std::to_string(density::kMaxChunkCoordinate) +
+                                " chunks whose block arithmetic stays in 32 bits; this build "
+                                "refuses its biomes (SPEC §8)");
+    }
+    constexpr std::int64_t kLayerReach = std::int64_t{1} << 31;
+    const std::int64_t lowestY = std::int64_t{minQuartY} * kQuartWidth;
+    const std::int64_t highestY =
+        (std::int64_t{minQuartY} + static_cast<std::int64_t>(layers)) * kQuartWidth;
+    if (lowestY < -kLayerReach + 1024 || highestY > kLayerReach - 1024) {
+        throw std::out_of_range("quart layers from " + std::to_string(minQuartY) + " (" +
+                                std::to_string(layers) +
+                                " of them) reach block y outside the 32-bit range; this build "
+                                "refuses them (SPEC §8)");
+    }
     if (type_ == Type::TheEnd) {
         fillEndChunk(interpreter, router, chunkX, chunkZ, minQuartY,
                      into.first(layers * kQuartsPerLayer), cache);

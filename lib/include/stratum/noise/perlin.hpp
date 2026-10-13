@@ -26,6 +26,7 @@
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <utility>
@@ -51,6 +52,15 @@ public:
     PerlinNoise(double originX, double originY, double originZ,
                 std::array<std::uint8_t, 256> permutation) noexcept;
 
+    /// PRECONDITION: each of `floor(x + originX())`, `floor(y + originY())`
+    /// and `floor(z + originZ())` lies in the int32 range, NaN excluded. The
+    /// lattice cell is converted to int32 before it is masked to a byte, and
+    /// outside that range the conversion is undefined behaviour — on x86-64
+    /// it yields INT32_MIN, so lattice byte 0, and on ARM64 it saturates, so
+    /// the two architectures would build different worlds (SPEC §5.7). Asserted
+    /// in debug builds; every caller that takes its coordinate from a pack or
+    /// a far chunk checks it first (NormalNoise::accepts) or bounds it
+    /// (BlendedNoise's wrap).
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
     /// The variant that folds the y coordinate back onto a slab, used where
@@ -60,6 +70,12 @@ public:
 
     /// 2D simplex noise over the same permutation, which is what the End's
     /// island noise samples.
+    ///
+    /// PRECONDITION: |x| and |y| below 2^30, so the skewed cell and the sums
+    /// of cell and row indices built from it stay in int32. Both callers hold
+    /// it by construction: the End's island field samples block / 16 and the
+    /// freezing test block / 8, and an int32 block coordinate is under 2^31.
+    /// Asserted in debug builds.
     [[nodiscard]] double sampleSimplex2D(double x, double y) const noexcept;
 
     [[nodiscard]] double originX() const noexcept { return originX_; }
@@ -114,9 +130,14 @@ public:
     [[nodiscard]] static OctaveNoise createLegacy(rng::JavaRandom& random, int firstOctave,
                                                   int octaveCount);
 
+    /// PRECONDITION: every octave's lattice cell stays in int32 — see
+    /// PerlinNoise::sample. NormalNoise::accepts is the checked form.
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
     [[nodiscard]] std::size_t octaveCount() const noexcept { return octaves_.size(); }
+
+    /// The highest frequency among the octaves, 0 for an empty stack.
+    [[nodiscard]] double maxFrequency() const noexcept;
 
 private:
     struct Octave {
@@ -152,17 +173,39 @@ public:
     /// (SPEC §11).
     [[nodiscard]] static NormalNoise zero();
 
+    /// PRECONDITION: accepts(x, y, z). Asserted in debug builds.
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
     [[nodiscard]] double valueFactor() const noexcept { return valueFactor_; }
 
+    /// The largest |coordinate|, on any axis, that sample() is defined for:
+    /// past it, the highest-frequency octave's lattice cell —
+    /// `floor(coordinate * frequency + origin)`, the second stack at 337/331
+    /// of the frequency — leaves int32, which PerlinNoise::sample cannot
+    /// convert (SPEC §5.7). Infinite for a noise with no octaves.
+    ///
+    /// Reached by vanilla's own data, not only a datapack's: the overworld's
+    /// `noise minecraft:jagged` at `xz_scale` 1500 (its top octave at
+    /// frequency 1/2) passes it at |x| or |z| of about 2 812 300 blocks, well
+    /// inside the world border. Conservative by 512 lattice units, which is
+    /// under a block at that scale.
+    [[nodiscard]] double inputLimit() const noexcept { return inputLimit_; }
+
+    /// Whether sample() is defined at (x, y, z): every axis within
+    /// inputLimit(), and none NaN. Callers that take coordinates from a pack
+    /// or from a far chunk check this and refuse by name when it is false.
+    [[nodiscard]] bool accepts(double x, double y, double z) const noexcept {
+        return std::fabs(x) <= inputLimit_ && std::fabs(y) <= inputLimit_ &&
+               std::fabs(z) <= inputLimit_;
+    }
+
 private:
-    NormalNoise(OctaveNoise first, OctaveNoise second, double valueFactor)
-        : first_(std::move(first)), second_(std::move(second)), valueFactor_(valueFactor) {}
+    NormalNoise(OctaveNoise first, OctaveNoise second, double valueFactor);
 
     OctaveNoise first_;
     OctaveNoise second_;
     double valueFactor_ = 1.0;
+    double inputLimit_ = 0.0;
 };
 
 } // namespace stratum::noise

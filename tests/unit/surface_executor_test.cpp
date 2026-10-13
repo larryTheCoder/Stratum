@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -710,4 +711,224 @@ TEST_CASE("clayBandAt refuses a tree that never named bandlands", "[surface][ban
                                               {"result_state", {{"Name", "minecraft:stone"}}}});
     const Executor executor = Executor::compile(graph, kSeed, overworldGeometry());
     CHECK_THROWS_WITH(executor.clayBandAt(0), ContainsSubstring("bandlands"));
+}
+
+// --- inputs that would reach undefined behaviour (SPEC §8) -----------------
+//
+// The rules' arithmetic is 32-bit, and every int the schema allows is an
+// int: an anchor, an offset or a sea level near 2^31 overflowed it, and a
+// datapack's noise amplitudes put a surface depth past any int. Each is now
+// refused by name — at compile where it is a constant, at the block where it
+// is not — and the in-range neighbour still runs.
+
+namespace {
+
+/// A worldgen tree holding exactly the noises a case writes, each in the
+/// `minecraft` namespace under the path it is given.
+class NoiseTree {
+public:
+    NoiseTree(std::initializer_list<std::pair<std::string_view, std::string_view>> noises)
+        : path_(std::filesystem::temp_directory_path() /
+                stratum::test::tempName("stratum-surface-ub-test")) {
+        const std::filesystem::path noiseDir = path_ / "noise";
+        std::filesystem::create_directories(noiseDir);
+        for (const auto& [name, json] : noises) {
+            std::ofstream out(noiseDir / (std::string(name) + ".json"));
+            out << json;
+            names_.push_back(stratum::data::ResourceLocation::parse(std::string(name)));
+        }
+    }
+
+    NoiseTree(const NoiseTree&) = delete;
+    NoiseTree& operator=(const NoiseTree&) = delete;
+    NoiseTree(NoiseTree&&) = delete;
+    NoiseTree& operator=(NoiseTree&&) = delete;
+
+    ~NoiseTree() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    [[nodiscard]] stratum::density::NoiseRegistry registry() const {
+        return stratum::density::NoiseRegistry::create(stratum::data::Pack::openWorldgenTree(path_),
+                                                       names_, kSeed,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    }
+
+private:
+    std::filesystem::path path_;
+    std::vector<stratum::data::ResourceLocation> names_;
+};
+
+constexpr std::string_view kTameSurface = R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})";
+constexpr std::string_view kTameSecondary =
+    R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})";
+constexpr std::string_view kHugeAmplitude = R"({"firstOctave": -6, "amplitudes": [1e12]})";
+
+[[nodiscard]] nlohmann::json when(const nlohmann::json& condition) {
+    return nlohmann::json{{"type", "minecraft:condition"},
+                          {"if_true", condition},
+                          {"then_run", block("minecraft:stone")}};
+}
+
+/// A column whose surface depth (seed 42, the tame surface noise) is at least
+/// one, so that adding it to INT32_MAX overflows.
+constexpr std::int32_t kDeepColumn = 0;
+
+} // namespace
+
+TEST_CASE("an anchor whose y is not a 32-bit integer is refused at compile", "[surface][ub]") {
+    // `below_top: -2147483648` puts the y at (top block) + 2^31.
+    const RuleGraph below =
+        resolve(when(nlohmann::json{{"type", "minecraft:y_above"},
+                                    {"anchor", {{"below_top", -2147483647 - 1}}},
+                                    {"surface_depth_multiplier", 0},
+                                    {"add_stone_depth", false}}));
+    CHECK_THROWS_WITH(Executor::compile(below, kSeed, overworldGeometry()),
+                      ContainsSubstring("'minecraft:y_above' condition's anchor") &&
+                          ContainsSubstring("32-bit"));
+    const RuleGraph above = resolve(when(gradient("stratum:g", 0, 0)));
+    CHECK_NOTHROW(Executor::compile(above, kSeed, overworldGeometry()));
+    nlohmann::json far = gradient("stratum:g", 0, 0);
+    // `above_bottom: -2147483648` puts it at min_y - 2^31.
+    far["false_at_and_above"] = {{"above_bottom", -2147483647 - 1}};
+    const RuleGraph farGraph = resolve(when(far));
+    CHECK_THROWS_WITH(Executor::compile(farGraph, kSeed, overworldGeometry()),
+                      ContainsSubstring("false_at_and_above (-2147483648)"));
+    // The largest absolute anchor is an int32 as written.
+    const RuleGraph absolute = resolve(when(nlohmann::json{{"type", "minecraft:y_above"},
+                                                           {"anchor", {{"absolute", 2147483647}}},
+                                                           {"surface_depth_multiplier", 0},
+                                                           {"add_stone_depth", false}}));
+    const Executor executor = Executor::compile(absolute, kSeed, overworldGeometry());
+    CHECK(executor.apply(at(0, 64, 0)) == nullptr);
+}
+
+TEST_CASE("a temperature condition refuses a sea level it cannot measure from", "[surface][ub]") {
+    // The freezing test's height runs from sea_level + 17.
+    const RuleGraph graph = resolve(when(nlohmann::json{{"type", "minecraft:temperature"}}));
+    constexpr std::int32_t kHighest = std::numeric_limits<std::int32_t>::max();
+    CHECK_THROWS_WITH(Executor::compile(graph, kSeed, overworldGeometry(), nullptr, kHighest),
+                      ContainsSubstring("sea_level 2147483647"));
+    CHECK_NOTHROW(Executor::compile(graph, kSeed, overworldGeometry(), nullptr, kHighest - 17));
+    // A tree without one takes the same sea level: nothing adds to it.
+    const RuleGraph plain = resolve(block("minecraft:stone"));
+    CHECK_NOTHROW(Executor::compile(plain, kSeed, overworldGeometry(), nullptr, kHighest));
+}
+
+TEST_CASE("the conditions refuse 32-bit arithmetic that would overflow", "[surface][ub]") {
+    const NoiseTree tree{{"surface", kTameSurface}, {"surface_secondary", kTameSecondary}};
+    const auto noises = tree.registry();
+    const auto geometry = overworldGeometry();
+    constexpr std::int32_t kHighest = std::numeric_limits<std::int32_t>::max();
+
+    const RuleGraph yAbove = resolve(when(nlohmann::json{{"type", "minecraft:y_above"},
+                                                         {"anchor", {{"absolute", kHighest}}},
+                                                         {"surface_depth_multiplier", 1},
+                                                         {"add_stone_depth", false}}));
+    const Executor yAboveExecutor = Executor::compile(yAbove, kSeed, geometry, &noises);
+    REQUIRE(yAboveExecutor.surfaceDepth(kDeepColumn, 0) >= 1);
+    CHECK_THROWS_WITH(yAboveExecutor.apply(at(kDeepColumn, 64, 0)),
+                      ContainsSubstring("y_above's anchor plus") && ContainsSubstring("32-bit"));
+
+    const RuleGraph water = resolve(when(nlohmann::json{{"type", "minecraft:water"},
+                                                        {"offset", kHighest},
+                                                        {"surface_depth_multiplier", 0},
+                                                        {"add_stone_depth", false}}));
+    const Executor waterExecutor = Executor::compile(water, kSeed, geometry, &noises);
+    Context wet = at(0, 10, 0);
+    wet.waterHeight = 63;
+    CHECK_THROWS_WITH(waterExecutor.apply(wet),
+                      ContainsSubstring("water's water height plus its offset"));
+    wet.waterHeight = 0;
+    CHECK(waterExecutor.apply(wet) == nullptr);
+
+    const RuleGraph stone = resolve(when(nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                        {"offset", kHighest},
+                                                        {"surface_type", "floor"},
+                                                        {"add_surface_depth", true},
+                                                        {"secondary_depth_range", 0}}));
+    const Executor stoneExecutor = Executor::compile(stone, kSeed, geometry, &noises);
+    CHECK_THROWS_WITH(stoneExecutor.apply(at(kDeepColumn, 64, 0)),
+                      ContainsSubstring("stone_depth's offset plus the surface depth"));
+
+    const RuleGraph aps =
+        resolve(when(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}}));
+    const Executor apsExecutor = Executor::compile(aps, kSeed, geometry, &noises);
+    CHECK_THROWS_WITH(apsExecutor.apply(at(kDeepColumn, 64, 0, kHighest)),
+                      ContainsSubstring("the preliminary surface plus the surface depth"));
+    CHECK_NOTHROW(apsExecutor.apply(at(kDeepColumn, 64, 0, 63)));
+}
+
+TEST_CASE("a surface depth no int holds is refused, not converted", "[surface][ub]") {
+    // A datapack may give `minecraft:surface` any amplitudes; at 1e12 the
+    // depth's raw value is far past int32, where the truncating conversion is
+    // undefined.
+    const NoiseTree tree{{"surface", kHugeAmplitude}, {"surface_secondary", kHugeAmplitude}};
+    const auto noises = tree.registry();
+    const RuleGraph hole = resolve(when(nlohmann::json{{"type", "minecraft:hole"}}));
+    const Executor executor = Executor::compile(hole, kSeed, overworldGeometry(), &noises);
+    bool refused = false;
+    for (std::int32_t x = 0; x < 64 && !refused; ++x) {
+        const double raw = executor.surfaceDepthRaw(x, 0);
+        if (raw > 2147483648.0 || raw < -2147483649.0) {
+            CHECK_THROWS_WITH(executor.surfaceDepth(x, 0),
+                              ContainsSubstring("the surface depth (minecraft:surface)") &&
+                                  ContainsSubstring("no 32-bit integer"));
+            refused = true;
+        }
+    }
+    CHECK(refused);
+
+    // The secondary depth, likewise.
+    const RuleGraph secondary = resolve(when(nlohmann::json{{"type", "minecraft:stone_depth"},
+                                                            {"offset", 0},
+                                                            {"surface_type", "floor"},
+                                                            {"add_surface_depth", false},
+                                                            {"secondary_depth_range", 30}}));
+    const Executor secondaryExecutor =
+        Executor::compile(secondary, kSeed, overworldGeometry(), &noises);
+    bool secondaryRefused = false;
+    for (std::int32_t x = 0; x < 64 && !secondaryRefused; ++x) {
+        try {
+            static_cast<void>(secondaryExecutor.apply(at(x, 64, 0)));
+        } catch (const ExecutionError& error) {
+            CHECK_THAT(error.what(), ContainsSubstring("minecraft:surface_secondary"));
+            secondaryRefused = true;
+        }
+    }
+    CHECK(secondaryRefused);
+}
+
+TEST_CASE("bandlands refuses an offset no int holds", "[surface][bandlands][ub]") {
+    const NoiseTree tree{{"clay_bands_offset", kHugeAmplitude}};
+    const auto noises = tree.registry();
+    const RuleGraph graph = resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry(), &noises, 63);
+    bool refused = false;
+    for (std::int32_t x = 0; x < 64 && !refused; ++x) {
+        try {
+            static_cast<void>(executor.bandlandsAt(x, 64, 0));
+        } catch (const ExecutionError& error) {
+            CHECK_THAT(error.what(), ContainsSubstring("minecraft:clay_bands_offset"));
+            refused = true;
+        }
+    }
+    CHECK(refused);
+}
+
+TEST_CASE("a noise_threshold refuses a noise past its 32-bit lattice", "[surface][ub]") {
+    // firstOctave 64 is inside the loader's bound; at frequency 2^64 no
+    // column but the origin's has a lattice cell an int32 holds.
+    const NoiseTree tree{{"steep", R"({"firstOctave": 64, "amplitudes": [1.0]})"}};
+    const auto noises = tree.registry();
+    const RuleGraph graph = resolve(when(nlohmann::json{{"type", "minecraft:noise_threshold"},
+                                                        {"noise", "minecraft:steep"},
+                                                        {"min_threshold", -10.0},
+                                                        {"max_threshold", 10.0}}));
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry(), &noises);
+    CHECK_NOTHROW(executor.apply(at(0, 64, 0)));
+    CHECK_THROWS_WITH(
+        executor.apply(at(1, 64, 0)),
+        ContainsSubstring("noise 'minecraft:steep' cannot be sampled at column (1, 0)"));
 }

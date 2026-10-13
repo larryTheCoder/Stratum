@@ -79,10 +79,31 @@ constexpr std::size_t kMaxAmplitudes = 64;
         }
         parsed.amplitudes.push_back(amplitude.get<double>());
     }
+    // The one check the blob reader runs too; the int64 range test above
+    // stays, since it has to happen before the narrowing.
+    parsed.check(subject);
     return parsed;
 }
 
 } // namespace
+
+void NoiseParameters::check(const std::string_view subject) const {
+    const auto fail = [subject](const std::string& what) {
+        throw NoiseError(std::string(subject) + ": " + what);
+    };
+    if (firstOctave < kMinFirstOctave || firstOctave > kMaxFirstOctave) {
+        fail(R"("firstOctave" is )" + std::to_string(firstOctave) +
+             ", outside the supported range [" + std::to_string(kMinFirstOctave) + ", " +
+             std::to_string(kMaxFirstOctave) + "]");
+    }
+    if (amplitudes.empty()) {
+        fail(R"("amplitudes" is empty; a noise with no octaves samples to nothing)");
+    }
+    if (amplitudes.size() > kMaxAmplitudes) {
+        fail(R"("amplitudes" has )" + std::to_string(amplitudes.size()) + " entries, more than " +
+             std::to_string(kMaxAmplitudes));
+    }
+}
 
 NoiseParameters NoiseParameters::fromJson(const nlohmann::json& json,
                                           const data::ResourceLocation& id) {

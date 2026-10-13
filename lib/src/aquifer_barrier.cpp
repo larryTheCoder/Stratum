@@ -3,7 +3,10 @@
 #include <stratum/aquifer/barrier.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace stratum::aquifer {
 
@@ -41,11 +44,24 @@ namespace {
 /// so it is read there and nowhere else (`BarrierNoise`).
 double levelPressure(const std::int32_t levelA, const std::int32_t levelB, const std::int32_t y,
                      BarrierNoise& barrierNoise) {
-    const std::int32_t deltaInt = levelA < levelB ? levelB - levelA : levelA - levelB;
-    if (deltaInt == 0) {
+    // Q6.4's `|L_A - L_B|`, formed exactly and refused where it is not an
+    // int32 (SPEC §8). Levels that far apart need a datapack's
+    // `fluid_level_spread` in the hundreds of millions — spreadOffset
+    // saturates it to the int range — and a 32-bit subtraction would then
+    // overflow; what the server computes there is unmeasured.
+    const std::int64_t deltaWide =
+        levelA < levelB ? std::int64_t{levelB} - levelA : std::int64_t{levelA} - levelB;
+    if (deltaWide > std::numeric_limits<std::int32_t>::max()) {
+        throw std::overflow_error(
+            "two aquifer fluid levels, " + std::to_string(levelA) + " and " +
+            std::to_string(levelB) +
+            ", are further apart than a 32-bit integer holds (a fluid_level_spread in the "
+            "hundreds of millions); this build refuses the barrier between them (SPEC §8)");
+    }
+    if (deltaWide == 0) {
         return 0.0;
     }
-    const auto delta = static_cast<double>(deltaInt);
+    const auto delta = static_cast<double>(deltaWide);
     const double m = (static_cast<double>(levelA) + static_cast<double>(levelB)) / 2.0;
     const double h = static_cast<double>(y) + 0.5 - m;
     const double r = delta / 2.0;
@@ -142,7 +158,7 @@ bool placesBarrierWith(const BarrierAt& at, BarrierNoise& barrierNoise) {
 
 } // namespace
 
-bool placesBarrier(const BarrierAt& at) noexcept {
+bool placesBarrier(const BarrierAt& at) {
     const auto stored = [&at] { return at.barrier; };
     BarrierNoise noise(stored);
     return placesBarrierWith(at, noise);

@@ -81,6 +81,16 @@ struct NoiseGeometry {
     [[nodiscard]] bool operator==(const NoiseGeometry& other) const = default;
 };
 
+/// What a dimension's geometry must satisfy, from the schema (vanilla-mcdoc:
+/// min_y in [-2048, 2047], height in [0, 4096], size_horizontal and
+/// size_vertical in [1, 4]) and from the cell sampler (min_y and height whole
+/// sections, height whole cells). One check for both paths: the settings
+/// loader runs it on a pack's `noise`, and freeze::read on a blob's, where a
+/// resealed blob otherwise carried a min_y of 2147483632 into `maxY()`'s
+/// sum (SPEC §8). Throws SettingsError naming the field; @p subject leads
+/// the message.
+void checkGeometry(const NoiseGeometry& geometry, std::string_view subject);
+
 /// Which entry of the noise router. Generated from mcdoc, so that a rename
 /// between versions is a compile error at every use site rather than a
 /// lookup that quietly finds nothing.

@@ -15,11 +15,14 @@
 #include <stratum/noise/perlin.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -170,4 +173,29 @@ TEST_CASE("the permutation is a permutation", "[noise][perlin]") {
             seen[entry] = true;
         }
     }
+}
+
+TEST_CASE("a normal noise knows where its lattice leaves int32", "[noise][ub]") {
+    // inputLimit is (2^31 - 512) over the highest frequency either stack
+    // samples at, the second at 337/331 of the first. Vanilla's `jagged`
+    // (firstOctave -16, sixteen octaves, so a top frequency of 1/2) is the
+    // case that matters: sampled at xz_scale 1500, its lattice leaves int32
+    // at about 2 812 300 blocks, inside the world border (SPEC §8).
+    stratum::rng::Xoroshiro128PlusPlus random{stratum::rng::Seed128{.lo = 1, .hi = 2}};
+    const std::vector<double> sixteen(16, 1.0);
+    const auto jagged = stratum::noise::NormalNoise::create(random, -16, sixteen);
+    const double limit = jagged.inputLimit();
+    CHECK(limit == Catch::Approx((2147483648.0 - 512.0) / (0.5 * 337.0 / 331.0)));
+    const double lastBlock = limit / 1500.0;
+    CHECK(lastBlock > 2812300.0);
+    CHECK(lastBlock < 2812400.0);
+    CHECK(jagged.accepts(limit, -limit, 0.0));
+    CHECK_FALSE(jagged.accepts(std::nextafter(limit, 1e300), 0.0, 0.0));
+    CHECK_FALSE(jagged.accepts(0.0, std::numeric_limits<double>::quiet_NaN(), 0.0));
+    // Sampling right at the limit is defined, which is the point of it.
+    CHECK(std::isfinite(jagged.sample(limit, -limit, limit)));
+
+    // A noise with no octaves has none: `minecraft:offset` under a legacy
+    // source.
+    CHECK(std::isinf(stratum::noise::NormalNoise::zero().inputLimit()));
 }

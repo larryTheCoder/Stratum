@@ -61,7 +61,16 @@ struct VerticalAnchor {
     std::int32_t value = 0;
 
     /// The y this names in a dimension of @p geometry.
+    ///
+    /// PRECONDITION: resolvable(@p geometry). Executor::compile refuses, by
+    /// name, an anchor that is not, before anything resolves it.
     [[nodiscard]] std::int32_t resolve(const settings::NoiseGeometry& geometry) const noexcept;
+
+    /// Whether the y this names is a 32-bit integer. Every value the schema
+    /// allows is an int, and `above_bottom` adds it to min_y and `below_top`
+    /// subtracts it from the top block, so near either end of the int range
+    /// the sum is not one: `below_top: -2147483648` overflowed (SPEC §8).
+    [[nodiscard]] bool resolvable(const settings::NoiseGeometry& geometry) const noexcept;
 
     [[nodiscard]] bool operator==(const VerticalAnchor& other) const = default;
 };

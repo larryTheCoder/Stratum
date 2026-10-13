@@ -1363,10 +1363,125 @@ TEST_CASE("find_top_surface returns lower_bound when there is no surface",
 TEST_CASE("find_top_surface refuses a cell_height that would never finish",
           "[density][interpreter][surface]") {
     // Not reachable through vanilla's data, but a datapack can write it, and
-    // the alternative to an error here is a hang with no explanation.
+    // the alternative to an error here is a hang with no explanation. Refused
+    // at LOAD now, by the schema's own range (cell_height int @ 1..), where
+    // it used to be refused on the first evaluation.
     const TempTree tree;
     tree.define("zero", findTopSurface(crossingAt(100), "320.0", -64, 0));
+    CHECK_THROWS_WITH(Graph::resolveAll(tree.pack()), ContainsSubstring("minecraft:zero") &&
+                                                          ContainsSubstring("cell_height 0") &&
+                                                          ContainsSubstring("at least 1"));
+}
+
+// --- inputs that would reach undefined behaviour (SPEC §8) -----------------
+//
+// Each of these is schema-legal, or a function's legal value, and each used
+// to carry the interpreter into a conversion or an int operation C++ leaves
+// undefined (found under UBSan). Each is now refused by name — at load where
+// the input is a constant, at evaluation where it is a function's value —
+// and the case beside it shows the in-range neighbour still evaluates.
+
+TEST_CASE("find_top_surface refuses a lower_bound or cell_height outside the schema's range",
+          "[density][interpreter][surface][ub]") {
+    // vanilla-mcdoc: lower_bound int @ -4064..4062, cell_height int @ 1..
+    // A lower_bound of 3e9 was an out-of-range float-to-int conversion.
+    const TempTree tree;
+    tree.define("low", R"({"type":"minecraft:find_top_surface","density":0.0,"upper_bound":0.0,
+                           "lower_bound":3000000000,"cell_height":8})");
+    CHECK_THROWS_WITH(Graph::resolveAll(tree.pack()), ContainsSubstring("lower_bound 3000000000") &&
+                                                          ContainsSubstring("[-4064, 4062]"));
+
+    const TempTree tall;
+    tall.define("tall", R"({"type":"minecraft:find_top_surface","density":0.0,"upper_bound":0.0,
+                            "lower_bound":-64,"cell_height":3000000000})");
+    CHECK_THROWS_WITH(Graph::resolveAll(tall.pack()), ContainsSubstring("cell_height 3000000000"));
+
+    // Both ends of the schema's range load.
+    const TempTree edges;
+    edges.define("bottom", findTopSurface(crossingAt(100), "320.0", -4064, 8));
+    edges.define("top", findTopSurface(crossingAt(100), "320.0", 4062, 8));
+    const Pipeline pipeline(edges.pack(), 0);
+    CHECK(bits(pipeline.at("bottom")) == bits(96.0));
+    CHECK(bits(pipeline.at("top")) == bits(4062.0));
+}
+
+TEST_CASE("find_top_surface refuses an upper_bound whose floor is no 32-bit integer",
+          "[density][interpreter][surface][ub]") {
+    // upper_bound is a function, so this is refused where it is evaluated.
+    // mul(1e6, 1e6) is two schema-legal constants; its floor, 1e12, used to
+    // be converted to int32 regardless.
+    const TempTree tree;
+    tree.define("huge", findTopSurface(crossingAt(100), R"({"type":"minecraft:mul",
+        "argument1":1000000.0,"argument2":1000000.0})",
+                                       -64, 8));
+    // Within one cell_height of INT32_MIN the lattice point below the bound
+    // is no int32 either: floorDiv(-2147483647, 3) * 3 is -2147483649.
+    tree.define("bottom", findTopSurface(crossingAt(100), "-2147483647.0", -64, 3));
+    // The largest int32 is a fine place to start a scan from, if a slow one.
+    tree.define("ceiling", findTopSurface(crossingAt(100), "2147483647.0", -64, 1 << 30));
     const Pipeline pipeline(tree.pack(), 0);
-    CHECK_THROWS_WITH(pipeline.at("zero"),
-                      ContainsSubstring("cell_height") && ContainsSubstring("never finish"));
+    CHECK_THROWS_WITH(pipeline.at("huge"), ContainsSubstring("upper_bound 1000000000000") &&
+                                               ContainsSubstring("not a 32-bit integer"));
+    CHECK_THROWS_WITH(pipeline.at("bottom"), ContainsSubstring("-2147483649"));
+    CHECK(bits(pipeline.at("ceiling")) == bits(0.0));
+}
+
+TEST_CASE("clamp refuses a min above its max", "[density][interpreter][ub]") {
+    // std::clamp's precondition; reversed bounds were undefined behaviour,
+    // and the schema bounds each without ordering them.
+    const TempTree tree;
+    tree.define("reversed", R"({"type":"minecraft:clamp","input":0.5,"min":1.0,"max":0.0})");
+    CHECK_THROWS_WITH(Graph::resolveAll(tree.pack()), ContainsSubstring("minecraft:reversed") &&
+                                                          ContainsSubstring("min 1") &&
+                                                          ContainsSubstring("max 0"));
+
+    const TempTree equal;
+    equal.define("point", R"({"type":"minecraft:clamp","input":0.5,"min":0.25,"max":0.25})");
+    const Pipeline pipeline(equal.pack(), 0);
+    CHECK(bits(pipeline.at("point")) == bits(0.25));
+}
+
+TEST_CASE("old_blended_noise refuses a scale or factor outside the wiki's range",
+          "[density][interpreter][ub]") {
+    // minecraft.wiki: each of the four "between 0.001 and 1000.0 (both
+    // inclusive)". A factor of 0 made the blend's coordinate infinite, which
+    // reached the Perlin lattice as NaN.
+    const TempTree tree;
+    tree.define("flat", R"({"type":"minecraft:old_blended_noise","xz_scale":0.25,"y_scale":0.125,
+                            "xz_factor":0.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    CHECK_THROWS_WITH(Graph::resolveAll(tree.pack()),
+                      ContainsSubstring("xz_factor 0") && ContainsSubstring("[0.001, 1000]"));
+
+    const TempTree steep;
+    steep.define("steep", R"({"type":"minecraft:old_blended_noise","xz_scale":1e300,
+        "y_scale":0.125,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    CHECK_THROWS_WITH(Graph::resolveAll(steep.pack()),
+                      ContainsSubstring("xz_scale 1") && ContainsSubstring("e+300"));
+}
+
+TEST_CASE("a noise refuses a coordinate past its 32-bit lattice", "[density][interpreter][ub]") {
+    const TempTree tree;
+    // A top octave at frequency 1/8, so the lattice reaches about 1.7e10.
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    // A scale no schema bounds, from mcdoc's plain `float`.
+    tree.define("scaled", R"({"type":"minecraft:noise","noise":"test","xz_scale":1e10,
+                              "y_scale":0.0})");
+    // A shift is any function's value.
+    tree.define("shifted", R"({"type":"minecraft:shifted_noise","noise":"test","xz_scale":1.0,
+        "y_scale":0.0,"shift_x":{"type":"minecraft:mul","argument1":1000000.0,
+        "argument2":1000000.0},"shift_y":0.0,"shift_z":0.0})");
+    tree.define("plain", R"({"type":"minecraft:noise","noise":"test","xz_scale":1.0,
+                             "y_scale":0.0})");
+    const Pipeline pipeline(tree.pack(), 0);
+
+    // x = 0 is fine whatever the scale: 0 * 1e10 is 0.
+    CHECK_NOTHROW(pipeline.at("scaled"));
+    CHECK_THROWS_WITH(pipeline.at("scaled", Point{.x = 2, .y = 0, .z = 0}),
+                      ContainsSubstring("samples noise 'minecraft:test'") &&
+                          ContainsSubstring("for block (2, 0, 0)") && ContainsSubstring("32-bit"));
+    CHECK_THROWS_WITH(pipeline.at("shifted"), ContainsSubstring("1000000000000"));
+
+    // The block coordinate alone gets there at 1/8 only past int32, so an
+    // ordinary noise at an ordinary scale is never refused here.
+    CHECK_NOTHROW(pipeline.at("plain", Point{.x = 2147483647, .y = 0, .z = -2147483647 - 1}));
 }

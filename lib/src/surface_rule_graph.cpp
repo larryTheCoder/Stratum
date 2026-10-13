@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <optional>
 #include <span>
 #include <string>
@@ -165,17 +166,37 @@ template<typename Type, std::size_t Count>
 
 } // namespace
 
-std::int32_t VerticalAnchor::resolve(const settings::NoiseGeometry& geometry) const noexcept {
-    switch (kind) {
-        case Kind::AboveBottom:
-            return geometry.minY + value;
-        case Kind::BelowTop:
+namespace {
+
+/// The y an anchor names, exactly: 64 bits hold every combination of a
+/// 32-bit value and a schema-bounded geometry.
+[[nodiscard]] std::int64_t resolveWide(const VerticalAnchor& anchor,
+                                       const settings::NoiseGeometry& geometry) noexcept {
+    const std::int64_t value = anchor.value;
+    switch (anchor.kind) {
+        case VerticalAnchor::Kind::AboveBottom:
+            return std::int64_t{geometry.minY} + value;
+        case VerticalAnchor::Kind::BelowTop:
             // The top block is minY + height - 1, so "below_top: 0" is it.
-            return (geometry.minY + geometry.height - 1) - value;
-        case Kind::Absolute:
+            return (std::int64_t{geometry.minY} + geometry.height - 1) - value;
+        case VerticalAnchor::Kind::Absolute:
         default:
             return value;
     }
+}
+
+} // namespace
+
+std::int32_t VerticalAnchor::resolve(const settings::NoiseGeometry& geometry) const noexcept {
+    // The header's precondition: Executor::compile has refused anything else.
+    assert(resolvable(geometry));
+    return static_cast<std::int32_t>(resolveWide(*this, geometry));
+}
+
+bool VerticalAnchor::resolvable(const settings::NoiseGeometry& geometry) const noexcept {
+    const std::int64_t y = resolveWide(*this, geometry);
+    return y >= std::numeric_limits<std::int32_t>::min() &&
+           y <= std::numeric_limits<std::int32_t>::max();
 }
 
 std::string_view ruleTypeName(RuleType type) noexcept {

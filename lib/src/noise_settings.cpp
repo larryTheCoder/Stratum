@@ -231,22 +231,9 @@ private:
         }
 
         // Constraints the schema's per-field ranges cannot express, and that
-        // the cell sampler will depend on. Checked here rather than assumed
-        // there, where a remainder would silently become a half-height cell
-        // at the top of the world.
-        if (geometry.minY % 16 != 0) {
-            fail("noise", "\"min_y\" is " + std::to_string(geometry.minY) +
-                              ", which is not a whole number of sections");
-        }
-        if (geometry.height % 16 != 0) {
-            fail("noise", "\"height\" is " + std::to_string(geometry.height) +
-                              ", which is not a whole number of sections");
-        }
-        if (geometry.height % geometry.cellHeight() != 0) {
-            fail("noise", "\"height\" is " + std::to_string(geometry.height) +
-                              ", which is not a whole number of " +
-                              std::to_string(geometry.cellHeight()) + "-block cells");
-        }
+        // the cell sampler will depend on — the same check freeze::read runs
+        // on a stored geometry, so the two paths refuse the same input.
+        checkGeometry(geometry, "noise settings '" + id_.toString() + "': \"noise\"");
         return geometry;
     }
 
@@ -285,6 +272,43 @@ private:
 };
 
 } // namespace
+
+void checkGeometry(const NoiseGeometry& geometry, const std::string_view subject) {
+    const auto fail = [subject](const std::string& what) {
+        throw SettingsError(std::string(subject) + " " + what);
+    };
+    for (const GeometryField& field : kGeometryFields) {
+        std::int64_t value = geometry.sizeVertical;
+        if (field.name == "min_y") {
+            value = geometry.minY;
+        } else if (field.name == "height") {
+            value = geometry.height;
+        } else if (field.name == "size_horizontal") {
+            value = geometry.sizeHorizontal;
+        }
+        if (value < field.minimum || value > field.maximum) {
+            fail("\"" + std::string(field.name) + "\" is " + std::to_string(value) +
+                 ", outside the schema's range [" + std::to_string(field.minimum) + ", " +
+                 std::to_string(field.maximum) + "]");
+        }
+    }
+    // Checked here rather than assumed in the cell sampler, where a
+    // remainder would silently become a half-height cell at the top of the
+    // world.
+    if (geometry.minY % 16 != 0) {
+        fail("\"min_y\" is " + std::to_string(geometry.minY) +
+             ", which is not a whole number of sections");
+    }
+    if (geometry.height % 16 != 0) {
+        fail("\"height\" is " + std::to_string(geometry.height) +
+             ", which is not a whole number of sections");
+    }
+    if (geometry.height % geometry.cellHeight() != 0) {
+        fail("\"height\" is " + std::to_string(geometry.height) +
+             ", which is not a whole number of " + std::to_string(geometry.cellHeight()) +
+             "-block cells");
+    }
+}
 
 std::string_view routerEntryName(RouterEntry entry) noexcept {
     const auto index = static_cast<std::size_t>(entry);

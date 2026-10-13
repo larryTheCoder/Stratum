@@ -52,9 +52,35 @@ public:
 ///
 /// The cast through `float` before the multiply is deliberate and is the
 /// reason this is not simply `llround(value * 10000)`.
+///
+/// PRECONDITION: |@p value| <= kMaxClimateSample, NaN excluded — beyond
+/// about 9.2e14 the conversion to int64 is undefined behaviour (SPEC §5.7).
+/// Both kinds of input are held to it before they get here: a table's bounds
+/// by `ParameterList::fromEntries`, which refuses anything outside the
+/// schema's [-2, 2], and a sample by `ParameterList::find`, which refuses by
+/// name a climate reading outside ±kMaxClimateSample.
 [[nodiscard]] constexpr std::int64_t quantizeCoord(double value) noexcept {
     return static_cast<std::int64_t>(static_cast<float>(value) * 10000.0F);
 }
+
+/// The widest climate reading the search is defined for. A router entry is
+/// an arbitrary density function, so a datapack can hand the search any
+/// double — `cube(1e6)` is 1e18 — and two things break past a bound: the
+/// quantising conversion above (at about 9.2e14), and, well before it,
+/// QuantizedPoint::fitness's int64 sum of squares (one axis at about 3e5, all
+/// six at about 1.2e5). At 1e5 each distance is at most 1e9 + 2e4, the sum of
+/// six squares and the offset's under 6.1e18, inside int64 with room to spare.
+/// Vanilla's own readings stay within a few units. What the server does with
+/// a reading past this is unmeasured, so this build refuses it rather than
+/// pick a reading (SPEC §8).
+inline constexpr double kMaxClimateSample = 1.0e5;
+
+/// The schema's range for a climate bound (vanilla-mcdoc
+/// `ClimateParameter`: float @ -2..2) and for an entry's offset
+/// (`offset`: float @ 0..1). The server's own dumped tables lie well inside
+/// both: [-1.2, 1.1], offsets up to 0.375.
+inline constexpr double kClimateBoundLimit = 2.0;
+inline constexpr double kMaxClimateOffset = 1.0;
 
 /// One axis of one entry. Vanilla writes either a `[min, max]` pair or a
 /// single number, which is a range of zero width rather than a special case.
@@ -141,9 +167,14 @@ struct QuantizedPoint {
     /// Squared throughout: only the ordering matters, and a square root
     /// would put rounding back into a comparison that has been made exact.
     ///
-    /// The widest legal input is a bound of ±2 against a sample of ∓2, so
-    /// each term is at most 40000² and the sum of seven at most 1.12e10 —
-    /// comfortably inside int64, and no term can overflow.
+    /// Inside int64 for every input the list lets through, and no further: a
+    /// bound is within ±2 (20000 quantised) and the offset within [0, 1]
+    /// (fromEntries refuses anything else), and a sample within
+    /// ±kMaxClimateSample (1e9 quantised; `find` refuses anything else). So a
+    /// distance is at most 1 000 020 000 and the seven terms sum to under
+    /// 6.1e18. An earlier version of this comment called ±2 against ∓2 the
+    /// widest input; the SAMPLE was never bounded, and a router temperature
+    /// of the constant 1e6 — schema-legal — overflowed this sum.
     [[nodiscard]] std::int64_t fitness(const QuantizedSample& sample) const noexcept;
 
     [[nodiscard]] bool operator==(const QuantizedPoint& other) const = default;
@@ -164,8 +195,11 @@ public:
 
     /// A list from entries already read — a frozen pipeline's (SPEC §6).
     /// Checks what `fromJson` checks of the numbers themselves: no more than
-    /// a dimension's worth of entries, and no axis with its minimum above its
-    /// maximum. `fromJson` ends here too, so the two build the same list.
+    /// a dimension's worth of entries, no axis with its minimum above its
+    /// maximum, every bound inside the schema's [-2, 2] and every offset
+    /// inside its [0, 1] — NaN and infinities refused with them, which a
+    /// resealed blob can carry and JSON's `1e999` can too. `fromJson` ends
+    /// here, so the two build the same list and refuse the same input.
     [[nodiscard]] static ParameterList fromEntries(std::vector<Entry> entries,
                                                    const data::ResourceLocation& id);
 
@@ -203,7 +237,9 @@ public:
     ///
     /// Throws ParameterError on an empty list rather than inventing a biome:
     /// there is no sensible default, and a world full of one wrong biome is
-    /// worse than a refusal.
+    /// worse than a refusal. And throws ParameterError, naming the climate
+    /// value and its axis, for a sample outside ±kMaxClimateSample or NaN,
+    /// where the search's own arithmetic is undefined (SPEC §8).
     [[nodiscard]] const data::ResourceLocation& find(const ClimateSample& sample) const;
 
 private:

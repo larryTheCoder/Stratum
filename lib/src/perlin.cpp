@@ -37,11 +37,14 @@
 #include <stratum/noise/perlin.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <span>
 #include <stdexcept>
@@ -153,6 +156,11 @@ double PerlinNoise::sample(double x, double y, double z, double yScale,
     const double cellX = std::floor(shiftedX);
     const double cellY = std::floor(shiftedY);
     const double cellZ = std::floor(shiftedZ);
+    // The header's precondition: the conversions below are undefined outside
+    // int32 (and for NaN, which fails every comparison here).
+    assert(cellX >= -2147483648.0 && cellX <= 2147483647.0);
+    assert(cellY >= -2147483648.0 && cellY <= 2147483647.0);
+    assert(cellZ >= -2147483648.0 && cellZ <= 2147483647.0);
 
     const double localX = shiftedX - cellX;
     double localY = shiftedY - cellY;
@@ -222,6 +230,8 @@ double PerlinNoise::sampleSimplex2D(double x, double y) const noexcept {
     const double kSkew = 0.5 * (std::sqrt(3.0) - 1.0);
     const double kUnskew = (3.0 - std::sqrt(3.0)) / 6.0;
 
+    // The header's precondition, which keeps every index below in int32.
+    assert(std::fabs(x) < 1073741824.0 && std::fabs(y) < 1073741824.0);
     const double skewed = (x + y) * kSkew;
     const auto cellX = static_cast<std::int32_t>(std::floor(x + skewed));
     const auto cellY = static_cast<std::int32_t>(std::floor(y + skewed));
@@ -331,6 +341,14 @@ OctaveNoise OctaveNoise::createLegacy(rng::JavaRandom& random, int firstOctave, 
     return octaveNoise;
 }
 
+double OctaveNoise::maxFrequency() const noexcept {
+    double highest = 0.0;
+    for (const Octave& octave : octaves_) {
+        highest = std::max(highest, octave.frequency);
+    }
+    return highest;
+}
+
 double OctaveNoise::sample(double x, double y, double z) const noexcept {
     double total = 0.0;
     for (const Octave& octave : octaves_) {
@@ -416,10 +434,31 @@ NormalNoise NormalNoise::zero() {
     return NormalNoise{OctaveNoise{}, OctaveNoise{}, 1.0};
 }
 
+namespace {
+
+/// The second stack is sampled at 337/331 of the frequency, a ratio close
+/// enough to one to correlate and irrational enough not to repeat.
+constexpr double kSecondFrequency = 337.0 / 331.0;
+
+/// How far `coordinate * frequency` may reach and still floor into int32
+/// once an origin in [0, 256) is added: 2^31 less 512, a margin of 256 for
+/// the origin and 256 more for the last-place rounding of two products —
+/// which, at 2^31, is a few millionths of a unit.
+constexpr double kLatticeReach = 2147483648.0 - 512.0;
+
+[[nodiscard]] double limitFor(double frequency) noexcept {
+    return frequency > 0.0 ? kLatticeReach / frequency : std::numeric_limits<double>::infinity();
+}
+
+} // namespace
+
+NormalNoise::NormalNoise(OctaveNoise first, OctaveNoise second, double valueFactor)
+    : first_(std::move(first)), second_(std::move(second)), valueFactor_(valueFactor),
+      inputLimit_(std::min(limitFor(first_.maxFrequency()),
+                           limitFor(second_.maxFrequency() * kSecondFrequency))) {}
+
 double NormalNoise::sample(double x, double y, double z) const noexcept {
-    // The second stack is sampled at 337/331 of the frequency, a ratio close
-    // enough to one to correlate and irrational enough not to repeat.
-    constexpr double kSecondFrequency = 337.0 / 331.0;
+    assert(accepts(x, y, z));
     const double combined =
         first_.sample(x, y, z) +
         second_.sample(x * kSecondFrequency, y * kSecondFrequency, z * kSecondFrequency);

@@ -578,3 +578,24 @@ TEST_CASE("fillBiomes reads any run of whole layers, and refuses a part of one",
     CHECK_THROWS_WITH(dimension->fillBiomes(-64, 1, column),
                       ContainsSubstring("for a dimension that needs 512"));
 }
+
+TEST_CASE("biomes whose block coordinates leave int32 are refused by name",
+          "[biome][end][world][ub]") {
+    // A quart's block coordinate is 4 * (4 * chunk + q), and a layer's 4 *
+    // quart y, in int32: chunk 2^29's quarts and a layer near 2^29 used to
+    // overflow (SPEC §8). The End's own answers hold out to the edge of the
+    // domain the filler shares.
+    const SyntheticEnd tree;
+    const auto dimension = CompiledDimension::compile(
+        tree.pipeline(), ResourceLocation::parse("minecraft:end"), BiomeSource::theEnd(), 31337);
+    std::vector<const ResourceLocation*> layer(16U);
+    constexpr std::int32_t kEdge = stratum::density::kMaxChunkCoordinate;
+    CHECK_NOTHROW(dimension->fillBiomes(kEdge, -kEdge, 0, layer));
+    CHECK_THROWS_WITH(dimension->fillBiomes(kEdge + 1, 0, 0, layer),
+                      ContainsSubstring("chunk (134217721, 0)") && ContainsSubstring("32 bits"));
+    CHECK_THROWS_WITH(dimension->fillBiomes(536870912, 0, 0, layer),
+                      ContainsSubstring("chunk (536870912, 0)"));
+    CHECK_THROWS_WITH(dimension->fillBiomes(0, 0, 536870911, layer),
+                      ContainsSubstring("quart layers from 536870911"));
+    CHECK_NOTHROW(dimension->fillBiomes(0, 0, -16, layer));
+}

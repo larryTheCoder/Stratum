@@ -186,6 +186,10 @@ public:
     /// storage order, `into.size() / 16` layers. The same answers `at` gives
     /// quart by quart; the End's are read once a layer, its sixteen columns
     /// sharing one sample.
+    ///
+    /// Throws std::out_of_range for a chunk outside
+    /// density::kMaxChunkCoordinate, or layers whose block y is not an int32
+    /// (SPEC §8).
     void fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
                    std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                    std::span<const data::ResourceLocation*> into,

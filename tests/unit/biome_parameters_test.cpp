@@ -17,7 +17,9 @@
 
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -183,4 +185,50 @@ TEST_CASE("a malformed table is refused by row and axis", "[biome][parameters]")
     const ParameterList empty = parse(nlohmann::json{{"biomes", nlohmann::json::array()}});
     CHECK(empty.size() == 0U);
     CHECK_THROWS_AS(empty.find(ClimateSample{}), ParameterError);
+}
+
+TEST_CASE("a table bound or offset outside the schema's range is refused",
+          "[biome][parameters][ub]") {
+    // vanilla-mcdoc: ClimateParameter float @ -2..2, offset float @ 0..1. The
+    // server's own tables sit well inside. A bound of 1e15 (or a NaN from a
+    // resealed blob) used to reach quantizeCoord, whose int64 conversion is
+    // undefined past about 9.2e14 (SPEC §8).
+    CHECK_THROWS_WITH(parse(nlohmann::json{{"biomes", {entry("minecraft:plains", 1e15, 0.0)}}}),
+                      ContainsSubstring("temperature of entry 0") && ContainsSubstring("[-2, 2]"));
+    CHECK_THROWS_WITH(parse(nlohmann::json{{"biomes", {entry("minecraft:plains", 0.0, 0.0, 1.5)}}}),
+                      ContainsSubstring("offset of entry 0") && ContainsSubstring("[0, 1]"));
+    CHECK_THROWS_WITH(
+        parse(nlohmann::json{{"biomes", {entry("minecraft:plains", 0.0, 0.0, -0.25)}}}),
+        ContainsSubstring("offset of entry 0"));
+    // Both ends of both ranges load.
+    CHECK_NOTHROW(parse(nlohmann::json{
+        {"biomes",
+         {entry("minecraft:plains", 2.0, -2.0, 0.0), entry("minecraft:desert", -2.0, 2.0, 1.0)}}}));
+
+    // fromEntries is what a frozen pipeline goes through, and a blob can
+    // carry a NaN that JSON cannot.
+    stratum::biome::Entry stored;
+    stored.parameters.erosion =
+        Parameter{.min = -1.0, .max = std::numeric_limits<double>::quiet_NaN()};
+    CHECK_THROWS_WITH(ParameterList::fromEntries({stored}, ResourceLocation::parse("stratum:t")),
+                      ContainsSubstring("erosion of entry 0"));
+}
+
+TEST_CASE("a climate sample the search cannot hold is refused by name", "[biome][parameters][ub]") {
+    // A router entry is any density function: a datapack's temperature of
+    // the constant 1e6 — schema-legal — overflowed the fitness sum, and
+    // cube(1e6) = 1e18 overflowed quantizeCoord. Both are refused, naming the
+    // axis, and the bound itself still searches (SPEC §8).
+    const ParameterList list =
+        parse(nlohmann::json{{"biomes", {entry("minecraft:plains", 0.5, 0.25)}}});
+    ClimateSample sample;
+    sample.temperature = 1.0e6;
+    CHECK_THROWS_WITH(list.find(sample), ContainsSubstring("temperature of 1000000") &&
+                                             ContainsSubstring("Check that router entry"));
+    sample.temperature = 0.0;
+    sample.erosion = std::numeric_limits<double>::quiet_NaN();
+    CHECK_THROWS_WITH(list.find(sample), ContainsSubstring("erosion of nan"));
+    sample.erosion = -stratum::biome::kMaxClimateSample;
+    sample.temperature = stratum::biome::kMaxClimateSample;
+    CHECK(list.find(sample) == ResourceLocation::parse("minecraft:plains"));
 }

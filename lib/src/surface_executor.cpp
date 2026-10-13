@@ -8,8 +8,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
 #include <ranges>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -22,6 +25,58 @@ namespace {
 /// The identifiers the surface depth reads, whatever the tree names.
 constexpr std::string_view kSurfaceNoise = "minecraft:surface";
 constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary";
+
+/// `value` as a message prints it: every digit a double carries.
+[[nodiscard]] std::string spell(double value) {
+    std::ostringstream text;
+    text << std::setprecision(17) << value;
+    return text.str();
+}
+
+/// One step of the rules' 32-bit arithmetic, computed exactly and refused by
+/// name where it leaves int32 (SPEC §8, "Inputs that would reach undefined
+/// behaviour"). In C++ that overflow is undefined; in Java an int wraps, but
+/// what the server's own expression is, and so where it would wrap, is not
+/// something this build knows — so it neither wraps nor widens, it refuses.
+/// Every schema-valid int can reach here (an anchor, an offset or a sea level
+/// near 2^31), and no vanilla pack comes within a factor of 10^6.
+[[nodiscard]] std::int32_t narrowed(const std::int64_t value, const char* what) {
+    if (value < std::numeric_limits<std::int32_t>::min() ||
+        value > std::numeric_limits<std::int32_t>::max()) {
+        throw ExecutionError(std::string(what) + " comes to " + std::to_string(value) +
+                             ", outside the 32-bit range; this build refuses it rather than "
+                             "guess how the server's own arithmetic wraps there (SPEC §8)");
+    }
+    return static_cast<std::int32_t>(value);
+}
+
+/// A double that becomes a 32-bit int by truncation, refused where the
+/// conversion is undefined: outside (-2^31 - 1, 2^31), or NaN.
+[[nodiscard]] std::int32_t truncated(const double value, const char* what) {
+    if (std::isnan(value) || value <= -2147483649.0 || value >= 2147483648.0) {
+        throw ExecutionError(std::string(what) + " is " + spell(value) +
+                             ", which no 32-bit integer holds; this build refuses it rather "
+                             "than guess what the server makes of it (SPEC §8)");
+    }
+    return static_cast<std::int32_t>(value);
+}
+
+/// `noise.sample(x, 0, z)`, refused by name where the noise is not defined
+/// (noise::NormalNoise::accepts) — a datapack's `firstOctave` reaching 2^64,
+/// or a column far enough out (SPEC §8).
+[[nodiscard]] double sampleColumn(const noise::NormalNoise& noise, std::string_view name,
+                                  const std::int32_t x, const std::int32_t z) {
+    const auto atX = static_cast<double>(x);
+    const auto atZ = static_cast<double>(z);
+    if (!noise.accepts(atX, 0.0, atZ)) {
+        throw ExecutionError("noise '" + std::string(name) + "' cannot be sampled at column (" +
+                             std::to_string(x) + ", " + std::to_string(z) + "): past " +
+                             spell(noise.inputLimit()) +
+                             " its highest-frequency octave's lattice leaves the 32-bit range "
+                             "(SPEC §8)");
+    }
+    return noise.sample(atX, 0.0, atZ);
+}
 
 } // namespace
 
@@ -224,6 +279,36 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
         throw ExecutionError(message);
     }
 
+    // What the conditions compute from constants alone is refused here, by
+    // name, before any block is run (SPEC §8): an anchor whose y is not a
+    // 32-bit integer, and a sea level the freezing test cannot add 17 to.
+    for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
+        const Condition& condition = graph.condition(index);
+        const auto refuseAnchor = [&](const VerticalAnchor& anchor, const char* field) {
+            if (!anchor.resolvable(geometry)) {
+                throw ExecutionError(
+                    "a '" + std::string(conditionTypeName(condition.type)) + "' condition's " +
+                    field + " (" + std::to_string(anchor.value) +
+                    ") names a y outside the 32-bit range in a dimension from " +
+                    std::to_string(geometry.minY) + " of height " +
+                    std::to_string(geometry.height) + "; this build refuses it (SPEC §8)");
+            }
+        };
+        if (condition.type == ConditionType::YAbove) {
+            refuseAnchor(condition.anchor, "anchor");
+        } else if (condition.type == ConditionType::VerticalGradient) {
+            refuseAnchor(condition.trueAtAndBelow, "true_at_and_below");
+            refuseAnchor(condition.falseAtAndAbove, "false_at_and_above");
+        } else if (condition.type == ConditionType::Temperature &&
+                   seaLevel > std::numeric_limits<std::int32_t>::max() - kFreezingOriginAbove) {
+            throw ExecutionError(
+                "a 'minecraft:temperature' condition measures height from sea_level + " +
+                std::to_string(kFreezingOriginAbove) + ", and sea_level " +
+                std::to_string(seaLevel) +
+                " leaves that outside the 32-bit range; this build refuses it (SPEC §8)");
+        }
+    }
+
     const bool wantsDepth = readsSurfaceDepth(graph);
     const bool wantsBandlands = usesBandlands(graph);
     const bool wantsNoise = !graph.referencedNoises().empty();
@@ -284,7 +369,7 @@ double Executor::surfaceDepthRaw(const std::int32_t x, const std::int32_t z) con
         throw ExecutionError("this tree was compiled without a surface depth, so nothing in it "
                              "may ask for one");
     }
-    const double field = surface_->sample(static_cast<double>(x), 0.0, static_cast<double>(z));
+    const double field = sampleColumn(*surface_, kSurfaceNoise, x, z);
     // One draw from the UNSALTED positional source, at y = 0 rather than the
     // block's own y.
     rng::Xoroshiro128PlusPlus draw = jitter_.at(x, 0, z);
@@ -313,12 +398,17 @@ std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) 
     // -1 or lower would agree with this line on every column ever read and is
     // NOT refuted by it — it is simply not implemented, because nothing
     // documents one. Said in the header, measured in the conformance harness.
-    return static_cast<std::int32_t>(surfaceDepthRaw(x, z));
+    //
+    // Refused, by name, where no int holds it — a datapack's `minecraft:surface`
+    // amplitudes in the trillions — rather than converted undefined (SPEC §8).
+    return truncated(surfaceDepthRaw(x, z), "the surface depth (minecraft:surface)");
 }
 
 bool Executor::freezing(const std::int32_t x, const std::int32_t y, const std::int32_t z,
                         const float biomeTemperature) const noexcept {
-    const std::int32_t origin = seaLevel_ + 17;
+    // In range: compile() refuses a sea level within 17 of INT32_MAX for any
+    // tree that reaches this test.
+    const std::int32_t origin = seaLevel_ + kFreezingOriginAbove;
     float value = biomeTemperature;
     if (y > origin) {
         // Float32 and left to right from here down. `* 0.05F / 40.0F` is NOT
@@ -350,11 +440,14 @@ const settings::BlockState& Executor::clayBandAt(const std::size_t index) const 
 
 const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const std::int32_t y,
                                                   const std::int32_t z) const {
-    const double raw =
-        clayBandsOffset_->sample(static_cast<double>(x), 0.0, static_cast<double>(z));
+    const double raw = sampleColumn(*clayBandsOffset_, kClayBandsOffsetNoise, x, z);
     // Round-half-up (Java's Math.round: floor(v + 0.5)) — ties go toward
     // positive infinity, not away from zero (spec/bandlands-spec.md Q4.4).
-    const auto offset = static_cast<std::int32_t>(std::floor((raw * 4.0) + 0.5));
+    // Refused where no int holds it (SPEC §8): a datapack's amplitudes can
+    // put it there, and what the server makes of such an offset is
+    // unmeasured.
+    const std::int32_t offset =
+        truncated(std::floor((raw * 4.0) + 0.5), "bandlands' offset (minecraft:clay_bands_offset)");
     // Vanilla's OWN index arithmetic: one Java '%' after a single '+192', not
     // a safe floorMod (spec/bandlands-spec.md Q4.5). C++'s '%' on int32_t
     // already matches Java's here — both truncate toward zero — so this is
@@ -362,7 +455,11 @@ const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const st
     // sufficiently negative y this can itself go negative, reproducing
     // vanilla's own reproduced ArrayIndexOutOfBoundsException (Q5.1) rather
     // than silently wrapping it into something vanilla never places.
-    const std::int32_t index = (y + offset + 192) % 192;
+    const std::int32_t index =
+        narrowed(std::int64_t{narrowed(std::int64_t{y} + offset, "bandlands' y plus its offset")} +
+                     192,
+                 "bandlands' y plus its offset plus 192") %
+        192;
     if (index < 0 || index >= static_cast<std::int32_t>(kClayBandsSize)) {
         throw ExecutionError(
             "bandlands' index (" + std::to_string(index) + ") is outside its " +
@@ -434,9 +531,18 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             // `add_stone_depth: true` was silently treated as false. Real
             // impact, not a hypothetical — vanilla's own overworld and Nether
             // trees together set it on ten y_above/water conditions.
-            const std::int32_t left = at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0);
-            const std::int32_t right = condition.anchor.resolve(*geometry_) +
-                                       (condition.surfaceDepthMultiplier * depthFor(condition, at));
+            //
+            // Every step checked (`narrowed`): an anchor, a multiplier or a
+            // depth near the int range would otherwise overflow (SPEC §8).
+            const std::int32_t left =
+                narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
+                         "y_above's y plus the stone depth");
+            const std::int32_t scaled =
+                narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at),
+                         "y_above's surface_depth_multiplier times the surface depth");
+            const std::int32_t right =
+                narrowed(std::int64_t{condition.anchor.resolve(*geometry_)} + scaled,
+                         "y_above's anchor plus its scaled surface depth");
             return left >= right;
         }
 
@@ -447,9 +553,16 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
                 return true;
             }
             // `add_stone_depth`, not `add_surface_depth` — see YAbove above.
-            const std::int32_t left = at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0);
-            const std::int32_t right = *at.waterHeight + condition.offset +
-                                       (condition.surfaceDepthMultiplier * depthFor(condition, at));
+            const std::int32_t left =
+                narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
+                         "water's y plus the stone depth");
+            const std::int32_t raised = narrowed(std::int64_t{*at.waterHeight} + condition.offset,
+                                                 "water's water height plus its offset");
+            const std::int32_t scaled =
+                narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at),
+                         "water's surface_depth_multiplier times the surface depth");
+            const std::int32_t right = narrowed(std::int64_t{raised} + scaled,
+                                                "water's level plus its scaled surface depth");
             return left >= right;
         }
 
@@ -473,15 +586,20 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             const std::int32_t depth = run - 1;
             std::int32_t threshold = condition.offset;
             if (condition.addSurfaceDepth) {
-                threshold += surfaceDepth(at.x, at.z);
+                threshold = narrowed(std::int64_t{threshold} + surfaceDepth(at.x, at.z),
+                                     "stone_depth's offset plus the surface depth");
             }
             if (condition.secondaryDepthRange != 0) {
-                const double secondary = surfaceSecondary_->sample(static_cast<double>(at.x), 0.0,
-                                                                   static_cast<double>(at.z));
+                const double secondary =
+                    sampleColumn(*surfaceSecondary_, kSurfaceSecondaryNoise, at.x, at.z);
                 // From [-1, 1], truncated, no clamp — `round` and the other
-                // three mappings were all refuted.
-                threshold += static_cast<std::int32_t>(
-                    (secondary + 1.0) * 0.5 * static_cast<double>(condition.secondaryDepthRange));
+                // three mappings were all refuted. Refused where no int holds
+                // it (a datapack's amplitudes), never converted undefined.
+                const std::int32_t secondaryDepth = truncated(
+                    (secondary + 1.0) * 0.5 * static_cast<double>(condition.secondaryDepthRange),
+                    "stone_depth's secondary depth (minecraft:surface_secondary)");
+                threshold = narrowed(std::int64_t{threshold} + secondaryDepth,
+                                     "stone_depth's threshold plus its secondary depth");
             }
             return depth <= threshold;
         }
@@ -510,8 +628,7 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             }
             // y is the literal 0.0 for every block, so this is constant down a
             // column; x and z are absolute and unquantised. Closed interval.
-            const double value =
-                sampled->sample(static_cast<double>(at.x), 0.0, static_cast<double>(at.z));
+            const double value = sampleColumn(*sampled, condition.noise->toString(), at.x, at.z);
             return condition.minThreshold <= value && value <= condition.maxThreshold;
         }
 
@@ -527,7 +644,13 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             // exactly this y and false one block under it on every column
             // measured, so `>= C` and `> C - 1` are the same predicate; what
             // was unknown was C, and C is not `preliminarySurface`.
-            return at.y >= at.preliminarySurface + surfaceDepth(at.x, at.z) - 8;
+            return at.y >=
+                   narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
+                                                      surfaceDepth(at.x, at.z),
+                                                  "the preliminary surface plus the surface "
+                                                  "depth")} -
+                                8,
+                            "the preliminary surface plus the surface depth, less 8");
 
         case ConditionType::Biome: {
             // The caller supplies the biome; compile() has already refused any

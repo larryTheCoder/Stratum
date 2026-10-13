@@ -308,3 +308,30 @@ TEST_CASE("a pack with no noise settings loads a graph and no settings", "[setti
     CHECK(loaded.settings.empty());
     CHECK(loaded.graph.nodeCount() == 1U);
 }
+
+TEST_CASE("one geometry check serves the loader and a frozen pipeline", "[settings][ub]") {
+    // freeze::read holds a stored geometry to the check the loader runs. A
+    // resealed blob with a min_y of 2147483632 used to overflow maxY(), and a
+    // size_vertical of 2^30 the cell height (SPEC §8).
+    using stratum::settings::checkGeometry;
+    using stratum::settings::NoiseGeometry;
+    CHECK_NOTHROW(checkGeometry(
+        NoiseGeometry{.minY = -64, .height = 384, .sizeHorizontal = 1, .sizeVertical = 2}, "t"));
+    CHECK_THROWS_WITH(checkGeometry(NoiseGeometry{.minY = 2147483632,
+                                                  .height = 384,
+                                                  .sizeHorizontal = 1,
+                                                  .sizeVertical = 2},
+                                    "stored noise settings 'x'"),
+                      ContainsSubstring("stored noise settings 'x'") &&
+                          ContainsSubstring("min_y") && ContainsSubstring("[-2048, 2047]"));
+    CHECK_THROWS_WITH(checkGeometry(NoiseGeometry{.minY = -64,
+                                                  .height = 384,
+                                                  .sizeHorizontal = 1,
+                                                  .sizeVertical = 0x40000000},
+                                    "t"),
+                      ContainsSubstring("size_vertical"));
+    CHECK_THROWS_WITH(
+        checkGeometry(
+            NoiseGeometry{.minY = -64, .height = 400, .sizeHorizontal = 1, .sizeVertical = 3}, "t"),
+        ContainsSubstring("12-block cells"));
+}

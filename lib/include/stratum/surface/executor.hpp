@@ -45,6 +45,10 @@ namespace stratum::surface {
 /// source, not derived from any pack parameter (spec/bandlands-spec.md Q1.1).
 inline constexpr std::size_t kClayBandsSize = 192;
 
+/// How far above `sea_level` the `temperature` condition's height
+/// adjustment starts (Executor::freezing).
+inline constexpr std::int32_t kFreezingOriginAbove = 17;
+
 /// Raised when a rule tree cannot be executed, naming what stopped it.
 class ExecutionError : public std::runtime_error {
 public:

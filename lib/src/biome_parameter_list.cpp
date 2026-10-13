@@ -7,8 +7,11 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,6 +47,25 @@ constexpr std::size_t kMaxEntries = 1'000'000;
         fail(id, where + " has its minimum above its maximum");
     }
     return parameter;
+}
+
+/// `value` as a message prints it: every digit a double carries.
+[[nodiscard]] std::string spell(double value) {
+    std::ostringstream text;
+    text << std::setprecision(17) << value;
+    return text.str();
+}
+
+/// One climate reading of a sample, refused by name where the search is not
+/// defined for it (kMaxClimateSample), NaN included.
+void checkSample(double value, const char* axis) {
+    if (std::isnan(value) || value < -kMaxClimateSample || value > kMaxClimateSample) {
+        throw ParameterError(std::string("the biome search was handed a ") + axis + " of " +
+                             spell(value) + ", outside ±" + spell(kMaxClimateSample) +
+                             " (or not a number): past it the search's fixed-point arithmetic "
+                             "overflows, and what the server picks there is unmeasured, so this "
+                             "build refuses it (SPEC §8). Check that router entry");
+    }
 }
 
 } // namespace
@@ -176,6 +198,19 @@ ParameterList ParameterList::fromEntries(std::vector<Entry> entries,
                 fail(id, std::string(axis) + " of entry " + std::to_string(row) +
                              " has its minimum above its maximum");
             }
+            // The schema's range, which also keeps quantizeCoord defined, NaN
+            // refused with the rest.
+            for (const double bound : {parameter.min, parameter.max}) {
+                if (std::isnan(bound) || bound < -kClimateBoundLimit ||
+                    bound > kClimateBoundLimit) {
+                    fail(id, std::string(axis) + " of entry " + std::to_string(row) + " is " +
+                                 spell(bound) + ", outside the schema's range [-2, 2]");
+                }
+            }
+        }
+        if (std::isnan(point.offset) || point.offset < 0.0 || point.offset > kMaxClimateOffset) {
+            fail(id, "offset of entry " + std::to_string(row) + " is " + spell(point.offset) +
+                         ", outside the schema's range [0, 1]");
         }
         list.quantized_.push_back(QuantizedPoint::of(point));
     }
@@ -189,6 +224,12 @@ const data::ResourceLocation& ParameterList::find(const ClimateSample& sample) c
                              "biome to choose; refusing rather than inventing one");
     }
 
+    checkSample(sample.temperature, "temperature");
+    checkSample(sample.humidity, "humidity (vegetation)");
+    checkSample(sample.continentalness, "continentalness (continents)");
+    checkSample(sample.erosion, "erosion");
+    checkSample(sample.depth, "depth");
+    checkSample(sample.weirdness, "weirdness (ridges)");
     const QuantizedSample quantized = QuantizedSample::of(sample);
     std::size_t best = 0;
     std::int64_t bestFitness = quantized_[0].fitness(quantized);

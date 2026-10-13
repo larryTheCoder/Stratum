@@ -138,6 +138,26 @@ struct Point {
     [[nodiscard]] bool operator==(const Point& other) const noexcept = default;
 };
 
+/// The chunk coordinates a dimension generates, on either axis:
+/// |chunk| <= kMaxChunkCoordinate, 2^27 - 8. A chunk's blocks are formed as
+/// 16 * chunk + local in int32, and its reads reach past its edge — a cell
+/// corner at +16, the `flat_cache` window to +19, an aquifer source centre to
+/// about +47 — so near 2^27 chunks that arithmetic leaves int32 and is
+/// undefined (chunk 134217727's window, 2147483632 + 20, was). This keeps a
+/// margin of more than a hundred blocks at both ends. terrain::ChunkFiller::
+/// fill and biome::Source::fillChunk refuse a chunk outside it by name
+/// (SPEC §8). Vanilla's world border sits at ±29 999 984 blocks
+/// (minecraft.wiki), under 1/70 of this, so no vanilla world has such a
+/// chunk.
+inline constexpr std::int32_t kMaxChunkCoordinate = (1 << 27) - 8;
+
+/// Whether (@p chunkX, @p chunkZ) is inside kMaxChunkCoordinate.
+[[nodiscard]] constexpr bool chunkInDomain(const std::int32_t chunkX,
+                                           const std::int32_t chunkZ) noexcept {
+    return chunkX >= -kMaxChunkCoordinate && chunkX <= kMaxChunkCoordinate &&
+           chunkZ >= -kMaxChunkCoordinate && chunkZ <= kMaxChunkCoordinate;
+}
+
 /// The columns one chunk's `flat_cache` grid holds, in block coordinates,
 /// both ends inclusive.
 ///
@@ -339,6 +359,15 @@ private:
     [[nodiscard]] float evaluateSpline(Scope& scope, SplineIndex index) const;
 
     [[nodiscard]] const noise::NormalNoise& noiseFor(NodeIndex index) const;
+
+    /// `noiseFor(index).sample(x, y, z)`, refused by name — EvalError naming
+    /// the node, its noise and the block @p at — where the noise is not
+    /// defined (noise::NormalNoise::accepts): a scale, a shift or a block
+    /// coordinate that carries some octave's lattice out of int32, or a NaN.
+    /// Vanilla's own `jagged` gets there inside the world border (SPEC §8,
+    /// "Inputs that would reach undefined behaviour").
+    [[nodiscard]] double sampleNoise(NodeIndex index, const Point& at, double x, double y,
+                                     double z) const;
 
     /// The blended noise built for @p index. Throws rather than returning a
     /// wrong value if none was built, which can only happen if the graph

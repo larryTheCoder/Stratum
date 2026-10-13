@@ -11,11 +11,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -47,6 +50,92 @@ struct TypeInfo {
 /// on the input it was validating.
 [[nodiscard]] bool isKnownType(NodeType type) noexcept {
     return static_cast<std::size_t>(type) < kTypeTable.size();
+}
+
+/// `value` as a message prints it: every digit a double carries.
+[[nodiscard]] std::string spell(double value) {
+    std::ostringstream text;
+    text << std::setprecision(17) << value;
+    return text.str();
+}
+
+/// The parameters of @p node that would carry the interpreter into undefined
+/// behaviour, refused by name (SPEC §8, "Inputs that would reach undefined
+/// behaviour"). One check for both ways a graph is built — the resolver's,
+/// from JSON, and the assembler's, from a frozen blob — so a resealed blob
+/// cannot carry what a pack may not.
+///
+/// Only what reaches undefined behaviour is refused; every bound below is
+/// the schema's or the wiki's own, or an order vanilla's own data keeps, so
+/// nothing a vanilla pack writes is.
+void checkParameters(const Node& node) {
+    const auto needs = [&node](std::size_t count) {
+        if (node.parameters.size() != count) {
+            throw ResolveError("'" + std::string(nodeTypeName(node.type)) + "' carries " +
+                               std::to_string(node.parameters.size()) +
+                               " numeric parameter(s) where its type takes " +
+                               std::to_string(count));
+        }
+    };
+    switch (node.type) {
+        case NodeType::Clamp: {
+            // std::clamp's precondition is `!(max < min)`; reversed bounds
+            // are undefined behaviour, and nothing says what vanilla makes
+            // of them. The schema bounds each, not their order.
+            needs(2);
+            const double min = node.parameters[0];
+            const double max = node.parameters[1];
+            if (std::isnan(min) || std::isnan(max) || min > max) {
+                throw ResolveError("'minecraft:clamp' has min " + spell(min) + " above max " +
+                                   spell(max) + "; a clamp needs min <= max");
+            }
+            break;
+        }
+        case NodeType::FindTopSurface: {
+            // The schema's own ranges (vanilla-mcdoc: lower_bound int
+            // @ -4064..4062, "(DimensionType.MIN_Y * 2)..(DimensionType.MAX_Y
+            // * 2)", and cell_height int @ 1..): outside them the int
+            // conversions the scan makes are undefined, and cell_height <= 0
+            // would never finish. The upper bound on cell_height is int32's.
+            needs(2);
+            const double lowerBound = node.parameters[0];
+            const double cellHeight = node.parameters[1];
+            if (std::isnan(lowerBound) || lowerBound <= -4065.0 || lowerBound >= 4063.0) {
+                throw ResolveError("'minecraft:find_top_surface' has lower_bound " +
+                                   spell(lowerBound) +
+                                   ", outside the schema's range [-4064, 4062]");
+            }
+            if (std::isnan(cellHeight) || cellHeight < 1.0 || cellHeight >= 2147483648.0) {
+                throw ResolveError("'minecraft:find_top_surface' has cell_height " +
+                                   spell(cellHeight) +
+                                   ", outside [1, 2147483647]: the schema requires at least 1, "
+                                   "and the scan steps in 32-bit integers");
+            }
+            break;
+        }
+        case NodeType::OldBlendedNoise: {
+            // minecraft.wiki gives each of these "between 0.001 and 1000.0
+            // (both inclusive)". Outside it a factor of 0 makes the blend's
+            // coordinate infinite, and a huge scale makes it overflow, and
+            // either reaches the lattice as NaN — undefined behaviour in the
+            // int conversion. smear_scale_multiplier (1 to 8) cannot get
+            // there, so it is not checked.
+            needs(5);
+            static constexpr std::array<std::string_view, 4> kNames = {"xz_scale", "y_scale",
+                                                                       "xz_factor", "y_factor"};
+            for (std::size_t i = 0; i < kNames.size(); ++i) {
+                const double value = node.parameters[i];
+                if (std::isnan(value) || value < 0.001 || value > 1000.0) {
+                    throw ResolveError("'minecraft:old_blended_noise' has " +
+                                       std::string(kNames[i]) + " " + spell(value) +
+                                       ", outside [0.001, 1000]");
+                }
+            }
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 } // namespace
@@ -254,6 +343,12 @@ private:
                     break;
             }
         }
+        try {
+            checkParameters(node);
+        } catch (const ResolveError& error) {
+            // Rethrown through fail() for the chain of identifiers.
+            fail(error.what());
+        }
         return addNode(graph, std::move(node));
     }
 
@@ -362,6 +457,8 @@ NodeIndex Graph::Assembler::addNode(Node node) {
                                ", which is not before it");
         }
     }
+    // What the resolver refuses of a pack, refused of a blob too.
+    checkParameters(node);
     graph_.nodes_.push_back(std::move(node));
     return next;
 }

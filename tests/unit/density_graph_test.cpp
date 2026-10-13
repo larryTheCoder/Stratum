@@ -14,6 +14,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <bit>
@@ -444,4 +445,42 @@ TEST_CASE("reachability from one root is not the whole graph's reach", "[density
     CHECK(graph.noisesReachableFrom(twice) == reach);
     // And no roots reaches nothing, rather than reaching everything.
     CHECK(graph.noisesReachableFrom(std::vector<stratum::density::NodeIndex>{}).empty());
+}
+
+TEST_CASE("a frozen node is held to what a pack's is", "[density][graph][ub]") {
+    // Graph::Assembler is how freeze::read rebuilds a graph, so what the
+    // resolver refuses of a pack it refuses of a blob: a resealed blob must
+    // not carry a node the interpreter cannot evaluate defined (SPEC §8).
+    const auto constant = [](double value) {
+        stratum::density::Node node;
+        node.type = NodeType::Constant;
+        node.parameters = {value};
+        return node;
+    };
+    const auto clamp = [](double min, double max) {
+        stratum::density::Node node;
+        node.type = NodeType::Clamp;
+        node.arguments = {0};
+        node.parameters = {min, max};
+        return node;
+    };
+
+    Graph::Assembler reversed;
+    static_cast<void>(reversed.addNode(constant(0.5)));
+    CHECK_THROWS_MATCHES(reversed.addNode(clamp(1.0, 0.0)), ResolveError,
+                         Catch::Matchers::MessageMatches(
+                             Catch::Matchers::ContainsSubstring("'minecraft:clamp' has min 1")));
+
+    Graph::Assembler ordered;
+    static_cast<void>(ordered.addNode(constant(0.5)));
+    CHECK_NOTHROW(ordered.addNode(clamp(0.0, 1.0)));
+
+    // A node carrying fewer parameters than its type reads would have had
+    // the interpreter index past the end.
+    stratum::density::Node bare;
+    bare.type = NodeType::FindTopSurface;
+    Graph::Assembler unfinished;
+    CHECK_THROWS_MATCHES(unfinished.addNode(bare), ResolveError,
+                         Catch::Matchers::MessageMatches(
+                             Catch::Matchers::ContainsSubstring("carries 0 numeric parameter")));
 }

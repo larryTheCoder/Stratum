@@ -58,9 +58,11 @@ std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
     // stone blocks over rows lambda-1..+40 of three probe worlds.
     //
     // The result can now sit arbitrarily far below `lambda`, which is the
-    // point. `levelPressure` casts both levels to double before any
-    // arithmetic and the int32 difference tops out around 32 900 even against
-    // `kNeverLevel`, so nothing here can wrap.
+    // point. Against `kNeverLevel` the difference between two levels tops out
+    // around 32 900 for any spread vanilla's routers produce; a datapack's
+    // spread in the hundreds of millions saturates spreadOffset and can put
+    // two levels more than 2^31 apart, which `levelPressure` forms in 64 bits
+    // and refuses by name rather than wrap (SPEC §8).
     //
     // The `seaLevel` parameter went with the clamp: nothing else in Q5.7
     // reads it, and leaving it would suggest the sea still enters a ladder

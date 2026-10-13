@@ -24,7 +24,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,6 +41,19 @@ namespace {
 /// an approximate comparison.
 [[nodiscard]] bool isZero(double value) noexcept {
     return (std::bit_cast<std::uint64_t>(value) & UINT64_C(0x7FFFFFFFFFFFFFFF)) == 0U;
+}
+
+/// A double as an error message spells it: every digit it carries.
+[[nodiscard]] std::string describe(double value) {
+    std::ostringstream text;
+    text << std::setprecision(17) << value;
+    return text.str();
+}
+
+/// A block position as an error message spells it.
+[[nodiscard]] std::string describe(const Point& at) {
+    return "(" + std::to_string(at.x) + ", " + std::to_string(at.y) + ", " + std::to_string(at.z) +
+           ")";
 }
 
 /// Vanilla's lerp, in whatever type it is instantiated with: `from` plus a
@@ -390,6 +406,24 @@ const noise::NormalNoise& Interpreter::noiseFor(NodeIndex index) const {
     return *noise;
 }
 
+double Interpreter::sampleNoise(const NodeIndex index, const Point& at, const double x,
+                                const double y, const double z) const {
+    const noise::NormalNoise& noise = noiseFor(index);
+    if (!noise.accepts(x, y, z)) {
+        const Node& node = graph_->node(index);
+        std::ostringstream message;
+        message << std::setprecision(17) << "'" << nodeTypeName(node.type) << "' samples noise '"
+                << (node.noise.has_value() ? node.noise->toString() : std::string("(inline)"))
+                << "' at (" << x << ", " << y << ", " << z << ") for block (" << at.x << ", "
+                << at.y << ", " << at.z << "), past " << noise.inputLimit()
+                << " on an axis or not a number: there its highest-frequency octave's lattice "
+                   "cell leaves the 32-bit range, where this build's arithmetic is undefined, "
+                   "so it refuses rather than guess what the server builds there (SPEC §8)";
+        throw EvalError(message.str());
+    }
+    return noise.sample(x, y, z);
+}
+
 const noise::BlendedNoise& Interpreter::blendedFor(NodeIndex index) const {
     const std::optional<noise::BlendedNoise>& blended = blendedOf_[static_cast<std::size_t>(index)];
     if (!blended.has_value()) {
@@ -664,7 +698,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         case NodeType::Noise: {
             const double xzScale = node.parameters[0];
             const double yScale = node.parameters[1];
-            value = noiseFor(index).sample(x * xzScale, y * yScale, z * xzScale);
+            value = sampleNoise(index, at, x * xzScale, y * yScale, z * xzScale);
             break;
         }
         case NodeType::ShiftedNoise: {
@@ -673,20 +707,20 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             const double shiftX = argument(0);
             const double shiftY = argument(1);
             const double shiftZ = argument(2);
-            value = noiseFor(index).sample((x * xzScale) + shiftX, (y * yScale) + shiftY,
-                                           (z * xzScale) + shiftZ);
+            value = sampleNoise(index, at, (x * xzScale) + shiftX, (y * yScale) + shiftY,
+                                (z * xzScale) + shiftZ);
             break;
         }
         case NodeType::Shift:
-            value = noiseFor(index).sample(x * 0.25, y * 0.25, z * 0.25) * 4.0;
+            value = sampleNoise(index, at, x * 0.25, y * 0.25, z * 0.25) * 4.0;
             break;
         case NodeType::ShiftA:
-            value = noiseFor(index).sample(x * 0.25, 0.0, z * 0.25) * 4.0;
+            value = sampleNoise(index, at, x * 0.25, 0.0, z * 0.25) * 4.0;
             break;
         case NodeType::ShiftB:
             // The axes are rotated, which is what makes shift_z independent
             // of shift_x while sharing one noise.
-            value = noiseFor(index).sample(z * 0.25, x * 0.25, 0.0) * 4.0;
+            value = sampleNoise(index, at, z * 0.25, x * 0.25, 0.0) * 4.0;
             break;
 
         // --- splines -------------------------------------------------------
@@ -739,6 +773,9 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             //   * the test is a strict `> 0`: a density of exactly zero at a
             //     lattice point is not a surface.
             const double upperBound = evaluateNode(scope, node.arguments[1]);
+            // Both conversions are defined: the graph refuses, at load, a
+            // lower_bound outside the schema's [-4064, 4062] and a cell_height
+            // outside [1, 2^31) (density_graph.cpp, checkParameters; SPEC §8).
             const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
             const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
             if (cellHeight <= 0) {
@@ -747,11 +784,32 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
                                 ", which would never finish scanning; it must be positive");
             }
 
+            // upper_bound is a function's value, so it is checked here rather
+            // than at load: a floor that is not an int32 (NaN included) has no
+            // defined conversion, and nothing says what the server scans from
+            // there. Refused by name (SPEC §8).
+            const double flooredTop = std::floor(upperBound);
+            if (std::isnan(flooredTop) || flooredTop < -2147483648.0 || flooredTop > 2147483647.0) {
+                throw EvalError("'minecraft:find_top_surface' reads upper_bound " +
+                                describe(upperBound) + " at block " + describe(at) +
+                                ", whose floor is not a 32-bit integer; this build refuses it "
+                                "rather than guess where the server's scan starts");
+            }
+            const auto top = static_cast<std::int32_t>(flooredTop);
             // floorDiv, not truncating division: a negative upper_bound has to
             // land on the lattice point BELOW it, and C++ division rounds the
-            // other way.
-            const auto top = static_cast<std::int32_t>(std::floor(upperBound));
-            const std::int32_t start = javamath::floorDiv(top, cellHeight) * cellHeight;
+            // other way. The product is formed in 64 bits and refused where it
+            // leaves int32 — a top within one cell_height of INT32_MIN — rather
+            // than wrapped.
+            const std::int64_t startWide =
+                static_cast<std::int64_t>(javamath::floorDiv(top, cellHeight)) * cellHeight;
+            if (startWide < std::numeric_limits<std::int32_t>::min()) {
+                throw EvalError("'minecraft:find_top_surface' reads upper_bound " +
+                                describe(upperBound) + " at block " + describe(at) +
+                                ", whose lattice point below it, " + std::to_string(startWide) +
+                                ", is not a 32-bit integer; this build refuses it");
+            }
+            const auto start = static_cast<std::int32_t>(startWide);
 
             // A bound on the work, so a pathological upper_bound is an error
             // rather than a hang. Vanilla's own use runs 48 steps.
@@ -765,6 +823,12 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             }
 
             value = lowerBound;
+            // The step cannot overflow, which is a bound that holds rather
+            // than a check: every scanY is a multiple of cell_height no lower
+            // than lower_bound, and lower_bound is at least -4064. With a
+            // cell_height above 4064 the only such multiples are 0 and up, so
+            // a step lands no lower than -cell_height; with one at most 4064
+            // it lands no lower than -8128.
             for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
                 Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
                              scope.window(), scope.context());
@@ -790,7 +854,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             const double rarity =
                 rarityValueMapper(node.selector, evaluateNode(scope, node.arguments[0]));
             value = std::abs(rarity *
-                             noiseFor(index).sample(at.x / rarity, at.y / rarity, at.z / rarity));
+                             sampleNoise(index, at, at.x / rarity, at.y / rarity, at.z / rarity));
             break;
         }
         case NodeType::Spline: {

@@ -417,6 +417,17 @@ TEST_CASE("the checks behind the hash catch what the hash would have caught", "[
         CHECK(refusalsMentioning(good, payload, "biome parameter list") > 0U);
     }
 
+    SECTION("a stored noise outside the bounds a pack's is held to") {
+        // A firstOctave the loader would refuse used to thaw unchecked, and
+        // 2^31 - 1 overflowed the octave's name (SPEC §8). Byte 200 in a
+        // first octave's low byte is 200 or more: past the bound.
+        CHECK(refusalsMentioning(good, payload, "\"firstOctave\" is") > 0U);
+    }
+
+    SECTION("a stored geometry outside the bounds a pack's is held to") {
+        CHECK(refusalsMentioning(good, payload, "stored noise settings") > 0U);
+    }
+
     SECTION("a noise field tagged as neither spelling") {
         // The field is a union, so the tag has three legal values and 253
         // illegal ones. A reader that treated anything non-zero as "an
