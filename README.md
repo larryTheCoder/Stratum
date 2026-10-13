@@ -101,8 +101,10 @@ stratum diff <left.mca> <right.mca> [--max <n>]   # 0 identical, 1 differing
 stratum render <region.mca> --out map.png --mode heightmap|biome|blocks
 ```
 
-`diff` compares block-for-block in Java block space, before any Bedrock
-mapping (SPEC §7), and reports the first differences with their coordinates.
+`diff` compares in Java space, before any Bedrock mapping (SPEC §7): every
+block, and every stored biome by name, cell by 4x4x4 cell. It reports the
+first differences of each, apart, with their coordinates, and says
+"identical" (exit 0) only when the blocks and the biomes both agree.
 Anything it cannot compare — a chunk present on one side, one that fails to
 decode, one whose stored coordinates disagree — is reported as a finding
 rather than skipped. Slice rendering is still to come.

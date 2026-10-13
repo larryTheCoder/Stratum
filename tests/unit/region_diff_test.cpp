@@ -11,8 +11,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -38,6 +40,16 @@ using stratum::test::uniformSection;
     return section;
 }
 
+/// @p section with a biome palette and one index per 4x4x4 cell (y, then z,
+/// then x); no indices means a single-entry palette, as vanilla writes a
+/// uniform section.
+[[nodiscard]] SectionSpec withBiomes(SectionSpec section, std::vector<std::string> palette,
+                                     std::vector<std::uint16_t> cells = {}) {
+    section.biomePalette = std::move(palette);
+    section.biomes = std::move(cells);
+    return section;
+}
+
 } // namespace
 
 TEST_CASE("identical regions compare equal", "[diff]") {
@@ -52,6 +64,9 @@ TEST_CASE("identical regions compare equal", "[diff]") {
     CHECK(report.blocksCompared == stratum::chunk::kBlocksPerSection);
     CHECK(report.blockDifferenceCount == 0U);
     CHECK(report.chunkFindings.empty());
+    // A section's worth of y: its 64 biome cells, stored by neither side.
+    CHECK(report.biomesCompared == stratum::chunk::kBiomesPerSection);
+    CHECK(report.biomeDifferenceCount == 0U);
 }
 
 TEST_CASE("a single differing block is reported with its coordinates", "[diff]") {
@@ -183,4 +198,83 @@ TEST_CASE("two empty regions are identical, having compared nothing", "[diff]") 
     CHECK(report.identical());
     CHECK(report.chunksCompared == 0U);
     CHECK(report.blocksCompared == 0U);
+}
+
+TEST_CASE("a region pair differing only in its biomes is reported different", "[diff][biome]") {
+    // Every block the same; one biome cell differs. Cell 37 is y 2, z 1,
+    // x 1 of section 0 in chunk (1, 0): its lowest block is world (20, 8, 4).
+    std::vector<std::uint16_t> cells(stratum::chunk::kBiomesPerSection, 0);
+    cells[37] = 1;
+
+    RegionBuilder left;
+    RegionBuilder right;
+    left.addChunk(1, 0, {withBiomes(stoneSection(), {"minecraft:the_end"})});
+    right.addChunk(1, 0,
+                   {withBiomes(stoneSection(), {"minecraft:the_end", "minecraft:plains"}, cells)});
+
+    const DiffReport report = diff(left.build(), right.build());
+    CHECK_FALSE(report.identical());
+    CHECK(report.blockDifferenceCount == 0U);
+    CHECK(report.blockDifferences.empty());
+    CHECK(report.biomesCompared == stratum::chunk::kBiomesPerSection);
+    CHECK(report.biomeDifferenceCount == 1U);
+    REQUIRE(report.biomeDifferences.size() == 1U);
+    const stratum::region::BiomeDifference& difference = report.biomeDifferences.front();
+    CHECK(difference.x == 20);
+    CHECK(difference.y == 8);
+    CHECK(difference.z == 4);
+    CHECK(difference.left == "minecraft:the_end");
+    CHECK(difference.right == "minecraft:plains");
+}
+
+TEST_CASE("biomes are compared by name, not by palette index", "[diff][biome]") {
+    // The same biome everywhere, under two palettes that index it differently.
+    RegionBuilder left;
+    RegionBuilder right;
+    left.addChunk(0, 0, {withBiomes(stoneSection(), {"minecraft:end_midlands"})});
+    right.addChunk(0, 0,
+                   {withBiomes(stoneSection(), {"minecraft:plains", "minecraft:end_midlands"},
+                               std::vector<std::uint16_t>(stratum::chunk::kBiomesPerSection, 1))});
+
+    const DiffReport report = diff(left.build(), right.build());
+    CHECK(report.identical());
+    CHECK(report.biomesCompared == stratum::chunk::kBiomesPerSection);
+}
+
+TEST_CASE("biomes stored on one side only are differences, never skipped", "[diff][biome]") {
+    RegionBuilder left;
+    RegionBuilder right;
+    left.addChunk(0, 0, {withBiomes(stoneSection(), {"minecraft:the_end"})});
+    right.addChunk(0, 0, {stoneSection()});
+
+    const DiffReport report = diff(left.build(), right.build());
+    CHECK_FALSE(report.identical());
+    CHECK(report.blockDifferenceCount == 0U);
+    CHECK(report.biomeDifferenceCount == stratum::chunk::kBiomesPerSection);
+    REQUIRE_FALSE(report.biomeDifferences.empty());
+    CHECK(report.biomeDifferences.front().left == "minecraft:the_end");
+    CHECK(report.biomeDifferences.front().right == "<no biomes>");
+}
+
+TEST_CASE("recorded biome differences are capped, counted in full, and found in a stable order",
+          "[diff][biome]") {
+    // Every cell differs; the first recorded must be the lowest cell, y then
+    // z then x.
+    RegionBuilder left;
+    RegionBuilder right;
+    left.addChunk(0, 0, {withBiomes(stoneSection(), {"minecraft:end_barrens"})});
+    right.addChunk(0, 0, {withBiomes(stoneSection(), {"minecraft:small_end_islands"})});
+
+    DiffOptions options;
+    options.maxBiomeDifferences = 3;
+    const DiffReport report = diff(left.build(), right.build(), options);
+    CHECK(report.biomeDifferenceCount == stratum::chunk::kBiomesPerSection);
+    REQUIRE(report.biomeDifferences.size() == 3U);
+    CHECK(report.biomeDifferences[0].x == 0);
+    CHECK(report.biomeDifferences[0].y == 0);
+    CHECK(report.biomeDifferences[0].z == 0);
+    CHECK(report.biomeDifferences[1].x == 4);
+    CHECK(report.biomeDifferences[1].z == 0);
+    // The block cap is separate, and nothing about the blocks differs.
+    CHECK(report.blockDifferences.empty());
 }
