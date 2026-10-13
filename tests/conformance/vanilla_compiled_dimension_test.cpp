@@ -48,6 +48,7 @@
 using Catch::Matchers::ContainsSubstring;
 using stratum::data::Pack;
 using stratum::data::ResourceLocation;
+using stratum::world::BiomeSource;
 using stratum::world::CompiledDimension;
 
 namespace {
@@ -80,8 +81,8 @@ TEST_CASE("a dimension compiled from a thawed blob fills what its pack fills",
 
     for (const std::int64_t seed : {std::int64_t{0}, std::int64_t{-4172144997902289642}}) {
         CAPTURE(seed);
-        const auto dimension =
-            CompiledDimension::compile(thawedVanilla(), overworld, overworld, seed);
+        const auto dimension = CompiledDimension::compile(thawedVanilla(), overworld,
+                                                          BiomeSource::multiNoise(overworld), seed);
 
         // The reference: straight from the pack, every object a local here.
         const Pack pack = Pack::open(versionDir() / "worldgen");
@@ -183,9 +184,9 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
     // flag and is NOT refused: it names none (vanilla_legacy_named_noises_test).
     std::string netherRefusal;
     try {
-        static_cast<void>(
-            CompiledDimension::compile(thawedVanilla(), ResourceLocation::parse("minecraft:nether"),
-                                       ResourceLocation::parse("minecraft:nether"), 1));
+        static_cast<void>(CompiledDimension::compile(thawedVanilla(),
+                                                     ResourceLocation::parse("minecraft:nether"),
+                                                     BiomeSource::parse("minecraft:nether"), 1));
     } catch (const std::exception& error) {
         netherRefusal = error.what();
     }
@@ -194,31 +195,34 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
                                   ContainsSubstring("names 8 noise(s) — ") &&
                                   ContainsSubstring("minecraft:surface, ") &&
                                   ContainsSubstring("minecraft:nether_state_selector"));
-    // THE END'S BOUNDARY, stated as measured rather than as a universal. A
-    // first version of this case said "CompiledDimension::compile still
-    // refuses EVERY legacy dimension"; that is false, and a reviewer refuted
-    // it by construction. The End is refused on (end, end) for ONE reason
-    // only: its `biome_source` is `minecraft:the_end` — neither `multi_noise`
-    // nor `fixed` — so vanilla ships no biome parameter list named
-    // `minecraft:end`, and the refusal names exactly that. It is not refused
-    // for being legacy. Paired with any list that does exist it compiles and
-    // generates through this public path; golden_end_test.cpp holds the
-    // block-level result (25165824 of 25165824). What is NOT implemented is
-    // the End's own biome source, and that is the whole of the boundary.
-    CHECK_THROWS_WITH(CompiledDimension::compile(thawedVanilla(),
-                                                 ResourceLocation::parse("minecraft:end"),
-                                                 ResourceLocation::parse("minecraft:end"), 1),
-                      ContainsSubstring("no biome parameter list 'minecraft:end'"));
-    CHECK_NOTHROW(CompiledDimension::compile(
-        thawedVanilla(), ResourceLocation::parse("minecraft:end"), overworld, 1));
+    // THE END compiles with its own biome source, `minecraft:the_end`
+    // (biome/source.hpp; vanilla_end_biome_source_test.cpp scores it against
+    // every End quart on disk). It is not refused for being legacy — it names
+    // no noise — and it no longer needs another dimension's list to compile
+    // at all, which is how it used to get its biomes: plausible and wrong.
+    // The pairing is the caller's to name, type and all; there is still no
+    // multi-noise list called `minecraft:end`, and that refusal is by name.
+    const auto end = ResourceLocation::parse("minecraft:end");
+    CHECK_NOTHROW(CompiledDimension::compile(thawedVanilla(), end, BiomeSource::theEnd(), 1));
+    CHECK_NOTHROW(CompiledDimension::compile(thawedVanilla(), end,
+                                             BiomeSource::parse("minecraft:the_end"), 1));
+    CHECK_THROWS_WITH(
+        CompiledDimension::compile(thawedVanilla(), end, BiomeSource::multiNoise(end), 1),
+        ContainsSubstring("no biome parameter list 'minecraft:end'"));
+    // Vanilla's two other source types are refused by name, never read as a
+    // parameter list that happens to be missing.
+    CHECK_THROWS_WITH(BiomeSource::parse("minecraft:fixed"),
+                      ContainsSubstring("biome source 'minecraft:fixed' is not implemented"));
+    CHECK_THROWS_WITH(
+        BiomeSource::parse("minecraft:checkerboard"),
+        ContainsSubstring("biome source 'minecraft:checkerboard' is not implemented"));
 
     CHECK_THROWS_WITH(CompiledDimension::compile(thawedVanilla(),
                                                  ResourceLocation::parse("minecraft:not_settings"),
-                                                 overworld, 1),
+                                                 BiomeSource::multiNoise(overworld), 1),
                       ContainsSubstring("no noise settings 'minecraft:not_settings'"));
     CHECK_THROWS_WITH(CompiledDimension::compile(thawedVanilla(), overworld,
-                                                 ResourceLocation::parse("minecraft:not_a_list"),
-                                                 1),
+                                                 BiomeSource::parse("minecraft:not_a_list"), 1),
                       ContainsSubstring("no biome parameter list 'minecraft:not_a_list'"));
 }
 
@@ -249,7 +253,8 @@ TEST_CASE("the shipped overworld's output is pinned, on every architecture CI bu
                                                                << "; run tools/fetch-vanilla");
     }
     const auto overworld = ResourceLocation::parse("minecraft:overworld");
-    const auto dimension = CompiledDimension::compile(thawedVanilla(), overworld, overworld, 0);
+    const auto dimension = CompiledDimension::compile(thawedVanilla(), overworld,
+                                                      BiomeSource::multiNoise(overworld), 0);
 
     std::uint64_t hash = 0xcbf29ce484222325ULL;
     const auto mix = [&hash](const std::string& text) {
@@ -372,8 +377,8 @@ TEST_CASE("amplified and large_biomes compile from a thawed blob and fill what t
         REQUIRE(settings.geometry.minY == -64);
         REQUIRE(settings.geometry.height == 384);
 
-        const auto dimension =
-            CompiledDimension::compile(thawedVanilla(), preset, overworld, c.seed);
+        const auto dimension = CompiledDimension::compile(
+            thawedVanilla(), preset, BiomeSource::multiNoise(overworld), c.seed);
         REQUIRE(dimension->geometry() == settings.geometry);
 
         const auto rules = stratum::surface::RuleGraph::resolve(settings.surfaceRule, preset);

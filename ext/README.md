@@ -6,20 +6,26 @@ read from PocketMine-MP and chunkutils2 source, and PROGRESS.md the slices).
 **Landed: `stratum_pmmp_core`** (`include/stratum_pmmp/chunk_encoder.hpp`),
 plain C++ with no PHP in it, built and tested on every CI platform.
 `encodeChunk()` generates a chunk through `world::CompiledDimension` and
-packs every sub-chunk into `PalettedBlockArray::fromData`'s own arguments
+packs all 24 of PocketMine-MP's sub-chunks — those outside a shorter
+dimension's height, such as the End's y 0..127, as air with the biome
+source's biomes read at their own y, never left to PocketMine-MP's
+all-ocean default — into `PalettedBlockArray::fromData`'s own arguments
 for chunkutils2 0.3.x: host-endian `uint32` words in XZY order, the
 smallest width chunkutils2 accepts ({0,1,2,3,4,5,6,8,16}) for a
 deduplicated palette, and no block layer for an all-air sub-chunk. Block
 palettes hold Java state ids for the PHP side to translate; biome palettes
 hold Bedrock biome ids. `tests/chunk_encoder_test.cpp` pins the byte
 lengths chunkutils2's own tests assert; `tests/vanilla_chunk_encoder_test.cpp`
-decodes real overworld chunks back to exactly what was generated.
+decodes real overworld and End chunks back to exactly what was generated.
 
 **Landed: the zend module** (`zend/php_stratum.cpp`; `zend/stratum.stub.php`
 documents its PHP surface, SPEC §4.3). Marshaling only: it freezes a
 pipeline, opens a dimension from a frozen blob — one compiled dimension per
 process for every worker thread that opens the same world — and returns
 `encodeChunk()`'s layers and `bedrockBlockState()`'s triples as PHP arrays.
+`Stratum\parseBiomeSource()` reads a biome source as opening a dimension
+will, and opens nothing, so the plugin refuses a source this build does not
+implement on the main thread (`zend/tests/006_biome_source.phpt`).
 C++ exceptions never cross into the engine; each becomes a
 `Stratum\GenerationException`. Build it against a thread-safe PHP:
 
@@ -48,8 +54,9 @@ gives them to the main thread, once, by the world's options and seed.
 the generator, translates each sub-chunk's palette through PocketMine-MP's
 own deserializer, and freezes a pipeline into a new world's folder. Written
 against PocketMine-MP 5.44.4's source but **never run** — PocketMine-MP
-cannot be installed here — so CI checks that it parses and tests the one
-class that is pure PHP.
+cannot be installed here — so CI checks that it parses and tests its
+options class and fluid-update scheduler against stand-ins for
+PocketMine-MP's classes, with this extension loaded.
 
 ## How the pieces fit
 

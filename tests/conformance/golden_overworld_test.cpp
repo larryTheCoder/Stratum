@@ -179,8 +179,9 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
             SKIP("no golden overworld region at "
                  << region << "; generate it with tools/fetch-vanilla --generate-regions");
         }
-        const auto shipped = stratum::world::CompiledDimension::compile(stratum::freeze::read(blob),
-                                                                        overworld, overworld, seed);
+        const auto shipped = stratum::world::CompiledDimension::compile(
+            stratum::freeze::read(blob), overworld,
+            stratum::world::BiomeSource::multiNoise(overworld), seed);
         const auto noises = stratum::density::NoiseRegistry::create(
             pack, loaded.graph.referencedNoises(), seed, stratum::density::RandomSource::Xoroshiro);
         const auto raw = stratum::terrain::ChunkFiller::compile(loaded.graph, noises, settings);

@@ -66,7 +66,7 @@ final class FluidUpdateScheduler implements Listener{
 		$updates = \Stratum\takeFluidUpdates(
 			$options->blobPath,
 			$options->noiseSettings,
-			$options->biomeParameterList,
+			$options->biomeSource,
 			$world->getSeed(),
 			$event->getChunkX(),
 			$event->getChunkZ()

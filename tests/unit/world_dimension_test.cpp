@@ -15,17 +15,19 @@
 
 using Catch::Matchers::ContainsSubstring;
 using stratum::data::ResourceLocation;
+using stratum::world::BiomeSource;
 using stratum::world::CompiledDimension;
 
 TEST_CASE("a dimension the frozen pipeline does not carry is refused by name", "[world]") {
     const auto overworld = ResourceLocation::parse("minecraft:overworld");
 
-    CHECK_THROWS_WITH(
-        CompiledDimension::compile(stratum::freeze::Pipeline{}, overworld, overworld, 1),
-        ContainsSubstring("no noise settings 'minecraft:overworld'"));
+    CHECK_THROWS_WITH(CompiledDimension::compile(stratum::freeze::Pipeline{}, overworld,
+                                                 BiomeSource::multiNoise(overworld), 1),
+                      ContainsSubstring("no noise settings 'minecraft:overworld'"));
 
     stratum::freeze::Pipeline withSettings;
     withSettings.settings.emplace(overworld, stratum::settings::NoiseSettings{});
-    CHECK_THROWS_WITH(CompiledDimension::compile(std::move(withSettings), overworld, overworld, 1),
+    CHECK_THROWS_WITH(CompiledDimension::compile(std::move(withSettings), overworld,
+                                                 BiomeSource::multiNoise(overworld), 1),
                       ContainsSubstring("no biome parameter list 'minecraft:overworld'"));
 }

@@ -17,8 +17,8 @@ use pocketmine\world\generator\Generator;
  * Constructed once per generation worker thread with nothing but the world
  * seed and its options string. Everything expensive happens here, once:
  * opening the world's frozen pipeline compiles it, and the engine shares one
- * compiled dimension across every worker that opens the same blob, settings,
- * list and seed.
+ * compiled dimension across every worker that opens the same blob, noise
+ * settings, biome source and seed.
  *
  * What generateChunk() does per chunk is deliberately small — the engine
  * returns sub-chunks already packed the way PalettedBlockArray::fromData
@@ -44,7 +44,7 @@ final class StratumGenerator extends Generator{
 		$this->dimension = \Stratum\Dimension::open(
 			$options->blobPath,
 			$options->noiseSettings,
-			$options->biomeParameterList,
+			$options->biomeSource,
 			$seed
 		);
 		$this->translator = new BlockStateTranslator();
@@ -81,9 +81,11 @@ final class StratumGenerator extends Generator{
 			);
 		}
 
-		// Every sub-chunk the dimension covers is present: a key Chunk's
-		// constructor does not find becomes air AND an all-ocean biome
-		// array, which would be a visibly wrong world with no error.
+		// All 24 sub-chunks are present, whatever the dimension's height:
+		// a key Chunk's constructor does not find becomes air AND an
+		// all-ocean biome array, which would be a visibly wrong world with
+		// no error. encodeChunk returns every one — for the End, whose
+		// terrain is y 0..127, the rest as air with the End's own biomes.
 		$world->setChunk($chunkX, $chunkZ, new Chunk($subChunks, terrainPopulated: false));
 	}
 

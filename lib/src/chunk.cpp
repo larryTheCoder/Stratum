@@ -466,6 +466,21 @@ const BlockState* Chunk::blockAt(int localX, int y, int localZ) const {
     return &found->blockAt(localX, localY, localZ);
 }
 
+const std::string* Chunk::biomeAt(int localX, int y, int localZ) const {
+    const int sectionY = javamath::floorDiv(y, kSectionSize);
+    const auto found =
+        std::ranges::find_if(sections_, [sectionY](const Section& s) { return s.y == sectionY; });
+    if (found == sections_.end() || found->biomes.empty()) {
+        return nullptr;
+    }
+    // One entry per 4x4x4 cell, y then z then x, 64 to a section; decode
+    // checked every index against the palette.
+    const auto cellX = static_cast<std::size_t>(localX) / 4U;
+    const auto cellY = static_cast<std::size_t>(javamath::floorMod(y, kSectionSize)) / 4U;
+    const auto cellZ = static_cast<std::size_t>(localZ) / 4U;
+    return &found->biomePalette[found->biomes[(cellY * 16U) + (cellZ * 4U) + cellX]];
+}
+
 std::optional<int> Chunk::highestNonAir(int localX, int localZ) const {
     for (const Section& section : std::views::reverse(sections_)) {
         for (int localY = kSectionSize - 1; localY >= 0; --localY) {

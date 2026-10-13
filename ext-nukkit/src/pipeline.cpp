@@ -18,6 +18,20 @@ namespace {
 constexpr int kQuartWidth = 4;
 constexpr int kQuartsPerChunkEdge = 4;
 
+/// The biome source vanilla's world presets pair with @p noiseSettings: the
+/// End's own for `minecraft:end`, and otherwise the multi-noise list of the
+/// same name — the overworld's for the overworld, the one dimension
+/// compile() lets through today. Derived here rather than passed in, because
+/// Nukkit names a dimension and nothing else; a datapack's other pairings
+/// are not reachable from this binding.
+[[nodiscard]] world::BiomeSource vanillaBiomeSource(const data::ResourceLocation& noiseSettings) {
+    static const auto kEnd = data::ResourceLocation::parse("minecraft:end");
+    if (noiseSettings == kEnd) {
+        return world::BiomeSource::theEnd();
+    }
+    return world::BiomeSource::multiNoise(noiseSettings);
+}
+
 } // namespace
 
 /// Everything is in `world::CompiledDimension`, the core both native
@@ -36,9 +50,15 @@ std::unique_ptr<Pipeline> Pipeline::compile(const std::filesystem::path& packDir
                                             const std::int64_t worldSeed) {
     static const auto kOverworld = data::ResourceLocation::parse("minecraft:overworld");
     if (dimension != kOverworld) {
+        // The binding's scope, not the library's: lib compiles the End
+        // (refusing only the legacy dimensions' named surface-rule noises,
+        // M4), but nothing here has matched another dimension's height and
+        // biome column to Nukkit's own, and no dimension can place a block
+        // until Nukkit's block id table is sourced (resolveNukkitFullId).
         throw NukkitError("stratum-nukkit: '" + dimension.toString() +
-                          "' is not a dimension this pipeline can compile yet — only "
-                          "minecraft:overworld, blocked elsewhere on legacy_random_source (M4)");
+                          "' is outside this binding's scope, which is minecraft:overworld "
+                          "alone: no other dimension's height and biome column have been "
+                          "matched to Nukkit's own (M5)");
     }
     // Still the live pack, not a world's frozen blob (SPEC §6): the Nukkit
     // binding has no world-creation hook storing one yet. It resolves the
@@ -47,7 +67,7 @@ std::unique_ptr<Pipeline> Pipeline::compile(const std::filesystem::path& packDir
     pipeline->impl_ = std::make_unique<Impl>();
     pipeline->impl_->dimension = world::CompiledDimension::compile(
         freeze::resolve(data::Pack::open(packDir / "worldgen"), packDir / "biome_parameters"),
-        dimension, dimension, worldSeed);
+        dimension, vanillaBiomeSource(dimension), worldSeed);
     return pipeline;
 }
 

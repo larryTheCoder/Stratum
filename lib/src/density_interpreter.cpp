@@ -318,6 +318,18 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
                 break;
             case NodeType::YClampedGradient:
             case NodeType::Shift:
+            case NodeType::OldBlendedNoise:
+            case NodeType::WeirdScaledSampler:
+                // Each reads y itself, whatever its arguments do: the
+                // gradient is a function of y, plain shift samples its noise
+                // with y unpinned, old_blended_noise is 3D noise, and
+                // weird_scaled_sampler samples its noise at the point's own
+                // y over the rarity. The last two once reached the default
+                // below, where a node with no varying argument —
+                // old_blended_noise has none at all — was reported
+                // invariant, and the End's biome source, trusting that, read
+                // a datapack's 3D erosion once per chunk (measured in
+                // tests/unit/biome_source_test.cpp).
                 invariant = false;
                 break;
             case NodeType::Interpolated:

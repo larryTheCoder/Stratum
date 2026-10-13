@@ -2,17 +2,20 @@
 
 A C++20 world generation engine for [PocketMine-MP](https://pmmp.io) that
 executes **vanilla Java Edition's data-driven worldgen JSON** — density
-functions, noise settings, multi-noise biome sources and surface rules — so
-that Java-ecosystem datapacks and authoring tools (Misode's generators,
-Snowcapped, Spyglass) work as content for a Bedrock server.
+functions, noise settings, multi-noise and End biome sources and surface
+rules — so that Java-ecosystem datapacks and authoring tools (Misode's
+generators, Snowcapped, Spyglass) work as content for a Bedrock server.
 
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
 - **Status:** the shipped overworld generates end to end — terrain, ore
   veins, biomes, aquifers and surface rules — and matches the vanilla server
-  block for block on 99.9957% of the golden positions scored. **M4** stays
-  open for the legacy dimensions' surface rules and the End's biome source;
+  block for block on 99.9957% of the golden positions scored, and the End
+  generates exactly — its blocks over its noise height (y 0..127), its
+  biomes over the whole column the server stores them for (y 0..255).
+  **M4** stays open for the legacy
+  dimensions' surface rules;
   **M5** (PocketMine integration) is written but has never run inside a
   server. See [What generates today](#what-generates-today) for the honest
   breakdown.
@@ -98,8 +101,10 @@ stratum diff <left.mca> <right.mca> [--max <n>]   # 0 identical, 1 differing
 stratum render <region.mca> --out map.png --mode heightmap|biome|blocks
 ```
 
-`diff` compares block-for-block in Java block space, before any Bedrock
-mapping (SPEC §7), and reports the first differences with their coordinates.
+`diff` compares in Java space, before any Bedrock mapping (SPEC §7): every
+block, and every stored biome by name, cell by 4x4x4 cell. It reports the
+first differences of each, apart, with their coordinates, and says
+"identical" (exit 0) only when the blocks and the biomes both agree.
 Anything it cannot compare — a chunk present on one side, one that fails to
 decode, one whose stored coordinates disagree — is reported as a finding
 rather than skipped. Slice rendering is still to come.
@@ -220,8 +225,16 @@ legacy dimensions are the exception. Where a dimension uses
 by name rather than derived wrongly. That covers the Nether, `caves` and
 `floating_islands`.
 The legacy Nether's climate and terrain are measured (32765 of 32768 golden
-biome cells, every miss an exact tie). The End's terrain generates exactly,
-but its `the_end` biome source is not implemented.
+biome cells, every miss an exact tie). The End generates exactly: its terrain
+block for block over its noise height (y 0..127), and its biomes through its
+own `the_end` biome source, which reads the noise router's erosion at each
+chunk's centre — exact on every quart the server stores, y 0..255, in 45 End
+regions, datapack variants of its router included (SPEC §11). The upper half
+of that column, above the noise height, comes from `fillBiomes`' range form,
+which is also what fills PocketMine-MP's sub-chunks above and below the End's
+terrain. A dimension names its biome source when it is compiled, since a
+frozen pipeline does not record one. How PocketMine-MP then presents an End
+world to Bedrock clients — its dimension, sky and fog — is not verified.
 
 **PocketMine integration — written, and never run inside a server.** The
 Java-to-Bedrock mapping tables, the sub-chunk encoder, the zend module and the
@@ -236,7 +249,9 @@ untouched at about 237 ms per chunk, on a per-point interpreter.
 This matrix is part of the public contract (SPEC §8). A pack that
 half-loads silently is a bug of the highest severity class: anything outside
 the supported column is a **hard error at load, naming the registry or node
-that was rejected**.
+that was rejected** — except where a row below says a file loads and is not
+yet interpreted (a pack's `dimension` and `world_preset` files, and the
+`biome_source` they declare, which nothing reads yet).
 
 | Registry / feature | v1 | Notes |
 |---|---|---|
@@ -244,9 +259,11 @@ that was rejected**.
 | `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
 | Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
-| Multi-noise biome source | Supported | |
+| Multi-noise biome source | Supported | Named by its parameter list |
+| `the_end` biome source | Supported | Reads the router's `erosion`, as the server does (SPEC §11) |
+| `fixed`, `checkerboard` biome sources | **Rejected** | Refused by name when a caller names them to `world::BiomeSource::parse` (as `Stratum\Dimension::open` and the PocketMine-MP plugin's options do). Nothing reads a pack's own `biome_source` yet, so one a pack declares in its `dimension` or `world_preset` is neither refused nor reported (SPEC §11) |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
-| `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |
+| `dimension`, `dimension_type`, `world_preset` | Partial | Loaded and addressable, not interpreted: the caller names a dimension's noise settings and its biome source, and nothing reads them from these files yet |
 | Tags and namespaced references | Supported | Within the registries above |
 | `configured_feature`, `placed_feature` | **Rejected** | v2 (SPEC §10, M6) |
 | `configured_carver` | **Rejected** | v2 |

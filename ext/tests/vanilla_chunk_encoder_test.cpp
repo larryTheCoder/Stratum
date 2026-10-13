@@ -7,7 +7,8 @@
 // format: every block must decode to the Java state id of what the dimension
 // placed there, every biome to its quart's Bedrock id, and an all-air
 // sub-chunk must carry no block layer at all. The chunk's fluid updates must
-// be the filler's own, each on a fluid.
+// be the filler's own, each on a fluid. And an End chunk, whose terrain is
+// eight sub-chunks of PocketMine-MP's 24, must still come back as all 24.
 //
 // Mojang-derived fixtures are never committed (SPEC §12); without them this
 // SKIPs, naming the command that produces them.
@@ -24,8 +25,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using stratum::data::ResourceLocation;
@@ -69,7 +72,7 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
     const auto dimension = stratum::world::CompiledDimension::compile(
         stratum::freeze::read(stratum::freeze::write(
             stratum::freeze::resolve(pack, versionDir() / "biome_parameters"))),
-        overworld, overworld, 20260915);
+        overworld, stratum::world::BiomeSource::multiNoise(overworld), 20260915);
     const stratum::settings::NoiseGeometry& geometry = dimension->geometry();
 
     std::size_t fluidUpdates = 0;
@@ -149,4 +152,99 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
     }
     // Not vacuous either: chunk (-3, 2) holds aquifer fluid that ticks.
     CHECK(fluidUpdates > 0U);
+}
+
+TEST_CASE("an End chunk fills all 24 of PocketMine-MP's sub-chunks, not only its own 8",
+          "[conformance][pmmp][end]") {
+    // The End generates y 0..127 and PocketMine-MP's column is -64..319. A
+    // sub-chunk Chunk::__construct is not given becomes air and an all-ocean
+    // biome array, so the encoder gives all 24: its own eight as generated,
+    // the other sixteen as air, and every one's biomes from the End's source
+    // read at that quart's y — which over y 128..255 is what the server
+    // stores (vanilla_end_biome_source_test), and for vanilla's End is one
+    // biome per chunk at every y.
+    if (!std::filesystem::is_directory(versionDir() / "worldgen" / "noise_settings") ||
+        !std::filesystem::is_directory(versionDir() / "biome_parameters")) {
+        SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR
+                                                               << "; run tools/fetch-vanilla");
+    }
+    const stratum::data::Pack pack = stratum::data::Pack::open(versionDir() / "worldgen");
+    const auto dimension = stratum::world::CompiledDimension::compile(
+        stratum::freeze::read(stratum::freeze::write(
+            stratum::freeze::resolve(pack, versionDir() / "biome_parameters"))),
+        ResourceLocation::parse("minecraft:end"), stratum::world::BiomeSource::theEnd(), 42);
+    const stratum::settings::NoiseGeometry& geometry = dimension->geometry();
+    REQUIRE(geometry.minY == 0);
+    REQUIRE(geometry.height == 128);
+    const auto bedrockEndId =
+        stratum::mapping::bedrockBiomeId(ResourceLocation::parse("minecraft:the_end"));
+    REQUIRE(bedrockEndId.has_value());
+    // value_or only because clang-tidy cannot see that REQUIRE returned.
+    const auto bedrockEnd = static_cast<std::uint32_t>(bedrockEndId.value_or(-1));
+
+    // (0, 0) the central island; (2067, 0) end_highlands on the server
+    // (end-islands r.64.0, seed 42).
+    for (const auto& [chunkX, chunkZ, javaBiome] :
+         std::array<std::tuple<std::int32_t, std::int32_t, const char*>, 2>{
+             {{0, 0, "minecraft:the_end"}, {2067, 0, "minecraft:end_highlands"}}}) {
+        CAPTURE(chunkX, chunkZ);
+        const auto encoded = stratum::pmmp::encodeChunk(*dimension, chunkX, chunkZ);
+        stratum::terrain::ChunkBuffer blocks(geometry);
+        dimension->fillBlocks(chunkX, chunkZ, blocks);
+        // PocketMine-MP's whole column, quart layers -16..79, through the
+        // range form the encoder uses.
+        std::vector<const ResourceLocation*> biomes(std::size_t{16} * 96U);
+        dimension->fillBiomes(chunkX, chunkZ, -16, biomes);
+
+        REQUIRE(encoded.subChunks.size() == 24U);
+        std::size_t withBlocks = 0;
+        for (std::size_t section = 0; section < encoded.subChunks.size(); ++section) {
+            const auto& sub = encoded.subChunks[section];
+            CAPTURE(sub.index);
+            CHECK(sub.index == stratum::pmmp::kMinSubChunk + static_cast<std::int32_t>(section));
+            const std::int32_t sectionMinY = sub.index * 16;
+            const bool generated = sectionMinY >= geometry.minY && sectionMinY < geometry.maxY();
+            checkShape(sub.biomes);
+            if (sub.blocks.has_value()) {
+                CHECK(generated);
+                checkShape(*sub.blocks);
+                ++withBlocks;
+            }
+            std::size_t blocksDiffering = 0;
+            std::size_t biomesDiffering = 0;
+            for (int x = 0; x < 16; ++x) {
+                for (int z = 0; z < 16; ++z) {
+                    for (int y = 0; y < 16; ++y) {
+                        const std::size_t at = stratum::pmmp::subChunkIndex(x, y, z);
+                        if (generated) {
+                            const auto& state = blocks.at(x, sectionMinY + y, z);
+                            bool same = state == stratum::settings::BlockState{};
+                            if (sub.blocks.has_value()) {
+                                same = decodeAt(*sub.blocks, at) ==
+                                       stratum::mapping::javaBlockStateId(state);
+                            }
+                            blocksDiffering += same ? 0U : 1U;
+                        }
+                        // Quart layer -16 is index 0.
+                        const std::int32_t quartLayer =
+                            stratum::javamath::floorDiv(sectionMinY + y, 4) + 16;
+                        const std::size_t quart = ((static_cast<std::size_t>(quartLayer) * 4U) +
+                                                   static_cast<std::size_t>(z / 4)) *
+                                                      4U +
+                                                  static_cast<std::size_t>(x / 4);
+                        // One Java biome over the whole column, and Bedrock's
+                        // the_end for it.
+                        biomesDiffering += biomes.at(quart)->toString() == javaBiome &&
+                                                   decodeAt(sub.biomes, at) == bedrockEnd
+                                               ? 0U
+                                               : 1U;
+                    }
+                }
+            }
+            CHECK(blocksDiffering == 0U);
+            CHECK(biomesDiffering == 0U);
+        }
+        // Not vacuous: the island holds blocks, within the End's own eight.
+        CHECK(withBlocks > 0U);
+    }
 }

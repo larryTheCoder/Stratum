@@ -76,7 +76,14 @@ struct EncodedSubChunk {
 
 /// One chunk, as PocketMine-MP takes it.
 struct EncodedChunk {
-    /// Every sub-chunk the dimension's height covers, bottom to top.
+    /// All 24 of PocketMine-MP's sub-chunks, -4 to 19, bottom to top — not
+    /// only those the dimension's noise height covers. A sub-chunk
+    /// `Chunk::__construct` is not given becomes air AND an all-ocean biome
+    /// array, so a dimension shorter than PocketMine-MP's column (the End,
+    /// y 0..127) would otherwise be ocean above and below its terrain.
+    /// Outside the noise height the blocks are air and the biomes are the
+    /// dimension's biome source read at each quart's own y
+    /// (`CompiledDimension::fillBiomes`' range form).
     std::vector<EncodedSubChunk> subChunks;
     /// The aquifer's fluid updates (spec Q8.1): the positions a Java server
     /// keeps in the chunk's `PostProcessing` lists and ticks once the chunk
@@ -102,11 +109,11 @@ struct EncodedChunk {
 /// smallest width that holds it.
 [[nodiscard]] PalettedLayer encodeLayer(std::span<const std::uint32_t, kSubChunkVolume> values);
 
-/// Chunk (@p chunkX, @p chunkZ) of @p dimension, as every PocketMine-MP
-/// sub-chunk the dimension's height covers, bottom to top, plus its fluid
-/// updates. Throws EncodeError for a dimension that does not fit
-/// PocketMine-MP's chunk, and lets `mapping::BlockMappingError` through,
-/// naming the block.
+/// Chunk (@p chunkX, @p chunkZ) of @p dimension, as all 24 PocketMine-MP
+/// sub-chunks, bottom to top (EncodedChunk::subChunks says what fills those
+/// outside the noise height), plus its fluid updates. Throws EncodeError for
+/// a dimension that does not fit PocketMine-MP's chunk, and lets
+/// `mapping::BlockMappingError` through, naming the block.
 [[nodiscard]] EncodedChunk encodeChunk(const world::CompiledDimension& dimension,
                                        std::int32_t chunkX, std::int32_t chunkZ);
 

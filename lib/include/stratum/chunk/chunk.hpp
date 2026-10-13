@@ -131,6 +131,12 @@ public:
     /// when y falls outside the sections this chunk stores.
     [[nodiscard]] const BlockState* blockAt(int localX, int y, int localZ) const;
 
+    /// The biome stored, by name, for the 4x4x4 cell that holds chunk-local
+    /// block x/z (0..15) at world y. Returns nullptr when y falls outside
+    /// the sections this chunk stores, or in a section that stores no
+    /// biomes.
+    [[nodiscard]] const std::string* biomeAt(int localX, int y, int localZ) const;
+
     /// Highest y at which the column holds something other than air, or
     /// nullopt for an entirely empty column.
     [[nodiscard]] std::optional<int> highestNonAir(int localX, int localZ) const;

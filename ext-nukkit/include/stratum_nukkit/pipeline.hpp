@@ -13,12 +13,17 @@
 // own doc for why that one is a refusal, not an answer, today).
 //
 // SCOPED TO THE OVERWORLD, matching `tools/analysis/generate-world.cpp`'s
-// own scope: `legacy_random_source` (M4) still blocks the density chain for
-// the Nether, the End, caves and floating islands, so there is nothing this
-// pipeline could compile for them yet. `Pipeline::compile` names the
-// dimension in its signature anyway, rather than hard-coding it invisibly,
-// so extending this to another dimension is a matter of removing a check in
-// `pipeline.cpp`, not changing this interface.
+// own scope. That is this binding's choice, not the library's limit: lib
+// compiles the End, blocks and its own `minecraft:the_end` biome source, and
+// refuses the legacy dimensions (the Nether, caves, floating islands) only
+// for the named noises their surface rules read (M4). What is missing here
+// is Nukkit's side — no other dimension's height and biome column have been
+// matched to Nukkit's own, and no dimension can place a block until
+// Nukkit's block id table is sourced (`resolveNukkitFullId`). `compile`
+// names the dimension in its signature anyway, and already pairs it with
+// the biome source vanilla's presets do (the End's own for `minecraft:end`),
+// so extending this to another dimension means removing a check in
+// `pipeline.cpp` once that matching is done, not changing this interface.
 #pragma once
 
 #include <stratum/data/pack.hpp>
@@ -69,8 +74,8 @@ public:
     /// exactly what `tools/fetch-vanilla` leaves behind and what
     /// `tools/analysis/generate-world.cpp` already reads the same way —
     /// not the `worldgen/` tree itself. Throws `NukkitError` naming the
-    /// dimension if it is not `minecraft:overworld` — the only one this
-    /// pipeline can compile today — and whatever `lib/`'s own loaders throw
+    /// dimension if it is not `minecraft:overworld` — the only one in this
+    /// binding's scope today — and whatever `lib/`'s own loaders throw
     /// (`PackError`, `FillError`, ...) for a malformed or unsupported pack,
     /// unchanged: this layer adds no tolerance `lib/` does not already
     /// have.

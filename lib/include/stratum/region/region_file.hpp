@@ -6,7 +6,8 @@
 // interpreting that is the NBT reader's job.
 //
 // This exists for the conformance harness (SPEC §7): `cli diff` compares
-// vanilla's region output against ours block-for-block in Java block space.
+// vanilla's region output against ours in Java space, block for block and
+// stored biome for stored biome.
 // A malformed or unsupported file therefore raises FormatError naming what
 // was wrong and where. Skipping a chunk that could not be read would turn a
 // parity failure into a green run, which SPEC §8 treats as the most severe

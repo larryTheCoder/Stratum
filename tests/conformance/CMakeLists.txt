@@ -71,6 +71,7 @@ add_executable(stratum_conformance_tests
     vanilla_biome_tie_break_test.cpp
     vanilla_biome_mapping_test.cpp
     vanilla_compiled_dimension_test.cpp
+    vanilla_end_biome_source_test.cpp
     vanilla_block_state_mapping_test.cpp
     vanilla_blended_probe_test.cpp
     vanilla_legacy_blended_test.cpp
