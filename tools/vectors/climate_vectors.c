@@ -1,5 +1,14 @@
 /* Stratum — known-answer vectors for the 2D density pipeline, from cubiomes.
- * Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 the Stratum contributors.
+ * SPDX-License-Identifier: Apache-2.0 AND MIT
+ *
+ * ADAPTED (CLAUDE.md, NOTICE): `getSplineStrict` below is a copy of cubiomes'
+ * biomenoise.c `getSpline` (https://github.com/Cubitect/cubiomes, MIT
+ * License, Copyright (c) 2020 Cubitect), read at
+ * e61f90580cbdd883214a8054670dacae655e59c0, with its double `lerp` helper
+ * replaced by the float `lerpF`. That function is MIT-licensed code, which is
+ * why this file's licence expression names MIT beside Apache-2.0; the rest of
+ * the file is this project's own driver. Recorded in NOTICE.
  *
  * cubiomes (MIT, Cubitect) is the reference SPEC §2 names for noise and biome
  * math. tools/vectors/noise_vectors.c already checks the noise primitives

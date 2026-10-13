@@ -2,6 +2,13 @@
 // stored biomes.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
+// ADAPTED (CLAUDE.md, NOTICE): the cubiomes legacy Nether climate below
+// (`kCubiomesNether*`, `cubiomesNetherLayout`, `cubiomesNetherBlocks`) is
+// adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT License,
+// Copyright (c) 2020 Cubitect), biomenoise.c `setNetherSeed` and noise.c
+// `octaveInit` and `doublePerlinInit`, read at
+// e61f90580cbdd883214a8054670dacae655e59c0. Recorded in NOTICE.
+//
 // WHAT THIS IS FOR. How a NAMED noise's identifier becomes a Java LCG seed
 // under `legacy_random_source` is unsolved (SPEC §11). tools/analysis/
 // legacy-seed-analyze.cpp attacks it through synthetic probe dimensions whose

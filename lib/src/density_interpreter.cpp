@@ -1,5 +1,16 @@
 // Stratum — evaluating a resolved density function graph, one point at a time.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// ADAPTED (CLAUDE.md, NOTICE): Interpreter::evaluateSpline follows cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), biomenoise.c `getSpline`, read at
+// e61f90580cbdd883214a8054670dacae655e59c0: the knot search, the straight
+// line off either end, and the cubic written as
+// `lerp(k, n, o) + k * (1 - k) * lerp(k, p, q)` with its two tangent terms.
+// Recorded as an adaptation because it cannot be shown to be independent of
+// that function: it arrived in the same commit as the explicit copy in
+// tools/vectors/climate_vectors.c and matches it term for term. What is this
+// project's own is the float-throughout evaluation (SPEC §11).
 
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>

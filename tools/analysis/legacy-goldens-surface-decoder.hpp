@@ -1,6 +1,13 @@
 // Stratum — reading a surface noise's sign straight out of a golden region.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
+// ADAPTED (CLAUDE.md, NOTICE): `octaveInitBlock` and `octaveInitLayout`
+// re-express the draw order of cubiomes' noise.c `octaveInit`
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), read at e61f90580cbdd883214a8054670dacae655e59c0, as an index
+// formula. What they do with a declared zero amplitude is not cubiomes' but
+// deepslate's, observed as a black box. Recorded in NOTICE.
+//
 // A dimension's surface rule is a decision tree whose leaves place blocks and
 // whose `noise_threshold` conditions are the only thing in it that a world
 // seed reaches. So the block a golden region holds at one position is, read

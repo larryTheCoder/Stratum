@@ -1,12 +1,26 @@
 // Stratum — Perlin, octave, normal and simplex noise.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// REFERENCE (SPEC §2, CLAUDE.md): the composition implemented here — the
-// gradient set, the octave salts, the persistence and lacunarity schedules
-// and the normal-noise scaling — was checked against cubiomes
-// (https://github.com/Cubitect/cubiomes, MIT, Cubitect), file noise.c, which
-// SPEC §2 names as the reference for noise and biome math. The known-answer
-// vectors in tests/unit/noise_vectors.inc are produced from it.
+// ADAPTED (CLAUDE.md, NOTICE): OctaveNoise::createLegacy and
+// NormalNoise::createLegacy are adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), noise.c `octaveInit` (with rng.h `skipNextN`) and
+// `doublePerlinInit`, read at e61f90580cbdd883214a8054670dacae655e59c0:
+// the guard on the octave range, the 262 raw steps skipped per octave above
+// the top one, the draw order and storage order highest frequency first, the
+// persistence and frequency schedules, and the `(10/6) * n / (n + 1)`
+// amplitude. Recorded in NOTICE.
+//
+// REFERENCE (SPEC §2, CLAUDE.md): the rest — the gradient set, the octave
+// salts, the persistence and lacunarity schedules and the normal-noise
+// scaling of the modern construction — was written from the documented
+// algorithms and checked against the same file of cubiomes, which SPEC §2
+// names as the reference for noise and biome math. Its structure parallels
+// cubiomes' noise.c in places — the layout of the three gradient tables, the
+// simplex corner sequence — and both follow Perlin's published improved noise
+// and the standard simplex construction; this part is recorded as a
+// reference, not an adaptation (NOTICE). The known-answer vectors in
+// tests/unit/noise_vectors.inc are produced from it.
 //
 // This file depends on -ffp-contract=off (SPEC §5.4): the interpolations
 // below are sums of products, and letting the compiler contract them into

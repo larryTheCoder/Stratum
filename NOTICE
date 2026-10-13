@@ -38,15 +38,64 @@ it merges.
 cubiomes (MIT)
 --------------------------------------------------------------------------
 
+Every adaptation below is recorded against cubiomes commit
+e61f90580cbdd883214a8054670dacae655e59c0, the commit tools/vectors pins,
+and was checked against the upstream text at that commit. Each adapted
+file names its upstream file and licence in its header.
+
 lib/src/blended.cpp is adapted from cubiomes by Cubitect
 (https://github.com/Cubitect/cubiomes): the octave loop and blend of
 `sampleSurfaceNoise` in biomenoise.c, and the octave seeding order of
-`octaveInit` in noise.c.
+`octaveInit` in noise.c. lib/include/stratum/noise/blended.hpp declares it
+and carries the same attribution.
+
+lib/src/perlin.cpp adapts the legacy octave construction from noise.c:
+`OctaveNoise::createLegacy` is `octaveInit` (with rng.h's `skipNextN`) —
+its guard that the octave range be non-empty with a top octave of at most
+0, the 262 raw generator steps skipped per octave above the top one, the
+octaves drawn and stored highest frequency first, the persistence
+1/(2^n - 1) doubled per octave and the frequency 2^top halved per octave —
+and `NormalNoise::createLegacy` is `doublePerlinInit`: two such stacks drawn
+in sequence from one generator, scaled by `(10.0 / 6.0) * n / (n + 1)` in
+cubiomes' order of operations. lib/include/stratum/noise/perlin.hpp
+declares both and carries the same attribution. The rest of perlin.cpp —
+the modern octave and normal noise, Perlin and simplex sampling — was
+written from the documented algorithms and checked against cubiomes as a
+reference; it is not recorded as adapted.
+
+lib/src/noise_registry.cpp adapts the legacy Nether climate from
+biomenoise.c's `setNetherSeed`: `minecraft:temperature` from
+java.util.Random(worldSeed) and `minecraft:vegetation` from
+java.util.Random(worldSeed + 1), each a two-octave stack pair from octave
+-7, whatever parameters the pack gives. `minecraft:offset` as zero is this
+project's reading of `getNetherBiome` sampling that climate unshifted, not
+code adapted from it.
+
+lib/src/density_interpreter.cpp's `Interpreter::evaluateSpline` follows
+biomenoise.c's `getSpline`: the knot search, the straight line off either
+end, and the cubic as `lerp(k, n, o) + k * (1 - k) * lerp(k, p, q)` with its
+two tangent terms. It is recorded as an adaptation because it cannot be
+shown independent of that function — it arrived in the same commit as the
+copy in tools/vectors/climate_vectors.c and matches it term for term — not
+because a derivation was traced. The float-throughout evaluation is this
+project's own (SPEC.md section 11).
+
+tools/vectors/climate_vectors.c carries `getSplineStrict`, a copy of
+biomenoise.c's `getSpline` with its double `lerp` helper replaced by a
+float one; that file's licence expression is Apache-2.0 AND MIT for it.
+The vector drivers otherwise call cubiomes' own functions, built from a
+checkout fetched at run time.
+
+tools/analysis/legacy-goldens-biome-analyze.cpp reproduces the same legacy
+Nether climate a second time, for analysis: `setNetherSeed`, `octaveInit`
+and `doublePerlinInit`. tools/analysis/legacy-goldens-surface-decoder.hpp
+re-expresses `octaveInit`'s draw order as an index formula
+(`octaveInitBlock`, `octaveInitLayout`); its handling of a zero amplitude is
+deepslate's, observed, not cubiomes'.
 
 lib/src/biome_source.cpp and lib/include/stratum/biome/source.hpp adapt
 the structure of the End's biome source from cubiomes' biomenoise.c,
-`mapEnd`, `mapEndBiome` and `getEndBiome` (read as text at commit
-e61f90580cbdd883214a8054670dacae655e59c0): the chunk taken from the quart
+`mapEnd`, `mapEndBiome` and `getEndBiome`: the chunk taken from the quart
 by a floor shift; the central test, inclusive at 4096 in 64-bit chunk
 coordinates; one sample per chunk, in the island-field cell holding the
 chunk's centre; and the three edges with their inclusivity (cubiomes'
@@ -69,23 +118,29 @@ cubiomes is MIT-licensed:
 
     Copyright (c) 2020 Cubitect
 
-    Permission is hereby granted, free of charge, to any person obtaining
-    a copy of this software and associated documentation files (the
-    "Software"), to deal in the Software without restriction, including
-    without limitation the rights to use, copy, modify, merge, publish,
-    distribute, sublicense, and/or sell copies of the Software, and to
-    permit persons to whom the Software is furnished to do so, subject to
-    the following conditions:
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-    The above copyright notice and this permission notice shall be
-    included in all copies or substantial portions of the Software.
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
-cubiomes is otherwise used as a *reference* rather than adapted: the
-known-answer vectors under tests/ are generated by running it at a pinned
-commit (tools/vectors/), and its source is never vendored into this
-repository.
+Beyond the adaptations recorded above, cubiomes is used as a *reference*:
+the known-answer vectors under tests/ are generated by running it at the
+pinned commit (tools/vectors/). Its source tree is never vendored into
+this repository; the only cubiomes code here is what those adaptations
+carry, getSplineStrict's copy among them.
 
 --------------------------------------------------------------------------
 vanilla-mcdoc (MIT)

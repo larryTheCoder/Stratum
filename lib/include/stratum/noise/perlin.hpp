@@ -6,6 +6,12 @@
 // normal-noise composition on top of it — and checked against cubiomes
 // (MIT, Cubitect), the noise reference SPEC §2 names.
 //
+// The two legacy constructions declared here, OctaveNoise::createLegacy and
+// NormalNoise::createLegacy, are adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Cubitect), noise.c
+// `octaveInit` and `doublePerlinInit`; their definitions are in perlin.cpp
+// and the adaptation is recorded in NOTICE.
+//
 // WHAT THE VECTORS ESTABLISH: cubiomes is an independent reimplementation of
 // Minecraft's noise, so bit-exact agreement with it is strong evidence that
 // this code is right. It is not proof that either matches Mojang. That is

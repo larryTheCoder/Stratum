@@ -1,5 +1,14 @@
 // Stratum — the noises a density function graph names.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// ADAPTED (CLAUDE.md, NOTICE): the legacy climate below — the seeds
+// worldSeed and worldSeed + 1 and the fixed two-octave stacks from octave -7
+// that `legacyClimateNoise` builds — is adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), biomenoise.c `setNetherSeed`, read at
+// e61f90580cbdd883214a8054670dacae655e59c0. `minecraft:offset` as zero is
+// this project's reading of `getNetherBiome` sampling the climate unshifted,
+// not code taken from it. Recorded in NOTICE.
 
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
