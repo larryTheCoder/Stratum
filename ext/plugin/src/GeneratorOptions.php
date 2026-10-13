@@ -89,11 +89,27 @@ final class GeneratorOptions{
 		public readonly string $biomeSource
 	){}
 
-	public static function encode(string $blobPath, string $noiseSettings = self::DEFAULT_DIMENSION, string $biomeSource = self::DEFAULT_DIMENSION) : string{
+	/**
+	 * The options for a world generated from $blobPath: the overworld when
+	 * neither $noiseSettings nor $biomeSource is given, otherwise the pair as
+	 * given. One without the other throws, as parse() refuses it: defaulting
+	 * the missing half to the overworld's would turn encode($blob,
+	 * "minecraft:end") into the End's terrain under the overworld's biomes —
+	 * a world that generates and is wrong (SPEC §8).
+	 *
+	 * @throws \InvalidArgumentException naming the missing half.
+	 */
+	public static function encode(string $blobPath, ?string $noiseSettings = null, ?string $biomeSource = null) : string{
+		if(($noiseSettings === null) !== ($biomeSource === null)){
+			throw new \InvalidArgumentException($noiseSettings === null ?
+				"GeneratorOptions::encode() was given a biome source (" . $biomeSource . ") without the noise settings to go with it" :
+				"GeneratorOptions::encode() was given noise settings (" . $noiseSettings . ") without the biome source to go with them"
+			);
+		}
 		return json_encode([
 			"blob" => $blobPath,
-			"settings" => $noiseSettings,
-			"biomes" => $biomeSource
+			"settings" => $noiseSettings ?? self::DEFAULT_DIMENSION,
+			"biomes" => $biomeSource ?? self::DEFAULT_DIMENSION
 		], JSON_THROW_ON_ERROR);
 	}
 
