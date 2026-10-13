@@ -69,7 +69,7 @@ TEST_CASE("a real overworld chunk packs into sub-chunks that read back exactly",
     const auto dimension = stratum::world::CompiledDimension::compile(
         stratum::freeze::read(stratum::freeze::write(
             stratum::freeze::resolve(pack, versionDir() / "biome_parameters"))),
-        overworld, overworld, 20260915);
+        overworld, stratum::world::BiomeSource::multiNoise(overworld), 20260915);
     const stratum::settings::NoiseGeometry& geometry = dimension->geometry();
 
     std::size_t fluidUpdates = 0;

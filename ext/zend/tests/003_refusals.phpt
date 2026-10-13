@@ -31,6 +31,11 @@ attempt(function() use ($blob){
 	Stratum\Dimension::open($blob, "minecraft:nether", "minecraft:nether", 1);
 });
 attempt(fn() => Stratum\Dimension::open($blob, "minecraft:overworld", "minecraft:no_such_list", 1));
+// The End's settings with no list of their own: no list is called
+// minecraft:end, and its source is spelled minecraft:the_end.
+attempt(fn() => Stratum\Dimension::open($blob, "minecraft:end", "minecraft:end", 1));
+// A biome source type this build does not implement, refused as one.
+attempt(fn() => Stratum\Dimension::open($blob, "minecraft:overworld", "minecraft:fixed", 1));
 unlink($blob);
 ?>
 --EXPECTF--
@@ -38,3 +43,5 @@ cannot read the frozen pipeline at /nonexistent/stratum.blob
 not a frozen pipeline: %s
 %slegacy_random_source%s
 the frozen pipeline has no biome parameter list 'minecraft:no_such_list'
+the frozen pipeline has no biome parameter list 'minecraft:end'
+biome source 'minecraft:fixed' is not implemented by this build%s

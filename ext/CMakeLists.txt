@@ -90,9 +90,16 @@ if(STRATUM_BUILD_EXT)
                 "${CMAKE_CURRENT_SOURCE_DIR}/zend/tests"
                 "${CMAKE_CURRENT_SOURCE_DIR}/plugin/tests"
         )
+        # The same fixture location the conformance suites read, so a
+        # -DSTRATUM_FIXTURES_DIR (a git worktree pointing at the main
+        # checkout's fixtures) reaches these too. Declared here with the
+        # default tests/conformance/ gives it, because ext/ is configured
+        # first; the second declaration there is then a no-op.
+        set(STRATUM_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/.fixtures" CACHE PATH
+            "Location of locally generated, never-committed vanilla fixtures")
         set_tests_properties(ext.phpt PROPERTIES
             LABELS "ext"
-            ENVIRONMENT "STRATUM_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/.fixtures;NO_INTERACTION=1"
+            ENVIRONMENT "STRATUM_FIXTURES_DIR=${STRATUM_FIXTURES_DIR};NO_INTERACTION=1"
         )
     endif()
 endif()

@@ -11,11 +11,15 @@
 //   function bedrockBlockState(int $javaStateId): array
 //   function javaBlockStateCount(): int
 //   function takeFluidUpdates(string $blobPath, string $noiseSettings,
-//                             string $biomeParameterList, int $seed,
+//                             string $biomeSource, int $seed,
 //                             int $chunkX, int $chunkZ): array
 //   final class Dimension {
 //       static function open(string $blobPath, string $noiseSettings,
-//                            string $biomeParameterList, int $seed): Dimension
+//                            string $biomeSource, int $seed): Dimension
+//
+// $biomeSource is world::BiomeSource::parse's spelling: a multi-noise
+// parameter list's id (`minecraft:overworld`, `minecraft:nether`), as it
+// always was, or `minecraft:the_end` for the End's own source.
 //       function getMinY(): int
 //       function getHeight(): int
 //       function encodeChunk(int $chunkX, int $chunkZ): array
@@ -91,9 +95,10 @@ using RegistryKey = std::tuple<std::string, std::string, std::string, std::int64
 
 class Registry {
 public:
-    std::shared_ptr<const stratum::world::CompiledDimension>
-    open(const std::string& blobPath, const std::string& noiseSettings,
-         const std::string& biomeParameterList, const std::int64_t seed) {
+    std::shared_ptr<const stratum::world::CompiledDimension> open(const std::string& blobPath,
+                                                                  const std::string& noiseSettings,
+                                                                  const std::string& biomeSource,
+                                                                  const std::int64_t seed) {
         std::ifstream file(blobPath, std::ios::binary);
         if (!file) {
             throw std::runtime_error("cannot read the frozen pipeline at " + blobPath);
@@ -113,7 +118,7 @@ public:
             hash[2 * i] = kHex.at(provenance.contentHash.at(i) >> 4U);
             hash[(2 * i) + 1] = kHex.at(provenance.contentHash.at(i) & 0x0FU);
         }
-        const RegistryKey key{hash, noiseSettings, biomeParameterList, seed};
+        const RegistryKey key{hash, noiseSettings, biomeSource, seed};
 
         const std::lock_guard<std::mutex> lock(mutex_);
         if (auto existing = dimensions_[key].lock()) {
@@ -122,7 +127,7 @@ public:
         std::shared_ptr<const stratum::world::CompiledDimension> compiled =
             stratum::world::CompiledDimension::compile(
                 stratum::freeze::read(blob), stratum::data::ResourceLocation::parse(noiseSettings),
-                stratum::data::ResourceLocation::parse(biomeParameterList), seed);
+                stratum::world::BiomeSource::parse(biomeSource), seed);
         dimensions_[key] = compiled;
         return compiled;
     }
@@ -236,7 +241,7 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_takeFluidUpdates, 0, 6, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
-ZEND_ARG_TYPE_INFO(0, biomeParameterList, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, seed, IS_LONG, 0)
 ZEND_ARG_TYPE_INFO(0, chunkX, IS_LONG, 0)
 ZEND_ARG_TYPE_INFO(0, chunkZ, IS_LONG, 0)
@@ -248,7 +253,7 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_Dimension_open, 0, 4, Stratum\\Dimension, 0)
 ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
-ZEND_ARG_TYPE_INFO(0, biomeParameterList, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, seed, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
@@ -326,14 +331,14 @@ static ZEND_FUNCTION(stratum_javaBlockStateCount) {
 static ZEND_FUNCTION(stratum_takeFluidUpdates) {
     zend_string* blobPath = nullptr;
     zend_string* noiseSettings = nullptr;
-    zend_string* biomeParameterList = nullptr;
+    zend_string* biomeSource = nullptr;
     zend_long seed = 0;
     zend_long chunkX = 0;
     zend_long chunkZ = 0;
     ZEND_PARSE_PARAMETERS_START(6, 6)
     Z_PARAM_STR(blobPath)
     Z_PARAM_STR(noiseSettings)
-    Z_PARAM_STR(biomeParameterList)
+    Z_PARAM_STR(biomeSource)
     Z_PARAM_LONG(seed)
     Z_PARAM_LONG(chunkX)
     Z_PARAM_LONG(chunkZ)
@@ -347,7 +352,7 @@ static ZEND_FUNCTION(stratum_takeFluidUpdates) {
         // No world open under this key means no worker generated anything
         // for it: nothing to take, and nothing is created by asking.
         if (const auto outbox = outboxes().find(stratum::pmmp::fluidUpdateWorldKey(
-                fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeParameterList),
+                fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeSource),
                 static_cast<std::int64_t>(seed)));
             outbox != nullptr) {
             updates = outbox->take(x, z);
@@ -374,20 +379,19 @@ static ZEND_METHOD(Stratum_Dimension, __construct) {
 static ZEND_METHOD(Stratum_Dimension, open) {
     zend_string* blobPath = nullptr;
     zend_string* noiseSettings = nullptr;
-    zend_string* biomeParameterList = nullptr;
+    zend_string* biomeSource = nullptr;
     zend_long seed = 0;
     ZEND_PARSE_PARAMETERS_START(4, 4)
     Z_PARAM_STR(blobPath)
     Z_PARAM_STR(noiseSettings)
-    Z_PARAM_STR(biomeParameterList)
+    Z_PARAM_STR(biomeSource)
     Z_PARAM_LONG(seed)
     ZEND_PARSE_PARAMETERS_END();
     try {
-        auto dimension =
-            registry().open(fromZend(blobPath), fromZend(noiseSettings),
-                            fromZend(biomeParameterList), static_cast<std::int64_t>(seed));
+        auto dimension = registry().open(fromZend(blobPath), fromZend(noiseSettings),
+                                         fromZend(biomeSource), static_cast<std::int64_t>(seed));
         auto fluidUpdates = outboxes().attach(stratum::pmmp::fluidUpdateWorldKey(
-            fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeParameterList),
+            fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeSource),
             static_cast<std::int64_t>(seed)));
         object_init_ex(return_value, dimensionEntry);
         DimensionObject* object = fetchDimension(Z_OBJ_P(return_value));

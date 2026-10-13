@@ -44,7 +44,7 @@ final class StratumGenerator extends Generator{
 		$this->dimension = \Stratum\Dimension::open(
 			$options->blobPath,
 			$options->noiseSettings,
-			$options->biomeParameterList,
+			$options->biomeSource,
 			$seed
 		);
 		$this->translator = new BlockStateTranslator();

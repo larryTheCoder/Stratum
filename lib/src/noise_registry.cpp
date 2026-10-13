@@ -243,9 +243,9 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         // what the other three still need from this function is their
         // SURFACE RULES' noises alone — the Nether's eight, nine each for
         // caves and floating islands — and CompiledDimension::compile still
-        // refuses them for exactly those. The End compiles when paired with
-        // an existing biome list; its own `minecraft:the_end` biome source is
-        // not implemented. See SPEC §11.
+        // refuses them for exactly those. The End compiles with its own
+        // `minecraft:the_end` biome source (biome/source.hpp), which reads
+        // the router's erosion and needs no noise either. See SPEC §11.
         //
         // The names go in the message. Which noises a legacy dimension still
         // cannot have is the actionable part of this refusal now that it is

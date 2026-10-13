@@ -293,6 +293,27 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
                                  const surface::RuleGraph* surfaceRules,
                                  const biome::ParameterList* biomeParameters,
                                  const biome::TemperatureTable* biomeTemperatures) {
+    std::optional<biome::Source> source;
+    if (biomeParameters != nullptr) {
+        source = biome::Source::multiNoise(*biomeParameters);
+    }
+    return compileWith(graph, noises, settings, surfaceRules, source, biomeTemperatures);
+}
+
+ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::NoiseRegistry& noises,
+                                 const settings::NoiseSettings& settings,
+                                 const surface::RuleGraph* surfaceRules,
+                                 const biome::Source& biomeSource,
+                                 const biome::TemperatureTable* biomeTemperatures) {
+    return compileWith(graph, noises, settings, surfaceRules, biomeSource, biomeTemperatures);
+}
+
+ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
+                                     const density::NoiseRegistry& noises,
+                                     const settings::NoiseSettings& settings,
+                                     const surface::RuleGraph* surfaceRules,
+                                     const std::optional<biome::Source>& biomeSource,
+                                     const biome::TemperatureTable* biomeTemperatures) {
     // WIRED (SPEC §10 milestone MA, §11): the cell lattice, the centre
     // jitter, the fluid level rule (including its ocean branch and the
     // depth path's anchor gate), source selection (selection.hpp), and the
@@ -418,15 +439,15 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
         const SurfaceNeeds needs = surfaceNeedsOf(*surfaceRules);
         // `temperature` needs to know WHICH biome a block sits in before it
         // can look up that biome's declared value, so it leans on the same
-        // climate search `biome` itself does — a tree naming only
-        // `temperature` still needs a ParameterList, even though it never
-        // names `biome` directly.
+        // biome source `biome` itself does — a tree naming only
+        // `temperature` still needs one, even though it never names `biome`
+        // directly.
         const bool needsBiomeIdentity = needs.biome || needs.temperature;
-        if (needsBiomeIdentity && biomeParameters == nullptr) {
+        if (needsBiomeIdentity && !biomeSource.has_value()) {
             filler.surfaceRulesBlockedBy_.emplace_back(
                 "minecraft:biome (this dimension's rules read the biome, directly or through a "
-                "biome's declared temperature, and no biome::ParameterList was supplied to "
-                "ChunkFiller::compile)");
+                "biome's declared temperature, and no biome source — a biome::ParameterList or "
+                "a biome::Source — was supplied to ChunkFiller::compile)");
         }
         if (needs.temperature && biomeTemperatures == nullptr) {
             // Not a construct — the executor runs `temperature` fine, given
@@ -470,17 +491,17 @@ ChunkFiller ChunkFiller::compile(const density::Graph& graph, const density::Noi
             filler.surfaceNeedsTemperature_ = needs.temperature;
             filler.surfaceNeedsPreliminarySurface_ = needs.preliminarySurface;
             filler.surfaceNeedsSteep_ = needs.steep;
-            filler.biomeParameters_ = biomeParameters;
+            filler.biomeSource_ = biomeSource;
             filler.biomeTemperatures_ = biomeTemperatures;
             if (needs.preliminarySurface) {
                 filler.interpreter_.requireEvaluable(
                     settings.router.at(settings::RouterEntry::PreliminarySurfaceLevel));
             }
-            if (needsBiomeIdentity) {
-                for (const settings::RouterEntry entry :
-                     {settings::RouterEntry::Temperature, settings::RouterEntry::Vegetation,
-                      settings::RouterEntry::Continents, settings::RouterEntry::Erosion,
-                      settings::RouterEntry::Depth, settings::RouterEntry::Ridges}) {
+            if (needsBiomeIdentity && biomeSource.has_value()) {
+                // What the source reads and nothing more: the End's reads
+                // erosion alone, so its other climate entries need not be
+                // evaluable for its rules to run.
+                for (const settings::RouterEntry entry : biomeSource->routerEntries()) {
                     filler.interpreter_.requireEvaluable(settings.router.at(entry));
                 }
             }
@@ -760,6 +781,19 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     }
 }
 
+const data::ResourceLocation&
+ChunkFiller::surfaceBiomeAt(const density::Point quartCorner,
+                            density::Interpreter::CornerCache& cache) const {
+    // Its own function, and checked here rather than trusted from compile():
+    // compile() leaves no tree that reads the biome without a source, and a
+    // read without one would have nothing honest to return.
+    if (!biomeSource_.has_value()) {
+        throw FillError(
+            "this dimension's surface rules read the biome, and it has no biome source");
+    }
+    return biomeSource_->at(interpreter_, settings_->router, quartCorner, cache);
+}
+
 void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_t chunkZ,
                                     ChunkBuffer& into) const {
     if (!surfaceExecutor_.has_value()) {
@@ -945,27 +979,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                         if (cached != biomeCache.end()) {
                             biomeId = cached->second;
                         } else {
-                            const density::Point at{.x = qx, .y = quartY, .z = qz};
-                            const biome::ClimateSample sample{
-                                .temperature = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Temperature), at,
-                                    surfaceCache),
-                                .humidity = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Vegetation), at,
-                                    surfaceCache),
-                                .continentalness = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Continents), at,
-                                    surfaceCache),
-                                .erosion = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Erosion), at,
-                                    surfaceCache),
-                                .depth = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Depth), at,
-                                    surfaceCache),
-                                .weirdness = interpreter_.evaluate(
-                                    settings_->router.at(settings::RouterEntry::Ridges), at,
-                                    surfaceCache)};
-                            biomeId = biomeParameters_->find(sample);
+                            biomeId = surfaceBiomeAt(density::Point{.x = qx, .y = quartY, .z = qz},
+                                                     surfaceCache);
                             biomeCache.emplace(key, biomeId);
                         }
                         biomeQuartY = quartY;

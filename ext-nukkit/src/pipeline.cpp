@@ -47,7 +47,7 @@ std::unique_ptr<Pipeline> Pipeline::compile(const std::filesystem::path& packDir
     pipeline->impl_ = std::make_unique<Impl>();
     pipeline->impl_->dimension = world::CompiledDimension::compile(
         freeze::resolve(data::Pack::open(packDir / "worldgen"), packDir / "biome_parameters"),
-        dimension, dimension, worldSeed);
+        dimension, world::BiomeSource::multiNoise(dimension), worldSeed);
     return pipeline;
 }
 

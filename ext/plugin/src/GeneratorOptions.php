@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stratum\PMMP;
 
 use pocketmine\world\generator\InvalidGeneratorOptionsException;
+use function array_key_exists;
 use function is_array;
 use function is_readable;
 use function is_string;
@@ -26,6 +27,17 @@ use const JSON_THROW_ON_ERROR;
  *   {"blob":"/path/worlds/myworld/stratum-pipeline.blob",
  *    "settings":"minecraft:overworld",
  *    "biomes":"minecraft:overworld"}
+ *
+ * "biomes" is the dimension's biome source: a multi-noise parameter list
+ * ("minecraft:overworld", "minecraft:nether"), or "minecraft:the_end" for
+ * the End's own. The End is {"settings":"minecraft:end",
+ * "biomes":"minecraft:the_end"}.
+ *
+ * Both default to the overworld's, but only TOGETHER: options that name
+ * "settings" must name "biomes" too. Noise settings do not say which biome
+ * source goes with them, so "settings" alone would quietly pair whatever it
+ * names with the overworld's biomes, and for the End that is a world that
+ * generates, with every biome wrong.
  */
 final class GeneratorOptions{
 
@@ -34,14 +46,14 @@ final class GeneratorOptions{
 	private function __construct(
 		public readonly string $blobPath,
 		public readonly string $noiseSettings,
-		public readonly string $biomeParameterList
+		public readonly string $biomeSource
 	){}
 
-	public static function encode(string $blobPath, string $noiseSettings = self::DEFAULT_DIMENSION, string $biomeParameterList = self::DEFAULT_DIMENSION) : string{
+	public static function encode(string $blobPath, string $noiseSettings = self::DEFAULT_DIMENSION, string $biomeSource = self::DEFAULT_DIMENSION) : string{
 		return json_encode([
 			"blob" => $blobPath,
 			"settings" => $noiseSettings,
-			"biomes" => $biomeParameterList
+			"biomes" => $biomeSource
 		], JSON_THROW_ON_ERROR);
 	}
 
@@ -70,6 +82,9 @@ final class GeneratorOptions{
 		// missing blob would only be able to take the generation task down.
 		if(!is_readable($blob)){
 			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $blob);
+		}
+		if(array_key_exists("settings", $decoded) && !array_key_exists("biomes", $decoded)){
+			throw new InvalidGeneratorOptionsException('Stratum\'s generator options name "settings" without "biomes", the biome source to go with them ("minecraft:overworld", "minecraft:nether" or "minecraft:the_end"): ' . $generatorOptions);
 		}
 		$settings = $decoded["settings"] ?? self::DEFAULT_DIMENSION;
 		$biomes = $decoded["biomes"] ?? self::DEFAULT_DIMENSION;
