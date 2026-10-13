@@ -26,7 +26,12 @@ PocketMine-MP itself can call.
 - `GeneratorOptions` is the world's options string:
   `{"blob":"…/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}`.
   A generator receives nothing else — not the server, not the plugin, not a
-  config — so the path to the frozen pipeline travels in here.
+  config — so the path to the frozen pipeline travels in here. `biomes` is
+  the dimension's biome source: a multi-noise parameter list, or
+  `minecraft:the_end` for the End (`"settings":"minecraft:end",
+  "biomes":"minecraft:the_end"`). Both default to the overworld's, but only
+  together: options naming `settings` without `biomes` are refused, since
+  noise settings do not say which biome source goes with them.
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so when it fires

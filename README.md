@@ -2,17 +2,18 @@
 
 A C++20 world generation engine for [PocketMine-MP](https://pmmp.io) that
 executes **vanilla Java Edition's data-driven worldgen JSON** — density
-functions, noise settings, multi-noise biome sources and surface rules — so
-that Java-ecosystem datapacks and authoring tools (Misode's generators,
-Snowcapped, Spyglass) work as content for a Bedrock server.
+functions, noise settings, multi-noise and End biome sources and surface
+rules — so that Java-ecosystem datapacks and authoring tools (Misode's
+generators, Snowcapped, Spyglass) work as content for a Bedrock server.
 
 - **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
 - **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
   Java for the same JSON and seed (Tier A, see below)
 - **Status:** the shipped overworld generates end to end — terrain, ore
   veins, biomes, aquifers and surface rules — and matches the vanilla server
-  block for block on 99.9957% of the golden positions scored. **M4** stays
-  open for the legacy dimensions' surface rules and the End's biome source;
+  block for block on 99.9957% of the golden positions scored, and the End
+  generates whole, blocks and biomes. **M4** stays open for the legacy
+  dimensions' surface rules;
   **M5** (PocketMine integration) is written but has never run inside a
   server. See [What generates today](#what-generates-today) for the honest
   breakdown.
@@ -220,8 +221,12 @@ legacy dimensions are the exception. Where a dimension uses
 by name rather than derived wrongly. That covers the Nether, `caves` and
 `floating_islands`.
 The legacy Nether's climate and terrain are measured (32765 of 32768 golden
-biome cells, every miss an exact tie). The End's terrain generates exactly,
-but its `the_end` biome source is not implemented.
+biome cells, every miss an exact tie). The End generates exactly: its terrain
+block for block, and its biomes through its own `the_end` biome source, which
+reads the noise router's erosion at each chunk's centre — exact on every
+stored quart of 45 End regions, datapack variants of its router included
+(SPEC §11). A dimension names its biome source when it is compiled, since a
+frozen pipeline does not record one.
 
 **PocketMine integration — written, and never run inside a server.** The
 Java-to-Bedrock mapping tables, the sub-chunk encoder, the zend module and the
@@ -244,7 +249,9 @@ that was rejected**.
 | `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
 | `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
 | Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
-| Multi-noise biome source | Supported | |
+| Multi-noise biome source | Supported | Named by its parameter list |
+| `the_end` biome source | Supported | Reads the router's `erosion`, as the server does (SPEC §11) |
+| `fixed`, `checkerboard` biome sources | **Rejected** | Refused by name when a dimension is compiled |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |
 | Tags and namespaced references | Supported | Within the registries above |

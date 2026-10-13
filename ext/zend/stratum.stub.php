@@ -39,16 +39,21 @@ function javaBlockStateCount() : int{}
  *
  * @return list<array{int, int, int}>
  */
-function takeFluidUpdates(string $blobPath, string $noiseSettings, string $biomeParameterList, int $seed, int $chunkX, int $chunkZ) : array{}
+function takeFluidUpdates(string $blobPath, string $noiseSettings, string $biomeSource, int $seed, int $chunkX, int $chunkZ) : array{}
 
 final class Dimension{
 	private function __construct(){}
 
 	/**
 	 * One dimension of a world, compiled from its frozen pipeline. Shared by
-	 * every thread that opens the same blob, settings, list and seed.
+	 * every thread that opens the same blob, settings, biome source and seed.
+	 *
+	 * $biomeSource names the dimension's biome source: a multi-noise
+	 * parameter list's id ("minecraft:overworld", "minecraft:nether"), or
+	 * "minecraft:the_end" for the End's own. "minecraft:fixed" and
+	 * "minecraft:checkerboard" are refused by name.
 	 */
-	public static function open(string $blobPath, string $noiseSettings, string $biomeParameterList, int $seed) : Dimension{}
+	public static function open(string $blobPath, string $noiseSettings, string $biomeSource, int $seed) : Dimension{}
 
 	public function getMinY() : int{}
 

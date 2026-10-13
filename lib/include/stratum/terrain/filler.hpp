@@ -66,7 +66,8 @@
 //
 //     `compile` now runs them wherever it can: pass a resolved
 //     `surface::RuleGraph` and, for a tree that reads `biome`, the
-//     `biome::ParameterList` that resolves one. A tree with one unrunnable
+//     dimension's biome source (a `biome::ParameterList` for a multi-noise
+//     one, or any `biome::Source`). A tree with one unrunnable
 //     construct is refused whole, same as `surface::Executor` itself refuses
 //     it — `runsSurfaceRules()` says whether this dimension's did, and
 //     `surfaceRulesBlockedBy()` says why not when it didn't. Either way
@@ -77,6 +78,7 @@
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -207,12 +209,25 @@ public:
     /// for a tree that names the construct is treated the same as an
     /// unrunnable construct rather than run with a missing Context field
     /// (see `runsSurfaceRules()`).
+    ///
+    /// @p biomeParameters names a `minecraft:multi_noise` source: exactly the
+    /// overload below with `biome::Source::multiNoise(*biomeParameters)`.
     [[nodiscard]] static ChunkFiller
     compile(const density::Graph& graph, const density::NoiseRegistry& noises,
             const settings::NoiseSettings& settings,
             const surface::RuleGraph* surfaceRules = nullptr,
             const biome::ParameterList* biomeParameters = nullptr,
             const biome::TemperatureTable* biomeTemperatures = nullptr);
+
+    /// The same, with the dimension's biome source named — any type
+    /// `biome::Source` implements, `minecraft:the_end` included. A tree that
+    /// reads `biome` resolves it through @p biomeSource at the quart a block
+    /// sits in, as `world::CompiledDimension::fillBiomes` does; whatever the
+    /// source points into must outlive this ChunkFiller.
+    [[nodiscard]] static ChunkFiller
+    compile(const density::Graph& graph, const density::NoiseRegistry& noises,
+            const settings::NoiseSettings& settings, const surface::RuleGraph* surfaceRules,
+            const biome::Source& biomeSource, const biome::TemperatureTable* biomeTemperatures);
 
     /// Fills @p into with the chunk at chunk coordinates @p chunkX, @p chunkZ.
     /// @p into is cleared first (`ChunkBuffer::clear`): what it held before,
@@ -352,13 +367,26 @@ private:
     ChunkFiller(const density::Graph& graph, const density::NoiseRegistry& noises,
                 const settings::NoiseSettings& settings);
 
+    /// Both public compile()s, with the biome source optional.
+    [[nodiscard]] static ChunkFiller compileWith(const density::Graph& graph,
+                                                 const density::NoiseRegistry& noises,
+                                                 const settings::NoiseSettings& settings,
+                                                 const surface::RuleGraph* surfaceRules,
+                                                 const std::optional<biome::Source>& biomeSource,
+                                                 const biome::TemperatureTable* biomeTemperatures);
+
     void applySurfaceRules(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const;
+
+    /// The biome the surface pass sees at the quart whose lowest block is
+    /// @p quartCorner: biomeSource_'s answer, the one fillBiomes stores.
+    [[nodiscard]] const data::ResourceLocation&
+    surfaceBiomeAt(density::Point quartCorner, density::Interpreter::CornerCache& cache) const;
 
     const settings::NoiseSettings* settings_;
     density::Interpreter interpreter_;
     density::NodeIndex finalDensity_{};
 
-    const biome::ParameterList* biomeParameters_ = nullptr;
+    std::optional<biome::Source> biomeSource_;
     const biome::TemperatureTable* biomeTemperatures_ = nullptr;
     bool surfaceNeedsBiome_ = false;
     bool surfaceNeedsTemperature_ = false;

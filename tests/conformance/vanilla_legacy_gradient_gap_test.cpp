@@ -608,8 +608,8 @@ TEST_CASE("a doctored legacy pack with a gradient generates through CompiledDime
     // have placed something else on a large share of them.
     //
     // The CONTROL runs first and in the same case on purpose, as it did
-    // when this asserted a throw: the undoctored End, paired with any biome
-    // list that exists, must compile through the identical path.
+    // when this asserted a throw: the undoctored End, with its own biome
+    // source, must compile through the identical path.
     const std::filesystem::path tree = fixtures() / "worldgen";
     const std::filesystem::path lists = fixtures() / "biome_parameters";
     if (!std::filesystem::is_directory(tree) || !std::filesystem::is_directory(lists)) {
@@ -617,7 +617,7 @@ TEST_CASE("a doctored legacy pack with a gradient generates through CompiledDime
                                                                << "; run tools/fetch-vanilla");
     }
     const auto endId = ResourceLocation::parse("minecraft:end");
-    const auto overworldList = ResourceLocation::parse("minecraft:overworld");
+    const auto endSource = stratum::world::BiomeSource::theEnd();
     constexpr std::int64_t kSeed = 42;
 
     {
@@ -625,7 +625,7 @@ TEST_CASE("a doctored legacy pack with a gradient generates through CompiledDime
         auto pipeline =
             stratum::freeze::read(stratum::freeze::write(stratum::freeze::resolve(pack, lists)));
         CHECK_NOTHROW(stratum::world::CompiledDimension::compile(std::move(pipeline), endId,
-                                                                 overworldList, kSeed));
+                                                                 endSource, kSeed));
     }
 
     // A private copy of the pinned tree, with ONE edit: a gradient in front
@@ -682,7 +682,7 @@ TEST_CASE("a doctored legacy pack with a gradient generates through CompiledDime
         stratum::freeze::read(stratum::freeze::write(stratum::freeze::resolve(doctored, lists)));
     std::unique_ptr<stratum::world::CompiledDimension> dimension;
     REQUIRE_NOTHROW(dimension = stratum::world::CompiledDimension::compile(
-                        std::move(pipeline), endId, overworldList, kSeed));
+                        std::move(pipeline), endId, endSource, kSeed));
     REQUIRE(dimension != nullptr);
 
     const auto legacy = stratum::rng::legacyPositionalSourceFor(kSeed, name);

@@ -93,7 +93,6 @@ private:
 /// each gets its own outbox and neither takes the other's updates.
 [[nodiscard]] std::string fluidUpdateWorldKey(const std::string& blobPath,
                                               const std::string& noiseSettings,
-                                              const std::string& biomeParameterList,
-                                              std::int64_t seed);
+                                              const std::string& biomeSource, std::int64_t seed);
 
 } // namespace stratum::pmmp

@@ -55,11 +55,11 @@ std::shared_ptr<FluidUpdateOutbox> FluidUpdateOutboxes::find(const std::string& 
 }
 
 std::string fluidUpdateWorldKey(const std::string& blobPath, const std::string& noiseSettings,
-                                const std::string& biomeParameterList, const std::int64_t seed) {
+                                const std::string& biomeSource, const std::int64_t seed) {
     // Each part prefixed by its length, so no choice of strings can make two
     // different tuples spell the same key.
     std::string key;
-    for (const std::string* part : {&blobPath, &noiseSettings, &biomeParameterList}) {
+    for (const std::string* part : {&blobPath, &noiseSettings, &biomeSource}) {
         key += std::to_string(part->size());
         key += ':';
         key += *part;
