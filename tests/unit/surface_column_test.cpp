@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -49,9 +50,14 @@ using stratum::terrain::SurfaceColumn;
 /// solid, 'F' fluid, '.' air. Returned bottom to top, as `read` wants it.
 [[nodiscard]] std::vector<Category> column(const std::string& topDown) {
     std::vector<Category> categories;
-    for (auto it = topDown.rbegin(); it != topDown.rend(); ++it) {
-        categories.push_back(*it == 'S' ? Category::Solid
-                                        : (*it == 'F' ? Category::Fluid : Category::Air));
+    for (const char symbol : std::ranges::reverse_view(topDown)) {
+        if (symbol == 'S') {
+            categories.push_back(Category::Solid);
+        } else if (symbol == 'F') {
+            categories.push_back(Category::Fluid);
+        } else {
+            categories.push_back(Category::Air);
+        }
     }
     return categories;
 }

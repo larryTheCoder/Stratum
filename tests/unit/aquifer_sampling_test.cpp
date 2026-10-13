@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -38,11 +39,15 @@ TEST_CASE("floodedness is read at the cell's own centre, verbatim", "[aquifer]")
         CellIndex centre;
     };
 
-    const Case cases[] = {
-        {{4, 0, 3}, {71, 7, 53}},   {{4, 0, 4}, {70, 6, 72}},  {{1, 0, 5}, {22, 7, 85}},
-        {{6, 0, 5}, {105, 4, 89}},  {{3, 1, 3}, {53, 20, 57}}, {{6, 1, 3}, {100, 19, 55}},
+    const std::array<Case, 7> cases{{
+        {{4, 0, 3}, {71, 7, 53}},
+        {{4, 0, 4}, {70, 6, 72}},
+        {{1, 0, 5}, {22, 7, 85}},
+        {{6, 0, 5}, {105, 4, 89}},
+        {{3, 1, 3}, {53, 20, 57}},
+        {{6, 1, 3}, {100, 19, 55}},
         {{7, 2, 3}, {119, 31, 53}},
-    };
+    }};
     for (const auto& one : cases) {
         INFO("cell " << one.cell.x << "," << one.cell.y << "," << one.cell.z);
         const CellIndex centre = source.centreOf(one.cell.x, one.cell.y, one.cell.z);
@@ -242,7 +247,7 @@ TEST_CASE("only the thirteen measured offsets are in the window", "[aquifer]") {
 TEST_CASE("the surface read is a minimum, and its abort is strict", "[aquifer]") {
     // V2. Everything at the threshold exactly: `value < -62.0` is false there,
     // so nothing aborts and the minimum is the threshold itself.
-    Oracle flat{kAnchorX, kAnchorZ, -62.0};
+    const Oracle flat{kAnchorX, kAnchorZ, -62.0};
     CHECK(readPreliminarySurface(flat, kCentre, 63) ==
           PslRead{.gate = -62, .cap = -62, .anchor = -62, .aborted = false});
 
@@ -407,10 +412,10 @@ TEST_CASE("the surface window works off the origin quadrant", "[aquifer]") {
     // V11. The offsets are applied to the floored anchor and are not mirrored
     // when the coordinates go negative. Centre (-125, -121) anchors at
     // (-128, -124), so the aborting sample sits at (-160, -140).
-    constexpr CellIndex centre{-125, 50, -121};
+    constexpr CellIndex kNegativeCentre{-125, 50, -121};
     Oracle oracle{-128, -124, 200.0};
     oracle.at(-32, -16, -70.0);
-    CHECK(readPreliminarySurface(oracle, centre, 63) ==
+    CHECK(readPreliminarySurface(oracle, kNegativeCentre, 63) ==
           PslRead{.gate = 200, .cap = -70, .anchor = 200, .aborted = true});
 }
 
@@ -506,7 +511,7 @@ TEST_CASE("a memoized read asks once per position and answers as the sampler did
         }
     }
     CHECK(wrong == 0);
-    CHECK(calls == 41 * 41 * 2);
+    CHECK(calls == 41LL * 41 * 2);
     CHECK(memo.size() == static_cast<std::size_t>(41 * 41 * 2));
     // The extremes of the coordinate range are positions like any other.
     constexpr std::int32_t kMin = std::numeric_limits<std::int32_t>::min();

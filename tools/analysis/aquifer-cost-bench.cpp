@@ -7,7 +7,8 @@
 //     --seeds a,b,...        world seeds (default 0)
 //     --chunks x,z,nx,nz     the chunk window, lowest corner first (default 0,0,4,4)
 //     --aquifers on|off      the preset's own aquifers_enabled, or forced off
-//     --veins on|off         its ore_veins_enabled, or forced off
+//     --veins on|off         its ore_veins_enabled, or forced off (whatever
+//                            --aquifers says, since engine v14)
 //     --surface on|off       run the 287-rule surface tree, or the first pass alone
 //     --settings <id>        the noise settings (default minecraft:overworld; the
 //                            amplified and large_biomes presets take the
@@ -23,11 +24,18 @@
 // biome search and surface tree; tests/conformance/
 // vanilla_compiled_dimension_test.cpp asserts the two agree block for block)
 // with each of the three toggles independent, so the aquifer's share is a
-// difference of two runs that differ in that flag alone. Since engine v14 ore
-// veins no longer follow aquifers off (the gate rested on a seed confound,
-// ore/vein.hpp), so `aquifers off` keeps the veins; the figures in SPEC §11
-// were taken before that, when the aquifer's share was `veins off` against
-// `aquifers off`.
+// difference of two runs that differ in that flag alone. `--veins off`
+// against `--aquifers off --veins off` isolates it, and is the pair SPEC §11
+// reports. Everything against `--aquifers off` differs in that flag alone
+// too, but runs the veins on both sides, so it also counts how the aquifer
+// changes the veins' own cost: the veins with aquifers less the veins
+// without, up to 2 M instructions a chunk either way on SPEC §11's windows
+// under v14. Since engine v14 ore veins no longer follow aquifers off (the
+// gate rested on a seed confound, ore/vein.hpp), so `--aquifers off` alone
+// keeps the veins. Engine v13 placed none there, so its
+// `--aquifers off` did the work `--aquifers off --veins off` does now (the
+// two write the same dump), and its aquifer share was `--veins off` against
+// `--aquifers off`; SPEC §11 keeps those v13 figures beside v14's.
 //
 // THE TIME. CPU time per fill() (`std::clock`, process CPU time on POSIX),
 // which a loaded machine moves far less than wall time; wall time is printed

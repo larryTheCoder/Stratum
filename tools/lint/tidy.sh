@@ -7,6 +7,15 @@
 # pushing. Format is wired in (lint.format) because it costs a quarter of a
 # second; this does not.
 #
+# It covers the tests too: tests/ under tests/.clang-tidy (the root policy plus
+# the support headers, less the one check Catch2's REQUIRE defeats; the file
+# says why) and ext/tests under the root's. They are most of its time: adding
+# their 118 files took a full run here from 6 minutes to 26.
+#
+# Given file arguments, it analyses only those, configured and invoked exactly
+# as the full run is: the way to re-check the files a change touched without
+# waiting for every one. CI always runs the full list below.
+#
 # The pre-push routine is this, tools/lint/warnings.sh, tools/lint/clang.sh
 # and tools/lint/optimised.sh: clang-tidy here, the project warning set as
 # errors under GCC there and under Clang in the third, and the unit tests
@@ -44,34 +53,38 @@ if [[ "${version%%.*}" != "${expected}" ]]; then
     echo "         Findings differ between majors; expect CI to disagree." >&2
 fi
 
-# Same build directory and same source list CI uses.
-cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=OFF >/dev/null
+# Same build directory and same source list CI uses. Tests ON, so that
+# compile_commands.json holds tests/ and ext/tests as well.
+cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=ON >/dev/null
 
-sources=()
-while IFS= read -r file; do
-    sources+=("${file}")
-# The tools/analysis entries are the ones that are build targets, so they are
-# in compile_commands.json and clang-tidy can see them. They are analysed for
-# the same reason they were made targets: an analysis tool that claims
-# agreement with the library has to be held to the library's own gates, or the
-# claim drifts unnoticed. Keep this list in step with the one in format.sh.
-done < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
-    printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
-                   tools/analysis/legacy-goldens-biome-analyze.cpp \
-                   tools/analysis/legacy-goldens-surface-analyze.cpp \
-                   tools/analysis/aquifer-barrier-analyze.cpp \
-                   tools/analysis/aquifer-cells.cpp \
-                   tools/analysis/aquifer-cost-bench.cpp \
-                   tools/analysis/aquifer-deepfloor-analyze.cpp \
-                   tools/analysis/aquifer-fluidtype-analyze.cpp \
-                   tools/analysis/aquifer-level-analyze.cpp \
-                   tools/analysis/aquifer-nearsurface-analyze.cpp \
-                   tools/analysis/aquifer-presets-scout.cpp \
-                   tools/analysis/aquifer-ties-analyze.cpp \
-                   tools/analysis/aquifer-waterlava-analyze.cpp \
-                   tools/analysis/legacy-aquifer-analyze.cpp \
-                   tools/analysis/legacy-orevein-analyze.cpp \
-                   tools/analysis/aquifer-tiebreak-analyze.cpp)
+sources=("$@")
+if [[ $# -eq 0 ]]; then
+    while IFS= read -r file; do
+        sources+=("${file}")
+    # The tools/analysis entries are the ones that are build targets, so they
+    # are in compile_commands.json and clang-tidy can see them. They are
+    # analysed for the same reason they were made targets: an analysis tool
+    # that claims agreement with the library has to be held to the library's
+    # own gates, or the claim drifts unnoticed. Keep this list in step with the
+    # one in format.sh.
+    done < <(find lib cli ext/src ext/tests tests -name '*.cpp' -not -path '*/_deps/*' | sort; \
+        printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
+                       tools/analysis/legacy-goldens-biome-analyze.cpp \
+                       tools/analysis/legacy-goldens-surface-analyze.cpp \
+                       tools/analysis/aquifer-barrier-analyze.cpp \
+                       tools/analysis/aquifer-cells.cpp \
+                       tools/analysis/aquifer-cost-bench.cpp \
+                       tools/analysis/aquifer-deepfloor-analyze.cpp \
+                       tools/analysis/aquifer-fluidtype-analyze.cpp \
+                       tools/analysis/aquifer-level-analyze.cpp \
+                       tools/analysis/aquifer-nearsurface-analyze.cpp \
+                       tools/analysis/aquifer-presets-scout.cpp \
+                       tools/analysis/aquifer-ties-analyze.cpp \
+                       tools/analysis/aquifer-waterlava-analyze.cpp \
+                       tools/analysis/legacy-aquifer-analyze.cpp \
+                       tools/analysis/legacy-orevein-analyze.cpp \
+                       tools/analysis/aquifer-tiebreak-analyze.cpp)
+fi
 
 if [[ ${#sources[@]} -eq 0 ]]; then
     echo "no first-party sources to analyse"

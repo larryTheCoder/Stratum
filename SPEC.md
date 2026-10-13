@@ -698,11 +698,14 @@ mapping has two halves, split at a platform-neutral midpoint:
   13579, whose window holds veins, is block for block the aquifers-on world
   (14 373 vein blocks in each), and so are the legacy probe's aquifers-off
   arms. `ore::veinsPlaceBlocks` is gone and engine v14 places veins wherever
-  `ore_veins_enabled` is set.
+  `ore_veins_enabled` is set. Over open ground below a raised sea as well:
+  there the aquifers-off world's veins are the aquifers-on world's wherever
+  the former is solid, and the latter's barriers carry veins of their own
+  (§11, "`aquifers_enabled: false` reaches the server, pinned").
 
   *The deterministic gate, confirmed with ZERO exceptions.* The y-range
   (`y` in `[-60, -8]` for iron, `[0, 50]` for copper — the dead zone
-  `[-8, 0)` between them produces neither), the type/sign correspondence
+  between them, y -7..-1, produces neither), the type/sign correspondence
   (`vein_toggle > 0` for copper, `<= 0` for iron), the richness threshold
   (`|vein_toggle|` must clear 0.6 at either y limit, falling linearly to
   0.4 at 20 blocks inside), and `vein_ridged < 0` as necessary for any vein
@@ -4123,10 +4126,14 @@ Open:
   *The instrument.* `tools/analysis/aquifer-cost-bench.cpp`, a build
   target, fills vanilla's own overworld (or `amplified`, `large_biomes`)
   from the fetched pack exactly as `world::CompiledDimension` does, with
-  aquifers, ore veins and the surface pass each switchable. Veins were
-  gated on aquifers by the engine itself, so the aquifer's share is "veins
-  off" against "aquifers off" (engine v13; since v14 veins no longer follow
-  aquifers off — §11, "Ore veins under the legacy source"). It times
+  aquifers, ore veins and the surface pass each switchable. Under engine
+  v13 veins were gated on aquifers by the engine itself, so the aquifer's
+  share was "veins off" against "aquifers off". Since v14 veins run
+  whatever `aquifers_enabled` says (§11, "Ore veins under the legacy
+  source"), so "aquifers off" alone pays for the veins, and the aquifer's
+  share is "veins off" against "aquifers off, veins off" — the work v13's
+  "aquifers off" did, and the same dump byte for byte ("Re-measured under
+  engine v14", below). It times
   `ChunkFiller::fill` alone — the first pass and the surface rules, not the
   biome fill or the packing — as process CPU time, each chunk's fastest of
   several passes. Every run also
@@ -4226,26 +4233,130 @@ Open:
   configuration; the overworld over seeds 0, -1, 42 and
   9223372036854775807, chunks -2..1 on both axes (64 chunks), `amplified`
   over seeds 0 and 163, chunks 15..18 by 25..28 (32 chunks, where its
-  aquifer reaches above the sea); each chunk's fastest of five passes:
+  aquifer reaches above the sea); each chunk's fastest of five passes.
+  "Before" and "After" are the record, taken under engine v13, when veins
+  followed aquifers, on the 4-core box above; the last two columns are
+  the re-measurement under engine v14 below, on another machine, so they
+  compare with each other and not with the record:
 
-  | Configuration | Before | After |
-  |---|---|---|
-  | overworld, everything | 183.5 | 174.0 |
-  | overworld, veins off | 180.0 | 169.9 |
-  | overworld, aquifers off (control) | 172.6 | 167.8 |
-  | overworld, first pass, veins off | 109.7 | 104.6 |
-  | overworld, first pass, aquifers off (control) | 102.0 | 103.5 |
-  | `amplified`, everything | 242.9 | 220.8 |
-  | `amplified`, veins off | 238.8 | 219.9 |
-  | `amplified`, aquifers off (control) | 223.9 | 217.1 |
+  | Configuration | Before (v13) | After (v13) | v13, 2026-10-13 | v14, 2026-10-13 |
+  |---|---|---|---|---|
+  | overworld, everything | 183.5 | 174.0 | 98.9 | 99.3 |
+  | overworld, veins off | 180.0 | 169.9 | 97.6 | 96.9 |
+  | overworld, aquifers off (v13's control; v14 places veins) | 172.6 | 167.8 | 95.1 | 97.9 |
+  | overworld, aquifers off, veins off (v14's control) | — | — | — | 94.6 |
+  | overworld, first pass, everything | — | — | — | 67.4 |
+  | overworld, first pass, veins off | 109.7 | 104.6 | 63.9 | 64.6 |
+  | overworld, first pass, aquifers off (v13's control; v14 places veins) | 102.0 | 103.5 | 62.4 | 65.3 |
+  | overworld, first pass, aquifers off, veins off (v14's control) | — | — | — | 62.8 |
+  | `amplified`, everything | 242.9 | 220.8 | 121.0 | 121.1 |
+  | `amplified`, veins off | 238.8 | 219.9 | 118.5 | 118.5 |
+  | `amplified`, aquifers off (v13's control; v14 places veins) | 223.9 | 217.1 | 115.4 | 118.8 |
+  | `amplified`, aquifers off, veins off (v14's control) | — | — | — | 116.0 |
 
-  The controls run no aquifer code in either build, so they are the noise:
-  up to 3% between builds. Read within each build, aquifers on minus off
-  with veins off, the aquifer cost 7.7 ms of the overworld's first pass
-  (7.0%) and costs 1.1 (1.1%); 7.4 ms of the whole overworld fill (4.1%),
-  now 2.1 (1.2%); 14.9 ms of `amplified`'s (6.2%), now 2.8 (1.3%). Two
-  earlier runs of three passes agree on the first-pass rows within 6 ms and
-  put the whole overworld at 188 to 190 before and 176 after.
+  Under engine v13 the controls ran no aquifer code and no vein code in
+  either build, so they were the noise: up to 3% between builds. Read
+  within each build — under v13, "veins off" minus "aquifers off", which
+  then differed in the aquifer alone, each share of the "veins off" run —
+  the aquifer cost 7.7 ms of the overworld's first pass (7.0%) and costs
+  1.1 (1.1%); 7.4 ms of the whole overworld fill (4.1%), now 2.1 (1.2%);
+  14.9 ms of `amplified`'s (6.2%), now 2.8 (1.3%). Two earlier runs of
+  three passes agree on the first-pass rows within 6 ms and put the whole
+  overworld at 188 to 190 before and 176 after.
+
+  *Re-measured under engine v14 (2026-10-13).* Since v14 the "aquifers
+  off" rows pay for the veins, so they are no control for the aquifer:
+  read the v13 way, "veins off" minus "aquifers off", the aquifer would now
+  cost -15 M instructions a chunk of the overworld fill, -15 M of its
+  first pass and -22 M of `amplified`'s (-1.0, -0.7 and -0.3 ms in the
+  table), which is the aquifer less the veins. The aquifer's share is
+  "veins off" against "aquifers off, veins off" now, and the veins'
+  "everything" against "veins off". The last two columns are a 6-core,
+  12-thread Ryzen 5 7600 shared with other agents' builds and clang-tidy
+  runs (load average 2.7 to 19.7 over the hour, median 6.0): each figure
+  is the median of seven runs, the twenty configurations of both columns
+  interleaved run by run, each run each chunk's fastest of five passes, in
+  release builds (the `release` preset, RelWithDebInfo). The v13 column is
+  engine v13's tree (bac7033) built the same way and run beside v14, so
+  the two engines compare on one machine.
+
+  Every share from here on is of the run of its pair that has the part
+  on, as the record's are: the aquifer's of "veins off", the veins' of
+  "everything". By those medians the aquifer costs 2.3 ms of the overworld
+  fill's 96.9 (2.4%), 1.8 of its first pass's 64.6 (2.8%) and 2.5 of
+  `amplified`'s 118.5 (2.1%), and the veins 2.4 of 99.3 (2.4%), 2.8 of
+  67.4 (4.2%) and 2.6 of 121.1 (2.1%). Differences that size are this
+  machine's noise: a configuration's middle five runs span 1 to 10 ms, and
+  a run caught under the heaviest load sat up to 47 ms above its median.
+  So the split is also taken as user-space instructions retired (`perf
+  stat -e instructions:u`; one pass of the window is a `--repeat 2` run
+  less a `--repeat 1` run, which leaves out the pack load, the compile and
+  the dump, averaged with `--repeat 3` less `--repeat 2`), which no load
+  moves. Every instruction figure here is from runs WITHOUT `--dump`.
+  Writing the dump falls outside that window and still moves the count
+  inside it, by up to 2.5 M a chunk on a veins-on configuration — and by
+  the dump path's length too: the first pass with veins off reads
+  1 037.4 M without a dump and 1 037.2 M or 1 034.9 M with one, by path,
+  which puts the first pass's aquifer at 22.9 M rather than 25.9 M (an
+  adversarial re-count's figures; the cause, likely allocator state, is
+  unmeasured). So instruction counts compare only between runs made the
+  same way, as all of these are. A chunk of the overworld fill executes
+  1 718 M instructions with everything on and 1 679 M with veins off: the
+  aquifer is 22.9 M of the 1 679 M (1.4%), the veins 39.4 M of the 1 718 M
+  (2.3%). Its first pass
+  executes 1 078 M and 1 037 M, the aquifer 25.9 M (2.5%) and the veins
+  41.1 M (3.8%); `amplified`'s fill 2 122 M and 2 083 M, the aquifer
+  18.3 M (0.9%) and the veins 38.7 M (1.8%). A configuration's second and
+  third passes differ by up to 10 M a chunk (the first pass's two aquifer
+  readings are 21.9 and 29.9 M), so each share is good to a few M.
+  Without aquifers the veins cost the same, 37.8, 40.7 and 40.7 M.
+
+  These are perf's counts, not callgrind's, and the two instruments count
+  the same chunks differently, so no share carries from one to the other.
+  On the four-chunk sample above (one first pass, v14; callgrind counting
+  inside `ChunkFiller::fill`, as the record's did) callgrind counts the
+  fill with veins off at 7 389 M where perf counts 4 176 M, the veins
+  at 830 M where perf counts 142 M, and the aquifer at 121 M where perf
+  counts 104 M. 45% of callgrind's veins-off count is glibc's `memset` (the
+  AVX2 variant, which glibc picks under valgrind), against 6% of perf's
+  instruction samples over a native run of the same window (the AVX-512
+  variant). Callgrind's own counts also differ from one machine to
+  another: the record's tree (3e3e805), under callgrind here, gives the
+  aquifer 120 M of 7 389 M, not the 103 M of 7 512 M it gave on the
+  4-core box. So the record's 1.4% after the cuts is callgrind's share on
+  that box and the 2.5% above is perf's on this one, and perf's 104 M
+  lying near the record's 103 M is a coincidence of two instruments, not
+  an agreement.
+
+  v14 costs what v13 did. With everything on, and with veins off, the two
+  engines execute the same instructions to within 0.01 M a chunk, and
+  v14's "aquifers off, veins off" what v13's "aquifers off" did to within
+  0.6 M (0.03%). The dumps agree byte for byte: v13's "aquifers off"
+  against v14's "aquifers off, veins off" on all three windows, and the
+  two engines with everything on for the overworld and `amplified` (v14's
+  0.7F membership moves no block there). Only the "aquifers off" rows
+  changed, by the veins they now place: 2.8, 2.9 and 3.4 ms by the
+  medians, 38 to 41 M instructions a chunk. So the conclusion holds: by
+  instructions the aquifer is 1.4% of the overworld fill without veins and
+  0.9% of `amplified`'s, and the veins 2.3% and 1.8% of the fill with
+  everything on.
+
+  Set beside the record, the first pass's share reads 1.1% there and 2.5%
+  here, and no cost moved between them. The record's own tree (3e3e805),
+  built and counted here the same way, executes both runs of the first
+  pass's pair exactly as v13 does, to within 0.01 M a chunk: 1 037.4 M
+  with veins off, 1 011.6 M with aquifers off, the aquifer 25.75 M
+  (2.5%); v14's are within 0.2 M of those. The two figures differ in unit
+  and machine: the record's 1.1 ms is CPU time on the 4-core box, inside
+  its own 3% noise, while here the same pair is 2.5% by instructions and,
+  by CPU medians, 2.8% under v14 and 2.3% under v13. The whole fills read
+  1.2% and 1.3% in the record by CPU time and 1.4% and 0.9% here by
+  instructions, and there the trees do differ a little: counted here, the
+  record's own tree has them at 1.6% and 1.0% (26.9 M and 21.6 M a chunk,
+  against v13's 23.0 M and 17.7 M, each good to a few M as above). All of
+  that lies past the first pass, which executes the same in both trees
+  for `amplified` too, in the surface pass, whose executor changed between
+  them (d22578a's `vertical_gradient` source).
 
   The 237 ms/chunk on record (M5) was measured with the binding's work,
   before engines v3 to v12, and by its own note includes the per-quart
@@ -7332,17 +7443,27 @@ Open:
   refuses a run with no seed unless `STRATUM_PROBE_OVERWRITE=1`.
 
   *The flag's path through `density-probe.sh` — measured on three local
-  corpora, pinned by no case.* `la`, `ma` and the 13579 rebuild's `mr2` read
+  corpora, pinned by no case; pinned since.* (*Since pinned*:
+  `tools/analysis/aquifer-flag-probe.sh` builds the control in CI-generated
+  corpora, two aquifers-off arms over open ground below a sea raised to 32,
+  each beside its aquifers-on twin in one world, at three seeds, and
+  `tests/conformance/vanilla_aquifer_flag_test.cpp` reads them: each off arm
+  is the global picker on every open block of its window, each on arm misses
+  it on 755 404-910 599 blocks — next entry, "`aquifers_enabled: false`
+  reaches the server, pinned".) `la`, `ma` and the 13579 rebuild's `mr2` read
   exactly as their aquifers-on twins do, which is also what they would read
   if `aquifers_enabled: false` never reached the server. No conformance case
-  is a control for that. Of the 184 aquifers-off arms in `tools/probe-worlds`'
-  density corpora, 114 are solid columns and the other 70 leave `sea_level`
-  at the dimension's floor with the default air `default_fluid`, so none is
-  known to separate the flag: on thirteen of the 70, from eleven of their
-  twelve probes, the library's aquifers-on fill, with water standing in for
-  the air it refuses and read back as air, is their aquifers-off fill block
-  for block (a library prediction; the other 57 arms, the twelfth probe
-  `legacy-seed-probe.sh`'s among them, were not checked).
+  was a control for that. Of the 184 aquifers-off arms then in
+  `tools/probe-worlds`' density corpora, 114 were solid columns and the
+  other 70 left `sea_level` at the dimension's floor with the default air
+  `default_fluid`, so none was known to separate the flag: on thirteen of
+  the 70, from eleven of their twelve probes, the library's aquifers-on
+  fill, with water standing in for the air it refuses and read back as air,
+  was their aquifers-off fill block for block (a library prediction; the
+  other 57 arms, the twelfth probe `legacy-seed-probe.sh`'s among them, were
+  not checked). The corpora have held 190 since: the six added are the
+  `aqflag_s*` corpora's `moff` and `loff` at three seeds, and those separate
+  it (next entry).
 
   The control exists on disk, outside every unit: three `density-probe.sh`
   corpora with aquifers off and a water sea above the floor — `stdep2`'s
@@ -7397,13 +7518,109 @@ Open:
   `tools/probe-worlds`' legacy shard; 8675309, 14 and 15 confirmed the rule
   and are not.
 
-  *Still open.* Draw 3's method; whether draw 2 is taken when
-  `vein_gap <= -0.3` (nothing downstream reads the stream); and a
-  conformance case for the control that `aquifers_enabled: false` reaches
-  the server through `density-probe.sh` — measured on three local corpora
-  (above), but no `tools/probe-worlds` unit generates one and no case reads
-  it. Why the first coupling world read stone is answered: a seed with no
-  admissible position in its window.
+  *Still open.* Draw 3's method; and whether draw 2 is taken when
+  `vein_gap <= -0.3` (nothing downstream reads the stream). A conformance
+  case for the control that `aquifers_enabled: false` reaches the server
+  through `density-probe.sh` — *since closed*: three `tools/probe-worlds`
+  units generate it and a case reads it (next entry). Why the first coupling
+  world read stone is answered: a seed with no admissible position in its
+  window.
+
+- **`aquifers_enabled: false` reaches the server, pinned; and veins with
+  aquifers off over open ground, measured (MA/M3, no engine change).** Two
+  gaps the previous entry left. Every aquifers-off arm a case read was a
+  solid column or kept `sea_level` at the dimension's floor with an air
+  default fluid — worlds the flag cannot change — so nothing a case read
+  showed `density-probe.sh`'s `aquifers_enabled` line reaching the server.
+  And veins with aquifers off had been measured over solid columns only.
+
+  *The probe.* `tools/analysis/aquifer-flag-probe.sh` builds the world where
+  the flag must show: one world a seed, four dimensions, two pairs that
+  differ ONLY in `aquifers_enabled` — `mon`/`moff`, the modern source over 3D
+  caves (`stratum:probe_noise` at `xz_scale` = `y_scale` = 0.5, about half of
+  every layer open, walls in every direction), and `lon`/`loff`, the legacy
+  source over a noise-free layering (four `abs` folds of
+  `y_clamped_gradient` make a triangle wave in y: seven solid rows and nine
+  open in every sixteen from -64 to 64, open above, never within 0.125 of
+  zero; a legacy dimension may name no noise but the three climate ones).
+  Everything else is a constant and the same in all four: `sea_level` 32,
+  inside copper's vein range, so vein blocks meet both the sea and the air
+  above it with aquifers off; water `default_fluid`; a surface rule that
+  never fires; the legacy aquifer probe's aquifer inputs but the barrier
+  (`barrier` 0, `fluid_level_floodedness` 0.5, `fluid_level_spread` 0,
+  `lava` -1, `preliminary_surface_level` 96, so y_skip is 130 and the
+  lattice is consulted over both vein ranges); and the legacy ore-vein
+  probe's vein inputs, so every `default_block` position of both ranges is
+  a candidate. Generated at 42, 31337 and 8675309 (about a minute each
+  locally), frozen as every probe is.
+
+  *The flag, library-free.* Over every block of each 8x8 window
+  (6 291 456 an arm), read off the server's regions alone: each off arm is
+  the global picker on EVERY open block — lava below min(-54, sea_level),
+  water below `sea_level`, air above — 0 misses of 3 138 654-5 373 952 open
+  blocks, none of them flowing, at all three seeds and in both pairs. Each
+  on arm misses the picker on 755 404-910 599 of its open blocks (air, water
+  or lava that is not its row's), and differs from its twin on
+  843 148-1 025 059 blocks, its barriers among them: the positive control. A
+  run where the flag never reached the server would have made each pair two
+  copies of one world. On the on arms 1-6 blocks of the window are flowing
+  fluid, the frozen world's remnant.
+
+  *Each arm its own setting, through the shipped filler.* Each arm's
+  settings rebuilt from its `spec.json` through `probe_settings.hpp`, the
+  registry its source selects and `ChunkFiller::compile`, against the server
+  state for state on all 144 chunks the server generated of each arm
+  (14 155 776 blocks an arm, twelve arms): 0 blocks wrong. What differs is
+  fluid flow, classified by `support/fluid_flow.hpp`'s shared rule — 1-9
+  blocks an on arm, every one in a chunk that ticked, and 0 on every off arm,
+  whose every block is exact with no flow rule applied. Each of the 24 is
+  the server's fluid one step from a source of its own: 19 falling (level 8)
+  directly under one, and 3 level-1 water and 2 level-2 lava beside one;
+  none is a source, so none is the shared rule's water source between two
+  others. Every post-processing mark of the 63 chunks that never ticked is
+  exact: 28 246-46 386 an on arm, 0 an off arm, where the filler writes
+  none.
+
+  *Veins with aquifers off, over open ground.* 527 203-595 440 vein blocks
+  an off arm's window, 84 241-126 185 of them beside water or lava and
+  18 479-23 038 beside air; every one is where the filler puts it (0 vein
+  positions wrong over the 144 chunks, 1 186 375-1 359 192 vein blocks an
+  off arm), and none lies outside its own metal's range: copper's blocks
+  only in y 0..50, iron's only in -60..-8, none in the dead zone between.
+  Against the twin: wherever the off arm is solid the on arm holds the same
+  block, vein blocks included (0 positions otherwise), so the aquifer only
+  ever adds solid. The on arm's extra vein blocks are exactly the ones
+  standing on its barriers: 33 475-38 403 vein blocks of 79 901-114 459
+  barrier blocks, and the on arm's vein count less the off arm's is that
+  number at every seed and pair. So veins read no aquifer and replace the
+  `default_block` the filler holds when they look, the aquifer's barrier
+  included — as the filler already did; no engine change, no bump.
+
+  *What ships.* The probe, its three corpora as units of
+  `tools/probe-worlds`' water shard (the lightest shard but the markers'
+  own, 15 minutes cold in CI run 38192289975), and
+  `tests/conformance/vanilla_aquifer_flag_test.cpp`: the library-free pass
+  over every block of each window at every seed (about 17 s in a debug
+  build), and the shipped filler state for state on six chunks an arm — three
+  in the window, one in its ring and two that never ticked, whose marks it
+  also holds exact (about 20 s). An off arm is scored with no flow rule,
+  every block exact: nothing in a frozen aquifers-off world moves, and
+  under the shared rule a missing sea block between two others reads as
+  flow, so a filler that placed no default fluid below `sea_level` with
+  aquifers off left each legacy off arm 0 blocks wrong (and each modern one
+  24-40), held only by the bounds on flow; scored this way it leaves 75 264
+  wrong on each legacy off arm and 67 570-68 121 on each modern one. On an
+  on arm every block the shared rule forgives must also be one step from a
+  source of its own fluid, as above, so a pool of wrong water sources is
+  never flow: a 3x3 of them written as air at y 5 inside the server's water
+  on seed 42's `mon` passed the case before (9 blocks of flow, 0 wrong) and
+  fails it now. Each metal's vein blocks are held to that metal's own range
+  in the window pass. It skips with no corpus and fails on a partial set.
+
+  *Still open.* Veins with aquifers off over vanilla's own router: every
+  corpus with real terrain and aquifers off (`aquifer-free-probe.sh`'s)
+  turns the veins off too. And the three local corpora above (`w_fl0`,
+  `stw`, `sw40`) stay outside every unit; the case does not need them.
 
 - **A legacy dimension's `old_blended_noise` is settled; its named noises are
   not (M4).** `minecraft:old_blended_noise` carries no identifier, so it is

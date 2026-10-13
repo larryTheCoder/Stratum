@@ -105,7 +105,8 @@ corpora(const std::string& prefix, std::span<const std::int64_t> seeds, const st
 /// vanilla_aquifer_varying_surface_test.cpp's.
 class Field {
 public:
-    explicit Field(const std::filesystem::path& readout) : values_(kSpan * kSpan, 0.0) {
+    explicit Field(const std::filesystem::path& readout)
+        : values_(static_cast<std::size_t>(kSpan) * static_cast<std::size_t>(kSpan), 0.0) {
         const auto file = region::RegionFile::open(readout);
         for (std::int32_t cz = 0; cz < kChunks; ++cz) {
             for (std::int32_t cx = 0; cx < kChunks; ++cx) {
@@ -121,7 +122,12 @@ public:
                                 break;
                             }
                         }
-                        const double arm = top < 100 ? kLow : (top < 160 ? kMid : kHigh);
+                        double arm = kHigh;
+                        if (top < 100) {
+                            arm = kLow;
+                        } else if (top < 160) {
+                            arm = kMid;
+                        }
                         values_[index((cx * 16) + lx, (cz * 16) + lz)] = arm;
                     }
                 }
@@ -139,7 +145,8 @@ public:
 
 private:
     [[nodiscard]] static std::size_t index(const std::int32_t x, const std::int32_t z) noexcept {
-        return static_cast<std::size_t>((z * kSpan) + x);
+        return (static_cast<std::size_t>(z) * static_cast<std::size_t>(kSpan)) +
+               static_cast<std::size_t>(x);
     }
 
     std::vector<double> values_;
@@ -163,9 +170,9 @@ private:
     if (!onNearSurfacePath(cell) || !cell.surface.aborted) {
         return false;
     }
-    return !(cell.centreY >= lambda &&
-             cell.centreY >
-                 javamath::wrappingAdd(cell.surface.cap, aquifer::kNearSurfaceFloorOffset));
+    return cell.centreY < lambda ||
+           cell.centreY <=
+               javamath::wrappingAdd(cell.surface.cap, aquifer::kNearSurfaceFloorOffset);
 }
 
 /// Q2.3/Q2.5's per-chunk cutoff — the filler's own `chunkYSkip`: above it

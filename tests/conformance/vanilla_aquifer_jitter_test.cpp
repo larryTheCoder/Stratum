@@ -99,8 +99,9 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
                 for (int lz = 0; lz < 16; ++lz) {
                     for (int lx = 0; lx < 16; ++lx) {
                         const auto* block = chunk.blockAt(lx, kProbeY, lz);
-                        if (block == nullptr)
+                        if (block == nullptr) {
                             continue;
+                        }
                         const int x = (cx * 16) + lx;
                         const int z = (cz * 16) + lz;
 
@@ -112,8 +113,9 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
                             for (int oz = -1; oz <= 1; ++oz) {
                                 const int qx = cx + ox;
                                 const int qz = cz + oz;
-                                if (qx < 0 || qx >= kCells || qz < 0 || qz >= kCells)
+                                if (qx < 0 || qx >= kCells || qz < 0 || qz >= kCells) {
                                     continue;
+                                }
                                 const auto centre = centres.centreOf(qx, kThresholdLayer, qz);
                                 const std::int64_t dx = x - centre.x;
                                 const std::int64_t dz = z - centre.z;
@@ -125,8 +127,9 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
                                 }
                             }
                         }
-                        if (ownerX < 0)
+                        if (ownerX < 0) {
                             continue;
+                        }
                         Tally& tally = grid[static_cast<std::size_t>(ownerZ)]
                                            [static_cast<std::size_t>(ownerX)];
                         ++tally.total;
@@ -141,8 +144,9 @@ TEST_CASE("the aquifer's cell centres are the ones the server drew", "[conforman
             for (int cx = 0; cx < kCells; ++cx) {
                 const Tally& tally =
                     grid[static_cast<std::size_t>(cz)][static_cast<std::size_t>(cx)];
-                if (tally.total < 120)
+                if (tally.total < 120) {
                     continue;
+                }
                 const bool observed = tally.wet * 2 > tally.total;
                 const bool predicted = centres.jitterOf(cx, kThresholdLayer, cz).y >=
                                        stratum::aquifer::kJitterBoundY - 1;

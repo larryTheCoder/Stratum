@@ -310,8 +310,8 @@ struct Score {
     if (block == nullptr) {
         return "off";
     }
-    std::string name =
-        block->name.rfind("minecraft:", 0) == 0 ? block->name.substr(10) : block->name;
+    const std::string name =
+        block->name.starts_with("minecraft:") ? block->name.substr(10) : block->name;
     const int level = stratum::test::fluidLevel(block);
     return level >= 0 ? name + ":" + std::to_string(level) : name;
 }
@@ -519,9 +519,9 @@ void scoreProbe(const std::filesystem::path& probeDir, const std::int64_t seed, 
                                 static_cast<long long>(contactRemnant && !newStone);
                             const bool flowShaped = sharedFlowShape || contactRemnant;
                             const bool realStone = serverStone && !flowShaped;
-                            if (y >= lambda && !(y == lambda && nearestWaterHere) && plainBlock) {
+                            if (y >= lambda && (y != lambda || !nearestWaterHere) && plainBlock) {
                                 const bool flowStone = flowShaped && !newStone;
-                                total.flowStone += flowStone;
+                                total.flowStone += static_cast<long long>(flowStone);
                                 if (serverStone && !newStone && !flowStone &&
                                     total.missSamples.size() < 4000) {
                                     total.missSamples +=
@@ -537,43 +537,55 @@ void scoreProbe(const std::filesystem::path& probeDir, const std::int64_t seed, 
                                         described(golden.blockAt(x, y, z - 1)) + "]";
                                 }
                                 if (hasMixedPair(at)) {
-                                    total.mixedServerStone += serverStone;
-                                    total.mixedOldMiss += (serverStone && !oldStone);
-                                    total.mixedNewMiss += (serverStone && !newStone && !flowStone);
-                                    total.mixedOldFalse += (!serverStone && oldStone);
-                                    total.mixedNewFalse += (!serverStone && newStone);
+                                    total.mixedServerStone += static_cast<long long>(serverStone);
+                                    total.mixedOldMiss +=
+                                        static_cast<long long>(serverStone && !oldStone);
+                                    total.mixedNewMiss += static_cast<long long>(
+                                        serverStone && !newStone && !flowStone);
+                                    total.mixedOldFalse +=
+                                        static_cast<long long>(!serverStone && oldStone);
+                                    total.mixedNewFalse +=
+                                        static_cast<long long>(!serverStone && newStone);
                                 } else {
-                                    total.pureServerStone += serverStone;
-                                    total.pureOldMiss += (serverStone && !oldStone);
-                                    total.pureNewMiss += (serverStone && !newStone && !flowStone);
-                                    total.pureFalse += (!serverStone && (oldStone || newStone));
+                                    total.pureServerStone += static_cast<long long>(serverStone);
+                                    total.pureOldMiss +=
+                                        static_cast<long long>(serverStone && !oldStone);
+                                    total.pureNewMiss += static_cast<long long>(
+                                        serverStone && !newStone && !flowStone);
+                                    total.pureFalse += static_cast<long long>(
+                                        !serverStone && (oldStone || newStone));
                                 }
                                 if (newStone && !oldStone) {
                                     ++total.constantAdds;
-                                    total.constantAddsServerStone += serverStone;
+                                    total.constantAddsServerStone +=
+                                        static_cast<long long>(serverStone);
                                 }
                                 if (y > lambda) {
                                     const TypeFieldReading tf = typeFieldReading(at);
                                     if (tf.applies && tf.constantFires && !oldStone) {
                                         ++total.tfConstantOnly;
-                                        total.tfConstantOnlyServerStone += realStone;
+                                        total.tfConstantOnlyServerStone +=
+                                            static_cast<long long>(realStone);
                                     }
                                     if (tf.applies && !tf.constantFires && oldStone) {
                                         ++total.tfFormulaOnly;
-                                        total.tfFormulaOnlyServerStone += serverStone;
+                                        total.tfFormulaOnlyServerStone +=
+                                            static_cast<long long>(serverStone);
                                     }
                                     if (!newStone && bothAirMixedWouldFire(at)) {
                                         ++total.bothAir;
-                                        total.bothAirServerStone += realStone;
+                                        total.bothAirServerStone +=
+                                            static_cast<long long>(realStone);
                                     }
                                 }
                             }
 
                             if (y < lambda) {
                                 ++total.belowTotal;
-                                total.belowNowLava += (now.substance == aquifer::Substance::Fluid &&
-                                                       now.fluidType == aquifer::FluidType::Lava);
-                                total.belowServerLava += serverLava;
+                                total.belowNowLava += static_cast<long long>(
+                                    now.substance == aquifer::Substance::Fluid &&
+                                    now.fluidType == aquifer::FluidType::Lava);
+                                total.belowServerLava += static_cast<long long>(serverLava);
                                 if (serverWater) {
                                     ++total.belowServerWater;
                                     const auto* above = ch.blockAt(static_cast<int>(lx), y + 1,
@@ -583,28 +595,31 @@ void scoreProbe(const std::filesystem::path& probeDir, const std::int64_t seed, 
                                     const bool fellIn = isFallingWater(b) && isWater(above) &&
                                                         below != nullptr &&
                                                         below->name == "minecraft:obsidian";
-                                    total.belowServerWaterUnexplained += !fellIn;
+                                    total.belowServerWaterUnexplained +=
+                                        static_cast<long long>(!fellIn);
                                 }
-                                total.belowBareWrongType +=
-                                    (bare.substance != aquifer::Substance::Fluid ||
-                                     bare.fluidType != aquifer::FluidType::Lava);
+                                total.belowBareWrongType += static_cast<long long>(
+                                    bare.substance != aquifer::Substance::Fluid ||
+                                    bare.fluidType != aquifer::FluidType::Lava);
                             } else if (y == lambda) {
                                 const bool nearestWater =
                                     nearestFluid && nearestType == aquifer::FluidType::Default;
                                 if (nearestWater) {
                                     ++total.fires;
-                                    total.firesBareStone += bareStone;
-                                    total.firesServerStone += realStone;
-                                    total.firesNowFluid +=
-                                        (now.substance == aquifer::Substance::Fluid);
+                                    total.firesBareStone += static_cast<long long>(bareStone);
+                                    total.firesServerStone += static_cast<long long>(realStone);
+                                    total.firesNowFluid += static_cast<long long>(
+                                        now.substance == aquifer::Substance::Fluid);
                                 } else if (!nearestFluid) {
                                     ++total.nearestAir;
-                                    total.nearestAirServerStone += serverStone;
+                                    total.nearestAirServerStone +=
+                                        static_cast<long long>(serverStone);
                                 }
                             } else {
                                 ++total.aboveTotal;
-                                total.aboveDisagree += (now.substance != bare.substance ||
-                                                        now.fluidType != bare.fluidType);
+                                total.aboveDisagree +=
+                                    static_cast<long long>(now.substance != bare.substance ||
+                                                           now.fluidType != bare.fluidType);
                             }
                         }
                     }
@@ -633,15 +648,14 @@ constexpr std::array<std::int64_t, 3> kSeeds{42, 31337, 8675309};
 /// eight rows, so it is not repeated per case. Called only once
 /// presentProbes() has found all of them.
 [[nodiscard]] const Score& scoredProbes() {
-    static const Score scored = [] {
+    static const Score kScored = [] {
         Score total;
-        for (std::size_t i = 0; i < kSeeds.size(); ++i) {
-            scoreProbe(fixtures() / "probes" / ("waterlava_s" + std::to_string(kSeeds[i])),
-                       kSeeds[i], total);
+        for (const std::int64_t seed : kSeeds) {
+            scoreProbe(fixtures() / "probes" / ("waterlava_s" + std::to_string(seed)), seed, total);
         }
         return total;
     }();
-    return scored;
+    return kScored;
 }
 
 } // namespace

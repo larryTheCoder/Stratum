@@ -72,7 +72,7 @@ constexpr const char* kScript = "tools/analysis/aquifer-ties-probe.sh";
     std::vector<std::filesystem::path> found;
     if (std::filesystem::is_directory(root)) {
         for (const auto& entry : std::filesystem::directory_iterator(root)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind("ties_s", 0) == 0) {
+            if (entry.is_directory() && entry.path().filename().string().starts_with("ties_s")) {
                 found.push_back(entry.path());
             }
         }
@@ -120,8 +120,8 @@ struct Arm {
     std::array<Expect, ties::kReadingCount> expect;
 };
 
-constexpr Expect R = Expect::Refuted;
-constexpr Expect T = Expect::Tied;
+constexpr Expect kR = Expect::Refuted;
+constexpr Expect kT = Expect::Tied;
 constexpr std::optional<std::int32_t> kAll;
 
 // Readings in `Reading`'s order: shipped, engine v12, (a) v12's exemption on
@@ -135,26 +135,26 @@ constexpr std::array<Arm, 12> kArms{{
     // (a): an anchor at -63 with -100 in its window. v12's exemption read
     // -100 and gave the sea; the anchor (and so the aborting sample, which
     // it is) gives A_lava below -43.
-    {"ta", 2, kAll, kAll, 10000, {T, R, T, R, T, T, T, T}},
-    {"tar", 2, kAll, kAll, 10000, {T, R, T, R, T, T, T, T}},
+    {"ta", 2, kAll, kAll, 10000, {kT, kR, kT, kR, kT, kT, kT, kT}},
+    {"tar", 2, kAll, kAll, 10000, {kT, kR, kT, kR, kT, kT, kT, kT}},
     // (c): -60 fires before -64 aborts, so the sea, where v12 gave A_lava.
-    {"tb", 2, kAll, kAll, 10000, {T, R, R, T, R, T, T, T}},
-    {"tbr", 2, kAll, kAll, 10000, {T, R, R, T, R, T, T, T}},
+    {"tb", 2, kAll, kAll, 10000, {kT, kR, kR, kT, kR, kT, kT, kT}},
+    {"tbr", 2, kAll, kAll, 10000, {kT, kR, kR, kT, kR, kT, kT, kT}},
     // Both, with -100 after the -64 that aborts: the aborting sample's
     // exemption parts from the spec here as well.
-    {"tab", 2, kAll, kAll, 1000, {T, R, R, R, R, T, T, T}},
+    {"tab", 2, kAll, kAll, 1000, {kT, kR, kR, kR, kR, kT, kT, kT}},
     // (b): Q5.3(a) on the anchor, seen through the sea's lid.
-    {"tl35", 1, -3, 8, 300, {T, R, T, T, T, T, T, R}},
-    {"tl43", 1, -3, 8, 300, {T, R, T, T, T, T, T, R}},
+    {"tl35", 1, -3, 8, 300, {kT, kR, kT, kT, kT, kT, kT, kR}},
+    {"tl43", 1, -3, 8, 300, {kT, kR, kT, kT, kT, kT, kT, kR}},
     // Q5.3(a) on the anchor over an aborted scan's land prefix, the same
     // way, and in blocks at sea -70.
-    {"tp35", 1, -3, 8, 300, {T, R, T, T, T, R, T, T}},
-    {"tp43", 1, -3, 8, 300, {T, R, T, T, T, R, T, T}},
-    {"tc", 2, kAll, kAll, 5000, {T, R, T, T, T, R, T, T}},
-    {"tcr", 2, kAll, kAll, 5000, {T, R, T, T, T, R, T, T}},
+    {"tp35", 1, -3, 8, 300, {kT, kR, kT, kT, kT, kR, kT, kT}},
+    {"tp43", 1, -3, 8, 300, {kT, kR, kT, kT, kT, kR, kT, kT}},
+    {"tc", 2, kAll, kAll, 5000, {kT, kR, kT, kT, kT, kR, kT, kT}},
+    {"tcr", 2, kAll, kAll, 5000, {kT, kR, kT, kT, kT, kR, kT, kT}},
     // No sample fires: the level rule, where v12 gave A_lava. Row lambda,
     // where every block the model parts lies, and only a few.
-    {"td", 1, -117, -117, 10, {T, R, T, T, T, T, R, T}},
+    {"td", 1, -117, -117, 10, {kT, kR, kT, kT, kT, kT, kR, kT}},
 }};
 
 /// The readout dimensions: the field as a step indicator, so terrain height
@@ -320,7 +320,7 @@ TEST_CASE("the surface scan decides a source's status sample by sample", "[confo
                 }
             }
             INFO("readout: " << agree << " of " << columns << " columns");
-            REQUIRE(columns == 32 * 32);
+            REQUIRE(columns == 32LL * 32);
             CHECK(agree == columns);
             CHECK(steps.size() == check.steps);
         }

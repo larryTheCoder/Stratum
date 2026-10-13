@@ -22,7 +22,6 @@ using stratum::render::Mode;
 using stratum::render::renderRegion;
 using stratum::test::RegionBuilder;
 using stratum::test::SectionSpec;
-using stratum::test::uniformSection;
 
 constexpr std::array<std::uint8_t, 3> kBackground{16U, 16U, 24U};
 

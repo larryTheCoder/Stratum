@@ -43,13 +43,20 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [[ ${accept_eula} -eq 1 ]] || die "this runs the Minecraft server, so it needs --accept-eula"
 command -v java >/dev/null 2>&1 || die "java is needed"
-settings=".fixtures/${MINECRAFT_VERSION}/worldgen/noise_settings/overworld.json"
-[[ -f "${settings}" ]] || die "no ${settings}; run tools/fetch-vanilla first"
+# STRATUM_FIXTURES_DIR, as the CMake cache and density-probe.sh read it: a
+# git worktree sharing the main checkout's fixtures takes the jar and the
+# extracted worldgen from that tree and writes its region into it, rather
+# than needing a second copy of either. tools/probe-worlds clears it for
+# every generator it runs, so a corpus it generates lands under
+# <repo>/.fixtures whatever the environment.
+fixtures="${STRATUM_FIXTURES_DIR:-${repo_root}/.fixtures}"
 # `|| true`: under pipefail a find over a directory that is not there fails
 # the assignment, and `set -e` would exit here without the message below.
-jar="$(find ".fixtures/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
-[[ -n "${jar}" ]] || die "no server jar; run tools/fetch-vanilla first"
+jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 || true)"
+[[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
+settings="${fixtures}/${MINECRAFT_VERSION}/worldgen/noise_settings/overworld.json"
+[[ -f "${settings}" ]] || die "no ${settings}; run tools/fetch-vanilla first"
 
 work="$(mktemp -d)"
 # The trap takes the server down with the work directory: an interrupted run
@@ -174,7 +181,7 @@ printf 'stop\n' >&3
 exec 3>&-
 wait "${server_pid}" 2>/dev/null || true
 
-out="${repo_root}/.fixtures/${MINECRAFT_VERSION}/probes/aquifer-on/seed-${seed}"
+out="${fixtures}/${MINECRAFT_VERSION}/probes/aquifer-on/seed-${seed}"
 mkdir -p "${out}"
 cp "${region}" "${out}/r.0.0.mca"
 # What produced the region, read by the conformance cases: a corpus generated

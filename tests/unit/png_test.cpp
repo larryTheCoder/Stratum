@@ -86,7 +86,7 @@ struct PngChunk {
     stream.avail_in = static_cast<uInt>(input.size());
 
     std::vector<std::byte> output;
-    std::vector<std::byte> buffer(16U * 1024U);
+    std::vector<std::byte> buffer(std::size_t{16} * 1024U);
     int status = Z_OK;
     do {
         stream.next_out = reinterpret_cast<Bytef*>(buffer.data());
@@ -104,7 +104,7 @@ struct PngChunk {
 } // namespace
 
 TEST_CASE("an encoded image has the chunks a PNG must have", "[png]") {
-    Image image(4, 3);
+    const Image image(4, 3);
     const std::vector<std::byte> encoded = encodePng(image);
     const std::vector<PngChunk> chunks = parsePng(encoded);
 
@@ -137,7 +137,7 @@ TEST_CASE("pixels survive the round trip", "[png]") {
     const std::vector<std::byte> raw = inflateAll(chunks[1].payload);
 
     // Each scanline is a filter byte followed by width * 3 bytes.
-    REQUIRE(raw.size() == 2U * ((3U * 3U) + 1U));
+    REQUIRE(raw.size() == std::size_t{2} * ((3U * 3U) + 1U));
     for (std::size_t y = 0; y < 2; ++y) {
         const std::size_t rowStart = y * ((3U * 3U) + 1U);
         CHECK(static_cast<std::uint8_t>(raw[rowStart]) == 0U); // filter: none

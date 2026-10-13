@@ -53,13 +53,12 @@ public:
     }
 
     /// Writes `density_function/<name>.json`.
-    const TempTree& define(std::string_view name, std::string_view json) const {
+    void define(std::string_view name, std::string_view json) const {
         const std::filesystem::path file =
             path_ / "density_function" / (std::string(name) + ".json");
         std::filesystem::create_directories(file.parent_path());
         std::ofstream out(file);
         out << json;
-        return *this;
     }
 
     [[nodiscard]] Graph resolve() const { return Graph::resolveAll(Pack::openWorldgenTree(path_)); }

@@ -188,11 +188,12 @@ TEST_CASE("a vertical gradient is certain below, impossible above, and drawn bet
     // (124 - 12) / 224 = 0.5 exactly, so a large sample should sit near half.
     int fired = 0;
     int total = 0;
-    for (std::int32_t x = 0; x < 64; ++x)
+    for (std::int32_t x = 0; x < 64; ++x) {
         for (std::int32_t z = 0; z < 64; ++z) {
             ++total;
             fired += static_cast<int>(fires(x, 12, z));
         }
+    }
     const double rate = static_cast<double>(fired) / static_cast<double>(total);
     CHECK(rate > 0.46);
     CHECK(rate < 0.54);
@@ -200,10 +201,12 @@ TEST_CASE("a vertical gradient is certain below, impossible above, and drawn bet
     // The name is a salt, so an unrelated one gives an unrelated field.
     const auto other = stratum::rng::positionalSourceFor(42, "stratum:some_other_name");
     int differing = 0;
-    for (std::int32_t x = 0; x < 64; ++x)
-        for (std::int32_t z = 0; z < 64; ++z)
+    for (std::int32_t x = 0; x < 64; ++x) {
+        for (std::int32_t z = 0; z < 64; ++z) {
             differing += static_cast<int>(stratum::surface::verticalGradientFires(
                                               other, x, 12, z, -100, 124) != fires(x, 12, z));
+        }
+    }
     CHECK(differing > total / 4);
 
     // But NOT every pair of names is unrelated, and this is measured rather
@@ -214,9 +217,11 @@ TEST_CASE("a vertical gradient is certain below, impossible above, and drawn bet
     // demanded independence between them would be asserting a falsehood.
     const auto bedrock = stratum::rng::positionalSourceFor(42, "minecraft:bedrock_floor");
     int alsoDiffering = 0;
-    for (std::int32_t x = 0; x < 64; ++x)
-        for (std::int32_t z = 0; z < 64; ++z)
+    for (std::int32_t x = 0; x < 64; ++x) {
+        for (std::int32_t z = 0; z < 64; ++z) {
             alsoDiffering += static_cast<int>(stratum::surface::verticalGradientFires(
                                                   bedrock, x, 12, z, -100, 124) != fires(x, 12, z));
+        }
+    }
     CHECK(alsoDiffering < differing);
 }

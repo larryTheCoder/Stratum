@@ -281,8 +281,10 @@ constexpr std::array<Mix, 4> kMixes{Mix::Shipped, Mix::WideX, Mix::NarrowZ, Mix:
                 for (int lx = 0; lx < 16; ++lx) {
                     const auto* block = chunk.blockAt(lx, kProbeY, lz);
                     REQUIRE(block != nullptr);
-                    const auto at =
-                        static_cast<std::size_t>((((dz * 16) + lz) * kWindow) + (dx * 16) + lx);
+                    const std::size_t at =
+                        (((static_cast<std::size_t>(dz) * 16U) + static_cast<std::size_t>(lz)) *
+                         static_cast<std::size_t>(kWindow)) +
+                        (static_cast<std::size_t>(dx) * 16U) + static_cast<std::size_t>(lx);
                     wet[at] = static_cast<std::uint8_t>(block->name == "minecraft:water" ||
                                                         block->name == "minecraft:lava");
                 }
@@ -349,8 +351,9 @@ struct Score {
             Territory& territory = territories.at(static_cast<std::size_t>(ownerZ))
                                        .at(static_cast<std::size_t>(ownerX));
             ++territory.total;
-            territory.wet +=
-                static_cast<int>(wet.at(static_cast<std::size_t>((z * kWindow) + x)) != 0);
+            territory.wet += static_cast<int>(
+                wet.at((static_cast<std::size_t>(z) * static_cast<std::size_t>(kWindow)) +
+                       static_cast<std::size_t>(x)) != 0);
         }
     }
     Score result;

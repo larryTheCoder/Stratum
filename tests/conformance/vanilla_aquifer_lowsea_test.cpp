@@ -59,7 +59,6 @@
 namespace {
 
 using stratum::aquifer::CellIndex;
-using stratum::aquifer::CentreSource;
 using stratum::aquifer::PslRead;
 
 constexpr std::int32_t kSeaLevel = -70;

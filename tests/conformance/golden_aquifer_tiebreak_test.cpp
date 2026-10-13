@@ -186,7 +186,7 @@ TEST_CASE("the aquifer tie-break on the golden overworld: every tie counted and 
                                                   << "; generate them with tools/probe-worlds");
     }
     REQUIRE(chunks == 21U);
-    REQUIRE(total.blocks == 21U * 16U * 16U * 384U);
+    REQUIRE(total.blocks == std::uint64_t{21} * 16U * 16U * 384U);
 
     const tiebreak::PairTally& rank12 = total.pairs[0];
     const tiebreak::PairTally& rank23 = total.pairs[1];

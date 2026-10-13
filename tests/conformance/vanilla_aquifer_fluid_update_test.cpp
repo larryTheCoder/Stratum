@@ -182,8 +182,8 @@ TEST_CASE("the fluid-update flag is the server's own, on the comb worlds",
     }
     INFO("chunks " << total.chunks << ", server marks " << total.serverMarks << ", agree "
                    << total.agree << ", extra " << total.extra << ", missing " << total.missing);
-    REQUIRE(total.chunks == 4 * 63);
-    REQUIRE(total.tickedChunksChecked == 4 * 81);
+    REQUIRE(total.chunks == 4LL * 63);
+    REQUIRE(total.tickedChunksChecked == 4LL * 81);
     CHECK(total.serverMarks == 255457);
     CHECK(total.extra == 0);
     CHECK(total.missing == 0);
@@ -478,6 +478,6 @@ TEST_CASE("the chunk encoder writes the server's own PostProcessing lists",
     // Model-only counts: these chunks never ticked, so nothing after
     // generation moved their lists (support/probe_region.hpp).
     REQUIRE(chunks == 24);
-    CHECK(listsCompared == 24 * 24);
+    CHECK(listsCompared == 24LL * 24);
     CHECK(marks == 1964);
 }

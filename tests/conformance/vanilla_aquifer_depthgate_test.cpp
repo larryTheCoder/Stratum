@@ -68,7 +68,8 @@ constexpr std::int32_t kSpan = 128;
 /// The HIGH/LOW psl field, read off the readout dimension.
 class Field {
 public:
-    explicit Field(const std::filesystem::path& readout) : values_(kSpan * kSpan, 0.0) {
+    explicit Field(const std::filesystem::path& readout)
+        : values_(static_cast<std::size_t>(kSpan) * kSpan, 0.0) {
         const auto file = stratum::region::RegionFile::open(readout);
         for (std::int32_t cz = 0; cz < 8; ++cz) {
             for (std::int32_t cx = 0; cx < 8; ++cx) {
@@ -101,7 +102,7 @@ public:
 
 private:
     [[nodiscard]] static std::size_t index(const std::int32_t x, const std::int32_t z) noexcept {
-        return static_cast<std::size_t>((z * kSpan) + x);
+        return (static_cast<std::size_t>(z) * kSpan) + static_cast<std::size_t>(x);
     }
 
     std::vector<double> values_;

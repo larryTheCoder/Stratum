@@ -423,7 +423,7 @@ TEST_CASE("retyping every source alike changes no barrier", "[aquifer]") {
             }
         }
     }
-    CHECK(compared == 5U * 5U * 3U * 5U * 3U * 2U * 3U);
+    CHECK(compared == std::size_t{5} * 5U * 3U * 5U * 3U * 2U * 3U);
     // Not vacuous: the sweep reaches both answers.
     CHECK(placed > 0U);
     CHECK(placed < compared);

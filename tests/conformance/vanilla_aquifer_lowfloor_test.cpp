@@ -564,22 +564,22 @@ struct Arm {
     std::array<Expect, static_cast<std::size_t>(Reading::Count)> expect;
 };
 
-constexpr Expect R = Expect::Refuted;
-constexpr Expect T = Expect::Tied;
+constexpr Expect kR = Expect::Refuted;
+constexpr Expect kT = Expect::Tied;
 
 // Readings in `Reading`'s order: shipped, lambda+own, lambda+lava, -54+own,
 // near-surface only, lambda+16, anchor clears.
 constexpr std::array<Arm, 5> kArms{{
     // Sea -70: lambda and lambda + 16 are -70 and -54, so lambda + 16 ties.
-    {"lf_v5", {T, R, R, R, R, T, R}},
-    {"lf_v5w", {T, R, R, R, R, T, R}},
-    {"lf_dd", {T, R, R, R, R, T, R}},
+    {"lf_v5", {kT, kR, kR, kR, kR, kT, kR}},
+    {"lf_v5w", {kT, kR, kR, kR, kR, kT, kR}},
+    {"lf_dd", {kT, kR, kR, kR, kR, kT, kR}},
     // Sea -60, every scan aborting at its anchor: the near-surface floor
     // alone, so the reading that changes only the cells off that path ties.
-    {"lf_f60", {T, R, R, R, T, R, R}},
+    {"lf_f60", {kT, kR, kR, kR, kT, kR, kR}},
     // Sea 63: every floor reading's level is -54 (lambda + 16 is -38) and
     // the type is unseen; a low anchor that refused the sea is not.
-    {"lf_s63", {T, T, T, T, T, R, R}},
+    {"lf_s63", {kT, kT, kT, kT, kT, kR, kR}},
 }};
 
 } // namespace
@@ -627,7 +627,7 @@ TEST_CASE("an aborted scan's floor is A_lava where the sea sits below the lava l
                 }
             }
             INFO("readout: " << agree << " of " << columns << " columns, " << low << " at -88");
-            REQUIRE(columns == 32 * 32);
+            REQUIRE(columns == 32LL * 32);
             REQUIRE(agree == columns);
             REQUIRE(low > 0);
             REQUIRE(low < columns);

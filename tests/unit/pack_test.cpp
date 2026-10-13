@@ -122,7 +122,7 @@ TEST_CASE("the capability matrix matches SPEC section 8", "[data][registry]") {
 }
 
 TEST_CASE("a worldgen tree loads with nested identifiers", "[data][pack]") {
-    TempDirectory tree;
+    const TempDirectory tree;
     tree.write("density_function/overworld/base_3d_noise.json", kConstantDensityFunction);
     tree.write("noise/temperature.json", R"({"firstOctave":-10,"amplitudes":[1.5,0,1,0,0,0]})");
 
@@ -142,7 +142,7 @@ TEST_CASE("a worldgen tree loads with nested identifiers", "[data][pack]") {
 }
 
 TEST_CASE("entries in registries v1 does not execute are reported, never dropped", "[data][pack]") {
-    TempDirectory tree;
+    const TempDirectory tree;
     tree.write("density_function/a.json", kConstantDensityFunction);
     tree.write("placed_feature/ore_coal.json", R"({"feature":"minecraft:ore_coal"})");
     tree.write("structure/village_plains.json", R"({"type":"minecraft:jigsaw"})");
@@ -163,7 +163,7 @@ TEST_CASE("entries in registries v1 does not execute are reported, never dropped
 TEST_CASE("a directory this build cannot name is refused", "[data][pack]") {
     // Not the same as a registry we know and skip: an unknown directory means
     // the pack expects something of us we cannot even describe.
-    TempDirectory tree;
+    const TempDirectory tree;
     tree.write("density_function/a.json", kConstantDensityFunction);
     tree.write("mystery_registry/thing.json", R"({})");
 
@@ -177,7 +177,7 @@ TEST_CASE("a directory this build cannot name is refused", "[data][pack]") {
 }
 
 TEST_CASE("a data pack is read through its metadata", "[data][pack]") {
-    TempDirectory pack;
+    const TempDirectory pack;
     pack.write("pack.mcmeta",
                R"({"pack":{"description":"t","min_format":[94,1],"max_format":94}})");
     pack.write("data/minecraft/worldgen/density_function/a.json", kConstantDensityFunction);
@@ -193,7 +193,7 @@ TEST_CASE("a data pack is read through its metadata", "[data][pack]") {
 TEST_CASE("a pack that does not cover the pinned format is refused", "[data][pack][pin]") {
     // SPEC §3: loading a pack written for another format would mean guessing
     // at a schema it does not claim to speak.
-    TempDirectory pack;
+    const TempDirectory pack;
     pack.write("data/minecraft/worldgen/density_function/a.json", kConstantDensityFunction);
 
     pack.write("pack.mcmeta", R"({"pack":{"description":"t","pack_format":48}})");
@@ -213,21 +213,21 @@ TEST_CASE("a pack that does not cover the pinned format is refused", "[data][pac
 
 TEST_CASE("packs that cannot be read say why", "[data][pack][malformed]") {
     SECTION("no metadata at all") {
-        TempDirectory pack;
+        const TempDirectory pack;
         pack.write("data/minecraft/worldgen/noise/a.json", R"({})");
         REQUIRE_THROWS_WITH(Pack::openDataPack(pack.path()),
                             Catch::Matchers::ContainsSubstring("pack.mcmeta"));
     }
 
     SECTION("metadata that is not a pack") {
-        TempDirectory pack;
+        const TempDirectory pack;
         pack.write("pack.mcmeta", R"({"something":"else"})");
         REQUIRE_THROWS_WITH(Pack::openDataPack(pack.path()),
                             Catch::Matchers::ContainsSubstring("not a pack.mcmeta"));
     }
 
     SECTION("malformed JSON names the file") {
-        TempDirectory tree;
+        const TempDirectory tree;
         tree.write("noise/broken.json", R"({"firstOctave":)");
         REQUIRE_THROWS_WITH(Pack::openWorldgenTree(tree.path()),
                             Catch::Matchers::ContainsSubstring("broken.json"));
@@ -236,7 +236,7 @@ TEST_CASE("packs that cannot be read say why", "[data][pack][malformed]") {
     SECTION("one identifier defined twice") {
         // Only reachable across namespaces or layouts, but a duplicate would
         // otherwise resolve to whichever the filesystem listed first.
-        TempDirectory pack;
+        const TempDirectory pack;
         pack.write("pack.mcmeta", R"({"pack":{"description":"t","pack_format":94}})");
         pack.write("data/minecraft/worldgen/noise/a.json", R"({})");
         pack.write("data/minecraft/dimension/../worldgen/noise/a.json", R"({})");
@@ -248,7 +248,7 @@ TEST_CASE("loading is deterministic", "[data][pack]") {
     // Directory iteration order is unspecified; two loads of one pack must
     // still produce the same order, or an error would name a different file
     // each run.
-    TempDirectory tree;
+    const TempDirectory tree;
     for (const std::string_view name : {"c", "a", "b", "nested/d", "nested/e"}) {
         tree.write(std::string("density_function/") + std::string(name) + ".json",
                    kConstantDensityFunction);
