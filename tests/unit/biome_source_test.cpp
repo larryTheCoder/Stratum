@@ -17,7 +17,16 @@
 //     0.2547 about 0.25, -0.0594 about -0.0625, -0.2093 and -0.2204 about
 //     -0.21875 — which is where a wrong comparison or a float would show;
 //   * the edges themselves, exactly, from end-biome-router-probe.sh's
-//     constant-erosion dimensions (the server's biome at each constant).
+//     constant-erosion dimensions (the server's biome at each constant);
+//   * the y erosion is read at, 4 * quartY, from the same probe's y-varying
+//     dimensions: plain y_clamped_gradients, no Mojang data, so the
+//     server's layer-by-layer answer can stand here with nothing else.
+//
+// What stays out of reach without fixtures: the exact block a chunk is
+// sampled at within its 8-block island cell (16c + 8 rather than 16c + 9 ..
+// 16c + 15). The server says so through end-biome-router-probe.sh --set
+// sample, a vanilla noise this file does not carry, so only the
+// conformance case and samplePoint's own values below hold it.
 //
 // The End here is a synthetic one: vanilla's own erosion,
 // cache_2d(end_islands), in a hand-written settings entry, compiled through
@@ -248,9 +257,11 @@ TEST_CASE("the End's erosion edges are the server's, in double", "[biome][end]")
         CAPTURE(erosion);
         CHECK(EndRule::outer(erosion).toString() == biome);
     }
-    // Not measured: nothing on disk makes a NaN. cubiomes' rings — an int
-    // overflow in the island field — come out barrens, and this order of
-    // the tests is the one that sends a NaN there.
+    // NOT MEASURED, and this build's own choice: nothing on disk makes a
+    // NaN. Testing small islands before the barrens fall-through sends one
+    // to end_barrens, where cubiomes' separate overflow check puts its outer
+    // rings; cubiomes' own order of these tests would send it to
+    // small_end_islands.
     CHECK(EndRule::outer(std::numeric_limits<double>::quiet_NaN()).toString() ==
           "minecraft:end_barrens");
     CHECK(EndRule::outer(std::numeric_limits<double>::infinity()).toString() ==
@@ -270,6 +281,83 @@ TEST_CASE("the End samples a chunk at its centre, wrapping as Java's int does", 
     CHECK(negative.z == 24);
     // (2^31 - 1) * 16 + 8 is 2^35 - 8: -8 once wrapped to 32 bits.
     CHECK(EndRule::samplePoint(std::numeric_limits<std::int32_t>::max(), 0, 0).x == -8);
+}
+
+TEST_CASE("the End reads a y-varying erosion at y = 4 * quartY, layer by layer as the server did",
+          "[biome][end][world]") {
+    // end-biome-router-probe.sh, seed 42, r.-2.-2: the server's biome at
+    // each of the 64 stored layers of its outer chunks, all of which agree
+    // (the gradients read no x or z), as runs of (first layer, biome). Read
+    // out of the probe's regions; the erosions are the probe's own
+    // y_clamped_gradients, from -1 at from_y to 1 at to_y. ygrad puts two
+    // layers exactly on edges — y 60 at -0.0625 and y 80 at 0.25, both
+    // midlands — and the steps separate 4 qy from 4 qy + 1 (ystep_0) and
+    // from the bare quart index (ystep_4).
+    struct Run {
+        std::int32_t firstLayer;
+        const char* biome;
+    };
+
+    struct Gradient {
+        const char* name;
+        std::int32_t fromY;
+        std::int32_t toY;
+        std::vector<Run> server;
+    };
+
+    const std::array<Gradient, 3> gradients = {{
+        {"erosion_ygrad",
+         0,
+         128,
+         {{0, "minecraft:small_end_islands"},
+          {13, "minecraft:end_barrens"},
+          {15, "minecraft:end_midlands"},
+          {21, "minecraft:end_highlands"}}},
+        {"erosion_ystep_0",
+         0,
+         1,
+         {{0, "minecraft:small_end_islands"}, {1, "minecraft:end_highlands"}}},
+        {"erosion_ystep_4",
+         4,
+         5,
+         {{0, "minecraft:small_end_islands"}, {2, "minecraft:end_highlands"}}},
+    }};
+    constexpr std::int32_t kLayers = 64;
+    const auto endId = ResourceLocation::parse("minecraft:end");
+    for (const Gradient& gradient : gradients) {
+        CAPTURE(gradient.name);
+        const SyntheticEnd tree({{"type", "minecraft:y_clamped_gradient"},
+                                 {"from_y", gradient.fromY},
+                                 {"to_y", gradient.toY},
+                                 {"from_value", -1.0},
+                                 {"to_value", 1.0}});
+        const auto dimension =
+            CompiledDimension::compile(tree.pipeline(), endId, BiomeSource::theEnd(), 42);
+        // Three outer chunks of r.-2.-2 the decoded server biomes were read
+        // from: its far corner, (-46, -45) just outside the ring at 4141,
+        // and (-33, -64).
+        for (const auto& [chunkX, chunkZ] : std::array<std::pair<std::int32_t, std::int32_t>, 3>{
+                 {{-64, -64}, {-46, -45}, {-33, -64}}}) {
+            CAPTURE(chunkX, chunkZ);
+            std::vector<const ResourceLocation*> column(std::size_t{16} * kLayers);
+            dimension->fillBiomes(chunkX, chunkZ, 0, column);
+            std::size_t wrong = 0;
+            for (std::int32_t layer = 0; layer < kLayers; ++layer) {
+                std::string expected = gradient.server.front().biome;
+                for (const Run& run : gradient.server) {
+                    if (run.firstLayer <= layer) {
+                        expected = run.biome;
+                    }
+                }
+                for (std::size_t quart = 0; quart < 16U; ++quart) {
+                    const ResourceLocation* ours =
+                        column[(static_cast<std::size_t>(layer) * 16U) + quart];
+                    wrong += ours->toString() == expected ? 0U : 1U;
+                }
+            }
+            CHECK(wrong == 0U);
+        }
+    }
 }
 
 TEST_CASE("a biome source reads only the router entries its type reads", "[biome]") {

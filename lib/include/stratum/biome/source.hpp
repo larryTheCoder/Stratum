@@ -26,35 +26,56 @@
 //      `end_highlands`; else at or above -0.0625 `end_midlands`; else below
 //      -0.21875 `small_end_islands`; else `end_barrens`.
 //
-// PROVENANCE. The structure — the inclusive 4096 in chunk coordinates, one
-// sample per chunk at its centre, the three edges, and the order of the tests
-// that sends a NaN to `end_barrens` — is adapted from cubiomes (MIT,
-// Cubitect/cubiomes, biomenoise.c: mapEndBiome and getEndBiome), read as
-// text, and recorded in NOTICE. What cubiomes does NOT say, the server does, and where the two part
-// the server wins: cubiomes evaluates a hard-wired copy of the island field,
-// and the vanilla server reads the dimension's own router. Measured by
-// tools/analysis/end-biome-router-probe.sh (22 datapack dimensions with this
-// source and the End's settings, one router entry changed in each): every
-// erosion constant turns all 725 outer chunks of r.-2.-2 into one biome while
-// the 299 inside the ring stay `the_end`; constant temperature, vegetation,
-// continents, depth and ridges change nothing, nor does a constant
-// final_density; the edges hold to 1e-10 (so double, not float), and a
-// y-varying erosion is read at block y = 4 * qy. Its `--set sample` routes a
-// noise that differs from block to block there, and of a chunk's 256 columns
-// only (16c + 8, 16c + 8) reads all 725 outer chunks (the next best, 228).
-// Over every quart of every End region on disk — eight golden r.0.0,
-// end-islands' four, end-biomes' eight at four more worlds, and the two
-// probes' 25 — the rule is exact, 47185920 of 47185920, both through
-// fillChunk (by way of CompiledDimension::fillBiomes) and through `at` at
-// each quart's own corner (tests/conformance/vanilla_end_biome_source_test.cpp).
+// PROVENANCE. Adapted from cubiomes (MIT, Cubitect/cubiomes, biomenoise.c:
+// mapEnd, mapEndBiome and getEndBiome), read as text and recorded in NOTICE:
+// the chunk taken from the quart by a floor shift; the central test,
+// inclusive at 4096 in 64-bit chunk coordinates; one sample per chunk, in
+// the island-field cell that holds the chunk's centre; and the three edges
+// with their inclusivity — cubiomes' h < 3600, <= 10000 and <= 14400 on its
+// squared island distance are erosion > 0.25, >= -0.0625 and >= -0.21875.
 //
-// WHAT THE PROBES CANNOT SAY, and is therefore cubiomes' reading:
+// This build's own, and NOT cubiomes': the order of the last two tests.
+// cubiomes tests barrens before falling through to small islands, which in
+// erosion terms sends a NaN to `small_end_islands`; this tests small islands
+// first, so a NaN falls through to `end_barrens`, the biome cubiomes gives
+// its outer rings — the one place it models the island field going wrong,
+// through a separate overflow check (mapEndBiome's `(int)rsq < 0`), not
+// through this order. A choice, not a measurement: see below.
 //
-//   * NaN. Nothing on disk produces one. The order of the tests is cubiomes',
-//     whose "outer rings" (an int overflow in the island field past about
-//     370 000 blocks) come out `end_barrens`;
+// What cubiomes does not say, the server does, and where the two part the
+// server wins: cubiomes evaluates a hard-wired copy of the island field, and
+// the vanilla server reads the dimension's own router. Measured by
+// tools/analysis/end-biome-router-probe.sh (22 datapack dimensions with
+// this source and the End's settings: a control with nothing changed, 19
+// that change erosion alone, one final_density alone, and one that sets the
+// five other climate entries): every erosion constant turns all 725 outer
+// chunks of r.-2.-2 into one biome while the 299 inside the ring stay
+// `the_end`; the other climate entries change nothing, nor does a constant
+// final_density; the edges hold to 1e-10 either side (so double, not
+// float), with 0.25 itself midlands, -0.0625 midlands and -0.21875
+// barrens; and a y-varying erosion is read at block y = 4 * qy. Its
+// `--set sample` routes a noise that differs from block to block there,
+// and of a chunk's 256 columns only (16c + 8, 16c + 8) reads all 725 outer
+// chunks (the next best, 228). Over every quart of every End region on
+// disk — eight golden r.0.0, end-islands' four, end-biomes' eight at four
+// seeds (two of them End worlds the goldens do not hold, so eight distinct
+// End worlds in all), and the two probes' 25 — the rule is exact, 47185920
+// of 47185920, through fillChunk (by way of CompiledDimension::fillBiomes)
+// and through `at` at each quart's own corner alike: see
+// tests/conformance/vanilla_end_biome_source_test.cpp.
+//
+// WHAT THE PROBES CANNOT SAY:
+//
+//   * NaN. Nothing on disk produces one, nor can vanilla's erosion as this
+//     build computes it (noise::EndIslands takes square roots of 64-bit
+//     sums, never of a negative). Where one goes is the order of the tests
+//     above — this build's choice, unmeasured;
 //   * the central test past 46340 chunks, where a 32-bit square would wrap.
-//     64-bit is cubiomes' reading; no probe reaches it.
+//     64-bit is cubiomes' reading; no probe reaches it;
+//   * an erosion strictly between an edge and 1e-10 past it. The probes pin
+//     each edge's own value and the values 1e-10 either side; the rule puts
+//     everything strictly past an edge on the far side, as cubiomes'
+//     thresholds do, and no value on disk falls in between.
 //
 // Nor does this source settle the island field it reads past about 38 000
 // blocks, where no probe goes; noise::EndIslands owns that (SPEC §11).
@@ -108,7 +129,8 @@ struct EndRule {
     [[nodiscard]] static const data::ResourceLocation& central();
 
     /// The biome a chunk outside the ring gets for @p erosion. A NaN is
-    /// `end_barrens` (the order of the tests, see the file comment).
+    /// `end_barrens`, by this build's own order of the tests — unmeasured,
+    /// and not cubiomes' order (the file comment says why).
     [[nodiscard]] static const data::ResourceLocation& outer(double erosion);
 };
 
