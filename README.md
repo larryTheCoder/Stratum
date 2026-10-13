@@ -87,6 +87,7 @@ does not.
 | `release` | RelWithDebInfo; identical determinism flags to `dev` |
 | `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
 | `ci-conformance` | Build and test presets on `dev`'s tree: the conformance suite four cases at a time, an hour per case, as CI runs it |
+| `sanitize` | Clang, Debug, every first-party target under UBSan (float-cast-overflow included, the first report fatal): `ctest --preset sanitize` runs the unit suite, as CI does, and `sanitize-conformance` the conformance suite (SPEC §5.7) |
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
 zlib, and network access on first configure so Catch2 v3 can be fetched (or
@@ -283,6 +284,18 @@ it is asked to evaluate them without a cell lattice, which noise settings now
 supply — by name and with a reason, rather than approximating them. It refuses a noise written inline
 for a narrower reason: a noise is seeded from the MD5 of its identifier, and
 one written in place has none. SPEC §11 lists why each is where it is.
+
+It also refuses, by name, every input that would carry its arithmetic into
+undefined behaviour, rather than generating whatever that produces (SPEC §8,
+"Inputs that would reach undefined behaviour"): a value outside the range
+the schema or minecraft.wiki gives its field, an int near 2^31 whose
+arithmetic would overflow, a function whose value no 32-bit integer holds
+where one is needed, and a noise sampled past where its lattice fits 32
+bits. One of those is reached by vanilla's own data: in all three overworld
+presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits 2 812 333 blocks
+from the origin on either horizontal axis, so chunk coordinates 175 770 and
+up, and -175 771 and down, are refused there, inside the world border,
+until the server's reading past that point is measured.
 
 ### Density function types
 

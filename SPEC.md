@@ -213,6 +213,31 @@ These are hard requirements; violations are release blockers.
 6. Engine updates must reproduce stored pipelines byte-identically (§6). Any
    intentional output change bumps the pipeline engine version and is called
    out in release notes.
+7. **No input reaches undefined behaviour.** Here that is a determinism
+   failure before it is anything else: an out-of-range float-to-int
+   conversion yields INT32_MIN on x86-64 and saturates on ARM64, so the two
+   legs build different worlds, and an optimiser may delete the code
+   outright. Where a schema-legal input, or a function's legal value, would
+   drive an operation out of its type's range, the input is refused by name
+   (§8, "Inputs that would reach undefined behaviour"): at load when it is a
+   constant, at evaluation when it is a function's value. A wrapped,
+   saturated or clamped value is never substituted unless a server probe
+   measured that reading (§11). A bound that holds by construction is
+   written at the operation and asserted in debug builds instead.
+   The **`sanitize` preset** holds this: Clang, Debug, every first-party
+   target under UBSan — `undefined` plus `float-cast-overflow`,
+   `-fno-sanitize-recover=all` — with libstdc++'s assertions
+   (`cmake/StratumSanitize.cmake`, selected by `STRATUM_SANITIZE`). It leaves
+   out the checks whose reports are defined behaviour the engine relies on:
+   IEEE division by zero (`invert` of 0), unsigned wraparound (every seed and
+   hash), and narrowing to an unsigned type (the lattice indices). The
+   determinism flags apply to it unchanged, and
+   `tools/lint/check-determinism.sh` and `stratum_assert_no_banned_flags`
+   accept it as they find it. CI runs the unit suite under it (job
+   `linux-x86_64 (clang, UBSan)`; on an x86-64 dev box, a clean build in
+   about a minute at six jobs and the 559 unit cases in ten seconds at
+   four); `ctest --preset sanitize-conformance` runs the conformance suite
+   under it locally, at about twice the Debug time.
 
 ---
 
@@ -303,6 +328,22 @@ to bump the version and be called out; this is that call-out.
 | 13 | **The surface scan, read sample by sample: the clean-room Q5.3 as written** (§11, "The surface scan, sample by sample"). Q5.3(a) compares a source's centre with the ANCHOR's surface (v12: the scan's `cap`); otherwise the first sample in scan order that is submerged and that the centre clears by less than four decides, the sea for a clean sample and A_lava for an aborting one, whether or not a later sample aborts (v12: an aborted scan took the sea only at or above lambda and more than twenty above `cap`, else A_lava); a scan where no sample fires takes the level rule on `cap` even when it aborted. `aquifer-ties-probe.sh` builds surfaces that part each v12 choice from the spec's: on both seeds the build is exact on every scored block and fluid-update mark, and v12's reading is wrong wherever it parts (106 393, 64 913, 24 761 + 6 472 marks, 1 628, 1 780 and 14 blocks by kind). Changes blocks only over varying surfaces with an aborting or submerged scan window; no golden block changes. v12 had reached only this development branch; bumped rather than amended because a v12 blob could exist. |
 | 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7 (equivalently `f <= 0.7F`; no draw separates the two readings); v13 compared `f < 0.7F` in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on one comparison that changed the seed along with the flag (its stone world, at seed 42, has no position in its window that the vein gate admits, so the library predicts it stone with aquifers on too). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
+
+**No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
+they change no output. Every input whose handling changed either reached
+undefined behaviour before — so what it produced was the platform's, not
+this engine's, and x86-64 and ARM64 already disagreed there — or sits within
+the stated margin of such a point (a noise's 512 lattice units, the chunk
+domain's hundred-odd blocks), and it now stops generation by name, which
+cannot put a seam in a world: a chunk is generated under its version's rules
+or not at all. Every other input computes exactly what it did — the
+arithmetic that moved to 64 bits narrows back to the same int wherever it
+was one — and the pinned overworld hash, the golden cases and the full
+conformance preset hold unchanged. The load-time refusals fail a pack or
+blob that carries such a node even where nothing evaluates it, as a
+dangling reference always has; a `find_top_surface` `cell_height` of 0,
+refused at its first evaluation before, is among them. A bump would refuse
+every v15 world outright, for nothing they generate differently.
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -506,6 +547,79 @@ Unsupported in v1 (hard error at load, listed by name in the error):
 
 The matrix is published in the README and is part of the public contract.
 A pack that half-loads silently is a bug of the highest severity class.
+
+**Inputs that would reach undefined behaviour (§5.7).** Each of these was
+found reachable by an audit under UBSan at c7b060f — its own driver
+programs and the suites — and is refused by name, the message naming the
+node, noise, condition or field and the value. None is a reading of the
+server's: what it does with these inputs is unmeasured, and only the
+`jagged` case below is reachable from vanilla's own data.
+
+At load, from a pack or a frozen blob alike (one check serves both paths):
+
+- a multi-noise parameter-list bound outside the schema's [-2, 2]
+  (vanilla-mcdoc `ClimateParameter`) or an offset outside [0, 1], NaN and
+  infinity included (`biome::ParameterList::fromEntries`). Past about
+  9.2e14 the fixed-point conversion is undefined; the server's own tables
+  span [-1.2, 1.1] with offsets up to 0.375;
+- `clamp` with `min` above `max` (`std::clamp`'s precondition);
+- `find_top_surface` with `lower_bound` outside the schema's [-4064, 4062]
+  or `cell_height` outside [1, 2^31 - 1]. A `cell_height` of 0 was refused at
+  its first evaluation and is refused at load now;
+- `old_blended_noise` with `xz_scale`, `y_scale`, `xz_factor` or `y_factor`
+  outside [0.001, 1000], minecraft.wiki's range for each: a factor of 0 made
+  the coordinate infinite and the lattice cell NaN;
+- from a frozen blob only, what a pack's loader already refused: a noise's
+  `firstOctave` outside [-64, 64] or an amplitude list empty or over 64
+  (`NoiseParameters::check`; 2^31 - 1 overflowed the octave's name), a
+  noise-settings geometry outside the schema's ranges or not whole sections
+  and cells (`settings::checkGeometry`; a `min_y` of 2147483632 overflowed
+  `maxY()`), and a node carrying fewer numeric parameters than its type
+  reads;
+- when surface rules compile: a vertical anchor whose y is no 32-bit
+  integer (`below_top: -2147483648`), and, under a `temperature` condition,
+  a `sea_level` within 17 of INT32_MAX.
+
+At evaluation:
+
+- a noise sampled where its highest-frequency octave's lattice cell leaves
+  int32 (`noise::NormalNoise::inputLimit`, conservative by 512 lattice
+  units): an unbounded `xz_scale` or `y_scale`, a `shifted_noise` shift, a
+  `firstOctave` up to the loader's 64, or simply a far block. **Vanilla's
+  own data reaches this**, in all three overworld presets:
+  `noise minecraft:jagged` at `xz_scale` 1500 has its second stack's top
+  octave at frequency 1/2 x 337/331, so its lattice leaves 32 bits past
+  |x| or |z| = 2 812 332 blocks (block 2 812 333 is the first refused, and
+  the first undefined), well inside the world border. Chunk coordinates
+  175 770 and up, and -175 771 and down, on either axis, are refused there
+  (their cell corners reach |x| = 2 812 336); -175 770 to 175 769 generate.
+  That stands until the server's reading past that point is measured (§11,
+  "Undefined behaviour, audited");
+- a climate sample outside ±1e5, or NaN, in the multi-noise search: the
+  conversion and QuantizedPoint::fitness's int64 sum are defined to there
+  (a router temperature of the constant 1e6 overflowed the sum);
+- a `find_top_surface` `upper_bound` whose floor is no 32-bit integer, or
+  within one `cell_height` of INT32_MIN;
+- a `preliminary_surface_level` lattice corner whose floor is no 32-bit
+  integer;
+- a surface depth, secondary depth or `bandlands` offset no int32 holds (a
+  datapack's noise amplitudes), and any step of the surface rules' 32-bit
+  arithmetic — `y_above`, `water`, `stone_depth`,
+  `above_preliminary_surface`, `bandlands`' index — that leaves int32;
+- two aquifer fluid levels more than INT32_MAX apart (a
+  `fluid_level_spread` in the hundreds of millions, which `spreadOffset`
+  already saturates);
+- a chunk outside ±(2^27 - 8) on either axis (`density::kMaxChunkCoordinate`),
+  where the block arithmetic and the reads past a chunk's edge leave int32,
+  and biome layers whose block y does. Vanilla's world border is at
+  ±29 999 984 blocks; the End generated defined output in the few chunks
+  between the margin and the overflow, which are refused with the rest.
+
+Bounds that hold rather than checks: `PerlinNoise::sampleSimplex2D`'s two
+callers stay under 2^30 (the End's island field and the freezing test divide
+a block coordinate by 16 and 8), and `find_top_surface`'s scan steps over
+multiples of `cell_height` no lower than `lower_bound` >= -4064, so a step
+cannot leave int32. Both are asserted in debug builds.
 
 **Open question, raised by the loader (M2).** "Hard error at load" has two
 readings, and the difference matters: taken literally it makes vanilla's own
@@ -1376,7 +1490,9 @@ Defaults chosen; flip only with a written note in this section:
 
 - **C++ standard:** C++20. Toolchains: GCC/Clang per php-build-scripts;
   MSVC for Windows PHP builds (`/fp:precise`, see §5).
-- **Build:** CMake ≥ 3.24 with presets; core lib usable without PHP.
+- **Build:** CMake ≥ 3.24 with presets; core lib usable without PHP. The
+  `sanitize` configure, build and test presets (and `sanitize-conformance`)
+  build every first-party target under Clang's UBSan (§5.7).
 - **JSON:** nlohmann/json (parse happens once at world load; ergonomics
   over throughput). Revisit only if load-time profiling demands it.
 - **Tests:** Catch2 v3 for unit tests; golden/conformance via `cli diff`
@@ -1400,6 +1516,13 @@ Defaults chosen; flip only with a written note in this section:
   `LICENSE` holds the canonical text; `NOTICE` holds the copyright line and
   third-party attribution, and every adaptation must be recorded there and
   in a per-file header before it merges.
+  *Audited 2026-10-14*, against cubiomes' text at e61f905: five adaptations
+  that had merged without either — the legacy octave and normal-noise
+  construction (perlin.cpp), the legacy Nether climate (noise_registry.cpp),
+  `getSpline`'s copy in tools/vectors/climate_vectors.c and two analysis
+  tools' reproductions — plus `evaluateSpline`, recorded as an adaptation
+  because it cannot be shown independent of `getSpline` — are now in both,
+  and NOTICE no longer says cubiomes is never vendored.
 
 - **StrictMath parity for transcendental functions:** vendor from
   **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
@@ -10558,6 +10681,36 @@ Open:
   test whether the six noises share a seeding rule with one another, and it
   cannot: each is scored on its own decoded columns, so six independent
   refutations is what this is, not one refutation of a joint rule.
+
+- **Undefined behaviour, audited (2026-10-14).** An audit at c7b060f built the
+  tree under UBSan (`float-cast-overflow` included) and ran all 718 ctest
+  cases and a set of driver programs against it. The suites reached one
+  report in the library (a corrupted, resealed blob's NaN climate bound) and
+  three in test and analysis code (`seed + 1` at the golden seed
+  Long.MAX_VALUE, now Java's wrapping add); the drivers reached the rest of
+  §8's list. Each is refused by name or bounded as §8 says, and the
+  `sanitize` preset and CI job (§5.7) keep it so.
+
+  *The one vanilla reaches.* `jagged`'s lattice leaves int32 at 2 812 333
+  blocks, measured through `stratum render` of
+  `minecraft:overworld/sloped_cheese` (refused at 2 812 340, rendered at
+  2 812 300) and through `CompiledDimension::fillBlocks` (a scratch driver,
+  seed 42): in `overworld`, `amplified` and `large_biomes` alike, chunks
+  175 769 and -175 770 generate on both axes and 175 770 and -175 771 are
+  refused, naming `minecraft:jagged` at block 2 812 336. Before, x86-64 read
+  lattice byte 0 there and ARM64 would have saturated; neither is a reading
+  of the server's. *Still open:* what the
+  server builds past that point. The probe to settle it is
+  `tools/analysis/density-probe.sh` with a NEW corpus holding one entry,
+  `{"type": "minecraft:noise", "noise": "minecraft:jagged", "xz_scale":
+  1500, "y_scale": 0}`, at `--origin-chunk` 175776 0, -175808 0 and
+  1874976 0, scored block for block against candidate lattice readings —
+  bearing in mind that the top octave's weight is about 2^-16 of the
+  noise's, so a datapack noise with a single octave at a large scale is the
+  sharper instrument. Until then the refusal stands. A measured reading
+  would replace it without a bump of its own, as lifting a refusal never
+  needed one (§6, v14's legacy vein source): every chunk it would change is
+  refused today.
 
 ---
 
