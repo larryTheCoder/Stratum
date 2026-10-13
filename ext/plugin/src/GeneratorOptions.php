@@ -10,6 +10,7 @@ use function array_key_exists;
 use function array_keys;
 use function implode;
 use function is_array;
+use function is_file;
 use function is_readable;
 use function is_string;
 use function json_decode;
@@ -136,7 +137,9 @@ final class GeneratorOptions{
 		// Checked here, on the main thread, where the failure can still be
 		// reported against the world being loaded. A worker thread opening a
 		// missing blob would only be able to take the generation task down.
-		if(!is_readable($blob)){
+		// is_file as well: is_readable is true of a directory, which would
+		// pass here and fail on the worker instead.
+		if(!is_file($blob) || !is_readable($blob)){
 			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $blob);
 		}
 		$unknown = array_diff(array_keys($decoded), self::KEYS);

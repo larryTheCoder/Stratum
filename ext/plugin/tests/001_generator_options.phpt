@@ -60,6 +60,9 @@ namespace {
 		"not json",
 		'{"settings":"minecraft:overworld"}',
 		'{"blob":"/nonexistent/stratum.blob"}',
+		// A directory is readable, and no pipeline: refused here, not on a
+		// worker.
+		'{"blob":' . json_encode(sys_get_temp_dir()) . '}',
 		'{"blob":' . json_encode($blob) . ',"settings":42,"biomes":"minecraft:overworld"}',
 		// Settings with no biome source beside them would pair the End with
 		// the overworld's biomes, quietly.
@@ -106,6 +109,7 @@ pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum needs a fro
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options are not a JSON object%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options have no "blob" path to a frozen pipeline:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot read this world's frozen pipeline at /nonexistent/stratum.blob
+pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot read this world's frozen pipeline at %s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's "settings" and "biomes" options must be strings:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "settings" without "biomes", the biome source to go with them%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "biomes" without "settings", the noise settings to go with them%s
