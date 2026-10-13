@@ -249,7 +249,9 @@ untouched at about 237 ms per chunk, on a per-point interpreter.
 This matrix is part of the public contract (SPEC §8). A pack that
 half-loads silently is a bug of the highest severity class: anything outside
 the supported column is a **hard error at load, naming the registry or node
-that was rejected**.
+that was rejected** — except where a row below says a file loads and is not
+yet interpreted (a pack's `dimension` and `world_preset` files, and the
+`biome_source` they declare, which nothing reads yet).
 
 | Registry / feature | v1 | Notes |
 |---|---|---|

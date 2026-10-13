@@ -9845,9 +9845,12 @@ Open:
   build) behind `-DSTRATUM_BUILD_EXT_NUKKIT=ON`, off by default.
   `stratum_nukkit_pipeline::Pipeline` reuses `terrain::ChunkFiller` and
   `mapping::bedrockBiomeId()` (already built for the PocketMine-MP path)
-  unchanged, scoped to `minecraft:overworld` only — the same
-  `legacy_random_source` (M4) limit `tools/analysis/generate-world.cpp`
-  already lives under. `jni_bridge.cpp` is marshaling and exception
+  unchanged, scoped to `minecraft:overworld` only — the binding's own
+  scope, as `tools/analysis/generate-world.cpp`'s is: no other dimension's
+  height and biome column has been matched to Nukkit's, and the library
+  itself compiles the End (blocks and its own `minecraft:the_end` biome
+  source) and refuses the legacy dimensions only for their surface rules'
+  named noises (M4). `jni_bridge.cpp` is marshaling and exception
   translation only, matching `ext/`'s own "thin; marshaling only" rule for
   the PHP side. See `ext-nukkit/README.md` for the component's full scope
   and open gaps.
