@@ -10,21 +10,26 @@
 //   function freezePipeline(string $versionRoot, string $blobPath): void
 //   function bedrockBlockState(int $javaStateId): array
 //   function javaBlockStateCount(): int
+//   function parseBiomeSource(string $biomeSource): string
 //   function takeFluidUpdates(string $blobPath, string $noiseSettings,
 //                             string $biomeSource, int $seed,
 //                             int $chunkX, int $chunkZ): array
 //   final class Dimension {
 //       static function open(string $blobPath, string $noiseSettings,
 //                            string $biomeSource, int $seed): Dimension
-//
-// $biomeSource is world::BiomeSource::parse's spelling: a multi-noise
-// parameter list's id (`minecraft:overworld`, `minecraft:nether`), as it
-// always was, or `minecraft:the_end` for the End's own source.
 //       function getMinY(): int
 //       function getHeight(): int
 //       function encodeChunk(int $chunkX, int $chunkZ): array
 //   }
 //   final class GenerationException extends \RuntimeException {}
+//
+// Every $biomeSource is world::BiomeSource::parse's spelling: a multi-noise
+// parameter list's id (`minecraft:overworld`, `minecraft:nether`), as it
+// always was, or `minecraft:the_end` for the End's own source.
+// `parseBiomeSource` is that parse and nothing more — it opens and compiles
+// nothing — so a caller can refuse what `Dimension::open` would refuse
+// before any worker thread tries: the plugin's GeneratorOptions does, on the
+// main thread, with parse's own reason.
 //
 // THREADS. PocketMine-MP builds one Generator per worker thread, each in its
 // own PHP request. A compiled dimension is immutable (SPEC §4.1), so every
@@ -238,6 +243,10 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_javaBlockStateCount, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_parseBiomeSource, 0, 1, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_takeFluidUpdates, 0, 6, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
@@ -326,6 +335,20 @@ static ZEND_FUNCTION(stratum_bedrockBlockState) {
 static ZEND_FUNCTION(stratum_javaBlockStateCount) {
     ZEND_PARSE_PARAMETERS_NONE();
     RETURN_LONG(static_cast<zend_long>(stratum::mapping::javaBlockStateCount()));
+}
+
+static ZEND_FUNCTION(stratum_parseBiomeSource) {
+    zend_string* biomeSource = nullptr;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+    Z_PARAM_STR(biomeSource)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        const std::string spelled =
+            stratum::world::BiomeSource::parse(fromZend(biomeSource)).toString();
+        RETVAL_STRINGL(spelled.data(), spelled.size());
+    } catch (...) {
+        throwAsPhp();
+    }
 }
 
 static ZEND_FUNCTION(stratum_takeFluidUpdates) {
@@ -455,8 +478,10 @@ static const zend_function_entry stratum_functions[] = {
                          arginfo_bedrockBlockState)
             ZEND_NS_NAMED_FE("Stratum", javaBlockStateCount, ZEND_FN(stratum_javaBlockStateCount),
                              arginfo_javaBlockStateCount)
-                ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates, ZEND_FN(stratum_takeFluidUpdates),
-                                 arginfo_takeFluidUpdates) ZEND_FE_END};
+                ZEND_NS_NAMED_FE("Stratum", parseBiomeSource, ZEND_FN(stratum_parseBiomeSource),
+                                 arginfo_parseBiomeSource)
+                    ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates, ZEND_FN(stratum_takeFluidUpdates),
+                                     arginfo_takeFluidUpdates) ZEND_FE_END};
 
 static const zend_function_entry dimension_methods[] = {
     ZEND_ME(Stratum_Dimension, __construct, arginfo_Dimension___construct, ZEND_ACC_PRIVATE)

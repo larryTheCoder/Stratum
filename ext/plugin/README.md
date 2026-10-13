@@ -15,7 +15,8 @@ PocketMine-MP itself can call.
 - `StratumGenerator` is constructed once per generation worker thread with
   the seed and the world's options string. It opens the world's frozen
   pipeline (the engine shares one compiled dimension across every worker
-  that opens the same blob, settings, list and seed) and, per chunk, hands
+  that opens the same blob, noise settings, biome source and seed) and, per
+  chunk, hands
   each sub-chunk's already-packed layers to
   `PalettedBlockArray::fromData()`. The only PHP work per chunk is
   translating a handful of palette entries; there is no per-block PHP.
@@ -29,9 +30,17 @@ PocketMine-MP itself can call.
   config — so the path to the frozen pipeline travels in here. `biomes` is
   the dimension's biome source: a multi-noise parameter list, or
   `minecraft:the_end` for the End (`"settings":"minecraft:end",
-  "biomes":"minecraft:the_end"`). Both default to the overworld's, but only
-  together: options naming `settings` without `biomes` are refused, since
-  noise settings do not say which biome source goes with them.
+  "biomes":"minecraft:the_end"`). `settings` and `biomes` come together or
+  not at all — with neither, both are the overworld's — since neither says
+  which of the other goes with it. On the main thread, before any worker
+  opens the pipeline, the options are refused for a key other than these
+  three, for either of the pair alone, and for a biome source the engine's
+  own `BiomeSource::parse` refuses (`minecraft:fixed`,
+  `minecraft:checkerboard`, a bare `minecraft:multi_noise`, or no
+  identifier at all), with its reason; `GeneratorOptions`' doc lists
+  exactly what is accepted. A pairing vanilla does not make, such as the
+  End's settings with the overworld's list, is taken as asked: a datapack
+  may make it.
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so when it fires
@@ -74,9 +83,9 @@ build. So:
   independently re-checked (SPEC §11's M5-PMMP entry lists what that
   corrected), but nothing here has been executed against a real server.
 - CI checks that every file parses (`php -l`) and runs
-  `tests/001_generator_options.phpt`, which exercises the one class that is
-  pure PHP against a faithful stand-in for the single PocketMine-MP class it
-  touches, and `tests/002_fluid_update_scheduler.phpt`, which drives
+  `tests/001_generator_options.phpt`, which exercises `GeneratorOptions`
+  with the real extension loaded against a faithful stand-in for the single
+  PocketMine-MP class it touches, and `tests/002_fluid_update_scheduler.phpt`, which drives
   `FluidUpdateScheduler` with the real extension against stand-ins for the
   PocketMine-MP classes it calls.
 - The rest — registration, chunk assembly, block translation, and whether

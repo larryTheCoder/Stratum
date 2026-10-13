@@ -145,8 +145,13 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   `$biomeSource` is a multi-noise parameter list's id, as it always was, or
   `minecraft:the_end` for the End's own source (§11, "The End's biome
   source"); `minecraft:fixed` and `minecraft:checkerboard` are refused by
-  name. The plugin's options name it as `"biomes"`, and refuse `"settings"`
-  without it: noise settings do not say which source goes with them.
+  name. `Stratum\parseBiomeSource($biomeSource)` is that parse alone —
+  it opens and compiles nothing — and returns the source spelled in full,
+  or throws with parse's reason. The plugin's options name the source as
+  `"biomes"` and take it and `"settings"` together or not at all (neither
+  says which of the other goes with it), refuse any other key, and refuse a
+  source `parseBiomeSource` refuses, all on the main thread before a worker
+  opens the pipeline (`GeneratorOptions` lists exactly what it accepts).
 - Per chunk: `$dimension->encodeChunk($cx, $cz)` returns all 24 of
   PocketMine-MP's sub-chunks, keyed by sub-chunk index (-4 to 19), as
   `PalettedBlockArray::fromData` argument lists: block palettes hold Java
