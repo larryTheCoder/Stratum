@@ -237,7 +237,9 @@ These are hard requirements; violations are release blockers.
    `linux-x86_64 (clang, UBSan)`; on an x86-64 dev box, a clean build in
    about a minute at six jobs and the 559 unit cases in ten seconds at
    four); `ctest --preset sanitize-conformance` runs the conformance suite
-   under it locally, at about twice the Debug time.
+   under it locally, at about twice the Debug time. Measured when it landed:
+   176 of 176 with nothing skipped and no report, 74 minutes at four jobs
+   (15 457 s of test time, against 7 884 s for the same suite in Debug).
 
 ---
 
