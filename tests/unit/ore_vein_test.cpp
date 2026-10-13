@@ -15,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <limits>
@@ -50,7 +51,7 @@ TEST_CASE("the ore source's draws match known-answer vectors", "[ore][vein][rng]
         float first, second, third;
     };
 
-    static constexpr Vector kVectors[] = {
+    static constexpr auto kVectors = std::to_array<Vector>({
         {0LL, 0, 0, 0, 0.892419636F, 0.960065186F, 0.90817225F},
         {0LL, 75, 19, 88, 0.449496031F, 0.394712806F, 0.335043967F},
         {0LL, -13, -47, 260, 0.19639343F, 0.154126883F, 0.451847255F},
@@ -63,7 +64,7 @@ TEST_CASE("the ore source's draws match known-answer vectors", "[ore][vein][rng]
         {-1LL, 0, 0, 0, 0.765336275F, 0.896994948F, 0.0848363638F},
         {-1LL, -13, -47, 260, 0.0707936287F, 0.920744777F, 0.543898821F},
         {1234LL, 1, -60, -1, 0.284154177F, 0.995274603F, 0.839390934F},
-    };
+    });
     // Compared as bit patterns, not as floats: these are known-answer
     // vectors, so "equal to the last bit" is exactly the claim, and
     // `-Wfloat-equal` is right that `==` on floats usually is not.
@@ -307,13 +308,13 @@ TEST_CASE("a first draw of exactly 0.7F is a member, under either source", "[ore
         VeinBlock block;
     };
 
-    static constexpr Row kRows[] = {
+    static constexpr auto kRows = std::to_array<Row>({
         {RandomSource::Legacy, 31337, 38, -31, 7, VeinBlock::Ore},
         {RandomSource::Legacy, 14, 47, -38, 94, VeinBlock::Ore},
         {RandomSource::Legacy, 15, 62, 31, 113, VeinBlock::Filler},
         {RandomSource::Xoroshiro, 2, 24, -45, 22, VeinBlock::Ore},
         {RandomSource::Xoroshiro, 2, 24, 45, 22, VeinBlock::Ore},
-    };
+    });
     for (const Row& row : kRows) {
         INFO("seed " << row.seed << " (" << row.x << ", " << row.y << ", " << row.z << ")");
         // The position really is the bucket: its first draw is 0.7F exactly.
@@ -345,10 +346,10 @@ TEST_CASE("the ore roll compares its draw with the chance rounded to float", "[o
         double toggle;
     };
 
-    static constexpr Row kRows[] = {
+    static constexpr auto kRows = std::to_array<Row>({
         {RandomSource::Xoroshiro, 58, 20, 0, 0.59730469733476643},
         {RandomSource::Legacy, 20, 20, 0, 0.57947951108217244},
-    };
+    });
     for (const Row& row : kRows) {
         INFO("(" << row.x << ", " << row.y << ", " << row.z << ")");
         // The position is what the arm was built for: a member whose second

@@ -83,11 +83,11 @@ constexpr std::array<Dimension, 3> kDimensions{
 }
 
 aquifer::BarrierSource sourceOf(const aquifer::Source& ranked, double floodedness, double spread) {
-    aquifer::CellFluid cell{.centreY = ranked.centre.y,
-                            .surface = kSurface,
-                            .seaLevel = kSeaLevel,
-                            .floodedness = floodedness,
-                            .spread = spread};
+    const aquifer::CellFluid cell{.centreY = ranked.centre.y,
+                                  .surface = kSurface,
+                                  .seaLevel = kSeaLevel,
+                                  .floodedness = floodedness,
+                                  .spread = spread};
     return aquifer::BarrierSource{.level = aquifer::cellFluidLevel(cell),
                                   .distanceSq = ranked.distanceSq};
 }

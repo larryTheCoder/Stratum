@@ -100,7 +100,7 @@ void forEachCandidate(const std::string& dimension, const std::int64_t seed,
 
     const auto noises = stratum::density::NoiseRegistry::create(
         pack, loaded.graph.referencedNoises(), seed, stratum::density::RandomSource::Xoroshiro);
-    stratum::density::Interpreter interpreter(
+    const stratum::density::Interpreter interpreter(
         loaded.graph, noises,
         stratum::density::CellGeometry{.width = overworld.geometry.cellWidth(),
                                        .height = overworld.geometry.cellHeight()});

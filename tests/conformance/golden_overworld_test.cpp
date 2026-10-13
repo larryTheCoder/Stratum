@@ -187,7 +187,7 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
         GoldenRegion goldenRegion(region);
         // The vein chain on its own, for positions the filler never offers
         // it: the filler runs a vein only over `default_block`.
-        stratum::density::Interpreter veinReader(
+        const stratum::density::Interpreter veinReader(
             loaded.graph, noises,
             stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
                                            .height = settings.geometry.cellHeight()});
@@ -441,7 +441,7 @@ TEST_CASE("the deep-dark override reads erosion and depth through the chunk's fl
         }
     }
     CHECK(unexplained == 0U);
-    CHECK(blocks == 6U * 16U * 16U * 384U);
+    CHECK(blocks == std::size_t{6} * 16U * 16U * 384U);
     // On the region set first measured not one block of fluid moved in these
     // six chunks, so every category agreed outright — where the three
     // rejected readings leave 440, 16 and 2 disagreements, all of them

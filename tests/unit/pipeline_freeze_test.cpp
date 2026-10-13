@@ -184,7 +184,7 @@ void expectSame(const Pipeline& before, const Pipeline& after) {
         for (std::size_t k = 0; k < a.points.size(); ++k) {
             CHECK(bits(a.points[k].location) == bits(b.points[k].location));
             CHECK(bits(a.points[k].derivative) == bits(b.points[k].derivative));
-            CHECK(a.points[k].value.has_value() == b.points[k].value.has_value());
+            REQUIRE(a.points[k].value.has_value() == b.points[k].value.has_value());
             if (a.points[k].value.has_value()) {
                 CHECK(bits(*a.points[k].value) == bits(*b.points[k].value));
             } else {

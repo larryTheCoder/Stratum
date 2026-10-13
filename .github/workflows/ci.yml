@@ -159,12 +159,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
 
       - name: Configure for clang-tidy (compile_commands.json)
-        run: cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=OFF
+        # Tests ON: tests/ and ext/tests are analysed too, tests/ under
+        # tests/.clang-tidy.
+        run: cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=ON
 
       - name: clang-tidy
         run: |
           # The same list tools/lint/tidy.sh analyses; keep the two in step.
-          mapfile -t sources < <(find lib cli ext/src -name '*.cpp' -not -path '*/_deps/*' | sort; \
+          mapfile -t sources < <(find lib cli ext/src ext/tests tests -name '*.cpp' -not -path '*/_deps/*' | sort; \
             printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
                            tools/analysis/legacy-goldens-biome-analyze.cpp \
                            tools/analysis/legacy-goldens-surface-analyze.cpp \

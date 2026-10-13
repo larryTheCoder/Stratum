@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dimension's declared random source — measured under `legacy_random_source` with `legacy-orevein-probe.sh` and lifted from refusal; a first draw of exactly 0.7F is a member; veins are placed whatever `aquifers_enabled` says, the M3 coupling retracted as a seed confound; a non-stone `default_block` takes the same veins. M4: a legacy `vertical_gradient` draws the measured legacy coin and is no longer refused. The audit's docs sweep closed; the psl-lattice and weird-scaled cases read their spec through `probe_spec.hpp`; five probe scripts write `min_format`/`max_format`, `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, seven probes say why they stop; the barrier-at-lambda case classifies flow with the shared rule. CI run 37954735377 on the previous batch read, its budgets closed. Where the next session starts: "Handoff" below). Before it, 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) off the ocean branch, then the surface scan read sample by sample as the clean-room Q5.3 is written; the near-surface, ties, fluid-ceiling and far-cell probes are CI corpora with cases; the tie-break's reach counted on the goldens; Q8's fluid updates written into `PostProcessing` in the server's order and scheduled by the PocketMine-MP plugin; the aquifer's per-block cost measured — `tools/analysis/aquifer-cost-bench.cpp` — and cut by about four fifths with every block and fluid-update mark byte-identical. What is left, and where the next session starts: "Handoff" below). Earlier the same day (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; green on both legs in run 37890579708). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-13 (MA/M3, no engine change: `aquifers_enabled: false` reaching the server is pinned by a CI corpus and a case — `aquifer-flag-probe.sh`, `vanilla_aquifer_flag_test.cpp` — and veins with aquifers off are measured over caves and a raised sea; `aquifer-cost-bench`'s split re-measured under v14; clang-tidy 18 reaches `tests/` and `ext/tests` and is clean over all 176 files; the four standalone probe scripts read `STRATUM_FIXTURES_DIR`; the ore-vein dead zone corrected to y -7..-1 in SPEC. Main's CI on the v14 merge, run 38273558475, read and green). Before it, 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dimension's declared random source — measured under `legacy_random_source` with `legacy-orevein-probe.sh` and lifted from refusal; a first draw of exactly 0.7F is a member; veins are placed whatever `aquifers_enabled` says, the M3 coupling retracted as a seed confound; a non-stone `default_block` takes the same veins. M4: a legacy `vertical_gradient` draws the measured legacy coin and is no longer refused. The audit's docs sweep closed; the psl-lattice and weird-scaled cases read their spec through `probe_spec.hpp`; five probe scripts write `min_format`/`max_format`, `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, seven probes say why they stop; the barrier-at-lambda case classifies flow with the shared rule. CI run 37954735377 on the previous batch read, its budgets closed. Where the next session starts: "Handoff" below). Before it, 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) off the ocean branch, then the surface scan read sample by sample as the clean-room Q5.3 is written; the near-surface, ties, fluid-ceiling and far-cell probes are CI corpora with cases; the tie-break's reach counted on the goldens; Q8's fluid updates written into `PostProcessing` in the server's order and scheduled by the PocketMine-MP plugin; the aquifer's per-block cost measured — `tools/analysis/aquifer-cost-bench.cpp` — and cut by about four fifths with every block and fluid-update mark byte-identical. What is left, and where the next session starts: "Handoff" below). Earlier the same day (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; green on both legs in run 37890579708). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -18,7 +18,7 @@ Last swept: 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dime
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below), under both random sources and with no aquifer coupling since pipeline engine v14. Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates at the ChunkFiller level exactly; the End's `the_end` biome source is unimplemented |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling never run inside a real server (M5) |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk with biomes and packing; the fill alone 174, the aquifer about 1% of it since its per-block cost was cut; still the per-point interpreter) |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Started — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation) all landed; never run against a real PocketMine-MP server; perf pass open (237 ms/chunk with biomes and packing, an older measurement; the fill alone 99 ms/chunk on the dev box under v14 — 174 on the 4-core box of the v13 record — the aquifer 1.3% of it and the ore veins 2.3% by instructions; still the per-point interpreter) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -120,31 +120,62 @@ owner's call).
 
 **New follow-ups from this batch.**
 
-- [ ] `aquifers_enabled: false` reaching the server through
-      `density-probe.sh` is measured only on three local corpora no case
-      reads (`stdep2` `w_fl0`, `hsbA` `stw`, `hsbB` `sw40`: the server is
-      the aquifers-off fill on every block, where the library's aquifers-on
-      twin differs on 483 083 / 887 / 745). Give it a `tools/probe-worlds`
-      unit and a case: an aquifers-off arm over non-solid density with a
-      raised sea, beside its aquifers-on twin in one world.
-- [ ] Veins without aquifers are measured over solid columns only; over
-      caves, a sea or real terrain, unmeasured.
-- [ ] Re-measure `aquifer-cost-bench`'s "veins off" against "aquifers off"
-      split: it was taken under v13's coupling.
+- [x] `aquifers_enabled: false` reaching the server through
+      `density-probe.sh`. Done 2026-10-13, no engine change:
+      `aquifer-flag-probe.sh` puts `mon`/`moff` (modern, 3D caves) and
+      `lon`/`loff` (legacy, layers in y) below a sea of 32 with veins on,
+      at 42, 31337 and 8675309, as three units of the `water` shard.
+      `vanilla_aquifer_flag_test.cpp`: each off arm is the global picker
+      on every open block of its window and each on arm is not (the twins
+      differ on 843 148-1 025 059 blocks); the shipped filler is
+      state-exact on every chunk of all twelve arms, the off arms with no
+      flow allowance at all, the on arms' 1-9 flow blocks each one step
+      from a source.
+- [x] Veins without aquifers over caves and a raised sea: measured on the
+      same corpora, 527 203-595 440 vein blocks per off window, 84 241-
+      126 185 next to fluid and 18 479-23 038 next to air, every one where
+      the filler puts it, each metal inside its own range.
+- [x] `aquifer-cost-bench`'s split re-measured under v14 (above, M5's
+      generation-speed item; SPEC §11, "Re-measured under engine v14"):
+      v13 and v14 execute the same instructions; the instruction counts
+      are from runs without `--dump`, which moves them.
+- [x] The four standalone probe scripts read `STRATUM_FIXTURES_DIR` for
+      the jar, the extracted worldgen and the output root.
+- [x] clang-tidy 18 over `tests/` and `ext/tests`: `tools/lint/tidy.sh` and
+      CI's lint step cover 176 files (from 58), under a `tests/.clang-tidy`
+      that disables only `bugprone-unchecked-optional-access` (it cannot
+      see that `REQUIRE` ends a case: 48 of its 67 reports; 5 others were
+      real and are fixed). 196 findings fixed with no NOLINT and every
+      case's Catch2 assertion count unchanged.
 - [ ] The held-out corpora `orevlegacy_s8675309`, `_s14`, `_s15` and the
       `orevcoupling_scratch_*` worlds are local only, and no case reads
       them.
-- [ ] The four standalone probe scripts (`aquifer-free`, `aquifer-on`,
-      `aquifer-presets`, `blended-datapack`) still write under
-      `<repo>/.fixtures` only.
+- [ ] Veins with aquifers off over vanilla's own router (real terrain):
+      `aquifer-free-probe.sh` turns veins off; an aquifers-off, veins-on
+      twin of the real overworld would close it.
+- [ ] `tools/lint/tidy.sh` is one clang-tidy process over 176 files, about
+      26 minutes locally (CI's lint job has no timeout and nothing waits on
+      it). Running files in parallel (`run-clang-tidy-18 -j`, or `xargs
+      -P`) would cut it about 3x and end the one-process header cache that
+      a mid-run checkout can poison.
+- [ ] Never analysed by clang-tidy: `tools/analysis/*.hpp` (the root
+      header filter excludes `tools/`; `legacy-goldens-surface-decoder.hpp`
+      alone carries 10 findings seen from test units) and `ext-nukkit/`.
+- [ ] The x86-64 conformance leg is CI's long pole: 100 of its 150
+      minutes on two consecutive runs (38192289975, 38273558475), against
+      69 the run before. Every case over a minute slowed by a similar
+      factor, cases this work never touched among them, which points at
+      the runner; an A/B of an untouched case, old tree against new on
+      one machine, would settle it. If it nears 150: shard the leg or
+      build it optimised (the owner's call).
+- [ ] `ChunkFiller::fill` executes up to 10 M instructions a chunk more on
+      one pass than the next of the same configuration, deterministically
+      and alike under v13 and v14 — probably allocator state; unexplained.
 - [ ] Optional, carried from 2026-10-09: the remaining loose
       minimum-population floors in the aquifer cases could become exact
       corpus pins, as `barrier3source` and `depthgate` have. Mind the
       flow: a regeneration moves flow-dependent counts (one water source
       did, above), so a pin belongs on what flow cannot touch.
-- [ ] clang-tidy 18 over `tests/` (measured in an earlier round at 196
-      findings in 90 files; includes three `char name[8]` in the
-      psl-lattice case that CI never sees).
 
 **Owner flags (decisions or settings only the owner can make).**
 
@@ -1940,8 +1971,12 @@ Java side has never been compiled.
       built, and is this item's main lever (SPEC §10, M3). Measured since
       (SPEC §11, "What the aquifer costs"; `ChunkFiller::fill` alone, which
       leaves out the biome fill and packing this figure includes):
-      174 ms/chunk for the overworld, 221 for `amplified`, the aquifer
-      1-2% of either. The interpreter's own per-read scope — allocated and
+      99 ms/chunk for the overworld and 121 for `amplified` on the dev box
+      under v14 (174 and 221 on the 4-core box of the v13 record), by
+      instructions the aquifer 1.3% and 0.9% of either and the ore veins
+      2.3% and 1.8%. The 237 above predates engines v3-v12 and the aquifer
+      cuts, and is from yet another box: re-measure it end to end on one
+      machine before the perf pass leans on it. The interpreter's own per-read scope — allocated and
       zeroed for every evaluation — is about two fifths of every instruction
       a fill executes.
 - [x] **Block state resolution in `ext/` — landed with the plugin (slice

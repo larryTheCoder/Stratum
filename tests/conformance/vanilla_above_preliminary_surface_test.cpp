@@ -1230,7 +1230,7 @@ TEST_CASE("the surface depth carries no bottom clamp", "[conformance][surface]")
                          << " floored");
     // A floor, not the total: 15 dimensions each painting at least the
     // partial window s3 settled at.
-    CHECK(paintedTotal >= 15 * 49152);
+    CHECK(paintedTotal >= 15LL * 49152);
     CHECK(separatingTotal == 245);
     CHECK(separatingUnclampedTotal == 245);
     CHECK(separatingClampedTotal == 0);
@@ -1399,7 +1399,7 @@ TEST_CASE("the position mix multiplies x in 32 bits and z in 64 where only far c
                  << highZ << "; right: shipped " << right[0] << ", x in 64 bits " << right[1]
                  << ", z in 32 bits " << right[2] << ", logical shift " << right[3]);
     // The clamp case's own floor for three windows of k_p100.
-    REQUIRE(painted >= 3 * 49152);
+    REQUIRE(painted >= 3LL * 49152);
     REQUIRE(liveness == 0);
     REQUIRE(edgeBelow == 0);
     // Every column is past the point where the two x products part.

@@ -22,7 +22,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 
@@ -47,16 +49,18 @@ struct Score {
     Score score;
     for (std::int32_t cz = 0; cz < 8; ++cz) {
         for (std::int32_t cx = 0; cx < 8; ++cx) {
-            if (!file.hasChunk(cx, cz))
+            if (!file.hasChunk(cx, cz)) {
                 continue;
+            }
             const auto chunk =
                 stratum::chunk::Chunk::decode(stratum::nbt::read(file.readChunk(cx, cz)).root);
             for (int lz = 0; lz < 16; ++lz) {
                 for (int lx = 0; lx < 16; ++lx) {
                     for (int y = 0; y <= yMax; ++y) {
                         const auto* block = chunk.blockAt(lx, y, lz);
-                        if (block == nullptr)
+                        if (block == nullptr) {
                             continue;
+                        }
                         const bool actual = block->name == "minecraft:diamond_block";
                         const bool predicted = stratum::surface::verticalGradientFires(
                             source, (cx * 16) + lx, y, (cz * 16) + lz, trueAtAndBelow,
@@ -103,14 +107,15 @@ TEST_CASE("vertical_gradient holds across every band of the bracket sweep",
     long long total = 0;
     int bandsChecked = 0;
     for (int band = 0; band < 55; ++band) {
-        char name[8];
-        std::snprintf(name, sizeof name, "t%02d", band);
-        const std::filesystem::path region = root / name / "r.0.0.mca";
-        if (!std::filesystem::is_regular_file(region))
+        std::array<char, 8> name{};
+        std::snprintf(name.data(), name.size(), "t%02d", band);
+        const std::filesystem::path region = root / name.data() / "r.0.0.mca";
+        if (!std::filesystem::is_regular_file(region)) {
             continue;
+        }
         // band k is true at and below k - 31 and false at and above k + 1
         const Score score = scoreWorld(region, 42, "minecraft:deepslate", band - 31, band + 1, 23);
-        INFO("band " << name << ": " << score.right << " of " << score.total);
+        INFO("band " << name.data() << ": " << score.right << " of " << score.total);
         CHECK(score.right == score.total);
         right += score.right;
         total += score.total;

@@ -271,7 +271,10 @@ TEST_CASE("the shipped overworld's output is pinned, on every architecture CI bu
                     const auto& state = blocks.at(x, y, z);
                     std::string text = state.name.toString();
                     for (const auto& [key, value] : state.properties) {
-                        text += "," + key + "=" + value;
+                        text += ",";
+                        text += key;
+                        text += "=";
+                        text += value;
                     }
                     lava += static_cast<std::size_t>(text.starts_with("minecraft:lava"));
                     mix(text);

@@ -403,9 +403,9 @@ struct Reading {
 
 /// The ceiling as built, and four rivals, each identical to it at the
 /// shipped sea (63, lambda -54) — which is why one sea level cannot decide.
-enum Rule : std::uint8_t { Built, Minus9, Minus11, SeaRelative, LambdaRelative, kRules };
+enum Rule : std::uint8_t { Built, Minus9, Minus11, SeaRelative, LambdaRelative, RuleCount };
 
-constexpr std::array<std::string_view, kRules> kRuleNames{
+constexpr std::array<std::string_view, RuleCount> kRuleNames{
     "the build (L <= -10)", "L <= -9", "L <= -11 (strict at -10)", "L <= sea_level - 73",
     "L <= lambda + 44"};
 
@@ -426,7 +426,7 @@ constexpr std::array<std::string_view, kRules> kRuleNames{
             return reading.level <= reading.sea - 73;
         case LambdaRelative:
             return reading.level <= reading.lambda + 44;
-        case kRules:
+        case RuleCount:
             break;
     }
     return false;
@@ -515,16 +515,16 @@ TEST_CASE("the lava override's level ceiling is -10 and absolute on three arms o
     // The readings decide the rule. Every one the build's predicate gets
     // right; every rival gets at least one wrong.
     REQUIRE(readings.size() == 16U);
-    std::array<std::vector<std::string>, kRules> wrong;
+    std::array<std::vector<std::string>, RuleCount> wrong;
     for (const Reading& reading : readings) {
-        for (std::size_t r = 0; r < kRules; ++r) {
+        for (std::size_t r = 0; r < RuleCount; ++r) {
             if (rulePredictsLava(static_cast<Rule>(r), reading, lavaOf.at(reading.name)) !=
                 reading.lava) {
                 wrong.at(r).push_back(reading.name);
             }
         }
     }
-    for (std::size_t r = 0; r < kRules; ++r) {
+    for (std::size_t r = 0; r < RuleCount; ++r) {
         std::string names;
         for (const std::string& name : wrong.at(r)) {
             names += " " + name;

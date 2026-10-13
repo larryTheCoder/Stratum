@@ -73,24 +73,22 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
-    const TempTree& define(std::string_view name, std::string_view json) const {
-        return write("density_function", name, json);
+    void define(std::string_view name, std::string_view json) const {
+        write("density_function", name, json);
     }
 
-    const TempTree& defineNoise(std::string_view name, std::string_view json) const {
-        return write("noise", name, json);
+    void defineNoise(std::string_view name, std::string_view json) const {
+        write("noise", name, json);
     }
 
     [[nodiscard]] Pack pack() const { return Pack::openWorldgenTree(path_); }
 
 private:
-    const TempTree& write(std::string_view registry, std::string_view name,
-                          std::string_view json) const {
+    void write(std::string_view registry, std::string_view name, std::string_view json) const {
         const std::filesystem::path file = path_ / registry / (std::string(name) + ".json");
         std::filesystem::create_directories(file.parent_path());
         std::ofstream out(file);
         out << json;
-        return *this;
     }
 
     [[nodiscard]] static std::string uniqueName() {
@@ -869,8 +867,8 @@ TEST_CASE("the cell lattice is part of the answer", "[density][cells]") {
     // lattices. A dimension's cell size is not a performance knob.
     const Point at{.x = 5, .y = 5, .z = 5};
     CHECK(bits(overworld.at("smooth", at)) != bits(end.at("smooth", at)));
-    CHECK(overworld.interpreter().cells()->width == 4);
-    CHECK(end.interpreter().cells()->height == 4);
+    CHECK(overworld.interpreter().cells().value().width == 4);
+    CHECK(end.interpreter().cells().value().height == 4);
 }
 
 TEST_CASE("an unusable cell geometry is refused where it is given", "[density][cells]") {
