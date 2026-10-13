@@ -72,8 +72,10 @@
 // WHAT THE PROBES CANNOT SAY:
 //
 //   * NaN. Nothing on disk produces one, nor can vanilla's erosion as this
-//     build computes it (noise::EndIslands takes square roots of 64-bit
-//     sums, never of a negative). The rings past 46340 island-field cells
+//     build computes it (noise::EndIslands' square roots are of sums of
+//     squares — a 64-bit one for the central term, a float one for each
+//     island's distance — so never of a negative). The rings past 46340
+//     island-field cells
 //     (about 370 000 blocks), where cubiomes' column is NaN, are where one
 //     would arise if the server's field is NaN there; no probe reaches
 //     them. Where one goes is the order of the tests above — this build's
