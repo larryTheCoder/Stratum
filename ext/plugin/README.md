@@ -34,8 +34,9 @@ PocketMine-MP itself can call.
   not at all — with neither, both are the overworld's — since neither says
   which of the other goes with it. On the main thread, before any worker
   opens the pipeline, the options are refused for a key other than these
-  three, for either of the pair alone, and for a biome source the engine's
-  own `BiomeSource::parse` refuses (`minecraft:fixed`,
+  three, for either of the pair alone, for either not a string (a JSON
+  `null` is a key given, not one left out), and for a biome source the
+  engine's own `BiomeSource::parse` refuses (`minecraft:fixed`,
   `minecraft:checkerboard`, a bare `minecraft:multi_noise`, or no
   identifier at all), with its reason; `GeneratorOptions`' doc lists
   exactly what is accepted. A pairing vanilla does not make, such as the
