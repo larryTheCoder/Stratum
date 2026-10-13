@@ -23,6 +23,9 @@ documents its PHP surface, SPEC §4.3). Marshaling only: it freezes a
 pipeline, opens a dimension from a frozen blob — one compiled dimension per
 process for every worker thread that opens the same world — and returns
 `encodeChunk()`'s layers and `bedrockBlockState()`'s triples as PHP arrays.
+`Stratum\parseBiomeSource()` reads a biome source as opening a dimension
+will, and opens nothing, so the plugin refuses a source this build does not
+implement on the main thread (`zend/tests/006_biome_source.phpt`).
 C++ exceptions never cross into the engine; each becomes a
 `Stratum\GenerationException`. Build it against a thread-safe PHP:
 
@@ -51,8 +54,9 @@ gives them to the main thread, once, by the world's options and seed.
 the generator, translates each sub-chunk's palette through PocketMine-MP's
 own deserializer, and freezes a pipeline into a new world's folder. Written
 against PocketMine-MP 5.44.4's source but **never run** — PocketMine-MP
-cannot be installed here — so CI checks that it parses and tests the one
-class that is pure PHP.
+cannot be installed here — so CI checks that it parses and tests its
+options class and fluid-update scheduler against stand-ins for
+PocketMine-MP's classes, with this extension loaded.
 
 ## How the pieces fit
 

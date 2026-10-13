@@ -17,8 +17,8 @@ use pocketmine\world\generator\Generator;
  * Constructed once per generation worker thread with nothing but the world
  * seed and its options string. Everything expensive happens here, once:
  * opening the world's frozen pipeline compiles it, and the engine shares one
- * compiled dimension across every worker that opens the same blob, settings,
- * list and seed.
+ * compiled dimension across every worker that opens the same blob, noise
+ * settings, biome source and seed.
  *
  * What generateChunk() does per chunk is deliberately small — the engine
  * returns sub-chunks already packed the way PalettedBlockArray::fromData

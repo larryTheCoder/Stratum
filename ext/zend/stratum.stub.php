@@ -27,6 +27,21 @@ function bedrockBlockState(int $javaStateId) : array{}
 function javaBlockStateCount() : int{}
 
 /**
+ * What world::BiomeSource::parse reads $biomeSource as, spelled back in
+ * full: "minecraft:the_end" for the End's own source, or the multi-noise
+ * parameter list's id ("overworld" comes back "minecraft:overworld"). Opens
+ * and compiles nothing, so a caller can refuse a source before any worker
+ * opens a Dimension with it.
+ *
+ * @throws GenerationException with parse's reason, for the types this build
+ * does not implement ("minecraft:fixed", "minecraft:checkerboard"), for
+ * "minecraft:multi_noise" named with no list, and for text that is no
+ * identifier. Whether the frozen pipeline carries a list is Dimension::open's
+ * to say.
+ */
+function parseBiomeSource(string $biomeSource) : string{}
+
+/**
  * Removes and returns the fluid updates Dimension::encodeChunk() left for
  * chunk ($chunkX, $chunkZ) of the world whose generator was opened with
  * these options and this seed, as world [x, y, z] positions. These are the
