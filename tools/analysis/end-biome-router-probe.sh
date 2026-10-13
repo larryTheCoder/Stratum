@@ -3,7 +3,7 @@
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
 #   tools/analysis/end-biome-router-probe.sh --accept-eula [--seed 42] \
-#       [--region -2,-2]
+#       [--region -2,-2] [--set router|sample]
 #
 # THE QUESTION. The End's dimension declares `"biome_source": {"type":
 # "minecraft:the_end"}`, which takes no parameters (world_preset/normal.json),
@@ -65,9 +65,28 @@
 #     quart 1 at y 4, and the gradient's 13/2/6/11 quarts per bin are what
 #     y = 4 * quartY gives against those edges.
 #
+# --set sample asks a second question with the same machinery: WHERE IN THE
+# CHUNK the source reads erosion. The island field the End routes there is
+# constant over 8-block cells, so the server's End only pins the sample to
+# the cell holding blocks 16c + 8 .. 16c + 15; the wiki says "the center of
+# the chunk". One dimension, `xz`: the End's settings with erosion a named
+# noise sampled fast enough to differ from block to block —
+# noise(minecraft:ridge, xz_scale 64, y_scale 0), half a cycle a block —
+# under legacy_random_source false, so the noise is the ordinary Xoroshiro
+# kind, and final_density -1, so there is no terrain to wait for. A
+# variant's keys are router entries, or top-level settings fields where the
+# End's router has no such entry.
+#
+# WHAT IT FOUND (1.21.11, seed 42, r.-2.-2): all 725 outer chunks are read
+# at block (16 chunkX + 8, 16 chunkZ + 8), and no other of the chunk's 256
+# columns comes close — the best, (4, 7), reads 228 of them, against the
+# 192 that chance gives these four biomes' shares
+# (tests/conformance/vanilla_end_biome_source_test.cpp scores every column).
+#
 # WHAT IT WRITES. probes/end-biome-router/seed-<seed>/<name>/r.X.Z.mca for
-# each dimension, a manifest.json (seed, region, ticks_frozen) and
-# variants.json (each variant's router change, as written into its settings),
+# each dimension (probes/end-biome-sample/... with --set sample), a
+# manifest.json (seed, region, ticks_frozen) and variants.json (each
+# variant's change, as written into its settings),
 # under STRATUM_FIXTURES_DIR when that is set, else .fixtures —
 # tools/probe-worlds clears it for every generator it runs. An existing
 # seed-<seed> corpus is refused, never replaced. STRATUM_PROBE_XMX sets the
@@ -82,12 +101,14 @@ readonly PACK_FORMAT_MINOR=1
 accept_eula=0
 seed=42
 region="-2,-2"
+variant_set=router
 generation_timeout=2400
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --accept-eula) accept_eula=1; shift ;;
         --seed)        seed="${2:?--seed needs a number}"; shift 2 ;;
         --region)      region="${2:?--region needs X,Z}"; shift 2 ;;
+        --set)         variant_set="${2:?--set needs router or sample}"; shift 2 ;;
         --timeout)     generation_timeout="${2:?--timeout needs seconds}"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -103,6 +124,8 @@ command -v java >/dev/null 2>&1 || die "java is needed"
 command -v python3 >/dev/null 2>&1 || die "python3 is needed to write the datapack"
 [[ "${seed}" =~ ^-?[0-9]+$ ]] || die "--seed takes a whole number"
 [[ "${region}" =~ ^-?[0-9]+,-?[0-9]+$ ]] || die "malformed --region '${region}': expected X,Z"
+[[ "${variant_set}" == router || "${variant_set}" == sample ]] \
+    || die "--set takes router or sample, not '${variant_set}'"
 region_x="${region%%,*}"
 region_z="${region##*,}"
 region_file="r.${region_x}.${region_z}.mca"
@@ -117,7 +140,7 @@ jar="$(find "${fixtures}" -maxdepth 2 -name 'server*.jar' 2>/dev/null | head -1 
 [[ -n "${jar}" ]] || die "no server jar under ${fixtures}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
-out_dir="${fixtures}/probes/end-biome-router/seed-${seed}"
+out_dir="${fixtures}/probes/end-biome-${variant_set}/seed-${seed}"
 [[ ! -e "${out_dir}" ]] || die "${out_dir} already exists; this never replaces a corpus"
 probe_xmx="${STRATUM_PROBE_XMX:-3G}"
 
@@ -154,7 +177,7 @@ PACK
 
 # The variants, the datapack, and variants.json, in one place. The names are
 # printed one per line for the forceload and collection below.
-mapfile -t names < <(env WORLDGEN="${worldgen_dir}" PACK="${pack}" python3 - <<'PY'
+mapfile -t names < <(env WORLDGEN="${worldgen_dir}" PACK="${pack}" SET="${variant_set}" python3 - <<'PY'
 import copy, json, os, pathlib
 
 worldgen = pathlib.Path(os.environ['WORLDGEN'])
@@ -170,7 +193,7 @@ for path in sorted((worldgen / 'biome').glob('*.json')):
     (biome_dir / path.name).write_text(json.dumps(body))
 
 end = json.loads((worldgen / 'noise_settings' / 'end.json').read_text())
-variants = {'ctl': {}}
+variants = {} if os.environ['SET'] == 'sample' else {'ctl': {}}
 # Written as decimals and parsed, so each settings file carries exactly the
 # number its name spells (json.dumps gives a double's shortest round trip).
 for text in ('-0.5', '-0.21876', '-0.2187500001', '-0.21875', '-0.1', '-0.06251',
@@ -186,17 +209,22 @@ for low in (-1, 0, 3, 4):
 variants['climate'] = {'temperature': 0.7, 'vegetation': -0.7, 'continents': 0.7,
                        'depth': 0.7, 'ridges': -0.7}
 variants['terrain'] = {'final_density': -1.0}
+if os.environ['SET'] == 'sample':
+    variants = {'xz': {'legacy_random_source': False, 'final_density': -1.0,
+                       'erosion': {'type': 'minecraft:noise', 'noise': 'minecraft:ridge',
+                                   'xz_scale': 64.0, 'y_scale': 0.0}}}
 
 settings_dir = pack / 'data' / 'stratum' / 'worldgen' / 'noise_settings'
 dimension_dir = pack / 'data' / 'stratum' / 'dimension'
 settings_dir.mkdir(parents=True)
 dimension_dir.mkdir(parents=True)
 for name, change in variants.items():
-    unknown = set(change) - set(end['noise_router'])
+    unknown = set(change) - set(end['noise_router']) - set(end)
     if unknown:
-        raise SystemExit(f'{name}: the End router has no {sorted(unknown)}')
+        raise SystemExit(f'{name}: the End settings have no {sorted(unknown)}')
     settings = copy.deepcopy(end)
-    settings['noise_router'].update(change)
+    for key, value in change.items():
+        (settings['noise_router'] if key in end['noise_router'] else settings)[key] = value
     (settings_dir / f'{name}.json').write_text(json.dumps(settings))
     (dimension_dir / f'{name}.json').write_text(json.dumps({
         'type': 'minecraft:the_end',

@@ -333,6 +333,13 @@ UNITS = [
     unit('end-biome-router_s42', 'end', ['end-biome-router-probe.sh', '--seed', '42'],
          own('end-biome-router/seed-42', [f'{name}/r.-2.-2.mca' for name in END_ROUTER_DIMENSIONS],
              {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
+    # And where in the chunk it reads erosion: one dimension whose erosion
+    # differs from block to block, beside the world's own End. About a
+    # minute locally.
+    unit('end-biome-sample_s42', 'end',
+         ['end-biome-router-probe.sh', '--set', 'sample', '--seed', '42'],
+         own('end-biome-sample/seed-42', ['xz/r.-2.-2.mca', 'vanilla/r.-2.-2.mca'],
+             {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
 ] + [
     # markers: every cache marker a datapack can wrap an aquifer entry in,
     # five corpora (one server start each) per seed. A shard of its own: ten
