@@ -12,13 +12,19 @@
 //   * end-islands' r.-1.-1 and r.64.0 at seeds 0 and 42
 //     (tools/analysis/end-islands-probe.sh): a negative quadrant inside the
 //     ring, and 1024 chunks 32768 blocks out holding all four outer biomes;
-//   * end-biomes' two regions at each of four more worlds (the same script,
-//     --name end-biomes): a far region with all four outer biomes, signs
-//     mixed, and one straddling the ring on a negative axis — chunks (-64, 0)
-//     and (0, -64) sit exactly at 4096;
-//   * end-biome-router-probe.sh's 23 dimensions, each the End's settings
-//     with one router entry changed, scored the same way after compiling each
-//     variant from a doctored copy of the pinned pack;
+//   * end-biomes' two regions at each of four seeds (the same script,
+//     --name end-biomes), two of them End worlds the goldens do not hold
+//     (31337 and 8675309; the other two are golden seeds), so eight distinct
+//     End worlds over every corpus here: a far region with all four outer
+//     biomes, signs mixed, and one crossing the ring — on a negative axis at
+//     31337 and 8675309, where chunks (-64, 0) and (0, -64) sit exactly at
+//     4096, and off the axes at the other two;
+//   * end-biome-router-probe.sh's 22 datapack dimensions with the End's
+//     settings — a control with nothing changed, 19 that change erosion
+//     alone, one that changes final_density alone and one that sets the
+//     five other climate entries — and the world's own End, scored the same
+//     way after compiling each variant from a doctored copy of the pinned
+//     pack;
 //   * and its `--set sample` pair: a dimension whose erosion differs from
 //     block to block, and the world's own End again.
 //
@@ -40,7 +46,11 @@
 // than its centre, and every other column of the chunk; truncation rather
 // than floorDiv from quart to chunk; a strict ring; erosion read at
 // 4qy + 1..3 or at qy rather than at 4qy; and the world's own island field
-// rather than the router's erosion.
+// rather than the router's erosion. The controls read the rule through this
+// file's own constants — the ring's 4096 and the three erosion edges, spelled
+// out below, never EndRule's — so when the code under test moves, the
+// exactness checks move with it and the controls stay where the server put
+// them.
 //
 // SKIPS a corpus that is absent, naming the script that makes it; FAILS on a
 // partial one, which is a broken corpus rather than a missing one. The
@@ -76,7 +86,6 @@
 #include <utility>
 #include <vector>
 
-using stratum::biome::EndRule;
 using stratum::data::ResourceLocation;
 using stratum::density::Point;
 using stratum::settings::RouterEntry;
@@ -94,6 +103,47 @@ constexpr std::int32_t kNoiseLayers = 32;
 constexpr std::size_t kQuartsPerLayer = 16;
 constexpr std::size_t kQuartsPerChunk = static_cast<std::size_t>(kStoredLayers) * kQuartsPerLayer;
 constexpr std::size_t kQuartsPerRegion = kChunksPerRegion * kQuartsPerChunk;
+
+/// The rule as the server answered it, written out here rather than taken
+/// from EndRule (the CONTROLS paragraph says why): the ring, inclusive at
+/// 4096 chunks squared, and the three erosion edges.
+constexpr std::int64_t kRingSquared = 4096;
+constexpr double kHighlandsAbove = 0.25;
+constexpr double kMidlandsFrom = -0.0625;
+constexpr double kBarrensFrom = -0.21875;
+
+/// The five biomes the controls answer with, the test's own objects.
+struct ControlBiomes {
+    ResourceLocation theEnd{"minecraft", "the_end"};
+    ResourceLocation highlands{"minecraft", "end_highlands"};
+    ResourceLocation midlands{"minecraft", "end_midlands"};
+    ResourceLocation barrens{"minecraft", "end_barrens"};
+    ResourceLocation small{"minecraft", "small_end_islands"};
+};
+
+[[nodiscard]] const ControlBiomes& controlBiomes() {
+    static const ControlBiomes kBiomes;
+    return kBiomes;
+}
+
+[[nodiscard]] std::int64_t ringSquared(std::int32_t chunkX, std::int32_t chunkZ) {
+    return (std::int64_t{chunkX} * chunkX) + (std::int64_t{chunkZ} * chunkZ);
+}
+
+/// An outer chunk's biome for @p erosion, by the constants above.
+[[nodiscard]] const ResourceLocation& controlOuter(double erosion) {
+    const ControlBiomes& biomes = controlBiomes();
+    if (erosion > kHighlandsAbove) {
+        return biomes.highlands;
+    }
+    if (erosion >= kMidlandsFrom) {
+        return biomes.midlands;
+    }
+    if (erosion >= kBarrensFrom) {
+        return biomes.barrens;
+    }
+    return biomes.small;
+}
 
 [[nodiscard]] std::filesystem::path fixtures() {
     return std::filesystem::path{STRATUM_FIXTURES_DIR} / "1.21.11";
@@ -238,18 +288,17 @@ struct Reader {
                       stratum::density::CellGeometry{.width = settings->geometry.cellWidth(),
                                                      .height = settings->geometry.cellHeight()}) {}
 
-    /// The End's rule with each of its choices open: the chunk, where in it
-    /// the sample sits, at what y, and whether the ring is inclusive.
+    /// The End's rule with each of its choices open — the chunk, where in it
+    /// the sample sits, at what y, and whether the ring is inclusive — on
+    /// this file's own constants.
     [[nodiscard]] const ResourceLocation&
     endBiome(std::int32_t chunkX, std::int32_t chunkZ, Point sample, bool strictRing,
              stratum::density::Interpreter::CornerCache& cache) const {
-        const std::int64_t squared =
-            (std::int64_t{chunkX} * chunkX) + (std::int64_t{chunkZ} * chunkZ);
-        if (strictRing ? squared < EndRule::kCentralRadiusSquared
-                       : squared <= EndRule::kCentralRadiusSquared) {
-            return EndRule::central();
+        const std::int64_t squared = ringSquared(chunkX, chunkZ);
+        if (strictRing ? squared < kRingSquared : squared <= kRingSquared) {
+            return controlBiomes().theEnd;
         }
-        return EndRule::outer(
+        return controlOuter(
             interpreter.evaluate(settings->router.at(RouterEntry::Erosion), sample, cache));
     }
 };
@@ -522,13 +571,14 @@ TEST_CASE("the End's biome source past the ring and in the negative quadrant, at
     });
 }
 
-TEST_CASE("the End's biome source on the ring and far out, at four more End worlds",
+TEST_CASE("the End's biome source on the ring and far out, at four seeds, two of them new worlds",
           "[conformance][biome][end][islands]") {
     if (!havePack()) {
         SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR
                                                                << "; run tools/fetch-vanilla");
     }
-    // A far region and a ring region at each, the ring on a negative axis.
+    // A far region and a region crossing the ring at each seed: on a
+    // negative axis at 31337 and 8675309, off the axes at the other two.
     const std::vector<RegionFile> files = {probe("end-biomes", 31337, -65, 3),
                                            probe("end-biomes", 31337, -2, 0),
                                            probe("end-biomes", 8675309, 40, -50),
@@ -564,8 +614,7 @@ TEST_CASE("the End's biome source on the ring and far out, at four more End worl
             const std::int32_t chunkX = region.chunkX(chunk);
             const std::int32_t chunkZ = region.chunkZ(chunk);
             const std::size_t base = chunk * kQuartsPerChunk;
-            if ((std::int64_t{chunkX} * chunkX) + (std::int64_t{chunkZ} * chunkZ) ==
-                EndRule::kCentralRadiusSquared) {
+            if (ringSquared(chunkX, chunkZ) == kRingSquared) {
                 ++chunksAt4096;
             }
             const ResourceLocation& strict = end.reader.endBiome(
@@ -780,7 +829,7 @@ TEST_CASE("the End's biome source reads erosion at the chunk's centre, block 16c
         for (std::size_t chunk = 0; chunk < kChunksPerRegion; ++chunk) {
             const std::int32_t chunkX = files[i].chunkX(chunk);
             const std::int32_t chunkZ = files[i].chunkZ(chunk);
-            if (EndRule::isCentral(chunkX, chunkZ)) {
+            if (ringSquared(chunkX, chunkZ) <= kRingSquared) {
                 continue;
             }
             ++outer;

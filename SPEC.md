@@ -451,12 +451,16 @@ cannot keep stamping the old number.
 Supported registries: `worldgen/density_function`, `worldgen/noise`,
 `worldgen/noise_settings` (noise router + surface rules + spawn targets),
 the multi-noise biome source and the End's `minecraft:the_end` (§11, "The
-End's biome source"), and the minimum of
-`dimension` / `world_preset` needed to select settings. Tags and
-namespaced references within these. A frozen pipeline carries no dimension
-definitions, so the caller names a dimension's biome source when compiling
-it (`world::BiomeSource`); the other two types vanilla defines,
-`minecraft:fixed` and `minecraft:checkerboard`, are refused by name.
+End's biome source"). Tags and namespaced references within these.
+`dimension` and `world_preset` load and are addressable, and nothing in
+this build interprets them yet: a frozen pipeline carries no dimension
+definitions, so the caller names a dimension's noise settings and its
+biome source when compiling it (`world::BiomeSource`). The other two
+source types vanilla defines, `minecraft:fixed` and
+`minecraft:checkerboard`, are refused by name when a caller names them to
+`BiomeSource::parse`; one a pack declares in its own `dimension` or
+`world_preset` is neither read nor reported (§11, "The End's biome source",
+Still open).
 
 Aquifers (`aquifers_enabled` and the router entries they read) are supported
 at Tier A wherever the dimension's `default_fluid` is water, under either
@@ -7935,13 +7939,21 @@ Open:
      -0.21875 `small_end_islands`; else `end_barrens`.
 
   *Provenance.* The structure is adapted from cubiomes (MIT; biomenoise.c,
-  `mapEndBiome` and `getEndBiome`, read as text): the inclusive 4096 in
-  chunk coordinates, one sample per chunk at its centre, the three edges,
-  and the order of the tests. cubiomes also carries the island field's
-  17292-step seeding skip (`setEndSeed`) as the same literal, which gives the
-  measurement above independent support. Where cubiomes and the server part,
-  the server wins: cubiomes evaluates a hard-wired copy of the island field,
-  and the server reads the dimension's own router.
+  `mapEnd`, `mapEndBiome` and `getEndBiome`, read as text): the chunk taken
+  from the quart by a floor shift; the inclusive 4096 in 64-bit chunk
+  coordinates; one sample per chunk, in the island-field cell holding the
+  chunk's centre; and the three edges with their inclusivity — cubiomes'
+  h < 3600, h <= 10000 and h <= 14400 on its squared island distance, which
+  are erosion > 0.25, >= -0.0625 and >= -0.21875. The order of the last two
+  tests is NOT cubiomes': cubiomes tests barrens before falling through to
+  small islands, which in erosion terms would send a NaN to
+  `small_end_islands`. Testing small islands first, so that a NaN falls
+  through to `end_barrens`, is this build's own reading, and unmeasured
+  (below). cubiomes also carries the island field's 17292-step seeding skip
+  (`setEndSeed`) as the same literal, which gives the measurement above
+  independent support. Where cubiomes and the server part, the server wins:
+  cubiomes evaluates a hard-wired copy of the island field, and the server
+  reads the dimension's own router.
 
   *The probes.* Five corpora, every quart of every chunk of every region
   scored twice on shipped code
@@ -7955,8 +7967,8 @@ Open:
   |---|---|---|
   | golden `end/r.0.0` | 8 (six worlds) | the ring's inside: the_end 1024 chunks each |
   | end-islands, seeds 0 and 42 | 4 | r.-1.-1 inside; r.64.0 all four outer biomes (113/245/305/361 and 124/166/264/470 chunks barrens/highlands/midlands/small) |
-  | end-biomes, four more worlds | 8 | a far region with all four outer biomes at each, signs mixed, and a ring region on a negative axis: (-64, 0) and (0, -64) the_end at exactly 4096, (-64, 1) and (1, -64) outer at 4097 |
-  | end-biome-router, seed 42 | 23 | 22 datapack dimensions with this source and the End's settings, one router entry changed in each, and the world's own End |
+  | end-biomes, four seeds | 8 | two new End worlds (31337, 8675309; the other two seeds are golden worlds, so eight distinct End worlds across every corpus here); a far region with all four outer biomes at each seed, signs mixed, and a region crossing the ring at each: on a negative axis at the two new worlds — (-64, 0) and (0, -64) the_end at exactly 4096, (-64, 1) and (1, -64) outer at 4097 — and off the axes at the other two |
+  | end-biome-router, seed 42 | 23 | 22 datapack dimensions with this source and the End's settings — a control with nothing changed, 19 that change erosion alone, one that changes final_density alone, and one that sets the five other climate entries — and the world's own End |
   | end-biome-sample, seed 42 | 2 | erosion a noise that differs from block to block, and the world's own End |
 
   **47 185 920 of 47 185 920 quarts exact**, 45 regions, by both paths.
@@ -7971,9 +7983,13 @@ Open:
   outer chunks of r.-2.-2 into one biome while the 299 inside the ring stay
   the_end; the constants either side of each edge, 1e-10 apart, put 0.25 in
   midlands, -0.0625 in midlands and -0.21875 in barrens, which is double
-  rather than float; constant temperature, vegetation, continents, depth
-  and ridges change no quart, nor does a constant final_density; and a
-  y-varying erosion is read at block y = 4 qy. Its `--set sample`
+  rather than float (the constants AT each edge, and ygrad's layers at
+  exactly 0.25 and -0.0625, put each edge's own value on its side; nothing
+  on disk lies strictly between an edge and 1e-10 past it, where the rule
+  puts everything on the far side, as cubiomes' thresholds do); constant
+  temperature, vegetation, continents, depth and ridges change no quart,
+  nor does a constant final_density; and a y-varying erosion is read at
+  block y = 4 qy. Its `--set sample`
   dimension routes `noise(minecraft:ridge, xz_scale 64, y_scale 0)` there,
   under the Xoroshiro source with no terrain, so each of a chunk's 256
   columns is a separate reading: (16c + 8, 16c + 8) reads all 725 outer
@@ -8018,24 +8034,37 @@ Open:
   `shift`; the same correction makes a `cache_2d` over either a refusal
   (the M2 entry below).
 
-  *Refused by name.* `minecraft:fixed`, `minecraft:checkerboard`, and
-  `minecraft:multi_noise` named without its list, in `BiomeSource::parse`;
-  a multi-noise list the pipeline lacks, as before.
+  *Refused by name — when a caller names them.* `minecraft:fixed`,
+  `minecraft:checkerboard`, and `minecraft:multi_noise` named without its
+  list, in `BiomeSource::parse` (and so `Stratum\Dimension::open`, and the
+  plugin's options, through `Stratum\parseBiomeSource`); a multi-noise list
+  the pipeline lacks, as before. Only then: nothing in this build reads a
+  pack's own `biome_source`, in a `dimension` or a `world_preset`, so a pack
+  that declares `fixed` or `checkerboard` there loads and passes
+  `stratum validate` without a word about it (validate notes only that
+  those registries load and nothing interprets them). Still open, below.
 
-  *Not measured, and read from cubiomes.* NaN: nothing on disk produces one,
-  and the order of the tests above sends it to `end_barrens`, which is what
-  cubiomes gives its outer rings. The central square in 64 bits rather than
-  32: they part only past 46340 chunks, which no probe reaches. And two
-  things about the island field this source reads, which belong to
-  `noise::EndIslands` and change terrain as much as biomes: cubiomes'
-  steepness is `(|x| * 3439 + |z| * 147) % 13 + 9` computed in float, where
-  `EndIslands` uses 64-bit integers — the float sum is exact below 2^24,
-  which holds everywhere within about 4874 island cells (78 000 blocks) of
-  the origin, so the two can part only further out — and its
-  central term overflows a 32-bit square past grid coordinate 46340 (about
-  370 000 blocks), the wiki's empty outer rings, which `EndIslands`' 64-bit
-  square does not reproduce. Every probe region is within 38 000 blocks;
-  both are open, for a probe past 78 000 blocks and one in a ring.
+  *Not measured.* NaN, where one goes being this build's own choice.
+  Nothing on disk produces one, nor can vanilla's erosion as this build
+  computes it; the order of the tests above sends it to `end_barrens`, the
+  biome cubiomes gives its outer rings through a separate overflow check
+  (`mapEndBiome`'s `(int)rsq < 0`) — not through its order of the tests,
+  which would send a NaN to `small_end_islands`. The central square in 64 bits rather than
+  32, which is cubiomes' reading: they part only past 46340 chunks, which no
+  probe reaches. And two things about the island field this source reads,
+  which belong to `noise::EndIslands` and change terrain as much as biomes:
+  cubiomes' steepness is `(|x| * 3439 + |z| * 147) % 13 + 9` computed in
+  float, where `EndIslands` uses 64-bit integers — the float sum is exact
+  below 2^24, which holds everywhere within about 4874 island cells
+  (78 000 blocks) of the origin, so the two can part only further out — and
+  the server's island field has empty outer rings from about 370 000
+  blocks (the wiki describes them), which `EndIslands`' 64-bit square does
+  not reproduce. cubiomes models those rings as a 32-bit overflow on the
+  biome side, `mapEndBiome`'s ring test `(int)rsq < 0` on the island-grid
+  square, which first fires past grid coordinate 46340 on an axis and
+  turns them `end_barrens`; its own height function squares in 64 bits.
+  Every probe region is within 38 000 blocks; both are open, for a probe
+  past 78 000 blocks and one in a ring.
 
   *A datapack's markers.* A `flat_cache` or `interpolated` under the End's
   erosion is read as the multi-noise path reads its climate: at the sample
@@ -8043,6 +8072,34 @@ Open:
   the sample sits on a cell corner and on the quart grid, so neither
   changes a value there; under another cell width it is unmeasured, as it
   is for the multi-noise source.
+
+  *Still open* — recorded, not claimed:
+
+  - How PocketMine-MP presents an End world to Bedrock clients — its
+    dimension, sky, fog and light — is unverified. Generation matches the
+    server's, and ext gives PocketMine-MP all 24 sub-chunks with the End's
+    biomes (§4.3), but nothing here has read how PocketMine-MP tells a
+    client which dimension a world is; as far as this project knows a
+    PocketMine-MP world carries no dimension of its own, so an End world
+    may well reach clients looking like the overworld. The plugin's
+    `WorldFactory::create` also writes only the overworld's options, so an
+    End world's options are written by hand. Neither has run inside a
+    server (M5).
+  - A pack's own `biome_source` is neither read nor checked (*Refused by
+    name*, above): a caller names the source, and a `fixed` or
+    `checkerboard` declared in a pack's `dimension` or `world_preset` is
+    refused only if a caller passes that name on.
+  - No command-line path generates the End: `stratum generate` is still
+    unimplemented (M5), so its biomes are checked from the shell only
+    against regions something else wrote, which `stratum diff` now compares
+    biome for biome (§7).
+  - CI has the pack and none of these corpora. Its unit run holds the y at
+    which erosion is read to the server's answers through the router
+    probe's y_clamped_gradient dimensions, which need no Mojang data
+    (`biome_source_test.cpp`); the block within the chunk's island cell
+    (16c + 8 rather than 16c + 9 .. 16c + 15) it holds only by
+    `EndRule::samplePoint`'s own values, because the server says so through
+    `--set sample`, a vanilla noise that only the conformance case reads.
 
 - **The named-noise derivation: searched, still open, and now reproducible
   (M4).** How a noise's identifier becomes a Java LCG seed is unanswered.
@@ -8826,7 +8883,7 @@ Open:
   `biome_source` is `minecraft:the_end` — read from the pinned
   `world_preset/normal.json`, neither `multi_noise` nor `fixed` — and it was
   not implemented when this was written (since closed: "The End's biome
-  source", below, pipeline engine v15; the End now compiles with its own
+  source", above, pipeline engine v15; the End now compiles with its own
   source, and pairing it with a list is a caller's explicit
   `BiomeSource::multiNoise`). A first version of this paragraph then said
   "`CompiledDimension::compile` still refuses **every** legacy dimension";
@@ -8834,13 +8891,14 @@ Open:
   construction. The measured boundary is narrower: the public path refuses
   the End on `(end, end)` for ONE reason — vanilla ships no biome parameter
   list named `minecraft:end`, and the refusal names exactly that — and NOT
-  for being legacy. Pair the End's settings with any list that does exist
-  and it compiles and generates through `CompiledDimension::compile`
-  (asserted in `vanilla_compiled_dimension_test.cpp`; the block-level result
-  is `golden_end_test.cpp`'s). So the End IS available through the public
-  compile path, with the wrong biomes; what is not implemented is its own
-  biome source, and that is the whole of what "unblocked" must not be read
-  past. The other three legacy dimensions are refused on that path by name
+  for being legacy. Paired with any list that did exist, the End's settings
+  compiled and generated through `CompiledDimension::compile` (asserted in
+  `vanilla_compiled_dimension_test.cpp`; the block-level result is
+  `golden_end_test.cpp`'s). So the End WAS available through the public
+  compile path, with the wrong biomes; what was not implemented then was
+  its own biome source, and that was the whole of what "unblocked" was not
+  to be read past — until "The End's biome source", above, closed it. The
+  other three legacy dimensions were, and are, refused on that path by name
   of the noises they need.
 
   The refusal is therefore narrowed to a **non-empty** `wanted` under

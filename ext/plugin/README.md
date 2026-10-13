@@ -92,6 +92,15 @@ build. So:
   the scheduled fluid updates flow as a Java server's do — needs a real
   PocketMine-MP server to verify, and that is the next real step for this
   binding (PROGRESS.md).
+- **How an End world reaches a Bedrock client is unverified.** Generation
+  matches the server's (SPEC §11, "The End's biome source"), but nothing
+  here says how PocketMine-MP presents the result: as far as this binding
+  knows, a PocketMine-MP world carries no dimension of its own, so an End
+  world may well be sent to clients as the overworld — its sky, fog and
+  light — and `WorldFactory::create()` only ever writes the overworld's
+  options, so an End world needs its generator options written by hand.
+  Neither has been checked against PocketMine-MP's source or a client
+  (SPEC §11's End entry, "Still open").
 - Fluid updates live in memory between a chunk's generation and its
   population: a chunk generated as a neighbour in one server run and first
   populated in a later one gets none, and its aquifer fluid stays as

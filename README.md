@@ -233,7 +233,8 @@ regions, datapack variants of its router included (SPEC §11). The upper half
 of that column, above the noise height, comes from `fillBiomes`' range form,
 which is also what fills PocketMine-MP's sub-chunks above and below the End's
 terrain. A dimension names its biome source when it is compiled, since a
-frozen pipeline does not record one.
+frozen pipeline does not record one. How PocketMine-MP then presents an End
+world to Bedrock clients — its dimension, sky and fog — is not verified.
 
 **PocketMine integration — written, and never run inside a server.** The
 Java-to-Bedrock mapping tables, the sub-chunk encoder, the zend module and the
@@ -258,9 +259,9 @@ that was rejected**.
 | Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
 | Multi-noise biome source | Supported | Named by its parameter list |
 | `the_end` biome source | Supported | Reads the router's `erosion`, as the server does (SPEC §11) |
-| `fixed`, `checkerboard` biome sources | **Rejected** | Refused by name when a dimension is compiled |
+| `fixed`, `checkerboard` biome sources | **Rejected** | Refused by name when a caller names them to `world::BiomeSource::parse` (as `Stratum\Dimension::open` and the PocketMine-MP plugin's options do). Nothing reads a pack's own `biome_source` yet, so one a pack declares in its `dimension` or `world_preset` is neither refused nor reported (SPEC §11) |
 | `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
-| `dimension`, `dimension_type`, `world_preset` | Partial | Only what is needed to select noise settings |
+| `dimension`, `dimension_type`, `world_preset` | Partial | Loaded and addressable, not interpreted: the caller names a dimension's noise settings and its biome source, and nothing reads them from these files yet |
 | Tags and namespaced references | Supported | Within the registries above |
 | `configured_feature`, `placed_feature` | **Rejected** | v2 (SPEC §10, M6) |
 | `configured_carver` | **Rejected** | v2 |

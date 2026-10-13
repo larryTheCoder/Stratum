@@ -3,8 +3,9 @@
 //
 // See biome/source.hpp for the rule and where each part of it comes from.
 // The End's rule is adapted from cubiomes (MIT, Cubitect/cubiomes,
-// biomenoise.c: mapEndBiome and getEndBiome) and read off the server's own
-// router where the two part. Recorded in NOTICE.
+// biomenoise.c: mapEnd, mapEndBiome and getEndBiome) and read off the
+// server's own router where the two part; the order of its last two tests
+// is this build's own. Recorded in NOTICE.
 
 #include <stratum/biome/source.hpp>
 #include <stratum/javamath.hpp>
@@ -60,12 +61,13 @@ const data::ResourceLocation& EndRule::central() {
 }
 
 const data::ResourceLocation& EndRule::outer(const double erosion) {
-    // The ORDER is the point, not only the edges: every comparison is false
-    // for a NaN, so a NaN falls through all three to barrens — which is what
-    // cubiomes gives its overflow rings (biomenoise.c, mapEndBiome). The
-    // edges themselves are the server's, to 1e-10 either side
-    // (end-biome-router-probe.sh): 0.25 is midlands, -0.0625 midlands,
-    // -0.21875 barrens.
+    // The ORDER is this build's own choice, not cubiomes' (whose order
+    // would send a NaN to small islands) and not measured: every
+    // comparison is false for a NaN, so one falls through all three to
+    // barrens — the biome cubiomes gives its overflow rings, by a separate
+    // check (biomenoise.c, mapEndBiome). The edges themselves are the
+    // server's, to 1e-10 either side (end-biome-router-probe.sh): 0.25 is
+    // midlands, -0.0625 midlands, -0.21875 barrens.
     if (erosion > kHighlandsAbove) {
         return endHighlands();
     }
