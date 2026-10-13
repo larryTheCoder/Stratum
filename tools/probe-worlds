@@ -133,6 +133,14 @@ def golden(name, shard, *options):
 
 FROZEN_MANIFEST = {'file': 'manifest.json', 'seed': -1, 'frozen': True}
 END_REGIONS = ['r.-1.-1.mca', 'r.64.0.mca']
+# end-biome-router-probe.sh's dimensions, in its order: the variants it
+# writes, then the world's own End.
+END_ROUTER_DIMENSIONS = [
+    'ctl', 'erosion_m0_5', 'erosion_m0_21876', 'erosion_m0_2187500001', 'erosion_m0_21875',
+    'erosion_m0_1', 'erosion_m0_06251', 'erosion_m0_0625000001', 'erosion_m0_0625', 'erosion_0',
+    'erosion_p0_1', 'erosion_p0_25', 'erosion_p0_2500000001', 'erosion_p0_25001', 'erosion_p0_5',
+    'erosion_ygrad', 'erosion_ystep_m1', 'erosion_ystep_0', 'erosion_ystep_3', 'erosion_ystep_4',
+    'climate', 'terrain', 'vanilla']
 PRESET_REGIONS = ['amplified/r.0.0.mca', 'large_biomes/r.0.0.mca', 'overworld/r.0.0.mca']
 
 UNITS = [
@@ -302,6 +310,29 @@ UNITS = [
     unit(f'ties_s{seed}', 'end', ['aquifer-ties-probe.sh', str(seed)],
          density((f'ties_s{seed}', seed)))
     for seed in (42, 31337)
+] + [
+    # The End's biome source, minecraft:the_end, past r.0.0: four End worlds
+    # besides 0's and 42's (48-bit residues distinct from theirs and from
+    # each other's), one start of two regions each. A far region holding
+    # all four outer biomes, signs mixed across the seeds, and one
+    # straddling the 1024-block ring on a negative axis (r.-2.0 and r.0.-2
+    # hold the chunks at exactly 64 on an axis). About 40 seconds each
+    # locally; end-islands' 3200 chunks a seed took 2 minutes on a runner.
+    # Here by name, and with room: the shard ran 30.4 of its 90 minutes
+    # cold in CI run 38192289975.
+    unit(f'end-biomes_s{seed}', 'end',
+         ['end-islands-probe.sh', '--name', 'end-biomes', '--seeds', seed, '--regions', regions],
+         own(f'end-biomes/seed-{seed}', [f'r.{r.replace(",", ".")}.mca' for r in regions.split()]))
+    for seed, regions in (('31337', '-65,3 -2,0'), ('8675309', '40,-50 0,-2'),
+                          ('2891948927356891', '-30,-45 -2,-2'),
+                          ('-4172144997902289642', '70,20 -2,-1'))
+] + [
+    # Whether that biome source reads the noise router: one start of 22
+    # dimensions with its biome source and the End's settings, each with one
+    # router entry changed, beside the world's own End. About a minute locally.
+    unit('end-biome-router_s42', 'end', ['end-biome-router-probe.sh', '--seed', '42'],
+         own('end-biome-router/seed-42', [f'{name}/r.-2.-2.mca' for name in END_ROUTER_DIMENSIONS],
+             {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
 ] + [
     # markers: every cache marker a datapack can wrap an aquifer entry in,
     # five corpora (one server start each) per seed. A shard of its own: ten
@@ -563,8 +594,10 @@ def generate(units):
     for tool in ('java', 'python3'):
         if shutil.which(tool) is None:
             die(f'{tool} is needed')
-    if any(u['name'] in ('inline-noise', 'end-islands') for u in units) and not shutil.which('jq'):
-        die('jq is needed (inline-noise, end-islands)')
+    jq_generators = ('inline-noise-probe.sh', 'end-islands-probe.sh')
+    if any(os.path.basename(u['argv'][0]) in jq_generators for u in units) \
+            and not shutil.which('jq'):
+        die(f'jq is needed ({", ".join(jq_generators)})')
     if any(u['argv'][0] == FETCH for u in units):
         for tool in ('curl', 'jq', 'unzip'):
             if shutil.which(tool) is None:
