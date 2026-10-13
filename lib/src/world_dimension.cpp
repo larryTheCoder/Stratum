@@ -205,13 +205,23 @@ void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t
         throw DimensionError("a biome output of " + std::to_string(into.size()) +
                              " entries for a dimension that needs " + std::to_string(expected));
     }
+    fillBiomes(chunkX, chunkZ, javamath::floorDiv(settings.geometry.minY, kQuartWidth), into);
+}
+
+void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                   const std::int32_t minQuartY,
+                                   std::span<const data::ResourceLocation*> into) const {
+    constexpr std::size_t kQuartsPerLayer = std::size_t{kQuartsPerChunkEdge} * kQuartsPerChunkEdge;
+    if (into.size() % kQuartsPerLayer != 0) {
+        throw DimensionError("a biome output of " + std::to_string(into.size()) +
+                             " entries, which is not a whole number of 16-quart layers");
+    }
 
     // One cache for the whole chunk: it is keyed by cell, so reusing it
     // across positions changes no value, only how often corners are redone.
     density::Interpreter::CornerCache cache(impl_->biomeInterpreter.cacheSize());
-    impl_->biomeSource.fillChunk(impl_->biomeInterpreter, settings.router, chunkX, chunkZ,
-                                 javamath::floorDiv(settings.geometry.minY, kQuartWidth), into,
-                                 cache);
+    impl_->biomeSource.fillChunk(impl_->biomeInterpreter, impl_->settings.router, chunkX, chunkZ,
+                                 minQuartY, into, cache);
 }
 
 } // namespace stratum::world

@@ -6,14 +6,17 @@ read from PocketMine-MP and chunkutils2 source, and PROGRESS.md the slices).
 **Landed: `stratum_pmmp_core`** (`include/stratum_pmmp/chunk_encoder.hpp`),
 plain C++ with no PHP in it, built and tested on every CI platform.
 `encodeChunk()` generates a chunk through `world::CompiledDimension` and
-packs every sub-chunk into `PalettedBlockArray::fromData`'s own arguments
+packs all 24 of PocketMine-MP's sub-chunks — those outside a shorter
+dimension's height, such as the End's y 0..127, as air with the biome
+source's biomes read at their own y, never left to PocketMine-MP's
+all-ocean default — into `PalettedBlockArray::fromData`'s own arguments
 for chunkutils2 0.3.x: host-endian `uint32` words in XZY order, the
 smallest width chunkutils2 accepts ({0,1,2,3,4,5,6,8,16}) for a
 deduplicated palette, and no block layer for an all-air sub-chunk. Block
 palettes hold Java state ids for the PHP side to translate; biome palettes
 hold Bedrock biome ids. `tests/chunk_encoder_test.cpp` pins the byte
 lengths chunkutils2's own tests assert; `tests/vanilla_chunk_encoder_test.cpp`
-decodes real overworld chunks back to exactly what was generated.
+decodes real overworld and End chunks back to exactly what was generated.
 
 **Landed: the zend module** (`zend/php_stratum.cpp`; `zend/stratum.stub.php`
 documents its PHP surface, SPEC §4.3). Marshaling only: it freezes a

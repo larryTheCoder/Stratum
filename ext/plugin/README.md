@@ -96,7 +96,10 @@ found by reading PocketMine-MP's source rather than by running it:
 
 - A sub-chunk key `Chunk::__construct` does not find becomes air **and an
   all-ocean biome array**. Keys are signed indices (-4..19); a 0-based array
-  would shift the world vertically with nothing to say so.
+  would shift the world vertically with nothing to say so. And all 24 must
+  be given, not only those a dimension's height covers: the End generates
+  y 0..127, so `encodeChunk()` returns the other sixteen as air with the
+  End's own biomes (SPEC §4.3), and the plugin passes on every key it gets.
 - An unmapped biome id is silently replaced with `OCEAN` **on the wire**
   (`ChunkSerializer`), with no exception and no log.
 - A block PocketMine-MP does not implement (`minecraft:powder_snow` is a

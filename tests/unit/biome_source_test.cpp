@@ -29,6 +29,9 @@
 #include <stratum/biome/source.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_parameters.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/terrain/filler.hpp>
@@ -60,12 +63,24 @@ using stratum::world::CompiledDimension;
 
 namespace {
 
+/// Vanilla's End erosion, cache_2d(end_islands).
+[[nodiscard]] nlohmann::json vanillaErosion() {
+    return {{"type", "minecraft:cache_2d"}, {"argument", {{"type", "minecraft:end_islands"}}}};
+}
+
+/// The one named noise a synthetic tree's frozen pipeline carries.
+[[nodiscard]] ResourceLocation wobble() {
+    return ResourceLocation{"stratum", "wobble"};
+}
+
 /// A worldgen tree holding one settings entry, `minecraft:end`: vanilla's
-/// End geometry and erosion, solid everywhere, and a surface rule that
-/// paints end_midlands obsidian.
+/// End geometry, solid everywhere, a surface rule that paints end_midlands
+/// obsidian, and @p erosion — vanilla's own unless a case says otherwise —
+/// under the random source @p legacy names.
 class SyntheticEnd {
 public:
-    SyntheticEnd() : path_(stratum::test::tempPath("stratum-biome-source-test")) {
+    explicit SyntheticEnd(const nlohmann::json& erosion = vanillaErosion(), bool legacy = true)
+        : path_(stratum::test::tempPath("stratum-biome-source-test")) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_ / "density_function");
         std::filesystem::create_directories(path_ / "noise_settings");
@@ -74,8 +89,7 @@ public:
             router[std::string(stratum::settings::routerEntryName(
                 static_cast<stratum::settings::RouterEntry>(i)))] = 0.0;
         }
-        router["erosion"] = {{"type", "minecraft:cache_2d"},
-                             {"argument", {{"type", "minecraft:end_islands"}}}};
+        router["erosion"] = erosion;
         router["final_density"] = 1.0;
         const nlohmann::json settings = {
             {"default_block", {{"Name", "minecraft:end_stone"}}},
@@ -84,7 +98,7 @@ public:
             {"disable_mob_generation", true},
             {"aquifers_enabled", false},
             {"ore_veins_enabled", false},
-            {"legacy_random_source", true},
+            {"legacy_random_source", legacy},
             {"noise",
              {{"min_y", 0}, {"height", 128}, {"size_horizontal", 2}, {"size_vertical", 1}}},
             {"noise_router", router},
@@ -109,14 +123,17 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
-    /// The tree as a frozen pipeline would carry it: no noises, no
-    /// multi-noise lists — the End's source needs neither.
+    /// The tree as a frozen pipeline would carry it: one noise, for an
+    /// erosion that names it, and no multi-noise lists — the End's source
+    /// needs none.
     [[nodiscard]] stratum::freeze::Pipeline pipeline() const {
         stratum::settings::LoadedSettings loaded =
             stratum::settings::loadAll(stratum::data::Pack::open(path_));
         stratum::freeze::Pipeline pipeline;
         pipeline.graph = std::move(loaded.graph);
         pipeline.settings = std::move(loaded.settings);
+        pipeline.noises.emplace(wobble(), stratum::density::NoiseParameters{
+                                              .firstOctave = -4, .amplitudes = {1.0, 0.5}});
         return pipeline;
     }
 
@@ -344,4 +361,132 @@ TEST_CASE("a biome source is named by type, and the types this build lacks are r
     CHECK_THROWS_WITH(CompiledDimension::compile(tree.pipeline(), end,
                                                  BiomeSource::parse("minecraft:overworld"), 1),
                       ContainsSubstring("no biome parameter list 'minecraft:overworld'"));
+}
+
+TEST_CASE("an End whose erosion reads y is read at each layer's own y, wherever it is asked",
+          "[biome][end][world]") {
+    // Vanilla's End erosion reads no y, so a chunk's one sample serves every
+    // layer, and fillBiomes takes it once when Interpreter::isColumnInvariant
+    // says so. A datapack's need not: old_blended_noise and
+    // weird_scaled_sampler sample noise at the point's own y, and once had
+    // themselves reported invariant — old_blended_noise has no arguments,
+    // weird_scaled_sampler's input here is a constant — so fillBiomes read
+    // the bottom layer's biome into all 64. biome::Source::at, which the
+    // surface pass calls, read each layer's own, as the server does
+    // (end-biome-router-probe.sh: erosion is read at block y = 4 * qy).
+    // fillBiomes must agree with Source::at quart for quart, over the
+    // server's whole 256-block column — the noise height's 32 layers and the
+    // 32 above them, through the range form — and the columns must actually
+    // vary, or agreeing proves nothing.
+    struct Erosion {
+        const char* name;
+        nlohmann::json json;
+        bool legacy;
+    };
+
+    const std::array<Erosion, 2> erosions = {{
+        {"old_blended_noise",
+         {{"type", "minecraft:old_blended_noise"},
+          {"xz_scale", 0.25},
+          {"y_scale", 0.125},
+          {"xz_factor", 80.0},
+          {"y_factor", 160.0},
+          {"smear_scale_multiplier", 8.0}},
+         true},
+        {"weird_scaled_sampler",
+         {{"type", "minecraft:weird_scaled_sampler"},
+          {"rarity_value_mapper", "type_1"},
+          {"noise", "stratum:wobble"},
+          {"input", 0.5}},
+         false},
+    }};
+    const auto endId = ResourceLocation::parse("minecraft:end");
+    constexpr std::int32_t kLayers = 64;
+    for (const Erosion& erosion : erosions) {
+        CAPTURE(erosion.name);
+        const SyntheticEnd tree(erosion.json, erosion.legacy);
+        const stratum::freeze::Pipeline pipeline = tree.pipeline();
+        const auto dimension =
+            CompiledDimension::compile(pipeline, endId, BiomeSource::theEnd(), 20260915);
+
+        // Source::at over its own interpreter on the same pipeline.
+        const stratum::settings::NoiseSettings& settings = pipeline.settings.at(endId);
+        const std::vector<stratum::density::NodeIndex> roots(settings.router.entries.begin(),
+                                                             settings.router.entries.end());
+        const stratum::density::NoiseRegistry noises = stratum::density::NoiseRegistry::create(
+            pipeline.noises, pipeline.graph.noisesReachableFrom(roots), 20260915,
+            erosion.legacy ? stratum::density::RandomSource::Legacy
+                           : stratum::density::RandomSource::Xoroshiro);
+        const stratum::density::Interpreter interpreter(
+            pipeline.graph, noises,
+            stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                           .height = settings.geometry.cellHeight()});
+        stratum::density::Interpreter::CornerCache cache(interpreter.cacheSize());
+        const stratum::biome::Source source = stratum::biome::Source::theEnd();
+
+        std::size_t quarts = 0;
+        std::size_t differing = 0;
+        std::size_t layersOffTheBottom = 0;
+        // Outer chunks, both signs, and one inside the ring.
+        for (const auto& [chunkX, chunkZ] : std::array<std::pair<std::int32_t, std::int32_t>, 5>{
+                 {{2048, 0}, {2049, 3}, {-2050, -7}, {-70, 11}, {0, 0}}}) {
+            CAPTURE(chunkX, chunkZ);
+            std::vector<const ResourceLocation*> column(std::size_t{16} * kLayers);
+            dimension->fillBiomes(chunkX, chunkZ, 0, column);
+            std::vector<const ResourceLocation*> noiseHeight(std::size_t{16} * 32U);
+            dimension->fillBiomes(chunkX, chunkZ, noiseHeight);
+            std::size_t formsDiffering = 0;
+            for (std::size_t i = 0; i < noiseHeight.size(); ++i) {
+                formsDiffering += noiseHeight[i] == column[i] ? 0U : 1U;
+            }
+            CHECK(formsDiffering == 0U);
+            for (std::int32_t layer = 0; layer < kLayers; ++layer) {
+                for (std::int32_t qz = 0; qz < 4; ++qz) {
+                    for (std::int32_t qx = 0; qx < 4; ++qx) {
+                        const ResourceLocation& expected =
+                            source.at(interpreter, settings.router,
+                                      stratum::density::Point{.x = (chunkX * 16) + (qx * 4),
+                                                              .y = layer * 4,
+                                                              .z = (chunkZ * 16) + (qz * 4)},
+                                      cache);
+                        const std::size_t at = (static_cast<std::size_t>(layer) * 16U) +
+                                               static_cast<std::size_t>((qz * 4) + qx);
+                        ++quarts;
+                        differing += column[at] == &expected ? 0U : 1U;
+                    }
+                }
+                layersOffTheBottom +=
+                    column[static_cast<std::size_t>(layer) * 16U] == column[0] ? 0U : 1U;
+            }
+        }
+        CHECK(quarts == std::size_t{5} * 16U * kLayers);
+        CHECK(differing == 0U);
+        // Not vacuous: the erosion moves the biome from layer to layer.
+        CHECK(layersOffTheBottom > 0U);
+    }
+}
+
+TEST_CASE("fillBiomes reads any run of whole layers, and refuses a part of one",
+          "[biome][end][world]") {
+    const SyntheticEnd tree;
+    const auto dimension = CompiledDimension::compile(
+        tree.pipeline(), ResourceLocation::parse("minecraft:end"), BiomeSource::theEnd(), 31337);
+    // Below, at and above the noise height (y -64..319, PocketMine-MP's
+    // column): the End's one biome per chunk, at every y. Chunk (-64, 1) is
+    // end_midlands on the server (end-biomes r.-2.0).
+    std::vector<const ResourceLocation*> column(std::size_t{16} * 96U);
+    dimension->fillBiomes(-64, 1, -16, column);
+    std::size_t wrong = 0;
+    for (const ResourceLocation* biome : column) {
+        wrong += biome->toString() == "minecraft:end_midlands" ? 0U : 1U;
+    }
+    CHECK(wrong == 0U);
+    std::vector<const ResourceLocation*> none;
+    CHECK_NOTHROW(dimension->fillBiomes(-64, 1, 0, none));
+    std::vector<const ResourceLocation*> partial(17);
+    CHECK_THROWS_WITH(dimension->fillBiomes(-64, 1, 0, partial),
+                      ContainsSubstring("not a whole number of 16-quart layers"));
+    // The noise-height form still insists on the noise height.
+    CHECK_THROWS_WITH(dimension->fillBiomes(-64, 1, column),
+                      ContainsSubstring("for a dimension that needs 512"));
 }

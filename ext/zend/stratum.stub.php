@@ -60,9 +60,12 @@ final class Dimension{
 	public function getHeight() : int{}
 
 	/**
-	 * Every sub-chunk of the chunk, keyed by PocketMine-MP sub-chunk index.
-	 * Each layer is PalettedBlockArray::fromData()'s argument list. Block
-	 * palettes hold Java block state ids; biome palettes hold Bedrock ids.
+	 * All 24 of PocketMine-MP's sub-chunks, keyed by sub-chunk index (-4 to
+	 * 19), whatever the dimension's height: those outside it are air, with
+	 * the dimension's biomes read at their own y, so a short dimension such
+	 * as the End is never left to Chunk's all-ocean default. Each layer is
+	 * PalettedBlockArray::fromData()'s argument list. Block palettes hold
+	 * Java block state ids; biome palettes hold Bedrock ids.
 	 * The chunk's fluid updates are left for takeFluidUpdates(), replacing
 	 * any an earlier encoding of the same chunk left.
 	 *

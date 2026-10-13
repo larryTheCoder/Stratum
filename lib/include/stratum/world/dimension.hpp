@@ -139,14 +139,29 @@ public:
     /// have been built for `geometry()`.
     void fillBlocks(std::int32_t chunkX, std::int32_t chunkZ, terrain::ChunkBuffer& into) const;
 
-    /// The Java biome of every quart of the chunk, at vanilla's storage
-    /// resolution: `into[(qy * 4 + qz) * 4 + qx]`, qy counted up from
-    /// `geometry().minY`, so `into` holds `16 * (height / 4)` entries — from
-    /// the biome source this dimension was compiled with
-    /// (biome::Source::fillChunk). The pointers stay valid for this
-    /// dimension's lifetime. Throws DimensionError if @p into is the wrong
-    /// size.
+    /// The Java biome of every quart of the chunk over the dimension's noise
+    /// height, at vanilla's storage resolution: `into[(qy * 4 + qz) * 4 +
+    /// qx]`, qy counted up from `geometry().minY`, so `into` holds
+    /// `16 * (height / 4)` entries — from the biome source this dimension
+    /// was compiled with (biome::Source::fillChunk). The pointers stay valid
+    /// for this dimension's lifetime. Throws DimensionError if @p into is
+    /// the wrong size.
     void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ,
+                    std::span<const data::ResourceLocation*> into) const;
+
+    /// The same for any run of quart layers: `into.size() / 16` of them,
+    /// counted up from quart layer @p minQuartY (block y `4 * minQuartY`),
+    /// in the same order.
+    ///
+    /// The noise height is not the column the server stores biomes over: a
+    /// Java chunk carries one for every section of its DIMENSION TYPE, and
+    /// the End's (and the Nether's) is y 0..255 where its noise settings
+    /// generate 0..127. A biome source answers at any y, so this reads it
+    /// above and below the noise height as at it — which over the End's
+    /// upper half is what the server stores, quart for quart
+    /// (tests/conformance/vanilla_end_biome_source_test.cpp). Throws
+    /// DimensionError if @p into is not a whole number of layers.
+    void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                     std::span<const data::ResourceLocation*> into) const;
 
 private:

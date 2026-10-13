@@ -30,7 +30,7 @@
 // sample per chunk at its centre, the three edges, and the order of the tests
 // that sends a NaN to `end_barrens` — is adapted from cubiomes (MIT,
 // Cubitect/cubiomes, biomenoise.c: mapEndBiome and getEndBiome), read as
-// text. What cubiomes does NOT say, the server does, and where the two part
+// text, and recorded in NOTICE. What cubiomes does NOT say, the server does, and where the two part
 // the server wins: cubiomes evaluates a hard-wired copy of the island field,
 // and the vanilla server reads the dimension's own router. Measured by
 // tools/analysis/end-biome-router-probe.sh (22 datapack dimensions with this
@@ -44,8 +44,9 @@
 // only (16c + 8, 16c + 8) reads all 725 outer chunks (the next best, 228).
 // Over every quart of every End region on disk — eight golden r.0.0,
 // end-islands' four, end-biomes' eight at four more worlds, and the two
-// probes' 25 — the rule is exact, 47185920 of 47185920
-// (tests/conformance/vanilla_end_biome_source_test.cpp).
+// probes' 25 — the rule is exact, 47185920 of 47185920, both through
+// fillChunk (by way of CompiledDimension::fillBiomes) and through `at` at
+// each quart's own corner (tests/conformance/vanilla_end_biome_source_test.cpp).
 //
 // WHAT THE PROBES CANNOT SAY, and is therefore cubiomes' reading:
 //

@@ -1,5 +1,5 @@
 --TEST--
-The End opens with its own biome source, and every quart of it is Bedrock's one End biome
+The End opens with its own biome source, and every quart of all 24 sub-chunks is Bedrock's one End biome
 --EXTENSIONS--
 stratum
 chunkutils2
@@ -27,23 +27,31 @@ var_dump($end->getMinY(), $end->getHeight());
 
 // (0, 0) is the central island's; (2067, 0) is 33 000 blocks out, where the
 // server stores end_highlands over an outer island (end-islands r.64.0).
+// The End generates y 0..127, sub-chunks 0..7, and every one of
+// PocketMine-MP's other sixteen must still be given — a key Chunk's
+// constructor does not find becomes an all-ocean biome array — so they come
+// back as air, with the End's biome.
 foreach([[0, 0], [2067, 0]] as [$chunkX, $chunkZ]){
 	$subChunks = $end->encodeChunk($chunkX, $chunkZ);
 	$palettes = [];
-	$blocks = 0;
-	foreach($subChunks as ["blocks" => $layer, "biomes" => $biomes]){
+	$withBlocks = [];
+	foreach($subChunks as $index => ["blocks" => $layer, "biomes" => $biomes]){
 		PalettedBlockArray::fromData(...$biomes);
 		$palettes[implode(",", $biomes[2])] = true;
-		$blocks += $layer === null ? 0 : 1;
+		if($layer !== null){
+			PalettedBlockArray::fromData(...$layer);
+			$withBlocks[] = $index;
+		}
 	}
 	echo "chunk $chunkX $chunkZ: ", count($subChunks), " sub-chunks, keys ", array_key_first($subChunks),
 		" to ", array_key_last($subChunks), ", biome palettes ", implode(" ", array_keys($palettes)),
-		", non-air sub-chunks ", $blocks > 0 ? "some" : "none", "\n";
+		", blocks only within 0..7: ", count($withBlocks) > 0 && min($withBlocks) >= 0 && max($withBlocks) <= 7 ? "yes" : "no",
+		"\n";
 }
 unlink($blob);
 ?>
 --EXPECT--
 int(0)
 int(128)
-chunk 0 0: 8 sub-chunks, keys 0 to 7, biome palettes 9, non-air sub-chunks some
-chunk 2067 0: 8 sub-chunks, keys 0 to 7, biome palettes 9, non-air sub-chunks some
+chunk 0 0: 24 sub-chunks, keys -4 to 19, biome palettes 9, blocks only within 0..7: yes
+chunk 2067 0: 24 sub-chunks, keys -4 to 19, biome palettes 9, blocks only within 0..7: yes
