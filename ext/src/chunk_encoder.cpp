@@ -19,6 +19,14 @@ namespace {
 constexpr std::int32_t kSubChunkEdge = 16;
 constexpr std::int32_t kQuartWidth = 4;
 constexpr std::uint32_t kWordBits = 32;
+constexpr std::size_t kQuartsPerLayer = 16;
+
+/// PocketMine-MP's column in quart layers: from y -64, 96 of them.
+constexpr std::int32_t kMinQuartY = kMinSubChunk * kSubChunkEdge / kQuartWidth;
+constexpr auto kQuartLayers =
+    static_cast<std::size_t>((kMaxSubChunk + 1 - kMinSubChunk) * kSubChunkEdge / kQuartWidth);
+static_assert(kMinQuartY * kQuartWidth == kMinSubChunk * kSubChunkEdge,
+              "PocketMine-MP's column starts on a quart boundary");
 
 /// The widths chunkutils2 0.3.x accepts above zero, smallest first.
 constexpr std::array<std::uint8_t, 8> kWidths = {1, 2, 3, 4, 5, 6, 8, 16};
@@ -98,10 +106,16 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
         javaIds.push_back(mapping::javaBlockStateId(state));
     }
 
-    const std::int32_t quartsHigh = javamath::floorDiv(geometry.height, kQuartWidth);
-    std::vector<const data::ResourceLocation*> javaBiomes(16U *
-                                                          static_cast<std::size_t>(quartsHigh));
-    dimension.fillBiomes(chunkX, chunkZ, javaBiomes);
+    // Biomes over PocketMine-MP's whole column, not only the noise height:
+    // a sub-chunk Chunk::__construct is not given becomes ocean, so a
+    // shorter dimension's — the End's, y 0..127 — is filled above and below
+    // it too. The range form of CompiledDimension::fillBiomes reads the
+    // biome source at every y: over the End's y 128..255 that is what the
+    // server stores, and below 0 and from 256, where a Java End has no
+    // column at all, it is the same rule read on — for vanilla's End, the
+    // chunk's one biome, since its erosion reads no y.
+    std::vector<const data::ResourceLocation*> javaBiomes(kQuartsPerLayer * kQuartLayers);
+    dimension.fillBiomes(chunkX, chunkZ, kMinQuartY, javaBiomes);
     std::vector<std::uint32_t> bedrockBiomes;
     bedrockBiomes.reserve(javaBiomes.size());
     std::unordered_map<const data::ResourceLocation*, std::uint32_t> biomeIdOf;
@@ -119,26 +133,32 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
         bedrockBiomes.push_back(found->second);
     }
 
-    const std::int32_t firstIndex = javamath::floorDiv(geometry.minY, kSubChunkEdge);
-    const std::int32_t sections = geometry.height / kSubChunkEdge;
+    // Every one of PocketMine-MP's sub-chunks. Those outside the noise
+    // height are air, as a Java chunk's are there.
     EncodedChunk encoded;
-    encoded.subChunks.reserve(static_cast<std::size_t>(sections));
+    encoded.subChunks.reserve(static_cast<std::size_t>(kMaxSubChunk + 1 - kMinSubChunk));
     std::array<std::uint32_t, kSubChunkVolume> blocks{};
     std::array<std::uint32_t, kSubChunkVolume> biomes{};
-    for (std::int32_t section = 0; section < sections; ++section) {
-        const std::int32_t sectionMinY = (firstIndex + section) * kSubChunkEdge;
+    for (std::int32_t index = kMinSubChunk; index <= kMaxSubChunk; ++index) {
+        const std::int32_t sectionMinY = index * kSubChunkEdge;
+        const bool generated =
+            sectionMinY >= geometry.minY && sectionMinY + kSubChunkEdge <= geometry.maxY();
         bool allAir = true;
         for (int x = 0; x < kSubChunkEdge; ++x) {
             for (int z = 0; z < kSubChunkEdge; ++z) {
                 for (int y = 0; y < kSubChunkEdge; ++y) {
                     const std::size_t at = subChunkIndex(x, y, z);
-                    // Palette index 0 is always air: ChunkBuffer starts there.
-                    const std::uint16_t paletteIndex = buffer.paletteIndexAt(x, sectionMinY + y, z);
-                    allAir = allAir && paletteIndex == 0;
-                    blocks[at] = javaIds[paletteIndex];
+                    if (generated) {
+                        // Palette index 0 is always air: ChunkBuffer starts
+                        // there.
+                        const std::uint16_t paletteIndex =
+                            buffer.paletteIndexAt(x, sectionMinY + y, z);
+                        allAir = allAir && paletteIndex == 0;
+                        blocks[at] = javaIds[paletteIndex];
+                    }
 
-                    const auto quartY =
-                        static_cast<std::size_t>((sectionMinY + y - geometry.minY) / kQuartWidth);
+                    const auto quartY = static_cast<std::size_t>(
+                        javamath::floorDiv(sectionMinY + y, kQuartWidth) - kMinQuartY);
                     const std::size_t quart =
                         ((quartY * 4U) + static_cast<std::size_t>(z / kQuartWidth)) * 4U +
                         static_cast<std::size_t>(x / kQuartWidth);
@@ -147,7 +167,7 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
             }
         }
         EncodedSubChunk sub;
-        sub.index = firstIndex + section;
+        sub.index = index;
         if (!allAir) {
             sub.blocks = encodeLayer(blocks);
         }

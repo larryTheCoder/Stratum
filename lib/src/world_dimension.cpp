@@ -2,6 +2,7 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
@@ -11,7 +12,9 @@
 #include <stratum/world/dimension.hpp>
 
 #include <algorithm>
+#include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace stratum::world {
@@ -38,6 +41,24 @@ constexpr std::int32_t kQuartsPerChunkEdge = 4;
                              "'");
     }
     return found->second;
+}
+
+/// @p source bound to what it reads in @p pipeline, which must outlive it.
+[[nodiscard]] biome::Source bind(const freeze::Pipeline& pipeline, const BiomeSource& source) {
+    if (source.type() == BiomeSource::Type::TheEnd) {
+        return biome::Source::theEnd();
+    }
+    const std::optional<data::ResourceLocation>& list = source.parameterList();
+    if (!list.has_value()) {
+        // multiNoise() always names one; nothing else builds this type.
+        throw DimensionError("a minecraft:multi_noise biome source with no parameter list");
+    }
+    return biome::Source::multiNoise(listNamed(pipeline, *list));
+}
+
+[[nodiscard]] const data::ResourceLocation& theEndType() {
+    static const data::ResourceLocation kId{"minecraft", "the_end"};
+    return kId;
 }
 
 /// The noises THIS dimension needs — not every noise the pipeline carries.
@@ -73,32 +94,80 @@ noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& setti
 
 } // namespace
 
+BiomeSource BiomeSource::multiNoise(data::ResourceLocation parameterList) {
+    return {Type::MultiNoise, std::move(parameterList)};
+}
+
+BiomeSource BiomeSource::theEnd() {
+    return {Type::TheEnd, std::nullopt};
+}
+
+BiomeSource BiomeSource::parse(const std::string_view spelling) {
+    const data::ResourceLocation id = data::ResourceLocation::parse(spelling);
+    if (id == theEndType()) {
+        return theEnd();
+    }
+    // Vanilla's other biome source types: not lists, and not implemented.
+    // Refused by name here, so that `minecraft:fixed` is never reported as a
+    // parameter list the pipeline happens not to carry.
+    static constexpr std::array<std::string_view, 2> kUnimplemented = {"fixed", "checkerboard"};
+    if (id.namespaceName() == data::ResourceLocation::kDefaultNamespace) {
+        if (id.path() == "multi_noise") {
+            throw DimensionError("biome source 'minecraft:multi_noise' names no parameter list: "
+                                 "name the list it searches instead (minecraft:overworld, "
+                                 "minecraft:nether)");
+        }
+        if (std::ranges::find(kUnimplemented, std::string_view(id.path())) !=
+            kUnimplemented.end()) {
+            throw DimensionError("biome source '" + id.toString() +
+                                 "' is not implemented by this build (SPEC §8): only "
+                                 "minecraft:multi_noise, named by its parameter list, and "
+                                 "minecraft:the_end are");
+        }
+    }
+    return multiNoise(id);
+}
+
+std::string BiomeSource::toString() const {
+    if (type_ == Type::TheEnd || !parameterList_.has_value()) {
+        return theEndType().toString();
+    }
+    return parameterList_->toString();
+}
+
 /// Declaration order IS construction order, and it is load-bearing: see
 /// dimension.hpp's header. `filler` and `biomeInterpreter` are last because
 /// they hold references and pointers into everything above them.
 struct CompiledDimension::Impl {
     freeze::Pipeline pipeline;
     settings::NoiseSettings settings;
-    const biome::ParameterList& biomeParameters;
+    biome::Source biomeSource;
     surface::RuleGraph surfaceRules;
     density::NoiseRegistry noises;
     terrain::ChunkFiller filler;
     density::Interpreter biomeInterpreter;
 
     Impl(freeze::Pipeline frozen, const data::ResourceLocation& noiseSettings,
-         const data::ResourceLocation& biomeParameterList, const std::int64_t worldSeed)
+         const BiomeSource& source, const std::int64_t worldSeed)
         : pipeline(std::move(frozen)), settings(settingsNamed(pipeline, noiseSettings)),
-          biomeParameters(listNamed(pipeline, biomeParameterList)),
+          biomeSource(bind(pipeline, source)),
           surfaceRules(surface::RuleGraph::resolve(settings.surfaceRule, noiseSettings)),
           noises(density::NoiseRegistry::create(
               pipeline.noises, noisesFor(pipeline, settings, surfaceRules), worldSeed,
               settings.legacyRandomSource ? density::RandomSource::Legacy
                                           : density::RandomSource::Xoroshiro)),
           filler(terrain::ChunkFiller::compile(pipeline.graph, noises, settings, &surfaceRules,
-                                               &biomeParameters, &pipeline.biomeTemperatures)),
+                                               biomeSource, &pipeline.biomeTemperatures)),
           biomeInterpreter(pipeline.graph, noises,
                            density::CellGeometry{.width = settings.geometry.cellWidth(),
-                                                 .height = settings.geometry.cellHeight()}) {}
+                                                 .height = settings.geometry.cellHeight()}) {
+        // What the biome source reads, refused now rather than at the first
+        // chunk: the End's source reads erosion alone, a multi-noise one all
+        // six climate entries.
+        for (const settings::RouterEntry entry : biomeSource.routerEntries()) {
+            biomeInterpreter.requireEvaluable(settings.router.at(entry));
+        }
+    }
 };
 
 CompiledDimension::CompiledDimension() = default;
@@ -106,15 +175,14 @@ CompiledDimension::~CompiledDimension() = default;
 
 std::unique_ptr<CompiledDimension>
 CompiledDimension::compile(freeze::Pipeline pipeline, const data::ResourceLocation& noiseSettings,
-                           const data::ResourceLocation& biomeParameterList,
-                           const std::int64_t worldSeed) {
+                           const BiomeSource& biomeSource, const std::int64_t worldSeed) {
     // Named-lookup failures surface before anything expensive is built.
     static_cast<void>(settingsNamed(pipeline, noiseSettings));
-    static_cast<void>(listNamed(pipeline, biomeParameterList));
+    static_cast<void>(bind(pipeline, biomeSource));
 
     auto dimension = std::unique_ptr<CompiledDimension>(new CompiledDimension());
     dimension->impl_ =
-        std::make_unique<Impl>(std::move(pipeline), noiseSettings, biomeParameterList, worldSeed);
+        std::make_unique<Impl>(std::move(pipeline), noiseSettings, biomeSource, worldSeed);
     return dimension;
 }
 
@@ -137,40 +205,23 @@ void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t
         throw DimensionError("a biome output of " + std::to_string(into.size()) +
                              " entries for a dimension that needs " + std::to_string(expected));
     }
+    fillBiomes(chunkX, chunkZ, javamath::floorDiv(settings.geometry.minY, kQuartWidth), into);
+}
 
-    const std::int32_t baseQuartX = chunkX * kQuartsPerChunkEdge;
-    const std::int32_t baseQuartZ = chunkZ * kQuartsPerChunkEdge;
-    const std::int32_t baseQuartY = javamath::floorDiv(settings.geometry.minY, kQuartWidth);
-    const auto& router = settings.router;
+void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                   const std::int32_t minQuartY,
+                                   std::span<const data::ResourceLocation*> into) const {
+    constexpr std::size_t kQuartsPerLayer = std::size_t{kQuartsPerChunkEdge} * kQuartsPerChunkEdge;
+    if (into.size() % kQuartsPerLayer != 0) {
+        throw DimensionError("a biome output of " + std::to_string(into.size()) +
+                             " entries, which is not a whole number of 16-quart layers");
+    }
 
     // One cache for the whole chunk: it is keyed by cell, so reusing it
     // across positions changes no value, only how often corners are redone.
     density::Interpreter::CornerCache cache(impl_->biomeInterpreter.cacheSize());
-    const density::Interpreter& interpreter = impl_->biomeInterpreter;
-    std::size_t index = 0;
-    for (std::int32_t qy = 0; qy < quartsHigh; ++qy) {
-        for (std::int32_t qz = 0; qz < kQuartsPerChunkEdge; ++qz) {
-            for (std::int32_t qx = 0; qx < kQuartsPerChunkEdge; ++qx) {
-                const density::Point at{.x = (baseQuartX + qx) * kQuartWidth,
-                                        .y = (baseQuartY + qy) * kQuartWidth,
-                                        .z = (baseQuartZ + qz) * kQuartWidth};
-                const biome::ClimateSample sample{
-                    .temperature = interpreter.evaluate(
-                        router.at(settings::RouterEntry::Temperature), at, cache),
-                    .humidity = interpreter.evaluate(router.at(settings::RouterEntry::Vegetation),
-                                                     at, cache),
-                    .continentalness = interpreter.evaluate(
-                        router.at(settings::RouterEntry::Continents), at, cache),
-                    .erosion =
-                        interpreter.evaluate(router.at(settings::RouterEntry::Erosion), at, cache),
-                    .depth =
-                        interpreter.evaluate(router.at(settings::RouterEntry::Depth), at, cache),
-                    .weirdness =
-                        interpreter.evaluate(router.at(settings::RouterEntry::Ridges), at, cache)};
-                into[index++] = &impl_->biomeParameters.find(sample);
-            }
-        }
-    }
+    impl_->biomeSource.fillChunk(impl_->biomeInterpreter, impl_->settings.router, chunkX, chunkZ,
+                                 minQuartY, into, cache);
 }
 
 } // namespace stratum::world

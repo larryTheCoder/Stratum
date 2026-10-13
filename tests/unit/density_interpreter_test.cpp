@@ -381,6 +381,47 @@ TEST_CASE("flat_cache is only as column-invariant as what it wraps", "[density][
     CHECK_NOTHROW(pipeline.interpreter().requireEvaluable(pipeline.root("good")));
 }
 
+TEST_CASE("every node type that reads y is column-varying, whatever its arguments",
+          "[density][interpreter]") {
+    // old_blended_noise has no arguments at all and weird_scaled_sampler's
+    // input is a constant here, so "every argument invariant" would call both
+    // invariant; both sample noise at the point's own y. Measured below, not
+    // only asserted: each has two y in one column that differ.
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("blended", R"({"type":"minecraft:old_blended_noise","xz_scale":0.25,
+        "y_scale":0.125,"xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0})");
+    tree.define("weird", R"({"type":"minecraft:weird_scaled_sampler",
+        "rarity_value_mapper":"type_1","noise":"test","input":0.5})");
+    tree.define("shift", R"({"type":"minecraft:shift","argument":"minecraft:test"})");
+    tree.define("islands", R"({"type":"minecraft:end_islands"})");
+    tree.define("flat_noise", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":0.0})");
+    tree.define("bad_blended", R"({"type":"minecraft:cache_2d","argument":"blended"})");
+    tree.define("bad_weird", R"({"type":"minecraft:cache_2d","argument":"weird"})");
+    const Pipeline pipeline(tree.pack(), 17);
+
+    for (const std::string_view varying : {"blended", "weird", "shift"}) {
+        CAPTURE(varying);
+        CHECK_FALSE(pipeline.interpreter().isColumnInvariant(pipeline.root(varying)));
+        bool differs = false;
+        const double base = pipeline.at(varying, Point{.x = 37, .y = 0, .z = -91});
+        for (std::int32_t y = 1; y < 128 && !differs; ++y) {
+            differs = bits(pipeline.at(varying, Point{.x = 37, .y = y, .z = -91})) != bits(base);
+        }
+        CHECK(differs);
+    }
+    // The 2D ones stay invariant: end_islands reads no y, and a noise with
+    // y_scale 0 samples every y at the same place.
+    CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("islands")));
+    CHECK(pipeline.interpreter().isColumnInvariant(pipeline.root("flat_noise")));
+    // And cache_2d over either 3D sampler is refused, like any y-varying one.
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("bad_blended")),
+                      ContainsSubstring("cache_2d") && ContainsSubstring("varies with y"));
+    CHECK_THROWS_WITH(pipeline.interpreter().requireEvaluable(pipeline.root("bad_weird")),
+                      ContainsSubstring("cache_2d") && ContainsSubstring("varies with y"));
+}
+
 TEST_CASE("a cache over something unevaluable blames the right thing", "[density][interpreter]") {
     const TempTree tree;
     // The shape of vanilla's end/erosion, with an unevaluable argument in

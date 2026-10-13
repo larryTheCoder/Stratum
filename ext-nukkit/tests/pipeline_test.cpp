@@ -35,13 +35,16 @@ TEST_CASE("compile refuses a dimension this pipeline cannot build yet", "[nukkit
         SKIP("no worldgen fixtures under " << STRATUM_FIXTURES_DIR
                                            << "; run tools/fetch-vanilla first");
     }
-    // Nether, End, caves and floating islands are all blocked on
-    // legacy_random_source (M4) — this pipeline has never claimed to
-    // support them, and compile() says so by name rather than trying and
-    // producing a dimension whose density chain silently never ran.
+    // Outside this binding's scope, which is the overworld alone: lib
+    // compiles the End and refuses the legacy dimensions only for their
+    // surface rules' named noises (M4), but no other dimension's height and
+    // biome column have been matched to Nukkit's own. compile() says so by
+    // name rather than producing a chunk Nukkit would lay out wrongly.
     REQUIRE_THROWS_WITH(
         Pipeline::compile(packDir(), ResourceLocation::parse("minecraft:the_nether"), 1),
         ContainsSubstring("the_nether"));
+    REQUIRE_THROWS_WITH(Pipeline::compile(packDir(), ResourceLocation::parse("minecraft:end"), 1),
+                        ContainsSubstring("outside this binding's scope"));
 }
 
 TEST_CASE("compile succeeds for the overworld and reports its real geometry", "[nukkit]") {

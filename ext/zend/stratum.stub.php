@@ -27,6 +27,21 @@ function bedrockBlockState(int $javaStateId) : array{}
 function javaBlockStateCount() : int{}
 
 /**
+ * What world::BiomeSource::parse reads $biomeSource as, spelled back in
+ * full: "minecraft:the_end" for the End's own source, or the multi-noise
+ * parameter list's id ("overworld" comes back "minecraft:overworld"). Opens
+ * and compiles nothing, so a caller can refuse a source before any worker
+ * opens a Dimension with it.
+ *
+ * @throws GenerationException with parse's reason, for the types this build
+ * does not implement ("minecraft:fixed", "minecraft:checkerboard"), for
+ * "minecraft:multi_noise" named with no list, and for text that is no
+ * identifier. Whether the frozen pipeline carries a list is Dimension::open's
+ * to say.
+ */
+function parseBiomeSource(string $biomeSource) : string{}
+
+/**
  * Removes and returns the fluid updates Dimension::encodeChunk() left for
  * chunk ($chunkX, $chunkZ) of the world whose generator was opened with
  * these options and this seed, as world [x, y, z] positions. These are the
@@ -39,25 +54,33 @@ function javaBlockStateCount() : int{}
  *
  * @return list<array{int, int, int}>
  */
-function takeFluidUpdates(string $blobPath, string $noiseSettings, string $biomeParameterList, int $seed, int $chunkX, int $chunkZ) : array{}
+function takeFluidUpdates(string $blobPath, string $noiseSettings, string $biomeSource, int $seed, int $chunkX, int $chunkZ) : array{}
 
 final class Dimension{
 	private function __construct(){}
 
 	/**
 	 * One dimension of a world, compiled from its frozen pipeline. Shared by
-	 * every thread that opens the same blob, settings, list and seed.
+	 * every thread that opens the same blob, settings, biome source and seed.
+	 *
+	 * $biomeSource names the dimension's biome source: a multi-noise
+	 * parameter list's id ("minecraft:overworld", "minecraft:nether"), or
+	 * "minecraft:the_end" for the End's own. "minecraft:fixed" and
+	 * "minecraft:checkerboard" are refused by name.
 	 */
-	public static function open(string $blobPath, string $noiseSettings, string $biomeParameterList, int $seed) : Dimension{}
+	public static function open(string $blobPath, string $noiseSettings, string $biomeSource, int $seed) : Dimension{}
 
 	public function getMinY() : int{}
 
 	public function getHeight() : int{}
 
 	/**
-	 * Every sub-chunk of the chunk, keyed by PocketMine-MP sub-chunk index.
-	 * Each layer is PalettedBlockArray::fromData()'s argument list. Block
-	 * palettes hold Java block state ids; biome palettes hold Bedrock ids.
+	 * All 24 of PocketMine-MP's sub-chunks, keyed by sub-chunk index (-4 to
+	 * 19), whatever the dimension's height: those outside it are air, with
+	 * the dimension's biomes read at their own y, so a short dimension such
+	 * as the End is never left to Chunk's all-ocean default. Each layer is
+	 * PalettedBlockArray::fromData()'s argument list. Block palettes hold
+	 * Java block state ids; biome palettes hold Bedrock ids.
 	 * The chunk's fluid updates are left for takeFluidUpdates(), replacing
 	 * any an earlier encoding of the same chunk left.
 	 *

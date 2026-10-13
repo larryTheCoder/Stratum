@@ -102,6 +102,18 @@ struct CliResult {
     return path;
 }
 
+/// The same stone chunk, every one of its biome cells @p biome.
+[[nodiscard]] std::filesystem::path writeBiomeRegion(const std::string& stem,
+                                                     const std::string& biome) {
+    SectionSpec section = stoneSection(false);
+    section.biomePalette = {biome};
+    RegionBuilder builder;
+    builder.addChunk(1, 1, {section});
+    const std::filesystem::path path = stratum::test::tempPath(stem, ".mca");
+    builder.writeTo(path);
+    return path;
+}
+
 /// A minimal worldgen tree on disk, so the density render path can be driven
 /// through the real binary without the vanilla fixtures.
 class TempPack {
@@ -168,6 +180,25 @@ TEST_CASE("diff exits 1 and names the block when regions differ", "[cli]") {
     CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("block (20, 2, 19)"));
     CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:stone"));
     CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("minecraft:dirt"));
+
+    std::filesystem::remove(left);
+    std::filesystem::remove(right);
+}
+
+TEST_CASE("diff exits 1 and names the biome cell when only the biomes differ", "[cli]") {
+    // Blocks identical, biomes not: before diff compared biomes this pair
+    // read "regions are identical" and exited 0.
+    const std::filesystem::path left = writeBiomeRegion("stratum-cli-h", "minecraft:the_end");
+    const std::filesystem::path right = writeBiomeRegion("stratum-cli-i", "minecraft:plains");
+
+    const CliResult result = runCli("diff \"" + left.string() + "\" \"" + right.string() + "\"");
+    CHECK(result.exitCode == 1);
+    CHECK_THAT(result.output,
+               Catch::Matchers::ContainsSubstring("biome (16, 0, 16): minecraft:the_end != "
+                                                  "minecraft:plains"));
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("0 differing block(s)"));
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("64 differing biome cell(s)"));
+    CHECK_THAT(result.output, !Catch::Matchers::ContainsSubstring("identical"));
 
     std::filesystem::remove(left);
     std::filesystem::remove(right);

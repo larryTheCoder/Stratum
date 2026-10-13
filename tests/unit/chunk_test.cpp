@@ -158,6 +158,53 @@ TEST_CASE("sections below y=0 resolve, as they have since 1.18", "[chunk][landmi
     CHECK(chunk.blockAt(0, 4096, 0) == nullptr);
 }
 
+TEST_CASE("a biome is looked up in its own section and its own cell, x apart from z",
+          "[chunk][biome][landmine]") {
+    // As blockAt above: floorDiv from y to section, floorMod within it.
+    // Each section's palette is its own, and one cell in sections -4, -1
+    // and 0 differs from the rest of it, never at x == z.
+    SectionSpec deep = uniformSection(-4, "minecraft:stone");
+    deep.biomePalette = {"minecraft:the_end", "minecraft:end_barrens"};
+    deep.biomes.assign(stratum::chunk::kBiomesPerSection, 0);
+    deep.biomes[(3U * 16U) + (2U * 4U) + 1U] = 1; // y -52..-49, z 8..11, x 4..7
+    SectionSpec shallow = uniformSection(-1, "minecraft:stone");
+    shallow.biomePalette = {"minecraft:end_midlands", "minecraft:plains"};
+    shallow.biomes.assign(stratum::chunk::kBiomesPerSection, 0);
+    shallow.biomes[(3U * 16U) + (0U * 4U) + 3U] = 1; // y -4..-1, z 0..3, x 12..15
+    SectionSpec ground = uniformSection(0, "minecraft:stone");
+    ground.biomePalette = {"minecraft:desert", "minecraft:ocean"};
+    ground.biomes.assign(stratum::chunk::kBiomesPerSection, 0);
+    ground.biomes[(0U * 16U) + (3U * 4U) + 0U] = 1; // y 0..3, z 12..15, x 0..3
+    // A section that stores no biomes at all.
+    const SectionSpec bare = uniformSection(1, "minecraft:stone");
+
+    const Chunk chunk = decode(buildChunkNbt(0, 0, {deep, shallow, ground, bare}));
+    // A miss reads as "<none>" rather than a null to dereference, so a
+    // wrong section fails the check instead of the run.
+    const auto biome = [&chunk](const int x, const int y, const int z) -> std::string {
+        const std::string* found = chunk.biomeAt(x, y, z);
+        return found == nullptr ? std::string("<none>") : *found;
+    };
+
+    CHECK(biome(0, -64, 0) == "minecraft:the_end");
+    CHECK(biome(5, -52, 9) == "minecraft:end_barrens");
+    CHECK(biome(7, -49, 11) == "minecraft:end_barrens");
+    CHECK(biome(9, -52, 5) == "minecraft:the_end"); // x and z swapped
+    CHECK(biome(5, -53, 9) == "minecraft:the_end"); // the cell below
+    CHECK(biome(15, -16, 15) == "minecraft:end_midlands");
+    CHECK(biome(12, -4, 0) == "minecraft:plains");
+    CHECK(biome(15, -1, 3) == "minecraft:plains");
+    CHECK(biome(0, -1, 12) == "minecraft:end_midlands"); // x and z swapped
+    CHECK(biome(12, -5, 0) == "minecraft:end_midlands");
+    CHECK(biome(0, 0, 12) == "minecraft:ocean");
+    CHECK(biome(12, 0, 0) == "minecraft:desert"); // x and z swapped
+    CHECK(biome(3, 3, 15) == "minecraft:ocean");
+    CHECK(biome(3, 4, 15) == "minecraft:desert");
+    CHECK(chunk.biomeAt(0, -48, 0) == nullptr); // no section there
+    CHECK(chunk.biomeAt(0, 16, 0) == nullptr);  // a section, but no biomes
+    CHECK(chunk.biomeAt(0, 4096, 0) == nullptr);
+}
+
 TEST_CASE("block state properties are compared by meaning, not by order", "[chunk]") {
     stratum::chunk::BlockState left{"minecraft:oak_stairs", {{"facing", "north"}, {"half", "top"}}};
     stratum::chunk::BlockState right{"minecraft:oak_stairs",

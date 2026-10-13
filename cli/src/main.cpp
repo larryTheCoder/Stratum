@@ -52,7 +52,7 @@ struct Subcommand {
 constexpr auto kSubcommands = std::to_array<Subcommand>({
     {.name = "diff",
      .milestone = "M1",
-     .summary = "compare two region files block-for-block in Java block space"},
+     .summary = "compare two region files' blocks and stored biomes, in Java space"},
     {.name = "render",
      .milestone = "M1",
      .summary = "draw a region file, or a density function's field, to a PNG"},
@@ -60,7 +60,7 @@ constexpr auto kSubcommands = std::to_array<Subcommand>({
      .milestone = "M2",
      .summary = "load and schema-check a pack without generating"},
     {.name = "generate",
-     .milestone = "M3",
+     .milestone = "M5",
      .summary = "generate region files for a seed and chunk range"},
 });
 
@@ -77,7 +77,8 @@ void printUsage(std::ostream& out) {
     }
     out << "\n"
         << "  stratum diff <left.mca> <right.mca> [--max <n>]\n"
-        << "      Exits 0 when identical, 1 when they differ.\n"
+        << "      Compares every block and every stored biome. Exits 0 when both are\n"
+        << "      identical, 1 when either differs. --max lists up to n of each.\n"
         << "  stratum render <region.mca> --out <file.png> [--mode heightmap|biome|blocks]\n"
         << "  stratum render --pack <dir> --function <id> --out <file.png>\n"
         << "      [--seed N] [--origin X,Z] [--y N] [--step N] [--size WxH]\n"
@@ -110,6 +111,7 @@ int runDiff(const std::vector<std::string_view>& args) {
                 std::cerr << "stratum diff: --max needs a non-negative number\n";
                 return kExitUsage;
             }
+            options.maxBiomeDifferences = options.maxBlockDifferences;
             ++i;
         } else if (argument.starts_with("-")) {
             std::cerr << "stratum diff: unknown option '" << argument << "'\n";
@@ -134,7 +136,7 @@ int runDiff(const std::vector<std::string_view>& args) {
     const stratum::region::DiffReport report = stratum::region::diff(left, right, options);
 
     std::cout << "compared " << report.chunksCompared << " chunk(s), " << report.blocksCompared
-              << " block position(s)\n";
+              << " block position(s), " << report.biomesCompared << " biome cell(s)\n";
 
     for (const stratum::region::ChunkFinding& finding : report.chunkFindings) {
         std::cout << "chunk (" << finding.chunkX << ", " << finding.chunkZ
@@ -155,12 +157,24 @@ int runDiff(const std::vector<std::string_view>& args) {
                   << " more differing block(s); raise --max to see them\n";
     }
 
+    // Each cell named by its lowest block: one biome covers 4x4x4 of them.
+    for (const stratum::region::BiomeDifference& difference : report.biomeDifferences) {
+        std::cout << "biome (" << difference.x << ", " << difference.y << ", " << difference.z
+                  << "): " << difference.left << " != " << difference.right << '\n';
+    }
+
+    if (report.biomeDifferenceCount > report.biomeDifferences.size()) {
+        std::cout << "... and " << (report.biomeDifferenceCount - report.biomeDifferences.size())
+                  << " more differing biome cell(s); raise --max to see them\n";
+    }
+
     if (report.identical()) {
-        std::cout << "regions are identical\n";
+        std::cout << "regions are identical: every block and every stored biome\n";
         return kExitOk;
     }
 
     std::cout << report.blockDifferenceCount << " differing block(s), "
+              << report.biomeDifferenceCount << " differing biome cell(s), "
               << report.chunkFindings.size() << " chunk-level finding(s)\n";
     return kExitDifferences;
 }

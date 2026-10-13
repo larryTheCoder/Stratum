@@ -1,4 +1,4 @@
-// Stratum — block-for-block region comparison.
+// Stratum — region comparison, block for block and biome cell for biome cell.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
 #include <stratum/chunk/chunk.hpp>
@@ -16,6 +16,9 @@ namespace stratum::region {
 namespace {
 
 constexpr std::string_view kNoSection = "<no section>";
+constexpr std::string_view kNoBiomes = "<no biomes>";
+/// A biome cell's edge, in blocks: vanilla stores one biome per 4x4x4.
+constexpr int kBiomeCell = 4;
 
 struct LoadedChunk {
     chunk::Chunk chunk;
@@ -138,6 +141,41 @@ DiffReport diff(const RegionFile& left, const RegionFile& right, const DiffOptio
                                 .z = baseZ + blockZ,
                                 .left = describeBlock(leftChunk.chunk, blockX, y, blockZ),
                                 .right = describeBlock(rightChunk.chunk, blockX, y, blockZ)});
+                        }
+                    }
+                }
+            }
+
+            // The biomes, over the same y range, one cell at a time and by
+            // name: palettes are per section and per side, so two equal
+            // biomes need not share an index. A section that stores no
+            // biomes on one side and some on the other is a difference,
+            // never a pass.
+            for (int y = minY; y <= maxY; y += kBiomeCell) {
+                for (int cellZ = 0; cellZ < chunk::kSectionSize; cellZ += kBiomeCell) {
+                    for (int cellX = 0; cellX < chunk::kSectionSize; cellX += kBiomeCell) {
+                        ++report.biomesCompared;
+
+                        const std::string* leftBiome = leftChunk.chunk.biomeAt(cellX, y, cellZ);
+                        const std::string* rightBiome = rightChunk.chunk.biomeAt(cellX, y, cellZ);
+
+                        if (leftBiome == nullptr && rightBiome == nullptr) {
+                            continue;
+                        }
+                        if (leftBiome != nullptr && rightBiome != nullptr &&
+                            *leftBiome == *rightBiome) {
+                            continue;
+                        }
+
+                        ++report.biomeDifferenceCount;
+                        if (report.biomeDifferences.size() < options.maxBiomeDifferences) {
+                            report.biomeDifferences.push_back(BiomeDifference{
+                                .x = baseX + cellX,
+                                .y = y,
+                                .z = baseZ + cellZ,
+                                .left = leftBiome == nullptr ? std::string(kNoBiomes) : *leftBiome,
+                                .right =
+                                    rightBiome == nullptr ? std::string(kNoBiomes) : *rightBiome});
                         }
                     }
                 }
