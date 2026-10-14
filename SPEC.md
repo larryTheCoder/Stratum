@@ -10969,6 +10969,162 @@ Open:
   refusal and the executor's secondary-depth and `bandlands` index steps,
   each refused but never driven, now have [ub] unit cases.
 
+- **M5: Stratum inside a real PocketMine-MP — headless, on PocketMine-MP's
+  own PHP (2026-10-15).** Until now the binding had run only against
+  tools/php-dev's minimal PHP, and the plugin never.
+
+  *The owner's ruling, 2026-10-15.* M5 closes on evidence from a HEADLESS
+  PocketMine-MP server; the owner checks with a real Bedrock client
+  afterwards, so no client work is part of it. Approved downloads, and only
+  these: PocketMine-MP 5.44.3's release phar (3,354,057 bytes, SHA-256
+  d8b4d87a…105539) and pmmp/PHP-Binaries php-build-524's
+  PHP-8.2-Linux-x86_64-PM5 tarball (12,270,982 bytes, 000fc605…3082fc),
+  digests taken from GitHub's API and refused on mismatch; that build's
+  debugging symbols only if a crash needs a backtrace; and, instead of the
+  tarball, PHP built with PHP-Binaries' own compile.sh. Everything under
+  ~/.cache/stratum-pmmp, nothing in the repository, nothing run from a
+  download but the php binary and the phar.
+
+  *What was used.* The two approved files, matching their digests. Not the
+  symbols — nothing crashed — and not compile.sh: the module built against
+  tools/php-dev's PHP 8.2.30 ZTS loads into the release PHP and passes
+  there, the route the ruling preferred. `tools/pmmp-dev` fetches and
+  checks them; `cmake --preset ext-release` builds the stratum.so (Release,
+  the determinism flags every target gets); `ctest --preset pmmp` runs the
+  seven cases below, each a SKIP naming what is missing without the cache
+  or the fixtures — local evidence, not CI.
+
+  *How "nothing run but the php binary and the phar" is read.* The php
+  binary is the release PHP as PocketMine-MP runs it: the executable, the
+  shared libraries it links from its own `bin/php7/lib`, and the
+  `opcache.so` in its own extension_dir, which PHP-Binaries' php.ini
+  enables and the test server's php.ini enables likewise. No script from
+  either download runs: the PHPTs are driven by tools/php-dev's
+  `run-tests.php`, built from PHP's official source (byte-identical to the
+  tarball's copy, SHA-256 ad0e6a18…4c73f, but not taken from it). The
+  tarball is unpacked only after its whole listing, read once and in full,
+  passes: refused if tar fails or warns, or if a member is absolute or goes
+  through `..`, a symlink or hard link points at an absolute path or
+  through `..`, or a member is neither file, directory nor link. Round 1
+  ran these checks as `tar | grep -q` under pipefail, where grep exiting
+  first let tar die of SIGPIPE and the archive be extracted anyway (a
+  verifier extracted a 20002-member archive with an absolute first member
+  five times in five). The new check refuses that archive and seven more
+  crafted ones — a `..` member, symlinks through `..` and to an absolute
+  path, hard links whose raw targets are `../x` and `/etc/passwd`, a fifo,
+  a file that is not gzip — five times in five each, passes a clean one
+  with spaces, quotes and ` -> ` in its names, and unpacks the pinned
+  tarball to a tree identical to round 1's.
+
+  *Load and ABI (pmmp.load, pmmp.phpt).* The module's build id is
+  API20220829,TS, the release php's the same; the ABI lines of `php -i`
+  (PHP API 20220829, Zend Extension 420220829, Debug Build no, Thread
+  Safety enabled, Zend Signal Handling enabled, Zend Memory Manager
+  enabled, Zend Max Execution Timers disabled) are identical between the
+  PHP it was built on and PocketMine-MP's; every unversioned symbol it
+  imports is exported by that php; it loads beside the release's statically
+  built extensions (chunkutils2 0.3.5, pmmpthread 6.3.0, leveldb 0.3.0,
+  igbinary 3.2.16, morton, encoding, libdeflate, crypto, yaml and the
+  rest); and PocketMine-MP's own check_platform_dependencies accepts the
+  environment with it loaded. The ext PHPTs, 8 of 8, pass under that php,
+  driven by tools/php-dev's run-tests.php.
+
+  *Block states (pmmp.census.blocks)*, through the plugin's own
+  BlockStateTranslator — PocketMine-MP's upgrader and deserializer. Of
+  29671 Java states, 27070 are placed as themselves and 2601 fall back: 1
+  through the plugin's table (powder snow to snow) and 2600 to
+  `minecraft:info_update`, over 93 Bedrock blocks PocketMine-MP 5.44.3 does
+  not implement (shelves, copper chests and golem statues, the sculk
+  family, kelp, seagrass, pointed dripstone, moss, pistons, …); nothing
+  escaped translate(). 648 more are placed but serialized back as another
+  state (hanging signs, lightning rods, the bell, pitcher and torchflower
+  crops, the pumpkin). What v1 terrain places — 81 overworld and 25 End
+  chunks at seed 20260915, 29 and 2 distinct states — falls back only for
+  powder snow, never to info_update, and none is lossy. Features (M6) will
+  place kelp, seagrass and dripstone, which today reach info_update.
+
+  *Biomes (pmmp.census.biomes).* Every dimension of every world preset in
+  the version root: the overworld parameter list (normal, large_biomes,
+  amplified), 54 biomes to 54 Bedrock ids; the End's five to one, 9; the
+  Nether's list, 5 to 5, checked though not shipped. Every id is known to
+  LegacyBiomeIdToStringIdMap — so none is sent as OCEAN on the wire — and
+  defined in the biome definitions clients are sent. BiomeRegistry knows
+  12 of them and answers UnknownBiome for the rest, which nothing a
+  generator hands it reads. Encoded chunks carried 30 overworld ids and
+  the End's 9, every one predicted.
+
+  *Threads (pmmp.threads).* Four `pocketmine\thread\Thread`s race to open
+  one blob's Dimension and encode the same 16 chunks from different
+  starting points, overworld and End; all four were encoding at once, and
+  64 of 64 encodes of each are byte-identical to a single thread's.
+
+  *The server (pmmp.smoke.overworld, pmmp.smoke.end).* Headless, hermetic
+  (loopback in a network namespace of its own; IPv6, Query, UPnP, Xbox
+  Live authentication, crash reports, statistics and update checks off),
+  the plugin as a locally built phar — 5.44.3 has no folder loader — and
+  the world a pocketmine.yml `worlds:` entry: generator `stratum`, the
+  plugin's own GeneratorOptions::encode as the preset, the pipeline frozen
+  from the version root into the world's folder as WorldFactory does.
+  async-workers 3 (auto would be 10 here; two other builds shared the
+  machine). The generator registers on all three workers, the spawn area's
+  224 chunks are populated (292 on disk), level.dat holds `stratum`, the
+  options and the seed, and the console's `stop` returns with exit 0 — no
+  crash dump, error, exception or PHP diagnostic, and no warning from the
+  plugin but its documented powder-snow fallback, once per worker. Spawn
+  area wall time, overworld: 17.1 to 46.5 s over thirteen runs in two
+  rounds. A restart loads the world from disk. The End passes the same
+  checks in 0.9 to 2.3 s — its spawn area is all air (below).
+
+  *What the chunks hold.* After the stop, every chunk on disk — 292,
+  28,704,768 blocks and as many biome entries — is read back through
+  PocketMine-MP's own LevelDB provider and compared with what the engine
+  generates for it: the world's options from level.dat, parsed by the
+  plugin's GeneratorOptions, opened as a Dimension at the level.dat seed,
+  each chunk encoded, each Java state through the plugin's translator, the
+  sub-chunks read by their own indices rather than through the plugin's
+  generator. Biomes must be identical, and are in every run. Blocks must
+  be too, but for what PocketMine-MP's own liquid rules
+  (Liquid::onScheduledUpdate, Lava::flowIntoBlock, Lava::checkForHarden)
+  make of the aquifer fluid the plugin's scheduler sets flowing — air now
+  water or lava, air now stone or cobblestone, water now stone, lava now
+  obsidian or cobblestone — each counted; anything else fails. Overworld,
+  seven runs: 567 to 693 blocks of air now flowing water in six, and in
+  the seventh, the one with the most redone populations (54), 2667, with 4
+  of the engine's lava blocks hardened to obsidian where that water
+  reached them; nothing else. The End: no difference. Round 1's check
+  looked at none of this — a verifier showed a plugin writing empty chunks
+  passed it — and this one fails that plugin on both dimensions and one
+  filing each sub-chunk an index up on the overworld (tried with
+  `--plugin-dir`). Because the End's spawn area is all air, its comparison
+  covers biomes and air only.
+
+  *Found, and not fixed (none blocked the boot; reported to the owner).*
+  (1) The fluid scheduler makes PocketMine-MP redo population: a liquid it
+  sets flowing inside the 3x3 of a population task still in flight
+  invalidates that task (`World::generateChunkCallback`), and 3 to 56 were
+  discarded per overworld run against none with the scheduler left out;
+  in three paired runs the spawn area took 45.9/37.4, 32.5/22.0 and
+  23.1/19.6 s with and without it. (2) A Stratum world cannot move: its
+  options hold the blob's absolute path, PocketMine-MP validates them on
+  every load, and a server directory moved elsewhere refuses its default
+  world and stops at startup — measured. (3) An End world is presented as
+  the overworld: PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to
+  every client (`PreSpawnPacketHandler`, `NetworkSession`), and a new
+  world's default spawn, (256, 70, 256), is over the End's void, its whole
+  spawn area air. (4) The zend module never refreshes its static TSRM
+  cache (`ZEND_TSRMLS_CACHE_UPDATE`); harmless while every zend access goes
+  through an exported function, as now. (5) Read from source, not run:
+  `WorldFactory::create` freezes a new pipeline over
+  `worlds/<name>/stratum-pipeline.blob` before it asks WorldManager to
+  generate the world, and WorldManager refuses a world that already
+  exists — so create() for an existing Stratum world returns false having
+  replaced that world's blob, and chunks it generates afterwards come from
+  the new freeze.
+
+  *Not verified.* Anything a client sees: terrain, biomes, the End's sky,
+  and whether the scheduled fluid flows as a Java server's does. That is
+  the owner's follow-up.
+
 ---
 
 ## 12. Content, provenance & distribution policy
