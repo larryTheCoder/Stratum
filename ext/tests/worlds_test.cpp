@@ -37,9 +37,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -191,6 +193,135 @@ private:
     return names;
 }
 
+// The race below: kWorkers workers, kRounds opens each, as PocketMine-MP's
+// generation workers open and drop worlds.
+constexpr int kWorkers = 8;
+constexpr int kRounds = 50;
+
+/// Which of @p worlds worker @p worker opens in round @p round: each worker
+/// a different mix. Chunk (@p worker, @p round) is generated in that world
+/// and no other.
+[[nodiscard]] std::size_t worldOf(int worker, int round, std::size_t worlds) {
+    return static_cast<std::size_t>(worker + round) % worlds;
+}
+
+/// Where chunk (@p worker, @p round) is counted in RaceCount::taken.
+[[nodiscard]] std::size_t chunkIndex(int worker, int round) {
+    return (static_cast<std::size_t>(worker) * static_cast<std::size_t>(kRounds)) +
+           static_cast<std::size_t>(round);
+}
+
+/// The one fluid update a worker leaves for chunk (worker, @p round).
+[[nodiscard]] FluidUpdate updateOf(int round) {
+    return at(1, round, 2);
+}
+
+/// What a race saw, counted on its threads and checked after they joined:
+/// Catch2's assertions are not thread-safe.
+struct RaceCount {
+    /// An open that threw, or returned no dimension, no outbox or a
+    /// dimension of the wrong height; an unpin of a world that was not
+    /// pinned; an update taken that is not the one put for its chunk, or
+    /// was put in another world.
+    int wrong = 0;
+    /// Opens of the world the main thread pins and takes from.
+    int mainOpens = 0;
+    /// How many times the main thread pinned, took from and unpinned it.
+    int mainRounds = 0;
+    /// How many updates were taken from that world, chunk by chunk
+    /// (chunkIndex).
+    std::vector<int> taken = std::vector<int>(static_cast<std::size_t>(kWorkers * kRounds), 0);
+};
+
+/// Takes what world @p options[@p main] holds for every chunk the race
+/// generates, counting it in @p count.
+void takeEvery(Worlds& worlds, const std::vector<WorldOptions>& options, std::size_t main,
+               RaceCount& count) {
+    for (int w = 0; w < kWorkers; ++w) {
+        for (int i = 0; i < kRounds; ++i) {
+            const std::vector<FluidUpdate> updates = worlds.takeFluidUpdates(options[main], w, i);
+            if (updates.empty()) {
+                continue;
+            }
+            if (worldOf(w, i, options.size()) != main ||
+                updates != std::vector<FluidUpdate>{updateOf(i)}) {
+                ++count.wrong;
+            }
+            count.taken[chunkIndex(w, i)] += static_cast<int>(updates.size());
+        }
+    }
+}
+
+/// kWorkers workers open and drop @p options over and over, each leaving
+/// one fluid update for chunk (worker, round) in the world it opened, while
+/// PocketMine-MP's main thread loads world @p options[@p main] (pins it),
+/// takes its updates, and unloads it (unpins it), over and over until the
+/// workers are done. Every thread starts at once, so the main thread's
+/// pins, takes and unpins land among the workers' opens and puts.
+[[nodiscard]] RaceCount race(Worlds& worlds, const std::vector<WorldOptions>& options,
+                             std::size_t main) {
+    std::atomic<bool> go{false};
+    std::atomic<int> wrong{0};
+    std::atomic<int> mainOpens{0};
+    std::atomic<int> working{kWorkers};
+    RaceCount count;
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(kWorkers + 1);
+        for (int w = 0; w < kWorkers; ++w) {
+            threads.emplace_back([&worlds, &options, &go, &wrong, &mainOpens, &working, main, w] {
+                while (!go.load()) {
+                    std::this_thread::yield();
+                }
+                for (int i = 0; i < kRounds; ++i) {
+                    const std::size_t world = worldOf(w, i, options.size());
+                    try {
+                        const OpenWorld opened = worlds.open(options[world]);
+                        if (opened.dimension == nullptr || opened.fluidUpdates == nullptr ||
+                            opened.dimension->geometry().height != 384) {
+                            ++wrong;
+                            continue;
+                        }
+                        if (world == main) {
+                            ++mainOpens;
+                        }
+                        opened.fluidUpdates->put(w, i, {updateOf(i)});
+                    } catch (const std::exception&) {
+                        ++wrong;
+                    }
+                }
+                --working;
+            });
+        }
+        // The main thread, and the one thread that writes `count` until the
+        // join. At least one round, however fast the workers are.
+        threads.emplace_back([&worlds, &options, &go, &working, &count, main] {
+            while (!go.load()) {
+                std::this_thread::yield();
+            }
+            do {
+                try {
+                    worlds.pin(options[main]);
+                    takeEvery(worlds, options, main, count);
+                    if (!worlds.unpin(options[main])) {
+                        ++count.wrong;
+                    }
+                } catch (const std::exception&) {
+                    ++count.wrong;
+                }
+                ++count.mainRounds;
+            } while (working.load() > 0);
+        });
+        go = true;
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
+    }
+    count.wrong += wrong.load();
+    count.mainOpens = mainOpens.load();
+    return count;
+}
+
 } // namespace
 
 TEST_CASE("a dimension PocketMine-MP cannot hold is refused by name when it is opened", "[pmmp]") {
@@ -279,7 +410,6 @@ TEST_CASE("workers open and close the same and different worlds at once", "[pmmp
     const std::vector<WorldOptions> options = {overworld(blobA, 1), overworld(blobA, 2),
                                                overworld(blobB, 1)};
 
-    constexpr int kWorkers = 8;
     // Phase one: every worker opens every world and holds it until all have,
     // so every holder of a world is open at once and must share.
     std::vector<std::vector<OpenWorld>> held(kWorkers);
@@ -310,43 +440,62 @@ TEST_CASE("workers open and close the same and different worlds at once", "[pmmp
     CHECK(worlds.dimensions().entries() == 2U);
     held.clear();
 
-    // Phase two: workers open and drop worlds over and over, each a
-    // different mix, while one pins and unpins a fourth. Counted here and
-    // checked after the join: Catch2's assertions are not thread-safe.
-    std::atomic<int> wrong{0};
-    {
-        std::vector<std::thread> workers;
-        workers.reserve(kWorkers + 1);
-        for (int w = 0; w < kWorkers; ++w) {
-            workers.emplace_back([&worlds, &options, &wrong, w] {
-                for (int i = 0; i < 50; ++i) {
-                    const WorldOptions& world =
-                        options[static_cast<std::size_t>(i + w) % options.size()];
-                    const OpenWorld opened = worlds.open(world);
-                    opened.fluidUpdates->put(w, i, {at(1, i, 2)});
-                    if (opened.dimension->geometry().height != 384) {
-                        ++wrong;
-                    }
-                }
-            });
-        }
-        workers.emplace_back([&worlds, &blobB, &wrong] {
-            for (int i = 0; i < 50; ++i) {
-                worlds.pin(overworld(blobB, 9));
-                if (!worlds.unpin(overworld(blobB, 9))) {
-                    ++wrong;
-                }
+    // The world the main thread loads, generates and unloads below, and the
+    // chunks the race generates in it: each exactly once.
+    constexpr std::size_t kMain = 2;
+    std::vector<int> generated(static_cast<std::size_t>(kWorkers * kRounds), 0);
+    int mainChunks = 0;
+    for (int w = 0; w < kWorkers; ++w) {
+        for (int i = 0; i < kRounds; ++i) {
+            if (worldOf(w, i, options.size()) == kMain) {
+                generated[chunkIndex(w, i)] = 1;
+                ++mainChunks;
             }
-        });
-        for (std::thread& worker : workers) {
-            worker.join();
         }
     }
-    CHECK(wrong == 0);
+
+    // Phase two: workers open and drop worlds over and over, each a
+    // different mix, while the main thread loads one of those same worlds,
+    // takes its fluid updates and unloads it, over and over: a pin's first
+    // open and its last unpin land among workers opening the world.
+    const RaceCount loading = race(worlds, options, kMain);
+    CHECK(loading.wrong == 0);
+    // Every open of the world returned its dimension and its outbox,
+    // whether a pin held them at the time or not.
+    CHECK(loading.mainOpens == mainChunks);
+    // Between pins nothing but workers holds the outbox, and it goes, with
+    // what it holds, whenever none does: an update can be lost here (phase
+    // three is the pinned case). None is taken twice, or from another world.
+    int takenWrongly = 0;
+    for (std::size_t chunk = 0; chunk < generated.size(); ++chunk) {
+        if (loading.taken[chunk] > generated[chunk]) {
+            ++takenWrongly;
+        }
+    }
+    CHECK(takenWrongly == 0);
+    CHECK_FALSE(worlds.pinned(options[kMain]));
+
+    // Phase three: the same, with the world pinned throughout, as it is from
+    // load to unload, so the race's pins and unpins move only the count.
+    // Workers still come and go, and every update they leave is taken once.
+    worlds.pin(options[kMain]);
+    RaceCount loaded = race(worlds, options, kMain);
+    takeEvery(worlds, options, kMain, loaded); // what was put after its last take
+    CHECK(worlds.unpin(options[kMain]));
+    CHECK(loaded.wrong == 0);
+    CHECK(loaded.mainOpens == mainChunks);
+    int notTakenOnce = 0;
+    for (std::size_t chunk = 0; chunk < generated.size(); ++chunk) {
+        if (loaded.taken[chunk] != generated[chunk]) {
+            ++notTakenOnce;
+        }
+    }
+    CHECK(notTakenOnce == 0);
+
     // Nothing holds any of them now: one more open prunes every other entry.
     const OpenWorld last = worlds.open(options[0]);
     CHECK(worlds.dimensions().entries() == 1U);
-    CHECK_FALSE(worlds.pinned(overworld(blobB, 9)));
+    CHECK_FALSE(worlds.pinned(options[kMain]));
 }
 
 TEST_CASE("a pinned world outlives its generators and the file it was read from", "[pmmp]") {
