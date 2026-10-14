@@ -173,6 +173,12 @@ namespace holding only loopback (`unshare -rn`), `-Xmx2G`:
 2. loads the world, reads the same chunks back from disk (generating none),
    compares again, stops.
 
+The server lives in `$STRATUM_NUKKIT_DIR/servers/smoke`, rebuilt from empty
+each run; `STRATUM_NUKKIT_SERVER_DIR` moves it. The default disk
+(`~/stratum-work`) is exFAT: no symlinks or Unix permissions, so nothing is
+linked there, and should Nukkit's LevelDB misbehave on it,
+`~/.cache/stratum-nukkit/smoke` is the place to move it to.
+
 It passes when `level.dat` names `stratum`, every chunk is on disk and was
 filled by Stratum, blocks match everywhere, biomes match in memory, disk
 biome mismatches (if any) are all the serializer offset above, neither run

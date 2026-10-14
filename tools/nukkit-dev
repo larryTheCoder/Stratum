@@ -23,7 +23,10 @@
 #
 # Everything lives under $STRATUM_NUKKIT_DIR (default ~/stratum-work/nukkit):
 # jars/ the verified jar, quarantine/ what `pin` downloaded, servers/ the
-# server directories `smoke` writes. Idempotent: a verified jar is reused,
+# server directories `smoke` writes ($STRATUM_NUKKIT_SERVER_DIR moves the
+# smoke server elsewhere: ~/stratum-work is an exFAT disk, and should Nukkit's
+# LevelDB misbehave there, ~/.cache/stratum-nukkit/smoke is the place to put
+# it). Idempotent: a verified jar is reused,
 # `server` rewrites only its configuration, `smoke` starts from an empty
 # directory each time.
 #
