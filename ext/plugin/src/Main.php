@@ -24,6 +24,7 @@ use pocketmine\world\generator\InvalidGeneratorOptionsException;
 final class Main extends PluginBase{
 
 	private ?StratumWorlds $worlds = null;
+	private ?FluidUpdateScheduler $fluids = null;
 
 	protected function onLoad() : void{
 		// What a world's relative blob path ("worlds/<name>/
@@ -71,7 +72,7 @@ final class Main extends PluginBase{
 		$this->worlds = new StratumWorlds($this->getLogger(), static function(\Closure $task) use ($scheduler) : void{
 			$scheduler->scheduleTask(new ClosureTask($task));
 		});
-		$fluids = new FluidUpdateScheduler($this->worlds);
+		$fluids = $this->fluids = new FluidUpdateScheduler($this->worlds);
 		$pluginManager = $this->getServer()->getPluginManager();
 		$pluginManager->registerEvents($this->worlds, $this);
 		$pluginManager->registerEvents($fluids, $this);
@@ -83,5 +84,6 @@ final class Main extends PluginBase{
 	protected function onDisable() : void{
 		$this->worlds?->unpinAll();
 		$this->worlds = null;
+		$this->fluids = null;
 	}
 }

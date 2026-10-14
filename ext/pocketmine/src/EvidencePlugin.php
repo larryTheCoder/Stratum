@@ -64,7 +64,9 @@ use const JSON_THROW_ON_ERROR;
  *  - `stratumevidence status`: the async pool's running workers, when they
  *    were last given a task (AsyncPoolWorkerEntry::$lastUsed, which
  *    AsyncPool::shutdownUnusedWorkers() compares with 300 seconds ago),
- *    and the pin;
+ *    the pin, how many of the world's chunks are loaded, and how many the
+ *    Stratum plugin's FluidUpdateScheduler holds and will look at on its
+ *    next release — read through reflection too, from the plugin's Main;
  *  - `stratumevidence populate`: orders the population of every chunk next
  *    to the spawn area that is generated and not populated — chunks the
  *    old workers generated, as neighbours, before they were shut down — and
@@ -238,11 +240,16 @@ final class EvidencePlugin extends PluginBase implements Listener{
 		}
 		$running = $pool->getRunningWorkers();
 		$pinned = $this->pinned($world);
+		$loaded = count($world->getLoadedChunks());
+		$fluids = $this->fluids();
 		$this->report["status"][] = ["runningWorkers" => $running, "poolSize" => $pool->getSize(), "lastUsed" => $lastUsed,
-			"queuedTasks" => $queued, "pinned" => $pinned, "time" => time()];
+			"queuedTasks" => $queued, "pinned" => $pinned, "time" => time(),
+			"loadedChunks" => $loaded, "chunksHeld" => $fluids?->chunksHeld(), "chunksDue" => $fluids?->chunksDue()];
 		$this->getLogger()->info("status: async workers running [" . implode(",", $running) . "] of " . $pool->getSize() .
 			", " . $queued . " task(s) queued, last given a task at " . $lastUsed . ", now " . time() .
-			"; world \"" . $this->worldName . "\" pinned by StratumWorlds' record: " . self::yesNo($pinned));
+			"; world \"" . $this->worldName . "\" pinned by StratumWorlds' record: " . self::yesNo($pinned) .
+			"; " . $loaded . " of its chunks loaded; the fluid scheduler holds " .
+			($fluids === null ? "(cannot tell)" : $fluids->chunksHeld() . " chunk(s), " . $fluids->chunksDue() . " due"));
 		return true;
 	}
 
@@ -363,6 +370,19 @@ final class EvidencePlugin extends PluginBase implements Listener{
 		}
 		$worlds = (new \ReflectionProperty(\Stratum\PMMP\Main::class, "worlds"))->getValue($plugin);
 		return $worlds instanceof \Stratum\PMMP\StratumWorlds ? $worlds->isPinned($world) : null;
+	}
+
+	/**
+	 * The Stratum plugin's FluidUpdateScheduler, read through reflection as
+	 * pinned() reads its StratumWorlds, or null if that cannot be read.
+	 */
+	private function fluids() : ?\Stratum\PMMP\FluidUpdateScheduler{
+		$plugin = $this->getServer()->getPluginManager()->getPlugin("Stratum");
+		if(!$plugin instanceof \Stratum\PMMP\Main){
+			return null;
+		}
+		$fluids = (new \ReflectionProperty(\Stratum\PMMP\Main::class, "fluids"))->getValue($plugin);
+		return $fluids instanceof \Stratum\PMMP\FluidUpdateScheduler ? $fluids : null;
 	}
 
 	private static function yesNo(?bool $value) : string{

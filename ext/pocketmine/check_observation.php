@@ -35,6 +35,10 @@ declare(strict_types=1);
  *     what shows the extension's pin held — the extension cannot be asked
  *     whether a world is pinned without changing its pins — and a plugin
  *     that records a pin and never makes one fails here.
+ *  5. At every `stratumevidence status`, the plugin's FluidUpdateScheduler
+ *     held no more chunks than the world had loaded: it lets a chunk go as
+ *     it unloads, so what waits on terrain no one returns to does not pile
+ *     up. Printed at each, with how many it had due.
  */
 
 namespace Stratum\PocketMineEvidence;
@@ -193,6 +197,20 @@ if(count($short) > 0){
 if($markedTotal === 0 && $ordered > 0){
 	$failures[] = "the engine marks no fluid position in the chunks populated after the shutdown, so nothing shows the pin kept any";
 }
+
+// --- 5. the fluid scheduler holds only loaded chunks ---------------------------
+
+$scheduler = [];
+foreach($statuses as $status){
+	$held = $status["chunksHeld"] ?? null;
+	$scheduler[] = ($held === null ? "?" : $held . " held, " . ($status["chunksDue"] ?? "?") . " due") . " of " . ($status["loadedChunks"] ?? "?") . " loaded";
+	if($held === null){
+		$failures[] = "the fluid scheduler's chunks could not be read at a status";
+	}elseif($held > ($status["loadedChunks"] ?? -1)){
+		$failures[] = "the fluid scheduler held " . $held . " chunks with " . ($status["loadedChunks"] ?? "?") . " loaded";
+	}
+}
+echo "the fluid scheduler at each status: ", count($scheduler) > 0 ? implode("; ", $scheduler) : "never asked", "\n";
 
 if(count($failures) > 0){
 	foreach($failures as $failure){
