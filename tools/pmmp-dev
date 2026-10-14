@@ -135,8 +135,10 @@ fetch() {
     fi
     mkdir -p "$(dirname "${dest}")"
     log "downloading ${url}"
-    curl -fL --proto '=https' --tlsv1.2 --retry 3 -o "${dest}.part" "${url}" >&2 ||
-        die "download failed: ${url}"
+    if ! curl -fL --proto '=https' --tlsv1.2 --retry 3 -o "${dest}.part" "${url}" >&2; then
+        rm -f "${dest}.part"
+        die "download failed: ${url}; nothing was kept"
+    fi
     if ! (verify "${dest}.part" "${size}" "${sha}"); then
         rm -f "${dest}.part"
         die "the download of ${url} is not the approved file; nothing was kept"
@@ -203,7 +205,10 @@ unpack() {
     check_listing "${tarball}"
     local staging
     staging="$(mktemp -d "${cache_dir}/.unpack.XXXXXX")"
-    tar -xzf "${tarball}" -C "${staging}" --no-same-owner
+    if ! tar -xzf "${tarball}" -C "${staging}" --no-same-owner; then
+        rm -rf "${staging}"
+        die "refusing ${tarball}: tar failed to extract it; nothing was kept"
+    fi
     rm -rf "${dest}"
     mv "${staging}" "${dest}"
     printf '%s\n' "${sha}" >"${dest}/.stratum-sha256"
@@ -221,10 +226,14 @@ install_all() {
     fi
 }
 
-# A check never downloads: it skips, by name, when the cache is not there.
+# A check never downloads: it skips, by name, when the cache is not there,
+# and refuses a PHP tree unpacked from anything but the pinned tarball (its
+# marker is what unpack() wrote, the tarball's SHA-256).
 require_cache() {
     [[ -x "${php_bin}" && -f "${php_dir}/.stratum-sha256" ]] ||
         skip "PocketMine-MP's PHP is not unpacked at ${php_dir}; run tools/pmmp-dev"
+    [[ "$(cat "${php_dir}/.stratum-sha256")" == "${PHP_SHA256}" ]] ||
+        die "${php_dir} was not unpacked from the pinned ${PHP_TARBALL} (its .stratum-sha256 is not ${PHP_SHA256}); run tools/pmmp-dev"
     [[ -f "${phar}" ]] || skip "PocketMine-MP ${PMMP_VERSION} is not fetched to ${phar}; run tools/pmmp-dev"
     verify "${phar}" "${PHAR_SIZE}" "${PHAR_SHA256}"
 }
@@ -362,15 +371,22 @@ cmd_check_load() {
     done
 
     # PocketMine-MP's own startup gate (check_platform_dependencies) runs
-    # before --version prints, and exits 1 naming whatever it refuses.
+    # before --version prints, and exits 1 naming whatever it refuses. PHP
+    # itself only warns about a module it could not load and runs on
+    # without it, so that is a failure here too: the gate would have passed
+    # without stratum.so.
     local tmp gate rc=0
     tmp="$(mktemp -d)"
     gate="$("${php_bin}" -n -d extension="${so}" -d phar.require_hash=1 -d memory_limit=1024M \
         -d zend.assertions=-1 -d sys_temp_dir="${tmp}" "${phar}" --version 2>&1)" || rc=$?
     rm -rf "${tmp}"
-    echo "PocketMine-MP's startup gate, with stratum.so loaded (exit ${rc}): ${gate}"
+    echo "PocketMine-MP's startup gate, with stratum.so (exit ${rc}): ${gate}"
     if [[ ${rc} -ne 0 ]] || ! grep -q "PocketMine-MP ${PMMP_VERSION}" <<<"${gate}"; then
         echo "FAIL: PocketMine-MP refused this PHP environment"
+        failures=$((failures + 1))
+    fi
+    if grep -Eqi 'Unable to initialize module|Module compiled|Unable to load' <<<"${gate}"; then
+        echo "FAIL: PHP did not load stratum.so for PocketMine-MP's startup gate, which then ran without it"
         failures=$((failures + 1))
     fi
 
