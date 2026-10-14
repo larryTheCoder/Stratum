@@ -84,15 +84,19 @@ PocketMine-MP itself can call.
   holds a liquid once the liquid's own tick rate has passed — the delay
   `Liquid::onNearbyBlockChange()` schedules itself. Population rather than
   first load, because a populated chunk's neighbours all exist and the flow
-  cannot reach ungenerated terrain. And never while a population task is
-  in flight round the chunk: such a task locks its 3x3 (`World::lockChunk`),
-  and any block set there while it runs makes PocketMine-MP discard its
-  result and populate again, so a chunk's liquids are held until no chunk
-  of its 3x3 is locked. `Main` runs the release once a tick from its task
-  scheduler, which PocketMine-MP ticks before it collects finished
-  population tasks and before the worlds tick, and a released liquid is
-  ticked in that same server tick. Registered in `onEnable()`, which at
-  `load: STARTUP` is still before any world loads.
+  cannot reach ungenerated terrain. And never where a population is in
+  flight or still to come: a population task locks its 3x3
+  (`World::lockChunk`), and any block set there while it runs makes
+  PocketMine-MP discard its result and populate again. So a chunk's
+  liquids are held until none of its 3x3 is locked and every chunk within
+  two of it — every chunk whose population could lock that 3x3 — is loaded
+  and populated, which PocketMine-MP never populates again; a chunk at the
+  edge of what is populated keeps its liquids until the chunks beyond it
+  are. `Main` runs the release once a tick from its task scheduler, which
+  PocketMine-MP ticks before it collects finished population tasks and
+  before the worlds tick, and a released liquid is ticked in that same
+  server tick. Registered in `onEnable()`, which at `load: STARTUP` is
+  still before any world loads.
 - `WorldFactory::create()` makes one of four dimensions, as vanilla's world
   presets pair settings and biome source: `OVERWORLD` (the default),
   `LARGE_BIOMES` and `AMPLIFIED` (their settings, the overworld's parameter
@@ -235,19 +239,28 @@ client.** Every check above passes. What that leaves:
   the next tick — is `007_failed_pin.phpt`'s, against stand-ins. Not held
   back: a population some other code orders outside the locked spawn area
   between the failed pin and the next tick.
-- **The fluid updates cost generation work.** A block update scheduled at
-  each aquifer liquid when its chunk is populated makes that liquid flow
-  while the spawn area is still generating, and a block change inside the
-  3x3 of a population task still in flight makes PocketMine-MP discard
-  that task's result and populate again (`World::generateChunkCallback`).
-  Measured on the overworld smoke: 3 to 56 discarded populations a run,
-  and slower spawn generation in each of three paired runs, against none
-  with the scheduler left out. Whether the flow is Java's is unobserved.
+- **The fluid updates no longer cost generation work.** A block update
+  scheduled at each aquifer liquid as its chunk was populated made that
+  liquid flow while the spawn area was still generating, and a block
+  change inside the 3x3 of a population task still in flight makes
+  PocketMine-MP discard that task's result and populate again
+  (`World::generateChunkCallback`): 3 to 56 discarded populations an
+  overworld smoke. Holding a chunk's liquids only until its 3x3 was
+  unlocked still lost 18 in one run; held until every chunk within two is
+  populated as well, four overworld boots of this plugin discarded none
+  (241 to 462 blocks of air turned to flowing water in each, nothing else
+  different from the engine). The price: a chunk at the edge of what is
+  populated keeps its aquifer fluid still until the chunks beyond it are
+  populated. Whether the flow is Java's is unobserved.
 - **Only a world whose options name its blob relatively can move.**
   `WorldFactory` writes `worlds/<name>/stratum-pipeline.blob`, read against
   the data path `Main` gives the extension, and such a world loads from a
-  moved or renamed server directory (`006_moved_server.phpt`, against
-  stand-ins; not yet moved inside the real server). A world whose options
+  moved or renamed server directory: `006_moved_server.phpt` against
+  stand-ins, and once in the real server (a scratch run, not a CTest
+  case): a server whose default world names its blob relatively, with an
+  End world `WorldFactory` made, moved whole to another path, booted
+  again, loaded both, generated a new chunk in each, and every chunk on
+  disk matched the engine's encode. A world whose options
   hold an absolute path — every world made before this, and the smoke's
   `worlds:` entry, which `tools/pmmp-dev` writes absolute — still loads
   only where it was made: moved, PocketMine-MP refuses it at load, and a
@@ -257,12 +270,15 @@ client.** Every check above passes. What that leaves:
   biome. But PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to every
   client whatever the world (`PreSpawnPacketHandler`, `NetworkSession`),
   so its sky, fog and light will be the overworld's. `WorldFactory::create()`
-  with `THE_END` writes the End's options and spawns the world over the
-  main island; a `worlds:` entry, the smoke's included, cannot set a spawn,
-  so its End world gets PocketMine-MP's default, (256, 70, 256), over the
-  void between the main island and the outer ones, and the whole 224-chunk
-  spawn area the smoke checks is air. Read from source and measured
-  headless; no client has seen it.
+  with `THE_END` writes the End's options and spawns the world at
+  (0, 128, 0), over the main island: in the real server (the scratch run
+  above) its 224-chunk spawn area held end stone in 608 sub-chunk palettes,
+  biome 9 throughout, every block and biome the engine's. A `worlds:`
+  entry, the smoke's included, cannot set a spawn, so its End world gets
+  PocketMine-MP's default, (256, 70, 256), over the void between the main
+  island and the outer ones, and the whole 224-chunk spawn area the smoke
+  checks is air. Read from source and measured headless; no client has
+  seen it.
 - Fluid updates live in memory between a chunk's generation and its
   population — held through worker restarts while the world is loaded and
   pinned, but not through an unload: a chunk generated as a neighbour in
