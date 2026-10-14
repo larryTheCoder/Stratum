@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Stratum\PocketMineEvidence;
 
 use function intdiv;
+use function register_shutdown_function;
 use function sys_get_temp_dir;
 use function tempnam;
+use function unlink;
 
 /**
  * The worlds the checks generate: a pipeline frozen from a version root, and
@@ -30,14 +32,18 @@ final class Sample{
 	private function __construct(){}
 
 	/**
-	 * Freezes $versionRoot into a new temporary file and returns its path;
-	 * the caller unlinks it.
+	 * Freezes $versionRoot into a new temporary file and returns its path.
+	 * The file goes when the script ends, however it ends — a failed check
+	 * exits early, and must not leave a pipeline in the temporary directory.
 	 */
 	public static function freeze(string $versionRoot) : string{
 		$blob = tempnam(sys_get_temp_dir(), "stratum-pmmp-blob-");
 		if($blob === false){
 			fail("cannot create a temporary file for the frozen pipeline");
 		}
+		register_shutdown_function(static function() use ($blob) : void{
+			@unlink($blob);
+		});
 		\Stratum\freezePipeline($versionRoot, $blob);
 		return $blob;
 	}
