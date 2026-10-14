@@ -178,7 +178,9 @@ void checkShape(const Node& node) {
 
 /// The parameters of @p node that would carry the interpreter into undefined
 /// behaviour, refused by name (SPEC §8, "Inputs that would reach undefined
-/// behaviour"). Called after checkShape, so every parameter read here exists.
+/// behaviour") with an OutOfRangeError, which freeze::read reports as a
+/// refusal rather than as a malformed blob. Called after checkShape, so every
+/// parameter read here exists.
 ///
 /// Each check was prompted by a value that reaches undefined behaviour, but
 /// what it refuses is the schema's or the wiki's whole out-of-range set (or,
@@ -196,8 +198,8 @@ void checkParameters(const Node& node) {
             const double min = node.parameters[0];
             const double max = node.parameters[1];
             if (std::isnan(min) || std::isnan(max) || min > max) {
-                throw ResolveError("'minecraft:clamp' has min " + spell(min) + " above max " +
-                                   spell(max) + "; a clamp needs min <= max");
+                throw OutOfRangeError("'minecraft:clamp' has min " + spell(min) + " above max " +
+                                      spell(max) + "; a clamp needs min <= max");
             }
             break;
         }
@@ -210,15 +212,15 @@ void checkParameters(const Node& node) {
             const double lowerBound = node.parameters[0];
             const double cellHeight = node.parameters[1];
             if (std::isnan(lowerBound) || lowerBound <= -4065.0 || lowerBound >= 4063.0) {
-                throw ResolveError("'minecraft:find_top_surface' has lower_bound " +
-                                   spell(lowerBound) +
-                                   ", outside the schema's range [-4064, 4062]");
+                throw OutOfRangeError("'minecraft:find_top_surface' has lower_bound " +
+                                      spell(lowerBound) +
+                                      ", outside the schema's range [-4064, 4062]");
             }
             if (std::isnan(cellHeight) || cellHeight < 1.0 || cellHeight >= 2147483648.0) {
-                throw ResolveError("'minecraft:find_top_surface' has cell_height " +
-                                   spell(cellHeight) +
-                                   ", outside [1, 2147483647]: the schema requires at least 1, "
-                                   "and the scan steps in 32-bit integers");
+                throw OutOfRangeError("'minecraft:find_top_surface' has cell_height " +
+                                      spell(cellHeight) +
+                                      ", outside [1, 2147483647]: the schema requires at least 1, "
+                                      "and the scan steps in 32-bit integers");
             }
             break;
         }
@@ -234,9 +236,9 @@ void checkParameters(const Node& node) {
             for (std::size_t i = 0; i < kNames.size(); ++i) {
                 const double value = node.parameters[i];
                 if (std::isnan(value) || value < 0.001 || value > 1000.0) {
-                    throw ResolveError("'minecraft:old_blended_noise' has " +
-                                       std::string(kNames[i]) + " " + spell(value) +
-                                       ", outside [0.001, 1000]");
+                    throw OutOfRangeError("'minecraft:old_blended_noise' has " +
+                                          std::string(kNames[i]) + " " + spell(value) +
+                                          ", outside [0.001, 1000]");
                 }
             }
             break;

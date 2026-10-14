@@ -477,6 +477,13 @@ TEST_CASE("a frozen node is held to what a pack's is", "[density][graph][ub]") {
     static_cast<void>(ordered.addNode(constant(0.5)));
     CHECK_NOTHROW(ordered.addNode(clamp(0.0, 1.0)));
 
+    // A value refusal is an OutOfRangeError, which freeze::read tells apart
+    // from a malformed node: a build before SPEC §8's refusals froze such
+    // values (pipeline_freeze_test.cpp).
+    Graph::Assembler typed;
+    static_cast<void>(typed.addNode(constant(0.5)));
+    CHECK_THROWS_AS(typed.addNode(clamp(1.0, 0.0)), stratum::density::OutOfRangeError);
+
     // A node carrying fewer parameters than its type reads would have had
     // the interpreter index past the end.
     stratum::density::Node bare;

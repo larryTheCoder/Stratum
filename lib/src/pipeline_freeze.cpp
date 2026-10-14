@@ -174,6 +174,20 @@ public:
                           what);
     }
 
+    /// A value a pack's loader refuses too, which is not the same thing as a
+    /// malformed blob: the load-time checks of SPEC §8 arrived without a
+    /// version (§6, "No version for the undefined-behaviour refusals"), so a
+    /// build from before them may have frozen it at this very engine version.
+    /// The message says so and what to do, as §6 asks of a refusal.
+    [[noreturn]] void refuse(const std::string& what) const {
+        throw FreezeError(
+            "this world's pipeline carries a value this build refuses, at byte " +
+            std::to_string(at_) + ": " + what +
+            ". A build from before SPEC §8's undefined-behaviour refusals may have frozen it at "
+            "this same pipeline engine version; if one did, generate this world with that build "
+            "(SPEC §6, \"No version for the undefined-behaviour refusals\")");
+    }
+
     [[nodiscard]] std::size_t at() const noexcept { return at_; }
 
     [[nodiscard]] bool exhausted() const noexcept { return at_ == data_.size(); }
@@ -426,6 +440,8 @@ void writeSettings(Writer& out,
         for (density::SplineDefinition& spline : pendingSplines) {
             static_cast<void>(assembler.addSpline(std::move(spline)));
         }
+    } catch (const density::OutOfRangeError& error) {
+        in.refuse(error.what());
     } catch (const density::ResolveError& error) {
         in.fail(error.what());
     }
@@ -568,7 +584,9 @@ void readBiomes(Reader& in, Pipeline& pipeline) {
             pipeline.biomeParameters.emplace(
                 id, biome::ParameterList::fromEntries(std::move(entries), id));
         } catch (const biome::ParameterError& error) {
-            in.fail(std::string("a stored biome parameter list is not valid: ") + error.what());
+            // Its bounds are the schema's, and SPEC §8 added them: a refusal,
+            // not a malformed blob.
+            in.refuse(std::string("a stored biome parameter list is not valid: ") + error.what());
         }
     }
     std::map<data::ResourceLocation, float> temperatures;

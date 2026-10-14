@@ -347,36 +347,38 @@ to bump the version and be called out; this is that call-out.
 they change no output that is still produced. What they stop is of four
 kinds, and not all of it was undefined. (1) Inputs that reached undefined
 behaviour: what they produced was the platform's, not this engine's, and
-where it was an out-of-range conversion x86-64 and ARM64 already
-disagreed. (2) Evaluation-time inputs within a stated margin of such a
-point (a noise's 512 lattice units, the chunk domain's hundred-odd blocks, a
-climate sample past ±1e5), which computed defined output before. (3) The
-load-time checks' whole out-of-schema range (vanilla-mcdoc,
-minecraft.wiki), which takes in the undefined values but does not stop at
-them: a climate bound of 3.0, an offset of -0.25, a `find_top_surface`
-`lower_bound` of -5000, an `old_blended_noise` `xz_scale` of 2000 or a
-factor of 0.0005 each computed defined output at c7b060f and now stop the
-pack, or a v15 blob carrying them, from loading — even where nothing
-evaluates the node, as a dangling reference always has. A reversed `clamp`
-belongs here too: a
-violated precondition of `std::clamp`, but the same answer on x86-64 and
-ARM64 under libstdc++ (which bound a standard library tests first is its
-own choice, so that was never promised across them); and a `find_top_surface`
-`cell_height` of 0, refused at its first evaluation before, is refused at
-load now. (4) An integer a pack gives that its field's type cannot hold,
-which the JSON reader narrowed without a word, modulo 2^32 or 2^64: a
-surface rule's `{"absolute": 4294967359}` generated as 63, a `min_y` of
-2^64 - 64 as -64. Defined, the same on every architecture, and never what
-the pack said; refused at load now, from a pack or from the surface rules a
-v15 blob stores as text. A frozen node not of its type's shape is not among
-them: no build wrote one, so no world carries it. None of that needs a
-version, because a refusal produces no
-chunk: a chunk is generated under its version's rules or not at all, so a
-world cannot grow a seam from one. Every input still accepted computes
-exactly what it did — the arithmetic that moved to 64 bits narrows back to
-the same int wherever it was one — and the pinned overworld hash, the
-golden cases and the full conformance preset hold unchanged. A bump would
-refuse every v15 world outright, for nothing they generate differently.
+where it was an out-of-range conversion x86-64 and ARM64 already disagreed.
+(2) Evaluation-time inputs within a stated margin of such a point (a noise's
+512 lattice units, the chunk domain's hundred-odd blocks, a climate sample
+past ±1e5), which computed defined output before. (3) The load-time checks'
+whole out-of-schema range (vanilla-mcdoc, minecraft.wiki), which takes in
+the undefined values but does not stop at them: a climate bound of 3.0, an
+offset of -0.25, a `find_top_surface` `lower_bound` of -5000, an
+`old_blended_noise` `xz_scale` of 2000 or a factor of 0.0005 each computed
+defined output at c7b060f and now stop the pack, or a v15 blob carrying
+them, from loading — even where nothing evaluates the node, as a dangling
+reference always has. `freeze::read` reports such a blob as carrying a value
+this build refuses, not as malformed, and says what to do: a build from
+before these refusals may have frozen it, and such a world is generated with
+that build. A reversed `clamp` belongs here too: a violated precondition of
+`std::clamp`, but the same answer on x86-64 and ARM64 under libstdc++ (which
+bound a standard library tests first is its own choice, so that was never
+promised across them); and a `find_top_surface` `cell_height` of 0, refused
+at its first evaluation before, is refused at load now. (4) An integer a
+pack gives that its field's type cannot hold, which the JSON reader narrowed
+without a word, modulo 2^32 or 2^64: a surface rule's `{"absolute":
+4294967359}` generated as 63, a `min_y` of 2^64 - 64 as -64. Defined, the
+same on every architecture, and never what the pack said; refused at load
+now, from a pack or from the surface rules a v15 blob stores as text. A
+frozen node not of its type's shape is not among them: no build wrote one,
+so no world carries it. None of that needs a version, because a refusal
+produces no chunk: a chunk is generated under its version's rules or not at
+all, so a world cannot grow a seam from one. Every input still accepted
+computes exactly what it did — the arithmetic that moved to 64 bits narrows
+back to the same int wherever it was one — and the pinned overworld hash,
+the golden cases and the full conformance preset hold unchanged. A bump
+would refuse every v15 world outright, for nothing they generate
+differently.
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under

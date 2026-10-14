@@ -41,6 +41,15 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// A ResolveError for a node whose numbers lie outside what this build
+/// accepts (SPEC §8), as against one that is malformed. A frozen blob tells
+/// the two apart: builds from before those refusals froze such values at the
+/// same pipeline engine version, so what to do about one differs (SPEC §6).
+class OutOfRangeError : public ResolveError {
+public:
+    using ResolveError::ResolveError;
+};
+
 /// The density function types the pinned version defines. Generated from
 /// mcdoc — see tools/mcdoc-sync — so the set follows the schema rather than
 /// whatever vanilla's own data happens to use, which is eight types fewer.

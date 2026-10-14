@@ -630,6 +630,19 @@ TEST_CASE("a sealed blob whose node is not its type's shape is refused by name",
     SECTION("the blob as written is read") {
         CHECK(thawed.graph.nodeCount() > 5U);
     }
+
+    SECTION("a value refusal is told apart from a malformed blob") {
+        // A reversed clamp is well formed, and a build from before SPEC §8's
+        // refusals froze one at this engine version: the message says so and
+        // what to do, which "malformed" did not (SPEC §6).
+        const auto blob = respliced(good, joined({le32(2), le64(kMin), le64(kMax)}),
+                                    joined({le32(2), le64(kMax), le64(kMin)}));
+        CHECK_THROWS_WITH(stratum::freeze::read(blob),
+                          ContainsSubstring("carries a value this build refuses") &&
+                              ContainsSubstring("'minecraft:clamp' has min") &&
+                              ContainsSubstring("generate this world with that build") &&
+                              !ContainsSubstring("malformed"));
+    }
 }
 
 TEST_CASE("a thawed pipeline builds the same noises its pack would", "[freeze]") {
