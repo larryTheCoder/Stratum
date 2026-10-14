@@ -7,9 +7,11 @@
 # a schedule whose answers are known: one worker that queues stages behind
 # each other (so an event's own duration is not its cost), an event of
 # another level and another chunk to be filtered out, a stage that waits on
-# an idle worker, and `full` on the server thread. The second recording adds
-# a second worker, and the pin must be reported broken. Then the refusals
-# that keep the server and the baseline from running without --accept-eula.
+# an idle worker, and `full` on the server thread. The second adds a
+# fork-join spare whose stage overlaps the worker's: with one worker allowed
+# the two are one timeline, with two they are two. The third commits a stage
+# off the worldgen workers, which must be reported. Then the refusals that
+# keep the server and the baseline from running without --accept-eula.
 # Plain bash 3.2 and python3: this runs on the macOS legs too.
 set -euo pipefail
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found; skipping"; exit 77; }
@@ -30,12 +32,12 @@ expect() {  # expect <exit code> <what> <pattern or -> <command...>
     echo "ok: ${what}"
 }
 
-# events <file> <zone> <second worker: 0|1>. Times are milliseconds after
+# events <file> <zone> <extra: none|spare|stray>. Times are milliseconds after
 # midnight; the zone only changes how the instants are spelled.
 events() {
     python3 - "$@" <<'PY'
 import json, sys
-path, zone, second = sys.argv[1], sys.argv[2], sys.argv[3] == '1'
+path, zone, extra = sys.argv[1], sys.argv[2], sys.argv[3]
 offset_hours = 8 if zone == '+08:00' else 0
 def instant(ms):
     seconds, nanos = divmod(round(ms * 1_000_000), 1_000_000_000)
@@ -59,8 +61,12 @@ recorded = [
     event('full', 0, 0, 26, 0.8, thread='Server thread'),
     {'type': 'jdk.CPULoad', 'values': {}},  # not a chunk event: ignored
 ]
-if second:
-    recorded.append(event('carvers', 0, 0, 30, 1, thread='Worker-Main-2'))
+if extra == 'spare':
+    # Scheduled at 24, done at 30: one timeline charges it 30 - 26 = 4, its
+    # own thread 6.
+    recorded.append(event('carvers', 0, 0, 24, 6, thread='Worker-Main-2'))
+if extra == 'stray':
+    recorded.append(event('light', 0, 0, 27, 1, thread='Light thread'))
 json.dump({'recording': {'events': recorded}}, open(path, 'w'))
 PY
 }
@@ -76,7 +82,7 @@ print(f'ok: {sys.argv[3]}')
 PY
 }
 
-events "${work}/one.json" Z 0
+events "${work}/one.json" Z none
 expect 0 "a recording is read" "comparable median    19.00" \
     "${tool}" analyze "${work}/one.json" --area 0,0,0 --json "${work}/one.out.json"
 check "${work}/one.out.json" "abs(r['stages']['biomes']['median_ms'] - 4) < 1e-6" \
@@ -95,21 +101,54 @@ check "${work}/one.out.json" "r['stages']['full']['raw_only'] and abs(r['stages'
     "full is reported raw, from the server thread"
 check "${work}/one.out.json" "r['complete'] and r['missing'] == {'biomes': 0, 'noise': 0, 'surface': 0, 'full': 0}" \
     "the area is complete"
-check "${work}/one.out.json" "r['pin_held'] and r['generation_threads'] == ['Worker-Main-1']" \
-    "one worker committed every stage but full: the pin held"
-check "${work}/one.out.json" "abs(r['threads']['Worker-Main-1']['busy_s'] - 0.0255) < 1e-9" \
+check "${work}/one.out.json" "r['workers_only'] and r['commits'] == {'Worker-Main-1': 6}" \
+    "one worker committed every stage but full"
+check "${work}/one.out.json" "abs(r['worker_busy_s'] - 0.0255) < 1e-9" \
     "the worker's busy time is every estimate on it, other levels and chunks included"
 
-events "${work}/two.json" +08:00 1
+events "${work}/two.json" +08:00 spare
 expect 0 "an instant with an offset reads as the same instant" "comparable median    19.00" \
     "${tool}" analyze "${work}/two.json" --area 0,0,0 --json "${work}/two.out.json"
-expect 0 "a second worker is reported" "THE PIN DID NOT HOLD" \
-    "${tool}" analyze "${work}/two.json" --area 0,0,0
-check "${work}/two.out.json" "not r['pin_held'] and r['worker_threads'] == ['Worker-Main-1', 'Worker-Main-2']" \
-    "a second worker committing generation breaks the pin"
-expect 0 "two workers are within a pin of two" "comparable" \
+check "${work}/two.out.json" "list(r['timelines']) == ['Server thread', 'Worker-Main-*']" \
+    "with one worker allowed, a spare is on the worker's timeline"
+check "${work}/two.out.json" "abs(r['stages']['carvers']['median_ms'] - 4) < 1e-6 and abs(r['worker_busy_s'] - 0.0295) < 1e-9" \
+    "and is charged only what the worker had not already spent"
+check "${work}/two.out.json" "r['workers_only'] and r['commits'] == {'Worker-Main-1': 6, 'Worker-Main-2': 1}" \
+    "both workers' commits are counted"
+expect 0 "with two allowed, two timelines" "comparable" \
     "${tool}" analyze "${work}/two.json" --area 0,0,0 --threads 2 --json "${work}/three.out.json"
-check "${work}/three.out.json" "r['pin_held']" "and a pin of two holds"
+check "${work}/three.out.json" "abs(r['stages']['carvers']['median_ms'] - 6) < 1e-6 and abs(r['worker_busy_s'] - 0.0315) < 1e-9" \
+    "each charged on its own"
+
+# The pin's CPU half, as run() applies it after jstack: the one-worker
+# recording's workers span 26 ms, so 25 ms of their CPU is one thread's worth
+# and 40 ms is not.
+pin() {  # pin <result json> <allowed> <worker:cpu_s,...>
+    python3 - "${tool}" "$@" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('tool', sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+result = json.load(open(sys.argv[2]))
+cpu = {name: float(value) for name, value in (p.split(':') for p in sys.argv[4].split(','))}
+judged = tool.judge_pin(result, cpu, int(sys.argv[3]))
+print(f"pin_held={judged['pin_held']} parallelism={judged['parallelism']:.3f}")
+PY
+}
+expect 0 "one thread's worth of CPU holds the pin" "pin_held=True parallelism=0.962" \
+    pin "${work}/one.out.json" 1 Worker-Main-1:0.020,Worker-Main-2:0.005
+expect 0 "more than one thread's worth breaks it" "pin_held=False parallelism=1.538" \
+    pin "${work}/one.out.json" 1 Worker-Main-1:0.025,Worker-Main-2:0.015
+expect 0 "which a pin of two allows" "pin_held=True" \
+    pin "${work}/one.out.json" 2 Worker-Main-1:0.025,Worker-Main-2:0.015
+
+events "${work}/stray.json" Z stray
+expect 0 "a stage off the worldgen workers is reported" "NOT ONLY ON WORLDGEN WORKERS" \
+    "${tool}" analyze "${work}/stray.json" --area 0,0,0 --json "${work}/stray.out.json"
+check "${work}/stray.out.json" "not r['workers_only'] and r['stray_threads'] == ['Light thread']" \
+    "and named"
+expect 0 "and breaks the pin whatever the CPU" "pin_held=False" \
+    pin "${work}/stray.out.json" 1 Worker-Main-1:0.010
 expect 0 "an area chunk with no events is reported" "INCOMPLETE" \
     "${tool}" analyze "${work}/one.json" --area 0,0,1 --json "${work}/four.out.json"
 check "${work}/four.out.json" "not r['complete'] and r['missing']['noise'] == 8" \
@@ -121,3 +160,4 @@ expect 1 "the baseline refuses the vanilla half without --accept-eula" "needs --
     "${baseline}" --skip-stratum
 expect 1 "the baseline refuses to do nothing" "both halves skipped" \
     "${baseline}" --skip-stratum --skip-vanilla
+

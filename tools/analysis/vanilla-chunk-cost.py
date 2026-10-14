@@ -33,13 +33,15 @@ names its chunk, level, status and the thread it was committed on. An event's
 own duration is NOT the stage's cost: it starts when the stage is scheduled,
 and with one worker most stages queue behind others (measured on this server:
 37 s of event time inside 3.4 s of wall time on one thread). So each event's
-cost is taken as the worker's time between the previous completion on that
-thread and its own: end - max(start, previous end). That is exact when the
-worker runs one task at a time and every task ends in an event; work no event
-records (lighting, I/O callbacks) lands on the next event to complete. The
-check is the worker's own CPU time over the recording (jstack before and
-after), printed beside the sum of the estimates: on the 25-chunk trial that
-settled the method they were 4.15 s and 4.16 s.
+cost is taken as the worker's time between the previous completion and its
+own: end - max(start, previous end), over the worker's timeline — with one
+worker allowed, every Worker-Main thread's events together (PROVING THE PIN
+says why). That is exact when the worker runs one task at a time and every
+task ends in an event; work no event records (lighting, I/O callbacks) lands
+on the next event to complete. The check is the workers' own CPU time over
+the recording (jstack before and after), printed beside the sum of the
+estimates: on the 25-chunk trial that settled the method they were 4.15 s
+and 4.16 s.
 
 WHAT IT REPORTS. Per stage: median, p10, p90 and mean ms/chunk over the
 measured area's chunks, and chunks/s as 1000 / mean. The stages comparable to
@@ -51,13 +53,17 @@ generates no structures, carvers or features, and PocketMine-MP lights its own
 chunks. `full` runs on the server thread, among everything else it does, so
 only its raw durations are given.
 
-PROVING THE PIN. jstack after the measurement lists every `Worker-Main-*`
-thread and the CPU each spent over the recording; the recording says which
-threads committed generation events. The pin holds when one worker committed
-every event but `full`'s. (On a 12-thread box the property's absence shows
-eleven workers, Worker-Main-1 to -11, all busy. With it, a second worker can
-exist — a fork-join pool may add a spare while one blocks — and holds none of
-the generation; the report says if that ever changes.)
+PROVING THE PIN. jstack before and after the recording gives every
+`Worker-Main-*` thread's name and CPU; the recording says which threads
+committed generation. The pin holds when generation was committed on
+Worker-Main threads alone (`full` aside) and those threads together spent no
+more CPU than one thread could over the time generation took: parallelism,
+their CPU over the span of their events, at most 1.05. Unpinned, a 12-thread
+box runs eleven workers, Worker-Main-1 to -11, all busy. Pinned, it runs one
+and, at times, a fork-join spare or two (Worker-Main-2, -3) that the pool
+starts while its worker blocks on a join, to run in its place: one at a
+time, which is why the estimate reads them as one timeline. On the first
+121-chunk overworld a spare committed 7 of 4362 generation events.
 
 `analyze` is the reading alone, on a saved recording or on `jfr print --json`
 output; tests/tools/vanilla_chunk_cost_test.sh drives it on synthetic events.
@@ -191,24 +197,40 @@ def read_events(path, jfr=None):
     return events
 
 
-def exclusive_times(events):
-    """Each event's cost on its thread: end - max(start, the previous end there).
+MERGED = WORKER_PREFIX + '-*'
+# How far above the pin the workers' parallelism may read before the pin is
+# called broken: jstack's CPU and JFR's clock are read at different moments.
+PARALLELISM_SLACK = 0.05
+
+
+def timeline_of(thread, allowed_workers):
+    """The timeline an event's thread runs on. With one worker allowed, every
+    Worker-Main thread is ONE timeline: the pool runs one task at a time, and
+    the spare it starts while its worker blocks on a join (Worker-Main-2,
+    -3) runs in that worker's place, not beside it."""
+    if allowed_workers == 1 and thread.startswith(WORKER_PREFIX):
+        return MERGED
+    return thread
+
+
+def exclusive_times(events, allowed_workers=1):
+    """Each event's cost on its timeline: end - max(start, the previous end there).
 
     A stage's event starts when the stage is scheduled; on a single worker it
     then waits for whatever is queued ahead of it, so its duration is queueing
-    plus work. Ordering a thread's events by completion and charging each the
-    time since the one before it completed takes the queueing out."""
-    by_thread = {}
+    plus work. Ordering a timeline's events by completion and charging each
+    the time since the one before it completed takes the queueing out."""
+    timelines = {}
     for event in events:
-        by_thread.setdefault(event['thread'], []).append(event)
-    for thread_events in by_thread.values():
-        thread_events.sort(key=lambda e: (e['end'], e['start']))
+        timelines.setdefault(timeline_of(event['thread'], allowed_workers), []).append(event)
+    for timeline_events in timelines.values():
+        timeline_events.sort(key=lambda e: (e['end'], e['start']))
         previous = None
-        for event in thread_events:
+        for event in timeline_events:
             begin = event['start'] if previous is None else max(event['start'], previous)
             event['exclusive'] = event['end'] - begin
             previous = event['end']
-    return by_thread
+    return timelines
 
 
 def percentile(ordered, fraction):
@@ -237,11 +259,14 @@ def summarise(milliseconds):
 def analyse(events, level, area, allowed_workers=1):
     """Per-chunk stage costs for @p level's chunks inside @p area, from a
     recording whose server was allowed @p allowed_workers worldgen workers."""
-    by_thread = exclusive_times(events)
+    timelines = exclusive_times(events, allowed_workers)
     wanted = area_chunks(area)
-    generation_threads = sorted({e['thread'] for e in events if e['status'] != 'full'})
-    workers = [t for t in generation_threads if t.startswith(WORKER_PREFIX)]
-    strays = [t for t in generation_threads if not t.startswith(WORKER_PREFIX)]
+    commits = {}
+    for event in events:
+        if event['status'] != 'full':
+            commits[event['thread']] = commits.get(event['thread'], 0) + 1
+    workers = sorted(t for t in commits if t.startswith(WORKER_PREFIX))
+    strays = sorted(t for t in commits if not t.startswith(WORKER_PREFIX))
 
     per_chunk = {}
     for event in events:
@@ -274,14 +299,15 @@ def analyse(events, level, area, allowed_workers=1):
     missing = {status: len([c for c in wanted if status not in per_chunk.get(c, {})])
                for status in COMPARABLE + ('full',)}
 
-    threads = {}
-    for thread, thread_events in sorted(by_thread.items()):
-        threads[thread] = {
-            'events': len(thread_events),
-            'busy_s': sum(e['exclusive'] for e in thread_events) / 1e9,
-            'span_s': (max(e['end'] for e in thread_events) -
-                       min(e['start'] for e in thread_events)) / 1e9,
+    spans = {}
+    for name, timeline_events in sorted(timelines.items()):
+        spans[name] = {
+            'events': len(timeline_events),
+            'busy_s': sum(e['exclusive'] for e in timeline_events) / 1e9,
+            'span_s': (max(e['end'] for e in timeline_events) -
+                       min(e['start'] for e in timeline_events)) / 1e9,
         }
+    worker_events = [e for e in events if e['thread'].startswith(WORKER_PREFIX)]
     return {
         'level': level,
         'area': {'centre': [area[0], area[1]], 'radius': area[2], 'chunks': len(wanted)},
@@ -289,13 +315,17 @@ def analyse(events, level, area, allowed_workers=1):
         'comparable': summarise(comparable),
         'missing': missing,
         'complete': not any(missing.values()),
-        'generation_threads': generation_threads,
+        'allowed_workers': allowed_workers,
+        'commits': commits,
         'worker_threads': workers,
         'stray_threads': strays,
-        # The pin holds when no more workers than it allows committed
-        # generation, and nothing but a worker did.
-        'pin_held': 0 < len(workers) <= allowed_workers and not strays,
-        'threads': threads,
+        # Generation committed on Worker-Main threads and nowhere else. Half
+        # the pin's evidence; run() adds the other half, the workers' CPU.
+        'workers_only': bool(workers) and not strays,
+        'timelines': spans,
+        'worker_busy_s': sum(e['exclusive'] for e in worker_events) / 1e9,
+        'worker_span_s': ((max(e['end'] for e in worker_events) -
+                           min(e['start'] for e in worker_events)) / 1e9 if worker_events else 0.0),
         'samples': {
             'comparable_ms': comparable,
             **{status: [s[status]['exclusive'] / 1e6 for s in per_chunk.values() if status in s]
@@ -304,10 +334,25 @@ def analyse(events, level, area, allowed_workers=1):
     }
 
 
+def judge_pin(result, worker_cpu_s, allowed_workers):
+    """The pin's other half, from each Worker-Main thread's CPU over the
+    recording: however many of them exist, together they spent no more CPU
+    than @p allowed_workers threads could over the time generation took.
+    Unpinned, eleven workers on a 12-thread box spend several times that."""
+    result['worker_cpu_s'] = worker_cpu_s
+    result['jstack_workers'] = sorted(worker_cpu_s)
+    result['worker_cpu_total_s'] = sum(worker_cpu_s.values())
+    span = result['worker_span_s']
+    result['parallelism'] = result['worker_cpu_total_s'] / span if span > 0 else 0.0
+    result['pin_held'] = (result['workers_only'] and
+                          result['parallelism'] <= allowed_workers + PARALLELISM_SLACK)
+    return result
+
+
 def pool(results):
     """Several runs' chunks as one sample."""
     out = {'runs': len(results), 'stages': {}, 'complete': all(r['complete'] for r in results),
-           'pin_held': all(r['pin_held'] for r in results)}
+           'pin_held': all(r.get('pin_held', r['workers_only']) for r in results)}
     for status in COMPARABLE:
         out['stages'][status] = summarise([v for r in results for v in r['samples'][status]])
     out['comparable'] = summarise([v for r in results for v in r['samples']['comparable_ms']])
@@ -337,8 +382,16 @@ def print_result(title, result):
                       'comparable]')
         if not result['complete']:
             print(f'  INCOMPLETE: area chunks with no event: {result["missing"]}')
-        print(f'  generation committed on: {", ".join(result["generation_threads"])}'
-              + ('' if result['pin_held'] else '  <-- THE PIN DID NOT HOLD'))
+        commits = ', '.join(f'{thread} ({count})' for thread, count in
+                            sorted(result['commits'].items()))
+        print(f'  generation committed on: {commits}'
+              + ('' if result['workers_only'] else '  <-- NOT ONLY ON WORLDGEN WORKERS'))
+        if 'pin_held' in result:
+            print(f'  workers: {result["worker_cpu_total_s"]:.2f} s of CPU over '
+                  f'{result["worker_span_s"]:.2f} s of generation, parallelism '
+                  f'{result["parallelism"]:.2f} (the pin allows {result["allowed_workers"]}); '
+                  f'the estimates sum to {result["worker_busy_s"]:.2f} s'
+                  + ('' if result['pin_held'] else '  <-- THE PIN DID NOT HOLD'))
     sys.stdout.flush()
 
 
@@ -514,9 +567,8 @@ def measure(server, jdk, name, level, area, warmup_area, threads):
     result['settled_after_s'] = settled
     result['load_average_before'] = load_before
     result['load_average_after'] = load_after
-    result['worker_cpu_s'] = {thread: (after.get(thread, 0.0) - before.get(thread, 0.0)) / 1000.0
-                              for thread in sorted(after) if thread.startswith(WORKER_PREFIX)}
-    result['jstack_workers'] = sorted(t for t in after if t.startswith(WORKER_PREFIX))
+    judge_pin(result, {thread: (after.get(thread, 0.0) - before.get(thread, 0.0)) / 1000.0
+                       for thread in sorted(after) if thread.startswith(WORKER_PREFIX)}, threads)
     return result
 
 
@@ -570,12 +622,8 @@ def run(args):
                         result['seed'] = seed
                         result['preset'] = preset
                         report['runs'].append(result)
-                        cpu = sum(result['worker_cpu_s'].values())
-                        busy = sum(t['busy_s'] for n, t in result['threads'].items()
-                                   if n.startswith(WORKER_PREFIX))
-                        print_result(f'{name} seed {seed} (load {result["load_average_after"]}; '
-                                     f'worker CPU {cpu:.2f} s over the recording, the estimates '
-                                     f'sum to {busy:.2f} s)', result)
+                        print_result(f'{name} seed {seed} (load {result["load_average_before"]} '
+                                     f'-> {result["load_average_after"]})', result)
                 finally:
                     server.stop()
     finally:
