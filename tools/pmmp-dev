@@ -19,12 +19,18 @@
 #   gdb backtrace of a crash
 # Each archive is unpacked into its own empty directory, once its listing
 # has passed check_listing. Nothing from them runs but the php binary and
-# the phar. No root needed; idempotent.
+# the phar. "The php binary" is the release's PHP as PocketMine-MP runs it:
+# the executable with the shared libraries it links (bin/php7/lib) and the
+# one extension it loads from its own extension_dir, opcache.so — which
+# PHP-Binaries' own php.ini enables, and which the server directory's
+# php.ini enables likewise. No script from the tarball runs: the PHPTs are
+# driven by tools/php-dev's run-tests.php, built from PHP's official source,
+# not the copy the tarball carries. No root needed; idempotent.
 #
 # Usage:
 #   tools/pmmp-dev [--with-debug-symbols]   fetch, verify and unpack into
 #                                           ~/.cache/stratum-pmmp ($STRATUM_PMMP_DIR)
-#   tools/pmmp-dev --print-php | --print-phar | --print-run-tests | --print-dir
+#   tools/pmmp-dev --print-php | --print-phar | --print-dir
 #   tools/pmmp-dev server <dir> --stratum-so <so> --version-root <root>
 #                  [--dimension overworld|end] [--seed N] [--port N] [--async-workers N]
 #       write a hermetic headless server directory: loopback only, IPv6,
@@ -34,7 +40,10 @@
 #       Stratum\PMMP\WorldFactory leaves it; the world as a pocketmine.yml
 #       `worlds:` entry and the default world.
 #   tools/pmmp-dev check-load --stratum-so <so> [--build-php-config <php-config>]
-#   tools/pmmp-dev phpt --stratum-so <so> --fixtures-dir <dir> -- <test-dir>...
+#   tools/pmmp-dev phpt --stratum-so <so> --build-php-config <php-config> --fixtures-dir <dir>
+#                  -- <test-dir>...
+#       the PHPTs under PocketMine-MP's php, driven by the run-tests.php of
+#       the PHP <php-config> belongs to (tools/php-dev's)
 #   tools/pmmp-dev census-blocks --stratum-so <so> --version-root <root> [--report <file>]
 #   tools/pmmp-dev census-biomes --stratum-so <so> --version-root <root>
 #   tools/pmmp-dev threads --stratum-so <so> --version-root <root>
@@ -76,7 +85,6 @@ readonly downloads="${cache_dir}/downloads"
 readonly php_dir="${cache_dir}/${PHP_BUILD}"
 readonly php_bin="${php_dir}/bin/php7/bin/php"
 readonly php_ext_dir="${php_dir}/bin/php7/lib/php/extensions/no-debug-zts-20220829"
-readonly run_tests="${php_dir}/bin/php7/lib/php/build/run-tests.php"
 readonly symbols_dir="${cache_dir}/${PHP_BUILD}-debugging-symbols"
 readonly phar_dir="${cache_dir}/pocketmine-mp-${PMMP_VERSION}"
 readonly phar="${phar_dir}/PocketMine-MP.phar"
@@ -398,8 +406,10 @@ write_server_dir() {
 ; Written by tools/pmmp-dev. pmmp/PHP-Binaries' own php.ini settings, with
 ; extension_dir pointed at this machine's copy (the release's compiled-in
 ; path is its CI runner's), temporary files kept inside the server directory
-; (the phar's stub caches itself there), and stratum.so loaded. Read through
-; PHPRC, so PocketMine-MP's console reader child process reads it too.
+; (the phar's stub caches itself there), and stratum.so loaded. opcache.so
+; is the release's own, which its php.ini enables, so the server runs as
+; PocketMine-MP runs it. Read through PHPRC, so PocketMine-MP's console
+; reader child process reads it too.
 memory_limit=1024M
 date.timezone=UTC
 short_open_tag=0
@@ -661,7 +671,6 @@ case "${command}" in
         ;;
     --print-php) install_all; echo "${php_bin}" ;;
     --print-phar) install_all; echo "${phar}" ;;
-    --print-run-tests) install_all; echo "${run_tests}" ;;
     --print-dir) echo "${cache_dir}" ;;
     server) cmd_server "$@" ;;
     check-load) parse_options "$@"; cmd_check_load ;;
@@ -669,9 +678,16 @@ case "${command}" in
         parse_options "$@"
         require_cache
         require_so "${so}"
+        [[ -n "${build_php_config}" ]] || die "--build-php-config is required: its PHP's run-tests.php drives the tests"
         [[ -n "${fixtures_dir}" ]] || die "--fixtures-dir is required"
         require_version_root "${fixtures_dir}/1.21.11"
         [[ ${#rest[@]} -gt 0 ]] || die "phpt needs test directories after --"
+        # tools/php-dev's run-tests.php, from PHP's official source: run by
+        # PocketMine-MP's php, and running the tests under it, but not a
+        # script out of the tarball.
+        run_tests="$("${build_php_config}" --prefix)/lib/php/build/run-tests.php"
+        [[ -f "${run_tests}" ]] || die "no run-tests.php at ${run_tests}"
+        echo "run-tests.php: ${run_tests}"
         STRATUM_FIXTURES_DIR="${fixtures_dir}" NO_INTERACTION=1 exec "${repo_root}/tools/run-phpt" \
             "${php_bin}" "${run_tests}" --show-diff -n -d extension="${so}" -- "${rest[@]}"
         ;;

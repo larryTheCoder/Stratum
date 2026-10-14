@@ -117,8 +117,12 @@ if(STRATUM_BUILD_EXT)
         set(pmmp_so --stratum-so "$<TARGET_FILE:stratum_php>")
         add_test(NAME pmmp.load
             COMMAND "${pmmp_dev}" check-load ${pmmp_so} --build-php-config "${STRATUM_PHP_CONFIG}")
+        # Driven by the run-tests.php of the PHP the module was built
+        # against (tools/php-dev's, from PHP's official source), never a
+        # script out of the downloaded tarball.
         add_test(NAME pmmp.phpt
-            COMMAND "${pmmp_dev}" phpt ${pmmp_so} --fixtures-dir "${STRATUM_FIXTURES_DIR}" --
+            COMMAND "${pmmp_dev}" phpt ${pmmp_so} --build-php-config "${STRATUM_PHP_CONFIG}"
+                --fixtures-dir "${STRATUM_FIXTURES_DIR}" --
                 "${CMAKE_CURRENT_SOURCE_DIR}/zend/tests" "${CMAKE_CURRENT_SOURCE_DIR}/plugin/tests")
         add_test(NAME pmmp.census.blocks
             COMMAND "${pmmp_dev}" census-blocks ${pmmp_so} --version-root "${pmmp_root}"
