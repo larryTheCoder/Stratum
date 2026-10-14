@@ -9,6 +9,8 @@
 //
 // PHP surface (namespace Stratum; stratum.stub.php documents the shapes):
 //
+//   function setDataPath(string $dataPath): void
+//   function resolvePipelinePath(string $blobPath): string
 //   function freezePipeline(string $versionRoot, string $blobPath): void
 //   function bedrockBlockState(int $javaStateId): array
 //   function javaBlockStateCount(): int
@@ -34,6 +36,12 @@
 // Every $biomeSource is world::BiomeSource::parse's spelling: a multi-noise
 // parameter list's id (`minecraft:overworld`, `minecraft:nether`), as it
 // always was, or `minecraft:the_end` for the End's own source.
+//
+// Every $blobPath is absolute, or relative to the server's data path, which
+// the plugin hands `setDataPath` once, on the main thread, before any world
+// loads: one value for the whole process, which PocketMine-MP's worker
+// threads share, so a world whose options name its blob relatively can be
+// moved with its server directory (stratum_pmmp/worlds.hpp).
 //
 // THE MAIN THREAD DECIDES. On PocketMine-MP an exception thrown on a
 // generation worker takes the whole server down, so everything that can be
@@ -199,6 +207,14 @@ extern "C" {
 
 // NOLINTBEGIN(readability-identifier-naming,cppcoreguidelines-*,modernize-*,hicpp-*)
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_setDataPath, 0, 1, IS_VOID, 0)
+ZEND_ARG_TYPE_INFO(0, dataPath, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_resolvePipelinePath, 0, 1, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_freezePipeline, 0, 2, IS_VOID, 0)
 ZEND_ARG_TYPE_INFO(0, versionRoot, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
@@ -262,6 +278,31 @@ ZEND_ARG_TYPE_INFO(0, chunkX, IS_LONG, 0)
 ZEND_ARG_TYPE_INFO(0, chunkZ, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
+static ZEND_FUNCTION(stratum_setDataPath) {
+    zend_string* dataPath = nullptr;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+    Z_PARAM_STR(dataPath)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        worlds().setDataPath(std::filesystem::path(fromZend(dataPath)));
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
+static ZEND_FUNCTION(stratum_resolvePipelinePath) {
+    zend_string* blobPath = nullptr;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+    Z_PARAM_STR(blobPath)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        const std::string resolved = worlds().resolvePipelinePath(fromZend(blobPath)).string();
+        RETVAL_STRINGL(resolved.data(), resolved.size());
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
 static ZEND_FUNCTION(stratum_freezePipeline) {
     zend_string* versionRoot = nullptr;
     zend_string* blobPath = nullptr;
@@ -270,13 +311,14 @@ static ZEND_FUNCTION(stratum_freezePipeline) {
     Z_PARAM_STR(blobPath)
     ZEND_PARSE_PARAMETERS_END();
     try {
+        const std::filesystem::path target = worlds().resolvePipelinePath(fromZend(blobPath));
         const std::filesystem::path root(fromZend(versionRoot));
         const std::vector<std::byte> blob = stratum::freeze::write(stratum::freeze::resolve(
             stratum::data::Pack::open(root / "worldgen"), root / "biome_parameters"));
         // Whole or not at all: a reader of $blobPath — a world's generator
         // opening it — finds the file it replaced or this one, never a
         // part-written blob.
-        stratum::pmmp::writePipelineFile(fromZend(blobPath), blob);
+        stratum::pmmp::writePipelineFile(target, blob);
     } catch (...) {
         throwAsPhp();
     }
@@ -348,9 +390,9 @@ static ZEND_FUNCTION(stratum_checkDimension) {
     try {
         // Any seed: nothing compileForPocketMine refuses depends on one.
         // Compiled and dropped; the shared registry is not touched.
-        static_cast<void>(
-            stratum::pmmp::compileForPocketMine(stratum::pmmp::readPipelineFile(fromZend(blobPath)),
-                                                fromZend(noiseSettings), fromZend(biomeSource), 0));
+        static_cast<void>(stratum::pmmp::compileForPocketMine(
+            stratum::pmmp::readPipelineFile(worlds().resolvePipelinePath(fromZend(blobPath))),
+            fromZend(noiseSettings), fromZend(biomeSource), 0));
     } catch (...) {
         throwAsPhp();
     }
@@ -504,24 +546,23 @@ static ZEND_METHOD(Stratum_Dimension, encodeChunk) {
     }
 }
 
+// One entry a line. Each macro ends in its own comma, so clang-format,
+// seeing no separator between them, cascades the table rightwards.
+// clang-format off
 static const zend_function_entry stratum_functions[] = {
-    ZEND_NS_NAMED_FE("Stratum", freezePipeline, ZEND_FN(stratum_freezePipeline),
-                     arginfo_freezePipeline)
-        ZEND_NS_NAMED_FE("Stratum", bedrockBlockState, ZEND_FN(stratum_bedrockBlockState),
-                         arginfo_bedrockBlockState)
-            ZEND_NS_NAMED_FE("Stratum", javaBlockStateCount, ZEND_FN(stratum_javaBlockStateCount),
-                             arginfo_javaBlockStateCount)
-                ZEND_NS_NAMED_FE("Stratum", parseBiomeSource, ZEND_FN(stratum_parseBiomeSource),
-                                 arginfo_parseBiomeSource)
-                    ZEND_NS_NAMED_FE("Stratum", checkDimension, ZEND_FN(stratum_checkDimension),
-                                     arginfo_checkDimension)
-                        ZEND_NS_NAMED_FE("Stratum", pinWorld, ZEND_FN(stratum_pinWorld),
-                                         arginfo_pinWorld)
-                            ZEND_NS_NAMED_FE("Stratum", unpinWorld, ZEND_FN(stratum_unpinWorld),
-                                             arginfo_unpinWorld)
-                                ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates,
-                                                 ZEND_FN(stratum_takeFluidUpdates),
-                                                 arginfo_takeFluidUpdates) ZEND_FE_END};
+    ZEND_NS_NAMED_FE("Stratum", setDataPath, ZEND_FN(stratum_setDataPath), arginfo_setDataPath)
+    ZEND_NS_NAMED_FE("Stratum", resolvePipelinePath, ZEND_FN(stratum_resolvePipelinePath), arginfo_resolvePipelinePath)
+    ZEND_NS_NAMED_FE("Stratum", freezePipeline, ZEND_FN(stratum_freezePipeline), arginfo_freezePipeline)
+    ZEND_NS_NAMED_FE("Stratum", bedrockBlockState, ZEND_FN(stratum_bedrockBlockState), arginfo_bedrockBlockState)
+    ZEND_NS_NAMED_FE("Stratum", javaBlockStateCount, ZEND_FN(stratum_javaBlockStateCount), arginfo_javaBlockStateCount)
+    ZEND_NS_NAMED_FE("Stratum", parseBiomeSource, ZEND_FN(stratum_parseBiomeSource), arginfo_parseBiomeSource)
+    ZEND_NS_NAMED_FE("Stratum", checkDimension, ZEND_FN(stratum_checkDimension), arginfo_checkDimension)
+    ZEND_NS_NAMED_FE("Stratum", pinWorld, ZEND_FN(stratum_pinWorld), arginfo_pinWorld)
+    ZEND_NS_NAMED_FE("Stratum", unpinWorld, ZEND_FN(stratum_unpinWorld), arginfo_unpinWorld)
+    ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates, ZEND_FN(stratum_takeFluidUpdates), arginfo_takeFluidUpdates)
+    ZEND_FE_END
+};
+// clang-format on
 
 static const zend_function_entry dimension_methods[] = {
     ZEND_ME(Stratum_Dimension, __construct, arginfo_Dimension___construct, ZEND_ACC_PRIVATE)

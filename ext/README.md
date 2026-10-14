@@ -47,6 +47,12 @@ itself; `Stratum\freezePipeline()` writes whole or not at all — beside
 the target, then renamed over it; on POSIX synced to disk before the rename
 and the directory after, so a power cut leaves one blob or the other — and
 first removes the `<blob>.partial-*` a write killed part-way left.
+A blob path may be relative: `Stratum\setDataPath()` gives the process the
+server's data path to read it against — once, on the main thread, before
+any world loads; PocketMine-MP's worker threads share it — so a world whose
+options name its blob relatively moves with its server directory, and a
+relative path and the absolute one it names are one world
+(`zend/tests/009_data_path.phpt`). An absolute path is read as it is.
 C++ exceptions never cross into the engine; each becomes a
 `Stratum\GenerationException`. Build it against a thread-safe PHP:
 

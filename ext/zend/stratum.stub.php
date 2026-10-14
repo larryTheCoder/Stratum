@@ -10,6 +10,31 @@
 namespace Stratum;
 
 /**
+ * Sets the directory every relative $blobPath below is read against: the
+ * server's data path (pocketmine\Server::getDataPath()). One value for the
+ * whole process — PocketMine-MP's worker threads are threads of it — set on
+ * the main thread before any world loads; the plugin sets it as it loads.
+ * A world whose options name its blob relatively ("worlds/<name>/
+ * stratum-pipeline.blob", as the plugin's WorldFactory writes them) then
+ * moves with its server directory. An absolute $blobPath, as every world
+ * made before relative paths has, is read as it is. Setting the same path
+ * again changes nothing.
+ *
+ * @throws GenerationException for a path that is not absolute, or for a
+ * different one while any world is pinned (its relative blob path would
+ * then name another file than the one it was pinned with).
+ */
+function setDataPath(string $dataPath) : void{}
+
+/**
+ * $blobPath as every function here reads it: absolute as it is, relative
+ * against setDataPath()'s path, both lexically normal. Touches no file.
+ *
+ * @throws GenerationException for a relative path before setDataPath().
+ */
+function resolvePipelinePath(string $blobPath) : string{}
+
+/**
  * Freezes the pipeline under $versionRoot (worldgen/ and biome_parameters/
  * side by side, as tools/fetch-vanilla leaves them) into $blobPath (SPEC §6).
  * A world generates from that blob and never from the pack again.
@@ -80,7 +105,9 @@ function checkDimension(string $blobPath, string $noiseSettings, string $biomeSo
  * holds without reading $blobPath again, and the fluid updates generators
  * leave outlive the generators themselves: PocketMine-MP shuts idle
  * workers down, and with them every Dimension they held. Pins are counted;
- * a world already pinned keeps the state it was first pinned with.
+ * a world already pinned keeps the state it was first pinned with. A
+ * relative $blobPath and the absolute one it resolves to name the same
+ * world, here and in every function below.
  *
  * @throws GenerationException with Dimension::open()'s reason, pinning
  * nothing.
@@ -89,7 +116,8 @@ function pinWorld(string $blobPath, string $noiseSettings, string $biomeSource, 
 
 /**
  * One pinWorld() fewer for this world. Its state goes once neither a pin nor
- * a Dimension holds it. Returns false, and does nothing, if it is not pinned.
+ * a Dimension holds it. Returns false, and does nothing, if it is not pinned
+ * — as a relative $blobPath before setDataPath() never is.
  */
 function unpinWorld(string $blobPath, string $noiseSettings, string $biomeSource, int $seed) : bool{}
 
@@ -102,7 +130,8 @@ function unpinWorld(string $blobPath, string $noiseSettings, string $biomeSource
  * lava flow; PocketMine-MP has no such list, so the caller schedules a block
  * update at each. Built for the main thread: it opens and compiles nothing,
  * and returns [] when neither a Dimension nor a pin (pinWorld) holds that
- * world's outbox, or nothing is held for the chunk. Each chunk's updates
+ * world's outbox (as nothing can for a relative $blobPath before
+ * setDataPath()), or nothing is held for the chunk. Each chunk's updates
  * are returned once.
  *
  * @return list<array{int, int, int}>

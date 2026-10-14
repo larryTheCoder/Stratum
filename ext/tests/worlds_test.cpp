@@ -614,6 +614,75 @@ TEST_CASE("a pinned world outlives its generators and the file it was read from"
                       ContainsSubstring("cannot read the frozen pipeline at"));
 }
 
+TEST_CASE("a relative blob path is read against the data path, and moves with it", "[pmmp]") {
+    const Scratch scratch;
+    const std::filesystem::path server = scratch.blobs().parent_path();
+    static_cast<void>(scratch.put("world.blob", scratch.blob()));
+    const WorldOptions relative = overworld("blobs/world.blob", 42);
+    const WorldOptions absolute = overworld(scratch.blobs() / "world.blob", 42);
+    Worlds worlds;
+
+    // Before the plugin sets the data path, a relative path is refused by
+    // name wherever it would be read, and names nothing pinned or held.
+    CHECK_THROWS_WITH(
+        worlds.open(relative),
+        ContainsSubstring("the frozen pipeline path 'blobs/world.blob' is relative to "
+                          "the server's data path, and none has been set"));
+    CHECK_THROWS_WITH(worlds.pin(relative), ContainsSubstring("none has been set"));
+    CHECK_THROWS_WITH(worlds.resolvePipelinePath("blobs/world.blob"),
+                      ContainsSubstring("none has been set"));
+    CHECK_FALSE(worlds.unpin(relative));
+    CHECK_FALSE(worlds.pinned(relative));
+    CHECK(worlds.takeFluidUpdates(relative, 0, 0).empty());
+    // An absolute one needs no data path.
+    CHECK(worlds.open(absolute).dimension != nullptr);
+
+    CHECK_THROWS_WITH(worlds.setDataPath("srv"), ContainsSubstring("must be absolute, not 'srv'"));
+    worlds.setDataPath(server);
+    CHECK(worlds.resolvePipelinePath("blobs/world.blob") == scratch.blobs() / "world.blob");
+    CHECK(worlds.resolvePipelinePath("blobs/../blobs/./world.blob") ==
+          scratch.blobs() / "world.blob");
+    CHECK(worlds.resolvePipelinePath((scratch.blobs() / "world.blob").string()) ==
+          scratch.blobs() / "world.blob");
+
+    // The relative path and the absolute one it names are one world: one
+    // pin, one dimension, one outbox.
+    worlds.pin(relative);
+    CHECK(worlds.pinned(absolute));
+    {
+        const OpenWorld byRelative = worlds.open(relative);
+        const OpenWorld byAbsolute = worlds.open(absolute);
+        CHECK(byRelative.dimension == byAbsolute.dimension);
+        CHECK(byRelative.fluidUpdates == byAbsolute.fluidUpdates);
+        byRelative.fluidUpdates->put(1, 2, {at(3, 40, 5)});
+    }
+    CHECK(worlds.takeFluidUpdates(absolute, 1, 2).size() == 1U);
+
+    // The data path does not move under a pinned world; set again to the
+    // same path, nothing changes.
+    worlds.setDataPath(server);
+    const std::filesystem::path moved =
+        server.parent_path() / (server.filename().string() + "-moved");
+    CHECK_THROWS_WITH(worlds.setDataPath(moved),
+                      ContainsSubstring("cannot change") && ContainsSubstring("while a world is "
+                                                                              "pinned"));
+    CHECK(worlds.unpin(absolute));
+
+    // The server directory moves, and the next process is handed its new
+    // data path: the same options open the same blob where it now is.
+    std::filesystem::remove_all(moved);
+    std::filesystem::create_directories(moved / "blobs");
+    std::filesystem::copy_file(scratch.blobs() / "world.blob", moved / "blobs" / "world.blob");
+    worlds.setDataPath(moved);
+    CHECK(worlds.resolvePipelinePath("blobs/world.blob") == moved / "blobs" / "world.blob");
+    CHECK(worlds.open(relative).dimension != nullptr);
+    std::filesystem::remove(moved / "blobs" / "world.blob");
+    CHECK_THROWS_WITH(worlds.open(relative),
+                      ContainsSubstring("cannot read the frozen pipeline at " +
+                                        (moved / "blobs" / "world.blob").string()));
+    std::filesystem::remove_all(moved);
+}
+
 TEST_CASE("a frozen pipeline is written whole or not at all", "[pmmp]") {
     const Scratch scratch;
     const std::filesystem::path path = scratch.blobs() / "stratum-pipeline.blob";
