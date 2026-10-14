@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stratum\PMMP;
 
 use pocketmine\plugin\PluginBase;
+use pocketmine\scheduler\ClosureTask;
 use pocketmine\world\generator\GeneratorManager;
 use pocketmine\world\generator\InvalidGeneratorOptionsException;
 
@@ -56,12 +57,22 @@ final class Main extends PluginBase{
 	 * Listeners can only be registered once the plugin is enabled. Enabling
 	 * at STARTUP is still before any world loads, so every Stratum world is
 	 * pinned as it loads and no chunk is populated before this is listening.
+	 *
+	 * The fluid scheduler releases what it holds once a tick, from this
+	 * plugin's task scheduler: PocketMine-MP runs that at the top of each
+	 * server tick, before it collects finished population tasks and before
+	 * the worlds tick (Server::tick), which is where FluidUpdateScheduler
+	 * needs to look at the chunk locks.
 	 */
 	protected function onEnable() : void{
 		$this->worlds = new StratumWorlds($this->getLogger());
+		$fluids = new FluidUpdateScheduler($this->worlds);
 		$pluginManager = $this->getServer()->getPluginManager();
 		$pluginManager->registerEvents($this->worlds, $this);
-		$pluginManager->registerEvents(new FluidUpdateScheduler($this->worlds), $this);
+		$pluginManager->registerEvents($fluids, $this);
+		$this->getScheduler()->scheduleRepeatingTask(new ClosureTask(static function() use ($fluids) : void{
+			$fluids->release();
+		}), 1);
 	}
 
 	protected function onDisable() : void{

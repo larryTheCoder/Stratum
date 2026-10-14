@@ -71,11 +71,18 @@ PocketMine-MP itself can call.
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so when it fires
   `ChunkPopulateEvent` for a Stratum world this takes the chunk's positions
-  from the engine (`Stratum\takeFluidUpdates`) and schedules a block update
-  at each that still holds a liquid, after the liquid's own tick rate —
-  what `Liquid::onNearbyBlockChange()` does itself. Population rather than
+  from the engine (`Stratum\takeFluidUpdates`) and ticks each that still
+  holds a liquid once the liquid's own tick rate has passed — the delay
+  `Liquid::onNearbyBlockChange()` schedules itself. Population rather than
   first load, because a populated chunk's neighbours all exist and the flow
-  cannot reach ungenerated terrain. Registered in `onEnable()`, which at
+  cannot reach ungenerated terrain. And never while a population task is
+  in flight round the chunk: such a task locks its 3x3 (`World::lockChunk`),
+  and any block set there while it runs makes PocketMine-MP discard its
+  result and populate again, so a chunk's liquids are held until no chunk
+  of its 3x3 is locked. `Main` runs the release once a tick from its task
+  scheduler, which PocketMine-MP ticks before it collects finished
+  population tasks and before the worlds tick, and a released liquid is
+  ticked in that same server tick. Registered in `onEnable()`, which at
   `load: STARTUP` is still before any world loads.
 - `WorldFactory::create()` makes one of four dimensions, as vanilla's world
   presets pair settings and biome source: `OVERWORLD` (the default),

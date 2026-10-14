@@ -20,14 +20,26 @@ if(!is_dir("$root/worldgen/noise_settings") || !is_dir("$root/biome_parameters")
 // at WorldLoadEvent and unpins it at WorldUnloadEvent.
 //
 // Stand-ins as in 002_fluid_update_scheduler.phpt, read from PocketMine-MP
-// 5.44.4, plus WorldLoadEvent (a WorldEvent: getWorld()). A worker is what
-// StratumGenerator's constructor does — GeneratorOptions::parse() of the
-// options string, then Stratum\Dimension::open() — and its shutdown is
-// that Dimension going. The engine is the real extension.
+// 5.44.3's phar, plus WorldLoadEvent (a WorldEvent: getWorld()). A worker
+// is what StratumGenerator's constructor does — GeneratorOptions::parse()
+// of the options string, then Stratum\Dimension::open() — and its shutdown
+// is that Dimension going. A chunk's population is ChunkPopulateEvent and
+// then the server's ticks until its water is due (FluidUpdateScheduler
+// ticks a liquid its tick rate after the population). The engine is the
+// real extension.
 
 namespace {
 	interface Logger{
 		public function error($message);
+	}
+}
+
+namespace pocketmine {
+	final class Server{
+		private static ?self $instance = null;
+		public int $tick = 0;
+		public static function get() : self{ return self::$instance ??= new self(); }
+		public function getTick() : int{ return $this->tick; }
 	}
 }
 
@@ -90,6 +102,9 @@ namespace pocketmine\world {
 		public function getId() : int{ return $this->id; }
 		public function getSeed() : int{ return $this->seed; }
 		public function getFolderName() : string{ return "world" . $this->id; }
+		public function getServer() : \pocketmine\Server{ return \pocketmine\Server::get(); }
+		public function isLoaded() : bool{ return true; }
+		public function isChunkLocked(int $chunkX, int $chunkZ) : bool{ return false; }
 		public function getProvider() : object{
 			$data = new class($this->generator, $this->generatorOptions){
 				public function __construct(private string $generator, private string $options){}
@@ -154,6 +169,13 @@ namespace {
 		return Stratum\Dimension::open($parsed->blobPath, $parsed->noiseSettings, $parsed->biomeSource, $world->getSeed());
 	}
 
+	/** PocketMine-MP populates chunk ($x, $z) of $world, and ticks on until its water is due. */
+	function populated(FluidUpdateScheduler $scheduler, World $world, int $x, int $z) : void{
+		$scheduler->onChunkPopulate(new ChunkPopulateEvent($world, $x, $z));
+		pocketmine\Server::get()->tick += 5;
+		$scheduler->release();
+	}
+
 	/** The positions scheduled, without their delays. */
 	function positions(World $world) : array{
 		return array_map(fn($s) => [$s[0], $s[1], $s[2]], $world->scheduled);
@@ -202,8 +224,8 @@ namespace {
 		$generator->encodeChunk(-3, 2);
 		unset($generator);
 	}
-	$scheduler->onChunkPopulate(new ChunkPopulateEvent($pinned, -3, 2));
-	$scheduler->onChunkPopulate(new ChunkPopulateEvent($unpinned, -3, 2));
+	populated($scheduler, $pinned, -3, 2);
+	populated($scheduler, $unpinned, -3, 2);
 	echo "pinned world, after its worker went: ", positions($pinned) === $expected ? "every update scheduled" : count($pinned->scheduled) . " scheduled", "\n";
 	echo "unpinned world, after its worker went: ", count($unpinned->scheduled), " scheduled\n";
 
@@ -216,7 +238,7 @@ namespace {
 	unset($restarted);
 	// And what it left is held through its going, as before.
 	$pinned->scheduled = [];
-	$scheduler->onChunkPopulate(new ChunkPopulateEvent($pinned, -3, 2));
+	populated($scheduler, $pinned, -3, 2);
 	echo "after the restarted worker went: ", positions($pinned) === $expected ? "every update scheduled" : count($pinned->scheduled) . " scheduled", "\n";
 
 	// Another world's unload leaves the pin alone; its own unload releases

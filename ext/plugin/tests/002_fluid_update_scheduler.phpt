@@ -1,5 +1,5 @@
 --TEST--
-The plugin schedules a block update at each liquid the engine marked, once, in Stratum worlds only
+The plugin ticks each liquid the engine marked, once, at its tick rate, in Stratum worlds only, and never while a population around it is in flight
 --EXTENSIONS--
 stratum
 --SKIPIF--
@@ -11,21 +11,32 @@ if(!is_dir("$root/worldgen/noise_settings") || !is_dir("$root/biome_parameters")
 ?>
 --FILE--
 <?php
-// PocketMine-MP is not installable here (ext/plugin/README.md), so the
-// classes FluidUpdateScheduler and StratumWorlds (which says which worlds
-// are Stratum's) touch are stand-ins with the signatures they call, read
-// from PocketMine-MP 5.44.4: World::getBlockAt(int, int, int),
-// World::scheduleDelayedBlockUpdate(Vector3, int), World::getId/getSeed/
-// getFolderName/getProvider()->getWorldData()->getGenerator/
+// PocketMine-MP is not loaded here (ext/plugin/README.md), so the classes
+// FluidUpdateScheduler and StratumWorlds (which says which worlds are
+// Stratum's) touch are stand-ins with the signatures they call, read from
+// PocketMine-MP 5.44.3's phar: World::getBlockAt(int, int, int),
+// World::scheduleDelayedBlockUpdate(Vector3, int), World::isChunkLocked(int,
+// int), World::isLoaded(), World::getServer()->getTick(), World::getId/
+// getSeed/getFolderName/getProvider()->getWorldData()->getGenerator/
 // getGeneratorOptions, Block::getPosition(), Liquid::tickRate() (water 5,
 // lava 30), ChunkEvent::getChunkX/getChunkZ, WorldEvent::getWorld,
 // GeneratorManager::getInstance()->getGenerator(name)?->getGeneratorClass().
-// The engine side is the real extension: the updates are the ones
-// Dimension::encodeChunk left, taken through Stratum\takeFluidUpdates.
+// A population task in flight is what World::internalOrderChunkPopulation
+// leaves: the 3x3 chunks it populates locked (World::lockChunk) until its
+// result is back. The engine side is the real extension: the updates are
+// the ones Dimension::encodeChunk left, taken through
+// Stratum\takeFluidUpdates.
 
 namespace {
 	interface Logger{
 		public function error($message);
+	}
+}
+
+namespace pocketmine {
+	final class Server{
+		public int $tick = 0;
+		public function getTick() : int{ return $this->tick; }
 	}
 }
 
@@ -76,10 +87,14 @@ namespace pocketmine\world\generator {
 
 namespace pocketmine\world {
 	use pocketmine\math\Vector3;
+	use pocketmine\Server;
 
 	class World{
-		/** @var list<array{int, int, int, int}> */
+		/** @var list<array{int, int, int, int, int}> x, y, z, delay, the tick it was scheduled on */
 		public array $scheduled = [];
+		/** @var array<string, true> "x z" of every locked chunk */
+		public array $locked = [];
+		public bool $loaded = true;
 
 		/** @param \Closure(int, int, int) : \pocketmine\block\Block $blockAt */
 		public function __construct(
@@ -87,11 +102,14 @@ namespace pocketmine\world {
 			private string $generator,
 			private string $generatorOptions,
 			private int $seed,
-			private \Closure $blockAt
+			private \Closure $blockAt,
+			private Server $server
 		){}
 
 		public function getId() : int{ return $this->id; }
 		public function getSeed() : int{ return $this->seed; }
+		public function getServer() : Server{ return $this->server; }
+		public function isLoaded() : bool{ return $this->loaded; }
 		public function getFolderName() : string{ return "world" . $this->id; }
 		public function getProvider() : object{
 			$data = new class($this->generator, $this->generatorOptions){
@@ -108,7 +126,10 @@ namespace pocketmine\world {
 			return ($this->blockAt)($x, $y, $z);
 		}
 		public function scheduleDelayedBlockUpdate(Vector3 $pos, int $delay) : void{
-			$this->scheduled[] = [(int) $pos->x, (int) $pos->y, (int) $pos->z, $delay];
+			$this->scheduled[] = [(int) $pos->x, (int) $pos->y, (int) $pos->z, $delay, $this->server->getTick()];
+		}
+		public function isChunkLocked(int $chunkX, int $chunkZ) : bool{
+			return isset($this->locked["$chunkX $chunkZ"]);
 		}
 	}
 }
@@ -139,6 +160,7 @@ namespace {
 	use pocketmine\event\world\ChunkPopulateEvent;
 	use pocketmine\event\world\WorldUnloadEvent;
 	use pocketmine\math\Vector3;
+	use pocketmine\Server;
 	use pocketmine\world\World;
 	use Stratum\PMMP\FluidUpdateScheduler;
 	use Stratum\PMMP\StratumWorlds;
@@ -174,55 +196,101 @@ namespace {
 			default => new Water($at)
 		};
 	};
+	$positions = fn(array $scheduled) => array_map(fn($s) => [$s[0], $s[1], $s[2]], $scheduled);
+	$waters = array_slice($expected, 2);
 
+	$server = new Server();
+	$server->tick = 100;
 	$worlds = new StratumWorlds($logger);
 	$scheduler = new FluidUpdateScheduler($worlds);
 
-	// A world another generator owns schedules nothing and takes nothing,
-	// even with the same options and seed.
-	$normal = new World(1, "normal", $options, $seed, $blockAt);
+	// A world another generator owns holds nothing and takes nothing, even
+	// with the same options and seed.
+	$normal = new World(1, "normal", $options, $seed, $blockAt, $server);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($normal, -3, 2));
-	echo "normal world scheduled: ", count($normal->scheduled), "\n";
+	echo "normal world held: ", $scheduler->chunksHeld(), "\n";
 
-	// The Stratum world takes them: every liquid, at its own tick rate, in
-	// the engine's order; the stone is left alone.
-	$stratum = new World(2, "stratum", $options, $seed, $blockAt);
+	// The Stratum world takes them as the chunk is populated, on tick 100,
+	// and ticks none yet: each liquid is due its own tick rate later.
+	$stratum = new World(2, "stratum", $options, $seed, $blockAt, $server);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
-	echo "scheduled: ", count($stratum->scheduled) === count($expected) - 1 ? "all but the stone" : count($stratum->scheduled), "\n";
-	$positions = array_map(fn($s) => [$s[0], $s[1], $s[2]], $stratum->scheduled);
-	var_dump($positions === array_slice($expected, 1));
-	echo "lava delay: ", $stratum->scheduled[0][3], "\n";
-	echo "water delays: ", implode(",", array_unique(array_map(fn($s) => $s[3], array_slice($stratum->scheduled, 1)))), "\n";
+	echo "held: ", $scheduler->chunksHeld(), " chunk, ", count($stratum->scheduled), " scheduled\n";
+	for(; $server->tick < 105; ++$server->tick){
+		$scheduler->release();
+	}
+	echo "before tick 105: ", count($stratum->scheduled), " scheduled\n";
 
-	// Once: populating it again schedules nothing more, and a chunk nothing
-	// was left for schedules nothing.
+	// Tick 105, the water's due: but a population task is in flight next to
+	// the chunk, holding chunk (-2, 3) of its 3x3. A flow there would make
+	// PocketMine-MP discard that task's result, so nothing is ticked while
+	// it runs. A lock two chunks away, outside the 3x3, holds nothing back.
+	$stratum->locked["-2 3"] = true;
+	$stratum->locked["-1 2"] = true;
+	for(; $server->tick < 110; ++$server->tick){
+		$scheduler->release();
+	}
+	echo "while (-2, 3) is locked: ", count($stratum->scheduled), " scheduled\n";
+
+	// Its result is back: the next tick ticks every water, in the engine's
+	// order, at once (delay 0: PocketMine-MP ticks the world after the
+	// plugin's scheduler, in the same server tick); the stone is left alone
+	// and the lava is not yet due.
+	unset($stratum->locked["-2 3"]);
+	$scheduler->release();
+	var_dump($positions($stratum->scheduled) === $waters);
+	echo "water: delay ", implode(",", array_unique(array_column($stratum->scheduled, 3))), " on tick ", implode(",", array_unique(array_column($stratum->scheduled, 4))), "\n";
+	$stratum->scheduled = [];
+	for(++$server->tick; $server->tick < 130; ++$server->tick){
+		$scheduler->release();
+	}
+	echo "before tick 130: ", count($stratum->scheduled), " scheduled\n";
+	$scheduler->release();
+	echo "lava: ", $positions($stratum->scheduled) === [$expected[1]] ? "ticked" : "not ticked", ", delay ", $stratum->scheduled[0][3] ?? "-", " on tick ", $stratum->scheduled[0][4] ?? "-", "\n";
+	echo "held after: ", $scheduler->chunksHeld(), "\n";
+
+	// Once: populating it again ticks nothing more, and a chunk nothing was
+	// left for holds nothing.
+	$stratum->scheduled = [];
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, 0, 0));
-	echo "after repeats: ", count($stratum->scheduled) === count($expected) - 1 ? "unchanged" : "changed", "\n";
+	$server->tick += 40;
+	$scheduler->release();
+	echo "after repeats: ", count($stratum->scheduled), " scheduled, ", $scheduler->chunksHeld(), " held\n";
 
 	// A world whose options do not parse — which PocketMine-MP, having
 	// validated them at load, never presents — says so once, by name,
 	// rather than throwing out of the tick.
-	$broken = new World(3, "stratum", '{"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}', $seed, $blockAt);
+	$broken = new World(3, "stratum", '{"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}', $seed, $blockAt, $server);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($broken, -3, 2));
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($broken, -3, 2));
 	echo "logged: ", count($logged), "\n";
 	echo str_replace($blob, "<blob>", $logged[0]), "\n";
 	// A blob that has gone is no longer the options' concern (parse() reads
-	// the string alone): such a world has nothing held, and schedules
-	// nothing, without a word.
-	$gone = new World(4, "stratum", GeneratorOptions::encode("/nonexistent/stratum.blob"), $seed, $blockAt);
+	// the string alone): such a world has nothing held, and ticks nothing,
+	// without a word.
+	$gone = new World(4, "stratum", GeneratorOptions::encode("/nonexistent/stratum.blob"), $seed, $blockAt, $server);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($gone, -3, 2));
-	echo "gone: ", count($gone->scheduled), " scheduled, ", count($logged), " logged\n";
+	echo "gone: ", $scheduler->chunksHeld(), " held, ", count($logged), " logged\n";
+
+	// Held updates go with their world: unloaded before they are due, they
+	// are never ticked.
+	$dimension->encodeChunk(-3, 2);
+	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
+	echo "held again: ", $scheduler->chunksHeld(), "\n";
+	$worlds->onWorldUnload(new WorldUnloadEvent($stratum));
+	$scheduler->onWorldUnload(new WorldUnloadEvent($stratum));
+	$stratum->loaded = false;
+	$server->tick += 40;
+	$scheduler->release();
+	echo "after unload: ", count($stratum->scheduled), " scheduled, ", $scheduler->chunksHeld(), " held\n";
 
 	// What a world's options say is read once, and forgotten at unload: the
 	// same id, after an unload, is read afresh.
 	$dimension->encodeChunk(-3, 2);
-	$worlds->onWorldUnload(new WorldUnloadEvent($stratum));
-	$reused = new World(2, "normal", $options, $seed, $blockAt);
+	$reused = new World(2, "normal", $options, $seed, $blockAt, $server);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($reused, -3, 2));
-	echo "after unload, as another generator's: ", count($reused->scheduled), "\n";
-	echo "still held for the Stratum world: ", count(Stratum\takeFluidUpdates($blob, "minecraft:overworld", "minecraft:overworld", $seed, -3, 2)) === count($expected) ? "yes" : "no", "\n";
+	echo "after unload, as another generator's: ", $scheduler->chunksHeld(), " held\n";
+	echo "still in the extension for the Stratum world: ", count(Stratum\takeFluidUpdates($blob, "minecraft:overworld", "minecraft:overworld", $seed, -3, 2)) === count($expected) ? "yes" : "no", "\n";
 
 	unset($dimension);
 	unlink($blob);
@@ -230,14 +298,20 @@ namespace {
 ?>
 --EXPECT--
 marked: several
-normal world scheduled: 0
-scheduled: all but the stone
+normal world held: 0
+held: 1 chunk, 0 scheduled
+before tick 105: 0 scheduled
+while (-2, 3) is locked: 0 scheduled
 bool(true)
-lava delay: 30
-water delays: 5
-after repeats: unchanged
+water: delay 0 on tick 110
+before tick 130: 0 scheduled
+lava: ticked, delay 0 on tick 130
+held after: 0
+after repeats: 0 scheduled, 0 held
 logged: 1
 Stratum world "world3": its aquifer water and lava will not flow, because its generator options do not parse: Stratum's generator options take "blob", "settings" and "biomes" and nothing else, so "biome" would be ignored: {"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}
-gone: 0 scheduled, 1 logged
-after unload, as another generator's: 0
-still held for the Stratum world: yes
+gone: 0 held, 1 logged
+held again: 1
+after unload: 0 scheduled, 0 held
+after unload, as another generator's: 0 held
+still in the extension for the Stratum world: yes
