@@ -31,8 +31,12 @@ use function max;
  *
  * Why the chunk's population and not its first load: PocketMine-MP generates
  * a chunk's neighbours to populate it, so a populated chunk's eight
- * neighbours all exist, and a liquid flowing out of it never reaches
- * ungenerated terrain, where World::setBlockAt() throws. A chunk generated
+ * neighbours all exist — and by the time its liquids are released (below),
+ * every chunk within three of it does. A liquid flowing out of it reaches
+ * ungenerated terrain, where World::setBlockAt() throws inside a scheduled
+ * update, only by running on past all of those (read from 5.44.3, never
+ * seen); one reaching a chunk unloaded meanwhile reads it as air
+ * (World::getBlockAt) and may write into it. A chunk generated
  * only as a neighbour keeps its updates in the extension until it is
  * populated itself — through any number of worker restarts, because
  * StratumWorlds pins the world's state on the main thread while it is
