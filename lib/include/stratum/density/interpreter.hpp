@@ -352,6 +352,15 @@ private:
 
     [[nodiscard]] double evaluateNode(Scope& scope, NodeIndex index) const;
 
+    /// The cases of evaluateNode that hold more than a few doubles, kept out
+    /// of its frame, which a graph pays once per level of its depth (SPEC
+    /// §8). Each is that case exactly.
+    [[nodiscard]] double oldBlendedNoise(NodeIndex index, const Node& node, Point at) const;
+    [[nodiscard]] double endIslands(Point at) const;
+    [[nodiscard]] double findTopSurface(Scope& scope, const Node& node) const;
+    [[nodiscard]] double weirdScaledSampler(Scope& scope, NodeIndex index, const Node& node) const;
+    [[nodiscard]] double flatCache(Scope& scope, const Node& node) const;
+
     /// Splines are evaluated in float, not double: their knot locations,
     /// derivatives and values are floats in vanilla, and the coordinate is
     /// narrowed to float before it is used. Widening the arithmetic would

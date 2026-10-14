@@ -386,6 +386,17 @@ struct Resolver {
     void readScalar(FieldKind kind, const SchemaField& field, const nlohmann::json& value,
                     std::string_view typeName, FieldValue& into);
 
+    /// What a rule or condition is, from its "type", refusing anything else.
+    [[nodiscard]] RuleType ruleTypeOf(const nlohmann::json& json) const;
+    [[nodiscard]] ConditionType conditionTypeOf(const nlohmann::json& json) const;
+    /// A field of a nested rule or condition, refused where it is an
+    /// identifier the schema does not allow there.
+    void requireInline(const SchemaField& field, const nlohmann::json& value,
+                       std::string_view typeName) const;
+    /// A field of every other kind, none of which recurses.
+    void readLeaf(FieldKind kind, const SchemaField& field, const nlohmann::json& value,
+                  std::string_view typeName, FieldValue& into) const;
+
     void bindRule(Rule& entry, const SchemaField& field, FieldValue&& value,
                   std::string_view typeName) const;
     void bindCondition(Condition& entry, const SchemaField& field, FieldValue&& value,
@@ -426,27 +437,47 @@ struct Resolver {
     }
 };
 
+// THE RECURSION'S OWN FRAMES ARE KEPT THIN. readRule and readCondition reach
+// each other through readField and readScalar once per level of a tree, so
+// whatever those four hold on the stack is paid once per level of it:
+// reading a leaf field, checking a type, and building every message are in
+// functions of their own, whose frames are gone again before the recursion
+// goes a level deeper. Unoptimised, where a compiler gives each temporary
+// string a slot of its own, that took a level from 4.5 KiB to 1.5 in the
+// sanitize preset's build, readScalar's frame from 3.0 KiB to a quarter of
+// one (SPEC §8).
+
 void Resolver::readScalar(const FieldKind kind, const SchemaField& field,
                           const nlohmann::json& value, const std::string_view typeName,
                           FieldValue& into) {
+    // Only these two recurse.
+    if (kind == FieldKind::Rule) {
+        requireInline(field, value, typeName);
+        into.rules.push_back(readRule(value));
+    } else if (kind == FieldKind::Condition) {
+        requireInline(field, value, typeName);
+        into.conditions.push_back(readCondition(value));
+    } else {
+        readLeaf(kind, field, value, typeName, into);
+    }
+}
+
+void Resolver::requireInline(const SchemaField& field, const nlohmann::json& value,
+                             const std::string_view typeName) const {
+    // No field may be written as an identifier at the pinned version; the
+    // schema, not this code, is what says so.
+    if (value.is_string() && !field.allowsReference) {
+        fail(id, "'" + std::string(typeName) + "' does not accept an identifier for \"" +
+                     std::string(field.name) + "\" at this version; it must be given inline");
+    }
+}
+
+void Resolver::readLeaf(const FieldKind kind, const SchemaField& field, const nlohmann::json& value,
+                        const std::string_view typeName, FieldValue& into) const {
     switch (kind) {
         case FieldKind::Rule:
-            // No field may be written as an identifier at the pinned version;
-            // the schema, not this code, is what says so.
-            if (value.is_string() && !field.allowsReference) {
-                fail(id, "'" + std::string(typeName) + "' does not accept an identifier for \"" +
-                             std::string(field.name) +
-                             "\" at this version; it must be given inline");
-            }
-            into.rules.push_back(readRule(value));
-            break;
         case FieldKind::Condition:
-            if (value.is_string() && !field.allowsReference) {
-                fail(id, "'" + std::string(typeName) + "' does not accept an identifier for \"" +
-                             std::string(field.name) +
-                             "\" at this version; it must be given inline");
-            }
-            into.conditions.push_back(readCondition(value));
+            // readScalar's own, since they recurse.
             break;
         case FieldKind::BlockState:
             into.block = readBlockState(value, id, typeName, field.name);
@@ -599,7 +630,7 @@ void Resolver::bindCondition(Condition& entry, const SchemaField& field, FieldVa
     }
 }
 
-RuleIndex Resolver::readRule(const nlohmann::json& json) {
+RuleType Resolver::ruleTypeOf(const nlohmann::json& json) const {
     if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
         fail(id, "a rule must be an object with a string \"type\"");
     }
@@ -610,9 +641,26 @@ RuleIndex Resolver::readRule(const nlohmann::json& json) {
                      "' is not a surface rule this build knows; the four are sequence, condition, "
                      "block and bandlands");
     }
+    return *found;
+}
 
+ConditionType Resolver::conditionTypeOf(const nlohmann::json& json) const {
+    if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
+        fail(id, "a condition must be an object with a string \"type\"");
+    }
+    const auto name = json.at("type").get<std::string>();
+    const std::optional<ConditionType> found = typeFromName(kConditionTable, name);
+    if (!found.has_value()) {
+        fail(id, "'" + name + "' is not a surface rule condition this build knows");
+    }
+    return *found;
+}
+
+RuleIndex Resolver::readRule(const nlohmann::json& json) {
     Rule entry;
-    entry.type = *found;
+    entry.type = ruleTypeOf(json);
+    // The table's own spelling of the name, which is the one "type" gave.
+    const std::string_view name = ruleTypeName(entry.type);
     // `bandlands` has no fields, so this loop does nothing for it — which is
     // the whole of what being absent from mcdoc costs it.
     for (const SchemaField& field : fieldsOf(entry.type)) {
@@ -626,17 +674,9 @@ RuleIndex Resolver::readRule(const nlohmann::json& json) {
 }
 
 ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
-    if (!json.is_object() || !json.contains("type") || !json.at("type").is_string()) {
-        fail(id, "a condition must be an object with a string \"type\"");
-    }
-    const auto name = json.at("type").get<std::string>();
-    const std::optional<ConditionType> found = typeFromName(kConditionTable, name);
-    if (!found.has_value()) {
-        fail(id, "'" + name + "' is not a surface rule condition this build knows");
-    }
-
     Condition entry;
-    entry.type = *found;
+    entry.type = conditionTypeOf(json);
+    const std::string_view name = conditionTypeName(entry.type);
     // The four conditions absent from mcdoc take no fields, so the same loop
     // covers them by doing nothing.
     for (const SchemaField& field : fieldsOf(entry.type)) {

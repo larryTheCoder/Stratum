@@ -297,13 +297,93 @@ private:
         throw ResolveError(chain.empty() ? what : chain + ": " + what);
     }
 
+    // THE RECURSION'S OWN FRAMES ARE KEPT THIN. resolveValue, resolveObject,
+    // resolveSpline and resolveReference call one another once per level of
+    // nesting, so whatever each holds on the stack is paid once per level.
+    // Everything that does not recurse — reading a leaf field, checking
+    // a shape, and building every message — is in a function of its own,
+    // whose frame is gone again before the recursion goes a level deeper.
+    // Unoptimised, where a compiler gives each temporary string a slot of its
+    // own, that took a level of resolveValue and resolveObject from 4.8 KiB
+    // to 1.1 in the sanitize preset's build (SPEC §8).
+
     /// Resolves a density function named by identifier, or returns the node
     /// it already resolved to.
     NodeIndex resolveReference(Graph& graph, const data::ResourceLocation& id) {
         if (const auto found = resolved_.find(id); found != resolved_.end()) {
             return found->second;
         }
+        const data::PackEntry& entry = definitionOf(id);
+        stack_.push_back(id);
+        const NodeIndex index = resolveValue(graph, entry.json);
+        stack_.pop_back();
 
+        resolved_.emplace(id, index);
+        return index;
+    }
+
+    /// A density function is a number, an identifier, or an inline object.
+    /// Public because the builder resolves the density functions written
+    /// inline in a noise settings router through it.
+public:
+    NodeIndex resolveValue(Graph& graph, const nlohmann::json& value) {
+        if (value.is_number()) {
+            return addConstant(graph, value);
+        }
+        if (value.is_string()) {
+            return resolveReference(graph, idOf(value));
+        }
+        if (!value.is_object()) {
+            failNotAFunction(value);
+        }
+        return resolveObject(graph, value);
+    }
+
+private:
+    NodeIndex resolveObject(Graph& graph, const nlohmann::json& object) {
+        Node node;
+        node.type = typeOf(object);
+        for (const SchemaField& field : infoOf(node.type).fields) {
+            const nlohmann::json* const value = fieldOf(object, node.type, field);
+            if (value == nullptr) {
+                continue;
+            }
+            // Only these two recurse.
+            if (field.kind == FieldKind::Function) {
+                checkReference(node.type, field, *value);
+                node.arguments.push_back(resolveValue(graph, *value));
+            } else if (field.kind == FieldKind::Spline) {
+                node.spline = resolveSpline(graph, *value);
+            } else {
+                readLeaf(node, field, *value);
+            }
+        }
+        checkResolved(node);
+        return addNode(graph, std::move(node));
+    }
+
+    SplineIndex resolveSpline(Graph& graph, const nlohmann::json& value) {
+        checkSpline(value);
+        SplineDefinition definition;
+        definition.coordinate = resolveValue(graph, value.at("coordinate"));
+        for (const nlohmann::json& point : pointsOf(value)) {
+            SplinePoint resolved = pointOf(point, definition);
+            const nlohmann::json& pointValue = point.at("value");
+            if (pointValue.is_number()) {
+                resolved.value = pointValue.get<double>();
+            } else {
+                resolved.nested = resolveSpline(graph, pointValue);
+            }
+            definition.points.push_back(resolved);
+        }
+        return addSpline(graph, std::move(definition));
+    }
+
+    // --- what the recursion calls, and does not recurse from ---------------
+
+    /// The pack entry @p id names, refusing a cycle back to it and an
+    /// identifier the pack does not define.
+    [[nodiscard]] const data::PackEntry& definitionOf(const data::ResourceLocation& id) const {
         const auto cycleAt = std::ranges::find(stack_, id);
         if (cycleAt != stack_.end()) {
             std::string cycle;
@@ -319,42 +399,31 @@ private:
             fail("references density function '" + id.toString() +
                  "', which the pack does not define");
         }
-
-        stack_.push_back(id);
-        const NodeIndex index = resolveValue(graph, entry->json);
-        stack_.pop_back();
-
-        resolved_.emplace(id, index);
-        return index;
+        return *entry;
     }
 
-    /// A density function is a number, an identifier, or an inline object.
-    /// Public because the builder resolves the density functions written
-    /// inline in a noise settings router through it.
-public:
-    NodeIndex resolveValue(Graph& graph, const nlohmann::json& value) {
-        if (value.is_number()) {
-            // The documented shorthand: a bare number is a constant.
-            return addNode(graph, Node{.type = NodeType::Constant,
-                                       .arguments = {},
-                                       .parameters = {value.get<double>()},
-                                       .noise = std::nullopt,
-                                       .inlineNoise = std::nullopt,
-                                       .spline = std::nullopt,
-                                       .selector = {}});
-        }
-        if (value.is_string()) {
-            return resolveReference(graph, parseId(value.get<std::string>()));
-        }
-        if (!value.is_object()) {
-            fail("a density function must be a number, an identifier or an object, not " +
-                 std::string(value.type_name()));
-        }
-        return resolveObject(graph, value);
+    /// The documented shorthand: a bare number is a constant.
+    [[nodiscard]] static NodeIndex addConstant(Graph& graph, const nlohmann::json& value) {
+        return addNode(graph, Node{.type = NodeType::Constant,
+                                   .arguments = {},
+                                   .parameters = {value.get<double>()},
+                                   .noise = std::nullopt,
+                                   .inlineNoise = std::nullopt,
+                                   .spline = std::nullopt,
+                                   .selector = {}});
     }
 
-private:
-    NodeIndex resolveObject(Graph& graph, const nlohmann::json& object) {
+    [[nodiscard]] data::ResourceLocation idOf(const nlohmann::json& value) const {
+        return parseId(value.get<std::string>());
+    }
+
+    [[noreturn]] void failNotAFunction(const nlohmann::json& value) const {
+        fail("a density function must be a number, an identifier or an object, not " +
+             std::string(value.type_name()));
+    }
+
+    /// The type an inline function's "type" names.
+    [[nodiscard]] NodeType typeOf(const nlohmann::json& object) const {
         if (!object.contains("type")) {
             fail(R"(an inline density function has no "type")");
         }
@@ -372,153 +441,152 @@ private:
                  "' is not implemented by this engine. The types it implements are those "
                  "vanilla's own data uses.");
         }
+        return *type;
+    }
 
-        Node node;
-        node.type = *type;
-        for (const SchemaField& field : infoOf(*type).fields) {
-            if (!object.contains(field.name)) {
-                // The schema marks some fields optional, with a documented
-                // default; the rest are required.
-                if (field.optional) {
-                    continue;
+    /// @p field's value in @p object, or nothing for an optional field that
+    /// is absent. The schema marks some fields optional, with a documented
+    /// default; the rest are required.
+    [[nodiscard]] const nlohmann::json* fieldOf(const nlohmann::json& object, NodeType type,
+                                                const SchemaField& field) const {
+        if (object.contains(field.name)) {
+            return &object.at(field.name);
+        }
+        if (field.optional) {
+            return nullptr;
+        }
+        fail("'" + std::string(nodeTypeName(type)) + "' is missing its \"" +
+             std::string(field.name) + "\"");
+    }
+
+    /// Some fields take a nested function but not a reference to one —
+    /// clamp's input, at this version. Only the schema records that
+    /// distinction.
+    void checkReference(NodeType type, const SchemaField& field,
+                        const nlohmann::json& value) const {
+        if (value.is_string() && !field.allowsReference) {
+            fail("'" + std::string(nodeTypeName(type)) + "' does not accept an identifier for \"" +
+                 std::string(field.name) + "\" at this version; it must be given inline");
+        }
+    }
+
+    /// A field that holds no function: a number, a noise or a selector.
+    void readLeaf(Node& node, const SchemaField& field, const nlohmann::json& value) const {
+        const std::string typeName(nodeTypeName(node.type));
+        switch (field.kind) {
+            case FieldKind::Number:
+                if (!value.is_number()) {
+                    fail("'" + typeName + "' expects \"" + std::string(field.name) +
+                         "\" to be a number, not " + std::string(value.type_name()));
                 }
-                fail("'" + typeName + "' is missing its \"" + std::string(field.name) + "\"");
-            }
-            const nlohmann::json& fieldValue = object.at(field.name);
-
-            switch (field.kind) {
-                case FieldKind::Function:
-                    // Some fields take a nested function but not a reference
-                    // to one — clamp's input, at this version. Only the
-                    // schema records that distinction.
-                    if (fieldValue.is_string() && !field.allowsReference) {
+                node.parameters.push_back(value.get<double>());
+                break;
+            case FieldKind::Noise:
+                // A union in the schema, so a union here: the field either
+                // names a `worldgen/noise` entry or carries that entry's
+                // parameters inline. Both are legal to vanilla, and the
+                // generated table used to record only the first — which made
+                // a datapack that inlines its noise parameters something this
+                // engine refused for no reason (SPEC §8, §11).
+                if (value.is_string()) {
+                    // No noise field at the pinned version forbids the
+                    // identifier, so this refusal cannot fire today. It is
+                    // here because the table decides and not this code: a
+                    // bare `NoiseParameters` field is a shape the generator
+                    // emits, and it means inline only.
+                    if (!field.allowsReference) {
                         fail("'" + typeName + "' does not accept an identifier for \"" +
                              std::string(field.name) +
                              "\" at this version; it must be given inline");
                     }
-                    node.arguments.push_back(resolveValue(graph, fieldValue));
-                    break;
-                case FieldKind::Number:
-                    if (!fieldValue.is_number()) {
-                        fail("'" + typeName + "' expects \"" + std::string(field.name) +
-                             "\" to be a number, not " + std::string(fieldValue.type_name()));
+                    node.noise = parseId(value.get<std::string>());
+                } else if (value.is_object()) {
+                    try {
+                        node.inlineNoise = NoiseParameters::fromInline(
+                            value, "the noise written inline in '" + typeName + "' as \"" +
+                                       std::string(field.name) + "\"");
+                    } catch (const NoiseError& error) {
+                        // Rethrown as a ResolveError so that the message
+                        // carries the chain of identifiers that reached this
+                        // node, which is the whole point of fail().
+                        fail(error.what());
                     }
-                    node.parameters.push_back(fieldValue.get<double>());
-                    break;
-                case FieldKind::Noise:
-                    // A union in the schema, so a union here: the field
-                    // either names a `worldgen/noise` entry or carries that
-                    // entry's parameters inline. Both are legal to vanilla,
-                    // and the generated table used to record only the first
-                    // — which made a datapack that inlines its noise
-                    // parameters something this engine refused for no
-                    // reason (SPEC §8, §11).
-                    if (fieldValue.is_string()) {
-                        // No noise field at the pinned version forbids the
-                        // identifier, so this refusal cannot fire today. It
-                        // is here because the table decides and not this
-                        // code: a bare `NoiseParameters` field is a shape
-                        // the generator emits, and it means inline only.
-                        if (!field.allowsReference) {
-                            fail("'" + typeName + "' does not accept an identifier for \"" +
-                                 std::string(field.name) +
-                                 "\" at this version; it must be given inline");
-                        }
-                        node.noise = parseId(fieldValue.get<std::string>());
-                    } else if (fieldValue.is_object()) {
-                        try {
-                            node.inlineNoise = NoiseParameters::fromInline(
-                                fieldValue, "the noise written inline in '" + typeName + "' as \"" +
-                                                std::string(field.name) + "\"");
-                        } catch (const NoiseError& error) {
-                            // Rethrown as a ResolveError so that the message
-                            // carries the chain of identifiers that reached
-                            // this node, which is the whole point of fail().
-                            fail(error.what());
-                        }
-                    } else {
-                        fail("'" + typeName + "' expects \"" + std::string(field.name) +
-                             "\" to name a noise or to be one, not " +
-                             std::string(fieldValue.type_name()));
-                    }
-                    break;
-                case FieldKind::Selector: {
-                    if (!fieldValue.is_string()) {
-                        fail("'" + typeName + "' expects \"" + std::string(field.name) +
-                             "\" to be a string");
-                    }
-                    node.selector = fieldValue.get<std::string>();
-                    if (std::ranges::find(field.selectorValues, node.selector) ==
-                        field.selectorValues.end()) {
-                        fail("'" + typeName + "' has an unknown " + std::string(field.name) + " '" +
-                             node.selector + "'");
-                    }
-                    break;
+                } else {
+                    fail("'" + typeName + "' expects \"" + std::string(field.name) +
+                         "\" to name a noise or to be one, not " + std::string(value.type_name()));
                 }
-                case FieldKind::Spline:
-                    node.spline = resolveSpline(graph, fieldValue);
-                    break;
-            }
+                break;
+            case FieldKind::Selector:
+                if (!value.is_string()) {
+                    fail("'" + typeName + "' expects \"" + std::string(field.name) +
+                         "\" to be a string");
+                }
+                node.selector = value.get<std::string>();
+                if (std::ranges::find(field.selectorValues, node.selector) ==
+                    field.selectorValues.end()) {
+                    fail("'" + typeName + "' has an unknown " + std::string(field.name) + " '" +
+                         node.selector + "'");
+                }
+                break;
+            case FieldKind::Function:
+            case FieldKind::Spline:
+                // resolveObject's own, since they recurse.
+                break;
         }
+    }
+
+    /// checkNode, rethrown through fail() for the chain of identifiers.
+    void checkResolved(const Node& node) const {
         try {
             checkNode(node);
         } catch (const ResolveError& error) {
-            // Rethrown through fail() for the chain of identifiers.
             fail(error.what());
         }
-        return addNode(graph, std::move(node));
     }
 
-    SplineIndex resolveSpline(Graph& graph, const nlohmann::json& value) {
+    void checkSpline(const nlohmann::json& value) const {
         if (!value.is_object()) {
             fail("a spline must be an object, not " + std::string(value.type_name()));
         }
         if (!value.contains("coordinate") || !value.contains("points")) {
             fail(R"(a spline needs both "coordinate" and "points")");
         }
+    }
 
-        SplineDefinition definition;
-        definition.coordinate = resolveValue(graph, value.at("coordinate"));
-
-        const nlohmann::json& points = value.at("points");
+    [[nodiscard]] const nlohmann::json& pointsOf(const nlohmann::json& spline) const {
+        const nlohmann::json& points = spline.at("points");
         if (!points.is_array()) {
             fail(R"(a spline's "points" must be an array)");
         }
+        return points;
+    }
 
-        double previousLocation = 0.0;
-        bool first = true;
-        for (const nlohmann::json& point : points) {
-            if (!point.is_object() || !point.contains("location") || !point.contains("value") ||
-                !point.contains("derivative")) {
-                fail(R"(a spline point needs "location", "value" and "derivative")");
-            }
-
-            SplinePoint resolved;
-            resolved.location = point.at("location").get<double>();
-            resolved.derivative = point.at("derivative").get<double>();
-
-            // Interpolation walks the points in order; out-of-order points
-            // would silently sample the wrong segment.
-            if (!first && resolved.location < previousLocation) {
-                fail("a spline's points are not in ascending order of location");
-            }
-            previousLocation = resolved.location;
-            first = false;
-
-            const nlohmann::json& pointValue = point.at("value");
-            if (pointValue.is_number()) {
-                resolved.value = pointValue.get<double>();
-            } else {
-                resolved.nested = resolveSpline(graph, pointValue);
-            }
-            definition.points.push_back(resolved);
+    /// @p point's location and derivative, after the points of @p spline
+    /// read so far: its value is the caller's, since it may recurse.
+    [[nodiscard]] SplinePoint pointOf(const nlohmann::json& point,
+                                      const SplineDefinition& spline) const {
+        if (!point.is_object() || !point.contains("location") || !point.contains("value") ||
+            !point.contains("derivative")) {
+            fail(R"(a spline point needs "location", "value" and "derivative")");
         }
+        SplinePoint resolved;
+        resolved.location = point.at("location").get<double>();
+        resolved.derivative = point.at("derivative").get<double>();
+        // Interpolation walks the points in order; out-of-order points would
+        // silently sample the wrong segment.
+        if (!spline.points.empty() && resolved.location < spline.points.back().location) {
+            fail("a spline's points are not in ascending order of location");
+        }
+        return resolved;
+    }
 
-        if (definition.points.empty()) {
+    /// Appends @p spline, whose coordinate and nested splines are in the graph
+    /// already, refusing one with no points.
+    [[nodiscard]] SplineIndex addSpline(Graph& graph, SplineDefinition spline) const {
+        if (spline.points.empty()) {
             fail("a spline has no points");
         }
-
-        graph.splines_.push_back(std::move(definition));
+        graph.splines_.push_back(std::move(spline));
         return static_cast<SplineIndex>(graph.splines_.size() - 1);
     }
 

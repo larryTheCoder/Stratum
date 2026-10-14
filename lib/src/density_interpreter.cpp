@@ -89,6 +89,40 @@ template<typename T>
     return javamath::floorDiv(coordinate, 4) * 4;
 }
 
+// The refusals evaluation makes, each built here rather than in the frame
+// that finds it: those frames are on the stack once per level of a graph's
+// depth, and a message's temporaries would be too.
+
+[[noreturn]] void refuseUnevaluated(const NodeType type) {
+    throw EvalError("'" + std::string(nodeTypeName(type)) + "' has no evaluation in this build");
+}
+
+[[noreturn]] void refuseCellHeight(const std::int32_t cellHeight) {
+    throw EvalError("'minecraft:find_top_surface' has cell_height " + std::to_string(cellHeight) +
+                    ", which would never finish scanning; it must be positive");
+}
+
+[[noreturn]] void refuseUpperBound(const double upperBound, const Point& at) {
+    throw EvalError("'minecraft:find_top_surface' reads upper_bound " + describe(upperBound) +
+                    " at block " + describe(at) +
+                    ", whose floor is not a 32-bit integer; this build refuses it rather than "
+                    "guess where the server's scan starts");
+}
+
+[[noreturn]] void refuseLatticePoint(const double upperBound, const Point& at,
+                                     const std::int64_t start) {
+    throw EvalError("'minecraft:find_top_surface' reads upper_bound " + describe(upperBound) +
+                    " at block " + describe(at) + ", whose lattice point below it, " +
+                    std::to_string(start) + ", is not a 32-bit integer; this build refuses it");
+}
+
+[[noreturn]] void refuseScan(const std::int64_t steps, const std::int32_t start,
+                             const std::int32_t lowerBound) {
+    throw EvalError("'minecraft:find_top_surface' would scan " + std::to_string(steps) +
+                    " steps from " + std::to_string(start) + " down to " +
+                    std::to_string(lowerBound) + "; that is not a column, it is a hang");
+}
+
 } // namespace
 
 /// One point's evaluation, with the values already computed for it. Nodes
@@ -725,143 +759,19 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
 
         // --- splines -------------------------------------------------------
-        case NodeType::OldBlendedNoise: {
-            // Only reachable with a candidate in place; unevaluableReason
-            // refuses it otherwise, and that refusal is what keeps an
-            // unverified reading out of an ordinary world.
-            // Built at construction; see blendedOf_. A substitution still
-            // wins if one is in place, so an experiment can put a candidate
-            // in front of the settled reading.
-            if (substitutions_.blendedNoise != nullptr) {
-                const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
-                                                                 .yScale = node.parameters[1],
-                                                                 .xzFactor = node.parameters[2],
-                                                                 .yFactor = node.parameters[3],
-                                                                 .smearScaleMultiplier =
-                                                                     node.parameters[4]};
-                value = substitutions_.blendedNoise(parameters, at);
-            } else {
-                value = blendedFor(index).sample(at.x, at.y, at.z);
-            }
+        case NodeType::OldBlendedNoise:
+            value = oldBlendedNoise(index, node, at);
             break;
-        }
-        case NodeType::EndIslands: {
-            // Built at construction, exactly once per graph; see endIslands_.
-            // Absent only if the graph changed under the interpreter, which
-            // is a bug rather than an input, so it is an error and not a
-            // fallback value.
-            if (!endIslands_.has_value()) {
-                throw EvalError("'minecraft:end_islands' was reached with no island field built "
-                                "for this world seed");
-            }
-            value = endIslands_->sample(at.x, at.z);
+        case NodeType::EndIslands:
+            value = endIslands(at);
             break;
-        }
-        case NodeType::FindTopSurface: {
-            // "Scans through a column of an input density and returns the
-            // topmost y-level that is above 0. If no such position exists
-            // within the bounds, the lower_bound is returned" — minecraft.wiki.
-            // Everything the wiki leaves open was measured off the server
-            // (SPEC §11):
-            //
-            //   * the scan is on a lattice of ABSOLUTE multiples of
-            //     cell_height, anchored to neither bound. Probed with an
-            //     upper_bound of 317 and a lower_bound of -60, both off the
-            //     lattice, and the answers stayed multiples of eight.
-            //   * upper_bound is inclusive when it lands on the lattice, and
-            //     is FLOORED onto it when it does not: 319.9 scans from 312,
-            //     320.0 scans from 320.
-            //   * the test is a strict `> 0`: a density of exactly zero at a
-            //     lattice point is not a surface.
-            const double upperBound = evaluateNode(scope, node.arguments[1]);
-            // Both conversions are defined: the graph refuses, at load, a
-            // lower_bound outside the schema's [-4064, 4062] and a cell_height
-            // outside [1, 2^31) (density_graph.cpp, checkNode; SPEC §8).
-            const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
-            const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
-            if (cellHeight <= 0) {
-                throw EvalError("'minecraft:find_top_surface' has cell_height " +
-                                std::to_string(cellHeight) +
-                                ", which would never finish scanning; it must be positive");
-            }
-
-            // upper_bound is a function's value, so it is checked here rather
-            // than at load: a floor that is not an int32 (NaN included) has no
-            // defined conversion, and nothing says what the server scans from
-            // there. Refused by name (SPEC §8).
-            const double flooredTop = std::floor(upperBound);
-            if (std::isnan(flooredTop) || flooredTop < -2147483648.0 || flooredTop > 2147483647.0) {
-                throw EvalError("'minecraft:find_top_surface' reads upper_bound " +
-                                describe(upperBound) + " at block " + describe(at) +
-                                ", whose floor is not a 32-bit integer; this build refuses it "
-                                "rather than guess where the server's scan starts");
-            }
-            const auto top = static_cast<std::int32_t>(flooredTop);
-            // floorDiv, not truncating division: a negative upper_bound has to
-            // land on the lattice point BELOW it, and C++ division rounds the
-            // other way. The product is formed in 64 bits and refused where it
-            // leaves int32 — a top within one cell_height of INT32_MIN — rather
-            // than wrapped.
-            const std::int64_t startWide =
-                static_cast<std::int64_t>(javamath::floorDiv(top, cellHeight)) * cellHeight;
-            if (startWide < std::numeric_limits<std::int32_t>::min()) {
-                throw EvalError("'minecraft:find_top_surface' reads upper_bound " +
-                                describe(upperBound) + " at block " + describe(at) +
-                                ", whose lattice point below it, " + std::to_string(startWide) +
-                                ", is not a 32-bit integer; this build refuses it");
-            }
-            const auto start = static_cast<std::int32_t>(startWide);
-
-            // A bound on the work, so a pathological upper_bound is an error
-            // rather than a hang. Vanilla's own use runs 48 steps.
-            constexpr std::int64_t kMaxSteps = 1 << 20;
-            const std::int64_t steps = (static_cast<std::int64_t>(start) - lowerBound) / cellHeight;
-            if (steps > kMaxSteps) {
-                throw EvalError("'minecraft:find_top_surface' would scan " + std::to_string(steps) +
-                                " steps from " + std::to_string(start) + " down to " +
-                                std::to_string(lowerBound) +
-                                "; that is not a column, it is a hang");
-            }
-
-            value = lowerBound;
-            // The step cannot overflow, which is a bound that holds rather
-            // than a check: every scanY is a multiple of cell_height no lower
-            // than lower_bound, and lower_bound is at least -4064. With a
-            // cell_height above 4064 the only such multiples are 0 and up, so
-            // a step lands no lower than -cell_height; with one at most 4064
-            // it lands no lower than -8128. Asserted, so that a change to the
-            // load checks that broke it would not go unnoticed in a debug run.
-            for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
-                assert(std::int64_t{scanY} - cellHeight >=
-                       std::numeric_limits<std::int32_t>::min());
-                Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
-                             scope.window(), scope.context());
-                if (evaluateNode(column, node.arguments[0]) > 0.0) {
-                    value = scanY;
-                    break;
-                }
-            }
+        case NodeType::FindTopSurface:
+            value = findTopSurface(scope, node);
             break;
-        }
-        case NodeType::WeirdScaledSampler: {
-            // abs(rarity * noise(x/rarity, y/rarity, z/rarity)). The rarity
-            // scales the sampled position AND the value, and the absolute
-            // value is what makes this a cave function: the tunnels are where
-            // the result is near zero, which is both sides of the noise's
-            // own zero crossing rather than one.
-            //
-            // A substituted constant still wins, as an isolation device.
-            if (substitutions_.weirdScaledSampler.has_value()) {
-                value = *substitutions_.weirdScaledSampler;
-                break;
-            }
-            const double rarity =
-                rarityValueMapper(node.selector, evaluateNode(scope, node.arguments[0]));
-            value = std::abs(rarity *
-                             sampleNoise(index, at, at.x / rarity, at.y / rarity, at.z / rarity));
+        case NodeType::WeirdScaledSampler:
+            value = weirdScaledSampler(scope, index, node);
             break;
-        }
-        case NodeType::Spline: {
+        case NodeType::Spline:
             // The resolver never builds one without a spline, but this layer
             // does not get to assume its input came from that resolver.
             if (!node.spline.has_value()) {
@@ -869,30 +779,11 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             }
             value = static_cast<double>(evaluateSpline(scope, *node.spline));
             break;
-        }
 
         // --- caches --------------------------------------------------------
-        case NodeType::FlatCache: {
-            // Relocated, not merely remembered: vanilla fills this cache
-            // once per 4x4 column at y = 0, so every block in that column
-            // reads the corner's value — inside the window that grid covers.
-            // Outside it there is no grid point to read, and the argument is
-            // read where it was asked for, at its own y: measured through
-            // every aquifer read a datapack can wrap in it, where a y-varying
-            // argument makes that y visible (SPEC §11, "Cache markers in a
-            // datapack's aquifer entries"). Without a window every read
-            // relocates.
-            const FlatCacheWindow* window = scope.window();
-            const bool relocates = window == nullptr || window->covers(at.x, at.z);
-            const Point corner{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)};
-            if (!relocates || corner == at) {
-                value = argument(0);
-            } else {
-                Scope cornerScope(corner, graph_->nodeCount(), nullptr, window, scope.context());
-                value = evaluateNode(cornerScope, node.arguments[0]);
-            }
+        case NodeType::FlatCache:
+            value = flatCache(scope, node);
             break;
-        }
         case NodeType::BlendDensity:
             // The third member of the same interface as blend_alpha and
             // blend_offset, and this engine generates every chunk itself. If
@@ -941,11 +832,153 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
 
         default:
-            throw EvalError("'" + std::string(nodeTypeName(node.type)) +
-                            "' has no evaluation in this build");
+            refuseUnevaluated(node.type);
     }
 
     return scope.store(index, value);
+}
+
+// --- the cases evaluateNode hands off ------------------------------------
+//
+// Each holds more than a few doubles, or builds a message, and evaluateNode's
+// frame is paid once per level of a graph's depth (SPEC §8): out here, a
+// case's locals are on the stack only while that case runs. Unoptimised,
+// where a compiler gives every local and temporary a slot of its own, that
+// took evaluateNode's frame from 3.1 KiB to 1.0 in the sanitize preset's
+// build (SPEC §8).
+
+double Interpreter::oldBlendedNoise(const NodeIndex index, const Node& node, const Point at) const {
+    // Built at construction; see blendedOf_. A substitution still wins if one
+    // is in place, so an experiment can put a candidate in front of the
+    // settled reading.
+    if (substitutions_.blendedNoise != nullptr) {
+        const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
+                                                         .yScale = node.parameters[1],
+                                                         .xzFactor = node.parameters[2],
+                                                         .yFactor = node.parameters[3],
+                                                         .smearScaleMultiplier =
+                                                             node.parameters[4]};
+        return substitutions_.blendedNoise(parameters, at);
+    }
+    return blendedFor(index).sample(at.x, at.y, at.z);
+}
+
+double Interpreter::endIslands(const Point at) const {
+    // Built at construction, exactly once per graph; see endIslands_. Absent
+    // only if the graph changed under the interpreter, which is a bug rather
+    // than an input, so it is an error and not a fallback value.
+    if (!endIslands_.has_value()) {
+        throw EvalError("'minecraft:end_islands' was reached with no island field built for "
+                        "this world seed");
+    }
+    return endIslands_->sample(at.x, at.z);
+}
+
+double Interpreter::findTopSurface(Scope& scope, const Node& node) const {
+    // "Scans through a column of an input density and returns the topmost
+    // y-level that is above 0. If no such position exists within the bounds,
+    // the lower_bound is returned" — minecraft.wiki. Everything the wiki
+    // leaves open was measured off the server (SPEC §11):
+    //
+    //   * the scan is on a lattice of ABSOLUTE multiples of cell_height,
+    //     anchored to neither bound. Probed with an upper_bound of 317 and a
+    //     lower_bound of -60, both off the lattice, and the answers stayed
+    //     multiples of eight.
+    //   * upper_bound is inclusive when it lands on the lattice, and is
+    //     FLOORED onto it when it does not: 319.9 scans from 312, 320.0 scans
+    //     from 320.
+    //   * the test is a strict `> 0`: a density of exactly zero at a lattice
+    //     point is not a surface.
+    const Point at = scope.at();
+    const double upperBound = evaluateNode(scope, node.arguments[1]);
+    // Both conversions are defined: the graph refuses, at load, a lower_bound
+    // outside the schema's [-4064, 4062] and a cell_height outside [1, 2^31)
+    // (density_graph.cpp, checkNode; SPEC §8).
+    const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
+    const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
+    if (cellHeight <= 0) {
+        refuseCellHeight(cellHeight);
+    }
+
+    // upper_bound is a function's value, so it is checked here rather than at
+    // load: a floor that is not an int32 (NaN included) has no defined
+    // conversion, and nothing says what the server scans from there. Refused
+    // by name (SPEC §8).
+    const double flooredTop = std::floor(upperBound);
+    if (std::isnan(flooredTop) || flooredTop < -2147483648.0 || flooredTop > 2147483647.0) {
+        refuseUpperBound(upperBound, at);
+    }
+    const auto top = static_cast<std::int32_t>(flooredTop);
+    // floorDiv, not truncating division: a negative upper_bound has to land
+    // on the lattice point BELOW it, and C++ division rounds the other way.
+    // The product is formed in 64 bits and refused where it leaves int32 — a
+    // top within one cell_height of INT32_MIN — rather than wrapped.
+    const std::int64_t startWide =
+        static_cast<std::int64_t>(javamath::floorDiv(top, cellHeight)) * cellHeight;
+    if (startWide < std::numeric_limits<std::int32_t>::min()) {
+        refuseLatticePoint(upperBound, at, startWide);
+    }
+    const auto start = static_cast<std::int32_t>(startWide);
+
+    // A bound on the work, so a pathological upper_bound is an error rather
+    // than a hang. Vanilla's own use runs 48 steps.
+    constexpr std::int64_t kMaxSteps = 1 << 20;
+    const std::int64_t steps = (static_cast<std::int64_t>(start) - lowerBound) / cellHeight;
+    if (steps > kMaxSteps) {
+        refuseScan(steps, start, lowerBound);
+    }
+
+    // The step cannot overflow, which is a bound that holds rather than a
+    // check: every scanY is a multiple of cell_height no lower than
+    // lower_bound, and lower_bound is at least -4064. With a cell_height above
+    // 4064 the only such multiples are 0 and up, so a step lands no lower than
+    // -cell_height; with one at most 4064 it lands no lower than -8128.
+    // Asserted, so that a change to the load checks that broke it would not
+    // go unnoticed in a debug run.
+    for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
+        assert(std::int64_t{scanY} - cellHeight >= std::numeric_limits<std::int32_t>::min());
+        Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
+                     scope.window(), scope.context());
+        if (evaluateNode(column, node.arguments[0]) > 0.0) {
+            return scanY;
+        }
+    }
+    return lowerBound;
+}
+
+double Interpreter::weirdScaledSampler(Scope& scope, const NodeIndex index,
+                                       const Node& node) const {
+    // abs(rarity * noise(x/rarity, y/rarity, z/rarity)). The rarity scales the
+    // sampled position AND the value, and the absolute value is what makes
+    // this a cave function: the tunnels are where the result is near zero,
+    // which is both sides of the noise's own zero crossing rather than one.
+    //
+    // A substituted constant still wins, as an isolation device.
+    if (substitutions_.weirdScaledSampler.has_value()) {
+        return *substitutions_.weirdScaledSampler;
+    }
+    const Point at = scope.at();
+    const double rarity = rarityValueMapper(node.selector, evaluateNode(scope, node.arguments[0]));
+    return std::abs(rarity * sampleNoise(index, at, at.x / rarity, at.y / rarity, at.z / rarity));
+}
+
+double Interpreter::flatCache(Scope& scope, const Node& node) const {
+    // Relocated, not merely remembered: vanilla fills this cache once per 4x4
+    // column at y = 0, so every block in that column reads the corner's value
+    // — inside the window that grid covers. Outside it there is no grid point
+    // to read, and the argument is read where it was asked for, at its own
+    // y: measured through every aquifer read a datapack can wrap in it, where
+    // a y-varying argument makes that y visible (SPEC §11, "Cache markers in a
+    // datapack's aquifer entries"). Without a window every read relocates.
+    const Point at = scope.at();
+    const FlatCacheWindow* window = scope.window();
+    const bool relocates = window == nullptr || window->covers(at.x, at.z);
+    const Point corner{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)};
+    if (!relocates || corner == at) {
+        return evaluateNode(scope, node.arguments[0]);
+    }
+    Scope cornerScope(corner, graph_->nodeCount(), nullptr, window, scope.context());
+    return evaluateNode(cornerScope, node.arguments[0]);
 }
 
 double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
