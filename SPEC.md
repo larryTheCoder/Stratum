@@ -246,7 +246,7 @@ These are hard requirements; violations are release blockers.
    `tools/lint/check-determinism.sh` and `stratum_assert_no_banned_flags`
    accept it as they find it. CI runs the unit suite under it (job
    `linux-x86_64 (clang, UBSan)`; on an x86-64 dev box, a clean build in
-   about a minute at six jobs and the 563 unit cases in ten seconds at
+   about a minute at six jobs and the 571 unit cases in eleven seconds at
    four); `ctest --preset sanitize-conformance` runs the conformance suite
    under it locally, at about twice the Debug time. Measured when it landed:
    176 of 176 with nothing skipped and no report, 74 minutes at four jobs
