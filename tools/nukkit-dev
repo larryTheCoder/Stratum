@@ -1,0 +1,491 @@
+#!/usr/bin/env bash
+# Stratum — a CloudburstMC/Nukkit server to build and run ext-nukkit/ against.
+#
+# ext-nukkit/'s plugin is compiled against, and smoke-tested inside, a real
+# Nukkit server. The one thing this script downloads is that server: ONE
+# prebuilt jar from CloudburstMC's own CI (the NukkitX/Nukkit master job), at
+# the build pinned below, checked against the SHA-256 recorded below and
+# refused on any mismatch. Nothing from the download is run but the jar
+# itself; Nukkit is never built from source here. No root, no JDK download.
+#
+# Usage:
+#   tools/nukkit-dev                    # the pin, where everything lives, what is present
+#   tools/nukkit-dev fetch              # download the pinned jar once, verify it
+#   tools/nukkit-dev --print-jar        # the verified jar's path (exit 1 if absent)
+#   tools/nukkit-dev --print-java-home  # a local JDK with javac and jni.h
+#   tools/nukkit-dev pin <build>        # owner only: download <build>'s jar into
+#                                       # quarantine and print the lines to pin it
+#   tools/nukkit-dev server <dir> --plugin <jar> --pack <version root> [options]
+#                                       # write a hermetic server directory
+#   tools/nukkit-dev smoke --plugin <jar> --smoke-plugin <jar> --library <so>
+#                          --pack <version root> [options]
+#                                       # the headless smoke run (ext-nukkit.smoke)
+#
+# Everything lives under $STRATUM_NUKKIT_DIR (default ~/stratum-work/nukkit):
+# jars/ the verified jar, quarantine/ what `pin` downloaded, servers/ the
+# server directories `smoke` writes. Idempotent: a verified jar is reused,
+# `server` rewrites only its configuration, `smoke` starts from an empty
+# directory each time.
+#
+# HERMETIC: the server binds 127.0.0.1 on a non-default port; query, RCON and
+# bStats are off; nobody is whitelisted. `smoke` also runs it in a network
+# namespace of its own (unshare -rn) holding loopback alone, so nothing it
+# does can reach any other host. Read from Nukkit at the pinned commit
+# (SPEC §11's M5-Nukkit entry): server.properties' defaults are
+# Server.ServerProperties, nukkit.yml's the jar's lang/eng/nukkit.yml, bStats
+# is cn.nukkit.metrics.NukkitMetrics (plugins/bStats/config.yml).
+set -euo pipefail
+
+# --- The pin ----------------------------------------------------------------
+# Set together, from `tools/nukkit-dev pin <build>`'s output, by the owner.
+# Empty until then, and `fetch` refuses to download anything without them.
+readonly NUKKIT_CI_JOB="https://ci.opencollab.dev/job/NukkitX/job/Nukkit/job/master"
+readonly NUKKIT_BUILD=""
+readonly NUKKIT_COMMIT=""
+readonly NUKKIT_ARTIFACT=""
+readonly NUKKIT_SHA256=""
+# The commit this binding was read against (CloudburstMC/Nukkit master,
+# 2026-09-19, Bedrock 26.50). Prefer the CI build of exactly this commit.
+readonly NUKKIT_READ_AT="b3caad67d86be34aeca3937e64e8176f6760a2d4"
+
+readonly nukkit_dir="${STRATUM_NUKKIT_DIR:-${HOME}/stratum-work/nukkit}"
+
+log() { printf '==> %s\n' "$*" >&2; }
+die() { printf 'nukkit-dev: %s\n' "$*" >&2; exit 1; }
+
+jar_path() { printf '%s/jars/nukkit-%s.jar' "${nukkit_dir}" "${NUKKIT_BUILD}"; }
+
+pinned() { [[ -n "${NUKKIT_BUILD}" && -n "${NUKKIT_ARTIFACT}" && -n "${NUKKIT_SHA256}" ]]; }
+
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# Exit status 0 when $1 is the pinned jar, byte for byte.
+verified() { pinned && [[ -f "$1" ]] && [[ "$(sha256_of "$1")" == "${NUKKIT_SHA256}" ]]; }
+
+require_pin() {
+    pinned || die "no Nukkit build is pinned yet. The owner runs 'tools/nukkit-dev pin <build>' \
+(a build of ${NUKKIT_CI_JOB}, preferably the one of commit ${NUKKIT_READ_AT}) and copies the \
+four lines it prints into this script."
+}
+
+download() { # url target
+    curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+        --connect-timeout 30 --max-time 900 --output "$2" "$1"
+}
+
+# --- JDK ----------------------------------------------------------------------
+
+java_home_ok() { [[ -x "$1/bin/javac" && -x "$1/bin/java" && -f "$1/include/jni.h" && -f "$1/lib/ct.sym" ]]; }
+
+find_java_home() {
+    if [[ -n "${JAVA_HOME:-}" ]] && java_home_ok "${JAVA_HOME}"; then
+        printf '%s\n' "${JAVA_HOME}"
+        return 0
+    fi
+    # The newest Java version first, by each JDK's own `release` file. A JDK,
+    # not a JRE: javac for the classes, jni.h for the shim, ct.sym for
+    # --release 8 (Nukkit's floor).
+    local candidate version
+    while IFS=' ' read -r version candidate; do
+        if java_home_ok "${candidate}"; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done < <(find /usr/lib/jvm "${HOME}/.jdks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null |
+        while IFS= read -r candidate; do
+            version="$(sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p' "${candidate}/release" 2>/dev/null)"
+            printf '%s %s\n' "${version:-0}" "${candidate}"
+        done | sort -rV)
+    return 1
+}
+
+# --- Subcommands ----------------------------------------------------------------
+
+cmd_status() {
+    if pinned; then
+        echo "pinned:   build ${NUKKIT_BUILD} of ${NUKKIT_CI_JOB} (commit ${NUKKIT_COMMIT:-unrecorded})"
+        echo "          ${NUKKIT_ARTIFACT}, sha256 ${NUKKIT_SHA256}"
+    else
+        echo "pinned:   nothing yet (tools/nukkit-dev pin <build>; read against ${NUKKIT_READ_AT})"
+    fi
+    echo "dir:      ${nukkit_dir}"
+    if pinned; then
+        local jar
+        jar="$(jar_path)"
+        if verified "${jar}"; then
+            echo "jar:      ${jar} (verified)"
+        elif [[ -f "${jar}" ]]; then
+            echo "jar:      ${jar} (DIGEST MISMATCH: refused)"
+        else
+            echo "jar:      absent (tools/nukkit-dev fetch)"
+        fi
+    fi
+    local home
+    if home="$(find_java_home)"; then
+        echo "jdk:      ${home}"
+    else
+        echo "jdk:      none found with javac, jni.h and ct.sym (set JAVA_HOME)"
+    fi
+}
+
+cmd_fetch() {
+    require_pin
+    local jar
+    jar="$(jar_path)"
+    if verified "${jar}"; then
+        log "already fetched and verified: ${jar}"
+        printf '%s\n' "${jar}"
+        return 0
+    fi
+    [[ -e "${jar}" ]] && die "${jar} exists and is not the pinned jar (sha256 $(sha256_of "${jar}")); \
+remove it by hand after looking at what it is"
+    mkdir -p "${nukkit_dir}/jars"
+    local quarantined="${nukkit_dir}/quarantine/nukkit-${NUKKIT_BUILD}.jar"
+    local part="${jar}.part"
+    rm -f "${part}"
+    if [[ -f "${quarantined}" ]] && [[ "$(sha256_of "${quarantined}")" == "${NUKKIT_SHA256}" ]]; then
+        log "using the copy 'pin' downloaded: ${quarantined}"
+        cp "${quarantined}" "${part}"
+    else
+        log "downloading build ${NUKKIT_BUILD}'s ${NUKKIT_ARTIFACT}"
+        download "${NUKKIT_CI_JOB}/${NUKKIT_BUILD}/artifact/${NUKKIT_ARTIFACT}" "${part}"
+    fi
+    local got
+    got="$(sha256_of "${part}")"
+    if [[ "${got}" != "${NUKKIT_SHA256}" ]]; then
+        rm -f "${part}"
+        die "build ${NUKKIT_BUILD}'s jar has sha256 ${got}, not the pinned ${NUKKIT_SHA256}: refused"
+    fi
+    mv "${part}" "${jar}"
+    log "verified: ${jar}"
+    printf '%s\n' "${jar}"
+}
+
+cmd_print_jar() {
+    require_pin
+    local jar
+    jar="$(jar_path)"
+    verified "${jar}" || die "no verified Nukkit jar at ${jar} (tools/nukkit-dev fetch)"
+    printf '%s\n' "${jar}"
+}
+
+cmd_pin() {
+    local build="${1:-}"
+    [[ "${build}" =~ ^[0-9]+$ ]] || die "usage: tools/nukkit-dev pin <build number>"
+    local meta
+    meta="$(curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --max-time 60 \
+        "${NUKKIT_CI_JOB}/${build}/api/json?tree=result,timestamp,artifacts%5BrelativePath%5D,actions%5BlastBuiltRevision%5BSHA1%5D%5D")" \
+        || die "CloudburstMC's CI did not answer for build ${build} of ${NUKKIT_CI_JOB}"
+    local parsed
+    parsed="$(printf '%s' "${meta}" | python3 -I -c '
+import json, sys
+build = json.load(sys.stdin)
+commits = sorted({a["lastBuiltRevision"]["SHA1"] for a in build.get("actions") or []
+                  if a and a.get("lastBuiltRevision")})
+jars = [a["relativePath"] for a in build.get("artifacts") or []
+        if a["relativePath"].endswith(".jar")
+        and not any(word in a["relativePath"].lower() for word in ("sources", "javadoc", "original"))]
+print(build.get("result") or "UNKNOWN")
+print(",".join(commits))
+print("\n".join(jars))
+')"
+    local result commit
+    result="$(sed -n 1p <<<"${parsed}")"
+    commit="$(sed -n 2p <<<"${parsed}")"
+    local -a jars
+    mapfile -t jars < <(sed -n '3,$p' <<<"${parsed}" | sed '/^$/d')
+    [[ "${result}" == "SUCCESS" ]] || die "build ${build} is ${result}, not SUCCESS: refused"
+    [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || die "build ${build} names no single commit (${commit:-none})"
+    [[ ${#jars[@]} -eq 1 ]] || die "build ${build} has ${#jars[@]} candidate server jars \
+(${jars[*]:-none}); pin one by hand"
+    mkdir -p "${nukkit_dir}/quarantine"
+    local quarantined="${nukkit_dir}/quarantine/nukkit-${build}.jar"
+    log "downloading build ${build}'s ${jars[0]} into quarantine (not installed)"
+    download "${NUKKIT_CI_JOB}/${build}/artifact/${jars[0]}" "${quarantined}.part"
+    mv "${quarantined}.part" "${quarantined}"
+    local digest
+    digest="$(sha256_of "${quarantined}")"
+    [[ "${commit}" == "${NUKKIT_READ_AT}" ]] || log "note: build ${build} built ${commit}, not the \
+commit this binding was read against (${NUKKIT_READ_AT})"
+    cat <<EOF
+# Paste into tools/nukkit-dev, replacing the empty pin, then: tools/nukkit-dev fetch
+readonly NUKKIT_BUILD="${build}"
+readonly NUKKIT_COMMIT="${commit}"
+readonly NUKKIT_ARTIFACT="${jars[0]}"
+readonly NUKKIT_SHA256="${digest}"
+EOF
+}
+
+# server <dir> --plugin <jar> --pack <root> [--smoke-plugin <jar>] [--seed <n>]
+#        [--workers <n>] [--port <n>] [--world <name>]
+cmd_server() {
+    local dir="${1:-}"
+    [[ -n "${dir}" ]] || die "usage: tools/nukkit-dev server <dir> --plugin <jar> --pack <version root> [options]"
+    shift
+    local plugin="" smoke_plugin="" pack="" seed="20260915" workers="4" port="19232" world="stratum"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --plugin) plugin="$2"; shift 2 ;;
+            --smoke-plugin) smoke_plugin="$2"; shift 2 ;;
+            --pack) pack="$2"; shift 2 ;;
+            --seed) seed="$2"; shift 2 ;;
+            --workers) workers="$2"; shift 2 ;;
+            --port) port="$2"; shift 2 ;;
+            --world) world="$2"; shift 2 ;;
+            *) die "server: unknown option $1" ;;
+        esac
+    done
+    [[ -f "${plugin}" ]] || die "server: --plugin must name the built Stratum plugin jar"
+    [[ -d "${pack}/worldgen" ]] || die "server: --pack must be a version root (tools/fetch-vanilla's), not ${pack}"
+    [[ "${seed}" =~ ^-?[0-9]+$ && "${seed}" != 0 ]] || die "server: --seed must be a non-zero integer"
+    [[ "${port}" =~ ^[0-9]+$ && "${port}" != 19132 && "${port}" != 19133 ]] \
+        || die "server: --port must be a number other than Bedrock's defaults"
+    [[ "${world}" =~ ^[A-Za-z0-9_-]+$ ]] || die "server: --world must be a plain name"
+
+    mkdir -p "${dir}/plugins/bStats"
+    dir="$(cd "${dir}" && pwd)"
+    pack="$(cd "${pack}" && pwd -P)"
+    local blob="${dir}/worlds/${world}/stratum-pipeline.blob"
+
+    # Every default that listens or talks, set; the rest as Nukkit has it.
+    cat >"${dir}/server.properties" <<EOF
+#Written by tools/nukkit-dev: a hermetic Stratum test server.
+motd=Stratum test server
+sub-motd=not for players
+server-ip=127.0.0.1
+server-port=${port}
+enable-query=off
+enable-rcon=off
+white-list=on
+max-players=0
+view-distance=4
+level-name=${world}
+level-seed=${seed}
+level-type=stratum
+generator-settings={"blob":"${blob}","pack":"${pack}"}
+allow-nether=off
+allow-the-end=off
+auto-save=on
+EOF
+    cat >"${dir}/nukkit.yml" <<EOF
+# Written by tools/nukkit-dev. Only what differs from Nukkit's own defaults.
+settings:
+ language: "eng"
+ query-plugins: false
+ async-workers: ${workers}
+debug:
+ level: 1
+# No worlds beyond the default one, which server.properties makes Stratum's.
+worlds: {}
+EOF
+    # Written before Nukkit's first start, which would otherwise create it
+    # with metrics enabled.
+    cat >"${dir}/plugins/bStats/config.yml" <<EOF
+enabled: false
+serverUuid: "00000000-0000-0000-0000-000000000000"
+logFailedRequests: false
+EOF
+    : >"${dir}/white-list.txt"
+    # Copies, not links: the default directory is on a disk that has none.
+    cp "${plugin}" "${dir}/plugins/stratum-nukkit.jar"
+    if [[ -n "${smoke_plugin}" ]]; then
+        cp "${smoke_plugin}" "${dir}/plugins/stratum-nukkit-smoke.jar"
+    else
+        rm -f "${dir}/plugins/stratum-nukkit-smoke.jar"
+    fi
+    printf '%s\n' "${dir}"
+}
+
+# One server run, headless and in its own network namespace. Exit status is
+# the server's; stdout and stderr go to console-<mode>.log.
+run_server() { # dir java jar library mode radius limit
+    local dir="$1" java="$2" jar="$3" library="$4" mode="$5" radius="$6" limit="$7"
+    local fifo_dir
+    fifo_dir="$(mktemp -d)"
+    mkfifo "${fifo_dir}/stdin"
+    # A console that never reaches end-of-file: Nukkit's reads its standard
+    # input for commands, and the plugin stops the server itself.
+    sleep infinity >"${fifo_dir}/stdin" &
+    local holder=$!
+    local status=0
+    # JDK 24+ warns when a library is loaded without it; JDK 11 refuses it.
+    local -a native_access=()
+    if "${java}" --enable-native-access=ALL-UNNAMED -version >/dev/null 2>&1; then
+        native_access=(--enable-native-access=ALL-UNNAMED)
+    fi
+    (
+        cd "${dir}"
+        exec timeout --kill-after=30 "${limit}" unshare --user --map-root-user --net \
+            sh -c 'ip link set lo up && exec "$@"' sh \
+            "${java}" -Xmx2G "${native_access[@]}" \
+            "-Dstratum.nukkit.library=${library}" \
+            "-Dstratum.smoke.mode=${mode}" \
+            "-Dstratum.smoke.radius=${radius}" \
+            "-Dstratum.smoke.report=${dir}/report-${mode}.properties" \
+            -jar "${jar}" --language eng
+    ) <"${fifo_dir}/stdin" >"${dir}/console-${mode}.log" 2>&1 || status=$?
+    kill "${holder}" 2>/dev/null || true
+    wait "${holder}" 2>/dev/null || true
+    rm -rf "${fifo_dir}"
+    # Nukkit rolls logs/server.log over at the next start: keep this run's.
+    [[ -f "${dir}/logs/server.log" ]] && cp "${dir}/logs/server.log" "${dir}/server-${mode}.log"
+    [[ -f "${dir}/logs/leveldb/latest.log" ]] && cp "${dir}/logs/leveldb/latest.log" "${dir}/leveldb-${mode}.log"
+    return "${status}"
+}
+
+prop() { # file key: a value java.util.Properties stored
+    sed -n "s/^$2=//p" "$1" | head -1 | sed 's/\\:/:/g; s/\\=/=/g; s/\\ / /g'
+}
+
+# Exit status 0 when property $2 of $1 is a whole number at least $3.
+at_least() { # file key minimum
+    local value
+    value="$(prop "$1" "$2")"
+    [[ "${value}" =~ ^[0-9]+$ ]] && (( value >= $3 ))
+}
+
+cmd_smoke() {
+    local jar="" plugin="" smoke_plugin="" library="" pack="" java="java"
+    local dir="${STRATUM_NUKKIT_SERVER_DIR:-${nukkit_dir}/servers/smoke}" radius=4 workers=4 seed=20260915
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --jar) jar="$2"; shift 2 ;;
+            --plugin) plugin="$2"; shift 2 ;;
+            --smoke-plugin) smoke_plugin="$2"; shift 2 ;;
+            --library) library="$2"; shift 2 ;;
+            --pack) pack="$2"; shift 2 ;;
+            --java) java="$2"; shift 2 ;;
+            --dir) dir="$2"; shift 2 ;;
+            --radius) radius="$2"; shift 2 ;;
+            --workers) workers="$2"; shift 2 ;;
+            --seed) seed="$2"; shift 2 ;;
+            *) die "smoke: unknown option $1" ;;
+        esac
+    done
+    if [[ ! -d "${pack}/worldgen" ]]; then
+        echo "SKIP: no worldgen fixtures under ${pack}; run tools/fetch-vanilla first"
+        exit 77
+    fi
+    require_pin
+    [[ -n "${jar}" ]] || jar="$(jar_path)"
+    verified "${jar}" || die "smoke: ${jar} is not the pinned Nukkit jar (sha256 \
+$( [[ -f "${jar}" ]] && sha256_of "${jar}" || echo absent)): refused"
+    [[ -f "${plugin}" && -f "${smoke_plugin}" && -f "${library}" ]] \
+        || die "smoke: --plugin, --smoke-plugin and --library must name the built jars and library"
+    [[ "${radius}" =~ ^[0-9]+$ ]] || die "smoke: --radius must be a whole number"
+    unshare --user --map-root-user --net true 2>/dev/null \
+        || die "smoke: unshare cannot make a network namespace here, and the smoke server runs in one"
+    command -v ip >/dev/null || die "smoke: needs iproute2's ip, to raise loopback inside the namespace"
+    library="$(cd "$(dirname "${library}")" && pwd)/$(basename "${library}")"
+
+    rm -rf "${dir}"
+    mkdir -p "${dir}"
+    dir="$(cmd_server "${dir}" --plugin "${plugin}" --smoke-plugin "${smoke_plugin}" --pack "${pack}" \
+        --seed "${seed}" --workers "${workers}")"
+    log "smoke server in ${dir}"
+
+    local failures=()
+    log "run 1: create the world, generate the spawn area, compare it in memory, stop"
+    run_server "${dir}" "${java}" "${jar}" "${library}" generate "${radius}" 1200 \
+        || failures+=("run 1 exited with status $?")
+    log "run 2: load the world, read the area back from disk, compare, stop"
+    run_server "${dir}" "${java}" "${jar}" "${library}" readback "${radius}" 1200 \
+        || failures+=("run 2 exited with status $?")
+
+    local generate="${dir}/report-generate.properties" readback="${dir}/report-readback.properties"
+    [[ -f "${generate}" ]] || failures+=("run 1 wrote no report")
+    [[ -f "${readback}" ]] || failures+=("run 2 wrote no report")
+    if [[ -f "${generate}" && -f "${readback}" ]]; then
+        local area
+        area="$(prop "${generate}" area_chunks)"
+        [[ "$(prop "${generate}" outcome)" == ok ]] || failures+=("run 1: $(prop "${generate}" outcome)")
+        [[ "$(prop "${readback}" outcome)" == ok ]] || failures+=("run 2: $(prop "${readback}" outcome)")
+        [[ "$(prop "${readback}" level_dat_generator)" == stratum ]] \
+            || failures+=("level.dat names generator '$(prop "${readback}" level_dat_generator)', not stratum")
+        [[ "${area}" =~ ^[1-9][0-9]*$ ]] || failures+=("run 1 reports no area (area_chunks '${area}')")
+        at_least "${generate}" chunks_generated_by_stratum "${area:-1}" \
+            || failures+=("Stratum filled $(prop "${generate}" chunks_generated_by_stratum) chunks of ${area}")
+        [[ "$(prop "${readback}" chunks_missing_on_disk)" == 0 ]] \
+            || failures+=("$(prop "${readback}" chunks_missing_on_disk) of ${area} chunks are not on disk")
+        [[ "$(prop "${readback}" chunks_generated_during_readback)" == 0 ]] \
+            || failures+=("run 2 generated chunks it should have read")
+        local where
+        for where in memory disk; do
+            local report="${generate}"
+            [[ "${where}" == disk ]] && report="${readback}"
+            [[ "$(prop "${report}" "chunks_compared_${where}")" == "${area}" ]] \
+                || failures+=("${where}: compared $(prop "${report}" "chunks_compared_${where}") of ${area} chunks")
+            [[ "$(prop "${report}" "block_mismatches_${where}")" == 0 ]] \
+                || failures+=("${where}: $(prop "${report}" "block_mismatches_${where}") blocks differ from the fill")
+        done
+        [[ "$(prop "${generate}" biome_mismatches_memory)" == 0 ]] \
+            || failures+=("memory: $(prop "${generate}" biome_mismatches_memory) biomes differ from the fill")
+        local disk_biomes offset_biomes
+        disk_biomes="$(prop "${readback}" biome_mismatches_disk)"
+        offset_biomes="$(prop "${readback}" biome_mismatches_disk_explained_by_section_offset)"
+        if [[ "${disk_biomes}" != 0 && "${disk_biomes}" != "${offset_biomes}" ]]; then
+            failures+=("disk: ${disk_biomes} biomes differ from the fill, $((disk_biomes - offset_biomes)) not by Nukkit's section offset")
+        fi
+    fi
+    # Any exception or error in either run's logs; any block state Nukkit's
+    # LevelDB layer could not find (its own silent info_update substitution).
+    local logfile
+    for logfile in "${dir}"/server-*.log "${dir}"/console-*.log; do
+        [[ -f "${logfile}" ]] || continue
+        if grep -En 'Exception|Throwable|^[[:space:]]+at [[:alnum:]_.$]+\(| (ERROR|FATAL) |\[(ERROR|FATAL)' "${logfile}" \
+            >"${logfile}.problems"; then
+            failures+=("$(basename "${logfile}"): $(wc -l <"${logfile}.problems") error line(s), first: $(head -1 "${logfile}.problems")")
+        else
+            rm -f "${logfile}.problems"
+        fi
+    done
+    for logfile in "${dir}"/leveldb-*.log; do
+        [[ -f "${logfile}" ]] || continue
+        if grep -n 'Can not find' "${logfile}" >"${logfile}.problems"; then
+            failures+=("$(basename "${logfile}"): Nukkit substituted block states: $(head -1 "${logfile}.problems")")
+        else
+            rm -f "${logfile}.problems"
+        fi
+    done
+
+    local summary="${dir}/smoke-summary.txt"
+    {
+        echo "Stratum Nukkit smoke, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "nukkit:   build ${NUKKIT_BUILD} (${NUKKIT_COMMIT:-commit unrecorded}), sha256 ${NUKKIT_SHA256}"
+        echo "java:     $("${java}" -version 2>&1 | head -1)"
+        echo "server:   ${dir}"
+        if [[ -f "${generate}" ]]; then
+            echo "world:    $(prop "${generate}" level), seed $(prop "${generate}" seed), $(prop "${generate}" area)"
+            echo "spawn:    $(prop "${generate}" chunks_generated_by_stratum) chunks in $(prop "${generate}" spawn_generation_ms) ms on $(prop "${generate}" generation_threads) generation threads (async-workers $(prop "${generate}" async_workers)): $(prop "${generate}" generation_thread_names)"
+            echo "census:   $(prop "${generate}" census_emittable_states) emittable states, all resolved: $(prop "${generate}" census_emittable_resolved)"
+            echo "          all Java states: $(prop "${generate}" census_all_java_states) (Nukkit palette $(prop "${generate}" nukkit_palette_version), engine table $(prop "${generate}" engine_table_version))"
+            echo "biomes:   $(prop "${generate}" census_biomes); unknown to Nukkit: $(prop "${generate}" census_biomes_unknown_to_nukkit)"
+            echo "memory:   $(prop "${generate}" chunks_compared_memory) chunks, $(prop "${generate}" block_mismatches_memory) block and $(prop "${generate}" biome_mismatches_memory) biome mismatches"
+        fi
+        if [[ -f "${readback}" ]]; then
+            echo "disk:     $(prop "${readback}" chunks_compared_disk) chunks, $(prop "${readback}" block_mismatches_disk) block and $(prop "${readback}" biome_mismatches_disk) biome mismatches ($(prop "${readback}" biome_mismatches_disk_explained_by_section_offset) of them Nukkit's LevelDB section offset); level.dat generator '$(prop "${readback}" level_dat_generator)'"
+            if [[ "$(prop "${readback}" biome_mismatches_disk)" != 0 ]] \
+                && [[ "$(prop "${readback}" biome_mismatches_disk)" == "$(prop "${readback}" biome_mismatches_disk_explained_by_section_offset)" ]]; then
+                echo "KNOWN NUKKIT DEFECT: every biome read back from disk is the one generated 64 blocks higher"
+                echo "          (Data3dSerializer passes array indices to getBiomeStorage, which takes a section y)"
+            fi
+        fi
+        if [[ ${#failures[@]} -eq 0 ]]; then
+            echo "PASS"
+        else
+            printf 'FAIL: %s\n' "${failures[@]}"
+        fi
+    } | tee "${summary}"
+    [[ ${#failures[@]} -eq 0 ]]
+}
+
+case "${1:-}" in
+    "" | status) cmd_status ;;
+    fetch) cmd_fetch ;;
+    --print-jar) cmd_print_jar ;;
+    --print-java-home) find_java_home || die "no JDK with javac, include/jni.h and lib/ct.sym found; set JAVA_HOME" ;;
+    pin) shift; cmd_pin "$@" ;;
+    server) shift; cmd_server "$@" ;;
+    smoke) shift; cmd_smoke "$@" ;;
+    *) sed -n '2,25p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
+esac
