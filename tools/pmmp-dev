@@ -17,8 +17,9 @@
 #   PHP-Binaries php-build-524's PHP 8.2 Linux x86-64 build for PM5
 #   with --with-debug-symbols only: that build's debugging symbols, for a
 #   gdb backtrace of a crash
-# Each archive is unpacked into its own empty directory. Nothing from them
-# runs but the php binary and the phar. No root needed; idempotent.
+# Each archive is unpacked into its own empty directory, once its listing
+# has passed check_listing. Nothing from them runs but the php binary and
+# the phar. No root needed; idempotent.
 #
 # Usage:
 #   tools/pmmp-dev [--with-debug-symbols]   fetch, verify and unpack into
@@ -127,19 +128,63 @@ fetch() {
     mv "${dest}.part" "${dest}"
 }
 
-# unpack <tarball> <sha256> <dest>: into a fresh directory of its own, refusing
-# absolute paths, '..' and symlinks that leave the archive.
+# check_listing <tarball>: refuses an archive, before anything is extracted,
+# whose listing fails or makes tar warn; or that holds a member named by an
+# absolute path or through '..', a symlink or hard link whose target is
+# absolute or goes through '..', or a member that is not a file, a directory
+# or a link (a device, a fifo). The listing is taken once, in full, and only
+# then read: a reader that stops at its first match would leave tar writing
+# into a closed pipe, and under pipefail that SIGPIPE turns a refusal into a
+# pass. GNU tar's C quoting writes every name and target as one
+# double-quoted string, so a name holding spaces or ' -> ' is read whole. A
+# hard link's target is one tar rewrites as it lists it, dropping a leading
+# '/' or '../' and saying so on stderr, which is why a warning refuses too.
+check_listing() {
+    local tarball="$1" version listing warnings said
+    version="$(tar --version 2>/dev/null)" || true
+    [[ "${version}" == *"GNU tar"* ]] || die "unpacking needs GNU tar, to read the archive's listing exactly"
+    warnings="$(mktemp)"
+    if ! listing="$(LC_ALL=C tar --quoting-style=c -tzvf "${tarball}" 2>"${warnings}")"; then
+        rm -f "${warnings}"
+        die "refusing ${tarball}: tar cannot list it"
+    fi
+    said="$(cat "${warnings}")"
+    rm -f "${warnings}"
+    [[ -z "${said}" ]] || die "refusing ${tarball}: tar warned while listing it: ${said}"
+    [[ -n "${listing}" ]] || die "refusing ${tarball}: it lists no members"
+    # type, then the fields up to the name (no '"' among them), the name, and
+    # for a link ' -> ' or ' link to ' and its target
+    local quoted='"(([^"\\]|\\.)*)"'
+    local line_re="^(.)[^\"]* ${quoted}( (->|link to) ${quoted})?\$"
+    local escapes='^/|(^|/)\.\.(/|$)'
+    local line type name link target members=0
+    while IFS= read -r line; do
+        [[ "${line}" =~ ${line_re} ]] || die "refusing ${tarball}: cannot read its listing line: ${line}"
+        # a group that took no part in the match may be unset, not empty
+        type="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" link="${BASH_REMATCH[4]:-}" target="${BASH_REMATCH[6]:-}"
+        members=$((members + 1))
+        [[ ! "${name}" =~ ${escapes} ]] || die "refusing ${tarball}: member \"${name}\" is an absolute path or goes through '..'"
+        case "${type}" in
+            - | d) [[ -z "${link}" ]] || die "refusing ${tarball}: cannot read its listing line: ${line}" ;;
+            l | h)
+                [[ -n "${link}" ]] || die "refusing ${tarball}: link \"${name}\" has no target in its listing line"
+                [[ ! "${target}" =~ ${escapes} ]] ||
+                    die "refusing ${tarball}: link \"${name}\" points at \"${target}\", an absolute path or through '..'"
+                ;;
+            *) die "refusing ${tarball}: member \"${name}\" is of type '${type}', not a file, a directory or a link" ;;
+        esac
+    done <<<"${listing}"
+    log "$(basename "${tarball}"): ${members} members listed, none leaving the archive"
+}
+
+# unpack <tarball> <sha256> <dest>: into a fresh directory of its own, once
+# check_listing has passed it.
 unpack() {
     local tarball="$1" sha="$2" dest="$3"
     if [[ -f "${dest}/.stratum-sha256" && "$(cat "${dest}/.stratum-sha256")" == "${sha}" ]]; then
         return
     fi
-    if tar -tzf "${tarball}" | grep -Eq '^/|(^|/)\.\.(/|$)'; then
-        die "refusing ${tarball}: it holds an absolute path or '..'"
-    fi
-    if tar -tzvf "${tarball}" | awk '$1 ~ /^l/ { print $NF }' | grep -Eq '^/|(^|/)\.\.(/|$)'; then
-        die "refusing ${tarball}: it holds a symlink leaving the archive"
-    fi
+    check_listing "${tarball}"
     local staging
     staging="$(mktemp -d "${cache_dir}/.unpack.XXXXXX")"
     tar -xzf "${tarball}" -C "${staging}" --no-same-owner
@@ -243,7 +288,9 @@ cmd_check_load() {
     local failures=0
 
     local module_id php_id
-    module_id="$(LC_ALL=C grep -aoE 'API[0-9]{8},(NTS|TS)(,debug)?' "${so}" | head -1)"
+    # every build id string in the module, read to the end (no early-exiting
+    # reader for grep to write into under pipefail); exactly one is expected
+    module_id="$(LC_ALL=C grep -aoE 'API[0-9]{8},(NTS|TS)(,debug)?' "${so}" | LC_ALL=C sort -u)" || true
     php_id="$("${php_bin}" -n -i | sed -n 's/^PHP Extension Build => //p')"
     echo "stratum.so module build id: ${module_id:-none found}"
     echo "PocketMine-MP's php build id: ${php_id}"
@@ -479,6 +526,8 @@ cmd_smoke() {
     mkfifo "${dir}/console.in"
     local console
     exec {console}<>"${dir}/console.in"
+    # there before the server is, so the first look for its lines finds a file
+    : >"${dir}/console.out"
     local started=${SECONDS}
     (
         cd "${dir}"
