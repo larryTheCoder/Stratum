@@ -8,14 +8,15 @@
 # each other (so an event's own duration is not its cost), an event of
 # another level and another chunk to be filtered out, a stage that waits on
 # an idle worker, and `full` on the server thread. The second recording adds
-# a second worker, and the pin must be reported broken. Then the refusal
-# that keeps the server from starting without --accept-eula.
+# a second worker, and the pin must be reported broken. Then the refusals
+# that keep the server and the baseline from running without --accept-eula.
 # Plain bash 3.2 and python3: this runs on the macOS legs too.
 set -euo pipefail
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found; skipping"; exit 77; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tool="${repo_root}/tools/analysis/vanilla-chunk-cost.py"
+baseline="${repo_root}/tools/perf-baseline"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
@@ -116,3 +117,7 @@ check "${work}/four.out.json" "not r['complete'] and r['missing']['noise'] == 8"
 
 expect 1 "run refuses without --accept-eula" "needs --accept-eula" "${tool}" run
 expect 2 "an area needs three numbers" "an area is cx,cz,r" "${tool}" analyze x --area 1,2
+expect 1 "the baseline refuses the vanilla half without --accept-eula" "needs --accept-eula" \
+    "${baseline}" --skip-stratum
+expect 1 "the baseline refuses to do nothing" "both halves skipped" \
+    "${baseline}" --skip-stratum --skip-vanilla

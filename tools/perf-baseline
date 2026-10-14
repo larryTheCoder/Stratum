@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+# Stratum — M5's performance baseline in one command: what a PocketMine-MP
+# generation task costs Stratum per chunk, beside what the vanilla server
+# spends on the same stages, on the same box, one worldgen thread each.
+# Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+"""M5's performance baseline: Stratum's chunk cost beside the vanilla server's.
+
+  tools/perf-baseline --accept-eula [--seeds a,b,...] [--dimensions a,b,...]
+      [--area cx,cz,r] [--repeat n] [--require-quiet LOAD] [--out DIR]
+      [--jdk DIR] [--heap 3G] [--work DIR] [--skip-stratum] [--skip-vanilla]
+
+1. Builds stratum_chunk_cost_bench with the release preset (RelWithDebInfo,
+   the optimised configuration CMakePresets.json already has) and runs it over
+   the measured square (--area, default the 121 chunks within 5 of chunk
+   (-64, 64)) plus its scattered set: fill + biomes + the chunkutils2 encode,
+   what PocketMine-MP's generation task calls, one thread.
+2. Runs tools/analysis/vanilla-chunk-cost.py on the same seeds and the same
+   square: the 1.21.11 server with one worldgen worker (-Dmax.bg.threads=1),
+   its own per-chunk stage times read from its JFR chunk-generation events.
+3. Prints and writes (OUT/baseline.json, OUT/summary.txt) the two side by
+   side, per dimension, against the owner's bar (SPEC §11, "M5's performance
+   bar"): 35 ms/chunk (about 28 chunks/s) per thread is the best case, 100
+   ms/chunk (10 chunks/s) the minimum. Stratum's figure is end to end
+   (stratum::pmmp::encodeChunk), over the square's chunks, as a rate: 1000 /
+   mean ms. Vanilla's is biomes + noise + surface over the same chunks.
+
+The load average is recorded before and after each half, and a run whose
+one-minute load went above 1.0 anywhere is labelled PROVISIONAL. A number of
+record wants a quiet machine: --require-quiet 0.5 refuses to start above that
+one-minute load. Run it after a large merge, with nothing else building.
+
+Running the vanilla half runs the Minecraft server, so it needs --accept-eula
+(passed on to the vanilla script, accepted for nobody else). OUT defaults to
+build/perf-baseline/<UTC time>; it holds timing summaries and logs only. The
+server's worlds and recordings are Mojang-derived (SPEC §12) and stay in the
+vanilla script's own temporary directory (or --work), never in OUT.
+"""
+import argparse
+import datetime
+import json
+import os
+import pathlib
+import platform
+import shutil
+import subprocess
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+VERSION = '1.21.11'
+BEST_MS = 35.0
+MINIMUM_MS = 100.0
+# The one-minute load average above which a run is called provisional.
+QUIET = 1.0
+VANILLA = REPO / 'tools' / 'analysis' / 'vanilla-chunk-cost.py'
+
+
+def die(message):
+    print(f'error: {message}', file=sys.stderr)
+    sys.exit(1)
+
+
+def log(message):
+    print(f'==> {message}', file=sys.stderr, flush=True)
+
+
+def first_line(path):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            return handle.readline().strip()
+    except OSError:
+        return 'unknown'
+
+
+def load_average():
+    line = first_line('/proc/loadavg')
+    return ' '.join(line.split()[:3]) if line != 'unknown' else line
+
+
+def machine():
+    model = 'unknown'
+    try:
+        with open('/proc/cpuinfo', encoding='utf-8') as handle:
+            for line in handle:
+                if line.startswith('model name'):
+                    model = line.split(':', 1)[1].strip()
+                    break
+    except OSError:
+        pass
+    available = 'unknown'
+    try:
+        with open('/proc/meminfo', encoding='utf-8') as handle:
+            for line in handle:
+                if line.startswith('MemAvailable:'):
+                    available = f'{int(line.split()[1]) // 1024} MiB'
+    except OSError:
+        pass
+    return {
+        'cpu': model,
+        'hardware_threads': os.cpu_count(),
+        'governor': first_line('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'),
+        'boost': first_line('/sys/devices/system/cpu/cpufreq/boost'),
+        'kernel': platform.release(),
+        'memory_available': available,
+    }
+
+
+def tee(command, log_path, env=None):
+    """Runs @p command, its output both shown and kept in @p log_path."""
+    log('$ ' + ' '.join(str(c) for c in command))
+    with open(log_path, 'w', encoding='utf-8') as kept:
+        process = subprocess.Popen([str(c) for c in command], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, cwd=REPO, env=env)
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            kept.write(line)
+        return process.wait()
+
+
+def fixtures_dir():
+    return pathlib.Path(os.environ.get('STRATUM_FIXTURES_DIR') or REPO / '.fixtures')
+
+
+def build_bench(out):
+    """The release preset's bench, configured and built through the presets."""
+    if not shutil.which('cmake'):
+        die('cmake is needed')
+    configure = ['cmake', '--preset', 'release']
+    if os.environ.get('STRATUM_FIXTURES_DIR'):
+        configure.append(f'-DSTRATUM_FIXTURES_DIR={os.environ["STRATUM_FIXTURES_DIR"]}')
+    if tee(configure, out / 'configure.log') != 0:
+        die(f'configuring the release preset failed (see {out / "configure.log"})')
+    build = ['cmake', '--build', '--preset', 'release', '--target', 'stratum_chunk_cost_bench']
+    if tee(build, out / 'build.log') != 0:
+        die(f'building stratum_chunk_cost_bench failed (see {out / "build.log"})')
+    analysis = REPO / 'build' / 'release' / 'tools' / 'analysis'
+    for candidate in (analysis / 'stratum_chunk_cost_bench',
+                      analysis / 'RelWithDebInfo' / 'stratum_chunk_cost_bench',
+                      analysis / 'RelWithDebInfo' / 'stratum_chunk_cost_bench.exe',
+                      analysis / 'stratum_chunk_cost_bench.exe'):
+        if candidate.is_file():
+            return candidate
+    die(f'built, but no stratum_chunk_cost_bench under {analysis}')
+    return None
+
+
+def figure(entry):
+    if not entry or not entry.get('available'):
+        return None
+    return entry
+
+
+def describe(entry):
+    if not entry:
+        return '-'
+    return (f'median {entry["median_ms"]:7.2f}  mean {entry["mean_ms"]:7.2f} ms/chunk  '
+            f'{entry["chunks_per_s"]:6.2f} chunks/s')
+
+
+def verdict(mean_ms):
+    if mean_ms <= BEST_MS:
+        return f'meets the best case ({BEST_MS:.0f} ms/chunk)'
+    if mean_ms <= MINIMUM_MS:
+        return f'between the minimum ({MINIMUM_MS:.0f}) and the best case ({BEST_MS:.0f} ms/chunk)'
+    return (f'BELOW the minimum: {mean_ms / MINIMUM_MS:.2f}x the {MINIMUM_MS:.0f} ms/chunk bar, '
+            f'{mean_ms / BEST_MS:.2f}x the {BEST_MS:.0f} ms best case')
+
+
+def compare(stratum, vanilla, dimensions):
+    lines = []
+    table = {}
+    for name in dimensions:
+        row = {}
+        lines.append(f'{name}:')
+        if stratum:
+            entry = stratum['dimensions'].get(name, {})
+            e2e = figure(entry.get('spiral', {}).get('e2e', {}).get('wall'))
+            row['stratum_e2e'] = e2e
+            row['stratum_stages'] = {stage: figure(entry.get('spiral', {}).get(stage, {})
+                                                   .get('wall'))
+                                     for stage in ('fill', 'biomes', 'encode')}
+            lines.append(f'  Stratum e2e (fill+biomes+encode)  {describe(e2e)}')
+            for stage, value in row['stratum_stages'].items():
+                lines.append(f'    {stage:8s}                       {describe(value)}')
+            if e2e:
+                row['bar'] = verdict(e2e['mean_ms'])
+                lines.append(f'  owner\'s bar, per thread: {row["bar"]}')
+        if vanilla:
+            entry = vanilla['dimensions'].get(name, {})
+            comparable = figure(entry.get('comparable'))
+            row['vanilla_comparable'] = comparable
+            row['vanilla_stages'] = {stage: figure(entry.get('stages', {}).get(stage))
+                                     for stage in ('biomes', 'noise', 'surface')}
+            lines.append(f'  vanilla biomes+noise+surface      {describe(comparable)}')
+            for stage, value in row['vanilla_stages'].items():
+                lines.append(f'    {stage:8s}                       {describe(value)}')
+            if not entry.get('complete', True) or not entry.get('pin_held', True):
+                lines.append('  vanilla: INCOMPLETE or the pin did not hold; see vanilla.log')
+        if stratum and vanilla and row.get('stratum_e2e') and row.get('vanilla_comparable'):
+            row['ratio'] = row['stratum_e2e']['mean_ms'] / row['vanilla_comparable']['mean_ms']
+            lines.append(f'  Stratum / vanilla (mean): {row["ratio"]:.2f}x')
+        table[name] = row
+    return lines, table
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='tools/perf-baseline', description=__doc__.split('\n')[0])
+    parser.add_argument('--accept-eula', action='store_true')
+    parser.add_argument('--seeds', default='0,42,-4172144997902289642')
+    parser.add_argument('--dimensions', default='overworld,amplified,large_biomes,end')
+    parser.add_argument('--area', default='-64,64,5')
+    parser.add_argument('--repeat', type=int, default=3)
+    parser.add_argument('--require-quiet', type=float)
+    parser.add_argument('--out')
+    parser.add_argument('--jdk')
+    parser.add_argument('--heap', default='3G')
+    parser.add_argument('--work')
+    parser.add_argument('--skip-stratum', action='store_true')
+    parser.add_argument('--skip-vanilla', action='store_true')
+    args = parser.parse_args()
+    if not args.skip_vanilla and not args.accept_eula:
+        die('the vanilla half runs the Minecraft server, so it needs --accept-eula '
+            '(or --skip-vanilla)')
+    if args.skip_stratum and args.skip_vanilla:
+        die('nothing to do: both halves skipped')
+    start_load = load_average()
+    if args.require_quiet is not None:
+        one_minute = float(start_load.split()[0]) if start_load != 'unknown' else 0.0
+        if one_minute > args.require_quiet:
+            die(f'the one-minute load average is {one_minute}, above --require-quiet '
+                f'{args.require_quiet}: this is not a quiet machine')
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    # Absolute: the halves run from the repository root.
+    out = pathlib.Path(args.out).resolve() if args.out else REPO / 'build' / 'perf-baseline' / stamp
+    out.mkdir(parents=True, exist_ok=True)
+    report = {'tool': 'perf-baseline', 'utc': stamp, 'machine': machine(),
+              'load_average_start': start_load, 'seeds': args.seeds, 'area': args.area,
+              'bar_ms': {'best': BEST_MS, 'minimum': MINIMUM_MS}}
+    dimensions = args.dimensions.split(',')
+    cx, cz, radius = (int(v) for v in args.area.split(','))
+
+    stratum = None
+    if not args.skip_stratum:
+        bench = build_bench(out)
+        report['stratum_load_before'] = load_average()
+        status = tee([bench, fixtures_dir() / VERSION, '--dimensions', args.dimensions,
+                      '--seeds', args.seeds, '--spiral', f'{cx},{cz},{radius}',
+                      '--repeat', str(args.repeat), '--json', out / 'stratum.json'],
+                     out / 'stratum.log')
+        report['stratum_load_after'] = load_average()
+        if status != 0:
+            die(f'the bench failed (see {out / "stratum.log"})')
+        stratum = json.loads((out / 'stratum.json').read_text(encoding='utf-8'))
+        if not stratum['machine']['optimised']:
+            die('the bench was not built optimised; its numbers are not a measurement')
+
+    vanilla = None
+    if not args.skip_vanilla:
+        command = [sys.executable, VANILLA, 'run', '--accept-eula', '--seeds', args.seeds,
+                   '--dimensions', args.dimensions, '--area', args.area,
+                   '--heap', args.heap, '--json', out / 'vanilla.json']
+        if args.jdk:
+            command += ['--jdk', pathlib.Path(args.jdk).resolve()]
+        if args.work:
+            command += ['--work', pathlib.Path(args.work).resolve()]
+        report['vanilla_load_before'] = load_average()
+        status = tee(command, out / 'vanilla.log')
+        report['vanilla_load_after'] = load_average()
+        if status not in (0, 3):
+            die(f'the vanilla run failed (see {out / "vanilla.log"})')
+        vanilla = json.loads((out / 'vanilla.json').read_text(encoding='utf-8'))
+
+    lines, table = compare(stratum, vanilla, dimensions)
+    report['dimensions'] = table
+    report['load_average_end'] = load_average()
+    # A one-minute load above QUIET anywhere along the way: other work shared
+    # the machine, so these are provisional figures, not a baseline of record.
+    loads = [v for k, v in report.items() if k.startswith(('load_average', 'stratum_load',
+                                                           'vanilla_load'))]
+    peak = max((float(v.split()[0]) for v in loads if v != 'unknown'), default=0.0)
+    report['provisional'] = peak > QUIET
+    header = [
+        f'M5 performance baseline, {stamp}',
+        f'machine: {report["machine"]["cpu"]}, {report["machine"]["hardware_threads"]} hardware '
+        f'threads, governor {report["machine"]["governor"]}, boost {report["machine"]["boost"]}',
+        f'load average: start {start_load}'
+        + (f'; Stratum {report["stratum_load_before"]} -> {report["stratum_load_after"]}'
+           if stratum else '')
+        + (f'; vanilla {report["vanilla_load_before"]} -> {report["vanilla_load_after"]}'
+           if vanilla else '')
+        + f'; end {report["load_average_end"]}',
+        f'seeds {args.seeds}; the square of radius {radius} around chunk ({cx}, {cz}); '
+        'one thread each',
+        (f'PROVISIONAL: the one-minute load reached {peak:.2f} (above {QUIET}); other work '
+         'shared the machine, so this is not a baseline of record' if report['provisional']
+         else f'quiet: the one-minute load stayed at or below {QUIET}'),
+        '',
+    ]
+    summary = '\n'.join(header + lines) + '\n'
+    print(summary)
+    (out / 'summary.txt').write_text(summary, encoding='utf-8')
+    (out / 'baseline.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    log(f'written: {out / "summary.txt"}, {out / "baseline.json"}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

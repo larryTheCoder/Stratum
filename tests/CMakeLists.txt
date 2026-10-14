@@ -101,8 +101,8 @@ if(UNIX)
 
     # tools/analysis/vanilla-chunk-cost.py's reading of the server's chunk
     # events — the Java baseline M5's performance bar is set against — on
-    # synthetic events whose per-stage costs are known, and its refusal to
-    # start a server without --accept-eula. Offline.
+    # synthetic events whose per-stage costs are known, and the refusals of
+    # it and tools/perf-baseline without --accept-eula. Offline.
     add_test(NAME unit.tools.vanilla_chunk_cost
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/vanilla_chunk_cost_test.sh"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
