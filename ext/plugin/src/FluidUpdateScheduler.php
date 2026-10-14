@@ -7,11 +7,6 @@ namespace Stratum\PMMP;
 use pocketmine\block\Liquid;
 use pocketmine\event\Listener;
 use pocketmine\event\world\ChunkPopulateEvent;
-use pocketmine\event\world\WorldUnloadEvent;
-use pocketmine\world\generator\GeneratorManager;
-use pocketmine\world\generator\InvalidGeneratorOptionsException;
-use pocketmine\world\World;
-use function array_key_exists;
 
 /**
  * Makes a Stratum world's aquifer water and lava flow once their chunk is in
@@ -33,7 +28,10 @@ use function array_key_exists;
  * neighbours all exist, and a liquid flowing out of it never reaches
  * ungenerated terrain, where World::setBlockAt() throws. A chunk generated
  * only as a neighbour keeps its updates in the extension until it is
- * populated itself.
+ * populated itself — through any number of worker restarts, because
+ * StratumWorlds pins the world's state on the main thread while it is
+ * loaded; which worlds are Stratum's, and with what options, is
+ * StratumWorlds' to say.
  *
  * What does not carry over: the updates live in memory, so a chunk generated
  * in one server run and first populated in a later one is populated without
@@ -44,22 +42,13 @@ use function array_key_exists;
  */
 final class FluidUpdateScheduler implements Listener{
 
-	/**
-	 * World id => its generator options, or null for a world Stratum does
-	 * not generate. Read once per world: the options never change while it
-	 * is loaded.
-	 *
-	 * @var array<int, GeneratorOptions|null>
-	 */
-	private array $worlds = [];
-
 	public function __construct(
-		private \Logger $logger
+		private StratumWorlds $worlds
 	){}
 
 	public function onChunkPopulate(ChunkPopulateEvent $event) : void{
 		$world = $event->getWorld();
-		$options = $this->optionsFor($world);
+		$options = $this->worlds->optionsFor($world);
 		if($options === null){
 			return;
 		}
@@ -79,37 +68,5 @@ final class FluidUpdateScheduler implements Listener{
 				$world->scheduleDelayedBlockUpdate($block->getPosition(), $block->tickRate());
 			}
 		}
-	}
-
-	/**
-	 * MONITOR, so it only sees an unload nothing cancelled.
-	 *
-	 * @priority MONITOR
-	 */
-	public function onWorldUnload(WorldUnloadEvent $event) : void{
-		unset($this->worlds[$event->getWorld()->getId()]);
-	}
-
-	private function optionsFor(World $world) : ?GeneratorOptions{
-		$id = $world->getId();
-		if(!array_key_exists($id, $this->worlds)){
-			$this->worlds[$id] = null;
-			$data = $world->getProvider()->getWorldData();
-			$entry = GeneratorManager::getInstance()->getGenerator($data->getGenerator());
-			if($entry !== null && $entry->getGeneratorClass() === StratumGenerator::class){
-				try{
-					$this->worlds[$id] = GeneratorOptions::parse($data->getGeneratorOptions());
-				}catch(InvalidGeneratorOptionsException $e){
-					// The world loaded with these options, so they parsed
-					// then; most likely its frozen pipeline has since gone.
-					// Said once, by name, rather than crashing the tick.
-					$this->logger->error(
-						"Stratum world \"" . $world->getFolderName() . "\": its aquifer water and lava will not flow, " .
-						"because its generator options no longer parse: " . $e->getMessage()
-					);
-				}
-			}
-		}
-		return $this->worlds[$id];
 	}
 }

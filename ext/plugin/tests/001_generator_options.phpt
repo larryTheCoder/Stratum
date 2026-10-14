@@ -11,7 +11,9 @@ stratum
 // subclass of UnexpectedValueException
 // (src/world/generator/InvalidGeneratorOptionsException.php:26). The
 // extension itself is real: the biome source is checked by its own
-// Stratum\parseBiomeSource, as on a server, where plugin.yml requires it.
+// Stratum\parseBiomeSource and the blob opened by Stratum\checkDimension,
+// as on a server, where plugin.yml requires it. Fixture-free: a real
+// frozen pipeline, opened in full, is 003_world_load_validation.phpt's.
 namespace pocketmine\world\generator {
 	class InvalidGeneratorOptionsException extends \UnexpectedValueException{}
 }
@@ -31,7 +33,10 @@ namespace {
 
 	$parsed = GeneratorOptions::parse($good);
 	var_dump($parsed->blobPath === $blob, $parsed->noiseSettings, $parsed->biomeSource);
-	var_dump(GeneratorOptions::validate($good));
+	// parse() reads the string alone — it is what a worker's generator
+	// calls, and a pinned world's generator never needs the file — so a
+	// blob that is not there is not its to refuse.
+	var_dump(GeneratorOptions::parse(GeneratorOptions::encode("/nonexistent/stratum.blob"))->blobPath);
 
 	// The End, with its own biome source.
 	$end = GeneratorOptions::parse(GeneratorOptions::encode($blob, "minecraft:end", "minecraft:the_end"));
@@ -40,8 +45,10 @@ namespace {
 	// options keep the spelling they were given.
 	var_dump(GeneratorOptions::parse(GeneratorOptions::encode($blob, "minecraft:end", "the_end"))->biomeSource);
 	// A pairing vanilla does not make is the caller's to ask for, and is
-	// taken as asked: a datapack may pair settings with any source.
-	var_dump(GeneratorOptions::validate(GeneratorOptions::encode($blob, "minecraft:end", "minecraft:overworld")));
+	// taken as asked: a datapack may pair settings with any source
+	// (003_world_load_validation.phpt opens one in full).
+	$pairing = GeneratorOptions::parse(GeneratorOptions::encode($blob, "minecraft:end", "minecraft:overworld"));
+	var_dump($pairing->noiseSettings, $pairing->biomeSource);
 	// encode() takes the pair together too: half of it is refused here, as
 	// parse() refuses it, rather than defaulted to the overworld's half.
 	foreach([["minecraft:end", null], [null, "minecraft:the_end"]] as [$settings, $biomes]){
@@ -63,6 +70,9 @@ namespace {
 		// A directory is readable, and no pipeline: refused here, not on a
 		// worker.
 		'{"blob":' . json_encode(sys_get_temp_dir()) . '}',
+		// A readable file that is no frozen pipeline: the extension opens
+		// it here, on the main thread, and refuses it with its own reason.
+		$good,
 		'{"blob":' . json_encode($blob) . ',"settings":42,"biomes":"minecraft:overworld"}',
 		// Settings with no biome source beside them would pair the End with
 		// the overworld's biomes, quietly.
@@ -98,11 +108,12 @@ bool(true)
 bool(true)
 string(19) "minecraft:overworld"
 string(19) "minecraft:overworld"
-NULL
+string(25) "/nonexistent/stratum.blob"
 string(13) "minecraft:end"
 string(17) "minecraft:the_end"
 string(7) "the_end"
-NULL
+string(13) "minecraft:end"
+string(19) "minecraft:overworld"
 encode refused: GeneratorOptions::encode() was given noise settings (minecraft:end) without the biome source to go with them
 encode refused: GeneratorOptions::encode() was given a biome source (minecraft:the_end) without the noise settings to go with it
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum needs a frozen pipeline to generate from.%s
@@ -110,6 +121,7 @@ pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options have no "blob" path to a frozen pipeline:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot read this world's frozen pipeline at /nonexistent/stratum.blob
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot read this world's frozen pipeline at %s
+pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot generate this world from its frozen pipeline at <blob>: not a frozen pipeline: %s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's "settings" and "biomes" options must be strings:%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "settings" without "biomes", the biome source to go with them%s
 pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum's generator options name "biomes" without "settings", the noise settings to go with them%s

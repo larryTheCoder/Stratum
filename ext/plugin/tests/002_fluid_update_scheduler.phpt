@@ -12,8 +12,9 @@ if(!is_dir("$root/worldgen/noise_settings") || !is_dir("$root/biome_parameters")
 --FILE--
 <?php
 // PocketMine-MP is not installable here (ext/plugin/README.md), so the
-// classes FluidUpdateScheduler touches are stand-ins with the signatures it
-// calls, read from PocketMine-MP 5.44.4: World::getBlockAt(int, int, int),
+// classes FluidUpdateScheduler and StratumWorlds (which says which worlds
+// are Stratum's) touch are stand-ins with the signatures they call, read
+// from PocketMine-MP 5.44.4: World::getBlockAt(int, int, int),
 // World::scheduleDelayedBlockUpdate(Vector3, int), World::getId/getSeed/
 // getFolderName/getProvider()->getWorldData()->getGenerator/
 // getGeneratorOptions, Block::getPosition(), Liquid::tickRate() (water 5,
@@ -129,6 +130,7 @@ namespace pocketmine\event\world {
 
 namespace {
 	require __DIR__ . "/../src/GeneratorOptions.php";
+	require __DIR__ . "/../src/StratumWorlds.php";
 	require __DIR__ . "/../src/FluidUpdateScheduler.php";
 
 	use pocketmine\block\Block;
@@ -139,6 +141,7 @@ namespace {
 	use pocketmine\math\Vector3;
 	use pocketmine\world\World;
 	use Stratum\PMMP\FluidUpdateScheduler;
+	use Stratum\PMMP\StratumWorlds;
 	use Stratum\PMMP\GeneratorOptions;
 
 	$logged = [];
@@ -172,7 +175,8 @@ namespace {
 		};
 	};
 
-	$scheduler = new FluidUpdateScheduler($logger);
+	$worlds = new StratumWorlds($logger);
+	$scheduler = new FluidUpdateScheduler($worlds);
 
 	// A world another generator owns schedules nothing and takes nothing,
 	// even with the same options and seed.
@@ -196,17 +200,25 @@ namespace {
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, 0, 0));
 	echo "after repeats: ", count($stratum->scheduled) === count($expected) - 1 ? "unchanged" : "changed", "\n";
 
-	// A world whose options no longer parse says so once, by name.
-	$broken = new World(3, "stratum", GeneratorOptions::encode("/nonexistent/stratum.blob"), $seed, $blockAt);
+	// A world whose options do not parse — which PocketMine-MP, having
+	// validated them at load, never presents — says so once, by name,
+	// rather than throwing out of the tick.
+	$broken = new World(3, "stratum", '{"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}', $seed, $blockAt);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($broken, -3, 2));
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($broken, -3, 2));
 	echo "logged: ", count($logged), "\n";
 	echo str_replace($blob, "<blob>", $logged[0]), "\n";
+	// A blob that has gone is no longer the options' concern (parse() reads
+	// the string alone): such a world has nothing held, and schedules
+	// nothing, without a word.
+	$gone = new World(4, "stratum", GeneratorOptions::encode("/nonexistent/stratum.blob"), $seed, $blockAt);
+	$scheduler->onChunkPopulate(new ChunkPopulateEvent($gone, -3, 2));
+	echo "gone: ", count($gone->scheduled), " scheduled, ", count($logged), " logged\n";
 
 	// What a world's options say is read once, and forgotten at unload: the
 	// same id, after an unload, is read afresh.
 	$dimension->encodeChunk(-3, 2);
-	$scheduler->onWorldUnload(new WorldUnloadEvent($stratum));
+	$worlds->onWorldUnload(new WorldUnloadEvent($stratum));
 	$reused = new World(2, "normal", $options, $seed, $blockAt);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($reused, -3, 2));
 	echo "after unload, as another generator's: ", count($reused->scheduled), "\n";
@@ -225,6 +237,7 @@ lava delay: 30
 water delays: 5
 after repeats: unchanged
 logged: 1
-Stratum world "world3": its aquifer water and lava will not flow, because its generator options no longer parse: Stratum cannot read this world's frozen pipeline at /nonexistent/stratum.blob
+Stratum world "world3": its aquifer water and lava will not flow, because its generator options do not parse: Stratum's generator options take "blob", "settings" and "biomes" and nothing else, so "biome" would be ignored: {"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}
+gone: 0 scheduled, 1 logged
 after unload, as another generator's: 0
 still held for the Stratum world: yes

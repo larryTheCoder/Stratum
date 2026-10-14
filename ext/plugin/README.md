@@ -13,13 +13,14 @@ PocketMine-MP itself can call.
   world naming an unregistered generator does not merely fail to load, it
   **aborts server startup**.
 - `StratumGenerator` is constructed once per generation worker thread with
-  the seed and the world's options string. It opens the world's frozen
-  pipeline (the engine shares one compiled dimension across every worker
-  that opens the same blob, noise settings, biome source and seed) and, per
-  chunk, hands
-  each sub-chunk's already-packed layers to
-  `PalettedBlockArray::fromData()`. The only PHP work per chunk is
-  translating a handful of palette entries; there is no per-block PHP.
+  the seed and the world's options string — again whenever PocketMine-MP
+  restarts a worker it shut down while idle. It opens the world (the state
+  the main thread pinned at world load; unpinned, the frozen pipeline,
+  compiled once and shared by every worker that opens the same blob bytes,
+  noise settings, biome source and seed) and, per chunk, hands each
+  sub-chunk's already-packed layers to `PalettedBlockArray::fromData()`.
+  The only PHP work per chunk is translating a handful of palette entries;
+  there is no per-block PHP.
 - `BlockStateTranslator` turns Java block state ids into PocketMine-MP's own
   state ids through **PocketMine-MP's own** upgrader and deserializer — the
   same path its world loader takes for every palette entry on disk — cached
@@ -32,16 +33,33 @@ PocketMine-MP itself can call.
   `minecraft:the_end` for the End (`"settings":"minecraft:end",
   "biomes":"minecraft:the_end"`). `settings` and `biomes` come together or
   not at all — with neither, both are the overworld's — since neither says
-  which of the other goes with it. On the main thread, before any worker
-  opens the pipeline, the options are refused for a key other than these
+  which of the other goes with it. **Every refusal is made on the main
+  thread**, where PocketMine-MP validates a world's options as it loads it
+  (`GeneratorOptions::validate`, the validator `Main` registers): there a
+  failure fails that world, while an exception on a generation worker takes
+  the whole server down. The options are refused for a key other than these
   three, for either of the pair alone, for either not a string (a JSON
   `null` is a key given, not one left out), and for a biome source the
   engine's own `BiomeSource::parse` refuses (`minecraft:fixed`,
   `minecraft:checkerboard`, a bare `minecraft:multi_noise`, or no
-  identifier at all), with its reason; `GeneratorOptions`' doc lists
-  exactly what is accepted. A pairing vanilla does not make, such as the
-  End's settings with the overworld's list, is taken as asked: a datapack
-  may make it.
+  identifier at all), with its reason; and then the world is opened in full
+  (`Stratum\checkDimension`) and nothing kept, so a blob that cannot be
+  read, one frozen by another pipeline engine version or failing its
+  content hash, settings or a parameter list the pipeline lacks, the legacy
+  Nether, a dimension outside PocketMine-MP's 24 sub-chunks, and a list
+  naming a biome with no Bedrock id are all refused at load, with the
+  engine's reason. `GeneratorOptions`' doc lists exactly what is accepted.
+  A pairing vanilla does not make, such as the End's settings with the
+  overworld's list, is taken as asked: a datapack may make it.
+- `StratumWorlds` pins each Stratum world's engine state — its compiled
+  dimension and its held fluid updates — on the main thread from
+  `WorldLoadEvent` to `WorldUnloadEvent` (`Stratum\pinWorld`). Unpinned,
+  that state lives only as long as the world's generators, and
+  PocketMine-MP's memory manager shuts idle workers down: the fluid updates
+  of every chunk generated but not yet populated went with them, and a
+  restarted worker read the blob afresh, whatever it held by then. Pinned,
+  every generator gets the state the world loaded with, without reading the
+  file. A pin that fails is logged by name, never thrown out of the event.
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so when it fires
@@ -52,8 +70,13 @@ PocketMine-MP itself can call.
   first load, because a populated chunk's neighbours all exist and the flow
   cannot reach ungenerated terrain. Registered in `onEnable()`, which at
   `load: STARTUP` is still before any world loads.
-- `WorldFactory::create()` freezes the pipeline into the new world's own
-  folder and then creates the world from it, in that order: creating the
+- `WorldFactory::create()` refuses a name that is already a world — loaded
+  or not — before writing anything, returning `false` as `generateWorld()`
+  would: freezing over an existing world's blob would change every chunk it
+  generates from then on, a seam (SPEC §6). Otherwise it freezes the
+  pipeline into the new world's own folder — whole or not at all: written
+  beside it, then renamed into place — checks it in full on the main
+  thread, and then creates the world from it, in that order: creating the
   world immediately registers the generator on a worker, which opens the
   blob.
 
@@ -83,12 +106,21 @@ build. So:
 - Every API it calls was read from PocketMine-MP 5.44.4's source and
   independently re-checked (SPEC §11's M5-PMMP entry lists what that
   corrected), but nothing here has been executed against a real server.
-- CI checks that every file parses (`php -l`) and runs
-  `tests/001_generator_options.phpt`, which exercises `GeneratorOptions`
-  with the real extension loaded against a faithful stand-in for the single
-  PocketMine-MP class it touches, and `tests/002_fluid_update_scheduler.phpt`, which drives
-  `FluidUpdateScheduler` with the real extension against stand-ins for the
-  PocketMine-MP classes it calls.
+- CI checks that every file parses (`php -l`) and runs the PHPT suites in
+  `tests/`, each with the real extension loaded against stand-ins for the
+  PocketMine-MP classes the code calls: `001_generator_options.phpt`
+  (`GeneratorOptions`, fixture-free), `002_fluid_update_scheduler.phpt`
+  (`FluidUpdateScheduler`), `003_world_load_validation.phpt` (the full
+  open `validate()` makes at world load), `004_world_pins.phpt`
+  (`StratumWorlds` across a worker shut down and restarted) and
+  `005_world_factory.phpt` (`WorldFactory` leaving an existing world's
+  blob byte for byte).
+- Three facts about PocketMine-MP that the main-thread checks and the pins
+  are built on come from the M5 review that asked for them, and have not
+  been re-read from PocketMine-MP's source: that an exception on a
+  generation worker takes the server down, that the memory manager shuts
+  idle workers down (and every generator with them), and that
+  `WorldLoadEvent` fires before any of the world's chunks is requested.
 - The rest — registration, chunk assembly, block translation, and whether
   the scheduled fluid updates flow as a Java server's do — needs a real
   PocketMine-MP server to verify, and that is the next real step for this
@@ -103,8 +135,10 @@ build. So:
   Neither has been checked against PocketMine-MP's source or a client
   (SPEC §11's End entry, "Still open").
 - Fluid updates live in memory between a chunk's generation and its
-  population: a chunk generated as a neighbour in one server run and first
-  populated in a later one gets none, and its aquifer fluid stays as
+  population — held through worker restarts while the world is loaded and
+  pinned, but not through an unload: a chunk generated as a neighbour in
+  one server run (or one load of the world) and first populated in a later
+  one gets none, and its aquifer fluid stays as
   generated until something beside it changes. PocketMine-MP saves no
   scheduled updates either, so a flow the server stops mid-way stops there.
 

@@ -34,9 +34,8 @@ use const JSON_THROW_ON_ERROR;
  *
  * EXACTLY WHAT IS ACCEPTED: a JSON object with these keys and no others.
  *
- *   "blob"      required: the path of a readable file, the world's frozen
- *               pipeline. Whether it IS one is Stratum\Dimension::open's to
- *               say, on the worker.
+ *   "blob"      required: the path of the world's frozen pipeline, a
+ *               readable file that Stratum\checkDimension opens.
  *   "settings"  the noise settings, by id ("minecraft:overworld",
  *               "minecraft:nether", "minecraft:end"), a string;
  *   "biomes"    the dimension's biome source, a string, as
@@ -54,21 +53,34 @@ use const JSON_THROW_ON_ERROR;
  * or the overworld's terrain with the End's — a world that generates, with
  * plausible biomes, all wrong.
  *
- * REFUSED HERE, on the main thread where a failure can still be reported
- * against the world being loaded, each with what is wrong: an empty string;
- * anything but a JSON object; no "blob", or one that cannot be read; a key
- * this list does not name (a misspelt "biome" is not quietly ignored);
- * "settings" without "biomes" or "biomes" without "settings"; either not a
- * string (null, a number, an object); and a "biomes" that
- * world::BiomeSource::parse refuses — "minecraft:fixed",
- * "minecraft:checkerboard", "minecraft:multi_noise" named with no list,
- * text that is no identifier — with parse's own reason, through the
- * extension's Stratum\parseBiomeSource.
+ * EVERY REFUSAL IS MADE ON THE MAIN THREAD, by validate(), which is what
+ * PocketMine-MP calls when it loads (or creates) the world: there a failure
+ * is reported against the world being loaded, while on a generation worker
+ * an exception takes the whole server down. Each says what is wrong.
  *
- * REFUSED LATER, by name, when a worker opens the pipeline
- * (Stratum\Dimension::open): "settings" that are no identifier, settings or
- * a parameter list the pipeline does not carry, and a dimension this build
- * cannot compile. "settings" is checked here only for being a string.
+ * parse() reads the string alone, and is what a worker's generator calls:
+ * an empty string; anything but a JSON object; no "blob"; a key this list
+ * does not name (a misspelt "biome" is not quietly ignored); "settings"
+ * without "biomes" or "biomes" without "settings"; either not a string
+ * (null, a number, an object); and a "biomes" that world::BiomeSource::parse
+ * refuses — "minecraft:fixed", "minecraft:checkerboard",
+ * "minecraft:multi_noise" named with no list, text that is no identifier —
+ * with parse's own reason, through the extension's Stratum\parseBiomeSource.
+ * It never touches the file: a pinned world's generators do not need it
+ * (StratumWorlds).
+ *
+ * check(), which validate() wraps, is parse() and then the whole of opening
+ * the world, through Stratum\checkDimension, with nothing kept: a "blob"
+ * that cannot be read or is no frozen pipeline; one frozen by another
+ * pipeline engine version, container format or Minecraft pin, or that fails
+ * its own content hash (SPEC section 6); "settings" that are no identifier,
+ * settings or a parameter list the pipeline does not carry, a
+ * legacy-random-source dimension (vanilla's Nether), a dimension this build
+ * cannot compile; a dimension outside PocketMine-MP's 24 sub-chunks, or a
+ * parameter list naming a biome with no Bedrock id. What is left to a worker
+ * is what no check can see before a chunk is generated: a block state the
+ * mapping table does not know (Stratum\checkDimension's documentation says
+ * why).
  *
  * NOT REFUSED: a pairing vanilla does not make. A datapack may pair noise
  * settings with any biome source, so the options take the pair they are
@@ -115,8 +127,10 @@ final class GeneratorOptions{
 	}
 
 	/**
-	 * @throws InvalidGeneratorOptionsException naming what is wrong, which
-	 * PocketMine-MP reports as an invalid-options world load failure.
+	 * The options string alone: nothing is read from disk and nothing is
+	 * opened, so a worker's generator can call it.
+	 *
+	 * @throws InvalidGeneratorOptionsException naming what is wrong.
 	 */
 	public static function parse(string $generatorOptions) : self{
 		if($generatorOptions === ""){
@@ -133,14 +147,6 @@ final class GeneratorOptions{
 		$blob = $decoded["blob"] ?? null;
 		if(!is_string($blob) || $blob === ""){
 			throw new InvalidGeneratorOptionsException('Stratum\'s generator options have no "blob" path to a frozen pipeline: ' . $generatorOptions);
-		}
-		// Checked here, on the main thread, where the failure can still be
-		// reported against the world being loaded. A worker thread opening a
-		// missing blob would only be able to take the generation task down.
-		// is_file as well: is_readable is true of a directory, which would
-		// pass here and fail on the worker instead.
-		if(!is_file($blob) || !is_readable($blob)){
-			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $blob);
 		}
 		$unknown = array_diff(array_keys($decoded), self::KEYS);
 		if($unknown !== []){
@@ -162,8 +168,7 @@ final class GeneratorOptions{
 			throw new InvalidGeneratorOptionsException('Stratum\'s "settings" and "biomes" options must be strings: ' . $generatorOptions);
 		}
 		// The extension's own parse, so this refuses exactly what
-		// Dimension::open would and says why in its words — here, rather
-		// than on a worker thread that could only take the task down.
+		// Dimension::open would and says why in its words.
 		try{
 			\Stratum\parseBiomeSource($biomes);
 		}catch(\Stratum\GenerationException $e){
@@ -172,10 +177,36 @@ final class GeneratorOptions{
 		return new self($blob, $settings, $biomes);
 	}
 
-	/** The shape GeneratorManager::addGenerator() wants: return, never throw. */
+	/**
+	 * parse(), and then everything opening the world would refuse
+	 * (Stratum\checkDimension), refused here. For the main thread: it reads
+	 * and compiles the world's whole frozen pipeline, and keeps nothing.
+	 *
+	 * @throws InvalidGeneratorOptionsException naming what is wrong, which
+	 * PocketMine-MP reports as an invalid-options world load failure.
+	 */
+	public static function check(string $generatorOptions) : self{
+		$options = self::parse($generatorOptions);
+		// is_file as well: is_readable is true of a directory.
+		if(!is_file($options->blobPath) || !is_readable($options->blobPath)){
+			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $options->blobPath);
+		}
+		try{
+			\Stratum\checkDimension($options->blobPath, $options->noiseSettings, $options->biomeSource);
+		}catch(\Stratum\GenerationException $e){
+			throw new InvalidGeneratorOptionsException("Stratum cannot generate this world from its frozen pipeline at " . $options->blobPath . ": " . $e->getMessage());
+		}
+		return $options;
+	}
+
+	/**
+	 * check(), in the shape GeneratorManager::addGenerator() wants: return,
+	 * never throw. PocketMine-MP calls it on the main thread when it loads or
+	 * creates a world with this generator.
+	 */
 	public static function validate(string $generatorOptions) : ?InvalidGeneratorOptionsException{
 		try{
-			self::parse($generatorOptions);
+			self::check($generatorOptions);
 			return null;
 		}catch(InvalidGeneratorOptionsException $e){
 			return $e;

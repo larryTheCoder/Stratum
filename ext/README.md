@@ -30,7 +30,8 @@ the blob's header and content hash are held to, compile, and what
 PocketMine-MP cannot hold (a dimension outside its 24 sub-chunks, a
 parameter list naming a biome with no Bedrock id) — with no seed and
 nothing kept, so a caller can refuse on the main thread everything a worker
-would otherwise die on (`zend/tests/008_pins.phpt`). Compiled dimensions
+would otherwise die on, as the plugin's world-load validation does
+(`zend/tests/008_pins.phpt`). Compiled dimensions
 are shared by the blob's every byte, never by the header's payload hash, so
 a blob restamped with another engine version is refused even while its
 twin is open (`zend/tests/007_frozen_header.phpt`). `Stratum\pinWorld()`
@@ -67,11 +68,12 @@ gives them to the main thread, once, by the world's options and seed.
 
 **Landed: the PocketMine-MP plugin** (`plugin/`, its own README): registers
 the generator, translates each sub-chunk's palette through PocketMine-MP's
-own deserializer, and freezes a pipeline into a new world's folder. Written
-against PocketMine-MP 5.44.4's source but **never run** — PocketMine-MP
-cannot be installed here — so CI checks that it parses and tests its
-options class and fluid-update scheduler against stand-ins for
-PocketMine-MP's classes, with this extension loaded.
+own deserializer, freezes a pipeline into a new world's folder, refuses on
+the main thread every world that cannot generate, and pins each Stratum
+world's state while it is loaded. Written against PocketMine-MP 5.44.4's
+source but **never run** — PocketMine-MP cannot be installed here — so CI
+checks that it parses and tests its classes against stand-ins for
+PocketMine-MP's, with this extension loaded.
 
 ## How the pieces fit
 
