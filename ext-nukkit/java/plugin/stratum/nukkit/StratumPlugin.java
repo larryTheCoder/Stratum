@@ -1,8 +1,7 @@
-// Stratum — the Nukkit plugin: registers the generator, freezes new worlds.
+// Stratum — the Nukkit plugin: registers the generator, freezes and checks worlds.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 package stratum.nukkit;
 
-import cn.nukkit.Server;
 import cn.nukkit.block.Block;
 import cn.nukkit.block.BlockLiquid;
 import cn.nukkit.event.EventHandler;
@@ -16,29 +15,37 @@ import cn.nukkit.level.generator.Generator;
 import cn.nukkit.plugin.PluginBase;
 
 import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Loads at {@code STARTUP}, so everything here happens before Nukkit loads
- * or creates a world:
+ * Loads at {@code STARTUP}, so everything in {@link #onLoad} happens before
+ * Nukkit loads or creates a world:
  * <ul>
  * <li>registers {@link StratumGenerator} as {@code stratum}. Registration
  * comes first and never depends on anything else succeeding: Nukkit gives a
  * world whose generator is not registered its own {@code Normal} generator,
- * silently, so a Stratum world must find Stratum registered even when the
- * native library is missing — and then fail to open, saying why;
+ * silently;
  * <li>loads the native library ({@link NativePipeline#load}: the
  * {@code stratum.nukkit.library} property, then this plugin's data folder,
  * then {@code java.library.path});
- * <li>writes the frozen pipeline of every Stratum world that does not exist
- * yet, from its options' {@code "pack"} — the world-creation hook Nukkit
- * does not offer, taken before Nukkit creates the world. A world that
- * already exists is never refrozen.
+ * <li>for every Stratum world Nukkit is about to load or create
+ * ({@link StartupWorlds}): writes a new world's frozen pipeline from its
+ * options' {@code "pack"} — the world-creation hook Nukkit does not offer,
+ * taken before Nukkit creates the world; a world that exists is never
+ * refrozen — and then makes every check opening it would
+ * ({@link WorldPipeline#validate});
+ * <li>if any of those worlds is refused, logs each refusal by name and stops
+ * the server, exit status 1, before Nukkit loads or creates any world.
  * </ul>
- * Nothing here throws: a plugin that fails to load leaves its worlds to
- * {@code Normal}. Every problem is logged, and the world it concerns then
- * refuses to open, by name.
+ * Stopping is the only clean refusal Nukkit leaves a plugin
+ * ({@code b3caad67d}): a generator whose {@code init} throws is logged and
+ * replaced by {@code null} in {@code Level}'s per-thread generator, and
+ * {@code Level.initLevel} then throws a {@code NullPointerException}. For a
+ * new world, {@code Server.generateLevel} catches that, but only after
+ * {@code LevelDBProvider.generate} has written the world's {@code level.dat};
+ * for an existing one, {@code Server.loadLevel} does not, and from Nukkit's
+ * startup the exception ends the server anyway.
  *
  * <p>While running, it schedules each generated chunk's fluid updates once
  * Nukkit populates the chunk (all eight neighbours generated, as
@@ -57,13 +64,43 @@ public final class StratumPlugin extends PluginBase implements Listener {
             nativeLoaded = true;
             getLogger().info("native library loaded from " + from + " (engine blockstates at "
                 + NativePipeline.formatVersion(NativePipeline.bedrockBlockStateVersion()) + ")");
-        } catch (Throwable e) {
+        } catch (RuntimeException | LinkageError e) {
             nativeFailure = e;
-            getLogger().error("cannot load the Stratum native library; every Stratum world will "
-                + "refuse to open: " + e.getMessage());
+        }
+
+        final StartupWorlds startup = StartupWorlds.read(getServer());
+        for (String problem : startup.unreadable) {
+            getLogger().warning(problem + "; if it is a Stratum world, it is checked only when "
+                + "Nukkit opens it");
+        }
+        if (startup.worlds.isEmpty()) {
+            if (nativeFailure != null) {
+                getLogger().error("cannot load the Stratum native library, and no Stratum world is "
+                    + "configured; any Stratum world created later will refuse to open: "
+                    + nativeFailure.getMessage());
+            }
             return;
         }
-        prepareWorlds(getServer());
+        final List<String> refused = new ArrayList<>();
+        for (StartupWorlds.World world : startup.worlds) {
+            try {
+                requireNative();
+                if (!world.exists) {
+                    freezeNew(world);
+                }
+                WorldPipeline.validate(world.name, world.options);
+                getLogger().info("world '" + world.name + "' checked: it opens, and every block "
+                    + "state it can place resolves through Nukkit's BlockStateMapping");
+            } catch (RuntimeException | LinkageError e) {
+                refused.add(world.name);
+                final String why = String.valueOf(e.getMessage());
+                getLogger().error("REFUSED " + (why.contains("world '" + world.name + "'") ? why
+                    : "stratum: world '" + world.name + "': " + why));
+            }
+        }
+        if (!refused.isEmpty()) {
+            stopBeforeWorlds(refused);
+        }
     }
 
     @Override
@@ -81,55 +118,37 @@ public final class StratumPlugin extends PluginBase implements Listener {
         }
     }
 
-    /** Freezes the pipeline of each configured Stratum world Nukkit has not created yet. */
-    private void prepareWorlds(Server server) {
-        if (StratumGenerator.NAME.equalsIgnoreCase(server.getPropertyString("level-type", "default"))) {
-            prepare(server, server.getPropertyString("level-name", "world"),
-                server.getPropertyString("generator-settings", ""));
-        }
-        final Map<String, Object> worlds = server.getConfig("worlds", new HashMap<String, Object>());
-        for (String name : worlds.keySet()) {
-            // Nukkit's own reading of the entry (Server's constructor):
-            // "<generator>:<options>", the options being everything after
-            // the first colon.
-            final String generator = String.valueOf(server.getConfig("worlds." + name + ".generator", ""));
-            final int colon = generator.indexOf(':');
-            final String type = colon < 0 ? generator : generator.substring(0, colon);
-            if (StratumGenerator.NAME.equalsIgnoreCase(type)) {
-                prepare(server, name, colon < 0 ? "" : generator.substring(colon + 1));
-            }
-        }
-    }
-
-    private void prepare(Server server, String world, String options) {
-        // Not server.isLevelGenerated(): it asks LevelProviderManager, which
-        // Nukkit fills only after STARTUP plugins are enabled, so here it
-        // calls every world new. A world exists once it has a level.dat;
-        // Server resolves a world's folder this way too.
-        final File folder = world.contains("/") || world.contains("\\") ? new File(world)
-            : new File(server.getDataPath(), "worlds/" + world);
-        if (new File(folder, "level.dat").exists()) {
+    /** Writes a new world's frozen pipeline from its "pack", unless the blob is there already. */
+    private void freezeNew(StartupWorlds.World world) {
+        final GeneratorOptions parsed = GeneratorOptions.parse(world.options);
+        final File blob = parsed.blobFile();
+        if (blob.isFile()) {
+            getLogger().info("world '" + world.name + "' will be created from the existing frozen "
+                + "pipeline " + blob);
             return;
         }
-        try {
-            final GeneratorOptions parsed = GeneratorOptions.parse(options);
-            final File blob = parsed.blobFile();
-            if (blob.isFile()) {
-                getLogger().info("world '" + world + "' will generate from the existing frozen "
-                    + "pipeline " + blob);
-                return;
-            }
-            if (parsed.pack == null) {
-                getLogger().error("world '" + world + "' has no frozen pipeline at " + blob
-                    + " and its options name no \"pack\" to write one from; it will refuse to open");
-                return;
-            }
-            NativePipeline.freeze(new File(parsed.pack).getAbsolutePath(), blob.getPath());
-            getLogger().info("world '" + world + "': froze " + parsed.pack + " into " + blob);
-        } catch (Throwable e) {
-            getLogger().error("world '" + world + "': " + e.getMessage()
-                + "; it will refuse to open");
+        if (parsed.pack == null) {
+            // Left to validate(), which refuses a world with no blob.
+            return;
         }
+        NativePipeline.freeze(new File(parsed.pack).getAbsolutePath(), blob.getPath());
+        getLogger().info("world '" + world.name + "': froze " + parsed.pack + " into " + blob);
+    }
+
+    /**
+     * Stops the server, exit status 1. Called from {@link #onLoad}: Nukkit
+     * has opened its network interface and its player database by then, and
+     * no world; {@code forceShutdown} closes both, and nothing is left to
+     * save.
+     */
+    private void stopBeforeWorlds(List<String> refused) {
+        getLogger().error("STOPPING the server before Nukkit loads or creates any world: "
+            + refused.size() + " Stratum world(s) refused, each named above: " + refused
+            + ". Nukkit cannot fail one world cleanly (a refused new world would be left with a "
+            + "level.dat, and an existing one would stop the server anyway), so fix or remove the "
+            + "world and start again");
+        getServer().forceShutdown();
+        System.exit(1);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -146,6 +165,7 @@ public final class StratumPlugin extends PluginBase implements Listener {
         }
         final int baseX = chunk.getX() << 4;
         final int baseZ = chunk.getZ() << 4;
+        int scheduled = 0;
         for (int packed : fluids) {
             final Block block = level.getBlock(baseX + (packed & 15), world.minY + (packed >>> 8),
                 baseZ + ((packed >>> 4) & 15));
@@ -153,8 +173,10 @@ public final class StratumPlugin extends PluginBase implements Listener {
             // its own tick rate (BlockLiquid.onUpdate).
             if (block instanceof BlockLiquid) {
                 level.scheduleUpdate(block, block.tickRate());
+                scheduled++;
             }
         }
+        world.recordFluidUpdatesScheduled(scheduled);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

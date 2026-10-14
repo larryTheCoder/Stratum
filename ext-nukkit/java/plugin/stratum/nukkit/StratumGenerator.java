@@ -23,8 +23,20 @@ import java.util.Map;
  * {@code PopChunkManager} that carries the seed and nothing else. So the
  * world is opened on the server thread's first call — the only one that
  * knows which world it is — and every later call finds it by seed and
- * options ({@link WorldPipeline}). If opening throws, Nukkit logs the
- * exception and the world fails to load, naming the refusal.
+ * options ({@link WorldPipeline}).
+ *
+ * <p>What Nukkit does with a refusal thrown from {@code init} is not a clean
+ * failure ({@code b3caad67d}): {@code Level}'s per-thread generator logs the
+ * exception, naming the refusal, and stores {@code null}, and
+ * {@code Level.initLevel} then throws a {@code NullPointerException}.
+ * {@code Server.generateLevel} catches it and logs a generation error — after
+ * {@code LevelDBProvider.generate} has already written the new world's
+ * {@code level.dat} — while {@code Server.loadLevel} does not, so an
+ * existing refused world stops the server as it starts. That is why
+ * {@link StratumPlugin} makes every check for the worlds Nukkit loads or
+ * creates at startup before Nukkit touches them, and stops the server on a
+ * refusal; this path is left to worlds a command or another plugin creates
+ * or loads later.
  *
  * <p>{@code generateChunk} runs on a worker, inside Nukkit's lock on its
  * chunk manager, with the new chunk set into that manager. Terrain only:

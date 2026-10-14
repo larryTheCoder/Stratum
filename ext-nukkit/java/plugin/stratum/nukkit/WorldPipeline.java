@@ -18,11 +18,16 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Everything a Stratum world generates through, opened once per world on
  * the thread that loads it and shared by every generation thread (SPEC
- * §4.1). Opening is where every refusal happens: unreadable options, no
- * frozen pipeline, settings or a biome source outside the binding's scope,
- * a biome with no Bedrock id, a block state Nukkit cannot place. Each is a
- * {@link StratumGenerationException} naming what is wrong, raised before
- * the first chunk, on the thread loading the world.
+ * §4.1). Every refusal is decided here: unreadable options, no frozen
+ * pipeline, settings or a biome source outside the binding's scope, a biome
+ * with no Bedrock id, a block state Nukkit cannot place. Each is a
+ * {@link StratumGenerationException} naming the world and what is wrong.
+ *
+ * <p>The plugin runs {@link #validate} for every configured Stratum world at
+ * {@code STARTUP}, before Nukkit loads or creates any world, and stops the
+ * server on a refusal; {@link #open} repeats the same checks when Nukkit
+ * loads the world, for worlds that were not configured at startup (see
+ * {@link StratumGenerator} for what Nukkit does with a refusal there).
  *
  * <p>Keyed by seed and options string, which is all a generation thread is
  * given to find it by. The options name the blob, so one key is one
@@ -46,6 +51,7 @@ public final class WorldPipeline {
     private final Map<Long, int[]> fluidUpdates = new ConcurrentHashMap<>();
 
     private final AtomicLong chunksGenerated = new AtomicLong();
+    private final AtomicLong fluidUpdatesScheduled = new AtomicLong();
     private final Set<String> generationThreads = ConcurrentHashMap.newKeySet();
 
     private WorldPipeline(String key, long bound, int minY, int height, int airFullId, File blob,
@@ -78,6 +84,27 @@ public final class WorldPipeline {
     }
 
     /**
+     * Every check {@link #open} makes that does not need Nukkit's
+     * {@code Level}: the options, the frozen pipeline, the engine's own
+     * refusals (settings and biome source in scope, every biome mapped), and
+     * every block state the world can place resolved through Nukkit's
+     * {@code BlockStateMapping} and bound. None of them depends on the seed,
+     * so the pipeline is compiled for seed 0 and released again; opening
+     * the world compiles it once more, for its own seed.
+     */
+    static void validate(String world, String options) {
+        final GeneratorOptions parsed = parse(world, options);
+        final File blob = requireBlob(world, parsed);
+        final long pipeline = openNative(world, blob, parsed, 0L);
+        try {
+            final Resolved resolved = resolveStates(world, pipeline);
+            NativePipeline.releaseBound(bindNative(world, pipeline, resolved));
+        } finally {
+            NativePipeline.release(pipeline);
+        }
+    }
+
+    /**
      * Opens the world {@code level} is, once; a later call for the same key
      * returns the same pipeline. Synchronized: worlds load one at a time on
      * the server thread anyway, and this keeps two opens of one key from
@@ -99,55 +126,20 @@ public final class WorldPipeline {
                 + level.getProvider().getClass().getSimpleName() + ", and Stratum fills Nukkit's "
                 + "LevelDB worlds only (y -64..319, a biome per block)");
         }
-        final GeneratorOptions parsed;
-        try {
-            parsed = GeneratorOptions.parse(options);
-        } catch (StratumGenerationException e) {
-            throw new StratumGenerationException("stratum: world '" + world + "': " + e.getMessage(), e);
-        }
-        final File blob = parsed.blobFile();
-        if (!blob.isFile()) {
-            throw new StratumGenerationException("stratum: world '" + world + "' has no frozen "
-                + "pipeline at " + blob + ". The Stratum plugin writes it from \"pack\" before the "
-                + "world is created, and never afterwards: a world that exists without its "
-                + "pipeline is refused rather than regenerated from a pack that may have changed");
-        }
+        final GeneratorOptions parsed = parse(world, options);
+        final File blob = requireBlob(world, parsed);
 
-        final long pipeline = NativePipeline.open(blob.getPath(), parsed.settings, parsed.biomes, seed);
+        final long pipeline = openNative(world, blob, parsed, seed);
         try {
-            final int[] ids = NativePipeline.emittableStateIds(pipeline);
-            final String[] names = NativePipeline.emittableStateNames(pipeline);
-            final NukkitBlockResolver resolver = new NukkitBlockResolver();
-            final int[] fullIds = new int[ids.length];
-            final StringBuilder misses = new StringBuilder();
-            int missCount = 0;
-            int airFullId = -1;
-            for (int i = 0; i < ids.length; i++) {
-                final BedrockState state = BedrockState.ofJavaState(ids[i]);
-                final NukkitBlockResolver.Resolution resolution = resolver.resolve(state);
-                if (resolution.miss != null) {
-                    misses.append(missCount++ == 0 ? "" : "; ").append(names[i]).append(" (Bedrock ")
-                        .append(state).append("): ").append(resolution.miss);
-                    continue;
-                }
-                fullIds[i] = resolution.fullId;
-                if (names[i].equals("minecraft:air")) {
-                    airFullId = resolution.fullId;
-                }
-            }
-            if (missCount != 0) {
-                throw new StratumGenerationException("stratum: world '" + world + "': " + missCount
-                    + " of the " + ids.length + " block states it can place have no Nukkit block id, "
-                    + "so it is refused rather than generated with substitutes: " + misses);
-            }
-            final long bound = NativePipeline.bind(pipeline, ids, fullIds);
+            final Resolved resolved = resolveStates(world, pipeline);
+            final long bound = bindNative(world, pipeline, resolved);
 
             final int tableVersion = NativePipeline.bedrockBlockStateVersion();
-            if (tableVersion != resolver.paletteVersion()) {
+            if (tableVersion != resolved.paletteVersion) {
                 log.info("stratum: world '" + world + "': the engine's blockstates are at "
                     + NativePipeline.formatVersion(tableVersion) + " and Nukkit's palette at "
-                    + NativePipeline.formatVersion(resolver.paletteVersion()) + "; matched by name and "
-                    + "states, all " + ids.length + " states it can place resolved");
+                    + NativePipeline.formatVersion(resolved.paletteVersion) + "; matched by name and "
+                    + "states, all " + resolved.ids.length + " states it can place resolved");
             }
             final int[] biomeIds = NativePipeline.emittableBiomeIds(pipeline);
             final String[] biomeNames = NativePipeline.emittableBiomeNames(pipeline);
@@ -166,15 +158,99 @@ public final class WorldPipeline {
             }
 
             final WorldPipeline opened = new WorldPipeline(key, bound, NativePipeline.minY(pipeline),
-                NativePipeline.height(pipeline), airFullId, blob, names, fullIds, biomeNames, biomeIds);
+                NativePipeline.height(pipeline), resolved.airFullId, blob, resolved.names,
+                resolved.fullIds, biomeNames, biomeIds);
             OPEN.put(key, opened);
             log.info("stratum: world '" + world + "' generates from " + blob + " (settings "
-                + parsed.settings + ", biomes " + parsed.biomes + ", " + ids.length
+                + parsed.settings + ", biomes " + parsed.biomes + ", " + resolved.ids.length
                 + " block states resolved through Nukkit's BlockStateMapping)");
             return opened;
         } finally {
             NativePipeline.release(pipeline);
         }
+    }
+
+    /** What resolving a world's block states through Nukkit gave, index for index. */
+    private static final class Resolved {
+        final int[] ids;
+        final String[] names;
+        final int[] fullIds;
+        final int airFullId;
+        final int paletteVersion;
+
+        Resolved(int[] ids, String[] names, int[] fullIds, int airFullId, int paletteVersion) {
+            this.ids = ids;
+            this.names = names;
+            this.fullIds = fullIds;
+            this.airFullId = airFullId;
+            this.paletteVersion = paletteVersion;
+        }
+    }
+
+    private static GeneratorOptions parse(String world, String options) {
+        try {
+            return GeneratorOptions.parse(options);
+        } catch (StratumGenerationException e) {
+            throw new StratumGenerationException("stratum: world '" + world + "': " + e.getMessage(), e);
+        }
+    }
+
+    private static File requireBlob(String world, GeneratorOptions parsed) {
+        final File blob = parsed.blobFile();
+        if (!blob.isFile()) {
+            throw new StratumGenerationException("stratum: world '" + world + "' has no frozen "
+                + "pipeline at " + blob + ". The Stratum plugin writes it from \"pack\" before the "
+                + "world is created, and never afterwards: a world that exists without its "
+                + "pipeline is refused rather than regenerated from a pack that may have changed");
+        }
+        return blob;
+    }
+
+    /** The engine's refusals (scope, unmapped biomes, an unreadable blob), naming the world. */
+    private static long openNative(String world, File blob, GeneratorOptions parsed, long seed) {
+        try {
+            return NativePipeline.open(blob.getPath(), parsed.settings, parsed.biomes, seed);
+        } catch (StratumGenerationException e) {
+            throw new StratumGenerationException("stratum: world '" + world + "': " + e.getMessage(), e);
+        }
+    }
+
+    private static long bindNative(String world, long pipeline, Resolved resolved) {
+        try {
+            return NativePipeline.bind(pipeline, resolved.ids, resolved.fullIds);
+        } catch (StratumGenerationException e) {
+            throw new StratumGenerationException("stratum: world '" + world + "': " + e.getMessage(), e);
+        }
+    }
+
+    /** Every state the world can place, through Nukkit; any miss refuses the world, naming each. */
+    private static Resolved resolveStates(String world, long pipeline) {
+        final int[] ids = NativePipeline.emittableStateIds(pipeline);
+        final String[] names = NativePipeline.emittableStateNames(pipeline);
+        final NukkitBlockResolver resolver = new NukkitBlockResolver();
+        final int[] fullIds = new int[ids.length];
+        final StringBuilder misses = new StringBuilder();
+        int missCount = 0;
+        int airFullId = -1;
+        for (int i = 0; i < ids.length; i++) {
+            final BedrockState state = BedrockState.ofJavaState(ids[i]);
+            final NukkitBlockResolver.Resolution resolution = resolver.resolve(state);
+            if (resolution.miss != null) {
+                misses.append(missCount++ == 0 ? "" : "; ").append(names[i]).append(" (Bedrock ")
+                    .append(state).append("): ").append(resolution.miss);
+                continue;
+            }
+            fullIds[i] = resolution.fullId;
+            if (names[i].equals("minecraft:air")) {
+                airFullId = resolution.fullId;
+            }
+        }
+        if (missCount != 0) {
+            throw new StratumGenerationException("stratum: world '" + world + "': " + missCount
+                + " of the " + ids.length + " block states it can place have no Nukkit block id, "
+                + "so it is refused rather than generated with substitutes: " + misses);
+        }
+        return new Resolved(ids, names, fullIds, airFullId, resolver.paletteVersion());
     }
 
     /** Forgets the world behind {@code level}, when Nukkit unloads it. */
@@ -201,6 +277,10 @@ public final class WorldPipeline {
     /** The chunk's fluid updates, removed: each is scheduled once. */
     int[] takeFluidUpdates(int chunkX, int chunkZ) {
         return fluidUpdates.remove(Level.chunkHash(chunkX, chunkZ));
+    }
+
+    void recordFluidUpdatesScheduled(int count) {
+        fluidUpdatesScheduled.addAndGet(count);
     }
 
     public int minY() {
@@ -234,6 +314,11 @@ public final class WorldPipeline {
     /** How many chunks this world's generator has filled since the world opened. */
     public long chunksGenerated() {
         return chunksGenerated.get();
+    }
+
+    /** How many liquid blocks the plugin has scheduled an update for, since the world opened. */
+    public long fluidUpdatesScheduled() {
+        return fluidUpdatesScheduled.get();
     }
 
     /** The names of the threads that filled them. */

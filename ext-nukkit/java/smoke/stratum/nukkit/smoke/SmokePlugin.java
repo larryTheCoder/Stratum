@@ -128,6 +128,12 @@ public final class SmokePlugin extends PluginBase {
                 compareNext("memory");
                 if (next == area.size()) {
                     record("memory");
+                    // Liquids the plugin scheduled an update for as Nukkit
+                    // populated chunks (all eight neighbours generated):
+                    // recorded, not judged, since how many the area holds
+                    // depends on the seed.
+                    report.setProperty("fluid_updates_scheduled",
+                        String.valueOf(world.fluidUpdatesScheduled()));
                     report.setProperty("saved", String.valueOf(level.save(true)));
                     finish("ok");
                 }
