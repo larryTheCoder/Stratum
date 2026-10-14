@@ -936,6 +936,47 @@ TEST_CASE("a chunk whose block arithmetic leaves int32 is refused by name",
     CHECK_THROWS(filler.fill(std::numeric_limits<std::int32_t>::max(), 0, buffer));
 }
 
+TEST_CASE("an interpolated cell a pack puts at the top of int32 is refused by name",
+          "[terrain][filler][ub]") {
+    // A chunk inside the domain, and a final_density that still reaches
+    // y = 2^31 - 4: find_top_surface scans from the lattice point under its
+    // upper_bound, and a cell_height that large starts the scan there. An
+    // `interpolated` in its density is then blended over a cell 4 high from
+    // 2147483644, whose top corner is 2^31 — which overflowed (SPEC §8). One
+    // block lower the cell ends at 2147483644 and the chunk fills, solid
+    // because the scan's first answer is positive.
+    const auto scanFrom = [](std::int32_t top) {
+        return nlohmann::json{{"type", "minecraft:find_top_surface"},
+                              {"density", {{"type", "minecraft:interpolated"}, {"argument", 1.0}}},
+                              {"upper_bound", static_cast<double>(top)},
+                              {"lower_bound", -64},
+                              {"cell_height", top}};
+    };
+    for (const std::int32_t top : {2147483643, 2147483644}) {
+        CAPTURE(top);
+        const TempTree tree;
+        nlohmann::json settings = flatSettings(false, false);
+        settings["noise_router"]["final_density"] = scanFrom(top);
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const auto& compiled =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        const auto noises =
+            stratum::density::NoiseRegistry::create(tree.pack(), loaded.graph.referencedNoises(), 0,
+                                                    stratum::density::RandomSource::Xoroshiro);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, compiled);
+        ChunkBuffer buffer(compiled.geometry);
+        if (top == 2147483643) {
+            filler.fill(0, 0, buffer);
+            CHECK(buffer.at(5, 31, 9).name.toString() == "minecraft:stone");
+        } else {
+            CHECK_THROWS_WITH(filler.fill(0, 0, buffer),
+                              ContainsSubstring("'minecraft:interpolated'") &&
+                                  ContainsSubstring("2147483644") && ContainsSubstring("32-bit"));
+        }
+    }
+}
+
 TEST_CASE("a preliminary_surface_level corner no int32 holds is refused by name",
           "[terrain][filler][surface][ub]") {
     // The surface pass reads `preliminary_surface_level` through its 16-block

@@ -686,6 +686,16 @@ At evaluation:
   (a router temperature of the constant 1e6 overflowed the sum);
 - a `find_top_surface` `upper_bound` whose floor is no 32-bit integer, or
   within one `cell_height` of INT32_MIN;
+- an `interpolated` blended over a cell whose corners are not all 32-bit
+  integers, which is within one cell's width or height of either end of an
+  axis (`Interpreter::interpolate`, whose corners were formed in int32
+  regardless). Inside the chunk domain only y gets there, and only through
+  `find_top_surface`: its scan starts at the lattice point under its
+  `upper_bound`, so a `cell_height` as large as the bound starts it at the
+  bound. An `upper_bound` and `cell_height` of 2147483644 over an
+  `interpolated`, in a dimension whose cells are 4 high, blended over the
+  cell from 2147483644 to 2^31; one lower fills. Through
+  `Interpreter::evaluate` itself, any axis gets there;
 - a `preliminary_surface_level` lattice corner whose floor is no 32-bit
   integer;
 - a surface depth, secondary depth or `bandlands` offset no int32 holds (a

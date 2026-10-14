@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -1450,6 +1451,45 @@ TEST_CASE("find_top_surface refuses an upper_bound whose floor is no 32-bit inte
                                                ContainsSubstring("not a 32-bit integer"));
     CHECK_THROWS_WITH(pipeline.at("bottom"), ContainsSubstring("-2147483649"));
     CHECK(bits(pipeline.at("ceiling")) == bits(0.0));
+}
+
+TEST_CASE("interpolated refuses a cell whose corners are not all 32-bit integers",
+          "[density][interpreter][cells][ub]") {
+    // A cell's corners are its lower corner plus a cell's width or height,
+    // and within one cell of either end of int32 that sum left the range.
+    // A pack reaches the top of y through find_top_surface, whose scan
+    // starts at the lattice point under its upper_bound: a cell_height as
+    // large as the bound starts it at the bound itself.
+    const auto scanFrom = [](std::int32_t top) {
+        return findTopSurface(R"({"type":"minecraft:interpolated","argument":-1.0})",
+                              std::to_string(top) + ".0", -64, top);
+    };
+    const TempTree tree;
+    // Cells 8 high: 2147483639's cell runs from 2147483632 to 2147483640,
+    // and 2147483640's would run to 2^31.
+    tree.define("last", scanFrom(2147483639));
+    tree.define("past", scanFrom(2147483640));
+    const Pipeline tall(tree.pack(), 0, CellGeometry{.width = 4, .height = 8});
+    CHECK(bits(tall.at("last")) == bits(-64.0));
+    CHECK_THROWS_WITH(tall.at("past"), ContainsSubstring("'minecraft:interpolated'") &&
+                                           ContainsSubstring("(0, 2147483640, 0)") &&
+                                           ContainsSubstring("32-bit"));
+
+    // Through evaluate() itself every axis reaches either end. A cell 12
+    // wide does not divide 2^31, so the cell holding INT32_MIN starts below
+    // it: -2147483641's lower corner is -2147483652.
+    const TempTree flat;
+    flat.define("flat", R"({"type":"minecraft:interpolated","argument":0.75})");
+    const Pipeline wide(flat.pack(), 0, CellGeometry{.width = 12, .height = 8});
+    CHECK(bits(wide.at("flat", Point{.x = -2147483640, .y = 0, .z = 2147483639})) == bits(0.75));
+    CHECK_THROWS_WITH(wide.at("flat", Point{.x = -2147483641, .y = 0, .z = 0}),
+                      ContainsSubstring("(-2147483652, 0, 0)"));
+    CHECK_THROWS_WITH(wide.at("flat", Point{.x = 0, .y = 0, .z = 2147483640}),
+                      ContainsSubstring("(0, 0, 2147483640)"));
+    // 8 divides 2^31, so the lowest cell on y starts at INT32_MIN itself.
+    CHECK(bits(wide.at("flat",
+                       Point{.x = 0, .y = std::numeric_limits<std::int32_t>::min(), .z = 0})) ==
+          bits(0.75));
 }
 
 TEST_CASE("clamp refuses a min above its max", "[density][interpreter][ub]") {

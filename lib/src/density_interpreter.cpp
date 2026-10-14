@@ -123,6 +123,44 @@ template<typename T>
                     std::to_string(lowerBound) + "; that is not a column, it is a hang");
 }
 
+[[noreturn]] void refuseCell(const Point& at, const CellGeometry& cells, const std::int64_t x0,
+                             const std::int64_t y0, const std::int64_t z0) {
+    throw EvalError("'minecraft:interpolated' at block " + describe(at) + " blends the " +
+                    std::to_string(cells.width) + "x" + std::to_string(cells.height) +
+                    " cell from (" + std::to_string(x0) + ", " + std::to_string(y0) + ", " +
+                    std::to_string(z0) +
+                    "), whose corners are not all 32-bit integers; this build refuses it rather "
+                    "than wrap them");
+}
+
+/// Whether a cell from @p lower, @p size long, has both its ends in int32.
+[[nodiscard]] constexpr bool cellFits(const std::int64_t lower, const std::int32_t size) noexcept {
+    return lower >= std::numeric_limits<std::int32_t>::min() &&
+           lower + size <= std::numeric_limits<std::int32_t>::max();
+}
+
+/// The lower corner of the cell @p at sits in, found with floorDiv so that a
+/// negative coordinate lands in the cell below it rather than the one above.
+///
+/// Formed in 64 bits and refused by name where a corner of the cell leaves
+/// int32 (SPEC §8), which is within one cell of either end of an axis: a
+/// pack reaches it on y through find_top_surface, whose scan starts at the
+/// lattice point under its upper_bound, and a caller on any axis through
+/// evaluate(). Everywhere else the corner is the int32 it always was. Out of
+/// interpolate() so that its frame, which is on the stack once per level of
+/// nested `interpolated`, holds the corner and not the check.
+[[nodiscard]] Point cellCorner(const Point& at, const CellGeometry& cells) {
+    const std::int64_t x0 = std::int64_t{javamath::floorDiv(at.x, cells.width)} * cells.width;
+    const std::int64_t y0 = std::int64_t{javamath::floorDiv(at.y, cells.height)} * cells.height;
+    const std::int64_t z0 = std::int64_t{javamath::floorDiv(at.z, cells.width)} * cells.width;
+    if (!cellFits(x0, cells.width) || !cellFits(y0, cells.height) || !cellFits(z0, cells.width)) {
+        refuseCell(at, cells, x0, y0, z0);
+    }
+    return Point{.x = static_cast<std::int32_t>(x0),
+                 .y = static_cast<std::int32_t>(y0),
+                 .z = static_cast<std::int32_t>(z0)};
+}
+
 } // namespace
 
 /// One point's evaluation, with the values already computed for it. Nodes
@@ -992,11 +1030,12 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
     }
     const CellGeometry cells = *cells_;
 
-    // The cell a point is in, found with floorDiv so that a negative
-    // coordinate lands in the cell below it rather than the one above.
-    const std::int32_t x0 = javamath::floorDiv(at.x, cells.width) * cells.width;
-    const std::int32_t y0 = javamath::floorDiv(at.y, cells.height) * cells.height;
-    const std::int32_t z0 = javamath::floorDiv(at.z, cells.width) * cells.width;
+    // The cell a point is in, refused by name where its corners leave int32
+    // (cellCorner), so the corner arithmetic below stays inside it.
+    const Point lower = cellCorner(at, cells);
+    const std::int32_t x0 = lower.x;
+    const std::int32_t y0 = lower.y;
+    const std::int32_t z0 = lower.z;
 
     const double tx = static_cast<double>(at.x - x0) / static_cast<double>(cells.width);
     const double ty = static_cast<double>(at.y - y0) / static_cast<double>(cells.height);

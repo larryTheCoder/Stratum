@@ -309,6 +309,14 @@ public:
     };
 
     /// The value of @p root at @p at.
+    ///
+    /// Any int32 point is accepted, and what cannot be evaluated there is
+    /// refused by EvalError, naming the node (SPEC §8) — among it an
+    /// `interpolated` whose cell at @p at, or at a point the graph moves to
+    /// (find_top_surface's scan), has a corner outside int32: within one
+    /// cell's width or height of either end of an axis. Inside a chunk of
+    /// kMaxChunkCoordinate's domain no x or z comes near one; y does only
+    /// through find_top_surface.
     [[nodiscard]] double evaluate(NodeIndex root, Point at) const;
 
     /// The same, reusing @p cache for the cell corners `interpolated` needs.
