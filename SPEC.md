@@ -566,6 +566,40 @@ cannot keep stamping the old number.
   agree and whose biomes do not exits 1 (it once compared blocks alone, and
   called such a pair identical). A pipeline node trace per divergence is
   not built yet.
+- `cli generate` (M5): region files from the library. It takes a
+  `tools/fetch-vanilla` version root or a frozen pipeline (§6), a dimension
+  by name — `overworld`, `amplified`, `large_biomes`, `nether`, `end`, the
+  pairing of noise settings and biome source vanilla's world presets make —
+  a seed, and a chunk or region range, and writes `r.<x>.<z>.mca` as the
+  server stores a chunk: status `minecraft:full`, DataVersion 4671, every
+  section of the dimension TYPE's column rather than the noise height (the
+  End's biomes above y 127 included), the four heightmaps, the aquifer's
+  fluid updates in `PostProcessing`, and no light (the server relights).
+  The heightmap rule is measured: on all 4 194 304 columns of the sixteen
+  golden overworld and End regions the server stored the highest block
+  that is not air (WORLD_SURFACE), neither air nor powder snow
+  (MOTION_BLOCKING, and _NO_LEAVES), and none of air, fluid and powder snow
+  (OCEAN_FLOOR). A dimension the library cannot compile is refused by
+  name — the Nether today, for its legacy named noises (§11) — as are a
+  noise height outside the stored column and an existing region file
+  without `--force`; `--threads` changes no byte of the output.
+  `golden_generate_test.cpp` runs it and scores the files with
+  `support/fluid_flow.hpp`'s rule rather than `diff`'s exit code, at seed
+  -4172144997902289642: the End's r.0.0 exact on all 67 108 864 blocks,
+  1 048 576 biome cells and every heightmap column; the overworld's chunks
+  0..15 of r.0.0 exact on 25 164 896 of 25 165 824 blocks, the rest 863 of
+  surface material (M4) and 65 of flow, its biomes on 393 214 of 393 216
+  cells — the other two equal-fitness ties the server resolves to the
+  earlier row, as at the tie columns in §11 — and every heightmap column.
+  The whole overworld region, scored once by the same rule through a
+  release build: 100 660 840 of 100 663 296 blocks exact, 2255 material,
+  201 flow; biomes on 1 572 250 of 1 572 864 cells, and every one of the
+  614 others a tie between exactly two rows that the server resolved to the
+  EARLIER one and `ParameterList::find` to the later. §11's tie-break entry
+  found one column of them at this seed, (460, 200); the whole region holds
+  six whole columns (five of `warm_ocean` where the server has
+  `deep_lukewarm_ocean`, and that one), a seventh in part, five pairs of
+  cells and three cave cells.
 - Fixed seed set: at least 8 seeds × overworld/nether/end noise settings ×
   a spread of chunk regions including y-extremes and biome borders.
 - Fixtures are **generated, never committed** (they are derived from Mojang
@@ -1218,7 +1252,8 @@ mapping has two halves, split at a platform-neutral midpoint:
   output, per-world freeze storage, PocketMine world-load path, perf pass,
   and `stratum generate` — region files from the library, so a generated
   world, its biomes included, can be diffed from the shell (the CLI
-  pointed it at M3, which closed without it).
+  pointed it at M3, which closed without it). `stratum generate` has
+  landed (§7, `cli generate`).
 - **M6 (v2)** — Staged features/structures with declared read/write radii;
   scripting escape hatch evaluation.
 - **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
@@ -8512,10 +8547,10 @@ Open:
     name*, above): a caller names the source, and a `fixed` or
     `checkerboard` declared in a pack's `dimension` or `world_preset` is
     refused only if a caller passes that name on.
-  - No command-line path generates the End: `stratum generate` is still
-    unimplemented (M5), so its biomes are checked from the shell only
-    against regions something else wrote, which `stratum diff` now compares
-    biome for biome (§7).
+  - CLOSED: no command-line path generated the End. `stratum generate
+    --dimension end` does now (§7, `cli generate`), and
+    `golden_generate_test.cpp` holds a whole region of it to the server's,
+    biome for biome.
   - CI has the pack and none of these corpora. Its unit run holds the y at
     which erosion is read to the server's answers through the router
     probe's y_clamped_gradient dimensions, which need no Mojang data
