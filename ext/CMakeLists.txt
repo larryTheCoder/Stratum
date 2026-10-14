@@ -104,5 +104,39 @@ if(STRATUM_BUILD_EXT)
             LABELS "ext"
             ENVIRONMENT "STRATUM_FIXTURES_DIR=${STRATUM_FIXTURES_DIR};NO_INTERACTION=1"
         )
+
+        # Inside a real PocketMine-MP 5.44.3, on PocketMine-MP's own PHP
+        # (tools/pmmp-dev; SPEC §11, "M5: Stratum inside a real
+        # PocketMine-MP"). Local evidence, not CI: every case SKIPs, saying
+        # what is missing, when tools/pmmp-dev has not fetched
+        # ~/.cache/stratum-pmmp ($STRATUM_PMMP_DIR) or the fixtures are
+        # absent. Run them with `ctest --preset pmmp`, which takes them one
+        # at a time: the smokes run a server.
+        set(pmmp_dev "${CMAKE_SOURCE_DIR}/tools/pmmp-dev")
+        set(pmmp_root "${STRATUM_FIXTURES_DIR}/${STRATUM_MINECRAFT_VERSION}")
+        set(pmmp_so --stratum-so "$<TARGET_FILE:stratum_php>")
+        add_test(NAME pmmp.load
+            COMMAND "${pmmp_dev}" check-load ${pmmp_so} --build-php-config "${STRATUM_PHP_CONFIG}")
+        add_test(NAME pmmp.phpt
+            COMMAND "${pmmp_dev}" phpt ${pmmp_so} --fixtures-dir "${STRATUM_FIXTURES_DIR}" --
+                "${CMAKE_CURRENT_SOURCE_DIR}/zend/tests" "${CMAKE_CURRENT_SOURCE_DIR}/plugin/tests")
+        add_test(NAME pmmp.census.blocks
+            COMMAND "${pmmp_dev}" census-blocks ${pmmp_so} --version-root "${pmmp_root}"
+                --report "${CMAKE_CURRENT_BINARY_DIR}/pmmp-census-blocks.tsv")
+        add_test(NAME pmmp.census.biomes
+            COMMAND "${pmmp_dev}" census-biomes ${pmmp_so} --version-root "${pmmp_root}")
+        add_test(NAME pmmp.threads
+            COMMAND "${pmmp_dev}" threads ${pmmp_so} --version-root "${pmmp_root}")
+        foreach(dimension overworld end)
+            add_test(NAME pmmp.smoke.${dimension}
+                COMMAND "${pmmp_dev}" smoke ${pmmp_so} --version-root "${pmmp_root}"
+                    --dimension ${dimension} --work-dir "${CMAKE_CURRENT_BINARY_DIR}/pmmp-smoke-${dimension}")
+        endforeach()
+        set_tests_properties(pmmp.load pmmp.phpt pmmp.census.blocks pmmp.census.biomes pmmp.threads
+            pmmp.smoke.overworld pmmp.smoke.end PROPERTIES
+            LABELS "pmmp"
+            SKIP_RETURN_CODE 77
+            RUN_SERIAL TRUE
+        )
     endif()
 endif()

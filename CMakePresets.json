@@ -80,6 +80,18 @@
         "STRATUM_BUILD_EXT": "ON",
         "STRATUM_PHP_CONFIG": "$env{STRATUM_PHP_CONFIG}"
       }
+    },
+    {
+      "name": "ext-release",
+      "displayName": "PocketMine-MP zend module, optimised",
+      "description": "Release, warnings as errors, with ext/'s zend module: the stratum.so to load into PocketMine-MP's own PHP (tools/pmmp-dev). The determinism flags are the ones every target gets from stratum_configure_target, so no fast-math and no FMA contraction here either. Needs STRATUM_PHP_CONFIG in the environment, as ext does.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "STRATUM_WERROR": "ON",
+        "STRATUM_BUILD_EXT": "ON",
+        "STRATUM_PHP_CONFIG": "$env{STRATUM_PHP_CONFIG}"
+      }
     }
   ],
   "buildPresets": [
@@ -120,6 +132,11 @@
       "name": "ext",
       "configurePreset": "ext",
       "configuration": "Debug"
+    },
+    {
+      "name": "ext-release",
+      "configurePreset": "ext-release",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -254,6 +271,44 @@
       },
       "execution": {
         "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ext-release",
+      "configurePreset": "ext-release",
+      "configuration": "Release",
+      "displayName": "ext PHPT, optimised module",
+      "description": "The ext PHPT suite against the Release stratum.so, under tools/php-dev's PHP.",
+      "filter": {
+        "include": {
+          "label": "ext"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "pmmp",
+      "configurePreset": "ext-release",
+      "configuration": "Release",
+      "displayName": "inside PocketMine-MP 5.44.3's own PHP",
+      "description": "Local evidence, not CI: the Release stratum.so loaded into pmmp/PHP-Binaries' php beside its own extensions, the ext PHPTs under that php, the block state and biome censuses and a pmmpthread case under PocketMine-MP's own classes, and a headless server boot. Needs tools/pmmp-dev to have fetched ~/.cache/stratum-pmmp; every case SKIPs, naming what is missing, without it. One case at a time: the boot smoke runs a server.",
+      "filter": {
+        "include": {
+          "label": "pmmp"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "jobs": 1,
+        "timeout": 1800
       }
     }
   ]
