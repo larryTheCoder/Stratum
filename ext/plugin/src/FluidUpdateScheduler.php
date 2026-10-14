@@ -136,7 +136,8 @@ final class FluidUpdateScheduler implements Listener{
 					}
 				}
 			}
-			if($this->held[$id][2] === []){
+			// Absent already if scheduling an update unloaded the world.
+			if(($this->held[$id][2] ?? []) === []){
 				unset($this->held[$id]);
 			}
 		}
