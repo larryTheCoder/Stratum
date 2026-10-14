@@ -2,8 +2,16 @@
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
-// Cubitect): the octave loop and blend in `sampleSurfaceNoise` (biomenoise.c)
-// and the seeding order in `octaveInit` (noise.c). Recorded in NOTICE.
+// Cubitect), read at e61f90580cbdd883214a8054670dacae655e59c0: the octave
+// loop and blend in `sampleSurfaceNoise` (biomenoise.c), the seeding order in
+// `octaveInit` (noise.c), and `maintainPrecision`, which is noise.h's
+// function of that name with the body noise.h keeps as a commented-out line,
+// `x - round(x / 33554432.0) * 33554432.0` — the name, the wrap into ±2^25
+// and its period. THIS PROJECT'S OWN: the half-up rounding, floor(v + 0.5),
+// where C's `round` takes a half away from zero, and applying the wrap at
+// all, where cubiomes' function returns its argument. The clean-room
+// spec/blended-noise-spec.md (Q1.6), which arrived later, states the same
+// wrap and rounding. Recorded in NOTICE.
 
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>

@@ -22,8 +22,10 @@
 //     base XOR md5("minecraft:continentalness") -> that noise's generator
 //
 // so every noise is a pure function of the world seed and its own name, and
-// naming one differently changes only that one. Checked against cubiomes'
-// setBiomeSeed — see tools/vectors/climate_vectors.c.
+// naming one differently changes only that one. Adapted from cubiomes'
+// (MIT) setBiomeSeed and init_climate_seed, as is the legacy climate from its
+// setNetherSeed — noise_registry.cpp's header and NOTICE record both — and
+// checked against them: see tools/vectors/climate_vectors.c.
 
 #pragma once
 

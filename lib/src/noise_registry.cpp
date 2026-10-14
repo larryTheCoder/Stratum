@@ -1,14 +1,23 @@
 // Stratum — the noises a density function graph names.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// ADAPTED (CLAUDE.md, NOTICE): the legacy climate below — the seeds
-// worldSeed and worldSeed + 1 and the fixed two-octave stacks from octave -7
-// that `legacyClimateNoise` builds — is adapted from cubiomes
+// ADAPTED (CLAUDE.md, NOTICE): two seedings here are adapted from cubiomes
 // (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
-// Cubitect), biomenoise.c `setNetherSeed`, read at
-// e61f90580cbdd883214a8054670dacae655e59c0. `minecraft:offset` as zero is
-// this project's reading of `getNetherBiome` sampling the climate unshifted,
-// not code taken from it. Recorded in NOTICE.
+// Cubitect), biomenoise.c, read at e61f90580cbdd883214a8054670dacae655e59c0.
+//
+//   * The legacy climate — the seeds worldSeed and worldSeed + 1 and the
+//     fixed two-octave stacks from octave -7 that `legacyClimateNoise`
+//     builds — is `setNetherSeed`. `minecraft:offset` as zero is this
+//     project's reading of `getNetherBiome` sampling the climate unshifted,
+//     not code taken from it.
+//   * The modern path at the end of `NoiseRegistry::create` — one
+//     XoroshiroPositionalFactory built from the world seed, then each noise's
+//     generator salted with the MD5 of its identifier — is `setBiomeSeed`
+//     with `init_climate_seed` (rng/xoroshiro128.hpp says what of it is
+//     whose). The parameters each noise is built from are the pack's, where
+//     cubiomes hardcodes its climate noises'.
+//
+// Recorded in NOTICE.
 
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
@@ -301,10 +310,11 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         return registry;
     }
 
-    // Forked once, then salted per name. Building it outside the loop is not
-    // an optimisation: the base is defined by two draws from the world seed
-    // and nothing else, so drawing again per noise would be a different
-    // derivation entirely.
+    // Forked once, then salted per name: cubiomes' setBiomeSeed and
+    // init_climate_seed (adapted; see the header). Building it outside the
+    // loop is not an optimisation: the base is defined by two draws from the
+    // world seed and nothing else, so drawing again per noise would be a
+    // different derivation entirely.
     const rng::XoroshiroPositionalFactory factory{worldSeed};
 
     for (const data::ResourceLocation& id : wanted) {

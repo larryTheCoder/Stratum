@@ -22,13 +22,33 @@
 //     way; only diffing generated terrain against the goldens does, which
 //     needs the density-function pipeline (M3).
 //
-// nextInt(bound), seedFromHashOf and the positional factory below are
-// checked against cubiomes (MIT), the noise and biome reference SPEC §2
-// names, and the MD5 halves they salt with are checked against md5sum. Still
-// absent for want of an oracle: nextGaussian and the general-purpose fork()
-// that derives a child generator for a sub-task — a different operation from
-// the positional factory, and one nothing here reaches yet. They arrive with
-// M3.
+// ADAPTED (CLAUDE.md, NOTICE): nextInt(bound), seedFromHashOf and the
+// positional factory below are adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), read at e61f90580cbdd883214a8054670dacae655e59c0, and checked
+// against it:
+//
+//   * nextInt(bound) is rng.h `xNextInt`, token for token but for its names
+//     and the threshold computed once: the low 32 bits of a draw times the
+//     bound, the guard, the `(~n + 1) % n` threshold, a fresh draw per retry,
+//     the high half returned. The method is Lemire's published one; which 32
+//     bits of a 64-bit draw it takes is on record from cubiomes alone.
+//   * XoroshiroPositionalFactory and seedFromHashOf, with the modern path of
+//     NoiseRegistry::create, are biomenoise.c `setBiomeSeed` and
+//     `init_climate_seed`: xSetSeed, two draws taken once as the base, then
+//     the halves of md5("minecraft:<noise>") XORed in, the first eight bytes
+//     into the low word.
+//
+// THIS PROJECT'S OWN: the digest computed at run time from any identifier
+// (cubiomes carries its climate names' halves as constants), and checked
+// against md5sum independently of cubiomes. Not adapted: the generator, the
+// seed upgrade and the other draws above, written and checked against the
+// JDK before cubiomes was consulted (cubiomes' xSetSeed later confirmed the
+// upgrade); and PositionalSource below, recovered against the server.
+//
+// Still absent for want of an oracle: nextGaussian and the general-purpose
+// fork() that derives a child generator for a sub-task — a different
+// operation from the positional factory, and one nothing here reaches yet.
 
 #pragma once
 
@@ -110,6 +130,7 @@ public:
     /// Uniform in [0, bound), by Lemire's multiply-and-shift with rejection:
     /// the low 32 bits of a draw are multiplied by the bound and the high
     /// half taken, retrying only for the values that would bias the result.
+    /// Adapted from cubiomes' rng.h `xNextInt` (see the header and NOTICE).
     /// Precondition: bound > 0.
     ///
     /// Note this is a different method from the Java LCG's bounded draw, and
@@ -174,9 +195,10 @@ private:
 /// independent of each other while both stay a pure function of the world
 /// seed, and what makes adding a noise leave the others undisturbed.
 ///
-/// Checked against cubiomes (MIT), whose setBiomeSeed derives the climate
-/// noises exactly this way: two draws from the world seed, then the MD5
-/// halves of the noise's identifier XORed into them. cubiomes is an
+/// Adapted from cubiomes (MIT), whose setBiomeSeed and init_climate_seed
+/// derive the climate noises exactly this way: two draws from the world
+/// seed, then the MD5 halves of the noise's identifier XORed into them (see
+/// the header and NOTICE), and checked against it. cubiomes is an
 /// independent reimplementation, so agreement is strong evidence rather than
 /// proof that Mojang composes it so; the goldens settle that (M3).
 class XoroshiroPositionalFactory {

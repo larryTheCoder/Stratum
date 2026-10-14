@@ -46,8 +46,17 @@ file names its upstream file and licence in its header.
 lib/src/blended.cpp is adapted from cubiomes by Cubitect
 (https://github.com/Cubitect/cubiomes): the octave loop and blend of
 `sampleSurfaceNoise` in biomenoise.c, and the octave seeding order of
-`octaveInit` in noise.c. lib/include/stratum/noise/blended.hpp declares it
-and carries the same attribution.
+`octaveInit` in noise.c. Its `maintainPrecision` is noise.h's function of
+that name with the body noise.h keeps as a commented-out line,
+`x - round(x / 33554432.0) * 33554432.0`: the name, the wrap into +/-2^25
+and its period are adapted from that line. This project's own: the
+rounding, half up as `floor(v / 2^25 + 0.5)`, where C's `round` takes a
+half away from zero (the two part at every negative odd multiple of 2^24),
+and applying the wrap at all, where cubiomes' function returns its argument
+unchanged. spec/blended-noise-spec.md Q1.6, which arrived later (3e41d5f),
+states the same wrap with the same half-up floor.
+lib/include/stratum/noise/blended.hpp declares both and carries the same
+attribution.
 
 lib/src/perlin.cpp is adapted from noise.c, function by function:
 
@@ -78,19 +87,54 @@ lib/src/perlin.cpp is adapted from noise.c, function by function:
     drawn in sequence from one generator, scaled by
     `(10.0 / 6.0) * n / (n + 1)` in cubiomes' order of operations.
 
-The modern construction (all but the two legacy functions) was first
-written from the documented algorithms — Perlin's improved noise and the
-standard simplex construction — and checked against cubiomes. Neither
-document carries its Minecraft-specific parts, and no other source for
-them is on record, so it is recorded as adapted on the same grounds as
-`evaluateSpline` below, not because a derivation was traced. This
-project's own, and not cubiomes': the octave salts hashed at run time,
-with no octave_-12..0 table and so no limit; the fold's 1e-7 epsilon
-(spec/blended-noise-spec.md); the `(sample * amplitude) * persistence`
-grouping of the octave sum and the normal noise's value-factor spelling,
-both measured against the server (SPEC.md section 11); and the lattice
-bound, `NormalNoise::inputLimit`. lib/include/stratum/noise/perlin.hpp
+The modern construction (all but the two legacy functions) is recorded as
+adapted on the same grounds as `evaluateSpline` below, not because a
+derivation was traced. Its M1 header described it as implemented from the
+documented algorithms — Perlin's improved noise and the standard simplex
+construction — and checked against cubiomes, but no such derivation is on
+record: the commit that added it (0cbc0be) names cubiomes as its oracle and
+no other source, and neither document carries the Minecraft-specific
+parts. This project's own, and not cubiomes': the octave salts hashed at
+run time, with no octave_-12..0 table and so no limit; the fold's 1e-7
+epsilon (spec/blended-noise-spec.md); the `(sample * amplitude) *
+persistence` grouping of the octave sum and the normal noise's value-factor
+spelling, both measured against the server (SPEC.md section 11); and the
+lattice bound, `NormalNoise::inputLimit`. lib/include/stratum/noise/perlin.hpp
 declares all of it and carries the same attribution.
+
+lib/include/stratum/rng/xoroshiro128.hpp's bounded draw,
+`Xoroshiro128PlusPlus::nextInt(bound)`, is rng.h's `xNextInt`, token for
+token but for its names and the threshold computed once: the low 32 bits of
+a 64-bit draw multiplied by the bound, the `(uint32_t)r < n` guard, the
+rejection threshold `(~n + 1) % n`, a fresh draw for each retry, and the
+high half returned. The method is Lemire's published multiply-and-shift
+with rejection ("Fast Random Integer Generation in an Interval", 2019), but
+the paper does not say which 32 bits of a 64-bit draw to take, and nothing
+but cubiomes is on record for that choice: M1 declined to write the
+function for want of an oracle (dfce50c), and it arrived with perlin.cpp,
+checked against cubiomes alone (0cbc0be). It is recorded as adapted on the
+same grounds as `evaluateSpline` below. Not adapted: the generator, the
+64-to-128-bit seed upgrade and the other draws, which M1 wrote and checked
+against the JDK before cubiomes was consulted (dfce50c); cubiomes'
+`xSetSeed` later confirmed the seed upgrade constant for constant.
+
+The named-noise seeding — `XoroshiroPositionalFactory` and `seedFromHashOf`
+in the same header, with the modern path of lib/src/noise_registry.cpp's
+`NoiseRegistry::create` — is adapted from biomenoise.c's `setBiomeSeed` and
+`init_climate_seed`: the world seed through `xSetSeed`, two `xNextLong`
+draws taken once as a 128-bit base, and each noise's generator that base
+XORed with the halves of md5("minecraft:<noise>"), the digest's first eight
+bytes, big-endian, into the low word. It arrived in the same commit as
+`evaluateSpline` (d47c53d) and is recorded on the same grounds; its
+octave-level form, `xOctaveInit`, is recorded above. This project's own:
+the digest computed at run time from whatever identifier a pack names
+(lib/src/md5.cpp, from RFC 1321), where cubiomes carries the halves for
+its climate noises' names as constants; and each noise's octaves taken from
+the pack's `worldgen/noise` entry, where cubiomes hardcodes them per climate
+parameter. Checked independently of cubiomes: the halves, against md5sum.
+What lib/src/positional_random.cpp builds on the factory — a second fork and
+the position mix of `PositionalSource` — is not cubiomes': it was recovered
+against the server (SPEC.md section 11).
 
 lib/src/noise_registry.cpp adapts the legacy Nether climate from
 biomenoise.c's `setNetherSeed`: `minecraft:temperature` from
@@ -112,8 +156,12 @@ project's own (SPEC.md section 11).
 tools/vectors/climate_vectors.c carries `getSplineStrict`, a copy of
 biomenoise.c's `getSpline` with its double `lerp` helper replaced by a
 float one; that file's licence expression is Apache-2.0 AND MIT for it.
-The vector drivers otherwise call cubiomes' own functions, built from a
-checkout fetched at run time.
+tools/vectors/blended_vectors.c's `initBlended` reproduces the opening of
+biomenoise.c's `initSurfaceNoise`: a Java LCG seeded with the world seed,
+then `octaveInit` from octave -15 with 16 octaves twice and from -7 with 8,
+into the octave buffer at 0, 16 and 32; that file's licence expression is
+Apache-2.0 AND MIT for it. The vector drivers otherwise call cubiomes' own
+functions, built from a checkout fetched at run time.
 
 tools/analysis/legacy-goldens-biome-analyze.cpp reproduces the same legacy
 Nether climate a second time, for analysis: `setNetherSeed`, `octaveInit`

@@ -30,14 +30,16 @@
 //   * NormalNoise::createLegacy: `doublePerlinInit`, with its
 //     `(10/6) * n / (n + 1)` amplitude in cubiomes' order of operations.
 //
-// The modern construction was first written from the documented algorithms
-// (Perlin's improved noise, the standard simplex construction) and checked
-// against cubiomes; it is recorded as adapted because no source but cubiomes
-// for its Minecraft-specific parts is on record — the same grounds as
-// density_interpreter.cpp's evaluateSpline — not because a derivation was
-// traced. THIS PROJECT'S OWN, and measured or specified elsewhere: the octave
-// salts hashed at run time, with no octave_-12..0 table and so no limit; the
-// fold's 1e-7 epsilon (spec/blended-noise-spec.md); the octave sum's
+// The modern construction is recorded as adapted because no source but
+// cubiomes for its Minecraft-specific parts is on record — the same grounds
+// as density_interpreter.cpp's evaluateSpline — not because a derivation was
+// traced. Its M1 header described it as implemented from the documented
+// algorithms (Perlin's improved noise, the standard simplex construction),
+// but the commit that added it names cubiomes as its oracle and no other
+// source, and no such derivation is on record. THIS PROJECT'S OWN, and
+// measured or specified elsewhere: the octave salts hashed at run time, with
+// no octave_-12..0 table and so no limit; the fold's 1e-7 epsilon
+// (spec/blended-noise-spec.md); the octave sum's
 // `(sample * amplitude) * persistence` grouping and the normal noise's
 // value-factor spelling (both measured, SPEC §11); and the lattice bound,
 // NormalNoise::inputLimit (SPEC §5.7). The known-answer vectors in
@@ -210,8 +212,13 @@ double PerlinNoise::sample(double x, double y, double z, double yScale,
         // omission this tiny produced errors up to 2e-2 in the final
         // density rather than something proportional to the epsilon
         // itself: `clean-room spec/blended-noise-spec.md Q2.2/Q2.3` names
-        // it as `⌊clamp_source/d + 1e-7⌋ · d`, a float literal widened to
-        // double, nudging an exact multiple to round up rather than down.
+        // it as `⌊clamp_source/d + 1e-7⌋ · d`, nudging an exact multiple to
+        // round up rather than down. The code adds the DOUBLE 1.0e-7. What
+        // Q2.3 says about the literal's precision describes source, and is
+        // flagged to the owner under CLAUDE.md's spec rule rather than read
+        // into the code; a float 1e-7 widened to double would be
+        // 1.0000000116860974e-7, and only the conformance harness can say
+        // which the server adds.
         // Confirmed against the server independently of that claim: three
         // corners bisected via `tools/analysis/final-density-probe.sh`
         // that disagreed with vanilla before this line changed now land

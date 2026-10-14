@@ -1,5 +1,16 @@
 /* Stratum — known-answer vectors for the legacy blended noise, from cubiomes.
- * Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 the Stratum contributors.
+ * SPDX-License-Identifier: Apache-2.0 AND MIT
+ *
+ * ADAPTED (CLAUDE.md, NOTICE): `initBlended` below reproduces the opening of
+ * cubiomes' biomenoise.c `initSurfaceNoise`
+ * (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+ * Cubitect), read at e61f90580cbdd883214a8054670dacae655e59c0: the LCG
+ * seeded with the world seed, then `octaveInit` from octave -15 with 16
+ * octaves twice and from -7 with 8, into the octave buffer at 0, 16 and 32.
+ * That sequence is why this file's licence expression names MIT beside
+ * Apache-2.0; setting the four scales from a table, and the rest of the
+ * file, is this project's own driver. Recorded in NOTICE.
  *
  * cubiomes (MIT, Cubitect) is the reference SPEC §2 names. Its
  * `sampleSurfaceNoise` is the same computation `minecraft:old_blended_noise`
@@ -67,7 +78,8 @@ static const int kCoords[][3] = {
 };
 static const int kCoordCount = (int)(sizeof(kCoords) / sizeof(kCoords[0]));
 
-/* The three stacks, seeded from one LCG in the order octaveInit imposes. */
+/* The three stacks, seeded from one LCG in the order octaveInit imposes:
+ * initSurfaceNoise's opening, reproduced (see the header). */
 static void initBlended(SurfaceNoise *sn, uint64_t seed, const struct Config *config) {
     uint64_t s;
     setSeed(&s, seed);

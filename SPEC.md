@@ -1578,6 +1578,20 @@ Defaults chosen; flip only with a written note in this section:
   Minecraft-specific parts no cited document carries) and the End's island
   field (`getEndHeightNoise`'s shape, end_islands.cpp). Both are recorded as
   adaptations, each with what is this project's own or measured instead.
+  A second review, at 08786df, held three more to that standard, and they
+  are recorded too: blended.cpp's `maintainPrecision`, which restores the
+  line noise.h keeps commented out in its function of that name (the
+  half-up rounding, and applying the wrap at all, are this project's own);
+  Xoroshiro's `nextInt(bound)`, rng.h's `xNextInt` token for token, whose
+  choice of the low 32 bits no published source but cubiomes records; and
+  the named-noise seeding, `XoroshiroPositionalFactory` and `seedFromHashOf`
+  with the noise registry's modern path, which is `setBiomeSeed` and
+  `init_climate_seed` (the run-time MD5, checked against md5sum, is this
+  project's own). So is one vector driver's call sequence,
+  `initBlended`'s reproduction of `initSurfaceNoise`'s opening. And
+  perlin.cpp's and NOTICE's statement that the modern noise was "first
+  written from the documented algorithms" now says only what is on record:
+  its M1 header said so, and no such derivation was traced.
 
 - **StrictMath parity for transcendental functions:** vendor from
   **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
@@ -1609,16 +1623,17 @@ Open:
   constant for constant.
 
   `nextInt(bound)` and the MD5 salt derivation are verified too: the bounded
-  draw against cubiomes, and the salts against `md5sum`, which turned out to
-  be a genuinely independent oracle for them — vanilla's octave salts are
-  simply `md5("octave_<n>")` taken as two big-endian halves. That is what
-  unblocked the noise.
+  draw against cubiomes, whose `xNextInt` it is adapted from (NOTICE), and
+  the salts against `md5sum`, which turned out to be a genuinely independent
+  oracle for them — vanilla's octave salts are simply `md5("octave_<n>")`
+  taken as two big-endian halves. That is what unblocked the noise.
 
   The **positional random factory** — a world seed forked into a 128-bit
   base by two draws, then salted per name with that name's MD5 — is verified
   as of M2 against cubiomes' `setBiomeSeed`, which derives the climate
-  noises identically. Every noise vanilla's overworld uses now matches
-  cubiomes bit-for-bit from a world seed.
+  noises identically, and is adapted from it and `init_climate_seed`
+  (NOTICE). Every noise vanilla's overworld uses now matches cubiomes
+  bit-for-bit from a world seed.
 
   Positional seeding at a block or cell position (`rng::PositionalSource`:
   fork, salt, fork again, then the position mix) is implemented, recovered
@@ -7210,7 +7225,9 @@ Open:
   a no-op — the real line is commented out in its header as "useless in
   practice". This build implements the wrap (fold into ±2^25, rounding half
   up as Java does), and the vectors deliberately stay inside the band where
-  the two agree. Where the wrap actually bites, nothing checks it.
+  the two agree. Where the wrap actually bites, nothing checks it. (The
+  wrap is that commented-out line, restored, and is recorded as adapted
+  from it; the half-up rounding is this project's own. NOTICE.)
 
 - **`legacy_random_source` is honoured by refusing, not by guessing (M3).**
   A noise settings entry picks one generator for all of a dimension's

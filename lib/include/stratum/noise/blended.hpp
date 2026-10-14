@@ -7,7 +7,10 @@
 //
 // Adapted from cubiomes' `sampleSurfaceNoise` and `octaveInit`
 // (https://github.com/Cubitect/cubiomes, MIT, noise.c and biomenoise.c),
-// which is the reference SPEC §2 names. See NOTICE.
+// which is the reference SPEC §2 names, and `maintainPrecision` from the line
+// noise.h keeps commented out in its function of that name — with this
+// project's own half-up rounding, applied where cubiomes' is a no-op
+// (blended.cpp's header says exactly what is whose). See NOTICE.
 //
 // WHAT IS AND IS NOT ESTABLISHED. This is the sharpest example in the
 // project so far of an oracle that covers some of a computation and not all
