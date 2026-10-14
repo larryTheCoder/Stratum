@@ -18,6 +18,19 @@
 // It is Mojang-derived and therefore never committed (SPEC §12). Without the
 // fixtures, everything here has nothing to load and the tests that need it
 // say so.
+//
+// ADAPTED (CLAUDE.md, NOTICE): quantizeCoord below is adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), biomenoise.c `sampleBiomeNoise`, read at
+// e61f90580cbdd883214a8054670dacae655e59c0: `(int64_t)(10000.0F*t)` over its
+// `float` climate values — the ten thousand steps a unit, the narrowing to
+// float, the float product, the truncation. No other source on record gives
+// the scale or the float step; the goldens measure the truncation against
+// flooring and rounding, and score truncation through float and through
+// double alike (SPEC §11). THIS PROJECT'S OWN: quantising the table's bounds
+// by the same function at load, where cubiomes carries its search tree's
+// bounds precomputed, and the bound that keeps the conversion defined
+// (kMaxClimateSample).
 
 #pragma once
 
@@ -51,7 +64,9 @@ public:
 /// measurement that established it.
 ///
 /// The cast through `float` before the multiply is deliberate and is the
-/// reason this is not simply `llround(value * 10000)`.
+/// reason this is not simply `llround(value * 10000)`. It is cubiomes'
+/// (`sampleBiomeNoise`; see the header and NOTICE): the goldens measure the
+/// truncation, not the float step, which they score as they score a double.
 ///
 /// PRECONDITION: |@p value| <= kMaxClimateSample, NaN excluded — beyond
 /// about 9.2e14 the conversion to int64 is undefined behaviour (SPEC §5.7).

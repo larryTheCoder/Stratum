@@ -82,9 +82,11 @@ TEST_CASE("coordinates quantise through float and truncate", "[biome][parameters
     CHECK(quantizeCoord(-0.00019) == -1);
     // The cast through float is load-bearing, and these are the witnesses:
     // narrowing first lands on a different side of the integer boundary
-    // than multiplying in double does. Either spelling is "reasonable"; only
-    // one of them agrees with vanilla, and getting it wrong moves a biome
-    // boundary by a ten-thousandth on every axis.
+    // than multiplying in double does, and a different side moves a biome
+    // boundary by a ten-thousandth on an axis. The float step is cubiomes'
+    // (`sampleBiomeNoise`, from which quantizeCoord is adapted); the goldens
+    // score the two spellings alike, so these values are this code's own
+    // arithmetic, pinned, and not a measurement of vanilla (SPEC §11).
     CHECK(quantizeCoord(-0.819) == -8190);
     CHECK(static_cast<std::int64_t>(-0.819 * 10000.0) == -8189);
     CHECK(quantizeCoord(-0.8188) == -8187);

@@ -1,5 +1,12 @@
 // Stratum — the multi-noise biome parameter table.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+//
+// ADAPTED (CLAUDE.md, NOTICE): the fixed-point mapping every sample and bound
+// goes through here, quantizeCoord, is adapted from cubiomes
+// (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+// Cubitect), biomenoise.c `sampleBiomeNoise`, read at
+// e61f90580cbdd883214a8054670dacae655e59c0. parameter_list.hpp's header says
+// what is adapted and what is this project's own.
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/data/resource_location.hpp>

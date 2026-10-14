@@ -33,10 +33,12 @@
 // The modern construction is recorded as adapted because no source but
 // cubiomes for its Minecraft-specific parts is on record — the same grounds
 // as density_interpreter.cpp's evaluateSpline — not because a derivation was
-// traced. Its M1 header described it as implemented from the documented
-// algorithms (Perlin's improved noise, the standard simplex construction),
-// but the commit that added it names cubiomes as its oracle and no other
-// source, and no such derivation is on record. THIS PROJECT'S OWN, and
+// traced. Its M1 header (0cbc0be, perlin.hpp) said it was "Implemented from
+// the documented algorithms — Perlin's improved noise, and vanilla's octave
+// and normal-noise composition on top of it — and checked against
+// cubiomes", but it named no document, none is on record for that
+// composition, and the commit that added it names cubiomes as the noise's
+// oracle, md5sum as the salts', and no document. THIS PROJECT'S OWN, and
 // measured or specified elsewhere: the octave salts hashed at run time, with
 // no octave_-12..0 table and so no limit; the fold's 1e-7 epsilon
 // (spec/blended-noise-spec.md); the octave sum's

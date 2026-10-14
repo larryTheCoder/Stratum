@@ -1623,8 +1623,23 @@ Defaults chosen; flip only with a written note in this section:
   project's own). So is one vector driver's call sequence,
   `initBlended`'s reproduction of `initSurfaceNoise`'s opening. And
   perlin.cpp's and NOTICE's statement that the modern noise was "first
-  written from the documented algorithms" now says only what is on record:
-  its M1 header said so, and no such derivation was traced.
+  written from the documented algorithms" now says only what is on record.
+  A third review, at dd465d3, found one more and a misquotation. The biome
+  search's fixed-point step, `biome::quantizeCoord` — ten thousand steps a
+  unit, the sample narrowed to `float` and the product truncated — is
+  biomenoise.c `sampleBiomeNoise`'s `(int64_t)(10000.0F*t)` over its `float`
+  climate values, and nothing else on record gives the scale or the float
+  step: the goldens measure truncation against flooring and rounding but
+  score truncation through `float` and through `double` alike (the
+  multi-noise entry below), and the unit vector pinning -0.819 to -8190 was
+  computed here. It is recorded as adapted on `evaluateSpline`'s grounds;
+  what is this project's own is quantising the table's bounds the same way
+  at load, where cubiomes carries its tree's bounds precomputed. And the M1
+  header is now quoted as it was written — "Implemented from the documented
+  algorithms — Perlin's improved noise, and vanilla's octave and
+  normal-noise composition on top of it" — where this series had
+  paraphrased it as naming "the standard simplex construction": it named no
+  document, and none is on record for that composition.
 
 - **StrictMath parity for transcendental functions:** vendor from
   **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
@@ -9788,9 +9803,12 @@ Open:
   six squares in floating point. Vanilla does not have the artefact because
   vanilla does not compare in the reals: every coordinate is first mapped to a
   fixed-point integer, ten thousand steps per unit, truncated through
-  `float` (cubiomes carries the same `int64` climate coordinates, which is the
-  independent corroboration). Quantised, the two entries are not 9e-9 apart —
-  they are **exactly equal, both 53824**. The near-miss was never a near-miss.
+  `float`. That mapping is ADAPTED from cubiomes — biomenoise.c
+  `sampleBiomeNoise`'s `(int64_t)(10000.0F*t)` over its `float` climate
+  values — and no other source on record gives the scale or the float step
+  (NOTICE; the 2026-10-14 audit under "License" above). Quantised, the two
+  entries are not 9e-9 apart — they are **exactly equal, both 53824**. The
+  near-miss was never a near-miss.
 
   Which leaves the tie, and the tie is the part that is measured rather than
   derived. `beach` is row 3609 and `dark_forest` is row 3611, so "earlier
@@ -9837,7 +9855,13 @@ Open:
   the corner and 32748/32768 wide; flooring or rounding is 98229 and 32752, a
   NET gain of four cells wide against a loss of seventy-five in the corner,
   the beach/dark_forest precedent. Nothing in the thirty-six is exact on
-  both. And two of the four deciding axis values argue for truncation beyond
+  both. What the goldens do NOT measure is the step through `float`:
+  truncating through `float` and through `double` score the same on both
+  samples under every bounds rounding (98304/98304 and 32748/32768, rerun at
+  dd465d3), so that step rests on cubiomes, from which it is adapted, and on
+  nothing measured here; the unit vector that tells the two apart (-0.819 to
+  -8190, not -8189) was computed by this code. And two of the four deciding
+  axis values argue for truncation beyond
   the totals: at seed 0 (328,4) the weirdness quantises to 500 under BOTH
   roundings — the unrounded 0.05001 is above the 0.05 that `river` and `beach`
   share — so no rounding removes that tie; and at seed MAX (68,128)/(72,128)

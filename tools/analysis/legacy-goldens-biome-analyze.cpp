@@ -7,7 +7,10 @@
 // adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT License,
 // Copyright (c) 2020 Cubitect), biomenoise.c `setNetherSeed` and noise.c
 // `octaveInit` and `doublePerlinInit`, read at
-// e61f90580cbdd883214a8054670dacae655e59c0. Recorded in NOTICE.
+// e61f90580cbdd883214a8054670dacae655e59c0; and `--quantize`'s trunc-float
+// rounding restates biome::quantizeCoord, which is adapted from biomenoise.c
+// `sampleBiomeNoise` (its other five roundings are this project's own).
+// Recorded in NOTICE.
 //
 // WHAT THIS IS FOR. How a NAMED noise's identifier becomes a Java LCG seed
 // under `legacy_random_source` is unsolved (SPEC §11). tools/analysis/

@@ -89,12 +89,13 @@ lib/src/perlin.cpp is adapted from noise.c, function by function:
 
 The modern construction (all but the two legacy functions) is recorded as
 adapted on the same grounds as `evaluateSpline` below, not because a
-derivation was traced. Its M1 header described it as implemented from the
-documented algorithms — Perlin's improved noise and the standard simplex
-construction — and checked against cubiomes, but no such derivation is on
-record: the commit that added it (0cbc0be) names cubiomes as its oracle and
-no other source, and neither document carries the Minecraft-specific
-parts. This project's own, and not cubiomes': the octave salts hashed at
+derivation was traced. Its M1 header (0cbc0be, perlin.hpp) said it was
+"Implemented from the documented algorithms — Perlin's improved noise, and
+vanilla's octave and normal-noise composition on top of it — and checked
+against cubiomes", but it named no document, and none is on record for
+vanilla's octave and normal-noise composition: the commit that added it
+names cubiomes as the noise's oracle, md5sum as the salts', and no document.
+This project's own, and not cubiomes': the octave salts hashed at
 run time, with no octave_-12..0 table and so no limit; the fold's 1e-7
 epsilon (spec/blended-noise-spec.md); the `(sample * amplitude) *
 persistence` grouping of the octave sum and the normal noise's value-factor
@@ -135,6 +136,24 @@ parameter. Checked independently of cubiomes: the halves, against md5sum.
 What lib/src/positional_random.cpp builds on the factory — a second fork and
 the position mix of `PositionalSource` — is not cubiomes': it was recovered
 against the server (SPEC.md section 11).
+
+lib/include/stratum/biome/parameter_list.hpp's `quantizeCoord`, the
+fixed-point mapping lib/src/biome_parameter_list.cpp puts every climate
+sample and every parameter-list bound through, is adapted from
+biomenoise.c's `sampleBiomeNoise`: `(int64_t)(10000.0F*t)` over its `float`
+climate values — ten thousand steps a unit, the value narrowed to float,
+the product taken in float and truncated. Nothing else on record gives the
+scale or the float step, so it is recorded on the same grounds as
+`evaluateSpline` below. What was measured against the server instead
+(SPEC.md section 11): truncation, against flooring and rounding, on the
+golden regions' stored biomes — which score truncation through float and
+through double alike, so the float step rests on cubiomes alone; and the
+tie-break, later row wins, as a proxy for the server's tree. This
+project's own: the table's bounds quantised by the same function at load,
+where cubiomes carries its search tree's bounds precomputed, and the bound
+that keeps the conversion defined (`kMaxClimateSample`).
+tools/analysis/legacy-goldens-biome-analyze.cpp's `--quantize` restates it
+as its trunc-float rounding, beside five roundings of its own.
 
 lib/src/noise_registry.cpp adapts the legacy Nether climate from
 biomenoise.c's `setNetherSeed`: `minecraft:temperature` from
