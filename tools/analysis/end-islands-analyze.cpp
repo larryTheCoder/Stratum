@@ -149,20 +149,29 @@ int main(int argc, char** argv) {
     }
     const auto chunks = manifest.value("chunks", 8);
     // `density-probe.sh` writes the window's origin as a two-element
-    // `origin_chunk` array. Read defensively: a manifest from a probe run
-    // that predates the key gives the origin, which is what every probe
-    // before end_islands used anyway.
+    // `origin_chunk` array; the endfield probes this tool was written for
+    // (2026-09-19, the examples above) carry the older spelling, `at_chunk_x`
+    // and `at_chunk_z`. Both are read. Missing both used to mean scoring the
+    // origin's window without a word — the endfield probes read as 24/1024
+    // with no survivor — so a manifest with neither now gives the origin
+    // only if it says so: the probes before end_islands, which used it.
     int atChunkX = 0;
     int atChunkZ = 0;
+    const char* originKey = "neither origin_chunk nor at_chunk_x/z: the origin";
     if (manifest.contains("origin_chunk") && manifest.at("origin_chunk").is_array() &&
         manifest.at("origin_chunk").size() == 2) {
         atChunkX = manifest.at("origin_chunk").at(0).get<int>();
         atChunkZ = manifest.at("origin_chunk").at(1).get<int>();
+        originKey = "origin_chunk";
+    } else if (manifest.contains("at_chunk_x") && manifest.contains("at_chunk_z")) {
+        atChunkX = manifest.at("at_chunk_x").get<int>();
+        atChunkZ = manifest.at("at_chunk_z").get<int>();
+        originKey = "at_chunk_x/z";
     }
     const std::string regionName = manifest.value("region", std::string("r.0.0.mca"));
-    std::printf("probe %s: seed %lld, %dx%d chunks at chunk (%d, %d), region %s\n",
+    std::printf("probe %s: seed %lld, %dx%d chunks at chunk (%d, %d) (from %s), region %s\n",
                 root.filename().string().c_str(), static_cast<long long>(seed), chunks, chunks, atChunkX,
-                atChunkZ, regionName.c_str());
+                atChunkZ, originKey, regionName.c_str());
 
     const noise::EndIslands islands = noise::EndIslands::fromWorldSeed(seed);
 
