@@ -814,6 +814,7 @@ TEST_CASE("writers to one path in one process never remove each other's partial 
     constexpr int kWriters = 4;
     constexpr int kEach = 50;
     std::vector<std::vector<std::byte>> blobs;
+    blobs.reserve(kWriters);
     for (int w = 0; w < kWriters; ++w) {
         blobs.emplace_back(std::size_t{8} * 1024, std::byte{static_cast<std::uint8_t>(w + 1)});
     }

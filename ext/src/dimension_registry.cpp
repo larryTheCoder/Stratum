@@ -63,7 +63,9 @@ namespace {
         std::string properties;
         for (const auto& [key, value] : state.properties) {
             properties += properties.empty() ? "" : ",";
-            properties += key + "=" + value;
+            properties += key;
+            properties += '=';
+            properties += value;
         }
         text += "[" + properties + "]";
     }
@@ -92,7 +94,7 @@ namespace {
     std::vector<std::string> seen;
     std::vector<std::string> unmapped;
     for (const auto& [where, state] : named) {
-        std::string described = std::string(where) + " " + spelled(*state);
+        const std::string described = std::string(where) + " " + spelled(*state);
         if (std::ranges::find(seen, described) != seen.end()) {
             continue;
         }
