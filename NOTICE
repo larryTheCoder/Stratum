@@ -49,19 +49,48 @@ lib/src/blended.cpp is adapted from cubiomes by Cubitect
 `octaveInit` in noise.c. lib/include/stratum/noise/blended.hpp declares it
 and carries the same attribution.
 
-lib/src/perlin.cpp adapts the legacy octave construction from noise.c:
-`OctaveNoise::createLegacy` is `octaveInit` (with rng.h's `skipNextN`) —
-its guard that the octave range be non-empty with a top octave of at most
-0, the 262 raw generator steps skipped per octave above the top one, the
-octaves drawn and stored highest frequency first, the persistence
-1/(2^n - 1) doubled per octave and the frequency 2^top halved per octave —
-and `NormalNoise::createLegacy` is `doublePerlinInit`: two such stacks drawn
-in sequence from one generator, scaled by `(10.0 / 6.0) * n / (n + 1)` in
-cubiomes' order of operations. lib/include/stratum/noise/perlin.hpp
-declares both and carries the same attribution. The rest of perlin.cpp —
-the modern octave and normal noise, Perlin and simplex sampling — was
-written from the documented algorithms and checked against cubiomes as a
-reference; it is not recorded as adapted.
+lib/src/perlin.cpp is adapted from noise.c, function by function:
+
+  * the gradient tables and `gradientDot` are the three 16-entry edge
+    tables of noise.c's disabled `indexedLerp` (its `#if 0` branch);
+  * `perlinFrom` is `perlinInit` / `xPerlinInit`: three origin draws times
+    256, then the identity table shuffled by `nextInt(256 - i) + i`;
+  * `PerlinNoise::sample` is `samplePerlin`: the corner hashing of its
+    `#else` branch, and its y fold (`yamp`, `ymin`) — the local y clamped,
+    floored over the scale and subtracted after the fade weights — with the
+    five-argument form and the `(0, 0)` call as the plain sample;
+  * `PerlinNoise::sampleSimplex2D` and `simplexCorner` are `sampleSimplex2D`
+    and `simplexGrad`, term for term;
+  * `OctaveNoise::create` is `xOctaveInit`: two draws as a base, each octave
+    seeded by XOR with md5("octave_<n>"), zero amplitudes skipped while the
+    frequency and persistence advance;
+  * `OctaveNoise::createLegacy` is `octaveInit` (with rng.h's
+    `skipNextN`): its guard that the octave range be non-empty with a top
+    octave of at most 0, the 262 raw generator steps skipped per octave
+    above the top one, the octaves drawn and stored highest frequency
+    first, the persistence 1/(2^n - 1) doubled per octave and the frequency
+    2^top halved per octave;
+  * `NormalNoise::create` and `NormalNoise::sample` are `xDoublePerlinInit`
+    (both stacks drawn from one generator in turn, leading and trailing zero
+    amplitudes trimmed before the scaling) and `sampleDoublePerlin` (the
+    second stack sampled at 337/331);
+  * `NormalNoise::createLegacy` is `doublePerlinInit`: two legacy stacks
+    drawn in sequence from one generator, scaled by
+    `(10.0 / 6.0) * n / (n + 1)` in cubiomes' order of operations.
+
+The modern construction (all but the two legacy functions) was first
+written from the documented algorithms — Perlin's improved noise and the
+standard simplex construction — and checked against cubiomes. Neither
+document carries its Minecraft-specific parts, and no other source for
+them is on record, so it is recorded as adapted on the same grounds as
+`evaluateSpline` below, not because a derivation was traced. This
+project's own, and not cubiomes': the octave salts hashed at run time,
+with no octave_-12..0 table and so no limit; the fold's 1e-7 epsilon
+(spec/blended-noise-spec.md); the `(sample * amplitude) * persistence`
+grouping of the octave sum and the normal noise's value-factor spelling,
+both measured against the server (SPEC.md section 11); and the lattice
+bound, `NormalNoise::inputLimit`. lib/include/stratum/noise/perlin.hpp
+declares all of it and carries the same attribution.
 
 lib/src/noise_registry.cpp adapts the legacy Nether climate from
 biomenoise.c's `setNetherSeed`: `minecraft:temperature` from
@@ -92,6 +121,25 @@ and `doublePerlinInit`. tools/analysis/legacy-goldens-surface-decoder.hpp
 re-expresses `octaveInit`'s draw order as an index formula
 (`octaveInitBlock`, `octaveInitLayout`); its handling of a zero amplitude is
 deepslate's, observed, not cubiomes'.
+
+lib/src/end_islands.cpp and lib/include/stratum/noise/end_islands.hpp
+adapt the shape of the End's island field from biomenoise.c's
+`getEndHeightNoise`, every constant of it: the central island at
+100 - 8 * distance on the eight-block grid; the outer islands in the
++/-12 cells around a column's sixteen-block cell, only where that cell's
+squared distance exceeds 4096 and the simplex reads below -0.9; each
+island's steepness `(|x| * 3439 + |z| * 147) % 13 + 9` (the integer form,
+which cubiomes keeps as a commented-out line); the offsets
+`within - 2 * cell`; and the clamp to [-100, 80]. The header used to call
+this "the community-documented End island field" without naming a
+document; no source but cubiomes is on record, so it is recorded as an
+adaptation on the same grounds as `evaluateSpline`. NOT adapted, and
+measured against the server instead (SPEC.md section 11): floorDiv and
+floorMod where cubiomes truncates; each island's height clamped and the
+highest taken, where cubiomes takes the smallest steepness-weighted
+squared distance and one square root; and the 17292-step seeding skip,
+found by scoring every skip in [0, 65536] against the server's own field.
+`setEndSeed` carries the same literal, which corroborates the measurement.
 
 lib/src/biome_source.cpp and lib/include/stratum/biome/source.hpp adapt
 the structure of the End's biome source from cubiomes' biomenoise.c,

@@ -1,7 +1,11 @@
 // Stratum — the End's island field.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// See end_islands.hpp for what is measured here and what is not.
+// ADAPTED from cubiomes (https://github.com/Cubitect/cubiomes, MIT License,
+// Copyright (c) 2020 Cubitect), biomenoise.c `getEndHeightNoise`, at
+// e61f905: the field's shape and constants. Recorded in NOTICE; see
+// end_islands.hpp for what was adapted, what was measured instead, and what
+// is not measured.
 
 #include <stratum/javamath.hpp>
 #include <stratum/noise/end_islands.hpp>

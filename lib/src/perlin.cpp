@@ -1,26 +1,47 @@
 // Stratum — Perlin, octave, normal and simplex noise.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// ADAPTED (CLAUDE.md, NOTICE): OctaveNoise::createLegacy and
-// NormalNoise::createLegacy are adapted from cubiomes
+// ADAPTED (CLAUDE.md, NOTICE): this file is adapted from cubiomes
 // (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
-// Cubitect), noise.c `octaveInit` (with rng.h `skipNextN`) and
-// `doublePerlinInit`, read at e61f90580cbdd883214a8054670dacae655e59c0:
-// the guard on the octave range, the 262 raw steps skipped per octave above
-// the top one, the draw order and storage order highest frequency first, the
-// persistence and frequency schedules, and the `(10/6) * n / (n + 1)`
-// amplitude. Recorded in NOTICE.
+// Cubitect), noise.c, read at e61f90580cbdd883214a8054670dacae655e59c0.
+// Recorded in NOTICE, function by function:
 //
-// REFERENCE (SPEC §2, CLAUDE.md): the rest — the gradient set, the octave
-// salts, the persistence and lacunarity schedules and the normal-noise
-// scaling of the modern construction — was written from the documented
-// algorithms and checked against the same file of cubiomes, which SPEC §2
-// names as the reference for noise and biome math. Its structure parallels
-// cubiomes' noise.c in places — the layout of the three gradient tables, the
-// simplex corner sequence — and both follow Perlin's published improved noise
-// and the standard simplex construction; this part is recorded as a
-// reference, not an adaptation (NOTICE). The known-answer vectors in
-// tests/unit/noise_vectors.inc are produced from it.
+//   * the gradient tables and gradientDot: the three 16-entry edge tables of
+//     noise.c's disabled `indexedLerp` (its `#if 0` branch), entry for entry;
+//   * perlinFrom: `perlinInit` / `xPerlinInit` — three origin draws times
+//     256, then the identity table shuffled by `nextInt(256 - i) + i`;
+//   * PerlinNoise::sample: `samplePerlin` — the corner hashing of its
+//     `#else` branch, and the y fold (`yamp`, `ymin`: the clamp of the local
+//     y, floored over the scale and subtracted after the fade weights), with
+//     its five-argument form and the `(0, 0)` call as the plain sample;
+//   * sampleSimplex2D and simplexCorner: `sampleSimplex2D` and `simplexGrad`,
+//     term for term;
+//   * OctaveNoise::create: `xOctaveInit` — two draws as a base, each octave
+//     seeded by XOR with md5("octave_<n>"), zero amplitudes skipped while the
+//     frequency and persistence advance;
+//   * OctaveNoise::createLegacy: `octaveInit`, with rng.h `skipNextN` — the
+//     guard on the octave range, the 262 raw steps skipped per octave above
+//     the top one, the draw and storage order highest frequency first, the
+//     persistence and frequency schedules;
+//   * NormalNoise::create and sample: `xDoublePerlinInit` (both stacks from
+//     one generator in turn, leading and trailing zero amplitudes trimmed
+//     before the scaling) and `sampleDoublePerlin` (the second stack at
+//     337/331);
+//   * NormalNoise::createLegacy: `doublePerlinInit`, with its
+//     `(10/6) * n / (n + 1)` amplitude in cubiomes' order of operations.
+//
+// The modern construction was first written from the documented algorithms
+// (Perlin's improved noise, the standard simplex construction) and checked
+// against cubiomes; it is recorded as adapted because no source but cubiomes
+// for its Minecraft-specific parts is on record — the same grounds as
+// density_interpreter.cpp's evaluateSpline — not because a derivation was
+// traced. THIS PROJECT'S OWN, and measured or specified elsewhere: the octave
+// salts hashed at run time, with no octave_-12..0 table and so no limit; the
+// fold's 1e-7 epsilon (spec/blended-noise-spec.md); the octave sum's
+// `(sample * amplitude) * persistence` grouping and the normal noise's
+// value-factor spelling (both measured, SPEC §11); and the lattice bound,
+// NormalNoise::inputLimit (SPEC §5.7). The known-answer vectors in
+// tests/unit/noise_vectors.inc are produced by running cubiomes itself.
 //
 // This file depends on -ffp-contract=off (SPEC §5.4): the interpolations
 // below are sums of products, and letting the compiler contract them into

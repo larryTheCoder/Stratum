@@ -6,11 +6,29 @@
 // simplex field decides where the outer islands sit, and a fixed radial term
 // draws the central one.
 //
-// PROVENANCE. The shape below is the community-documented End island field,
-// implemented from that description and then SETTLED against the vanilla
-// server's own output: eight golden End regions and two probe regions block by
-// block (tests/conformance/golden_end_test.cpp), and the field itself read out
-// of a probe dimension column by column
+// ADAPTED (CLAUDE.md, NOTICE). The shape below — every constant of it — is
+// cubiomes' End height field (https://github.com/Cubitect/cubiomes, MIT
+// License, Copyright (c) 2020 Cubitect), biomenoise.c `getEndHeightNoise`,
+// read at e61f90580cbdd883214a8054670dacae655e59c0: the central island at
+// 100 - 8 * distance on the `/8` grid; the outer islands in the +/-12 cells
+// around a column's `/16` cell, only where that cell's squared distance
+// exceeds 4096 and the simplex reads below -0.9; each island's steepness
+// `(|x| * 3439 + |z| * 147) % 13 + 9` (the integer form, cubiomes'
+// commented-out line); the offsets `within - 2 * cell`; and the clamp to
+// [-100, 80]. An earlier note here called it "the community-documented End
+// island field" and named no document; no source but cubiomes is on record,
+// so it is recorded as adapted (NOTICE), on the grounds NOTICE gives for
+// density_interpreter.cpp's evaluateSpline. NOT taken from cubiomes, and
+// measured instead: floorDiv/floorMod where cubiomes truncates; each island's
+// height clamped and the highest taken, where cubiomes takes the smallest
+// steepness-weighted squared distance and one square root; and the 17292-step
+// seeding skip, found by scoring every skip in [0, 65536] against the
+// server's own field (fromWorldSeed) — cubiomes' `setEndSeed` carries the
+// same literal, which corroborates it.
+//
+// SETTLED against the vanilla server's own output: eight golden End regions
+// and two probe regions block by block (tests/conformance/golden_end_test.cpp),
+// and the field itself read out of a probe dimension column by column
 // (tools/analysis/end-islands-field-probe.sh). Nothing here is transcribed
 // from Mojang code (CLAUDE.md's provenance rule) — and the one part that was
 // taken on reasoning rather than measurement, the simplex seeding, was WRONG

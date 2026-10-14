@@ -1,16 +1,16 @@
 // Stratum — Perlin, octave, normal and simplex noise.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// The noise vanilla's density functions are built from. Implemented from the
-// documented algorithms — Perlin's improved noise, and vanilla's octave and
-// normal-noise composition on top of it — and checked against cubiomes
-// (MIT, Cubitect), the noise reference SPEC §2 names.
+// The noise vanilla's density functions are built from: Perlin's improved
+// noise, and vanilla's octave and normal-noise composition on top of it.
 //
-// The two legacy constructions declared here, OctaveNoise::createLegacy and
-// NormalNoise::createLegacy, are adapted from cubiomes
-// (https://github.com/Cubitect/cubiomes, MIT License, Cubitect), noise.c
-// `octaveInit` and `doublePerlinInit`; their definitions are in perlin.cpp
-// and the adaptation is recorded in NOTICE.
+// ADAPTED from cubiomes (https://github.com/Cubitect/cubiomes, MIT License,
+// Copyright (c) 2020 Cubitect), noise.c at e61f905: what is declared here is
+// defined in perlin.cpp, whose header lists each function and the cubiomes
+// function it is adapted from (`perlinInit`/`xPerlinInit`, `samplePerlin`,
+// `sampleSimplex2D`/`simplexGrad`, `xOctaveInit`, `octaveInit`,
+// `xDoublePerlinInit`/`sampleDoublePerlin`, `doublePerlinInit`) and what is
+// this project's own. Recorded in NOTICE.
 //
 // WHAT THE VECTORS ESTABLISH: cubiomes is an independent reimplementation of
 // Minecraft's noise, so bit-exact agreement with it is strong evidence that
