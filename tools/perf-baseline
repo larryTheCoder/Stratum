@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-# Stratum — M5's performance baseline in one command: what a PocketMine-MP
-# generation task costs Stratum per chunk, beside what the vanilla server
-# spends on the same stages, on the same box, one worldgen thread each.
+# Stratum — M5's performance baseline in one command: what the C++ a
+# PocketMine-MP generation task calls costs Stratum per chunk, beside what the
+# vanilla server spends on the same stages, on the same box, one worldgen
+# thread each.
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 """M5's performance baseline: Stratum's chunk cost beside the vanilla server's.
 
   tools/perf-baseline --accept-eula [--seeds a,b,...] [--dimensions a,b,...]
-      [--area cx,cz,r] [--repeat n] [--require-quiet LOAD] [--out DIR]
-      [--jdk DIR] [--heap 3G] [--work DIR] [--skip-stratum] [--skip-vanilla]
-      [--from OUT]
+      [--area cx,cz,r] [--repeat n] [--require-quiet CORES] [--quiet-wait S]
+      [--out DIR] [--jdk DIR] [--heap 3G] [--jvm-arg=ARG ...] [--work DIR]
+      [--skip-stratum] [--skip-vanilla] [--from OUT]
 
 1. Builds stratum_chunk_cost_bench with the release preset (RelWithDebInfo,
    the optimised configuration CMakePresets.json already has) and runs it over
    the measured square (--area, default the 121 chunks within 5 of chunk
-   (-64, 64)) plus its scattered set: fill + biomes + the chunkutils2 encode,
-   what PocketMine-MP's generation task calls, one thread.
+   (-64, 64)) plus its scattered set: stratum::pmmp::encodeChunk — fill +
+   biomes + the chunkutils2 encode, the C++ PocketMine-MP's generation task
+   calls — on one thread. The zend marshaling and the PHP side of the task
+   are not in it (the bench's header lists them).
 2. Runs tools/analysis/vanilla-chunk-cost.py on the same seeds and the same
    square: the 1.21.11 server with one worldgen worker (-Dmax.bg.threads=1),
    its own per-chunk stage times read from its JFR chunk-generation events.
@@ -23,23 +26,46 @@
    bar"): 35 ms/chunk (about 28 chunks/s) per thread is the best case, 100
    ms/chunk (10 chunks/s) the minimum. Stratum's figure is end to end
    (stratum::pmmp::encodeChunk), over the square's chunks, as a rate: 1000 /
-   mean ms. Vanilla's is biomes + noise + surface over the same chunks.
+   mean ms. Vanilla's is biomes + noise + surface over the same chunks. Only
+   that sum is like for like: Stratum's fill also looks biomes up for its
+   surface rules, where vanilla's surface stage reads the ones its biomes
+   stage stored, so the per-stage rows are indicative only.
+
+QUIET OR PROVISIONAL. Each half is watched while it runs: the machine's busy
+CPU (/proc/stat) less this run's own — this process and every process under
+it, the bench, the server and its tools included — sampled every few
+seconds. A half whose other processes kept more than 0.5 cores busy on
+average, or more than 1.0 over any minute, makes the run PROVISIONAL, not a
+baseline of record; so does a half nobody watched (one reused from a run
+that predates the watching). The load average is printed too, for the
+record only: it counts the run's own threads, so a quiet box running a
+one-thread bench reads about 1. --require-quiet CORES, before each half,
+watches the machine for 15 s and waits (up to --quiet-wait seconds, default
+900) until other processes use at most CORES, then refuses.
+
+CHECKS THAT MAKE A ROW NOT A MEASUREMENT. Each dimension's row carries its
+halves' own validations, and a row that fails one is marked NOT A
+MEASUREMENT and the run exits 3 (the summary is still written): on the
+vanilla side a pin that did not hold, an incomplete area, or a recording
+whose stage estimates sit more than 5% from its workers' CPU (above:
+"worker descheduled: wall overstates"); on Stratum's, an end-to-end wall
+time more than 5% above the bench thread's CPU time. A vanilla half without
+per-recording checks is not a measurement either.
 
 --skip-stratum or --skip-vanilla with --from OUT takes that half from an
-earlier run's OUT (its stratum.json or vanilla.json, load averages
-included) instead of measuring it again; both, with --from, recompute the
-comparison alone.
-
-The load average is recorded before and after each half, and a run whose
-one-minute load went above 1.0 anywhere is labelled PROVISIONAL. A number of
-record wants a quiet machine: --require-quiet 0.5 refuses to start above that
-one-minute load. Run it after a large merge, with nothing else building.
+earlier run's OUT (its stratum.json or vanilla.json, with its log and its
+watch record when that run kept them) instead of measuring it again; both,
+with --from, recompute the comparison alone. The halves' own seeds, square
+and dimensions are read from their JSON: --seeds and --area default to them,
+and a half that disagrees with the other or with an explicit --seeds,
+--area or --dimensions is refused.
 
 Running the vanilla half runs the Minecraft server, so it needs --accept-eula
 (passed on to the vanilla script, accepted for nobody else). OUT defaults to
 build/perf-baseline/<UTC time>; it holds timing summaries and logs only. The
-server's worlds and recordings are Mojang-derived (SPEC §12) and stay in the
-vanilla script's own temporary directory (or --work), never in OUT.
+server's worlds and recordings are Mojang-derived (SPEC §12) and stay in a
+directory the vanilla script makes for itself (inside --work when given),
+never in OUT.
 """
 import argparse
 import datetime
@@ -50,13 +76,25 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 VERSION = '1.21.11'
 BEST_MS = 35.0
 MINIMUM_MS = 100.0
-# The one-minute load average above which a run is called provisional.
-QUIET = 1.0
+DEFAULT_SEEDS = '0,42,-4172144997902289642'
+DEFAULT_AREA = '-64,64,5'
+DIMENSIONS = ('overworld', 'amplified', 'large_biomes', 'end')
+# Other processes' CPU, in cores, above which a half is not quiet: on average
+# over the half, and over any QUIET_WINDOW_S of it.
+QUIET_MEAN_CORES = 0.5
+QUIET_PEAK_CORES = 1.0
+QUIET_WINDOW_S = 60.0
+SAMPLE_S = 5.0
+PROBE_S = 15.0
+# How far a wall figure may sit above the CPU that backs it.
+WALL_SLACK = 0.05
 VANILLA = REPO / 'tools' / 'analysis' / 'vanilla-chunk-cost.py'
 
 
@@ -110,6 +148,129 @@ def machine():
     }
 
 
+# --- what else the machine ran ------------------------------------------------
+
+def busy_ticks():
+    """The machine's busy clock ticks: /proc/stat's user, nice, system, irq,
+    softirq and steal, every CPU; None without /proc."""
+    try:
+        with open('/proc/stat', encoding='ascii') as handle:
+            fields = handle.readline().split()
+    except OSError:
+        return None
+    user, nice, system, _idle, _iowait, irq, softirq, steal = (int(v) for v in fields[1:9])
+    return user + nice + system + irq + softirq + steal
+
+
+def own_ticks():
+    """This process's clock ticks and every live process's under it, each with
+    its waited-for children's: everything this run has spent."""
+    table = {}
+    children = {}
+    for entry in os.scandir('/proc'):
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(f'/proc/{entry.name}/stat', encoding='ascii', errors='replace') as handle:
+                stat = handle.read()
+        except OSError:
+            continue
+        fields = stat[stat.rindex(')') + 2:].split()
+        pid = int(entry.name)
+        table[pid] = sum(int(v) for v in fields[11:15])
+        children.setdefault(int(fields[1]), []).append(pid)
+    total = 0
+    pending = [os.getpid()]
+    while pending:
+        pid = pending.pop()
+        total += table.get(pid, 0)
+        pending.extend(children.get(pid, []))
+    return total
+
+
+class Watch:
+    """Other processes' CPU while a half runs, sampled every SAMPLE_S."""
+
+    def __init__(self):
+        self.samples = []
+        self.stopping = threading.Event()
+        self.thread = None
+        self.available = busy_ticks() is not None and pathlib.Path('/proc/self/stat').is_file()
+
+    def sample(self):
+        self.samples.append((time.monotonic(), busy_ticks(), own_ticks()))
+
+    def loop(self):
+        while not self.stopping.wait(SAMPLE_S):
+            self.sample()
+
+    def __enter__(self):
+        if self.available:
+            self.sample()
+            self.thread = threading.Thread(target=self.loop, daemon=True)
+            self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        if self.thread:
+            self.stopping.set()
+            self.thread.join()
+            self.sample()
+
+    def summary(self):
+        if not self.available or len(self.samples) < 2:
+            return {'available': False}
+        hertz = os.sysconf('SC_CLK_TCK')
+        steps = []
+        for (t0, b0, o0), (t1, b1, o1) in zip(self.samples, self.samples[1:]):
+            steps.append((t1 - t0, max(0, (b1 - b0) - (o1 - o0)) / hertz))
+        wall = sum(dt for dt, _ in steps)
+        other = sum(cpu for _, cpu in steps)
+        own = (self.samples[-1][2] - self.samples[0][2]) / hertz
+        # The busiest QUIET_WINDOW_S: every run of consecutive steps that
+        # spans at least that long, or the whole half if it is shorter.
+        peak = other / wall if wall > 0 else 0.0
+        for first in range(len(steps)):
+            span = cpu = 0.0
+            for dt, used in steps[first:]:
+                span += dt
+                cpu += used
+                if span >= QUIET_WINDOW_S:
+                    break
+            if span >= QUIET_WINDOW_S:
+                peak = max(peak, cpu / span)
+        mean = other / wall if wall > 0 else 0.0
+        return {'available': True, 'wall_s': wall, 'own_cpu_s': own, 'other_cpu_s': other,
+                'mean_other_cores': mean, 'peak_other_cores': peak, 'window_s': QUIET_WINDOW_S,
+                'samples': len(self.samples),
+                'quiet': mean <= QUIET_MEAN_CORES and peak <= QUIET_PEAK_CORES}
+
+
+def wait_until_quiet(cores, wait_s, half):
+    """--require-quiet: watches the idle run for PROBE_S at a time until other
+    processes use at most @p cores, for up to @p wait_s."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        watch = Watch()
+        if not watch.available:
+            die('--require-quiet reads the machine\'s CPU from /proc, which is not here')
+        with watch:
+            time.sleep(PROBE_S)
+        used = watch.summary()['mean_other_cores']
+        if used <= cores:
+            log(f'before the {half} half: other processes use {used:.2f} cores, at most '
+                f'--require-quiet {cores}')
+            return used
+        if time.monotonic() >= deadline:
+            die(f'before the {half} half other processes still use {used:.2f} cores, above '
+                f'--require-quiet {cores}, after waiting {wait_s:.0f} s: this is not a quiet '
+                'machine')
+        log(f'before the {half} half: other processes use {used:.2f} cores, above '
+            f'--require-quiet {cores}; waiting')
+
+
+# --- the halves ---------------------------------------------------------------
+
 def tee(command, log_path, env=None):
     """Runs @p command, its output both shown and kept in @p log_path."""
     log('$ ' + ' '.join(str(c) for c in command))
@@ -150,6 +311,106 @@ def build_bench(out):
     return None
 
 
+def parse_seeds(text):
+    try:
+        return [int(s) for s in text.split(',')]
+    except ValueError:
+        die(f'--seeds is a comma-separated list of integers, not {text!r}')
+    return None
+
+
+def parse_area(text):
+    try:
+        cx, cz, radius = (int(v) for v in text.split(','))
+    except ValueError:
+        die(f'--area is cx,cz,r, not {text!r}')
+    return cx, cz, radius
+
+
+def measured(half, data):
+    """The seeds, square and dimensions a half's JSON says it measured."""
+    if half == 'stratum':
+        spiral = data.get('spiral') or {}
+        area = ((*spiral['centre'], spiral['radius']) if 'centre' in spiral and 'radius' in spiral
+                else None)
+    else:
+        area = tuple(data['area']) if data.get('area') else None
+    seeds = [int(s) for s in data['seeds']] if data.get('seeds') else None
+    return {'seeds': seeds, 'area': tuple(area) if area else None,
+            'dimensions': list(data.get('dimensions', {}))}
+
+
+def reuse_half(reuse, half, out):
+    """An earlier run's @p half, its JSON copied into @p out with its log and
+    its watch record when that run kept them."""
+    for name in (f'{half}.json', f'{half}.log', f'{half}.watch.json'):
+        source = reuse / name
+        if source.is_file() and source.resolve() != (out / name).resolve():
+            shutil.copyfile(source, out / name)
+    data = json.loads((out / f'{half}.json').read_text(encoding='utf-8'))
+    watch_path = out / f'{half}.watch.json'
+    watch = (json.loads(watch_path.read_text(encoding='utf-8')) if watch_path.is_file()
+             else {'available': False, 'why': 'its run kept no watch record'})
+    watch['from'] = str(reuse)
+    # The half's own load averages when its run predates the watch record.
+    watch.setdefault('load_before', data.get('load_average_start', '?'))
+    watch.setdefault('load_after', data.get('load_average_end', '?'))
+    return data, watch
+
+
+def settle_parameters(args, reused):
+    """The seeds, square and dimensions this run is about: the command line's
+    where given, else the reused halves', else the defaults; any disagreement
+    between them is refused."""
+    explicit = {'seeds': parse_seeds(args.seeds) if args.seeds else None,
+                'area': parse_area(args.area) if args.area else None,
+                'dimensions': args.dimensions.split(',') if args.dimensions else None}
+    found = {half: measured(half, data) for half, (data, _) in reused.items()}
+    # Seeds in any order are the same seeds; a square is its centre and radius.
+    same = {'seeds': lambda a, b: sorted(a) == sorted(b), 'area': lambda a, b: tuple(a) == tuple(b)}
+    for key in ('seeds', 'area'):
+        values = {half: f[key] for half, f in found.items()}
+        if any(v is None for v in values.values()):
+            missing = [half for half, v in values.items() if v is None]
+            die(f'--from: the reused {" and ".join(missing)} half records no {key}')
+        if len(values) == 2 and not same[key](values['stratum'], values['vanilla']):
+            die(f'--from: the reused halves measured different {key}: Stratum '
+                f'{values["stratum"]}, vanilla {values["vanilla"]}')
+        if explicit[key] is not None:
+            for half, value in values.items():
+                if not same[key](value, explicit[key]):
+                    die(f'--from: the reused {half} half measured {key} {value}, not '
+                        f'--{key} {explicit[key]}')
+    for half, f in found.items():
+        if explicit['dimensions']:
+            missing = [d for d in explicit['dimensions'] if d not in f['dimensions']]
+            if missing:
+                die(f'--from: the reused {half} half has no {", ".join(missing)}')
+    seeds = explicit['seeds'] or next((f['seeds'] for f in found.values()), None) or \
+        parse_seeds(DEFAULT_SEEDS)
+    area = explicit['area'] or next((f['area'] for f in found.values()), None) or \
+        parse_area(DEFAULT_AREA)
+    dimensions = explicit['dimensions']
+    if not dimensions:
+        dimensions = [d for d in DIMENSIONS if all(d in f['dimensions'] for f in found.values())]
+        if not dimensions:
+            die('--from: the reused halves have no dimension in common')
+    for name in dimensions:
+        if name not in DIMENSIONS:
+            die(f'unknown dimension {name!r} ({", ".join(DIMENSIONS)})')
+    return seeds, tuple(area), dimensions
+
+
+def check_measured(half, data, seeds, area, dimensions):
+    """A half just measured measured what it was asked to."""
+    got = measured(half, data)
+    if sorted(got['seeds'] or []) != sorted(seeds) or got['area'] != tuple(area) or \
+            any(d not in got['dimensions'] for d in dimensions):
+        die(f'the {half} half measured {got}, not seeds {seeds}, area {area}, {dimensions}')
+
+
+# --- the comparison -----------------------------------------------------------
+
 def figure(entry):
     if not entry or not entry.get('available'):
         return None
@@ -172,22 +433,98 @@ def verdict(mean_ms):
             f'{mean_ms / BEST_MS:.2f}x the {BEST_MS:.0f} ms best case')
 
 
+def stratum_checks(entry):
+    """Stratum's row: its end-to-end wall time against the bench thread's CPU."""
+    e2e = entry.get('spiral', {}).get('e2e', {})
+    wall, cpu = figure(e2e.get('wall')), figure(e2e.get('cpu'))
+    if not wall:
+        return {}, ['Stratum: no end-to-end figure']
+    if not cpu or cpu['mean_ms'] <= 0:
+        return {'wall_cpu_ratio': None}, ['Stratum: no thread CPU time to check the wall time by']
+    ratio = wall['mean_ms'] / cpu['mean_ms']
+    problems = []
+    if ratio > 1 + WALL_SLACK:
+        problems.append(f'Stratum descheduled: wall overstates (wall is {ratio:.3f}x the bench '
+                        'thread\'s CPU)')
+    return {'wall_cpu_ratio': ratio}, problems
+
+
+def vanilla_checks(vanilla, name):
+    """Vanilla's row: every recording of @p name — its pin, its area, and its
+    estimates against its workers' CPU."""
+    runs = [r for r in vanilla.get('runs', []) if r.get('dimension') == name]
+    if not runs:
+        return {}, ['vanilla: no per-recording checks in the vanilla half']
+    problems = []
+    ratios = []
+    for run in runs:
+        seed = run.get('seed', '?')
+        if not run.get('pin_held'):
+            problems.append(f'vanilla seed {seed}: the pin did not hold')
+        if not run.get('complete'):
+            problems.append(f'vanilla seed {seed}: the area was incomplete '
+                            f'({run.get("missing")})')
+        cpu, busy = run.get('worker_cpu_total_s'), run.get('worker_busy_s')
+        if not cpu or busy is None:
+            problems.append(f'vanilla seed {seed}: no worker CPU to check the estimates by')
+            continue
+        ratio = busy / cpu
+        ratios.append(ratio)
+        if ratio > 1 + WALL_SLACK:
+            problems.append(f'vanilla seed {seed}: worker descheduled: wall overstates (the '
+                            f'estimates are {ratio:.3f}x the workers\' CPU)')
+        elif ratio < 1 - WALL_SLACK:
+            problems.append(f'vanilla seed {seed}: the estimates miss worker CPU (they are '
+                            f'{ratio:.3f}x it)')
+    busy = sum(r.get('worker_busy_s') or 0.0 for r in runs)
+    cpu = sum(r.get('worker_cpu_total_s') or 0.0 for r in runs)
+    checks = {
+        'recordings': len(runs),
+        'pin_held': all(r.get('pin_held') for r in runs),
+        'complete': all(r.get('complete') for r in runs),
+        'estimate_cpu_ratio': busy / cpu if cpu > 0 else None,
+        'estimate_cpu_ratio_range': [min(ratios), max(ratios)] if ratios else None,
+    }
+    others = [r['other_cpu_cores'] for r in runs if r.get('other_cpu_cores') is not None]
+    checks['other_cpu_cores_max'] = max(others) if others else None
+    return checks, problems
+
+
+def helpers_line(pooled):
+    share = pooled.get('helper_share')
+    if not share:
+        return None
+    parts = [f'{label} {share[kind]:.0%}' for kind, label in
+             (('jit', 'JIT'), ('gc', 'GC'), ('server', 'Server thread'), ('io', 'IO-Worker'),
+              ('jfr', 'JFR'), ('other', 'other'), ('unlisted', 'unlisted'))
+             if share.get(kind) is not None]
+    return ('  vanilla\'s helpers on other cores, as a share of its worker\'s CPU: '
+            + ', '.join(parts) + ' (Stratum\'s bench has none)')
+
+
 def compare(stratum, vanilla, dimensions):
     lines = []
     table = {}
     for name in dimensions:
-        row = {}
+        row = {'problems': []}
         lines.append(f'{name}:')
         if stratum:
             entry = stratum['dimensions'].get(name, {})
             e2e = figure(entry.get('spiral', {}).get('e2e', {}).get('wall'))
             row['stratum_e2e'] = e2e
+            row['stratum_e2e_cpu'] = figure(entry.get('spiral', {}).get('e2e', {}).get('cpu'))
             row['stratum_stages'] = {stage: figure(entry.get('spiral', {}).get(stage, {})
                                                    .get('wall'))
                                      for stage in ('fill', 'biomes', 'encode')}
+            row['stratum_checks'], problems = stratum_checks(entry)
+            row['problems'] += problems
             lines.append(f'  Stratum e2e (fill+biomes+encode)  {describe(e2e)}')
             for stage, value in row['stratum_stages'].items():
-                lines.append(f'    {stage:8s}                       {describe(value)}')
+                lines.append(f'    {stage:8s}                       {describe(value)}  '
+                             '[indicative]')
+            ratio = row['stratum_checks'].get('wall_cpu_ratio')
+            if ratio is not None:
+                lines.append(f'  Stratum checks: wall {ratio:.3f}x the bench thread\'s CPU')
             if e2e:
                 row['bar'] = verdict(e2e['mean_ms'])
                 lines.append(f'  owner\'s bar, per thread: {row["bar"]}')
@@ -195,45 +532,81 @@ def compare(stratum, vanilla, dimensions):
             entry = vanilla['dimensions'].get(name, {})
             comparable = figure(entry.get('comparable'))
             row['vanilla_comparable'] = comparable
+            row['vanilla_comparable_cpu_scaled'] = figure(entry.get('comparable_cpu_scaled'))
             row['vanilla_stages'] = {stage: figure(entry.get('stages', {}).get(stage))
                                      for stage in ('biomes', 'noise', 'surface')}
+            row['vanilla_helper_share'] = entry.get('helper_share')
+            row['vanilla_checks'], problems = vanilla_checks(vanilla, name)
+            row['problems'] += problems
             lines.append(f'  vanilla biomes+noise+surface      {describe(comparable)}')
             for stage, value in row['vanilla_stages'].items():
-                lines.append(f'    {stage:8s}                       {describe(value)}')
-            if not entry.get('complete', True) or not entry.get('pin_held', True):
-                lines.append('  vanilla: INCOMPLETE or the pin did not hold; see vanilla.log')
+                lines.append(f'    {stage:8s}                       {describe(value)}  '
+                             '[indicative]')
+            checks = row['vanilla_checks']
+            if checks:
+                ratio_range = checks['estimate_cpu_ratio_range']
+                lines.append(
+                    f'  vanilla checks: {checks["recordings"]} recording(s), pin '
+                    f'{"held" if checks["pin_held"] else "BROKEN"}, area '
+                    f'{"complete" if checks["complete"] else "INCOMPLETE"}, estimates '
+                    + (f'{ratio_range[0]:.3f}x to {ratio_range[1]:.3f}x the workers\' CPU'
+                       if ratio_range else 'unchecked')
+                    + (f'; other processes at most {checks["other_cpu_cores_max"]:.2f} cores'
+                       if checks.get('other_cpu_cores_max') is not None else ''))
+            helpers = helpers_line(entry)
+            if helpers:
+                lines.append(helpers)
         if stratum and vanilla and row.get('stratum_e2e') and row.get('vanilla_comparable'):
             row['ratio'] = row['stratum_e2e']['mean_ms'] / row['vanilla_comparable']['mean_ms']
-            lines.append(f'  Stratum / vanilla (mean): {row["ratio"]:.2f}x')
+            line = f'  Stratum / vanilla (mean, wall): {row["ratio"]:.2f}x'
+            if row.get('stratum_e2e_cpu') and row.get('vanilla_comparable_cpu_scaled'):
+                row['ratio_cpu'] = (row['stratum_e2e_cpu']['mean_ms'] /
+                                    row['vanilla_comparable_cpu_scaled']['mean_ms'])
+                line += (f'; on CPU, {row["ratio_cpu"]:.2f}x (Stratum\'s thread CPU over '
+                         'vanilla\'s estimates scaled to its workers\' CPU)')
+            lines.append(line)
+        row['measurement'] = not row['problems']
+        for problem in row['problems']:
+            lines.append(f'  NOT A MEASUREMENT: {problem}')
         table[name] = row
     return lines, table
 
 
-def reused(reuse, half, out, report):
-    """An earlier run's @p half, copied into @p out, its load averages kept."""
-    if reuse is None:
-        return None
-    source = reuse / f'{half}.json'
-    data = json.loads(source.read_text(encoding='utf-8'))
-    if source.resolve() != (out / f'{half}.json').resolve():
-        shutil.copyfile(source, out / f'{half}.json')
-    report[f'{half}_from'] = str(reuse)
-    report[f'{half}_load_before'] = data.get('load_average_start', 'unknown')
-    report[f'{half}_load_after'] = data.get('load_average_end', 'unknown')
-    return data
+def quietness(watches):
+    """PROVISIONAL or quiet, and why, from each half's watch record."""
+    reasons = []
+    for half, watch in watches.items():
+        if not watch.get('available'):
+            reasons.append(f'{half}: not watched ({watch.get("why", "no /proc")})')
+        elif not watch['quiet']:
+            reasons.append(f'{half}: other processes kept {watch["mean_other_cores"]:.2f} cores '
+                           f'busy on average and {watch["peak_other_cores"]:.2f} over the '
+                           f'busiest minute (quiet is at most {QUIET_MEAN_CORES} and '
+                           f'{QUIET_PEAK_CORES})')
+    return reasons
+
+
+def watch_text(half, watch):
+    if not watch.get('available'):
+        return f'{half} not watched' + (f' (from {watch["from"]})' if watch.get('from') else '')
+    return (f'{half}: other processes {watch["mean_other_cores"]:.2f} cores mean, '
+            f'{watch["peak_other_cores"]:.2f} peak minute, over {watch["wall_s"]:.0f} s'
+            + (f' (from {watch["from"]})' if watch.get('from') else ''))
 
 
 def main():
     parser = argparse.ArgumentParser(prog='tools/perf-baseline', description=__doc__.split('\n')[0])
     parser.add_argument('--accept-eula', action='store_true')
-    parser.add_argument('--seeds', default='0,42,-4172144997902289642')
-    parser.add_argument('--dimensions', default='overworld,amplified,large_biomes,end')
-    parser.add_argument('--area', default='-64,64,5')
+    parser.add_argument('--seeds')
+    parser.add_argument('--dimensions')
+    parser.add_argument('--area')
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--require-quiet', type=float)
+    parser.add_argument('--quiet-wait', type=float, default=900.0)
     parser.add_argument('--out')
     parser.add_argument('--jdk')
     parser.add_argument('--heap', default='3G')
+    parser.add_argument('--jvm-arg', action='append', default=[])
     parser.add_argument('--work')
     parser.add_argument('--skip-stratum', action='store_true')
     parser.add_argument('--skip-vanilla', action='store_true')
@@ -248,87 +621,120 @@ def main():
     for half, skipped in (('stratum', args.skip_stratum), ('vanilla', args.skip_vanilla)):
         if reuse and skipped and not (reuse / f'{half}.json').is_file():
             die(f'--from {reuse} has no {half}.json')
-    start_load = load_average()
-    if args.require_quiet is not None:
-        one_minute = float(start_load.split()[0]) if start_load != 'unknown' else 0.0
-        if one_minute > args.require_quiet:
-            die(f'the one-minute load average is {one_minute}, above --require-quiet '
-                f'{args.require_quiet}: this is not a quiet machine')
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     # Absolute: the halves run from the repository root.
     out = pathlib.Path(args.out).resolve() if args.out else REPO / 'build' / 'perf-baseline' / stamp
     out.mkdir(parents=True, exist_ok=True)
+    reused = {}
+    for half, skipped in (('stratum', args.skip_stratum), ('vanilla', args.skip_vanilla)):
+        if skipped and reuse:
+            reused[half] = reuse_half(reuse, half, out)
+    seeds, area, dimensions = settle_parameters(args, reused)
+    seeds_text = ','.join(str(s) for s in seeds)
+    cx, cz, radius = area
     report = {'tool': 'perf-baseline', 'utc': stamp, 'machine': machine(),
-              'load_average_start': start_load, 'seeds': args.seeds, 'area': args.area,
-              'bar_ms': {'best': BEST_MS, 'minimum': MINIMUM_MS}}
-    dimensions = args.dimensions.split(',')
-    cx, cz, radius = (int(v) for v in args.area.split(','))
+              'load_average_start': load_average(), 'seeds': seeds, 'area': list(area),
+              'dimensions_measured': dimensions, 'jvm_args': args.jvm_arg,
+              'bar_ms': {'best': BEST_MS, 'minimum': MINIMUM_MS},
+              'quiet_cores': {'mean': QUIET_MEAN_CORES, 'peak_minute': QUIET_PEAK_CORES},
+              'halves': {}}
+    watches = {}
 
-    stratum = reused(reuse, 'stratum', out, report) if args.skip_stratum else None
-    if not args.skip_stratum:
+    stratum = None
+    if 'stratum' in reused:
+        stratum, watches['stratum'] = reused['stratum']
+        report['halves']['stratum'] = {'from': str(reuse)}
+    elif not args.skip_stratum:
         bench = build_bench(out)
-        report['stratum_load_before'] = load_average()
-        status = tee([bench, fixtures_dir() / VERSION, '--dimensions', args.dimensions,
-                      '--seeds', args.seeds, '--spiral', f'{cx},{cz},{radius}',
-                      '--repeat', str(args.repeat), '--json', out / 'stratum.json'],
-                     out / 'stratum.log')
-        report['stratum_load_after'] = load_average()
+        if args.require_quiet is not None:
+            wait_until_quiet(args.require_quiet, args.quiet_wait, 'stratum')
+        half = {'load_before': load_average()}
+        with Watch() as watch:
+            status = tee([bench, fixtures_dir() / VERSION, '--dimensions', ','.join(dimensions),
+                          '--seeds', seeds_text, '--spiral', f'{cx},{cz},{radius}',
+                          '--repeat', str(args.repeat), '--json', out / 'stratum.json'],
+                         out / 'stratum.log')
+        half['load_after'] = load_average()
+        watches['stratum'] = dict(watch.summary(), **half)
+        (out / 'stratum.watch.json').write_text(json.dumps(watches['stratum'], indent=2) + '\n',
+                                                encoding='utf-8')
         if status != 0:
             die(f'the bench failed (see {out / "stratum.log"})')
         stratum = json.loads((out / 'stratum.json').read_text(encoding='utf-8'))
+        check_measured('stratum', stratum, seeds, area, dimensions)
+        report['halves']['stratum'] = {}
     if stratum and not stratum['machine']['optimised']:
         die('the bench was not built optimised; its numbers are not a measurement')
 
-    vanilla = reused(reuse, 'vanilla', out, report) if args.skip_vanilla else None
-    if not args.skip_vanilla:
-        command = [sys.executable, VANILLA, 'run', '--accept-eula', '--seeds', args.seeds,
-                   '--dimensions', args.dimensions, '--area', args.area,
-                   '--heap', args.heap, '--json', out / 'vanilla.json']
+    vanilla = None
+    if 'vanilla' in reused:
+        vanilla, watches['vanilla'] = reused['vanilla']
+        report['halves']['vanilla'] = {'from': str(reuse)}
+    elif not args.skip_vanilla:
+        # --opt=value: a value may begin with a minus sign.
+        command = [sys.executable, VANILLA, 'run', '--accept-eula', f'--seeds={seeds_text}',
+                   f'--dimensions={",".join(dimensions)}', f'--area={cx},{cz},{radius}',
+                   f'--heap={args.heap}', '--json', out / 'vanilla.json']
+        command += [f'--jvm-arg={arg}' for arg in args.jvm_arg]
         if args.jdk:
             command += ['--jdk', pathlib.Path(args.jdk).resolve()]
         if args.work:
             command += ['--work', pathlib.Path(args.work).resolve()]
-        report['vanilla_load_before'] = load_average()
-        status = tee(command, out / 'vanilla.log')
-        report['vanilla_load_after'] = load_average()
+        if args.require_quiet is not None:
+            wait_until_quiet(args.require_quiet, args.quiet_wait, 'vanilla')
+        half = {'load_before': load_average()}
+        with Watch() as watch:
+            status = tee(command, out / 'vanilla.log')
+        half['load_after'] = load_average()
+        watches['vanilla'] = dict(watch.summary(), **half)
+        (out / 'vanilla.watch.json').write_text(json.dumps(watches['vanilla'], indent=2) + '\n',
+                                                encoding='utf-8')
+        # 3: it ran, and flagged a recording; the rows below say which.
         if status not in (0, 3):
             die(f'the vanilla run failed (see {out / "vanilla.log"})')
         vanilla = json.loads((out / 'vanilla.json').read_text(encoding='utf-8'))
+        check_measured('vanilla', vanilla, seeds, area, dimensions)
+        report['halves']['vanilla'] = {}
+    for half, watch in watches.items():
+        report['halves'][half]['watch'] = watch
 
     lines, table = compare(stratum, vanilla, dimensions)
     report['dimensions'] = table
     report['load_average_end'] = load_average()
-    # A one-minute load above QUIET anywhere along the way: other work shared
-    # the machine, so these are provisional figures, not a baseline of record.
-    loads = [v for k, v in report.items() if k.startswith(('load_average', 'stratum_load',
-                                                           'vanilla_load'))]
-    peak = max((float(v.split()[0]) for v in loads if v != 'unknown'), default=0.0)
-    report['provisional'] = peak > QUIET
+    # Judged from the halves' own watch records alone: what other processes
+    # ran while each half did. Not the load average, which counts the run's
+    # own threads, and not this moment's machine when a half was reused.
+    reasons = quietness(watches)
+    report['provisional'] = bool(reasons)
+    report['provisional_why'] = reasons
+    failed = [name for name, row in table.items() if not row['measurement']]
+    report['not_a_measurement'] = failed
+    loads = '; '.join(f'{half} {watch.get("load_before", "?")} -> {watch.get("load_after", "?")}'
+                      for half, watch in watches.items())
     header = [
         f'M5 performance baseline, {stamp}',
         f'machine: {report["machine"]["cpu"]}, {report["machine"]["hardware_threads"]} hardware '
         f'threads, governor {report["machine"]["governor"]}, boost {report["machine"]["boost"]}',
-        f'load average: start {start_load}'
-        + (f'; Stratum {report["stratum_load_before"]} -> {report["stratum_load_after"]}'
-           + (f' (from {report["stratum_from"]})' if 'stratum_from' in report else '')
-           if stratum else '')
-        + (f'; vanilla {report["vanilla_load_before"]} -> {report["vanilla_load_after"]}'
-           if vanilla else '')
+        'other processes\' CPU: ' + ('; '.join(watch_text(half, watch)
+                                              for half, watch in watches.items()) or '-'),
+        f'load average (the record only: it counts this run\'s own threads): start '
+        f'{report["load_average_start"]}' + (f'; {loads}' if loads else '')
         + f'; end {report["load_average_end"]}',
-        f'seeds {args.seeds}; the square of radius {radius} around chunk ({cx}, {cz}); '
+        f'seeds {seeds_text}; the square of radius {radius} around chunk ({cx}, {cz}); '
         'one thread each',
-        (f'PROVISIONAL: the one-minute load reached {peak:.2f} (above {QUIET}); other work '
-         'shared the machine, so this is not a baseline of record' if report['provisional']
-         else f'quiet: the one-minute load stayed at or below {QUIET}'),
-        '',
+        ('PROVISIONAL, not a baseline of record: ' + '; '.join(reasons) if reasons
+         else f'quiet: other processes kept at most {QUIET_MEAN_CORES} cores busy on average '
+              f'and {QUIET_PEAK_CORES} over any minute, through each half'),
     ]
-    summary = '\n'.join(header + lines) + '\n'
+    if failed:
+        header.append(f'NOT A MEASUREMENT: {", ".join(failed)} (each row says why)')
+    summary = '\n'.join(header + [''] + lines) + '\n'
     print(summary)
     (out / 'summary.txt').write_text(summary, encoding='utf-8')
     (out / 'baseline.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     log(f'written: {out / "summary.txt"}, {out / "baseline.json"}')
-    return 0
+    return 3 if failed else 0
 
 
 if __name__ == '__main__':

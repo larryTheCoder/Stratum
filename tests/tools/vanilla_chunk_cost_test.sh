@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Stratum — tools/analysis/vanilla-chunk-cost.py's reading, on synthetic events.
+# Stratum — tools/analysis/vanilla-chunk-cost.py's reading, on synthetic events,
+# and tools/perf-baseline's comparison, on synthetic halves.
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
 # No server is started. The events below are written here, in the shape
@@ -15,7 +16,8 @@
 # the JVM's helper threads read from a jstack, the refusals that keep the
 # server and the baseline from running without --accept-eula, a failed run
 # that keeps its own directory and nothing else, and tools/perf-baseline's
-# comparison from two earlier halves.
+# comparison from synthetic halves: its verdicts, its quiet-or-provisional
+# label, and its refusal of halves that measured different things.
 # Plain bash 3.2 and python3: this runs on the macOS legs too.
 set -euo pipefail
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found; skipping"; exit 77; }
@@ -270,30 +272,109 @@ fi
 # The comparison alone, from an earlier run's two halves (--from): a Stratum
 # end to end of 50 ms/chunk mean against vanilla's 10 is 5x, and between the
 # owner's minimum (100 ms) and best case (35 ms).
-mkdir -p "${work}/earlier"
-python3 - "${work}/earlier" <<'PY'
+# halves <dir> [key=value ...]: seeds, area (cx,cz,r), ratio (the vanilla
+# recordings' estimates over their CPU), watch (none|quiet|busy), dims.
+halves() {
+    python3 - "$@" <<'PY'
 import json, sys
+directory = sys.argv[1]
+options = dict(a.split('=', 1) for a in sys.argv[2:])
+seeds = [int(s) for s in options.get('seeds', '0,42').split(',')]
+area = [int(v) for v in options.get('area', '3,-4,1').split(',')]
+vanilla_area = [int(v) for v in options.get('vanilla_area', ','.join(map(str, area))).split(',')]
+ratio = float(options.get('ratio', '1.0'))
+dims = options.get('dims', 'overworld').split(',')
 def figure(mean):
-    return {'available': True, 'chunks': 121, 'median_ms': mean, 'p10_ms': mean, 'p90_ms': mean,
+    return {'available': True, 'chunks': 9, 'median_ms': mean, 'p10_ms': mean, 'p90_ms': mean,
             'mean_ms': mean, 'chunks_per_s': 1000 / mean}
-stages = {s: {'wall': figure(m)} for s, m in (('fill', 30.0), ('biomes', 19.0), ('encode', 1.0),
-                                              ('e2e', 50.0))}
+stages = {s: {'wall': figure(m), 'cpu': figure(m)} for s, m in
+          (('fill', 30.0), ('biomes', 19.0), ('encode', 1.0), ('e2e', 50.0))}
 json.dump({'machine': {'optimised': True}, 'load_average_start': '0.10 0.10 0.10',
-           'load_average_end': '0.20 0.10 0.10',
-           'dimensions': {'overworld': {'spiral': stages}}}, open(sys.argv[1] + '/stratum.json', 'w'))
+           'load_average_end': '0.20 0.10 0.10', 'seeds': seeds,
+           'spiral': {'centre': area[:2], 'radius': area[2], 'chunks': 9},
+           'dimensions': {d: {'spiral': stages} for d in dims}},
+          open(directory + '/stratum.json', 'w'))
+runs = [{'dimension': d, 'seed': s, 'pin_held': True, 'complete': True, 'missing': {},
+         'worker_cpu_total_s': 1.0, 'worker_busy_s': ratio, 'other_cpu_cores': 0.1}
+        for d in dims for s in seeds]
 json.dump({'load_average_start': '0.30 0.10 0.10', 'load_average_end': '0.40 0.10 0.10',
-           'dimensions': {'overworld': {'comparable': figure(10.0), 'complete': True,
-                                        'pin_held': True,
-                                        'stages': {s: figure(m) for s, m in
-                                                   (('biomes', 2.0), ('noise', 6.0),
-                                                    ('surface', 2.0))}}}},
-          open(sys.argv[1] + '/vanilla.json', 'w'))
+           'seeds': seeds, 'area': vanilla_area, 'runs': runs,
+           'dimensions': {d: {'comparable': figure(10.0), 'complete': True, 'pin_held': True,
+                              'helper_share': {'jit': 0.25, 'gc': 0.3},
+                              'stages': {s: figure(m) for s, m in
+                                         (('biomes', 2.0), ('noise', 6.0), ('surface', 2.0))}}
+                          for d in dims}},
+          open(directory + '/vanilla.json', 'w'))
+open(directory + '/vanilla.log', 'w').write('the vanilla half\n')
+watch = options.get('watch', 'none')
+if watch != 'none':
+    mean, peak = (0.1, 0.3) if watch == 'quiet' else (2.5, 6.0)
+    for half in ('stratum', 'vanilla'):
+        json.dump({'available': True, 'wall_s': 600.0, 'own_cpu_s': 600.0,
+                   'other_cpu_s': mean * 600, 'mean_other_cores': mean,
+                   'peak_other_cores': peak, 'window_s': 60.0, 'samples': 121,
+                   'quiet': watch == 'quiet', 'load_before': '9.00 9.00 9.00',
+                   'load_after': '9.50 9.00 9.00'}, open(f'{directory}/{half}.watch.json', 'w'))
 PY
-expect 0 "the baseline recomputes the comparison from an earlier run" "Stratum / vanilla (mean): 5.00x" \
-    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/earlier" --dimensions overworld \
-    --out "${work}/again"
-grep -qF "between the minimum (100) and the best case (35 ms/chunk)" "${work}/again/summary.txt" \
-    || { echo "FAIL: the bar's verdict is not in the summary"; cat "${work}/again/summary.txt"; exit 1; }
-echo "ok: and judges it against the owner's bar"
+}
+summary_has() {  # summary_has <out dir> <text> <what>
+    grep -qF -- "$2" "$1/summary.txt" || { echo "FAIL: $3"; cat "$1/summary.txt"; exit 1; }
+    echo "ok: $3"
+}
+
+mkdir -p "${work}/earlier"
+halves "${work}/earlier" watch=quiet
+expect 0 "the baseline recomputes the comparison from an earlier run" \
+    "Stratum / vanilla (mean, wall): 5.00x" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/earlier" --out "${work}/again"
+summary_has "${work}/again" "between the minimum (100) and the best case (35 ms/chunk)" \
+    "and judges it against the owner's bar"
+summary_has "${work}/again" "seeds 0,42; the square of radius 1 around chunk (3, -4)" \
+    "the header gives the seeds and square the halves measured, not the defaults"
+summary_has "${work}/again" "quiet: other processes kept at most 0.5 cores" \
+    "halves watched quiet are quiet, whatever the load average said or says now"
+summary_has "${work}/again" "vanilla checks: 2 recording(s), pin held, area complete, estimates 1.000x to 1.000x" \
+    "the vanilla half's own checks are in the row"
+summary_has "${work}/again" "JIT 25%, GC 30%" "and its helpers' share of the worker's CPU"
+[[ -f "${work}/again/vanilla.log" && -f "${work}/again/vanilla.watch.json" ]] \
+    || { echo "FAIL: --from left the vanilla log or watch record behind"; ls "${work}/again"; exit 1; }
+echo "ok: --from brings each half's log and watch record along"
+check "${work}/again/baseline.json" "r['provisional'] is False and r['dimensions']['overworld']['measurement'] and r['seeds'] == [0, 42] and r['area'] == [3, -4, 1]" \
+    "baseline.json says the same"
+
+mkdir -p "${work}/unwatched"
+halves "${work}/unwatched"
+expect 0 "halves nobody watched" "PROVISIONAL" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/unwatched" --out "${work}/unwatched-out"
+summary_has "${work}/unwatched-out" "stratum: not watched (its run kept no watch record)" \
+    "make the run provisional, and say so"
+
+mkdir -p "${work}/busy"
+halves "${work}/busy" watch=busy
+expect 0 "halves watched on a busy machine" "PROVISIONAL" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/busy" --out "${work}/busy-out"
+summary_has "${work}/busy-out" "other processes kept 2.50 cores busy on average and 6.00 over the busiest minute" \
+    "make it provisional with the figures that did"
+
+mkdir -p "${work}/descheduled"
+halves "${work}/descheduled" watch=quiet ratio=1.2
+expect 3 "a recording whose estimates exceed its CPU is not a measurement" \
+    "NOT A MEASUREMENT: vanilla seed 42: worker descheduled: wall overstates (the estimates are 1.200x" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/descheduled" --out "${work}/descheduled-out"
+check "${work}/descheduled-out/baseline.json" "r['not_a_measurement'] == ['overworld'] and not r['dimensions']['overworld']['measurement'] and abs(r['dimensions']['overworld']['vanilla_checks']['estimate_cpu_ratio'] - 1.2) < 1e-9" \
+    "the row and baseline.json say so, and the summary is still written"
+
+mkdir -p "${work}/mismatched"
+halves "${work}/mismatched" vanilla_area=3,-4,2
+expect 1 "halves that measured different squares are refused" \
+    "the reused halves measured different area" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/mismatched" --out "${work}/x"
+expect 1 "and so is a half that is not what the command line asks for" \
+    "the reused stratum half measured seeds [0, 42], not --seeds [0, 42, 7]" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/earlier" --seeds 0,42,7 \
+    --out "${work}/x"
+expect 1 "or a dimension a half does not have" "the reused stratum half has no end" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/earlier" --dimensions overworld,end \
+    --out "${work}/x"
 expect 1 "--from needs the half it stands in for" "has no stratum.json" \
     "${baseline}" --skip-stratum --skip-vanilla --from "${work}/again/nowhere"
