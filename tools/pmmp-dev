@@ -57,9 +57,10 @@
 #   tools/pmmp-dev smoke --stratum-so <so> --version-root <root> [--dimension overworld|end]
 #                  [--work-dir <dir>] [--keep] [--timeout S] [--async-workers N] [--no-netns]
 #       boot that server, let it generate the spawn area, stop it from the
-#       console, and check server.log, crash dumps, level.dat and every chunk
-#       on disk, block by block and biome by biome, against what the engine
-#       generates for it (ext/pocketmine/inspect_world.php)
+#       console, and check server.log (the network interface on loopback
+#       and nowhere else, no Query listener), crash dumps, level.dat and
+#       every chunk on disk, block by block and biome by biome, against what
+#       the engine generates for it (ext/pocketmine/inspect_world.php)
 #   server and smoke take --plugin-dir <dir> to pack a plugin tree other than
 #   ext/plugin, for trying a change to it against the real server.
 #
@@ -553,39 +554,22 @@ cmd_server() {
         "${dir}" "${dir}/php.ini" "${php_bin}" "${phar}" "${dir}" "${dir}/plugins"
 }
 
-# --- smoke --------------------------------------------------------------------
+# --- a running server -----------------------------------------------------------
 
-# epoch milliseconds of a server.log line's "YYYY-MM-DD [HH:MM:SS.mmm]" stamp
-log_stamp_ms() {
-    local stamp
-    stamp="$(sed -nE 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}) \[([0-9:.]+)\].*/\1 \2/p' <<<"$1")"
-    [[ -n "${stamp}" ]] && date -d "${stamp}" +%s%3N
-}
+server_dir=""
+server_pid=""
+console_fd=""
+server_rc=0
+server_stopped=0
 
-cmd_smoke() {
-    parse_options "$@"
-    require_cache
-    require_so "${so}"
-    require_version_root "${version_root}"
-    local settings biomes
-    read -r settings biomes < <(dimension_pair)
-    local world="stratum_${dimension}"
-    local own_dir=0
-    if [[ -z "${work_dir}" ]]; then
-        work_dir="$(mktemp -d "${TMPDIR:-/tmp}/stratum-pmmp-smoke.XXXXXX")"
-        own_dir=1
-    fi
-    write_server_dir "${work_dir}"
-    local dir
-    dir="$(cd "${work_dir}" && pwd)"
-    local options
-    options="$(cat "${dir}/generator-options.json")"
-
-    # In a network namespace of its own when the kernel allows one without
-    # root: loopback and nothing else, so nothing can reach the network
-    # whatever the configuration says.
-    local launcher=()
-    local ip_cmd
+# start_server <dir>: boots PocketMine-MP over a server directory this tool
+# wrote, its console a fifo (console.in) and its output console.out — in a
+# network namespace of its own when the kernel allows one without root:
+# loopback and nothing else, so nothing can reach the network whatever the
+# configuration says.
+start_server() {
+    server_dir="$1"
+    local launcher=() ip_cmd
     ip_cmd="$(command -v ip || echo /usr/sbin/ip)"
     if [[ ${netns} -eq 1 ]] && [[ -x "${ip_cmd}" ]] &&
         unshare -rn "${ip_cmd}" link set lo up >/dev/null 2>&1; then
@@ -595,76 +579,107 @@ cmd_smoke() {
         echo "network: the host's (no unprivileged network namespace here, or --no-netns); hermetic by configuration alone"
     fi
 
-    mkfifo "${dir}/console.in"
-    local console
-    exec {console}<>"${dir}/console.in"
+    mkfifo "${server_dir}/console.in"
+    exec {console_fd}<>"${server_dir}/console.in"
     # there before the server is, so the first look for its lines finds a file
-    : >"${dir}/console.out"
-    local started=${SECONDS}
+    : >"${server_dir}/console.out"
     (
-        cd "${dir}"
-        exec setsid env -i HOME="${dir}" PATH=/usr/bin:/bin LANG=C.UTF-8 TMPDIR="${dir}/tmp" \
-            PHPRC="${dir}/php.ini" PHP_INI_SCAN_DIR= \
+        cd "${server_dir}"
+        exec setsid env -i HOME="${server_dir}" PATH=/usr/bin:/bin LANG=C.UTF-8 TMPDIR="${server_dir}/tmp" \
+            PHPRC="${server_dir}/php.ini" PHP_INI_SCAN_DIR= \
             "${launcher[@]}" "${php_bin}" "${phar}" --no-wizard --disable-ansi \
-            --data="${dir}" --plugins="${dir}/plugins"
-    ) <"${dir}/console.in" >"${dir}/console.out" 2>&1 &
-    local pid=$!
+            --data="${server_dir}" --plugins="${server_dir}/plugins"
+    ) <"${server_dir}/console.in" >"${server_dir}/console.out" 2>&1 &
+    server_pid=$!
     # shellcheck disable=SC2064 # expand now: these are this run's
-    trap "kill -TERM -- -${pid} 2>/dev/null || true; exec {console}>&-" EXIT
+    trap "kill -TERM -- -${server_pid} 2>/dev/null || true; exec {console_fd}>&-" EXIT
+}
 
-    local spawn_re='Generating spawn terrain: ([0-9]+) / \1 \(100%\)'
-    local outcome="timeout"
-    while ((SECONDS - started < timeout)); do
-        if ! kill -0 "${pid}" 2>/dev/null; then
-            outcome="exited"
-            break
-        fi
-        if grep -Eq "${spawn_re}" "${dir}/console.out" && grep -q 'Done (' "${dir}/console.out"; then
-            outcome="spawn"
-            break
-        fi
+# console <line>: types a line at the server's console.
+console() {
+    printf '%s\n' "$1" >&"${console_fd}"
+}
+
+# wait_for <ERE>... <seconds>: until console.out has a line matching each
+# pattern, 0; the server exited first, 1; the time ran out, 2.
+wait_for() {
+    local patterns=("${@:1:$#-1}") limit="${*: -1}" started=${SECONDS} pattern found
+    while :; do
+        found=1
+        for pattern in "${patterns[@]}"; do
+            grep -Eq -- "${pattern}" "${server_dir}/console.out" || found=0
+        done
+        [[ ${found} -eq 1 ]] && return 0
+        kill -0 "${server_pid}" 2>/dev/null || return 1
+        ((SECONDS - started < limit)) || return 2
         sleep 1
     done
-    local spawn_seen=$((SECONDS - started))
+}
 
-    local rc=0 stopped=0
-    if [[ "${outcome}" != "exited" ]]; then
-        printf 'stop\n' >&"${console}"
+# stop_server: the console's stop, if the server is still running, then up
+# to 180 s for it to exit before it is killed. Sets server_rc and
+# server_stopped (1 only when it stopped on the console's stop).
+stop_server() {
+    server_rc=0
+    server_stopped=0
+    if kill -0 "${server_pid}" 2>/dev/null; then
+        console stop
         local waited=${SECONDS}
-        while kill -0 "${pid}" 2>/dev/null && ((SECONDS - waited < 180)); do
+        while kill -0 "${server_pid}" 2>/dev/null && ((SECONDS - waited < 180)); do
             sleep 1
         done
-        if kill -0 "${pid}" 2>/dev/null; then
-            kill -KILL -- "-${pid}" 2>/dev/null || true
+        if kill -0 "${server_pid}" 2>/dev/null; then
+            kill -KILL -- "-${server_pid}" 2>/dev/null || true
         else
-            stopped=1
+            server_stopped=1
         fi
     fi
-    wait "${pid}" || rc=$?
+    wait "${server_pid}" || server_rc=$?
     trap - EXIT
-    exec {console}>&-
+    exec {console_fd}>&-
+}
 
-    # --- what happened ---
-    local server_log="${dir}/server.log" failures=()
+# epoch milliseconds of a server.log line's "YYYY-MM-DD [HH:MM:SS.mmm]" stamp
+log_stamp_ms() {
+    local stamp
+    stamp="$(sed -nE 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}) \[([0-9:.]+)\].*/\1 \2/p' <<<"$1")"
+    [[ -n "${stamp}" ]] && date -d "${stamp}" +%s%3N
+}
+
+readonly spawn_re='Generating spawn terrain: ([0-9]+) / \1 \(100%\)'
+
+# check_server <world>: what a stopped server left in its log and its
+# directory, reported; each failure appended to the caller's failures.
+check_server() {
+    local world="$1" dir="${server_dir}"
+    local server_log="${dir}/server.log"
     [[ -f "${server_log}" ]] || server_log="${dir}/console.out"
-    echo "PocketMine-MP ${PMMP_VERSION}, headless; world ${world} (${settings} / ${biomes}), seed ${seed}; async-workers ${async_workers}"
-    echo "server: ${outcome} after ${spawn_seen}s; console stop $([[ ${stopped} -eq 1 ]] && echo "returned" || echo "DID NOT return"); exit code ${rc}"
-    [[ "${outcome}" == "spawn" ]] || failures+=("the spawn area never finished generating (${outcome})")
-    if [[ "${dimension}" == "end" ]]; then
-        grep -q "\[StratumEvidence\] world \"${world}\" created; its spawn set to 0 70 0" "${server_log}" ||
-            failures+=("the evidence plugin never set the End's spawn over the main island")
-    fi
-    [[ ${stopped} -eq 1 ]] || failures+=("the server did not stop on the console's stop")
-    [[ ${rc} -eq 0 ]] || failures+=("the server exited ${rc}")
+    echo "console stop $([[ ${server_stopped} -eq 1 ]] && echo "returned" || echo "DID NOT return"); exit code ${server_rc}"
+    [[ ${server_stopped} -eq 1 ]] || failures+=("the server did not stop on the console's stop")
+    [[ ${server_rc} -eq 0 ]] || failures+=("the server exited ${server_rc}")
 
     local line
     for line in "Loading Stratum v" "Enabling Stratum v" "Preparing world \"${world}\"" "Stopping the server" "Disabling Stratum v" "Unloading world \"${world}\"" "Stopping other threads"; do
         grep -q "${line}" "${server_log}" || failures+=("server.log never says '${line}'")
     done
 
+    # Loopback and nothing else: the one network interface on 127.0.0.1 at
+    # this server's port, no other (IPv6 off), and no Query listener.
+    local interfaces
+    # the message alone, after the stamp and the "[Server thread/INFO]: " tag
+    interfaces="$(grep -E 'network interface running on|Query listener running on' "${server_log}" | sed -E 's/^.*\]: //' || true)"
+    echo "network interfaces: ${interfaces//$'\n'/; }"
+    grep -q "Minecraft network interface running on 127.0.0.1:${port}\$" <<<"${interfaces}" ||
+        failures+=("server.log never says 'Minecraft network interface running on 127.0.0.1:${port}'")
+    local other
+    other="$(grep -v "^Minecraft network interface running on 127.0.0.1:${port}\$" <<<"${interfaces}" || true)"
+    [[ -z "${other}" ]] || failures+=("a network interface other than 127.0.0.1:${port}, or a Query listener:"$'\n'"${other}")
+
+    # Counted as PocketMine-MP logs it, before the generator is constructed
+    # there: a registration that then fails still counts.
     local registered
     registered="$(grep -oE 'Registering generator on worker [0-9]+' "${server_log}" | sort -u | wc -l | tr -d ' ')"
-    echo "generator registered on ${registered} async worker(s) (pool size ${async_workers})"
+    echo "generator registration started on ${registered} async worker(s) (pool size ${async_workers})"
     [[ "${registered}" -ge 1 ]] || failures+=("the generator was never registered on a worker")
 
     local begin end
@@ -677,7 +692,9 @@ cmd_smoke() {
     grep -m1 'Done (' "${server_log}" | sed 's/^/  /' || true
     # Reported, not failed: PocketMine-MP redoing population whose 3x3 a
     # block change touched while it ran, and main-thread ticks over budget.
-    echo "population results discarded because the terrain changed while populating: $(grep -c 'Discarding population result' "${server_log}" || true)"
+    local discards
+    discards="$(grep -c 'Discarding population result' "${server_log}" || true)"
+    echo "population results discarded because the terrain changed while populating: ${discards}"
     echo "main-thread ticks over budget: $(grep -c 'Tick took too long' "${server_log}" || true)"
 
     local crashes=0
@@ -702,27 +719,81 @@ cmd_smoke() {
     [[ -z "${bad}" ]] || failures+=("the plugin warned:"$'\n'"${bad}")
     echo "PocketMine-MP's own warnings:"
     grep -v 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" | grep -vi 'stratum' | sed -E 's/^[^]]*\] /  /' || true
+}
 
+# inspect <world> <options> [inspect_world.php options]: every chunk on disk
+# against what the engine generates for it; a failure appended to failures.
+inspect() {
+    local world="$1" options="$2"
+    shift 2
     echo "on disk, and against what the engine generates for it:"
     local inspect_rc=0
-    evidence_php "${evidence}/inspect_world.php" --phar="${phar}" --world="${dir}/worlds/${world}" \
-        --generator=stratum --options="${options}" --seed="${seed}" | sed 's/^/  /' || inspect_rc=$?
+    evidence_php "${evidence}/inspect_world.php" --phar="${phar}" --world="${server_dir}/worlds/${world}" \
+        --generator=stratum --options="${options}" --seed="${seed}" "$@" | sed 's/^/  /' || inspect_rc=$?
     [[ ${inspect_rc} -eq 0 ]] || failures+=("the world on disk is incomplete, or not what the engine generates for it")
+}
 
+# finish <own_dir>: removes what the run made unless --keep (the work
+# directory too when the tool made it, keeping server.log beside it), and
+# reports.
+finish() {
+    local own_dir="$1" dir="${server_dir}"
     if [[ ${keep} -eq 0 ]]; then
         rm -rf "${dir}/worlds" "${dir}/plugins" "${dir}/tmp" "${dir}/console.in"
         if [[ ${own_dir} -eq 1 ]]; then
-            cp "${server_log}" "${dir}.server.log" 2>/dev/null && echo "server.log kept at ${dir}.server.log"
+            cp "${dir}/server.log" "${dir}.server.log" 2>/dev/null && echo "server.log kept at ${dir}.server.log"
             rm -rf "${dir}"
         fi
     fi
-
     if [[ ${#failures[@]} -gt 0 ]]; then
         printf 'FAIL: %s\n' "${failures[@]}"
         [[ ${keep} -eq 1 || ${own_dir} -eq 0 ]] && echo "server directory: ${dir}"
         exit 1
     fi
     echo "RESULT: PASS"
+}
+
+# --- smoke --------------------------------------------------------------------
+
+cmd_smoke() {
+    parse_options "$@"
+    require_cache
+    require_so "${so}"
+    require_version_root "${version_root}"
+    local settings biomes
+    read -r settings biomes < <(dimension_pair)
+    local world="stratum_${dimension}"
+    local own_dir=0
+    if [[ -z "${work_dir}" ]]; then
+        work_dir="$(mktemp -d "${TMPDIR:-/tmp}/stratum-pmmp-smoke.XXXXXX")"
+        own_dir=1
+    fi
+    write_server_dir "${work_dir}"
+    local dir
+    dir="$(cd "${work_dir}" && pwd)"
+    local options
+    options="$(cat "${dir}/generator-options.json")"
+
+    start_server "${dir}"
+    local started=${SECONDS} outcome="spawn"
+    wait_for "${spawn_re}" 'Done \(' "${timeout}" || case $? in
+        1) outcome="exited" ;;
+        *) outcome="timeout" ;;
+    esac
+    local spawn_seen=$((SECONDS - started))
+    stop_server
+
+    failures=()
+    echo "PocketMine-MP ${PMMP_VERSION}, headless; world ${world} (${settings} / ${biomes}), seed ${seed}; async-workers ${async_workers}"
+    echo "server: ${outcome} after ${spawn_seen}s"
+    [[ "${outcome}" == "spawn" ]] || failures+=("the spawn area never finished generating (${outcome})")
+    if [[ "${dimension}" == "end" ]]; then
+        grep -q "\[StratumEvidence\] world \"${world}\" created; its spawn set to 0 70 0" "${dir}/server.log" ||
+            failures+=("the evidence plugin never set the End's spawn over the main island")
+    fi
+    check_server "${world}"
+    inspect "${world}" "${options}"
+    finish "${own_dir}"
 }
 
 # --- main -----------------------------------------------------------------------
