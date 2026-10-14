@@ -138,10 +138,28 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
 ### 4.3 PHP surface (ext/)
 
 - World creation: `Stratum\freezePipeline($versionRoot, $blobPath)` writes
-  the resolved pipeline into the world (§6).
+  the resolved pipeline into the world (§6), whole or not at all (written
+  beside the target, then renamed over it). The plugin's `WorldFactory`
+  refuses a name that is already a world before writing anything, so an
+  existing world's blob is never replaced.
 - World load: `Stratum\Dimension::open($blobPath, $noiseSettings,
   $biomeSource, $seed)` compiles it — once per process, shared by every
   worker thread that opens the same blob, settings, biome source and seed.
+  "The same blob" is every byte of it, header included, so every open is
+  held to `freeze::read`'s refusals (§6) even while a twin is open.
+  `Stratum\checkDimension($blobPath, $noiseSettings, $biomeSource)` is that
+  open with no seed (no refusal depends on one) and nothing kept, and also
+  refuses what PocketMine-MP cannot hold: a dimension outside its 24
+  sub-chunks, and a multi-noise list naming a biome with no Bedrock id. The
+  block states a dimension can place cannot be enumerated yet, so an
+  unmapped one is still refused at its chunk. The plugin's options
+  validator calls it on the main thread as each world loads, since on a
+  worker an exception takes PocketMine-MP down. `Stratum\pinWorld` /
+  `unpinWorld` (same arguments as `open`) hold a world's compiled
+  dimension and fluid-update outbox from world load to unload; while
+  pinned, `open` returns that state without reading the blob, so a worker
+  PocketMine-MP shuts down while idle loses no held update and a restarted
+  one generates what the world loaded with.
   `$biomeSource` is a multi-noise parameter list's id, as it always was, or
   `minecraft:the_end` for the End's own source (§11, "The End's biome
   source"); `minecraft:fixed` and `minecraft:checkerboard` are refused by
@@ -151,9 +169,9 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   `"biomes"` and take it and `"settings"` together or not at all (neither
   says which of the other goes with it), refuse any other key, refuse
   either that is not a string (a JSON `null` is a key given, not one left
-  out), and refuse a source `parseBiomeSource` refuses, all on the main
-  thread before a worker opens the pipeline (`GeneratorOptions` lists
-  exactly what it accepts).
+  out), refuse a source `parseBiomeSource` refuses, and refuse what
+  `checkDimension` refuses, all on the main thread before a worker opens
+  the pipeline (`GeneratorOptions` lists exactly what it accepts).
 - Per chunk: `$dimension->encodeChunk($cx, $cz)` returns all 24 of
   PocketMine-MP's sub-chunks, keyed by sub-chunk index (-4 to 19), as
   `PalettedBlockArray::fromData` argument lists: block palettes hold Java
