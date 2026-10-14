@@ -6,6 +6,7 @@
 // rather than the functions behind it.
 
 #include "support/cli_process.hpp"
+#include "support/file_bytes.hpp"
 #include "support/region_builder.hpp"
 #include "support/temp_path.hpp"
 
@@ -27,9 +28,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -323,9 +325,12 @@ private:
     return biome == nullptr ? std::string("<no biomes>") : *biome;
 }
 
-[[nodiscard]] std::vector<char> bytesOf(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+/// Every byte of @p path, which must exist: two missing files are not two
+/// identical ones.
+[[nodiscard]] std::string bytesOf(const std::filesystem::path& path) {
+    std::optional<std::string> bytes = stratum::test::readFileBytes(path);
+    REQUIRE(bytes.has_value());
+    return std::move(*bytes);
 }
 
 } // namespace
@@ -692,7 +697,7 @@ TEST_CASE("generate writes the same bytes whatever --threads says, from a pack o
     REQUIRE(second.exitCode == 0);
     REQUIRE(third.exitCode == 0);
 
-    const std::vector<char> bytes = bytesOf(regionPath(one.path(), 0, 0));
+    const std::string bytes = bytesOf(regionPath(one.path(), 0, 0));
     CHECK(bytes.size() > stratum::region::kHeaderBytes);
     CHECK(bytesOf(regionPath(three.path(), 0, 0)) == bytes);
     CHECK(bytesOf(regionPath(frozen.path(), 0, 0)) == bytes);
@@ -786,7 +791,7 @@ TEST_CASE("generate refuses to replace a region file unless --force says to", "[
 
     REQUIRE(runCli(request + " --chunks 0,0:1,0").exitCode == 0);
     const std::filesystem::path region = regionPath(out.path(), 0, 0);
-    const std::vector<char> before = bytesOf(region);
+    const std::string before = bytesOf(region);
 
     const CliResult refused = runCli(request + " --chunks 5,5");
     CHECK(refused.exitCode == 4);
