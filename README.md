@@ -125,12 +125,21 @@ vanilla's 2D functions are shaped around — continentalness below zero is
 ocean. The value range is printed alongside, because a shade cannot be read
 back into a number.
 
-This is **not** terrain height — it is one function's field. The cell sampler
-and block placement that turn it into terrain now exist in `lib/`, but the
-`generate` subcommand that would drive them from the command line does not,
-so terrain is reachable from the library and the conformance tests rather
-than from the shell. A function this build cannot evaluate is refused by name
-rather than drawn as a guess.
+This is **not** terrain height — it is one function's field. A function this
+build cannot evaluate is refused by name rather than drawn as a guess.
+
+Terrain comes from the shell through `generate`, which writes region files a
+vanilla server, `stratum diff` and `stratum render` all read:
+
+```bash
+stratum generate .fixtures/1.21.11 --dimension overworld --seed 42 \
+    --region 0,0 --out out/                  # or --chunks X,Z:X,Z; --threads N
+stratum diff out/r.0.0.mca .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
+```
+
+The input is a `tools/fetch-vanilla` version root or a frozen pipeline;
+`--dimension` is `overworld`, `amplified`, `large_biomes`, `nether` or `end`,
+and one this build cannot compile (the Nether, today) is refused by name.
 
 Check a pack before generating from it:
 
