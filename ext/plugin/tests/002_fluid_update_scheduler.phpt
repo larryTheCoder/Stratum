@@ -1,5 +1,5 @@
 --TEST--
-The plugin ticks each liquid the engine marked, once, at its tick rate, in Stratum worlds only, and never while a population around it is in flight
+The plugin ticks each liquid the engine marked, once, at its tick rate, in Stratum worlds only, and only once no population round its chunk is in flight or still to come
 --EXTENSIONS--
 stratum
 --SKIPIF--
@@ -234,34 +234,28 @@ namespace {
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($normal, -3, 2));
 	echo "normal world held: ", $scheduler->chunksHeld(), "\n";
 
-	// The Stratum world takes them as the chunk is populated, on tick 100,
-	// and ticks none yet: each liquid is due its own tick rate later.
+	// The Stratum world holds the chunk as it is populated, on tick 100, and
+	// ticks nothing while a chunk two away, (-1, 4), is not populated: its
+	// population would lock (-2, 3), in the 3x3 round this chunk, and a flow
+	// there would make PocketMine-MP discard its result. Loaded but
+	// unpopulated, or not loaded at all, is the same.
 	$stratum = new World(2, "stratum", $options, $seed, $blockAt, $server);
 	$stratum->populateAround(-3, 2, 2);
+	$stratum->chunks["-1 4"] = false;
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
 	echo "held: ", $scheduler->chunksHeld(), " chunk, ", count($stratum->scheduled), " scheduled\n";
 	for(; $server->tick < 105; ++$server->tick){
 		$scheduler->release();
 	}
-	echo "before tick 105: ", count($stratum->scheduled), " scheduled\n";
-
-	// Tick 105, the water's due, but a chunk two away, (-1, 4), is not
-	// populated yet. Its population would lock (-2, 3), in the 3x3 round
-	// this chunk, and a flow there would make PocketMine-MP discard its
-	// result; so nothing is ticked until every chunk within two is
-	// populated. Loaded but unpopulated, or not loaded at all, is the same.
-	$stratum->chunks["-1 4"] = false;
+	unset($stratum->chunks["-1 4"]);
 	for(; $server->tick < 107; ++$server->tick){
 		$scheduler->release();
 	}
-	unset($stratum->chunks["-1 4"]);
-	$scheduler->release();
-	++$server->tick;
 	echo "while (-1, 4) is unpopulated: ", count($stratum->scheduled), " scheduled\n";
 
-	// Tick 108: its population is in flight, holding (-2, 3) of the 3x3:
-	// nothing is ticked while it runs either. A lock outside the 3x3, at
-	// (-1, 2), holds nothing back.
+	// Tick 107: (-1, 4) is populated, but a population is in flight next to
+	// the chunk, holding (-2, 3) of its 3x3: nothing is ticked while it runs
+	// either. A lock outside the 3x3, at (-1, 2), holds nothing back.
 	$stratum->chunks["-1 4"] = true;
 	$stratum->locked["-2 3"] = true;
 	$stratum->locked["-1 2"] = true;
@@ -270,28 +264,25 @@ namespace {
 	}
 	echo "while (-2, 3) is locked: ", count($stratum->scheduled), " scheduled\n";
 
-	// Its result is back: the next tick ticks every water, in the engine's
-	// order, at once (delay 0: PocketMine-MP ticks the world after the
-	// plugin's scheduler, in the same server tick); the stone is left alone
-	// and the lava is not yet due.
+	// Tick 110: its result is back, and the chunk has settled for good. Its
+	// liquids are taken from the extension and scheduled at once, in the
+	// engine's order, each its own tick rate after the population: the water
+	// (due on tick 105) with delay 0, so PocketMine-MP ticks it this server
+	// tick, after the plugin's scheduler; the lava (due on 130) with delay
+	// 20. The stone is left alone.
 	unset($stratum->locked["-2 3"]);
 	$scheduler->release();
-	var_dump($positions($stratum->scheduled) === $waters);
-	echo "water: delay ", implode(",", array_unique(array_column($stratum->scheduled, 3))), " on tick ", implode(",", array_unique(array_column($stratum->scheduled, 4))), "\n";
-	$stratum->scheduled = [];
-	for(++$server->tick; $server->tick < 130; ++$server->tick){
-		$scheduler->release();
-	}
-	echo "before tick 130: ", count($stratum->scheduled), " scheduled\n";
-	$scheduler->release();
-	echo "lava: ", $positions($stratum->scheduled) === [$expected[1]] ? "ticked" : "not ticked", ", delay ", $stratum->scheduled[0][3] ?? "-", " on tick ", $stratum->scheduled[0][4] ?? "-", "\n";
+	var_dump($positions($stratum->scheduled) === array_slice($expected, 1));
+	echo "on tick ", implode(",", array_unique(array_column($stratum->scheduled, 4))), ": lava delay ", $stratum->scheduled[0][3], ", water delay ", implode(",", array_unique(array_column(array_slice($stratum->scheduled, 1), 3))), "\n";
 	echo "held after: ", $scheduler->chunksHeld(), "\n";
 
 	// Once: populating it again ticks nothing more, and a chunk nothing was
-	// left for holds nothing.
+	// left for is held until it settles, then let go with nothing ticked.
 	$stratum->scheduled = [];
+	$stratum->populateAround(0, 0, 2);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, 0, 0));
+	echo "repeats held: ", $scheduler->chunksHeld(), "\n";
 	$server->tick += 40;
 	$scheduler->release();
 	echo "after repeats: ", count($stratum->scheduled), " scheduled, ", $scheduler->chunksHeld(), " held\n";
@@ -305,15 +296,18 @@ namespace {
 	echo "logged: ", count($logged), "\n";
 	echo str_replace($blob, "<blob>", $logged[0]), "\n";
 	// A blob that has gone is no longer the options' concern (parse() reads
-	// the string alone): such a world has nothing held, and ticks nothing,
-	// without a word.
+	// the string alone): such a world holds its chunk until it settles, then
+	// finds nothing in the extension and ticks nothing, without a word.
 	$gone = new World(4, "stratum", GeneratorOptions::encode("/nonexistent/stratum.blob"), $seed, $blockAt, $server);
+	$gone->populateAround(-3, 2, 2);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($gone, -3, 2));
-	echo "gone: ", $scheduler->chunksHeld(), " held, ", count($logged), " logged\n";
+	$scheduler->release();
+	echo "gone: ", count($gone->scheduled), " scheduled, ", $scheduler->chunksHeld(), " held, ", count($logged), " logged\n";
 
-	// Held updates go with their world: unloaded before they are due, they
-	// are never ticked.
+	// A held chunk goes with its world: unloaded before it settles, its
+	// liquids are never ticked.
 	$dimension->encodeChunk(-3, 2);
+	$stratum->locked["-2 3"] = true;
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
 	echo "held again: ", $scheduler->chunksHeld(), "\n";
 	$worlds->onWorldUnload(new WorldUnloadEvent($stratum));
@@ -339,18 +333,16 @@ namespace {
 marked: several
 normal world held: 0
 held: 1 chunk, 0 scheduled
-before tick 105: 0 scheduled
 while (-1, 4) is unpopulated: 0 scheduled
 while (-2, 3) is locked: 0 scheduled
 bool(true)
-water: delay 0 on tick 110
-before tick 130: 0 scheduled
-lava: ticked, delay 0 on tick 130
+on tick 110: lava delay 20, water delay 0
 held after: 0
+repeats held: 2
 after repeats: 0 scheduled, 0 held
 logged: 1
 Stratum world "world3": its aquifer water and lava will not flow, because its generator options do not parse: Stratum's generator options take "blob", "settings" and "biomes" and nothing else, so "biome" would be ignored: {"blob":"/nonexistent/stratum.blob","biome":"minecraft:the_end"}
-gone: 0 held, 1 logged
+gone: 0 scheduled, 0 held, 1 logged
 held again: 1
 after unload: 0 scheduled, 0 held
 after unload, as another generator's: 0 held

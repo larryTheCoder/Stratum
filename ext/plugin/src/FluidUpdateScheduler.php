@@ -10,6 +10,7 @@ use pocketmine\event\world\ChunkPopulateEvent;
 use pocketmine\event\world\WorldUnloadEvent;
 use pocketmine\world\World;
 use function count;
+use function max;
 
 /**
  * Makes a Stratum world's aquifer water and lava flow once their chunk is in
@@ -22,10 +23,11 @@ use function count;
  * crosses back (FastChunkSerializer::serializeTerrain). So the engine leaves
  * each chunk's positions in the extension when a worker encodes it
  * (Stratum\Dimension::encodeChunk), and this takes them on the main thread —
- * Stratum\takeFluidUpdates, by the world's options and seed — when
- * PocketMine-MP announces the chunk populated, and ticks each liquid once
- * its own tick rate has passed: the delay Liquid::onNearbyBlockChange()
- * schedules when a neighbour changes.
+ * Stratum\takeFluidUpdates, by the world's options and seed — once
+ * PocketMine-MP has populated the chunk and the chunks round it (below),
+ * and ticks each liquid its own tick rate after the chunk was populated:
+ * the delay Liquid::onNearbyBlockChange() schedules when a neighbour
+ * changes.
  *
  * Why the chunk's population and not its first load: PocketMine-MP generates
  * a chunk's neighbours to populate it, so a populated chunk's eight
@@ -48,17 +50,18 @@ use function count;
  * was locked still lost 18 in one, to populations that started while the
  * flow went on. A flow sets blocks in its own chunk's 3x3 (water runs seven
  * blocks from a source), and a population locks that 3x3 only if it is of
- * a chunk within two of this one. So a chunk's held liquids are released
- * on a tick when none of its 3x3 is locked and every chunk within two of it
- * is loaded and populated — which PocketMine-MP never populates again, so
- * no population can lock that 3x3 from then on. A chunk at the edge of what
- * is populated keeps its liquids, in memory, until the chunks beyond it are
- * populated too. release() runs from the plugin's scheduler, which PocketMine-MP
- * ticks before it collects finished population tasks and before the world
- * ticks its scheduled updates; a liquid released there is ticked that same
- * tick (a delay of 0), once its own tick rate has passed since its chunk
- * was populated. A flow under way then carries on as PocketMine-MP's own
- * liquids do, one scheduled update after another.
+ * a chunk within two of this one. So a populated chunk is held, and its
+ * liquids released on a tick when none of its 3x3 is locked and every chunk
+ * within two of it is loaded and populated — which PocketMine-MP never
+ * populates again, so no population can lock that 3x3 from then on, and a
+ * liquid not yet due can wait in PocketMine-MP's own scheduled-update
+ * queue. A chunk at the edge of what is populated is held until the chunks
+ * beyond it are populated too: this keeps only its coordinates and the
+ * tick it was populated on, and its positions stay in the extension.
+ * release() runs from the plugin's scheduler, which PocketMine-MP ticks
+ * before it collects finished population tasks and before the world ticks
+ * its scheduled updates. A flow under way then carries on as
+ * PocketMine-MP's own liquids do, one scheduled update after another.
  *
  * What does not carry over: the updates live in memory, so a chunk generated
  * in one server run and first populated in a later one is populated without
@@ -70,10 +73,12 @@ use function count;
 final class FluidUpdateScheduler implements Listener{
 
 	/**
-	 * World id => the world and its held chunks: "x z" => [x, z, updates],
-	 * each update [x, y, z, the server tick it is due].
+	 * World id => the world, its options, and its populated chunks whose
+	 * liquids are not yet released: "x z" => [x, z, the server tick it was
+	 * populated on]. The positions themselves stay in the extension, a
+	 * dozen bytes each, until the chunk is released.
 	 *
-	 * @var array<int, array{World, array<string, array{int, int, list<array{int, int, int, int}>}>}>
+	 * @var array<int, array{World, GeneratorOptions, array<string, array{int, int, int}>}>
 	 */
 	private array $held = [];
 
@@ -89,79 +94,63 @@ final class FluidUpdateScheduler implements Listener{
 		}
 		$chunkX = $event->getChunkX();
 		$chunkZ = $event->getChunkZ();
-		$updates = \Stratum\takeFluidUpdates(
-			$options->blobPath,
-			$options->noiseSettings,
-			$options->biomeSource,
-			$world->getSeed(),
-			$chunkX,
-			$chunkZ
-		);
-		$now = $world->getServer()->getTick();
-		$held = [];
-		foreach($updates as [$x, $y, $z]){
-			$block = $world->getBlockAt($x, $y, $z);
-			// Every position the engine marks held fluid when it was
-			// generated; anything a plugin has since replaced is left alone.
-			if($block instanceof Liquid){
-				$held[] = [$x, $y, $z, $now + $block->tickRate()];
-			}
-		}
-		if($held !== []){
-			$id = $world->getId();
-			$this->held[$id][0] = $world;
-			$this->held[$id][1][$chunkX . " " . $chunkZ] = [$chunkX, $chunkZ, $held];
-		}
+		$id = $world->getId();
+		$this->held[$id] ??= [$world, $options, []];
+		$this->held[$id][2][$chunkX . " " . $chunkZ] = [$chunkX, $chunkZ, $world->getServer()->getTick()];
 	}
 
 	/**
-	 * Ticks every held liquid that is due, in every chunk no population
-	 * task is in flight around. Called once a server tick, from the
-	 * plugin's scheduler (Main).
+	 * Releases every held chunk that has settled (settledAround): takes its
+	 * liquids from the extension and schedules each, after what is left of
+	 * its tick rate since the chunk was populated. Called once a server
+	 * tick, from the plugin's scheduler (Main).
 	 */
 	public function release() : void{
-		foreach($this->held as $id => [$world, $chunks]){
+		foreach($this->held as $id => [$world, $options, $chunks]){
 			if(!$world->isLoaded()){
 				unset($this->held[$id]);
 				continue;
 			}
 			$now = $world->getServer()->getTick();
-			foreach($chunks as $key => [$chunkX, $chunkZ, $updates]){
+			foreach($chunks as $key => [$chunkX, $chunkZ, $populated]){
 				if(!self::settledAround($world, $chunkX, $chunkZ)){
 					continue;
 				}
-				$left = [];
-				foreach($updates as $update){
-					[$x, $y, $z, $due] = $update;
-					if($due > $now){
-						$left[] = $update;
-						continue;
-					}
+				unset($this->held[$id][2][$key]);
+				$updates = \Stratum\takeFluidUpdates(
+					$options->blobPath,
+					$options->noiseSettings,
+					$options->biomeSource,
+					$world->getSeed(),
+					$chunkX,
+					$chunkZ
+				);
+				foreach($updates as [$x, $y, $z]){
 					$block = $world->getBlockAt($x, $y, $z);
+					// Every position the engine marks held fluid when it was
+					// generated; anything a plugin has since replaced is left
+					// alone. Settled is for good, so a liquid not yet due can
+					// wait in PocketMine-MP's own queue.
 					if($block instanceof Liquid){
-						$world->scheduleDelayedBlockUpdate($block->getPosition(), 0);
+						$world->scheduleDelayedBlockUpdate($block->getPosition(), max(0, $populated + $block->tickRate() - $now));
 					}
-				}
-				if($left === []){
-					unset($this->held[$id][1][$key]);
-				}else{
-					$this->held[$id][1][$key][2] = $left;
 				}
 			}
-			if($this->held[$id][1] === []){
+			if($this->held[$id][2] === []){
 				unset($this->held[$id]);
 			}
 		}
 	}
 
 	/**
-	 * How many chunks hold updates not yet released, in every world.
+	 * How many populated chunks are held, their liquids not yet released,
+	 * in every world.
 	 *
 	 * @notHandler
 	 */
 	public function chunksHeld() : int{
 		$count = 0;
-		foreach($this->held as [, $chunks]){
+		foreach($this->held as [, , $chunks]){
 			$count += count($chunks);
 		}
 		return $count;

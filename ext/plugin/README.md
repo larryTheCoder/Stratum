@@ -78,25 +78,26 @@ PocketMine-MP itself can call.
   provider an unload has closed.)
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
-  the chunk loads; PocketMine-MP has no such list, so when it fires
-  `ChunkPopulateEvent` for a Stratum world this takes the chunk's positions
-  from the engine (`Stratum\takeFluidUpdates`) and ticks each that still
-  holds a liquid once the liquid's own tick rate has passed — the delay
+  the chunk loads; PocketMine-MP has no such list, so once it has fired
+  `ChunkPopulateEvent` for a chunk of a Stratum world this takes the
+  chunk's positions from the engine (`Stratum\takeFluidUpdates`) and
+  schedules a block update at each that still holds a liquid, the liquid's
+  own tick rate after the population — the delay
   `Liquid::onNearbyBlockChange()` schedules itself. Population rather than
   first load, because a populated chunk's neighbours all exist and the flow
   cannot reach ungenerated terrain. And never where a population is in
   flight or still to come: a population task locks its 3x3
   (`World::lockChunk`), and any block set there while it runs makes
-  PocketMine-MP discard its result and populate again. So a chunk's
-  liquids are held until none of its 3x3 is locked and every chunk within
-  two of it — every chunk whose population could lock that 3x3 — is loaded
-  and populated, which PocketMine-MP never populates again; a chunk at the
-  edge of what is populated keeps its liquids until the chunks beyond it
-  are. `Main` runs the release once a tick from its task scheduler, which
-  PocketMine-MP ticks before it collects finished population tasks and
-  before the worlds tick, and a released liquid is ticked in that same
-  server tick. Registered in `onEnable()`, which at `load: STARTUP` is
-  still before any world loads.
+  PocketMine-MP discard its result and populate again. So a populated chunk
+  is held — its coordinates and the tick, its positions left in the
+  extension — until none of its 3x3 is locked and every chunk within two
+  of it, every chunk whose population could lock that 3x3, is loaded and
+  populated: PocketMine-MP never populates those again, so the chunk has
+  settled for good. A chunk at the edge of what is populated is held until
+  the chunks beyond it are. `Main` runs the release once a tick from its
+  task scheduler, which PocketMine-MP ticks before it collects finished
+  population tasks and before the worlds tick. Registered in `onEnable()`,
+  which at `load: STARTUP` is still before any world loads.
 - `WorldFactory::create()` makes one of four dimensions, as vanilla's world
   presets pair settings and biome source: `OVERWORLD` (the default),
   `LARGE_BIOMES` and `AMPLIFIED` (their settings, the overworld's parameter
@@ -279,13 +280,14 @@ client.** Every check above passes. What that leaves:
   island and the outer ones, and the whole 224-chunk spawn area the smoke
   checks is air. Read from source and measured headless; no client has
   seen it.
-- Fluid updates live in memory between a chunk's generation and its
-  population — held through worker restarts while the world is loaded and
-  pinned, but not through an unload: a chunk generated as a neighbour in
-  one server run (or one load of the world) and first populated in a later
-  one gets none, and its aquifer fluid stays as
-  generated until something beside it changes. PocketMine-MP saves no
-  scheduled updates either, so a flow the server stops mid-way stops there.
+- Fluid updates live in memory between a chunk's generation and their
+  release once it has settled — held through worker restarts while the
+  world is loaded and pinned, but not through an unload: a chunk generated
+  as a neighbour, or populated at the edge of what is populated, in one
+  server run (or one load of the world) and settled only in a later one
+  gets none, and its aquifer fluid stays as generated until something
+  beside it changes. PocketMine-MP saves no scheduled updates either, so a
+  flow the server stops mid-way stops there.
 
 ## Traps this code is written around
 
