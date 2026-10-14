@@ -27,11 +27,13 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <vector>
@@ -472,6 +474,161 @@ TEST_CASE("the checks behind the hash catch what the hash would have caught", "[
             }
         }
         CHECK(caught > 0U);
+    }
+}
+
+namespace {
+
+/// The bytes the blob writes for a count or an index: four, little-endian.
+[[nodiscard]] std::vector<std::byte> le32(std::uint32_t value) {
+    std::vector<std::byte> bytes;
+    for (std::uint32_t shift = 0; shift < 32U; shift += 8U) {
+        bytes.push_back(static_cast<std::byte>((value >> shift) & 0xFFU));
+    }
+    return bytes;
+}
+
+/// The bytes the blob writes for a double: its bit pattern, little-endian.
+[[nodiscard]] std::vector<std::byte> le64(double value) {
+    const auto pattern = std::bit_cast<std::uint64_t>(value);
+    std::vector<std::byte> bytes;
+    for (std::uint64_t shift = 0; shift < 64U; shift += 8U) {
+        bytes.push_back(static_cast<std::byte>((pattern >> shift) & 0xFFU));
+    }
+    return bytes;
+}
+
+[[nodiscard]] std::vector<std::byte> joined(std::initializer_list<std::vector<std::byte>> parts) {
+    std::vector<std::byte> bytes;
+    for (const std::vector<std::byte>& part : parts) {
+        bytes.insert(bytes.end(), part.begin(), part.end());
+    }
+    return bytes;
+}
+
+/// Every offset at which @p needle starts in @p blob.
+[[nodiscard]] std::vector<std::size_t> offsetsOf(const std::vector<std::byte>& blob,
+                                                 const std::vector<std::byte>& needle) {
+    std::vector<std::size_t> found;
+    for (std::size_t at = 0; at + needle.size() <= blob.size(); ++at) {
+        if (std::equal(needle.begin(), needle.end(),
+                       blob.begin() + static_cast<std::ptrdiff_t>(at))) {
+            found.push_back(at);
+        }
+    }
+    return found;
+}
+
+/// @p blob with @p needle — which must occur in it exactly once — replaced by
+/// @p replacement, and the payload's length and hash rewritten to match: a
+/// blob every outer check accepts, wrong only where the test means it to be.
+[[nodiscard]] std::vector<std::byte> respliced(std::vector<std::byte> blob,
+                                               const std::vector<std::byte>& needle,
+                                               const std::vector<std::byte>& replacement) {
+    const std::vector<std::size_t> found = offsetsOf(blob, needle);
+    REQUIRE(found.size() == 1U);
+    const auto at = static_cast<std::ptrdiff_t>(found.front());
+    blob.erase(blob.begin() + at, blob.begin() + at + static_cast<std::ptrdiff_t>(needle.size()));
+    blob.insert(blob.begin() + at, replacement.begin(), replacement.end());
+    const std::size_t payload = payloadOffset();
+    const std::uint64_t length = blob.size() - payload;
+    for (std::size_t i = 0; i < 8U; ++i) {
+        blob[payload - 8U + i] = static_cast<std::byte>((length >> (i * 8U)) & 0xFFU);
+    }
+    reseal(blob);
+    return blob;
+}
+
+} // namespace
+
+TEST_CASE("a sealed blob whose node is not its type's shape is refused by name", "[freeze][ub]") {
+    // A blob's counts are whatever its bytes say, and the interpreter indexes
+    // a node's arguments and parameters by position. Each blob below is
+    // sealed — its length and hash agree with it — and differs from one this
+    // build wrote only in one node's counts; read unchecked, each evaluated
+    // past the end of a vector (SPEC §8). The values are chosen to have bit
+    // patterns that occur once in the blob, so the edit can find its node
+    // without the test knowing the payload's layout.
+    constexpr double kConstant = 0.3141592653589793;
+    constexpr double kFromY = -17.25;
+    constexpr double kToY = 23.75;
+    constexpr double kFromValue = 0.1234567890123;
+    constexpr double kToValue = -0.9876543210987;
+    constexpr double kMin = -0.5555555555555;
+    constexpr double kMax = 0.4444444444444;
+    const TempTree tree;
+    tree.write("density_function", "shaped", R"({"type":"minecraft:add",
+        "argument1":0.3141592653589793,
+        "argument2":{"type":"minecraft:abs","argument":{"type":"minecraft:clamp",
+            "input":{"type":"minecraft:y_clamped_gradient","from_y":-17.25,"to_y":23.75,
+                     "from_value":0.1234567890123,"to_value":-0.9876543210987},
+            "min":-0.5555555555555,"max":0.4444444444444}}})");
+    const std::vector<std::byte> good = stratum::freeze::write(buildPipeline(tree));
+    const Pipeline thawed = stratum::freeze::read(good);
+    // Where the clamp landed, for the abs that names it.
+    std::uint32_t clampIndex = 0;
+    for (std::size_t i = 0; i < thawed.graph.nodeCount(); ++i) {
+        if (thawed.graph.node(static_cast<stratum::density::NodeIndex>(i)).type ==
+            stratum::density::NodeType::Clamp) {
+            clampIndex = static_cast<std::uint32_t>(i);
+        }
+    }
+
+    SECTION("a constant with no parameter") {
+        const auto blob = respliced(good, joined({le32(1), le64(kConstant)}), le32(0));
+        CHECK_THROWS_WITH(stratum::freeze::read(blob),
+                          ContainsSubstring("malformed") &&
+                              ContainsSubstring("'minecraft:constant' carries 0 numeric "
+                                                "parameter(s) where its type reads 1"));
+    }
+
+    SECTION("a y_clamped_gradient with none of its four") {
+        const auto blob = respliced(
+            good, joined({le32(4), le64(kFromY), le64(kToY), le64(kFromValue), le64(kToValue)}),
+            le32(0));
+        CHECK_THROWS_WITH(stratum::freeze::read(blob),
+                          ContainsSubstring("'minecraft:y_clamped_gradient' carries 0 numeric "
+                                            "parameter(s) where its type reads 4"));
+    }
+
+    SECTION("a clamp with no input") {
+        // The clamp's record: one argument, the gradient's index, then its two
+        // parameters. The argument goes; the parameters stay.
+        const std::vector<std::byte> parameters = joined({le32(2), le64(kMin), le64(kMax)});
+        const std::vector<std::size_t> at = offsetsOf(good, parameters);
+        REQUIRE(at.size() == 1U);
+        REQUIRE(at.front() >= 8U);
+        const std::vector<std::byte> arguments(
+            good.begin() + static_cast<std::ptrdiff_t>(at.front() - 8U),
+            good.begin() + static_cast<std::ptrdiff_t>(at.front()));
+        REQUIRE(std::equal(arguments.begin(), arguments.begin() + 4, le32(1).begin()));
+        const auto blob =
+            respliced(good, joined({arguments, parameters}), joined({le32(0), parameters}));
+        CHECK_THROWS_WITH(stratum::freeze::read(blob),
+                          ContainsSubstring("'minecraft:clamp' carries 0 argument(s) where its "
+                                            "type reads 1"));
+    }
+
+    SECTION("an abs with no argument") {
+        // The abs's whole record: its type, one argument naming the clamp, no
+        // parameters, no noise, no spline and an empty selector.
+        const auto record = [](const std::vector<std::byte>& arguments) {
+            const auto type = static_cast<std::uint8_t>(stratum::density::NodeType::Abs);
+            return joined({{static_cast<std::byte>(type)},
+                           arguments,
+                           le32(0),
+                           {std::byte{0}, std::byte{0}},
+                           le32(0)});
+        };
+        const auto blob =
+            respliced(good, record(joined({le32(1), le32(clampIndex)})), record(le32(0)));
+        CHECK_THROWS_WITH(stratum::freeze::read(blob),
+                          ContainsSubstring("'minecraft:abs' carries 0 argument(s) where its "
+                                            "type reads 1"));
+    }
+
+    SECTION("the blob as written is read") {
+        CHECK(thawed.graph.nodeCount() > 5U);
     }
 }
 

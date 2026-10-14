@@ -29,12 +29,15 @@
 
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -46,6 +49,7 @@ using stratum::density::CellGeometry;
 using stratum::density::EvalError;
 using stratum::density::Graph;
 using stratum::density::Interpreter;
+using stratum::density::NodeType;
 using stratum::density::NoiseError;
 using stratum::density::NoiseParameters;
 using stratum::density::NoiseRegistry;
@@ -1484,4 +1488,82 @@ TEST_CASE("a noise refuses a coordinate past its 32-bit lattice", "[density][int
     // The block coordinate alone gets there at 1/8 only past int32, so an
     // ordinary noise at an ordinary scale is never refused here.
     CHECK_NOTHROW(pipeline.at("plain", Point{.x = 2147483647, .y = 0, .z = -2147483647 - 1}));
+}
+
+TEST_CASE("a node of each type's exact shape is evaluated without reading past it",
+          "[density][interpreter][ub]") {
+    // The other half of the shape check. density_graph_test.cpp shows a node
+    // of any shape but its type's is refused; this evaluates a node of exactly
+    // that shape — one argument per Function field, each a constant, one
+    // parameter per Number field, a noise, a spline and a selector where the
+    // type has one — for every type. Were the interpreter to read one more
+    // argument or parameter than the schema declares, this would read past a
+    // vector, which the sanitize preset's libstdc++ assertions abort on. A
+    // type this build refuses to evaluate is refused by EvalError, by name.
+    const ResourceLocation noiseId = ResourceLocation::parse("stratum:shaped");
+    const std::map<ResourceLocation, NoiseParameters> parameters{
+        {noiseId, NoiseParameters{.firstOctave = -4, .amplitudes = {1.0, 0.5}}}};
+    const std::vector<ResourceLocation> wanted{noiseId};
+    const NoiseRegistry noises =
+        NoiseRegistry::create(parameters, wanted, 42, stratum::density::RandomSource::Xoroshiro);
+
+    std::size_t evaluated = 0;
+    std::size_t refused = 0;
+    for (int raw = 0; stratum::density::nodeTypeName(static_cast<NodeType>(raw)) != "unknown";
+         ++raw) {
+        const auto type = static_cast<NodeType>(raw);
+        CAPTURE(stratum::density::nodeTypeName(type));
+
+        Graph::Assembler assembler;
+        stratum::density::Node constant;
+        constant.type = NodeType::Constant;
+        constant.parameters = {0.25};
+        static_cast<void>(assembler.addNode(constant));
+
+        stratum::density::Node node;
+        node.type = type;
+        for (const stratum::density::SchemaField& field : stratum::density::fieldsOf(type)) {
+            switch (field.kind) {
+                case stratum::density::FieldKind::Function:
+                    node.arguments.push_back(0);
+                    break;
+                case stratum::density::FieldKind::Number:
+                    node.parameters.push_back(1.0);
+                    break;
+                case stratum::density::FieldKind::Noise:
+                    node.noise = noiseId;
+                    break;
+                case stratum::density::FieldKind::Spline:
+                    node.spline = 0;
+                    break;
+                case stratum::density::FieldKind::Selector:
+                    node.selector = std::string(field.selectorValues.front());
+                    break;
+            }
+        }
+        const bool hasSpline = node.spline.has_value();
+        const stratum::density::NodeIndex root = assembler.addNode(std::move(node));
+        if (hasSpline) {
+            stratum::density::SplineDefinition spline;
+            spline.coordinate = 0;
+            spline.points.push_back(stratum::density::SplinePoint{
+                .location = 0.0, .derivative = 0.5, .value = 1.0, .nested = std::nullopt});
+            static_cast<void>(assembler.addSpline(std::move(spline)));
+        }
+        assembler.addRoot(ResourceLocation::parse("stratum:root"), root);
+        const Graph graph = assembler.release();
+
+        const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 8});
+        try {
+            const double value = interpreter.evaluate(root, Point{.x = 1, .y = 2, .z = 3});
+            CHECK(!std::isnan(value));
+            ++evaluated;
+        } catch (const EvalError& error) {
+            CHECK_THAT(error.what(),
+                       ContainsSubstring(std::string(stratum::density::nodeTypeName(type))));
+            ++refused;
+        }
+    }
+    CHECK(evaluated + refused == 34U);
+    CHECK(evaluated > refused);
 }

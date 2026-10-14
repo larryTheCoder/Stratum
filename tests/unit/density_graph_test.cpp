@@ -18,9 +18,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -483,4 +485,173 @@ TEST_CASE("a frozen node is held to what a pack's is", "[density][graph][ub]") {
     CHECK_THROWS_MATCHES(unfinished.addNode(bare), ResolveError,
                          Catch::Matchers::MessageMatches(
                              Catch::Matchers::ContainsSubstring("carries 0 numeric parameter")));
+}
+
+namespace {
+
+/// A node of @p type with exactly the shape its schema row declares: one
+/// argument per Function field (each naming node 0), one parameter of 1.0
+/// per Number field — inside every range the value checks hold a parameter
+/// to — and a noise, a spline and a selector where the type has one.
+[[nodiscard]] stratum::density::Node exactShape(NodeType type) {
+    stratum::density::Node node;
+    node.type = type;
+    for (const stratum::density::SchemaField& field : stratum::density::fieldsOf(type)) {
+        switch (field.kind) {
+            case stratum::density::FieldKind::Function:
+                node.arguments.push_back(0);
+                break;
+            case stratum::density::FieldKind::Number:
+                node.parameters.push_back(1.0);
+                break;
+            case stratum::density::FieldKind::Noise:
+                node.noise = ResourceLocation::parse("stratum:shaped");
+                break;
+            case stratum::density::FieldKind::Spline:
+                node.spline = 0;
+                break;
+            case stratum::density::FieldKind::Selector:
+                node.selector = std::string(field.selectorValues.front());
+                break;
+        }
+    }
+    return node;
+}
+
+/// What an assembler that already holds one constant says to @p node: the
+/// refusal's message, or nothing if it takes it.
+[[nodiscard]] std::string refusalOf(const stratum::density::Node& node) {
+    Graph::Assembler assembler;
+    stratum::density::Node constant;
+    constant.type = NodeType::Constant;
+    constant.parameters = {0.5};
+    static_cast<void>(assembler.addNode(constant));
+    try {
+        static_cast<void>(assembler.addNode(node));
+    } catch (const ResolveError& error) {
+        return error.what();
+    }
+    return {};
+}
+
+} // namespace
+
+TEST_CASE("every node type is held to its own shape, from one table", "[density][graph][ub]") {
+    // Graph::Assembler is what freeze::read rebuilds a graph through, and a
+    // blob's counts are whatever its bytes say. The interpreter indexes
+    // arguments and parameters by position, so a node with fewer of either
+    // than its type reads — a parameterless `constant`, an argumentless
+    // `clamp` — read past the end of a vector at its first evaluation. Every
+    // type, not the three a per-type check once covered: the loop runs to the
+    // first number that names no type, so a type the schema adds is in it.
+    using Catch::Matchers::ContainsSubstring;
+    std::size_t types = 0;
+    for (int raw = 0; stratum::density::nodeTypeName(static_cast<NodeType>(raw)) != "unknown";
+         ++raw) {
+        const auto type = static_cast<NodeType>(raw);
+        const std::string name = "'" + std::string(stratum::density::nodeTypeName(type)) + "'";
+        CAPTURE(name);
+        ++types;
+
+        const stratum::density::Node exact = exactShape(type);
+        CHECK(refusalOf(exact).empty());
+
+        stratum::density::Node extraParameter = exact;
+        extraParameter.parameters.push_back(1.0);
+        CHECK_THAT(refusalOf(extraParameter),
+                   ContainsSubstring(name + " carries " +
+                                     std::to_string(exact.parameters.size() + 1) +
+                                     " numeric parameter(s) where its type reads " +
+                                     std::to_string(exact.parameters.size())));
+        if (!exact.parameters.empty()) {
+            stratum::density::Node missingParameter = exact;
+            missingParameter.parameters.pop_back();
+            CHECK_THAT(refusalOf(missingParameter),
+                       ContainsSubstring(name + " carries " +
+                                         std::to_string(exact.parameters.size() - 1) +
+                                         " numeric parameter(s)"));
+        }
+
+        stratum::density::Node extraArgument = exact;
+        extraArgument.arguments.push_back(0);
+        CHECK_THAT(refusalOf(extraArgument),
+                   ContainsSubstring(name + " carries " +
+                                     std::to_string(exact.arguments.size() + 1) +
+                                     " argument(s) where its type reads " +
+                                     std::to_string(exact.arguments.size())));
+        if (!exact.arguments.empty()) {
+            stratum::density::Node missingArgument = exact;
+            missingArgument.arguments.pop_back();
+            CHECK_THAT(refusalOf(missingArgument),
+                       ContainsSubstring(name + " carries " +
+                                         std::to_string(exact.arguments.size() - 1) +
+                                         " argument(s)"));
+        }
+
+        stratum::density::Node noise = exact;
+        if (exact.noise.has_value()) {
+            noise.noise.reset();
+            CHECK_THAT(refusalOf(noise), ContainsSubstring(name + " carries no noise"));
+            noise = exact;
+            noise.inlineNoise =
+                stratum::density::NoiseParameters{.firstOctave = -4, .amplitudes = {1.0}};
+            CHECK_THAT(refusalOf(noise), ContainsSubstring("both a named and an inline noise"));
+        } else {
+            noise.noise = ResourceLocation::parse("stratum:stray");
+            CHECK_THAT(refusalOf(noise),
+                       ContainsSubstring(name + " carries a noise its type has no field for"));
+        }
+
+        stratum::density::Node spline = exact;
+        if (exact.spline.has_value()) {
+            spline.spline.reset();
+            CHECK_THAT(refusalOf(spline), ContainsSubstring(name + " carries no spline"));
+        } else {
+            spline.spline = 0;
+            CHECK_THAT(refusalOf(spline),
+                       ContainsSubstring(name + " carries a spline its type has no field for"));
+        }
+
+        stratum::density::Node selector = exact;
+        selector.selector = "type_3";
+        CHECK_THAT(refusalOf(selector),
+                   ContainsSubstring(name) && ContainsSubstring("selector 'type_3'"));
+    }
+    CHECK(types == 34U);
+
+    // The four the review drove through a sealed blob, spelled out here rather
+    // than derived from the schema the check itself reads
+    // (pipeline_freeze_test.cpp drives them through freeze::read).
+    stratum::density::Node constant;
+    constant.type = NodeType::Constant;
+    CHECK_THAT(refusalOf(constant), ContainsSubstring("'minecraft:constant' carries 0 numeric "
+                                                      "parameter(s) where its type reads 1"));
+    stratum::density::Node gradient;
+    gradient.type = NodeType::YClampedGradient;
+    CHECK_THAT(refusalOf(gradient), ContainsSubstring("'minecraft:y_clamped_gradient' carries 0 "
+                                                      "numeric parameter(s) where its type "
+                                                      "reads 4"));
+    stratum::density::Node clamp;
+    clamp.type = NodeType::Clamp;
+    clamp.parameters = {0.0, 1.0};
+    CHECK_THAT(refusalOf(clamp),
+               ContainsSubstring("'minecraft:clamp' carries 0 argument(s) where its type reads 1"));
+    stratum::density::Node abs;
+    abs.type = NodeType::Abs;
+    CHECK_THAT(refusalOf(abs),
+               ContainsSubstring("'minecraft:abs' carries 0 argument(s) where its type reads 1"));
+}
+
+TEST_CASE("a frozen spline with no points is refused", "[density][graph][ub]") {
+    // The resolver refuses one; the interpreter reads the first point wherever
+    // the coordinate falls, so from a blob it would read past the end.
+    Graph::Assembler assembler;
+    const stratum::density::SplineDefinition empty;
+    CHECK_THROWS_MATCHES(assembler.addSpline(empty), ResolveError,
+                         Catch::Matchers::MessageMatches(
+                             Catch::Matchers::ContainsSubstring("frozen spline 0 has no points")));
+    stratum::density::SplineDefinition one;
+    one.points.push_back(stratum::density::SplinePoint{
+        .location = 0.0, .derivative = 0.0, .value = 1.0, .nested = std::nullopt});
+    CHECK_NOTHROW(assembler.addSpline(one));
 }

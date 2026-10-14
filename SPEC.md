@@ -278,11 +278,12 @@ Refusals, in the order they are reached: a file that is not a blob, a
 container format this build does not write, **a pipeline engine version this
 build does not reproduce**, a schema pin that does not match, a payload whose
 length disagrees with the file, a content hash that does not match, and then
-the structural checks behind all of that — an unknown node type, an index
-that names nothing, trailing bytes. The engine-version refusal is the
-load-bearing one: a build that generates differently from the one that froze
-a world must not open it, because opening it and generating anyway is how a
-seam gets into terrain that already exists.
+the structural checks behind all of that — an unknown node type, a node not
+of its type's shape (§8), an index that names nothing, trailing bytes. The
+engine-version refusal is the load-bearing one: a build that generates
+differently from the one that froze a world must not open it, because
+opening it and generating anyway is how a seam gets into terrain that
+already exists.
 
 The content hash is MD5. That is an integrity check and not a security
 boundary — the question is whether the file changed, not whether somebody
@@ -595,8 +596,13 @@ that is undefined, so some of what they stop computed defined output before
   (`NoiseParameters::check`; 2^31 - 1 overflowed the octave's name), a
   noise-settings geometry outside the schema's ranges or not whole sections
   and cells (`settings::checkGeometry`; a `min_y` of 2147483632 overflowed
-  `maxY()`), and a node carrying fewer numeric parameters than its type
-  reads;
+  `maxY()`); a node whose shape is not its type's — a count of arguments or
+  of numeric parameters other than the type reads, or a noise, spline or
+  selector where the type has none, or none where it has one — held to one
+  table of every type's shape, counted from the schema at compile time
+  (`density_graph.cpp` `kShapes`), where a check per type had covered three
+  and a sealed blob's parameterless `constant` or argumentless `clamp` read
+  past the end of a vector; and a spline with no points;
 - when surface rules compile: a vertical anchor whose y is no 32-bit
   integer (`below_top: -2147483648`), and, under a `temperature` condition,
   a `sea_level` within 17 of INT32_MAX.

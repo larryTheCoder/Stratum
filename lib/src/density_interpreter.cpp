@@ -775,7 +775,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             const double upperBound = evaluateNode(scope, node.arguments[1]);
             // Both conversions are defined: the graph refuses, at load, a
             // lower_bound outside the schema's [-4064, 4062] and a cell_height
-            // outside [1, 2^31) (density_graph.cpp, checkParameters; SPEC §8).
+            // outside [1, 2^31) (density_graph.cpp, checkNode; SPEC §8).
             const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
             const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
             if (cellHeight <= 0) {

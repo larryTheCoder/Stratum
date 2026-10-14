@@ -39,9 +39,79 @@ struct TypeInfo {
 // authoritative about which types exist and what fields they take.
 #include "density_schema.inc"
 
+/// Whether row i of the table is the type whose enumerator is i. The
+/// generator emits both from one sorted list, so they agree by construction;
+/// this makes the compiler check it, because every lookup below indexes the
+/// table — and the shape table built from it — with an enum value.
+[[nodiscard]] constexpr bool rowsMatchEnumerators() {
+    for (std::size_t i = 0; i < kTypeTable.size(); ++i) {
+        if (static_cast<std::size_t>(kTypeTable[i].type) != i) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(rowsMatchEnumerators(), "kTypeTable is not in NodeType order");
+
 [[nodiscard]] const TypeInfo& infoOf(NodeType type) {
     return kTypeTable[static_cast<std::size_t>(type)];
 }
+
+/// What a node of one type is made of, counted from that type's schema row:
+/// a Function field is one argument and a Number field one parameter, both in
+/// declaration order, and a Noise, Spline or Selector field is the node's
+/// noise, spline or selector. The interpreter reads exactly that, by position
+/// — `arguments[i]` and `parameters[i]` — so a node of any other shape sends
+/// it past the end of a vector.
+struct Shape {
+    std::size_t arguments = 0;
+    std::size_t parameters = 0;
+    bool noise = false;
+    bool spline = false;
+    bool selector = false;
+    /// The strings a selector may be; empty for a type without one.
+    std::span<const std::string_view> selectorValues;
+};
+
+[[nodiscard]] constexpr Shape shapeOf(const TypeInfo& info) {
+    Shape shape;
+    for (const SchemaField& field : info.fields) {
+        switch (field.kind) {
+            case FieldKind::Function:
+                ++shape.arguments;
+                break;
+            case FieldKind::Number:
+                ++shape.parameters;
+                break;
+            case FieldKind::Noise:
+                shape.noise = true;
+                break;
+            case FieldKind::Spline:
+                shape.spline = true;
+                break;
+            case FieldKind::Selector:
+                shape.selector = true;
+                shape.selectorValues = field.selectorValues;
+                break;
+        }
+    }
+    return shape;
+}
+
+/// Every type's shape, one row per type, derived from the schema at compile
+/// time: ONE table for the whole check, so that no type can be left out of
+/// it the way all but three were when it was written type by type (SPEC §8).
+/// An optional field would make a count a range; the pinned schema has none,
+/// and an absent one is refused below by the count it leaves short rather
+/// than read past.
+constexpr std::array<Shape, kTypeTable.size()> kShapes = [] {
+    std::array<Shape, kTypeTable.size()> shapes{};
+    for (std::size_t i = 0; i < kTypeTable.size(); ++i) {
+        shapes[i] = shapeOf(kTypeTable[i]);
+    }
+    return shapes;
+}();
 
 /// Whether @p type names a row of the table at all. A NodeType that came out
 /// of a file rather than out of the resolver can be any byte, and indexing
@@ -59,11 +129,56 @@ struct TypeInfo {
     return text.str();
 }
 
+/// @p node refused by name unless it has exactly its type's shape (kShapes):
+/// as many arguments and numeric parameters as the type reads, a noise if
+/// and only if it samples one (named or inline, not both), a spline if and
+/// only if it is a spline, and a selector the type allows or none. The
+/// resolver builds every node to that shape from JSON, so from a pack this
+/// cannot fire; it is what stops a resealed frozen blob, whose counts are
+/// whatever its bytes say (SPEC §8).
+void checkShape(const Node& node) {
+    if (!isKnownType(node.type)) {
+        throw ResolveError("a node has type " + std::to_string(static_cast<int>(node.type)) +
+                           ", which this build does not know");
+    }
+    const Shape& shape = kShapes[static_cast<std::size_t>(node.type)];
+    const std::string name = "'" + std::string(nodeTypeName(node.type)) + "'";
+    if (node.parameters.size() != shape.parameters) {
+        throw ResolveError(name + " carries " + std::to_string(node.parameters.size()) +
+                           " numeric parameter(s) where its type reads " +
+                           std::to_string(shape.parameters));
+    }
+    if (node.arguments.size() != shape.arguments) {
+        throw ResolveError(name + " carries " + std::to_string(node.arguments.size()) +
+                           " argument(s) where its type reads " + std::to_string(shape.arguments));
+    }
+    if (node.noise.has_value() && node.inlineNoise.has_value()) {
+        throw ResolveError(name + " carries both a named and an inline noise; its noise field "
+                                  "is one or the other");
+    }
+    const bool hasNoise = node.noise.has_value() || node.inlineNoise.has_value();
+    if (hasNoise != shape.noise) {
+        throw ResolveError(name + (shape.noise ? " carries no noise, where its type samples one"
+                                               : " carries a noise its type has no field for"));
+    }
+    if (node.spline.has_value() != shape.spline) {
+        throw ResolveError(name + (shape.spline ? " carries no spline, where its type is one"
+                                                : " carries a spline its type has no field for"));
+    }
+    if (shape.selector) {
+        if (std::ranges::find(shape.selectorValues, node.selector) == shape.selectorValues.end()) {
+            throw ResolveError(name + " has the selector '" + node.selector +
+                               "', which its type does not allow");
+        }
+    } else if (!node.selector.empty()) {
+        throw ResolveError(name + " carries the selector '" + node.selector +
+                           "', which its type has no field for");
+    }
+}
+
 /// The parameters of @p node that would carry the interpreter into undefined
 /// behaviour, refused by name (SPEC §8, "Inputs that would reach undefined
-/// behaviour"). One check for both ways a graph is built — the resolver's,
-/// from JSON, and the assembler's, from a frozen blob — so a resealed blob
-/// cannot carry what a pack may not.
+/// behaviour"). Called after checkShape, so every parameter read here exists.
 ///
 /// Each check was prompted by a value that reaches undefined behaviour, but
 /// what it refuses is the schema's or the wiki's whole out-of-range set (or,
@@ -73,20 +188,11 @@ struct TypeInfo {
 /// for the undefined-behaviour refusals"). Nothing a vanilla pack writes is
 /// refused.
 void checkParameters(const Node& node) {
-    const auto needs = [&node](std::size_t count) {
-        if (node.parameters.size() != count) {
-            throw ResolveError("'" + std::string(nodeTypeName(node.type)) + "' carries " +
-                               std::to_string(node.parameters.size()) +
-                               " numeric parameter(s) where its type takes " +
-                               std::to_string(count));
-        }
-    };
     switch (node.type) {
         case NodeType::Clamp: {
             // std::clamp's precondition is `!(max < min)`; reversed bounds
             // are undefined behaviour, and nothing says what vanilla makes
             // of them. The schema bounds each, not their order.
-            needs(2);
             const double min = node.parameters[0];
             const double max = node.parameters[1];
             if (std::isnan(min) || std::isnan(max) || min > max) {
@@ -101,7 +207,6 @@ void checkParameters(const Node& node) {
             // * 2)", and cell_height int @ 1..): outside them the int
             // conversions the scan makes are undefined, and cell_height <= 0
             // would never finish. The upper bound on cell_height is int32's.
-            needs(2);
             const double lowerBound = node.parameters[0];
             const double cellHeight = node.parameters[1];
             if (std::isnan(lowerBound) || lowerBound <= -4065.0 || lowerBound >= 4063.0) {
@@ -124,7 +229,6 @@ void checkParameters(const Node& node) {
             // either reaches the lattice as NaN — undefined behaviour in the
             // int conversion. smear_scale_multiplier (1 to 8) cannot get
             // there, so it is not checked.
-            needs(5);
             static constexpr std::array<std::string_view, 4> kNames = {"xz_scale", "y_scale",
                                                                        "xz_factor", "y_factor"};
             for (std::size_t i = 0; i < kNames.size(); ++i) {
@@ -140,6 +244,13 @@ void checkParameters(const Node& node) {
         default:
             break;
     }
+}
+
+/// Everything the graph holds a node to, from a pack and from a blob alike:
+/// its shape first, so that the value checks read only parameters that exist.
+void checkNode(const Node& node) {
+    checkShape(node);
+    checkParameters(node);
 }
 
 } // namespace
@@ -348,7 +459,7 @@ private:
             }
         }
         try {
-            checkParameters(node);
+            checkNode(node);
         } catch (const ResolveError& error) {
             // Rethrown through fail() for the chain of identifiers.
             fail(error.what());
@@ -461,14 +572,20 @@ NodeIndex Graph::Assembler::addNode(Node node) {
                                ", which is not before it");
         }
     }
-    // What the resolver refuses of a pack, refused of a blob too.
-    checkParameters(node);
+    // What the resolver refuses of a pack, refused of a blob too — and the
+    // shape, which the resolver cannot get wrong and a blob can.
+    checkNode(node);
     graph_.nodes_.push_back(std::move(node));
     return next;
 }
 
 SplineIndex Graph::Assembler::addSpline(SplineDefinition spline) {
     const auto next = static_cast<SplineIndex>(graph_.splines_.size());
+    // The resolver refuses a spline with no points; the interpreter reads
+    // its first one wherever the coordinate falls (SPEC §8).
+    if (spline.points.empty()) {
+        throw ResolveError("frozen spline " + std::to_string(next) + " has no points");
+    }
     for (const SplinePoint& point : spline.points) {
         if (point.value.has_value() == point.nested.has_value()) {
             throw ResolveError("a frozen spline point is either both a value and a nested "
