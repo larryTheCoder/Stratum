@@ -3,7 +3,9 @@
 //
 // Marshaling only (SPEC §4.3): every function here parses PHP arguments,
 // calls into stratum_pmmp_core / lib, and turns the answer — or the C++
-// exception — into PHP values. No generation logic lives in this file.
+// exception — into PHP values. No generation logic lives in this file, and
+// no state either: the process-wide worlds live in stratum_pmmp_core
+// (stratum_pmmp/worlds.hpp), where they are unit-tested under threads.
 //
 // PHP surface (namespace Stratum; stratum.stub.php documents the shapes):
 //
@@ -11,6 +13,12 @@
 //   function bedrockBlockState(int $javaStateId): array
 //   function javaBlockStateCount(): int
 //   function parseBiomeSource(string $biomeSource): string
+//   function checkDimension(string $blobPath, string $noiseSettings,
+//                           string $biomeSource): void
+//   function pinWorld(string $blobPath, string $noiseSettings,
+//                     string $biomeSource, int $seed): void
+//   function unpinWorld(string $blobPath, string $noiseSettings,
+//                       string $biomeSource, int $seed): bool
 //   function takeFluidUpdates(string $blobPath, string $noiseSettings,
 //                             string $biomeSource, int $seed,
 //                             int $chunkX, int $chunkZ): array
@@ -26,17 +34,24 @@
 // Every $biomeSource is world::BiomeSource::parse's spelling: a multi-noise
 // parameter list's id (`minecraft:overworld`, `minecraft:nether`), as it
 // always was, or `minecraft:the_end` for the End's own source.
-// `parseBiomeSource` is that parse and nothing more — it opens and compiles
-// nothing — so a caller can refuse what `Dimension::open` would refuse
-// before any worker thread tries: the plugin's GeneratorOptions does, on the
-// main thread, with parse's own reason.
+//
+// THE MAIN THREAD DECIDES. On PocketMine-MP an exception thrown on a
+// generation worker takes the whole server down, so everything that can be
+// refused is refused on the main thread first: `parseBiomeSource` is the
+// parse alone, and `checkDimension` the whole of `Dimension::open` — read,
+// every check freeze::read makes, compile, and what PocketMine-MP cannot
+// hold — with nothing kept. The plugin's GeneratorOptions::validate calls
+// it when PocketMine-MP validates a world's options at load.
 //
 // THREADS. PocketMine-MP builds one Generator per worker thread, each in its
 // own PHP request. A compiled dimension is immutable (SPEC §4.1), so every
-// thread opening the same world shares one: `Registry::open` keeps a
-// process-wide registry of weak references, locked only while looking up or
-// compiling, never while generating. PHP objects themselves never cross
-// threads; each thread's Dimension object holds its own shared_ptr.
+// thread opening the same world shares one (stratum_pmmp/
+// dimension_registry.hpp), locked only while looking up or compiling, never
+// while generating. PHP objects themselves never cross threads; each
+// thread's Dimension object holds its own shared_ptr. `pinWorld` holds a
+// world's state on the main thread from world load to unload, so a worker
+// PocketMine-MP shuts down while idle takes neither the world's held fluid
+// updates nor its compiled state with it (stratum_pmmp/worlds.hpp).
 //
 // FLUID UPDATES cross threads the same way and no other: a worker's
 // `encodeChunk` leaves the chunk's fluid updates in its world's outbox
@@ -49,13 +64,14 @@
 // rethrows as Stratum\GenerationException.
 
 #include <stratum/data/pack.hpp>
-#include <stratum/data/resource_location.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/mapping/block_state.hpp>
 #include <stratum/world/dimension.hpp>
 
 #include <stratum_pmmp/chunk_encoder.hpp>
+#include <stratum_pmmp/dimension_registry.hpp>
 #include <stratum_pmmp/fluid_updates.hpp>
+#include <stratum_pmmp/worlds.hpp>
 
 // php.h has to come first — the others use macros it defines — and
 // clang-format would sort it last.
@@ -70,19 +86,15 @@ extern "C" {
 
 #include "php_stratum.h"
 
-#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
-#include <map>
 #include <memory>
-#include <mutex>
 #include <new>
+#include <stdexcept>
 #include <string>
-#include <tuple>
 #include <vector>
 
 namespace {
@@ -94,69 +106,25 @@ zend_class_entry* dimensionEntry =
 zend_object_handlers
     dimensionHandlers; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-// --- the shared registry --------------------------------------------------
-
-using RegistryKey = std::tuple<std::string, std::string, std::string, std::int64_t>;
-
-class Registry {
-public:
-    std::shared_ptr<const stratum::world::CompiledDimension> open(const std::string& blobPath,
-                                                                  const std::string& noiseSettings,
-                                                                  const std::string& biomeSource,
-                                                                  const std::int64_t seed) {
-        std::ifstream file(blobPath, std::ios::binary);
-        if (!file) {
-            throw std::runtime_error("cannot read the frozen pipeline at " + blobPath);
-        }
-        const std::vector<char> raw((std::istreambuf_iterator<char>(file)),
-                                    std::istreambuf_iterator<char>());
-        std::vector<std::byte> blob(raw.size());
-        std::memcpy(blob.data(), raw.data(), raw.size());
-
-        // Keyed by the blob's own content hash, not its path: two paths to
-        // one pipeline share, and an edited file at the same path does not.
-        const auto provenance = stratum::freeze::inspect(blob);
-        std::string hash(provenance.contentHash.size() * 2, '0');
-        for (std::size_t i = 0; i < provenance.contentHash.size(); ++i) {
-            static constexpr std::array<char, 16> kHex = {'0', '1', '2', '3', '4', '5', '6', '7',
-                                                          '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-            hash[2 * i] = kHex.at(provenance.contentHash.at(i) >> 4U);
-            hash[(2 * i) + 1] = kHex.at(provenance.contentHash.at(i) & 0x0FU);
-        }
-        const RegistryKey key{hash, noiseSettings, biomeSource, seed};
-
-        const std::lock_guard<std::mutex> lock(mutex_);
-        if (auto existing = dimensions_[key].lock()) {
-            return existing;
-        }
-        std::shared_ptr<const stratum::world::CompiledDimension> compiled =
-            stratum::world::CompiledDimension::compile(
-                stratum::freeze::read(blob), stratum::data::ResourceLocation::parse(noiseSettings),
-                stratum::world::BiomeSource::parse(biomeSource), seed);
-        dimensions_[key] = compiled;
-        return compiled;
-    }
-
-private:
-    std::mutex mutex_;
-    std::map<RegistryKey, std::weak_ptr<const stratum::world::CompiledDimension>> dimensions_;
-};
-
-Registry& registry() {
-    static Registry instance;
-    return instance;
-}
-
-/// Every world's fluid-update outbox. Keyed by the world's own generator
-/// options and seed, not by the blob's content as the registry above is
-/// (fluidUpdateWorldKey's doc says why).
-stratum::pmmp::FluidUpdateOutboxes& outboxes() {
-    static stratum::pmmp::FluidUpdateOutboxes instance;
+/// Every world in the process: compiled dimensions, fluid-update outboxes
+/// and the main thread's pins (stratum_pmmp/worlds.hpp).
+stratum::pmmp::Worlds& worlds() {
+    static stratum::pmmp::Worlds instance;
     return instance;
 }
 
 [[nodiscard]] std::string fromZend(const zend_string* text) {
     return {ZSTR_VAL(text), ZSTR_LEN(text)};
+}
+
+[[nodiscard]] stratum::pmmp::WorldOptions worldOptions(const zend_string* blobPath,
+                                                       const zend_string* noiseSettings,
+                                                       const zend_string* biomeSource,
+                                                       const zend_long seed) {
+    return {.blobPath = fromZend(blobPath),
+            .noiseSettings = fromZend(noiseSettings),
+            .biomeSource = fromZend(biomeSource),
+            .seed = static_cast<std::int64_t>(seed)};
 }
 
 // --- errors -----------------------------------------------------------------
@@ -247,6 +215,26 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_parseBiomeSource, 0, 1, IS_STRIN
 ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_checkDimension, 0, 3, IS_VOID, 0)
+ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_pinWorld, 0, 4, IS_VOID, 0)
+ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, seed, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_unpinWorld, 0, 4, _IS_BOOL, 0)
+ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, biomeSource, IS_STRING, 0)
+ZEND_ARG_TYPE_INFO(0, seed, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_takeFluidUpdates, 0, 6, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, blobPath, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, noiseSettings, IS_STRING, 0)
@@ -282,16 +270,13 @@ static ZEND_FUNCTION(stratum_freezePipeline) {
     Z_PARAM_STR(blobPath)
     ZEND_PARSE_PARAMETERS_END();
     try {
-        const std::filesystem::path root(std::string(ZSTR_VAL(versionRoot), ZSTR_LEN(versionRoot)));
+        const std::filesystem::path root(fromZend(versionRoot));
         const std::vector<std::byte> blob = stratum::freeze::write(stratum::freeze::resolve(
             stratum::data::Pack::open(root / "worldgen"), root / "biome_parameters"));
-        const std::string target(ZSTR_VAL(blobPath), ZSTR_LEN(blobPath));
-        std::ofstream out(target, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(blob.data()),
-                  static_cast<std::streamsize>(blob.size()));
-        if (!out) {
-            throw std::runtime_error("cannot write the frozen pipeline to " + target);
-        }
+        // Whole or not at all: a reader of $blobPath — a world's generator
+        // opening it — finds the file it replaced or this one, never a
+        // part-written blob.
+        stratum::pmmp::writePipelineFile(fromZend(blobPath), blob);
     } catch (...) {
         throwAsPhp();
     }
@@ -351,6 +336,62 @@ static ZEND_FUNCTION(stratum_parseBiomeSource) {
     }
 }
 
+static ZEND_FUNCTION(stratum_checkDimension) {
+    zend_string* blobPath = nullptr;
+    zend_string* noiseSettings = nullptr;
+    zend_string* biomeSource = nullptr;
+    ZEND_PARSE_PARAMETERS_START(3, 3)
+    Z_PARAM_STR(blobPath)
+    Z_PARAM_STR(noiseSettings)
+    Z_PARAM_STR(biomeSource)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        // Any seed: nothing compileForPocketMine refuses depends on one.
+        // Compiled and dropped; the shared registry is not touched.
+        static_cast<void>(
+            stratum::pmmp::compileForPocketMine(stratum::pmmp::readPipelineFile(fromZend(blobPath)),
+                                                fromZend(noiseSettings), fromZend(biomeSource), 0));
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
+static ZEND_FUNCTION(stratum_pinWorld) {
+    zend_string* blobPath = nullptr;
+    zend_string* noiseSettings = nullptr;
+    zend_string* biomeSource = nullptr;
+    zend_long seed = 0;
+    ZEND_PARSE_PARAMETERS_START(4, 4)
+    Z_PARAM_STR(blobPath)
+    Z_PARAM_STR(noiseSettings)
+    Z_PARAM_STR(biomeSource)
+    Z_PARAM_LONG(seed)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        worlds().pin(worldOptions(blobPath, noiseSettings, biomeSource, seed));
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
+static ZEND_FUNCTION(stratum_unpinWorld) {
+    zend_string* blobPath = nullptr;
+    zend_string* noiseSettings = nullptr;
+    zend_string* biomeSource = nullptr;
+    zend_long seed = 0;
+    ZEND_PARSE_PARAMETERS_START(4, 4)
+    Z_PARAM_STR(blobPath)
+    Z_PARAM_STR(noiseSettings)
+    Z_PARAM_STR(biomeSource)
+    Z_PARAM_LONG(seed)
+    ZEND_PARSE_PARAMETERS_END();
+    try {
+        RETVAL_BOOL(worlds().unpin(worldOptions(blobPath, noiseSettings, biomeSource, seed)));
+    } catch (...) {
+        throwAsPhp();
+    }
+}
+
 static ZEND_FUNCTION(stratum_takeFluidUpdates) {
     zend_string* blobPath = nullptr;
     zend_string* noiseSettings = nullptr;
@@ -371,15 +412,10 @@ static ZEND_FUNCTION(stratum_takeFluidUpdates) {
         // chunk a coordinate names.
         const auto x = static_cast<std::int32_t>(chunkX);
         const auto z = static_cast<std::int32_t>(chunkZ);
-        std::vector<stratum::pmmp::FluidUpdate> updates;
-        // No world open under this key means no worker generated anything
-        // for it: nothing to take, and nothing is created by asking.
-        if (const auto outbox = outboxes().find(stratum::pmmp::fluidUpdateWorldKey(
-                fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeSource),
-                static_cast<std::int64_t>(seed)));
-            outbox != nullptr) {
-            updates = outbox->take(x, z);
-        }
+        // Nothing is open or created by asking: a world no generator has
+        // generated for has nothing to take.
+        const std::vector<stratum::pmmp::FluidUpdate> updates = worlds().takeFluidUpdates(
+            worldOptions(blobPath, noiseSettings, biomeSource, seed), x, z);
         array_init_size(return_value, static_cast<std::uint32_t>(updates.size()));
         for (const stratum::pmmp::FluidUpdate& update : updates) {
             // World coordinates, as World::scheduleDelayedBlockUpdate takes.
@@ -411,15 +447,12 @@ static ZEND_METHOD(Stratum_Dimension, open) {
     Z_PARAM_LONG(seed)
     ZEND_PARSE_PARAMETERS_END();
     try {
-        auto dimension = registry().open(fromZend(blobPath), fromZend(noiseSettings),
-                                         fromZend(biomeSource), static_cast<std::int64_t>(seed));
-        auto fluidUpdates = outboxes().attach(stratum::pmmp::fluidUpdateWorldKey(
-            fromZend(blobPath), fromZend(noiseSettings), fromZend(biomeSource),
-            static_cast<std::int64_t>(seed)));
+        stratum::pmmp::OpenWorld world =
+            worlds().open(worldOptions(blobPath, noiseSettings, biomeSource, seed));
         object_init_ex(return_value, dimensionEntry);
         DimensionObject* object = fetchDimension(Z_OBJ_P(return_value));
-        object->dimension = std::move(dimension);
-        object->fluidUpdates = std::move(fluidUpdates);
+        object->dimension = std::move(world.dimension);
+        object->fluidUpdates = std::move(world.fluidUpdates);
     } catch (...) {
         throwAsPhp();
     }
@@ -480,8 +513,15 @@ static const zend_function_entry stratum_functions[] = {
                              arginfo_javaBlockStateCount)
                 ZEND_NS_NAMED_FE("Stratum", parseBiomeSource, ZEND_FN(stratum_parseBiomeSource),
                                  arginfo_parseBiomeSource)
-                    ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates, ZEND_FN(stratum_takeFluidUpdates),
-                                     arginfo_takeFluidUpdates) ZEND_FE_END};
+                    ZEND_NS_NAMED_FE("Stratum", checkDimension, ZEND_FN(stratum_checkDimension),
+                                     arginfo_checkDimension)
+                        ZEND_NS_NAMED_FE("Stratum", pinWorld, ZEND_FN(stratum_pinWorld),
+                                         arginfo_pinWorld)
+                            ZEND_NS_NAMED_FE("Stratum", unpinWorld, ZEND_FN(stratum_unpinWorld),
+                                             arginfo_unpinWorld)
+                                ZEND_NS_NAMED_FE("Stratum", takeFluidUpdates,
+                                                 ZEND_FN(stratum_takeFluidUpdates),
+                                                 arginfo_takeFluidUpdates) ZEND_FE_END};
 
 static const zend_function_entry dimension_methods[] = {
     ZEND_ME(Stratum_Dimension, __construct, arginfo_Dimension___construct, ZEND_ACC_PRIVATE)

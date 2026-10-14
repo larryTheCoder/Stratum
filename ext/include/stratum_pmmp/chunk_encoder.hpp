@@ -109,11 +109,19 @@ struct EncodedChunk {
 /// smallest width that holds it.
 [[nodiscard]] PalettedLayer encodeLayer(std::span<const std::uint32_t, kSubChunkVolume> values);
 
+/// Throws EncodeError, naming the span, unless @p geometry lies within
+/// PocketMine-MP's 24 sub-chunks (y -64 to 320) on sub-chunk boundaries.
+/// encodeChunk refuses the same; this is the same refusal for a binding to
+/// make when it opens a dimension (dimension_registry.hpp), so a dimension
+/// that cannot be encoded is refused there — on PocketMine-MP's main thread
+/// — rather than at its first chunk, on a worker.
+void requireFitsChunk(const settings::NoiseGeometry& geometry);
+
 /// Chunk (@p chunkX, @p chunkZ) of @p dimension, as all 24 PocketMine-MP
 /// sub-chunks, bottom to top (EncodedChunk::subChunks says what fills those
 /// outside the noise height), plus its fluid updates. Throws EncodeError for
-/// a dimension that does not fit PocketMine-MP's chunk, and lets
-/// `mapping::BlockMappingError` through, naming the block.
+/// a dimension that does not fit PocketMine-MP's chunk (requireFitsChunk),
+/// and lets `mapping::BlockMappingError` through, naming the block.
 [[nodiscard]] EncodedChunk encodeChunk(const world::CompiledDimension& dimension,
                                        std::int32_t chunkX, std::int32_t chunkZ);
 

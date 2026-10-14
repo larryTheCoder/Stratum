@@ -7,7 +7,9 @@
 
 add_library(stratum_pmmp_core STATIC
     src/chunk_encoder.cpp
+    src/dimension_registry.cpp
     src/fluid_updates.cpp
+    src/worlds.cpp
 )
 add_library(stratum::pmmp_core ALIAS stratum_pmmp_core)
 
@@ -15,8 +17,9 @@ target_include_directories(stratum_pmmp_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
-# Threads: the fluid-update outbox is handed between PocketMine-MP's
-# generation workers and its main thread (include/stratum_pmmp/fluid_updates.hpp).
+# Threads: compiled dimensions, fluid-update outboxes and the main thread's
+# pins are shared between PocketMine-MP's generation workers and its main
+# thread (include/stratum_pmmp/worlds.hpp).
 find_package(Threads REQUIRED)
 target_link_libraries(stratum_pmmp_core PUBLIC
     stratum::core

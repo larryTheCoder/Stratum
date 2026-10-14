@@ -65,10 +65,12 @@ private:
 
 /// Every world's outbox in the process, keyed by a string naming the world.
 ///
-/// An outbox lives exactly as long as something attached to it: the zend
-/// module attaches one to every `Stratum\Dimension` a generator opens, so a
-/// world's outbox — and any updates of chunks generated but never populated
-/// — goes when PocketMine-MP drops the world's generators at unload.
+/// An outbox lives exactly as long as something attached to it: every
+/// `Stratum\Dimension` a generator opens, and the main thread's pin of the
+/// world from load to unload (worlds.hpp). So a world's outbox — and any
+/// updates of chunks generated but never populated — outlives the worker
+/// restarts PocketMine-MP makes while the world is loaded, and goes once the
+/// world is unloaded and its generators dropped.
 /// `find()` never creates one: the main thread asking about a world no
 /// worker has opened gets nothing rather than an outbox nobody will fill.
 class FluidUpdateOutboxes {

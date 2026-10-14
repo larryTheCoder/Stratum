@@ -24,8 +24,23 @@ pipeline, opens a dimension from a frozen blob — one compiled dimension per
 process for every worker thread that opens the same world — and returns
 `encodeChunk()`'s layers and `bedrockBlockState()`'s triples as PHP arrays.
 `Stratum\parseBiomeSource()` reads a biome source as opening a dimension
-will, and opens nothing, so the plugin refuses a source this build does not
-implement on the main thread (`zend/tests/006_biome_source.phpt`).
+will, and opens nothing (`zend/tests/006_biome_source.phpt`);
+`Stratum\checkDimension()` is the whole of opening one — read, every check
+the blob's header and content hash are held to, compile, and what
+PocketMine-MP cannot hold (a dimension outside its 24 sub-chunks, a
+parameter list naming a biome with no Bedrock id) — with no seed and
+nothing kept, so a caller can refuse on the main thread everything a worker
+would otherwise die on (`zend/tests/008_pins.phpt`). Compiled dimensions
+are shared by the blob's every byte, never by the header's payload hash, so
+a blob restamped with another engine version is refused even while its
+twin is open (`zend/tests/007_frozen_header.phpt`). `Stratum\pinWorld()`
+holds a world's state on the main thread from world load to unload, so a
+worker PocketMine-MP shuts down while idle takes neither its held fluid
+updates nor its compiled state with it. The registry, the pins and the
+outboxes are plain C++ in `stratum_pmmp_core`
+(`include/stratum_pmmp/dimension_registry.hpp`, `worlds.hpp`), held to
+`tests/worlds_test.cpp` under threads with a pipeline the test freezes
+itself; `Stratum\freezePipeline()` writes whole or not at all.
 C++ exceptions never cross into the engine; each becomes a
 `Stratum\GenerationException`. Build it against a thread-safe PHP:
 

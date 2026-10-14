@@ -13,6 +13,12 @@ namespace Stratum;
  * Freezes the pipeline under $versionRoot (worldgen/ and biome_parameters/
  * side by side, as tools/fetch-vanilla leaves them) into $blobPath (SPEC §6).
  * A world generates from that blob and never from the pack again.
+ *
+ * Written whole or not at all: the bytes go to a new file beside $blobPath,
+ * which is then renamed over it, so a reader finds the file it replaced or
+ * this one and never part of either. Overwrites whatever is at $blobPath —
+ * refusing to replace an existing world's blob is the caller's to do
+ * (the plugin's WorldFactory::create does).
  */
 function freezePipeline(string $versionRoot, string $blobPath) : void{}
 
@@ -42,6 +48,48 @@ function javaBlockStateCount() : int{}
 function parseBiomeSource(string $biomeSource) : string{}
 
 /**
+ * Everything Dimension::open would refuse for these options, refused here
+ * with the same reason — and nothing kept. Reads the blob, makes every check
+ * the frozen pipeline's header and content hash are held to (container
+ * format, pipeline engine version, Minecraft pin, SPEC §6), compiles the
+ * dimension (unknown settings or parameter list, a legacy-random-source
+ * dimension, a biome source type this build does not implement), and refuses
+ * what PocketMine-MP cannot hold: a dimension outside its 24 sub-chunks, or a
+ * parameter list naming a biome with no Bedrock id. Takes no seed because no
+ * refusal depends on one. Built for the main thread, where PocketMine-MP
+ * validates a world's options at load: a worker that throws takes the server
+ * down.
+ *
+ * Not checked, because nothing can enumerate them yet: the block states the
+ * dimension places. encodeChunk still refuses one it cannot map.
+ *
+ * @throws GenerationException naming what is wrong.
+ */
+function checkDimension(string $blobPath, string $noiseSettings, string $biomeSource) : void{}
+
+/**
+ * Holds the world opened with these options and this seed — its compiled
+ * dimension and its fluid-update outbox — on this process until
+ * unpinWorld(). Built for the main thread, from world load to world unload.
+ *
+ * While pinned, Dimension::open() hands every generator the state the pin
+ * holds without reading $blobPath again, and the fluid updates generators
+ * leave outlive the generators themselves: PocketMine-MP shuts idle
+ * workers down, and with them every Dimension they held. Pins are counted;
+ * a world already pinned keeps the state it was first pinned with.
+ *
+ * @throws GenerationException with Dimension::open()'s reason, pinning
+ * nothing.
+ */
+function pinWorld(string $blobPath, string $noiseSettings, string $biomeSource, int $seed) : void{}
+
+/**
+ * One pinWorld() fewer for this world. Its state goes once neither a pin nor
+ * a Dimension holds it. Returns false, and does nothing, if it is not pinned.
+ */
+function unpinWorld(string $blobPath, string $noiseSettings, string $biomeSource, int $seed) : bool{}
+
+/**
  * Removes and returns the fluid updates Dimension::encodeChunk() left for
  * chunk ($chunkX, $chunkZ) of the world whose generator was opened with
  * these options and this seed, as world [x, y, z] positions. These are the
@@ -61,7 +109,10 @@ final class Dimension{
 
 	/**
 	 * One dimension of a world, compiled from its frozen pipeline. Shared by
-	 * every thread that opens the same blob, settings, biome source and seed.
+	 * every thread that opens the same blob — every byte of it — settings,
+	 * biome source and seed. A world pinned with pinWorld() gets the pinned
+	 * state, and $blobPath is not read. Refuses what checkDimension() refuses,
+	 * with the same reason.
 	 *
 	 * $biomeSource names the dimension's biome source: a multi-noise
 	 * parameter list's id ("minecraft:overworld", "minecraft:nether"), or

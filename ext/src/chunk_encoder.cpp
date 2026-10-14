@@ -84,9 +84,7 @@ PalettedLayer encodeLayer(const std::span<const std::uint32_t, kSubChunkVolume> 
     return layer;
 }
 
-EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::int32_t chunkX,
-                         const std::int32_t chunkZ) {
-    const settings::NoiseGeometry& geometry = dimension.geometry();
+void requireFitsChunk(const settings::NoiseGeometry& geometry) {
     if (javamath::floorMod(geometry.minY, kSubChunkEdge) != 0 ||
         javamath::floorMod(geometry.height, kSubChunkEdge) != 0 ||
         geometry.minY < kMinSubChunk * kSubChunkEdge ||
@@ -96,6 +94,12 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
                           " does not fit PocketMine-MP's 24 sub-chunks (y -64 to 320) on "
                           "sub-chunk boundaries");
     }
+}
+
+EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::int32_t chunkX,
+                         const std::int32_t chunkZ) {
+    const settings::NoiseGeometry& geometry = dimension.geometry();
+    requireFitsChunk(geometry);
 
     terrain::ChunkBuffer buffer(geometry);
     dimension.fillBlocks(chunkX, chunkZ, buffer);
