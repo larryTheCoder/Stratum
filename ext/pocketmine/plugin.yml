@@ -1,0 +1,13 @@
+name: StratumEvidence
+main: Stratum\PocketMineEvidence\EvidencePlugin
+version: 0.1.0
+# Test tooling for tools/pmmp-dev, never a part of the Stratum plugin: packed
+# from this directory (plugin.yml and src/) beside the plugin under test, and
+# told what to do by the stratum-evidence.json the tool writes into the
+# server directory (src/EvidencePlugin.php says what it does).
+api: [5.44.0]
+load: STARTUP
+depend: [Stratum]
+src-namespace-prefix: Stratum\PocketMineEvidence
+author: Stratum contributors
+description: Evidence for tools/pmmp-dev, from inside a real PocketMine-MP server.

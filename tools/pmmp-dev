@@ -38,11 +38,14 @@
 #       update checks all off; the Stratum plugin packed into plugins/; the
 #       pipeline frozen from <root> into the world's own folder, as
 #       Stratum\PMMP\WorldFactory leaves it; the world as a pocketmine.yml
-#       `worlds:` entry and the default world. <dir> may not be inside this
-#       checkout outside build/, where a frozen pipeline and LevelDB files
-#       would be one `git add -A` from a commit (each server directory also
-#       ignores itself); use one under build/ or $TMPDIR. Prints the command
-#       that runs it.
+#       `worlds:` entry and the default world. For the End, the evidence
+#       plugin too (ext/pocketmine's plugin.yml and src/), which sets the new
+#       world's spawn to 0 70 0, over the main island, as the world is
+#       created: PocketMine-MP gives every new world 256 70 256, over the
+#       void there. <dir> may not be inside this checkout outside build/,
+#       where a frozen pipeline and LevelDB files would be one `git add -A`
+#       from a commit (each server directory also ignores itself); use one
+#       under build/ or $TMPDIR. Prints the command that runs it.
 #   tools/pmmp-dev check-load --stratum-so <so> [--build-php-config <php-config>]
 #   tools/pmmp-dev phpt --stratum-so <so> --build-php-config <php-config> --fixtures-dir <dir>
 #                  -- <test-dir>...
@@ -444,6 +447,16 @@ write_server_dir() {
     "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
         "${plugin_dir}" "${dir}/plugins/Stratum.phar" >&2
 
+    # The evidence plugin (ext/pocketmine's plugin.yml and src/), for the
+    # End: it sets the new world's spawn over the main island. The plugin
+    # under test is the same either way.
+    if [[ "${dimension}" == "end" ]]; then
+        "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
+            "${evidence}" "${dir}/plugins/StratumEvidence.phar" >&2
+        "${php_bin}" -n -r 'echo json_encode(["world" => $argv[1], "spawn" => [0, 70, 0]], JSON_THROW_ON_ERROR), "\n";' \
+            "${world}" >"${dir}/stratum-evidence.json"
+    fi
+
     cat >"${dir}/php.ini" <<EOF
 ; Written by tools/pmmp-dev. pmmp/PHP-Binaries' own php.ini settings, with
 ; extension_dir pointed at this machine's copy (the release's compiled-in
@@ -637,11 +650,15 @@ cmd_smoke() {
     echo "PocketMine-MP ${PMMP_VERSION}, headless; world ${world} (${settings} / ${biomes}), seed ${seed}; async-workers ${async_workers}"
     echo "server: ${outcome} after ${spawn_seen}s; console stop $([[ ${stopped} -eq 1 ]] && echo "returned" || echo "DID NOT return"); exit code ${rc}"
     [[ "${outcome}" == "spawn" ]] || failures+=("the spawn area never finished generating (${outcome})")
+    if [[ "${dimension}" == "end" ]]; then
+        grep -q "\[StratumEvidence\] world \"${world}\" created; its spawn set to 0 70 0" "${server_log}" ||
+            failures+=("the evidence plugin never set the End's spawn over the main island")
+    fi
     [[ ${stopped} -eq 1 ]] || failures+=("the server did not stop on the console's stop")
     [[ ${rc} -eq 0 ]] || failures+=("the server exited ${rc}")
 
     local line
-    for line in "Loading Stratum" "Enabling Stratum" "Preparing world \"${world}\"" "Stopping the server" "Disabling Stratum" "Unloading world \"${world}\"" "Stopping other threads"; do
+    for line in "Loading Stratum v" "Enabling Stratum v" "Preparing world \"${world}\"" "Stopping the server" "Disabling Stratum v" "Unloading world \"${world}\"" "Stopping other threads"; do
         grep -q "${line}" "${server_log}" || failures+=("server.log never says '${line}'")
     done
 

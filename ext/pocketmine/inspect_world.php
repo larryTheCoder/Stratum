@@ -17,7 +17,9 @@ declare(strict_types=1);
  * PocketMine-MP's own LevelDB provider, as the server reads them: every
  * chunk on disk, which are populated, and whether every chunk of the spawn
  * area WorldManager::generateWorld() asks to populate (ChunkSelector, radius
- * 8, round the level.dat spawn) is there and populated.
+ * 8, round the level.dat spawn) is there and populated. That spawn area must
+ * hold some terrain in what the engine generates: a comparison of air with
+ * air would pass a generator that drops every block.
  *
  * Then what every chunk on disk HOLDS, populated or not, block by block and
  * biome by biome, against what it should: the world's own options — the
@@ -82,8 +84,9 @@ declare(strict_types=1);
  * pinned.
  *
  * Fails on a wrong generator, options or seed, on no chunks at all, on a
- * spawn-area chunk missing or unpopulated, and on any chunk that is not what
- * the engine generates for it, as above.
+ * spawn-area chunk missing or unpopulated, on a spawn area the engine fills
+ * with nothing but air, and on any chunk that is not what the engine
+ * generates for it, as above.
  */
 
 namespace Stratum\PocketMineEvidence;
@@ -622,16 +625,23 @@ if($changes > $bound){
 
 $spawnChunks = 0;
 $missing = [];
+$terrain = 0;
 foreach((new ChunkSelector())->selectChunks(8, $spawnX >> 4, $spawnZ >> 4) as $hash){
 	$spawnChunks++;
 	if(!isset($populated[$hash])){
 		World::getXZ($hash, $x, $z);
 		$missing[] = $x . "," . $z;
 	}
+	foreach($expectedLayers[$hash] ?? [] as $expected){
+		if($expected !== null){
+			$terrain += 4096;
+		}
+	}
 }
 
 echo "chunks on disk: ", $onDisk, " (", $loaded, " loaded by PocketMine-MP's LevelDB provider), ", count($populated), " populated\n";
-echo "spawn area (ChunkSelector radius 8 round the spawn): ", $spawnChunks, " chunks, ", $spawnChunks - count($missing), " on disk and populated\n";
+echo "spawn area (ChunkSelector radius 8 round the spawn): ", $spawnChunks, " chunks, ", $spawnChunks - count($missing), " on disk and populated; ",
+	$terrain, " blocks of it in sub-chunks the engine fills with more than air\n";
 arsort($presentBlocks);
 echo "Bedrock blocks present (sub-chunk palettes holding each): ";
 $parts = [];
@@ -669,6 +679,10 @@ if($onDisk === 0){
 }
 if(count($missing) > 0){
 	$failures[] = count($missing) . " spawn-area chunks missing or unpopulated: " . implode(" ", array_slice($missing, 0, 20));
+}
+if($terrain === 0 && $spawnChunks > 0){
+	$failures[] = "the engine generates nothing but air in the spawn area round " . $spawnX . "," . $spawnZ .
+		", so comparing it would pass a generator that drops every block";
 }
 if(count($differences) > 0){
 	$failures[] = count($differences) . " kind(s) of difference between the chunks on disk and what the engine generates for them (listed above)";
