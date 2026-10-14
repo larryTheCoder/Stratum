@@ -93,8 +93,14 @@ PHP: PocketMine-MP's own PHP (pmmp/PHP-Binaries) is the same 8.2.30 ZTS
 with the same build id, and the module loads into it beside pmmpthread,
 chunkutils2, leveldb and the rest and passes every PHPT there.
 `pocketmine/` holds the checks that run under PocketMine-MP's own classes:
-the block state and biome censuses, a pmmpthread case, and what a stopped
-server left on disk. `plugin/README.md` says what they found.
+the block state and biome censuses, a pmmpthread case, what a stopped
+server left on disk (`inspect_world.php`), and what `tools/pmmp-dev
+observe` saw (`check_observation.php`). It is also a test-only plugin,
+never part of Stratum's (`pocketmine/plugin.yml`,
+`src/EvidencePlugin.php`): packed beside it by `tools/pmmp-dev`, it sets
+the End smoke's spawn over the main island and reports, from inside the
+server, what the observation needs. `plugin/README.md` says what they
+found.
 
 ## How the pieces fit
 
@@ -108,9 +114,12 @@ server left on disk. `plugin/README.md` says what they found.
    world loader takes for every palette entry on disk — and builds the
    `SubChunk`s. A block PocketMine-MP does not implement goes through an
    explicit fallback with a log, never a silent substitution (SPEC §9).
-5. When PocketMine-MP reports a chunk populated, `plugin/` takes its fluid
-   updates and schedules a block update at each liquid, so aquifer water
-   and lava flow as they would in a world a Java server generated.
+5. Once PocketMine-MP has populated a chunk and it has settled — every
+   chunk within two of it populated too, so no population can be under
+   way or still to come in its 3x3, where its flow first sets blocks —
+   `plugin/` takes its fluid updates and schedules a block update at each
+   liquid, so aquifer water and lava flow by PocketMine-MP's own liquid
+   rules, from where a Java server would set them flowing.
 
 No per-protocol table appears anywhere in this: a generator never learns
 which Bedrock version will connect. That translation belongs to

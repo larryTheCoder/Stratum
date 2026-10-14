@@ -79,15 +79,18 @@ PocketMine-MP itself can call.
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so once it has fired
-  `ChunkPopulateEvent` for a chunk of a Stratum world this takes the
-  chunk's positions from the engine (`Stratum\takeFluidUpdates`) and
-  schedules a block update at each that still holds a liquid, the liquid's
-  own tick rate after the population — the delay
+  `ChunkPopulateEvent` for a chunk of a Stratum world, and the chunk has
+  settled (below), this takes the chunk's positions from the engine
+  (`Stratum\takeFluidUpdates`) and schedules a block update at each that
+  still holds a liquid, the liquid's own tick rate after the population
+  (what is left of it, if the chunk settled later) — the delay
   `Liquid::onNearbyBlockChange()` schedules itself. Population rather than
-  first load, because a populated chunk's neighbours all exist and the flow
-  cannot reach ungenerated terrain. And never where a population is in
-  flight or still to come: a population task locks its 3x3
-  (`World::lockChunk`), and any block set there while it runs makes
+  first load, because a populated chunk's neighbours all exist; once it has
+  settled, every chunk within three of it exists, so a flow reaches
+  ungenerated terrain — where `World::setBlockAt()` throws, inside a
+  scheduled update — only by running on past all of them. And never where
+  a population is in flight or still to come: a population task locks its
+  3x3 (`World::lockChunk`), and any block set there while it runs makes
   PocketMine-MP discard its result and populate again. So a populated chunk
   is held — its coordinates and the tick, its positions left in the
   extension — until none of its 3x3 is locked and every chunk within two
@@ -127,9 +130,11 @@ without it refuses the plugin by name at load time instead of failing
 inside a worker thread.
 
 PocketMine-MP 5.44.3 loads plugins from phars only — without DevTools it
-registers no folder loader — so pack this directory first:
+registers no folder loader — so pack this directory first, into the
+server's `plugins/` and never into this checkout:
 `php -d phar.readonly=0 ext/pocketmine/build_plugin_phar.php ext/plugin
-plugins/Stratum.phar` (`plugin.yml` at the root, `src/` beside it).
+<server>/plugins/Stratum.phar` (`plugin.yml` at the root, `src/` beside
+it).
 
 ```php
 // Creating a Stratum world, e.g. from a command or another plugin:
@@ -167,7 +172,10 @@ the void; `WorldFactory::create()` with `THE_END` does not.
 them. `tools/pmmp-dev server <dir> --stratum-so <so> --version-root
 <root>` writes a hermetic headless server directory — loopback only,
 nothing that phones home, the plugin packed into `plugins/`, the world as
-the `worlds:` entry above — and prints the command that starts it.
+the `worlds:` entry above, its blob named relatively — and prints the
+command that starts it. It refuses a `<dir>` inside this checkout outside
+`build/`, where a frozen pipeline would be one commit away from being
+published, and every server directory it writes ignores itself.
 `ctest --preset pmmp` is the evidence, local and not CI:
 
 - `pmmp.load`: the module's build id and the ABI lines of both PHPs agree,
@@ -187,18 +195,40 @@ the `worlds:` entry above — and prints the command that starts it.
   Dimension and encoding at once, byte-identical to one thread's encode.
 - `pmmp.smoke.overworld`, `pmmp.smoke.end`: a server boot that generates
   the spawn area (224 chunks populated) and stops from the console, with
-  `server.log`, crash dumps and `level.dat` checked, and then every chunk
-  on disk (292) read back through PocketMine-MP's own LevelDB provider and
-  compared, block by block and biome by biome, with what the engine
-  generates for it from the world's own options and seed, each block state
-  through `BlockStateTranslator` (`ext/pocketmine/inspect_world.php`). The
-  biomes must match exactly. A block may differ only as PocketMine-MP's own
-  liquid rules change the terrain once `FluidUpdateScheduler` sets the
-  aquifer water and lava flowing — air now water or lava, lava hardened to
-  obsidian or cobblestone beside water, water or flowed water turned to
-  stone where lava flowed into it — and each such change is counted.
-  Anything else fails, which is what a plugin writing empty or shifted
-  chunks does (both tried, both caught).
+  `server.log` (the network interface on 127.0.0.1 and nowhere else, no
+  Query listener, no error, and not one discarded population), crash
+  dumps and `level.dat` checked, and then every chunk on disk (292) read
+  back through PocketMine-MP's own LevelDB provider and compared, block by
+  block and biome by biome, with what the engine generates for it from the
+  world's own options and seed, each block state through
+  `BlockStateTranslator` (`ext/pocketmine/inspect_world.php`). The biomes
+  must match exactly. A block may differ only where PocketMine-MP 5.44.3's
+  own liquid and falling-block rules, read from its `Liquid`, `Water`,
+  `Lava` and `FallableTrait`, would change it once `FluidUpdateScheduler`
+  sets the aquifer water and lava flowing — flowing or falling liquid only
+  beside or under the liquid it came from, a water source only beside two
+  others and leading back to the engine's own, stone only beside lava,
+  hardened lava only beside water, a fallen gravel or sand block only over
+  what it could fall into — judged block by block from what is round it,
+  and no more changed blocks in all than four for each fluid position the
+  engine marked in the populated chunks. Anything else fails: a plugin
+  writing empty or shifted chunks, one placing water as stone, and one
+  placing air as water were each tried and caught. The End's spawn area is
+  the main island: the test-only evidence plugin (`ext/pocketmine`) sets
+  the new world's spawn to 0 70 0 on its `WorldInitEvent`, and a spawn
+  area of nothing but air fails, as does a generator that drops the End's
+  terrain and keeps its biomes (tried, caught).
+- `pmmp.observe`: the overworld smoke watched from inside the server by
+  that evidence plugin, about seven minutes. The world's `WorldLoadEvent`
+  must fire, with the world pinned by `StratumWorlds` and none of its
+  chunks loaded, before its first chunk is requested; once every async
+  worker has been idle the 300 s `AsyncPool::shutdownUnusedWorkers()` asks
+  for, the console's `gc` (what the periodic garbage collection runs) must
+  shut them all down; and the chunks the old workers generated beside the
+  spawn area, populated on new workers together with every chunk within
+  two of them (so that they settle), must get a block update at every
+  fluid position the engine marks in them — updates only the pin held. A
+  copy of the plugin that records a pin and never makes one fails it.
 
 ## What is not verified
 
@@ -223,14 +253,19 @@ client.** Every check above passes. What that leaves:
   `007_failed_pin.phpt` (a world whose pin fails reaching no worker, and
   unloaded or the server stopped). The real-server checks need the cache,
   so they are local.
-- What the pins are built on: that the memory manager shuts idle workers
-  down (and every generator with them) has not been observed in the real
-  server. That `WorldLoadEvent` fires before any of the world's chunks is
-  requested is read from 5.44.3's `WorldManager`: it is the last thing
-  `loadWorld()` does, and `generateWorld()` fires it before it orders the
-  spawn area. That an exception on a generation worker takes the server
-  down has been observed: a generator refusal injected into the smoke
-  crashes its workers and the server.
+- What the pins are built on is observed in the real server
+  (`pmmp.observe`): the world's `WorldLoadEvent` fires before its first
+  chunk is requested, with none of its chunks loaded and the world already
+  pinned; and once the async workers have been idle the 300 s
+  `AsyncPool::shutdownUnusedWorkers()` asks for, the memory manager's
+  garbage collection — run from the console's `gc`, the call its periodic
+  run makes — shuts all three down, new workers register the generator
+  again, and the
+  chunks the old ones generated get every fluid update the engine marked
+  in them (2637 of 2637) — from the pin, since a copy of the plugin that
+  never pins delivers 0 of 2637. That an exception on a generation worker
+  takes the server down has been observed too: a generator refusal
+  injected into the smoke crashes its workers and the server.
 - **A world whose pin fails** is held off generation and unloaded
   (`StratumWorlds`). Observed in the real server for a default world, with
   a pin failure injected into a scratch copy of the plugin: the error by
@@ -248,11 +283,23 @@ client.** Every check above passes. What that leaves:
   (`World::generateChunkCallback`): 3 to 56 discarded populations an
   overworld smoke. Holding a chunk's liquids only until its 3x3 was
   unlocked still lost 18 in one run; held until every chunk within two is
-  populated as well, four overworld boots of this plugin discarded none
-  (241 to 462 blocks of air turned to flowing water in each, nothing else
-  different from the engine). The price: a chunk at the edge of what is
-  populated keeps its aquifer fluid still until the chunks beyond it are
-  populated. Whether the flow is Java's is unobserved.
+  populated as well, no overworld boot of this plugin has discarded one:
+  241 to 462 blocks of air turned to flowing water in each of the plugin
+  owner's runs, 264 to 369 in three CTest smokes (spawn area 16.5 to
+  19.7 s), and 2792 after the observation's five minutes of flow, 32 of
+  them the engine's lava hardened to obsidian — nothing else different
+  from the engine in any. The CTest smokes and the observation now fail
+  on a single discarded population. The price: a chunk at the edge of
+  what is populated keeps its aquifer fluid still until the chunks beyond
+  it are populated. Whether the flow is Java's is unobserved.
+- **Where a flow could still go wrong**, read from 5.44.3 and not
+  observed: `World::getBlockAt()` answers air for a chunk that is not
+  loaded, and `World::setBlockAt()` loads a generated chunk to write into
+  it and throws for an ungenerated one. Every chunk within three of a
+  settled chunk is generated, so only a flow running on past all of them
+  would throw inside a scheduled update; one reaching a chunk unloaded in
+  the meantime would read it as air and could overwrite what is there. No
+  run has shown either.
 - **Only a world whose options name its blob relatively can move.**
   `WorldFactory` writes `worlds/<name>/stratum-pipeline.blob`, read against
   the data path `Main` gives the extension, and such a world loads from a
@@ -261,11 +308,13 @@ client.** Every check above passes. What that leaves:
   case): a server whose default world names its blob relatively, with an
   End world `WorldFactory` made, moved whole to another path, booted
   again, loaded both, generated a new chunk in each, and every chunk on
-  disk matched the engine's encode. A world whose options
-  hold an absolute path — every world made before this, and the smoke's
-  `worlds:` entry, which `tools/pmmp-dev` writes absolute — still loads
-  only where it was made: moved, PocketMine-MP refuses it at load, and a
-  default world so refused stops the server at startup (measured).
+  disk matched the engine's encode. Every CTest smoke now names its
+  world's blob relatively too, so the real server reads a relative path on
+  its main thread and its workers in each; the move itself is not a CTest
+  case. A world whose options hold an absolute path — every world made
+  before this — still loads only where it was made: moved, PocketMine-MP
+  refuses it at load, and a default world so refused stops the server at
+  startup (measured).
 - **An End world generates, and is presented as the overworld.** The End
   smoke boots, generates and stops cleanly, every biome Bedrock's one End
   biome. But PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to every
@@ -275,11 +324,13 @@ client.** Every check above passes. What that leaves:
   (0, 128, 0), over the main island: in the real server (the scratch run
   above) its 224-chunk spawn area held end stone in 608 sub-chunk palettes,
   biome 9 throughout, every block and biome the engine's. A `worlds:`
-  entry, the smoke's included, cannot set a spawn, so its End world gets
+  entry cannot set a spawn, so an End world made that way gets
   PocketMine-MP's default, (256, 70, 256), over the void between the main
-  island and the outer ones, and the whole 224-chunk spawn area the smoke
-  checks is air. Read from source and measured headless; no client has
-  seen it.
+  island and the outer ones, and its whole 224-chunk spawn area is air;
+  `pmmp.smoke.end`'s world is such an entry, and the test-only evidence
+  plugin, not this one, sets its spawn to (0, 70, 0) as it is created, so
+  that the smoke compares the main island. Read from source and measured
+  headless; no client has seen it.
 - Fluid updates live in memory between a chunk's generation and their
   release once it has settled — held through worker restarts while the
   world is loaded and pinned, but not through an unload: a chunk generated

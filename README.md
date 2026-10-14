@@ -16,9 +16,9 @@ generators, Snowcapped, Spyglass) work as content for a Bedrock server.
   biomes over the whole column the server stores them for (y 0..255).
   **M4** stays open for the legacy
   dimensions' surface rules;
-  **M5** (PocketMine integration) is written but has never run inside a
-  server. See [What generates today](#what-generates-today) for the honest
-  breakdown.
+  **M5** (PocketMine integration) runs inside a real, headless
+  PocketMine-MP 5.44.3; no client has connected to it yet. See
+  [What generates today](#what-generates-today) for the honest breakdown.
   Subcommands that are not implemented fail loudly with the milestone that
   owns them.
 
@@ -217,7 +217,9 @@ Vanilla also marks some fluid positions to tick once a chunk loads. That flag
 is computed too, and it is exact against the server's own lists
 (255457 of 255457 marks on one probe set). A datapack that wraps an aquifer
 entry in a cache marker gets the reading the server takes, measured marker by
-marker (SPEC §11). Still open: handing those marks to PocketMine.
+marker (SPEC §11). The marks reach PocketMine-MP: its plugin schedules a block
+update at each once the chunk is populated and settled, and the liquids then
+flow by PocketMine-MP's own rules.
 
 **Surface rules — run.** The overworld's whole tree executes (287 rules over
 141 conditions), and the shipped overworld figure above includes it. The
@@ -237,13 +239,19 @@ terrain. A dimension names its biome source when it is compiled, since a
 frozen pipeline does not record one. How PocketMine-MP then presents an End
 world to Bedrock clients — its dimension, sky and fog — is not verified.
 
-**PocketMine integration — written, and never run inside a server.** The
-Java-to-Bedrock mapping tables, the sub-chunk encoder, the zend module and the
-plugin are all in place. The plugin registers the generator, freezes the
-pipeline into a new world's folder, and translates block states through
-PocketMine-MP's own upgrader. None of it has run inside a real PocketMine-MP
-server, and that is the largest risk left in the project. Performance is
-untouched at about 237 ms per chunk, on a per-point interpreter.
+**PocketMine integration — run headless inside a real server, not yet seen by
+a client.** The Java-to-Bedrock mapping tables, the sub-chunk encoder, the
+zend module and the plugin are all in place. The plugin registers the
+generator, freezes the pipeline into a new world's folder, refuses on the main
+thread a world that cannot generate, and translates block states through
+PocketMine-MP's own upgrader. Inside PocketMine-MP 5.44.3, on its own PHP
+(`ctest --preset pmmp`, local evidence), the overworld's and the End's spawn
+areas generate on its worker threads, and every chunk on disk is the engine's,
+block by block and biome by biome, but for what PocketMine-MP's own liquid
+rules do once the aquifer fluid is set flowing (SPEC §11). Whether a Bedrock
+client sees what a Java client would is the owner's check to make.
+Performance is untouched at about 237 ms per chunk, on a per-point
+interpreter.
 
 ## Capability matrix (v1)
 
