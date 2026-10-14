@@ -28,14 +28,18 @@ use const JSON_THROW_ON_ERROR;
  * it is stored in the world's own data. So the path to the frozen pipeline
  * (SPEC section 6) travels in here.
  *
- *   {"blob":"/path/worlds/myworld/stratum-pipeline.blob",
+ *   {"blob":"worlds/myworld/stratum-pipeline.blob",
  *    "settings":"minecraft:overworld",
  *    "biomes":"minecraft:overworld"}
  *
  * EXACTLY WHAT IS ACCEPTED: a JSON object with these keys and no others.
  *
  *   "blob"      required: the path of the world's frozen pipeline, a
- *               readable file that Stratum\checkDimension opens.
+ *               readable file that Stratum\checkDimension opens. Relative
+ *               to the server's data path, as WorldFactory writes it, so
+ *               the world moves with its server directory; an absolute
+ *               path, as worlds made before that have, is read as it is
+ *               and pins the world to where it was made.
  *   "settings"  the noise settings, by id ("minecraft:overworld",
  *               "minecraft:nether", "minecraft:end"), a string;
  *   "biomes"    the dimension's biome source, a string, as
@@ -186,14 +190,21 @@ final class GeneratorOptions{
 	 */
 	public static function check(string $generatorOptions) : self{
 		$options = self::parse($generatorOptions);
+		// Where the extension reads it: a relative path against the server's
+		// data path, never PHP's working directory.
+		try{
+			$blobPath = \Stratum\resolvePipelinePath($options->blobPath);
+		}catch(\Stratum\GenerationException $e){
+			throw new InvalidGeneratorOptionsException("Stratum cannot find this world's frozen pipeline: " . $e->getMessage());
+		}
 		// is_file as well: is_readable is true of a directory.
-		if(!is_file($options->blobPath) || !is_readable($options->blobPath)){
-			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $options->blobPath);
+		if(!is_file($blobPath) || !is_readable($blobPath)){
+			throw new InvalidGeneratorOptionsException("Stratum cannot read this world's frozen pipeline at " . $blobPath);
 		}
 		try{
 			\Stratum\checkDimension($options->blobPath, $options->noiseSettings, $options->biomeSource);
 		}catch(\Stratum\GenerationException $e){
-			throw new InvalidGeneratorOptionsException("Stratum cannot generate this world from its frozen pipeline at " . $options->blobPath . ": " . $e->getMessage());
+			throw new InvalidGeneratorOptionsException("Stratum cannot generate this world from its frozen pipeline at " . $blobPath . ": " . $e->getMessage());
 		}
 		return $options;
 	}

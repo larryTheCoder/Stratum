@@ -25,6 +25,14 @@ final class Main extends PluginBase{
 	private ?StratumWorlds $worlds = null;
 
 	protected function onLoad() : void{
+		// What a world's relative blob path ("worlds/<name>/
+		// stratum-pipeline.blob", as WorldFactory writes it) is read against,
+		// for the whole process — generation workers are its threads. Here,
+		// on the main thread and before the generator is registered, so
+		// before any world can be validated, loaded or created; a world that
+		// names its blob relatively then moves with the server directory.
+		\Stratum\setDataPath($this->getServer()->getDataPath());
+
 		GeneratorManager::getInstance()->addGenerator(
 			StratumGenerator::class,
 			"stratum",

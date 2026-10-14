@@ -11,7 +11,9 @@ PocketMine-MP itself can call.
 - `Main` registers the generator under the name `stratum`, in `onLoad()` —
   worlds are loaded between the STARTUP and POSTWORLD plugin phases, and a
   world naming an unregistered generator does not merely fail to load, it
-  **aborts server startup**.
+  **aborts server startup**. Just before, it gives the extension the
+  server's data path (`Stratum\setDataPath`), which a world's relative blob
+  path is read against on every thread.
 - `StratumGenerator` is constructed once per generation worker thread with
   the seed and the world's options string — again whenever PocketMine-MP
   restarts a worker it shut down while idle. It opens the world (the state
@@ -26,9 +28,12 @@ PocketMine-MP itself can call.
   same path its world loader takes for every palette entry on disk — cached
   per worker.
 - `GeneratorOptions` is the world's options string:
-  `{"blob":"…/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}`.
+  `{"blob":"worlds/<name>/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}`.
   A generator receives nothing else — not the server, not the plugin, not a
-  config — so the path to the frozen pipeline travels in here. `biomes` is
+  config — so the path to the frozen pipeline travels in here: relative to
+  the server's data path, so the world moves with its server directory, or
+  absolute, as worlds made before that have it, which ties the world to
+  where it was made. `biomes` is
   the dimension's biome source: a multi-noise parameter list, or
   `minecraft:the_end` for the End (`"settings":"minecraft:end",
   "biomes":"minecraft:the_end"`). `settings` and `biomes` come together or
@@ -72,15 +77,24 @@ PocketMine-MP itself can call.
   first load, because a populated chunk's neighbours all exist and the flow
   cannot reach ungenerated terrain. Registered in `onEnable()`, which at
   `load: STARTUP` is still before any world loads.
-- `WorldFactory::create()` refuses a name that is already a world — loaded
-  or not — before writing anything, returning `false` as `generateWorld()`
-  would: freezing over an existing world's blob would change every chunk it
-  generates from then on, a seam (SPEC §6). Otherwise it freezes the
-  pipeline into the new world's own folder — whole or not at all: written
-  beside it, synced to disk, then renamed into place — checks it in full on
-  the main thread, and then creates the world from it, in that order:
-  creating the world immediately registers the generator on a worker, which
-  opens the blob.
+- `WorldFactory::create()` makes one of four dimensions, as vanilla's world
+  presets pair settings and biome source: `OVERWORLD` (the default),
+  `LARGE_BIOMES` and `AMPLIFIED` (their settings, the overworld's parameter
+  list), and `THE_END` (`minecraft:end` with the End's own source); any
+  other is refused by name before anything is written. An End world spawns
+  at (0, 128, 0), over the main island every End seed has at the origin, so
+  the spawn area PocketMine-MP generates round it holds terrain — its own
+  default spawn, (256, 70, 256), is over the void. It refuses a name that
+  is already a world — loaded or not — before writing anything, returning
+  `false` as `generateWorld()` would: freezing over an existing world's
+  blob would change every chunk it generates from then on, a seam (SPEC
+  §6). Otherwise it freezes the pipeline into the new world's own folder —
+  whole or not at all: written beside it, synced to disk, then renamed into
+  place — names it in the options relative to the server's data path
+  (`worlds/<name>/stratum-pipeline.blob`), checks it in full on the main
+  thread, and then creates the world from it, in that order: creating the
+  world immediately registers the generator on a worker, which opens the
+  blob.
 
 ## Installing
 
@@ -98,7 +112,9 @@ plugins/Stratum.phar` (`plugin.yml` at the root, `src/` beside it).
 
 ```php
 // Creating a Stratum world, e.g. from a command or another plugin:
-\Stratum\PMMP\WorldFactory::create($server, "overworld", seed: 12345, versionRoot: "/path/to/1.21.11");
+use Stratum\PMMP\WorldFactory;
+WorldFactory::create($server, "overworld", seed: 12345, versionRoot: "/path/to/1.21.11");
+WorldFactory::create($server, "end", seed: 12345, versionRoot: "/path/to/1.21.11", dimension: WorldFactory::THE_END);
 ```
 
 `versionRoot` is a version root as `tools/fetch-vanilla` leaves it —
@@ -107,15 +123,20 @@ plugins/Stratum.phar` (`plugin.yml` at the root, `src/` beside it).
 A world can come from `pocketmine.yml` too, with no code: freeze the
 pipeline into the world's folder first, as `WorldFactory` does
 (`Stratum\freezePipeline($versionRoot, "<server>/worlds/<name>/stratum-pipeline.blob")`),
-then name the generator and give the options as its preset:
+then name the generator and give the options as its preset — the blob
+relative to the server directory, so the world moves with it:
 
 ```yaml
 worlds:
   <name>:
     generator: stratum
-    preset: '{"blob":"<server>/worlds/<name>/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}'
+    preset: '{"blob":"worlds/<name>/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}'
     seed: 12345
 ```
+
+Such a world gets PocketMine-MP's default spawn, (256, 70, 256): a
+`worlds:` entry cannot set one, so an End world made this way spawns over
+the void; `WorldFactory::create()` with `THE_END` does not.
 
 ## Running on PocketMine-MP
 
@@ -173,10 +194,12 @@ client.** Every check above passes. What that leaves:
   (`GeneratorOptions`, fixture-free), `002_fluid_update_scheduler.phpt`
   (`FluidUpdateScheduler`), `003_world_load_validation.phpt` (the full
   open `validate()` makes at world load), `004_world_pins.phpt`
-  (`StratumWorlds` across a worker shut down and restarted) and
+  (`StratumWorlds` across a worker shut down and restarted),
   `005_world_factory.phpt` (`WorldFactory` leaving an existing world's
-  blob byte for byte). The real-server checks need the cache, so they are
-  local.
+  blob byte for byte, and each dimension's options, relative blob path and
+  spawn) and `006_moved_server.phpt` (a world it made loading, pinning and
+  generating the same chunk after its server directory moved). The
+  real-server checks need the cache, so they are local.
 - Two facts about PocketMine-MP that the pins are built on come from the
   M5 review that asked for them and have not been observed in the real
   server: that the memory manager shuts idle workers down (and every
@@ -192,22 +215,26 @@ client.** Every check above passes. What that leaves:
   Measured on the overworld smoke: 3 to 56 discarded populations a run,
   and slower spawn generation in each of three paired runs, against none
   with the scheduler left out. Whether the flow is Java's is unobserved.
-- **A Stratum world cannot move.** Its generator options hold the frozen
-  pipeline's absolute path, and PocketMine-MP validates them on every
-  load: move or rename the server directory and the world no longer
-  loads, and when it is the default world the server stops at startup.
-  Measured, not inferred.
+- **Only a world whose options name its blob relatively can move.**
+  `WorldFactory` writes `worlds/<name>/stratum-pipeline.blob`, read against
+  the data path `Main` gives the extension, and such a world loads from a
+  moved or renamed server directory (`006_moved_server.phpt`, against
+  stand-ins; not yet moved inside the real server). A world whose options
+  hold an absolute path — every world made before this, and the smoke's
+  `worlds:` entry, which `tools/pmmp-dev` writes absolute — still loads
+  only where it was made: moved, PocketMine-MP refuses it at load, and a
+  default world so refused stops the server at startup (measured).
 - **An End world generates, and is presented as the overworld.** The End
   smoke boots, generates and stops cleanly, every biome Bedrock's one End
   biome. But PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to every
   client whatever the world (`PreSpawnPacketHandler`, `NetworkSession`),
-  so its sky, fog and light will be the overworld's; a new world gets
-  PocketMine-MP's default spawn, (256, 70, 256), which in the End is over
-  the void between the main island and the outer ones — the whole
-  224-chunk spawn area is air; and `WorldFactory::create()` only ever
-  writes the overworld's options, so an End world needs its options
-  written by hand, as the smoke's `worlds:` entry does. Read from source
-  and measured headless; no client has seen it.
+  so its sky, fog and light will be the overworld's. `WorldFactory::create()`
+  with `THE_END` writes the End's options and spawns the world over the
+  main island; a `worlds:` entry, the smoke's included, cannot set a spawn,
+  so its End world gets PocketMine-MP's default, (256, 70, 256), over the
+  void between the main island and the outer ones, and the whole 224-chunk
+  spawn area the smoke checks is air. Read from source and measured
+  headless; no client has seen it.
 - Fluid updates live in memory between a chunk's generation and its
   population — held through worker restarts while the world is loaded and
   pinned, but not through an unload: a chunk generated as a neighbour in
