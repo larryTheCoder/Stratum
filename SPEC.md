@@ -10702,6 +10702,137 @@ Open:
   scheduler holds no chunk that is not loaded. Whether the flow is the one
   a Java server would make is unobserved.
 
+- **M5's performance bar, and the method that measures against it — the
+  figures here are provisional; the baseline of record waits for a quiet
+  box.** *The bar* (owner, 2026-10-15) is referenced to the Java Edition
+  baseline: 35 ms/chunk (about 28 chunks/s) is the best case, about 10
+  chunks/s (100 ms/chunk) the absolute minimum. *The working reading*,
+  flagged to the owner for confirmation: per generation thread, end to end
+  through what PocketMine-MP calls — fill + biomes + the chunkutils2 encode,
+  `stratum::pmmp::encodeChunk` — in a release build on the development box,
+  reported next to the vanilla server's own rate for the comparable stages,
+  measured on the same box with one worldgen thread. On vanilla's own
+  presets: datapacks are a v1 non-goal (owner, the same day).
+
+  *Stratum's side* is `stratum_chunk_cost_bench` (tools/analysis), built
+  with the existing `release` preset (RelWithDebInfo; a Debug build says
+  its figures are not a measurement). It times the C++ that
+  `Stratum\Dimension::encodeChunk` calls, `stratum::pmmp::encodeChunk`,
+  and not the whole generation task: the zend method's marshaling of the
+  result into PHP arrays (up to 48 layer triples a chunk) and its put of
+  the fluid updates, the PHP side (palette translation, a
+  `PalettedBlockArray::fromData` per layer, the SubChunk and Chunk
+  construction) and PocketMine-MP's serialisation of the task's result
+  are outside it. That is small beside today's figures but not shown to
+  be small beside the 35 ms best case, so the best case is not to be
+  claimed until the task is measured through PHP (once tools/pmmp-dev
+  lands). On one thread the bench times the fill (`fillBlocks`), the
+  biomes (`fillBiomes` over PocketMine-MP's 96 quart layers) and the
+  encode — through a copy of encodeChunk's steps that the first pass holds
+  to encodeChunk's own output, chunk by chunk — and encodeChunk end to end
+  on its own sweep: overworld, amplified, large_biomes and the End at seeds
+  0, 42 and -4172144997902289642, over the 121 chunks within 5 of chunk
+  (-64, 64) and 16 scattered chunks out to ±100 000. One warm-up pass, each
+  chunk's median of three timed passes, then median, p10, p90 and mean
+  ms/chunk over chunks and chunks/s as 1000 / mean, wall and thread-CPU.
+  `--dump` and `--compare` write and cmp-check every chunk's blocks,
+  biomes, encoded sub-chunks and fluid updates: how a performance change is
+  shown to move no output (dumps are vanilla-derived and never committed,
+  §12).
+
+  *Vanilla's side* is `tools/analysis/vanilla-chunk-cost.py`: the 1.21.11
+  server headless on a fresh world per seed and preset, ticks frozen,
+  structures off, with `-Dmax.bg.threads=1` — the JVM property
+  minecraft.wiki's 21w38a changelog documents as overriding the cap on the
+  background worker pool. After a warm-up square, the server's own `/jfr`
+  records the same 121 chunks, and its `minecraft.ChunkGeneration` events
+  give each chunk's stages. An event's duration is not a stage's cost: it
+  begins when the stage is scheduled, and on one worker stages queue (37 s
+  of event time inside 3.4 s of the thread's wall time), so each event is
+  charged the worker's time since the previous completion instead. *The
+  check, enforced*: those estimates are wall time, and the workers' CPU
+  over the recording (jstack before and after) must back them. A worker
+  descheduled on a busy box is charged for time it did not run, so a
+  recording whose estimates sum to more than 5% above its workers' CPU is
+  flagged "worker descheduled: wall overstates", and one more than 5% below
+  "the estimates miss worker CPU"; a flagged recording's comparable figure
+  is printed again scaled to its CPU, as a correction and not a
+  measurement. *The pin, from thread names*: unpinned, this 12-thread box
+  runs Worker-Main-1 to -11, all busy; pinned, the pool runs one task at a
+  time but starts a spare (Worker-Main-2, -3) to run in a worker's place
+  while it blocks on a join — on some recordings a spare carried nearly
+  every event — so the Worker-Main threads are read as one timeline, and
+  the pin is held when generation is committed on them alone and they
+  spent no more CPU than one thread could over the span of their events.
+  Comparable: biomes + noise (density, aquifers, ore veins) + surface.
+  Structure starts and references, carvers, features, light, spawn and
+  `full` (the server thread's) are reported separately and in no sum:
+  Stratum v1 has none of them, and PocketMine-MP lights its own chunks.
+  *What runs beside that one worker*: one worldgen thread is not one
+  thread of CPU. The JVM's JIT compilers and garbage collector, the Server
+  thread and the IO-Worker threads run on other cores beside the worker,
+  and the same jstacks, with /proc's last look at threads that end inside
+  a recording (compiler threads the JVM retires), give each kind's CPU over
+  it. On the twelve recordings below the JIT spent 19 to 38% of the
+  worker's CPU on the overworld presets and 40 to 47% on the End, and the
+  collector 37 to 52% and 95 to 106% — on the End largely the two
+  heap-inspection full collections that each recording's own `/jfr start`
+  and `stop` trigger (110 to 167 ms of pause a recording, on ten parallel
+  GC threads), the instrument's work rather than generation's. Stratum's
+  bench is one thread with no such helpers: vanilla's one-thread figure had
+  help Stratum's does not. `--jvm-arg=-XX:ParallelGCThreads=1
+  --jvm-arg=-XX:ConcGCThreads=1` is the sensitivity run for the collector.
+
+  *One command*: `tools/perf-baseline --accept-eula` builds the bench, runs
+  both halves on the same seeds and square, and prints and writes them side
+  by side against the bar. Only the summed comparison is like for like:
+  Stratum's fill looks the biome source up again for its surface rules
+  (`surfaceBiomeAt` in terrain_filler.cpp), where vanilla's surface stage
+  reads the biomes its biome stage stored, so the per-stage figures are
+  indicative only. Quiet or provisional is judged by what other processes
+  ran while each half did — the machine's busy CPU (/proc/stat) less the
+  run's own process tree, sampled every 5 s — and not by the load average,
+  which counts the run's own threads: other processes above 0.5 cores on
+  average or 1.0 over any minute, or a half nobody watched, label the run
+  PROVISIONAL, and `--require-quiet CORES` waits before each half, after
+  the build, for the box to be that quiet. A row whose checks fail —
+  vanilla's pin, area or estimates, or a Stratum wall time more than 5%
+  above its thread CPU — is marked NOT A MEASUREMENT and the command exits
+  3. `--from` reuses an earlier run's half, with its log and watch record,
+  and refuses halves that measured different seeds, squares or dimensions.
+
+  *Provisional, 2026-10-15*: AMD Ryzen 5 7600 (12 threads, governor
+  performance), GCC 15.2, OpenJDK 25.0.4, `tools/perf-baseline` at its
+  defaults, with three other workflows building and testing on the box.
+  Other processes kept 8.0 cores busy on average (11.0 over the busiest
+  minute) through Stratum's half and 3.5 (4.9) through vanilla's, the
+  one-minute load reading 5.7 to 13.6 and 3.2 to 6.4: PROVISIONAL. Every
+  row passed its checks — vanilla's pins held, its areas were complete, its
+  estimates 0.96 to 1.03 times its workers' CPU; Stratum's wall within 1%
+  of its thread CPU. Wall ms/chunk over the square's chunks, all three
+  seeds, mean (median); the stage columns are indicative:
+
+  | dimension | Stratum e2e | fill | biomes | encode | vanilla biomes+noise+surface | Stratum / vanilla, means: wall (CPU) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | overworld | 214.1 (224.1), 4.7/s | 123.1 | 83.1 | 0.91 | 13.9 (14.2), 72.0/s | 15.4x (15.1x) |
+  | amplified | 220.9 (235.1), 4.5/s | 131.7 | 86.4 | 0.99 | 19.9 (19.8), 50.3/s | 11.1x (11.1x) |
+  | large_biomes | 176.4 (173.7), 5.7/s | 101.2 | 66.0 | 0.69 | 14.4 (14.4), 69.5/s | 12.3x (12.0x) |
+  | end | 13.2 (13.2), 75.6/s | 12.9 | 0.01 | 0.34 | 2.9 (2.7), 349.5/s | 4.6x (4.6x) |
+
+  Against the bar, the three overworld presets are below the minimum (1.8
+  to 2.2 times 100 ms/chunk), and the End's 13 ms is inside the best case
+  for the C++ alone, the PHP side unmeasured. How far a shared box moves
+  these: the same command earlier the same day, at a load of 6.4 to 11.0,
+  read 181 to 211 ms for the overworld presets end to end and 16.2 for the
+  End, against vanilla's 14.8 to 18.4 and 3.6. Stratum's wall was within
+  1% of its thread CPU in both, so the box slowed the thread itself
+  (shared cores, caches and clocks) rather than taking it off the CPU, and
+  no correction recovers a quiet box's figure. These are not the baseline
+  of record; that is `tools/perf-baseline --accept-eula --require-quiet
+  0.5` on a quiet machine after the large branch now in flight merges. The
+  237 ms/chunk on record (the binding entry above) predates this
+  instrument and is not comparable to it.
+
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**
   Until now every attempt on this question inverted a *synthetic probe
