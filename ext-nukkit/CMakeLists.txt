@@ -44,8 +44,11 @@ find_package(Java 1.8 REQUIRED COMPONENTS Development)
 
 # Nukkit's floor is Java 8 (its build.gradle.kts), so every class is compiled
 # for it. javac 9+ warns that 8 is obsolete; that warning is about javac, not
-# this code, and is the one class switched off.
-set(STRATUM_JAVAC_FLAGS --release 8 -encoding UTF-8 -Xlint:all,-options)
+# this code, and is the one class switched off. -proc:none: up to JDK 22 javac
+# runs any annotation processor a class path jar registers, and Nukkit's
+# server jar bundles log4j with its processor's service file, so compiling
+# against it would otherwise run code from the download.
+set(STRATUM_JAVAC_FLAGS --release 8 -encoding UTF-8 -Xlint:all,-options -proc:none)
 
 set(java_dir "${CMAKE_CURRENT_SOURCE_DIR}/java")
 set(java_out "${CMAKE_CURRENT_BINARY_DIR}/java")
@@ -136,7 +139,18 @@ file(GLOB smoke_sources CONFIGURE_DEPENDS "${java_dir}/smoke/stratum/nukkit/smok
 set(plugin_jar "${CMAKE_CURRENT_BINARY_DIR}/stratum-nukkit.jar")
 set(smoke_jar "${CMAKE_CURRENT_BINARY_DIR}/stratum-nukkit-smoke.jar")
 
-if(STRATUM_NUKKIT_JAR AND EXISTS "${STRATUM_NUKKIT_JAR}")
+# The pin lives in tools/nukkit-dev; a change to it reconfigures.
+set(nukkit_dev "${CMAKE_SOURCE_DIR}/tools/nukkit-dev")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${nukkit_dev}")
+
+if(STRATUM_NUKKIT_JAR)
+    # A jar that is named and is not the pinned one stops the configure; it
+    # never quietly turns into a skip.
+    set(STRATUM_NUKKIT_DEV "${nukkit_dev}")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyNukkitJar.cmake")
+    set(verify_jar "${CMAKE_COMMAND}" "-DSTRATUM_NUKKIT_JAR=${STRATUM_NUKKIT_JAR}"
+        "-DSTRATUM_NUKKIT_DEV=${nukkit_dev}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyNukkitJar.cmake")
+
     configure_file("${java_dir}/plugin/plugin.yml.in" "${java_out}/plugin-resources/plugin.yml" @ONLY)
     configure_file("${java_dir}/smoke/plugin.yml.in" "${java_out}/smoke-resources/plugin.yml" @ONLY)
 
@@ -145,6 +159,7 @@ if(STRATUM_NUKKIT_JAR AND EXISTS "${STRATUM_NUKKIT_JAR}")
     # fix. They are printed, never hidden.
     add_custom_command(
         OUTPUT "${plugin_jar}"
+        COMMAND ${verify_jar}
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${java_out}/plugin"
         COMMAND "${Java_JAVAC_EXECUTABLE}" ${STRATUM_JAVAC_FLAGS}
                 -cp "${STRATUM_NUKKIT_JAR}" -d "${java_out}/plugin"
@@ -153,12 +168,13 @@ if(STRATUM_NUKKIT_JAR AND EXISTS "${STRATUM_NUKKIT_JAR}")
                 -C "${java_out}/plugin" .
                 -C "${java_out}/plugin-resources" plugin.yml
         DEPENDS ${core_sources} ${plugin_sources} "${java_dir}/plugin/plugin.yml.in"
-                "${STRATUM_NUKKIT_JAR}"
+                "${STRATUM_NUKKIT_JAR}" "${nukkit_dev}"
         COMMENT "javac + jar: the Stratum Nukkit plugin, against ${STRATUM_NUKKIT_JAR}"
         VERBATIM
     )
     add_custom_command(
         OUTPUT "${smoke_jar}"
+        COMMAND ${verify_jar}
         COMMAND "${CMAKE_COMMAND}" -E rm -rf "${java_out}/smoke"
         COMMAND "${Java_JAVAC_EXECUTABLE}" ${STRATUM_JAVAC_FLAGS}
                 -cp "${STRATUM_NUKKIT_JAR}${classpath_separator}${java_out}/plugin"
@@ -167,6 +183,7 @@ if(STRATUM_NUKKIT_JAR AND EXISTS "${STRATUM_NUKKIT_JAR}")
                 -C "${java_out}/smoke" .
                 -C "${java_out}/smoke-resources" plugin.yml
         DEPENDS ${smoke_sources} "${java_dir}/smoke/plugin.yml.in" "${plugin_jar}"
+                "${STRATUM_NUKKIT_JAR}" "${nukkit_dev}"
         COMMENT "javac + jar: the Stratum Nukkit smoke plugin"
         VERBATIM
     )
@@ -180,6 +197,10 @@ if(STRATUM_NUKKIT_JAR AND EXISTS "${STRATUM_NUKKIT_JAR}")
             LABELS "nukkit"
             PASS_REGULAR_EXPRESSION "stratum/nukkit/StratumGenerator\\.class.*plugin\\.yml|plugin\\.yml.*stratum/nukkit/StratumGenerator\\.class"
         )
+        # Exit 0 passes, 77 skips (no fixtures). 3 is every check Stratum
+        # owns passing while the biomes Nukkit read back from disk show its
+        # LevelDB serializer's section offset (ext-nukkit/README.md): not a
+        # pass until the owner rules on that defect, so CTest fails it.
         add_test(NAME ext-nukkit.smoke
             COMMAND "${CMAKE_SOURCE_DIR}/tools/nukkit-dev" smoke
                 --jar "${STRATUM_NUKKIT_JAR}"
