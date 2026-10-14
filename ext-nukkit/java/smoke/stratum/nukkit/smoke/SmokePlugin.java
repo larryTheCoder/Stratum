@@ -108,8 +108,13 @@ public final class SmokePlugin extends PluginBase {
                 if (allGenerated()) {
                     final long wallNanos = System.nanoTime() - startNanos;
                     report.setProperty("spawn_generation_ms", String.valueOf(wallNanos / 1_000_000L));
+                    // Counted since the world opened: Nukkit populates the
+                    // spawn chunk while starting, generating its 3x3 before
+                    // this plugin's first tick, inside the area.
                     report.setProperty("chunks_generated_by_stratum",
-                        String.valueOf(world.chunksGenerated() - generatedAtStart));
+                        String.valueOf(world.chunksGenerated()));
+                    report.setProperty("chunks_generated_before_the_request",
+                        String.valueOf(generatedAtStart));
                     report.setProperty("generation_threads", String.valueOf(world.generationThreads().size()));
                     report.setProperty("generation_thread_names",
                         String.valueOf(new TreeSet<>(world.generationThreads())));
@@ -131,8 +136,9 @@ public final class SmokePlugin extends PluginBase {
                 compareNext("disk");
                 if (next == area.size()) {
                     record("disk");
+                    // Since the world opened in this run, startup included.
                     report.setProperty("chunks_generated_during_readback",
-                        String.valueOf(world.chunksGenerated() - generatedAtStart));
+                        String.valueOf(world.chunksGenerated()));
                     report.setProperty("chunks_missing_on_disk", String.valueOf(chunksMissing));
                     finish("ok");
                 }

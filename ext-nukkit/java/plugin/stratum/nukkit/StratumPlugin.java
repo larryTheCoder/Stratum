@@ -102,7 +102,13 @@ public final class StratumPlugin extends PluginBase implements Listener {
     }
 
     private void prepare(Server server, String world, String options) {
-        if (server.isLevelGenerated(world)) {
+        // Not server.isLevelGenerated(): it asks LevelProviderManager, which
+        // Nukkit fills only after STARTUP plugins are enabled, so here it
+        // calls every world new. A world exists once it has a level.dat;
+        // Server resolves a world's folder this way too.
+        final File folder = world.contains("/") || world.contains("\\") ? new File(world)
+            : new File(server.getDataPath(), "worlds/" + world);
+        if (new File(folder, "level.dat").exists()) {
             return;
         }
         try {
