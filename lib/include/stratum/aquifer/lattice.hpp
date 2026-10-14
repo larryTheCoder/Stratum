@@ -501,7 +501,8 @@ inline constexpr double kDeepDarkDepthAbove = 0.9;
     constexpr std::int32_t kTen = 10;
     // floorDiv, not `/`: a surface below -20 makes the dividend negative.
     // Wrapping, not `+`: a datapack's psl saturates at the int range, and
-    // signed overflow is undefined where Java's int wraps.
+    // signed overflow is undefined where Java's int wraps. Java's reading,
+    // unmeasured: SPEC §8's one named exception to §5.7.
     const std::int32_t quotient = javamath::floorDiv(
         javamath::wrappingAdd(maxSurface, kSurfaceAdjustment + kCellHeight), kCellHeight);
     return javamath::wrappingAdd(

@@ -21,6 +21,9 @@ std::int32_t spreadOffset(const double spread) noexcept {
     // can be NaN (-> 0) or far outside the int range (-> saturated), where a
     // bare cast is undefined, and `3 * floorDiv(INT_MIN, 3)` overflows by one.
     // No vanilla router comes near either; the point is that no input is UB.
+    // Java's semantics here are a reading, not a measurement: SPEC §8 names
+    // the aquifer's int reads as the one exception to §5.7's rule that an
+    // unmeasured saturation or wrap is refused rather than substituted.
     const std::int32_t scaled = javamath::floorToInt(spread * 10.0);
     return javamath::wrappingMul(3, javamath::floorDiv(scaled, 3));
 }
@@ -76,6 +79,7 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // Every int operation on a psl reading wraps, as Java's int does: the
     // reading itself saturates (`readPreliminarySurface`), and a saturated
     // value minus a centre is exactly where a bare `-` would be undefined.
+    // Unmeasured, and SPEC §8's one named exception to §5.7 (spreadOffset).
     const std::int32_t oceanGate = javamath::wrappingSub(cell.seaLevel, kOceanGateOffset);
 
     // THE CLEAN-ROOM SPEC'S Q5.3, AS WRITTEN, and measured as written:

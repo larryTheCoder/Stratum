@@ -153,7 +153,8 @@ template<typename Sampler>
     for (std::int32_t z = rectangle.minZ; z <= rectangle.maxZ; z += kYSkipSampleStride) {
         for (std::int32_t x = rectangle.minX; x <= rectangle.maxX; x += kYSkipSampleStride) {
             // Java's `(int) Math.floor`: a datapack's psl may be NaN or out
-            // of range, and a bare cast of either is undefined.
+            // of range, and a bare cast of either is undefined. Java's
+            // reading, unmeasured: SPEC §8's one named exception to §5.7.
             maxSurface =
                 std::max(maxSurface, javamath::floorToInt(psl(x, kPreliminarySurfaceSampleY, z)));
         }
@@ -360,7 +361,9 @@ template<typename Sampler>
     // Floor toward negative infinity, on the double, once. Not round (0.4855),
     // not truncation toward zero (0.9209 — failing exactly on the negatives).
     // Java's `(int) Math.floor`, saturating and NaN -> 0: a datapack's psl can
-    // be either, and a bare cast of them is undefined.
+    // be either, and a bare cast of them is undefined. Java's reading,
+    // unmeasured: SPEC §8's one named exception to §5.7 — and std::min above
+    // passes over a NaN window sample, where it is not the anchor.
     // `cap` is the whole minimum whether or not the scan aborted: without an
     // abort every sample folded into the prefix too, and the two are one.
     return PslRead{.gate = javamath::floorToInt(prefix),

@@ -65,9 +65,13 @@ struct TypeInfo {
 /// from JSON, and the assembler's, from a frozen blob — so a resealed blob
 /// cannot carry what a pack may not.
 ///
-/// Only what reaches undefined behaviour is refused; every bound below is
-/// the schema's or the wiki's own, or an order vanilla's own data keeps, so
-/// nothing a vanilla pack writes is.
+/// Each check was prompted by a value that reaches undefined behaviour, but
+/// what it refuses is the schema's or the wiki's whole out-of-range set (or,
+/// for clamp, an order vanilla's own data keeps), not only the undefined
+/// part of it: some of what it stops, such as a `lower_bound` of -5000 or an
+/// `xz_scale` of 2000, computed defined output before (SPEC §6, "No version
+/// for the undefined-behaviour refusals"). Nothing a vanilla pack writes is
+/// refused.
 void checkParameters(const Node& node) {
     const auto needs = [&node](std::size_t count) {
         if (node.parameters.size() != count) {
