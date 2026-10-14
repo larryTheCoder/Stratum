@@ -16,6 +16,28 @@
 # Vanilla worldgen JSON extracted from a jar / data generator.
 **/vanilla_worldgen/
 **/generated/data/minecraft/worldgen/
+# A frozen pipeline is that JSON compiled (SPEC 6), wherever it lands —
+# stratum-pipeline.blob in a world's folder, and the .partial-* file
+# freezePipeline writes before renaming it over one.
+*.blob
+*.blob.partial-*
+# What tools/pmmp-dev writes into a PocketMine-MP server directory, and the
+# server adds: refused inside this checkout outside build/, and each such
+# directory ignores itself; these are a further guard. worlds/ holds LevelDB
+# chunks generated from a frozen pipeline; the phars are plugin builds
+# (build_plugin_phar.php), never published from here.
+worlds/
+*.phar
+.stratum-pmmp-server
+generator-options.json
+stratum-evidence.json
+stratum-evidence-report.json
+server.properties
+pocketmine.yml
+php.ini
+server.log
+console.in
+console.out
 
 # The Researcher process and its repository are not a permitted reference
 # (CLAUDE.md's provenance rule) -- only its filtered output under spec/ is.

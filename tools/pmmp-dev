@@ -38,7 +38,11 @@
 #       update checks all off; the Stratum plugin packed into plugins/; the
 #       pipeline frozen from <root> into the world's own folder, as
 #       Stratum\PMMP\WorldFactory leaves it; the world as a pocketmine.yml
-#       `worlds:` entry and the default world.
+#       `worlds:` entry and the default world. <dir> may not be inside this
+#       checkout outside build/, where a frozen pipeline and LevelDB files
+#       would be one `git add -A` from a commit (each server directory also
+#       ignores itself); use one under build/ or $TMPDIR. Prints the command
+#       that runs it.
 #   tools/pmmp-dev check-load --stratum-so <so> [--build-php-config <php-config>]
 #   tools/pmmp-dev phpt --stratum-so <so> --build-php-config <php-config> --fixtures-dir <dir>
 #                  -- <test-dir>...
@@ -376,6 +380,21 @@ cmd_check_load() {
 
 # --- server directory ---------------------------------------------------------
 
+# refuse_in_checkout <dir>: a server or work directory inside this checkout
+# and outside build/ would leave a frozen pipeline (Mojang-derived, SPEC §12)
+# and LevelDB files one `git add -A` from a commit. Judged on the resolved
+# path, so a relative <dir>, or one reached through a symlink, is caught too.
+refuse_in_checkout() {
+    local target checkout
+    target="$(realpath -m -- "$1")"
+    checkout="$(realpath -- "${repo_root}")"
+    if [[ "${target}" == "${checkout}" || "${target}" == "${checkout}/"* ]] &&
+        [[ "${target}" != "${checkout}/build/"* ]]; then
+        die "refusing $1: it is inside this checkout (${checkout}) and not under its build/; use a directory under build/ or \$TMPDIR"
+    fi
+}
+
+# write_server_dir <dir>: the server directory `server` describes.
 write_server_dir() {
     local dir="$1"
     local settings biomes
@@ -383,6 +402,7 @@ write_server_dir() {
     local world="stratum_${dimension}"
     [[ -n "${port}" ]] || port=$([[ "${dimension}" == "overworld" ]] && echo 19842 || echo 19852)
 
+    refuse_in_checkout "${dir}"
     if [[ -e "${dir}" ]]; then
         [[ -f "${dir}/.stratum-pmmp-server" || -z "$(ls -A "${dir}")" ]] ||
             die "${dir} exists and is not a server directory this tool wrote; refusing to touch it"
@@ -391,6 +411,8 @@ write_server_dir() {
     mkdir -p "${dir}/plugins" "${dir}/worlds/${world}" "${dir}/tmp"
     dir="$(cd "${dir}" && pwd)"
     : >"${dir}/.stratum-pmmp-server"
+    # A second guard, wherever the directory is: it ignores itself.
+    printf '# Written by tools/pmmp-dev: nothing in a server directory is ever committed.\n*\n' >"${dir}/.gitignore"
 
     # As WorldFactory does it: the blob in the world's own folder, before the
     # world exists; a folder holding only the blob is not a generated world.
@@ -492,7 +514,14 @@ cmd_server() {
     require_so "${so}"
     require_version_root "${version_root}"
     write_server_dir "${dir}"
-    echo "run it with: cd ${dir} && PHPRC=${dir}/php.ini PHP_INI_SCAN_DIR= ${php_bin} ${phar} --no-wizard --data=${dir} --plugins=${dir}/plugins"
+    # Absolute and quoted: the command cds into the directory first, and a
+    # path relative to where this ran would then name nothing — PHP would
+    # fall back to the release's own php.ini (no stratum.so) and
+    # PocketMine-MP to a fresh --data directory with its own defaults, which
+    # reach the network.
+    dir="$(cd "${dir}" && pwd)"
+    printf 'run it with: cd %q && PHPRC=%q PHP_INI_SCAN_DIR= %q %q --no-wizard --data=%q --plugins=%q\n' \
+        "${dir}" "${dir}/php.ini" "${php_bin}" "${phar}" "${dir}" "${dir}/plugins"
 }
 
 # --- smoke --------------------------------------------------------------------
