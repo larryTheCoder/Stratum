@@ -1,0 +1,659 @@
+#!/usr/bin/env bash
+# Stratum — a real PocketMine-MP 5.44.3, on PocketMine-MP's own PHP, for
+# evidence that ext/'s zend module and plugin work inside one (M5; SPEC §11,
+# "M5: Stratum inside a real PocketMine-MP").
+#
+# tools/php-dev builds a PHP that can COMPILE the extension; PocketMine-MP's
+# own PHP (pmmp/PHP-Binaries) ships no headers, so it cannot. This fetches
+# that PHP and the server, and runs the extension — built against
+# tools/php-dev's PHP 8.2.30 ZTS, the same version and the same thread
+# safety — inside them: loaded beside PocketMine-MP's own extensions, its
+# PHPTs, block state and biome censuses and a pmmpthread case under
+# PocketMine-MP's own classes, and a headless server boot.
+#
+# Fetched, digest-checked against the values below (refused on any
+# mismatch), never vendored, never committed, kept under ~/.cache:
+#   PocketMine-MP 5.44.3's release phar (pmmp/PocketMine-MP)
+#   PHP-Binaries php-build-524's PHP 8.2 Linux x86-64 build for PM5
+#   with --with-debug-symbols only: that build's debugging symbols, for a
+#   gdb backtrace of a crash
+# Each archive is unpacked into its own empty directory. Nothing from them
+# runs but the php binary and the phar. No root needed; idempotent.
+#
+# Usage:
+#   tools/pmmp-dev [--with-debug-symbols]   fetch, verify and unpack into
+#                                           ~/.cache/stratum-pmmp ($STRATUM_PMMP_DIR)
+#   tools/pmmp-dev --print-php | --print-phar | --print-run-tests | --print-dir
+#   tools/pmmp-dev server <dir> --stratum-so <so> --version-root <root>
+#                  [--dimension overworld|end] [--seed N] [--port N] [--async-workers N]
+#       write a hermetic headless server directory: loopback only, IPv6,
+#       Query, UPnP, Xbox Live authentication, crash reports, statistics and
+#       update checks all off; the Stratum plugin packed into plugins/; the
+#       pipeline frozen from <root> into the world's own folder, as
+#       Stratum\PMMP\WorldFactory leaves it; the world as a pocketmine.yml
+#       `worlds:` entry and the default world.
+#   tools/pmmp-dev check-load --stratum-so <so> [--build-php-config <php-config>]
+#   tools/pmmp-dev phpt --stratum-so <so> --fixtures-dir <dir> -- <test-dir>...
+#   tools/pmmp-dev census-blocks --stratum-so <so> --version-root <root> [--report <file>]
+#   tools/pmmp-dev census-biomes --stratum-so <so> --version-root <root>
+#   tools/pmmp-dev threads --stratum-so <so> --version-root <root>
+#   tools/pmmp-dev smoke --stratum-so <so> --version-root <root> [--dimension overworld|end]
+#                  [--work-dir <dir>] [--keep] [--timeout S] [--async-workers N] [--no-netns]
+#   server and smoke take --plugin-dir <dir> to pack a plugin tree other than
+#   ext/plugin, for trying a change to it against the real server.
+#
+# The checks (check-load onwards) never download: without the cache, or
+# without the fixtures they need, each exits 77 — CTest's SKIP — saying
+# which is missing. `ctest --preset pmmp` runs them all.
+#
+# Only the release PHP, not one built with PHP-Binaries' own compile.sh: an
+# extension built against tools/php-dev's PHP loads into it and passes every
+# PHPT there (check-load and phpt are that evidence), so the source build
+# the owner also approved was not needed.
+set -euo pipefail
+
+readonly PMMP_VERSION="5.44.3"
+readonly PHAR_URL="https://github.com/pmmp/PocketMine-MP/releases/download/${PMMP_VERSION}/PocketMine-MP.phar"
+readonly PHAR_SIZE=3354057
+readonly PHAR_SHA256="d8b4d87a64124d83659f629c87d6a8e0e142192f6c719fe4684272ff44105539"
+
+readonly PHP_BUILD="php-build-524"
+readonly PHP_TARBALL="PHP-8.2-Linux-x86_64-PM5.tar.gz"
+readonly PHP_URL="https://github.com/pmmp/PHP-Binaries/releases/download/${PHP_BUILD}/${PHP_TARBALL}"
+readonly PHP_SIZE=12270982
+readonly PHP_SHA256="000fc605878d24be3d6faa6991c0d3a39ae90a0f9ff24d9f4e4722ef823082fc"
+
+readonly SYMBOLS_TARBALL="Z-PHP-8.2-Linux-x86_64-PM5-debugging-symbols.tar.gz"
+readonly SYMBOLS_URL="https://github.com/pmmp/PHP-Binaries/releases/download/${PHP_BUILD}/${SYMBOLS_TARBALL}"
+readonly SYMBOLS_SIZE=47275178
+readonly SYMBOLS_SHA256="ef36ca14c2496a545bf82d132e4bfe96321d2ebf2185262c972567211bfae81a"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly repo_root
+readonly cache_dir="${STRATUM_PMMP_DIR:-${HOME}/.cache/stratum-pmmp}"
+readonly downloads="${cache_dir}/downloads"
+readonly php_dir="${cache_dir}/${PHP_BUILD}"
+readonly php_bin="${php_dir}/bin/php7/bin/php"
+readonly php_ext_dir="${php_dir}/bin/php7/lib/php/extensions/no-debug-zts-20220829"
+readonly run_tests="${php_dir}/bin/php7/lib/php/build/run-tests.php"
+readonly symbols_dir="${cache_dir}/${PHP_BUILD}-debugging-symbols"
+readonly phar_dir="${cache_dir}/pocketmine-mp-${PMMP_VERSION}"
+readonly phar="${phar_dir}/PocketMine-MP.phar"
+readonly evidence="${repo_root}/ext/pocketmine"
+
+log() { printf '==> %s\n' "$*" >&2; }
+die() {
+    printf 'pmmp-dev: %s\n' "$*" >&2
+    exit 1
+}
+skip() {
+    printf 'SKIP: %s\n' "$*"
+    exit 77
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
+# verify <file> <size> <sha256>: refuses a file that is not exactly what was approved.
+verify() {
+    local size
+    size="$(wc -c <"$1" | tr -d ' ')"
+    [[ "${size}" == "$2" ]] || die "refusing $1: ${size} bytes, expected $2"
+    local digest
+    digest="$(sha256_of "$1")"
+    [[ "${digest}" == "$3" ]] || die "refusing $1: sha256 ${digest}, expected $3"
+}
+
+# fetch <url> <size> <sha256> <dest>: downloads once; an existing file is re-verified, never replaced.
+fetch() {
+    local url="$1" size="$2" sha="$3" dest="$4"
+    if [[ -f "${dest}" ]]; then
+        verify "${dest}" "${size}" "${sha}"
+        return
+    fi
+    mkdir -p "$(dirname "${dest}")"
+    log "downloading ${url}"
+    curl -fL --proto '=https' --tlsv1.2 --retry 3 -o "${dest}.part" "${url}" >&2 ||
+        die "download failed: ${url}"
+    if ! (verify "${dest}.part" "${size}" "${sha}"); then
+        rm -f "${dest}.part"
+        die "the download of ${url} is not the approved file; nothing was kept"
+    fi
+    mv "${dest}.part" "${dest}"
+}
+
+# unpack <tarball> <sha256> <dest>: into a fresh directory of its own, refusing
+# absolute paths, '..' and symlinks that leave the archive.
+unpack() {
+    local tarball="$1" sha="$2" dest="$3"
+    if [[ -f "${dest}/.stratum-sha256" && "$(cat "${dest}/.stratum-sha256")" == "${sha}" ]]; then
+        return
+    fi
+    if tar -tzf "${tarball}" | grep -Eq '^/|(^|/)\.\.(/|$)'; then
+        die "refusing ${tarball}: it holds an absolute path or '..'"
+    fi
+    if tar -tzvf "${tarball}" | awk '$1 ~ /^l/ { print $NF }' | grep -Eq '^/|(^|/)\.\.(/|$)'; then
+        die "refusing ${tarball}: it holds a symlink leaving the archive"
+    fi
+    local staging
+    staging="$(mktemp -d "${cache_dir}/.unpack.XXXXXX")"
+    tar -xzf "${tarball}" -C "${staging}" --no-same-owner
+    rm -rf "${dest}"
+    mv "${staging}" "${dest}"
+    printf '%s\n' "${sha}" >"${dest}/.stratum-sha256"
+}
+
+install_all() {
+    mkdir -p "${cache_dir}"
+    fetch "${PHAR_URL}" "${PHAR_SIZE}" "${PHAR_SHA256}" "${phar}"
+    fetch "${PHP_URL}" "${PHP_SIZE}" "${PHP_SHA256}" "${downloads}/${PHP_TARBALL}"
+    unpack "${downloads}/${PHP_TARBALL}" "${PHP_SHA256}" "${php_dir}"
+    [[ -x "${php_bin}" ]] || die "${PHP_TARBALL} unpacked without bin/php7/bin/php"
+    if [[ "${1:-}" == "--with-debug-symbols" ]]; then
+        fetch "${SYMBOLS_URL}" "${SYMBOLS_SIZE}" "${SYMBOLS_SHA256}" "${downloads}/${SYMBOLS_TARBALL}"
+        unpack "${downloads}/${SYMBOLS_TARBALL}" "${SYMBOLS_SHA256}" "${symbols_dir}"
+    fi
+}
+
+# A check never downloads: it skips, by name, when the cache is not there.
+require_cache() {
+    [[ -x "${php_bin}" && -f "${php_dir}/.stratum-sha256" ]] ||
+        skip "PocketMine-MP's PHP is not unpacked at ${php_dir}; run tools/pmmp-dev"
+    [[ -f "${phar}" ]] || skip "PocketMine-MP ${PMMP_VERSION} is not fetched to ${phar}; run tools/pmmp-dev"
+    verify "${phar}" "${PHAR_SIZE}" "${PHAR_SHA256}"
+}
+require_so() {
+    [[ -n "${1:-}" ]] || die "--stratum-so is required"
+    [[ -f "$1" ]] || die "no stratum.so at $1 (cmake --build --preset ext-release --target stratum_php)"
+}
+require_version_root() {
+    [[ -n "${1:-}" ]] || die "--version-root is required"
+    [[ -d "$1/worldgen/noise_settings" && -d "$1/biome_parameters" ]] ||
+        skip "no vanilla version root at $1; run tools/fetch-vanilla"
+}
+
+# PocketMine-MP's PHP with no php.ini: just stratum.so, assertions on.
+evidence_php() {
+    "${php_bin}" -n -d memory_limit=1024M -d zend.assertions=1 -d extension="${so}" "$@"
+}
+
+# --- options ------------------------------------------------------------------
+
+so=""
+version_root=""
+dimension="overworld"
+seed=20260915
+port=""
+async_workers=3
+timeout=1200
+work_dir=""
+keep=0
+netns=1
+build_php_config=""
+report=""
+fixtures_dir=""
+plugin_dir="${repo_root}/ext/plugin"
+rest=()
+
+parse_options() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stratum-so) so="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+            --version-root) version_root="$2"; shift 2 ;;
+            --dimension) dimension="$2"; shift 2 ;;
+            --seed) seed="$2"; shift 2 ;;
+            --port) port="$2"; shift 2 ;;
+            --async-workers) async_workers="$2"; shift 2 ;;
+            --timeout) timeout="$2"; shift 2 ;;
+            --work-dir) work_dir="$2"; shift 2 ;;
+            --keep) keep=1; shift ;;
+            --no-netns) netns=0; shift ;;
+            --build-php-config) build_php_config="$2"; shift 2 ;;
+            --report) report="$2"; shift 2 ;;
+            --fixtures-dir) fixtures_dir="$2"; shift 2 ;;
+            --plugin-dir) plugin_dir="$2"; shift 2 ;;
+            --) shift; rest=("$@"); return ;;
+            *) die "unknown option $1" ;;
+        esac
+    done
+}
+
+dimension_pair() {
+    case "${dimension}" in
+        overworld) echo "minecraft:overworld minecraft:overworld" ;;
+        end) echo "minecraft:end minecraft:the_end" ;;
+        *) die "--dimension is overworld or end, not ${dimension}" ;;
+    esac
+}
+
+# --- check-load -----------------------------------------------------------------
+
+abi_lines() {
+    "$1" -n -i | grep -E '^(PHP API|PHP Extension|Zend Extension|PHP Extension Build|Debug Build|Thread Safety|Zend Signal Handling|Zend Memory Manager|Zend Max Execution Timers) =>'
+}
+
+cmd_check_load() {
+    require_cache
+    require_so "${so}"
+    local failures=0
+
+    local module_id php_id
+    module_id="$(LC_ALL=C grep -aoE 'API[0-9]{8},(NTS|TS)(,debug)?' "${so}" | head -1)"
+    php_id="$("${php_bin}" -n -i | sed -n 's/^PHP Extension Build => //p')"
+    echo "stratum.so module build id: ${module_id:-none found}"
+    echo "PocketMine-MP's php build id: ${php_id}"
+    [[ -n "${module_id}" && "${module_id}" == "${php_id}" ]] || {
+        echo "FAIL: the build ids differ"
+        failures=$((failures + 1))
+    }
+
+    echo "PocketMine-MP's php:"
+    abi_lines "${php_bin}" | sed 's/^/  /'
+    if [[ -n "${build_php_config}" ]]; then
+        local build_php
+        build_php="$("${build_php_config}" --php-binary)"
+        echo "the php stratum.so was built against (${build_php}):"
+        abi_lines "${build_php}" | sed 's/^/  /'
+        if ! diff <(abi_lines "${build_php}") <(abi_lines "${php_bin}") >/dev/null; then
+            echo "FAIL: the two PHPs differ in a line above"
+            failures=$((failures + 1))
+        fi
+    fi
+
+    if command -v nm >/dev/null 2>&1; then
+        local unresolved
+        unresolved="$(LC_ALL=C comm -23 \
+            <(nm -D --undefined-only "${so}" | awk '{print $2}' | grep -v '@' | grep -vE '^(_ITM_|__gmon_start__)' | LC_ALL=C sort -u) \
+            <(nm -D --defined-only "${php_bin}" | awk '{print $3}' | LC_ALL=C sort -u))"
+        if [[ -n "${unresolved}" ]]; then
+            echo "FAIL: stratum.so needs symbols PocketMine-MP's php does not export: ${unresolved//$'\n'/ }"
+            failures=$((failures + 1))
+        else
+            echo "every zend symbol stratum.so imports is exported by PocketMine-MP's php"
+        fi
+    else
+        echo "(no nm: the symbol check is not run)"
+    fi
+
+    local loaded
+    loaded="$("${php_bin}" -n -d extension="${so}" -r '
+        echo implode(" ", get_loaded_extensions()), "\n";
+        echo "stratum ", phpversion("stratum"), ": ", Stratum\javaBlockStateCount(), " Java block states\n";' 2>&1)" || true
+    echo "loaded into PocketMine-MP's php: ${loaded}"
+    if grep -Eqi 'warning|unable to load|module compiled|cannot load' <<<"${loaded}" ||
+        ! grep -q '^stratum 0' <<<"${loaded}"; then
+        echo "FAIL: stratum.so did not load cleanly"
+        failures=$((failures + 1))
+    fi
+    local extension
+    for extension in chunkutils2 pmmpthread leveldb igbinary morton encoding libdeflate crypto yaml; do
+        grep -qw "${extension}" <<<"${loaded}" || {
+            echo "FAIL: ${extension} is not loaded beside stratum"
+            failures=$((failures + 1))
+        }
+    done
+
+    # PocketMine-MP's own startup gate (check_platform_dependencies) runs
+    # before --version prints, and exits 1 naming whatever it refuses.
+    local tmp gate rc=0
+    tmp="$(mktemp -d)"
+    gate="$("${php_bin}" -n -d extension="${so}" -d phar.require_hash=1 -d memory_limit=1024M \
+        -d zend.assertions=-1 -d sys_temp_dir="${tmp}" "${phar}" --version 2>&1)" || rc=$?
+    rm -rf "${tmp}"
+    echo "PocketMine-MP's startup gate, with stratum.so loaded (exit ${rc}): ${gate}"
+    if [[ ${rc} -ne 0 ]] || ! grep -q "PocketMine-MP ${PMMP_VERSION}" <<<"${gate}"; then
+        echo "FAIL: PocketMine-MP refused this PHP environment"
+        failures=$((failures + 1))
+    fi
+
+    [[ ${failures} -eq 0 ]] || exit 1
+    echo "RESULT: PASS"
+}
+
+# --- server directory ---------------------------------------------------------
+
+write_server_dir() {
+    local dir="$1"
+    local settings biomes
+    read -r settings biomes < <(dimension_pair)
+    local world="stratum_${dimension}"
+    [[ -n "${port}" ]] || port=$([[ "${dimension}" == "overworld" ]] && echo 19842 || echo 19852)
+
+    if [[ -e "${dir}" ]]; then
+        [[ -f "${dir}/.stratum-pmmp-server" || -z "$(ls -A "${dir}")" ]] ||
+            die "${dir} exists and is not a server directory this tool wrote; refusing to touch it"
+        rm -rf "${dir}"
+    fi
+    mkdir -p "${dir}/plugins" "${dir}/worlds/${world}" "${dir}/tmp"
+    dir="$(cd "${dir}" && pwd)"
+    : >"${dir}/.stratum-pmmp-server"
+
+    # As WorldFactory does it: the blob in the world's own folder, before the
+    # world exists; a folder holding only the blob is not a generated world.
+    local blob="${dir}/worlds/${world}/stratum-pipeline.blob"
+    "${php_bin}" -n -d extension="${so}" -r 'Stratum\freezePipeline($argv[1], $argv[2]);' \
+        "${version_root}" "${blob}"
+    # The options string exactly as the plugin's own GeneratorOptions writes it.
+    local options
+    options="$("${php_bin}" -n -r 'require $argv[1]; echo Stratum\PMMP\GeneratorOptions::encode($argv[2], $argv[3], $argv[4]);' \
+        "${plugin_dir}/src/GeneratorOptions.php" "${blob}" "${settings}" "${biomes}")"
+    printf '%s' "${options}" >"${dir}/generator-options.json"
+
+    "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
+        "${plugin_dir}" "${dir}/plugins/Stratum.phar" >&2
+
+    cat >"${dir}/php.ini" <<EOF
+; Written by tools/pmmp-dev. pmmp/PHP-Binaries' own php.ini settings, with
+; extension_dir pointed at this machine's copy (the release's compiled-in
+; path is its CI runner's), temporary files kept inside the server directory
+; (the phar's stub caches itself there), and stratum.so loaded. Read through
+; PHPRC, so PocketMine-MP's console reader child process reads it too.
+memory_limit=1024M
+date.timezone=UTC
+short_open_tag=0
+phar.require_hash=1
+igbinary.compact_strings=0
+zend.assertions=-1
+error_reporting=-1
+display_errors=1
+display_startup_errors=1
+recursionguard.enabled=0
+extension_dir="${php_ext_dir}"
+zend_extension=opcache.so
+opcache.enable=1
+opcache.enable_cli=1
+opcache.save_comments=1
+opcache.validate_timestamps=1
+opcache.revalidate_freq=0
+opcache.file_update_protection=0
+opcache.optimization_level=0x7FFEBFFF
+sys_temp_dir="${dir}/tmp"
+extension="${so}"
+EOF
+
+    cat >"${dir}/server.properties" <<EOF
+#Properties Config file
+# Written by tools/pmmp-dev: a hermetic, headless test server. Loopback only;
+# IPv6 and Query off; Xbox Live authentication off, since it fetches
+# Microsoft's keys when a client logs in; whitelisted, with nobody on it.
+# The default world is the one pocketmine.yml's worlds: entry creates.
+motd=Stratum smoke test
+server-ip=127.0.0.1
+server-port=${port}
+server-ipv6=::1
+server-portv6=$((port + 1))
+enable-ipv6=off
+enable-query=off
+xbox-auth=off
+white-list=on
+max-players=1
+level-name=${world}
+level-seed=${seed}
+view-distance=4
+language=eng
+EOF
+
+    # Every pocketmine.yml switch that makes 5.44.3 reach the network, set
+    # off explicitly: a key left out takes its default in the code, and
+    # anonymous-statistics.enabled defaults to true there. The world is a
+    # worlds: entry, generator "stratum" with the plugin's options as its
+    # preset. Emitted by the yaml extension PocketMine-MP parses it with.
+    "${php_bin}" -n -r '
+        [, $workers, $world, $options, $seed] = $argv;
+        echo "# Written by tools/pmmp-dev: a hermetic, headless test server.\n";
+        echo yaml_emit([
+            "settings" => ["query-plugins" => false, "enable-profiling" => false,
+                "async-workers" => (int) $workers, "enable-dev-builds" => false],
+            "network" => ["upnp-forwarding" => false],
+            "debug" => ["level" => 2],
+            "player" => ["save-player-data" => false],
+            "auto-report" => ["enabled" => false, "send-code" => false, "send-settings" => false, "send-phpinfo" => false],
+            "anonymous-statistics" => ["enabled" => false],
+            "auto-updater" => ["enabled" => false, "suggest-channels" => false, "on-update" => ["warn-console" => false]],
+            "console" => ["enable-input" => true, "title-tick" => false],
+            "worlds" => [$world => ["generator" => "stratum", "preset" => $options, "seed" => (int) $seed]],
+        ]);' "${async_workers}" "${world}" "${options}" "${seed}" >"${dir}/pocketmine.yml"
+
+    log "server directory: ${dir} (world ${world}, ${settings} / ${biomes}, seed ${seed})"
+}
+
+cmd_server() {
+    local dir="${1:-}"
+    [[ -n "${dir}" && "${dir}" != --* ]] || die "usage: tools/pmmp-dev server <dir> --stratum-so <so> --version-root <root>"
+    shift
+    parse_options "$@"
+    install_all
+    require_so "${so}"
+    require_version_root "${version_root}"
+    write_server_dir "${dir}"
+    echo "run it with: cd ${dir} && PHPRC=${dir}/php.ini PHP_INI_SCAN_DIR= ${php_bin} ${phar} --no-wizard --data=${dir} --plugins=${dir}/plugins"
+}
+
+# --- smoke --------------------------------------------------------------------
+
+# epoch milliseconds of a server.log line's "YYYY-MM-DD [HH:MM:SS.mmm]" stamp
+log_stamp_ms() {
+    local stamp
+    stamp="$(sed -nE 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}) \[([0-9:.]+)\].*/\1 \2/p' <<<"$1")"
+    [[ -n "${stamp}" ]] && date -d "${stamp}" +%s%3N
+}
+
+cmd_smoke() {
+    parse_options "$@"
+    require_cache
+    require_so "${so}"
+    require_version_root "${version_root}"
+    local settings biomes
+    read -r settings biomes < <(dimension_pair)
+    local world="stratum_${dimension}"
+    local own_dir=0
+    if [[ -z "${work_dir}" ]]; then
+        work_dir="$(mktemp -d "${TMPDIR:-/tmp}/stratum-pmmp-smoke.XXXXXX")"
+        own_dir=1
+    fi
+    write_server_dir "${work_dir}"
+    local dir
+    dir="$(cd "${work_dir}" && pwd)"
+    local options
+    options="$(cat "${dir}/generator-options.json")"
+
+    # In a network namespace of its own when the kernel allows one without
+    # root: loopback and nothing else, so nothing can reach the network
+    # whatever the configuration says.
+    local launcher=()
+    local ip_cmd
+    ip_cmd="$(command -v ip || echo /usr/sbin/ip)"
+    if [[ ${netns} -eq 1 ]] && [[ -x "${ip_cmd}" ]] &&
+        unshare -rn "${ip_cmd}" link set lo up >/dev/null 2>&1; then
+        launcher=(unshare -rn sh -c '"$0" link set lo up && exec "$@"' "${ip_cmd}")
+        echo "network: a namespace of its own, loopback only"
+    else
+        echo "network: the host's (no unprivileged network namespace here, or --no-netns); hermetic by configuration alone"
+    fi
+
+    mkfifo "${dir}/console.in"
+    local console
+    exec {console}<>"${dir}/console.in"
+    local started=${SECONDS}
+    (
+        cd "${dir}"
+        exec setsid env -i HOME="${dir}" PATH=/usr/bin:/bin LANG=C.UTF-8 TMPDIR="${dir}/tmp" \
+            PHPRC="${dir}/php.ini" PHP_INI_SCAN_DIR= \
+            "${launcher[@]}" "${php_bin}" "${phar}" --no-wizard --disable-ansi \
+            --data="${dir}" --plugins="${dir}/plugins"
+    ) <"${dir}/console.in" >"${dir}/console.out" 2>&1 &
+    local pid=$!
+    # shellcheck disable=SC2064 # expand now: these are this run's
+    trap "kill -TERM -- -${pid} 2>/dev/null || true; exec {console}>&-" EXIT
+
+    local spawn_re='Generating spawn terrain: ([0-9]+) / \1 \(100%\)'
+    local outcome="timeout"
+    while ((SECONDS - started < timeout)); do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            outcome="exited"
+            break
+        fi
+        if grep -Eq "${spawn_re}" "${dir}/console.out" && grep -q 'Done (' "${dir}/console.out"; then
+            outcome="spawn"
+            break
+        fi
+        sleep 1
+    done
+    local spawn_seen=$((SECONDS - started))
+
+    local rc=0 stopped=0
+    if [[ "${outcome}" != "exited" ]]; then
+        printf 'stop\n' >&"${console}"
+        local waited=${SECONDS}
+        while kill -0 "${pid}" 2>/dev/null && ((SECONDS - waited < 180)); do
+            sleep 1
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -KILL -- "-${pid}" 2>/dev/null || true
+        else
+            stopped=1
+        fi
+    fi
+    wait "${pid}" || rc=$?
+    trap - EXIT
+    exec {console}>&-
+
+    # --- what happened ---
+    local server_log="${dir}/server.log" failures=()
+    [[ -f "${server_log}" ]] || server_log="${dir}/console.out"
+    echo "PocketMine-MP ${PMMP_VERSION}, headless; world ${world} (${settings} / ${biomes}), seed ${seed}; async-workers ${async_workers}"
+    echo "server: ${outcome} after ${spawn_seen}s; console stop $([[ ${stopped} -eq 1 ]] && echo "returned" || echo "DID NOT return"); exit code ${rc}"
+    [[ "${outcome}" == "spawn" ]] || failures+=("the spawn area never finished generating (${outcome})")
+    [[ ${stopped} -eq 1 ]] || failures+=("the server did not stop on the console's stop")
+    [[ ${rc} -eq 0 ]] || failures+=("the server exited ${rc}")
+
+    local line
+    for line in "Loading Stratum" "Enabling Stratum" "Preparing world \"${world}\"" "Stopping the server" "Disabling Stratum" "Unloading world \"${world}\"" "Stopping other threads"; do
+        grep -q "${line}" "${server_log}" || failures+=("server.log never says '${line}'")
+    done
+
+    local registered
+    registered="$(grep -oE 'Registering generator on worker [0-9]+' "${server_log}" | sort -u | wc -l | tr -d ' ')"
+    echo "generator registered on ${registered} async worker(s) (pool size ${async_workers})"
+    [[ "${registered}" -ge 1 ]] || failures+=("the generator was never registered on a worker")
+
+    local begin end
+    begin="$(grep -m1 "Spawn terrain for world \"${world}\" is being generated in the background" "${server_log}" || true)"
+    end="$(grep -m1 -E "${spawn_re}" "${server_log}" || true)"
+    if [[ -n "${begin}" && -n "${end}" ]]; then
+        local ms=$(($(log_stamp_ms "${end}") - $(log_stamp_ms "${begin}")))
+        echo "spawn generation: $(sed -nE 's/.*Generating spawn terrain: ([0-9]+) .*/\1/p' <<<"${end}") chunks populated in $((ms / 1000)).$(printf '%03d' $((ms % 1000)))s wall"
+    fi
+    grep -m1 'Done (' "${server_log}" | sed 's/^/  /' || true
+    # Reported, not failed: PocketMine-MP redoing population whose 3x3 a
+    # block change touched while it ran, and main-thread ticks over budget.
+    echo "population results discarded because the terrain changed while populating: $(grep -c 'Discarding population result' "${server_log}" || true)"
+    echo "main-thread ticks over budget: $(grep -c 'Tick took too long' "${server_log}" || true)"
+
+    local crashes=0
+    if [[ -d "${dir}/crashdumps" ]]; then
+        crashes="$(find "${dir}/crashdumps" -type f | wc -l | tr -d ' ')"
+    fi
+    echo "crashdumps: ${crashes}"
+    [[ "${crashes}" -eq 0 ]] || failures+=("${crashes} crashdump(s) in ${dir}/crashdumps")
+
+    local bad
+    bad="$(grep -E '/(EMERGENCY|ALERT|CRITICAL|ERROR)\]' "${server_log}" || true)"
+    [[ -z "${bad}" ]] || failures+=("server.log has errors:"$'\n'"${bad}")
+    bad="$(grep -Eh 'PHP (Fatal error|Warning|Notice|Deprecated)|^(Fatal error|Warning|Notice|Deprecated):|E_(USER_)?(WARNING|NOTICE|DEPRECATED)|Exception' "${server_log}" "${dir}/console.out" || true)"
+    [[ -z "${bad}" ]] || failures+=("PHP diagnostics or exceptions:"$'\n'"${bad}")
+
+    local warnings fallbacks
+    warnings="$(grep -E '/WARNING\]' "${server_log}" || true)"
+    fallbacks="$(grep -c 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" || true)"
+    echo "the plugin's documented fallback warnings: ${fallbacks}"
+    grep 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" | sed -E 's/.*cannot place ([^ ]+) .*using (.*) for it.*/  \1 -> \2/' | sort -u || true
+    bad="$(grep -v 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" | grep -i 'stratum' || true)"
+    [[ -z "${bad}" ]] || failures+=("the plugin warned:"$'\n'"${bad}")
+    echo "PocketMine-MP's own warnings:"
+    grep -v 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" | grep -vi 'stratum' | sed -E 's/^[^]]*\] /  /' || true
+
+    echo "on disk:"
+    local inspect_rc=0
+    evidence_php "${evidence}/inspect_world.php" --phar="${phar}" --world="${dir}/worlds/${world}" \
+        --generator=stratum --options="${options}" --seed="${seed}" | sed 's/^/  /' || inspect_rc=$?
+    [[ ${inspect_rc} -eq 0 ]] || failures+=("the world on disk is not what the server should have left")
+
+    if [[ ${keep} -eq 0 ]]; then
+        rm -rf "${dir}/worlds" "${dir}/plugins" "${dir}/tmp" "${dir}/console.in"
+        if [[ ${own_dir} -eq 1 ]]; then
+            cp "${server_log}" "${dir}.server.log" 2>/dev/null && echo "server.log kept at ${dir}.server.log"
+            rm -rf "${dir}"
+        fi
+    fi
+
+    if [[ ${#failures[@]} -gt 0 ]]; then
+        printf 'FAIL: %s\n' "${failures[@]}"
+        [[ ${keep} -eq 1 || ${own_dir} -eq 0 ]] && echo "server directory: ${dir}"
+        exit 1
+    fi
+    echo "RESULT: PASS"
+}
+
+# --- main -----------------------------------------------------------------------
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "${command}" in
+    "" | --with-debug-symbols)
+        install_all "${command}"
+        log "PocketMine-MP ${PMMP_VERSION}: ${phar}"
+        log "its PHP: $("${php_bin}" -n -r 'echo PHP_VERSION, PHP_ZTS ? " ZTS" : " NTS", PHP_DEBUG ? " debug" : "";') at ${php_bin}"
+        ;;
+    --print-php) install_all; echo "${php_bin}" ;;
+    --print-phar) install_all; echo "${phar}" ;;
+    --print-run-tests) install_all; echo "${run_tests}" ;;
+    --print-dir) echo "${cache_dir}" ;;
+    server) cmd_server "$@" ;;
+    check-load) parse_options "$@"; cmd_check_load ;;
+    phpt)
+        parse_options "$@"
+        require_cache
+        require_so "${so}"
+        [[ -n "${fixtures_dir}" ]] || die "--fixtures-dir is required"
+        require_version_root "${fixtures_dir}/1.21.11"
+        [[ ${#rest[@]} -gt 0 ]] || die "phpt needs test directories after --"
+        STRATUM_FIXTURES_DIR="${fixtures_dir}" NO_INTERACTION=1 exec "${repo_root}/tools/run-phpt" \
+            "${php_bin}" "${run_tests}" --show-diff -n -d extension="${so}" -- "${rest[@]}"
+        ;;
+    census-blocks)
+        parse_options "$@"
+        require_cache
+        require_so "${so}"
+        require_version_root "${version_root}"
+        report_arg=()
+        [[ -z "${report}" ]] || report_arg=(--report="${report}")
+        evidence_php "${evidence}/census_blocks.php" --phar="${phar}" --version-root="${version_root}" \
+            "${report_arg[@]}"
+        ;;
+    census-biomes)
+        parse_options "$@"
+        require_cache
+        require_so "${so}"
+        require_version_root "${version_root}"
+        evidence_php "${evidence}/census_biomes.php" --phar="${phar}" --version-root="${version_root}" \
+            --biome-table="${repo_root}/lib/mapping/src/biome_table.inc"
+        ;;
+    threads)
+        parse_options "$@"
+        require_cache
+        require_so "${so}"
+        require_version_root "${version_root}"
+        evidence_php "${evidence}/threads.php" --phar="${phar}" --version-root="${version_root}"
+        ;;
+    smoke) cmd_smoke "$@" ;;
+    *)
+        sed -n '/^# Usage:/,/^# The checks/p' "$0" | sed 's/^# \{0,1\}//' >&2
+        exit 2
+        ;;
+esac
