@@ -250,8 +250,8 @@ These are hard requirements; violations are release blockers.
    `tools/lint/check-determinism.sh` and `stratum_assert_no_banned_flags`
    accept it as they find it. CI runs the unit suite under it (job
    `linux-x86_64 (clang, UBSan)`; on an x86-64 dev box, a clean build in
-   about a minute at six jobs and the 580 unit cases in eleven seconds at
-   four); `ctest --preset sanitize-conformance` runs the conformance suite
+   about a minute at six jobs and the 583 unit cases in fourteen seconds at
+   three); `ctest --preset sanitize-conformance` runs the conformance suite
    under it locally, at about twice the Debug time. Measured when it landed:
    176 of 176 with nothing skipped and no report, 74 minutes at four jobs
    (15 457 s of test time, against 7 884 s for the same suite in Debug).
@@ -600,11 +600,14 @@ Unsupported in v1 (hard error at load, listed by name in the error):
 The matrix is published in the README and is part of the public contract.
 A pack that half-loads silently is a bug of the highest severity class.
 
-**Inputs that would reach undefined behaviour (§5.7).** Each of these was
-found reachable by an audit under UBSan at c7b060f — its own driver
-programs and the suites — and is refused by name, the message naming the
-node, noise, condition or field and the value. None is a reading of the
-server's: what it does with these inputs is unmeasured, and only the
+**Inputs that would reach undefined behaviour (§5.7).** These were found
+reachable by the audit under UBSan at c7b060f — its own driver programs
+and the suites — and by the reviews that followed it (08786df, dd465d3,
+f85f8e0). The narrowing and nesting refusals below are not UBSan-visible:
+an integer narrowed modulo 2^32 or 2^64 is defined C++20, and a stack run
+out is a crash, not a report. Each is refused by name, the message naming
+the node, noise, condition or field and the value. None is a reading of
+the server's: what it does with these inputs is unmeasured, and only the
 `jagged` case below is reachable from vanilla's own data.
 
 At load, from a pack or a frozen blob alike (one check serves both paths).
@@ -659,11 +662,19 @@ that is undefined, so some of what they stop computed defined output before
   node's depth, which memoised references can carry past the recursion that
   built it; from a blob by a walk with a stack of its own in
   `Graph::Assembler::release`, which also refuses, as malformed, a cycle
-  through a node's spline); and surface rules more than 128 rules and
-  conditions deep (`surface::kMaxRuleDepth`, which a pack cannot reach past
-  its JSON bound). The recursions keep thin frames, and at each bound the
-  most stack measured in the `sanitize` preset's build is 640 KiB, for a
-  chain of 256 `interpolated`; resolving and evaluating 256 levels
+  through a node's spline) — and since the way down counts the references
+  the resolver follows, which it follows only to a function not yet
+  resolved, a pack whose graph is shallower than 256 can be refused, and
+  whether it is depends on which file resolves first, which is name order:
+  127 `abs` in `deep_a` under 128 in `deep_b` that name it load, the same
+  graph with the two names swapped is refused, and so is a chain of more
+  than 256 files each naming the next, one node once resolved, when it is
+  resolved from its head (vanilla's worst descent is about 52); and surface
+  rules more than 128 rules and conditions deep (`surface::kMaxRuleDepth`,
+  which a pack cannot reach past its JSON bound). The recursions keep thin
+  frames, and at each bound the most stack measured in the `sanitize`
+  preset's build is 640 KiB, for a chain of 256 `interpolated`; resolving
+  and evaluating 256 levels
   otherwise took 320 KiB, resolving and running 128 levels of rules
   256 KiB, and a copy, a dump and an == of 128 levels of JSON 448 KiB —
   inside the 1 MiB a Windows main thread or a JVM thread gets by default.

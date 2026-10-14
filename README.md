@@ -292,15 +292,21 @@ the schema or minecraft.wiki gives its field, an integer its field's type
 cannot hold (which the JSON reader used to narrow without a word), an int
 near 2^31 whose arithmetic would overflow, a function whose value no 32-bit
 integer holds where one is needed, a frozen node of any shape but its
-type's, and a noise sampled past where its lattice fits 32 bits. And every
-input nested deeper than its recursions' stack allows: a file of JSON more
-than 128 arrays and objects deep, a density function graph more than 256
-nodes and splines deep, surface rules more than 128 deep (vanilla's
-deepest are 23, 46 and 14). One of those is reached by vanilla's own data: in all three overworld
-presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits 2 812 333 blocks
-from the origin on either horizontal axis, so chunk coordinates 175 770 and
-up, and -175 771 and down, are refused there, inside the world border,
-until the server's reading past that point is measured. The aquifer is the
+type's, a noise sampled past where its lattice fits 32 bits, and an
+`interpolated` cell whose corners leave 32 bits (which a pack reaches on y
+through `find_top_surface`). And every input nested deeper than its
+recursions' stack allows: a file of JSON more than 128 arrays and objects
+deep, a density function graph more than 256 nodes and splines deep,
+surface rules more than 128 deep (vanilla's deepest are 23, 46 and 14).
+The graph's bound also counts the resolver's own descent, references
+included, so a pack whose graph is shallower than 256 can be refused,
+depending on which file resolves first (SPEC §8). One of these refusals,
+the noise lattice's, is reached by vanilla's own data: in all three
+overworld presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits
+2 812 333 blocks from the origin on either horizontal axis, so chunk
+coordinates 175 770 and up, and -175 771 and down, are refused there,
+inside the world border, until the server's reading past that point is
+measured. The aquifer is the
 one named exception: it reads `preliminary_surface_level`,
 `fluid_level_spread` and `sea_level` with Java's own int semantics
 (saturating, NaN to 0, wrapping), which is defined and portable but not yet
