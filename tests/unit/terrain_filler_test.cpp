@@ -936,6 +936,72 @@ TEST_CASE("a chunk whose block arithmetic leaves int32 is refused by name",
     CHECK_THROWS(filler.fill(std::numeric_limits<std::int32_t>::max(), 0, buffer));
 }
 
+TEST_CASE("a preliminary_surface_level corner no int32 holds is refused by name",
+          "[terrain][filler][surface][ub]") {
+    // The surface pass reads `preliminary_surface_level` through its 16-block
+    // lattice, each corner floored to an int (preliminarySurfaceIn), and a
+    // router's entry is any function: past int32, or NaN, that conversion is
+    // undefined, so fill() refuses the chunk naming the entry (SPEC §8). Only
+    // a tree that reads the level takes the lattice; the in-range neighbour
+    // still fills.
+    const auto product = [](double a, double b) {
+        return nlohmann::json{{"type", "minecraft:mul"}, {"argument1", a}, {"argument2", b}};
+    };
+    // inf - inf: four cubes take 1e6 past the double range, and the
+    // difference of that with itself is NaN.
+    nlohmann::json huge = 1.0e6;
+    for (int i = 0; i < 4; ++i) {
+        huge = nlohmann::json{{"type", "minecraft:cube"}, {"argument", huge}};
+    }
+    const nlohmann::json notANumber = {
+        {"type", "minecraft:add"},
+        {"argument1", huge},
+        {"argument2", {{"type", "minecraft:mul"}, {"argument1", -1.0}, {"argument2", huge}}}};
+
+    const RuleGraph surface =
+        resolveSurface(condition(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+                                 block("minecraft:glowstone")));
+
+    struct Level {
+        const char* what;
+        nlohmann::json level;
+        bool refused;
+    };
+
+    for (const Level& c :
+         {Level{"1e12", product(1.0e6, 1.0e6), true}, Level{"-1e12", product(-1.0e6, 1.0e6), true},
+          Level{"NaN", notANumber, true}, Level{"64", 64.0, false}}) {
+        CAPTURE(c.what);
+        const TempTree tree;
+        nlohmann::json settings = flatSettings(false, false);
+        settings["noise_router"]["preliminary_surface_level"] = c.level;
+        tree.defineSettings("test", settings);
+        tree.defineSurfaceNoises();
+        const LoadedSettings loaded = tree.load();
+        const auto& compiled =
+            loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+        auto wanted = loaded.graph.referencedNoises();
+        wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface"));
+        wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:surface_secondary"));
+        const auto noises = stratum::density::NoiseRegistry::create(
+            tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
+        const ChunkFiller filler = ChunkFiller::compile(loaded.graph, noises, compiled, &surface);
+        REQUIRE(filler.runsSurfaceRules());
+        ChunkBuffer buffer(compiled.geometry);
+        if (c.refused) {
+            CHECK_THROWS_WITH(filler.fill(0, 0, buffer),
+                              ContainsSubstring("chunk (0, 0)") &&
+                                  ContainsSubstring("preliminary_surface_level") &&
+                                  ContainsSubstring("not a 32-bit integer"));
+        } else {
+            CHECK_NOTHROW(filler.fill(0, 0, buffer));
+            // A level of 64 puts the boundary at 64 + surfaceDepth - 8, above
+            // the whole flat plane, so the plane keeps its stone.
+            CHECK(buffer.at(0, -1, 0).name.toString() == "minecraft:stone");
+        }
+    }
+}
+
 TEST_CASE("a buffer refuses positions outside the chunk or the dimension", "[terrain][filler]") {
     const TempTree tree;
     tree.defineSettings("test", flatSettings(false, false));

@@ -900,6 +900,70 @@ TEST_CASE("a surface depth no int holds is refused, not converted", "[surface][u
     CHECK(secondaryRefused);
 }
 
+TEST_CASE("the secondary depth and bandlands' index refuse their own overflowing steps",
+          "[surface][bandlands][ub]") {
+    // The two `narrowed` steps the cases above do not reach: stone_depth's
+    // threshold plus its secondary depth, and bandlands' y plus its offset,
+    // then plus 192. Each is driven at INT32_MAX with tame noises, so the
+    // step itself is what leaves int32, not a conversion before it.
+    constexpr std::int32_t kHighest = std::numeric_limits<std::int32_t>::max();
+    const NoiseTree tree{{"surface", kTameSurface},
+                         {"surface_secondary", kTameSecondary},
+                         {"clay_bands_offset", kTameSurface}};
+    const auto noises = tree.registry();
+    const auto geometry = overworldGeometry();
+
+    // The secondary depth is (secondary + 1) / 2 * 30, truncated: at least 1
+    // in almost every column, which INT32_MAX cannot take.
+    const auto secondary = [](std::int32_t offset) {
+        return resolve(when(nlohmann::json{{"type", "minecraft:stone_depth"},
+                                           {"offset", offset},
+                                           {"surface_type", "floor"},
+                                           {"add_surface_depth", false},
+                                           {"secondary_depth_range", 30}}));
+    };
+    const RuleGraph highGraph = secondary(kHighest);
+    const Executor high = Executor::compile(highGraph, kSeed, geometry, &noises);
+    bool thresholdRefused = false;
+    for (std::int32_t x = 0; x < 64 && !thresholdRefused; ++x) {
+        try {
+            static_cast<void>(high.apply(at(x, 64, 0)));
+        } catch (const ExecutionError& error) {
+            CHECK_THAT(error.what(), ContainsSubstring("stone_depth's threshold plus its "
+                                                       "secondary depth") &&
+                                         ContainsSubstring("32-bit"));
+            thresholdRefused = true;
+        }
+    }
+    CHECK(thresholdRefused);
+    const RuleGraph plainGraph = secondary(0);
+    const Executor plain = Executor::compile(plainGraph, kSeed, geometry, &noises);
+    for (std::int32_t x = 0; x < 64; ++x) {
+        CHECK_NOTHROW(plain.apply(at(x, 64, 0)));
+    }
+
+    // bandlands' offset from a tame noise is a few blocks either way. At
+    // INT32_MAX - 100 adding it stays in range and the + 192 does not; at
+    // INT32_MAX a positive offset is itself the overflow.
+    const RuleGraph bands = resolve(nlohmann::json{{"type", "minecraft:bandlands"}});
+    const Executor bandlands = Executor::compile(bands, kSeed, geometry, &noises, 63);
+    CHECK_THROWS_WITH(bandlands.bandlandsAt(0, kHighest - 100, 0),
+                      ContainsSubstring("bandlands' y plus its offset plus 192 comes to"));
+    bool offsetRefused = false;
+    for (std::int32_t x = 0; x < 64 && !offsetRefused; ++x) {
+        try {
+            static_cast<void>(bandlands.bandlandsAt(x, kHighest, 0));
+        } catch (const ExecutionError& error) {
+            const std::string message = error.what();
+            if (message.find("bandlands' y plus its offset comes to") != std::string::npos) {
+                offsetRefused = true;
+            }
+        }
+    }
+    CHECK(offsetRefused);
+    CHECK_NOTHROW(bandlands.bandlandsAt(0, 64, 0));
+}
+
 TEST_CASE("bandlands refuses an offset no int holds", "[surface][bandlands][ub]") {
     const NoiseTree tree{{"clay_bands_offset", kHugeAmplitude}};
     const auto noises = tree.registry();
