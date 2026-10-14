@@ -373,8 +373,13 @@ at its first evaluation before, is refused at load now. (4) An integer a
 pack gives that its field's type cannot hold, which the JSON reader narrowed
 without a word, modulo 2^32 or 2^64: a surface rule's `{"absolute":
 4294967359}` generated as 63, a `min_y` of 2^64 - 64 as -64. Defined, the
-same on every architecture, and never what the pack said; refused at load
-now, from a pack or from the surface rules a v15 blob stores as text. (5)
+same on every architecture, and never what the pack said; refused now,
+from a pack or a v15 blob. Surface rules are refused when a dimension
+compiles rather than at load: `world::CompiledDimension::compile` is where
+they are first resolved, from a pack's pipeline and a blob's alike, and
+`freeze::read` keeps them as the text a blob stores. The refusal there
+(`surface::RuleRangeError`) carries the advice `freeze::read` gives for
+what it refuses, worded for the case of a pipeline read from a blob. (5)
 Nesting past the depth bounds (§8): a file of JSON more than 128 deep, a
 density function graph more than 256, surface rules more than 128. An
 earlier build resolved and generated these as deep as its stack held out
@@ -639,7 +644,8 @@ that is undefined, so some of what they stop computed defined output before
   int64, a noise's `firstOctave` and the geometry's fields, which then meet
   their schema range (`{"absolute": 4294967359}` read as 63, a `min_y` of
   2^64 - 64 as -64 inside that range, a `pack_format` of 2^32 + 94 as the
-  pin);
+  pin). A surface rule's are refused where its rules are first resolved,
+  when its dimension compiles (§6, kind (4));
 - nesting deeper than the stack the recursions over it are sized for
   (§5.7), each bound counted where the input is read, before anything
   recurses over it: a pack file, or the surface rules or spawn target a

@@ -20,12 +20,15 @@
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/hash/md5.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/rule_graph.hpp>
 #include <stratum/version.hpp>
+#include <stratum/world/dimension.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -39,6 +42,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -775,6 +779,34 @@ TEST_CASE("a sealed blob deeper than kMaxDepth, or with a cycle, is refused by n
             stratum::freeze::read(respliced(good, stored("[1,2,3]"), stored(deepArrays))),
             ContainsSubstring("\"spawn_target\" that nests arrays and objects 600 deep"));
     }
+}
+
+TEST_CASE("a frozen rule integer no int32 holds is refused with what to do about it",
+          "[freeze][world][ub]") {
+    // SPEC §6, kind (4): a build from before the refusal read
+    // {"absolute": 4294967359} as 63, and froze it as written, since a blob
+    // stores its surface rules as text. freeze::read does not resolve them;
+    // compiling the dimension does, and is where it is refused — with the
+    // loader's words and the advice freeze::read gives for what it refuses.
+    const TempTree tree;
+    Pipeline pipeline = buildPipeline(tree);
+    const ResourceLocation overworld = ResourceLocation::parse("minecraft:overworld");
+    pipeline.settings.at(overworld).surfaceRule = nlohmann::json::parse(R"({
+        "type":"minecraft:condition",
+        "if_true":{"type":"minecraft:y_above","anchor":{"absolute":4294967359},
+                   "surface_depth_multiplier":0,"add_stone_depth":false},
+        "then_run":{"type":"minecraft:block","result_state":{"Name":"minecraft:stone"}}})");
+    Pipeline thawed = stratum::freeze::read(stratum::freeze::write(pipeline));
+    const auto compile = [&] {
+        return stratum::world::CompiledDimension::compile(
+            std::move(thawed), overworld, stratum::world::BiomeSource::multiNoise(overworld), 0);
+    };
+    CHECK_THROWS_MATCHES(
+        compile(), stratum::surface::RuleRangeError,
+        Catch::Matchers::MessageMatches(
+            ContainsSubstring("anchor's absolute is 4294967359, which no 32-bit integer holds") &&
+            ContainsSubstring("frozen blob") &&
+            ContainsSubstring("generate this world with that build")));
 }
 
 TEST_CASE("a thawed pipeline builds the same noises its pack would", "[freeze]") {

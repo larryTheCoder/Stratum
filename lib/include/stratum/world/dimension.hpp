@@ -123,6 +123,9 @@ public:
     /// carry; a legacy-random-source dimension is refused by the noise
     /// registry, naming it; a router entry the biome source reads that this
     /// build cannot evaluate is refused here, by the interpreter, naming it.
+    /// The surface rules are resolved here, and one whose integer no int32
+    /// holds is refused by surface::RuleRangeError, which says what to do
+    /// about a world an earlier build froze with it (SPEC §6, kind (4)).
     [[nodiscard]] static std::unique_ptr<CompiledDimension>
     compile(freeze::Pipeline pipeline, const data::ResourceLocation& noiseSettings,
             const BiomeSource& biomeSource, std::int64_t worldSeed);

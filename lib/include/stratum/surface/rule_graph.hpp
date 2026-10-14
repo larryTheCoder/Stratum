@@ -52,6 +52,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// The RuleError for an integer a rule gives that no 32-bit integer holds,
+/// which this build refuses where an earlier one narrowed it (SPEC §8). Its
+/// own type so that world::CompiledDimension, where a frozen pipeline's
+/// stored rules are first resolved, can say what to do about a rule an
+/// earlier build froze, as freeze::read does for what it refuses (SPEC §6).
+class RuleRangeError : public RuleError {
+public:
+    using RuleError::RuleError;
+};
+
 /// Where a vertical anchor sits, once the dimension's own height is known.
 /// Vanilla writes all three spellings and this build sees all three: 72
 /// `absolute`, 10 `above_bottom`, 5 `below_top` across the seven settings.

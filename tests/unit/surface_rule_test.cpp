@@ -16,6 +16,7 @@ using stratum::data::ResourceLocation;
 using stratum::surface::ConditionType;
 using stratum::surface::RuleError;
 using stratum::surface::RuleGraph;
+using stratum::surface::RuleRangeError;
 using stratum::surface::RuleType;
 using stratum::surface::VerticalAnchor;
 
@@ -293,4 +294,22 @@ TEST_CASE("a rule's integers are read as Java ints or refused, never narrowed", 
                            {"surface_depth_multiplier", nlohmann::json::parse("2147483648")},
                            {"add_stone_depth", false}})),
         ContainsSubstring("'minecraft:y_above' has \"surface_depth_multiplier\" 2147483648"));
+
+    // Both kinds of refusal are a RuleRangeError, the type that lets a
+    // dimension compiled from a frozen blob say what to do about one (SPEC
+    // §6, kind (4)); a rule that is merely wrong is a plain RuleError.
+    const auto refusedAs = [](const nlohmann::json& rule) -> std::string {
+        try {
+            static_cast<void>(resolve(rule));
+        } catch (const RuleRangeError&) {
+            return "range";
+        } catch (const RuleError&) {
+            return "rule";
+        }
+        return "none";
+    };
+    CHECK(refusedAs(yAbove(nlohmann::json{{"absolute", nlohmann::json::parse("4294967359")}})) ==
+          "range");
+    CHECK(refusedAs(stoneDepth(nlohmann::json::parse("-4294967296"), zero)) == "range");
+    CHECK(refusedAs(yAbove(nlohmann::json{{"sideways", 0}})) == "rule");
 }

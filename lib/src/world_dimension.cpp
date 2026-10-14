@@ -92,6 +92,28 @@ noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& setti
     return ids;
 }
 
+/// The dimension's surface rules, resolved — the first time they are read as
+/// rules, whether the pipeline came from a pack or was thawed from a blob,
+/// which stores them as text. An integer no int32 holds is refused there in
+/// RuleGraph::resolve's words, and the message adds what freeze::read says
+/// of the values it refuses: the refusal arrived without a version, so a
+/// build from before it may have frozen the rule, and a world it froze is
+/// generated with that build (SPEC §6, kind (4)). Nothing here tells a blob
+/// from a pack, so the message says which case the advice is for.
+[[nodiscard]] surface::RuleGraph resolveSurfaceRules(const settings::NoiseSettings& settings,
+                                                     const data::ResourceLocation& id) {
+    try {
+        return surface::RuleGraph::resolve(settings.surfaceRule, id);
+    } catch (const surface::RuleRangeError& error) {
+        throw surface::RuleRangeError(
+            std::string(error.what()) +
+            ". If this pipeline was read from a world's frozen blob, a build from before SPEC "
+            "§8's undefined-behaviour refusals may have frozen it at this same pipeline "
+            "engine version; if one did, generate this world with that build (SPEC §6, "
+            "\"No version for the undefined-behaviour refusals\")");
+    }
+}
+
 } // namespace
 
 BiomeSource BiomeSource::multiNoise(data::ResourceLocation parameterList) {
@@ -151,7 +173,7 @@ struct CompiledDimension::Impl {
          const BiomeSource& source, const std::int64_t worldSeed)
         : pipeline(std::move(frozen)), settings(settingsNamed(pipeline, noiseSettings)),
           biomeSource(bind(pipeline, source)),
-          surfaceRules(surface::RuleGraph::resolve(settings.surfaceRule, noiseSettings)),
+          surfaceRules(resolveSurfaceRules(settings, noiseSettings)),
           noises(density::NoiseRegistry::create(
               pipeline.noises, noisesFor(pipeline, settings, surfaceRules), worldSeed,
               settings.legacyRandomSource ? density::RandomSource::Legacy

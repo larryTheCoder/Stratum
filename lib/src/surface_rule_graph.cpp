@@ -83,6 +83,11 @@ template<typename Type, std::size_t Count>
     throw RuleError("surface rule of '" + id.toString() + "': " + what);
 }
 
+/// The same, for an integer no 32-bit integer holds (RuleRangeError).
+[[noreturn]] void failRange(const data::ResourceLocation& id, const std::string& what) {
+    throw RuleRangeError("surface rule of '" + id.toString() + "': " + what);
+}
+
 /// The same shape settings::loadAll reads for `default_block`: a "Name" and
 /// an optional "Properties" of strings. Written again here rather than shared
 /// because the settings loader's version reports errors against a settings
@@ -150,9 +155,9 @@ template<typename Type, std::size_t Count>
     // read as 63 (SPEC §8).
     const std::optional<std::int32_t> y = data::exactInteger<std::int32_t>(value);
     if (!y.has_value()) {
-        fail(id, std::string(where) + "'s " + key + " is " + value.dump() +
-                     ", which no 32-bit integer holds; this build refuses it rather than wrap "
-                     "it (SPEC §8)");
+        failRange(id, std::string(where) + "'s " + key + " is " + value.dump() +
+                          ", which no 32-bit integer holds; this build refuses it rather than wrap "
+                          "it (SPEC §8)");
     }
 
     VerticalAnchor anchor;
@@ -544,10 +549,11 @@ void Resolver::readLeaf(const FieldKind kind, const SchemaField& field, const nl
             // modulo 2^32 as `get<std::int32_t>()` would (SPEC §8).
             const std::optional<std::int32_t> integer = data::exactInteger<std::int32_t>(value);
             if (!integer.has_value()) {
-                fail(id, "'" + std::string(typeName) + "' has \"" + std::string(field.name) +
-                             "\" " + value.dump() +
-                             ", which no 32-bit integer holds; this build refuses it rather than "
-                             "wrap it (SPEC §8)");
+                failRange(id,
+                          "'" + std::string(typeName) + "' has \"" + std::string(field.name) +
+                              "\" " + value.dump() +
+                              ", which no 32-bit integer holds; this build refuses it rather than "
+                              "wrap it (SPEC §8)");
             }
             into.integer = *integer;
             break;
