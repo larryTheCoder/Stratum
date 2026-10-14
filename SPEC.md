@@ -10834,29 +10834,52 @@ Open:
   instrument and is not comparable to it.
 
 - **M5-Nukkit: block states resolve once per world through Nukkit, worlds
-  generate from their frozen pipeline — built and JNI-tested, not yet run
-  inside Nukkit.** Owner rulings (2026-10-15): `ext-nukkit/` is M5 work in
-  parallel with the PocketMine-MP track; M5 closes on headless server
-  evidence, the owner checking with a real client later; the datapack route
-  and the nearest-biome fallback are v1 non-goals, so a biome with no
-  Bedrock id is refused by name; one download is approved, a prebuilt
-  Nukkit server jar from CloudburstMC's own CI pinned by build and SHA-256,
-  and nothing else (no building Nukkit, no JDK download). Read from
-  CloudburstMC/Nukkit `master` @ `b3caad67d` (2026-09-19, Bedrock 26.50).
+  generate from their frozen pipeline and are refused at startup — built
+  and JNI-tested, not yet run inside Nukkit.** Owner rulings (2026-10-15):
+  `ext-nukkit/` is M5 work in parallel with the PocketMine-MP track; M5
+  closes on headless server evidence, the owner checking with a real client
+  later; the datapack route and the nearest-biome fallback are v1
+  non-goals, so a biome with no Bedrock id is refused by name; one download
+  is approved, a prebuilt Nukkit server jar from CloudburstMC's own CI
+  pinned by build and SHA-256, and nothing else (no building Nukkit, no JDK
+  download). Read from CloudburstMC/Nukkit `master` @ `b3caad67d`
+  (2026-09-19, Bedrock 26.50).
 
   *How Nukkit drives a generator.* `Level` keeps one `Generator` per thread
   in a `ThreadLocal`, constructed with a fresh options map from `level.dat`
   (`generatorOptions`). The server thread calls `init` twice, with the
   `Level` and then with a new `PopChunkManager`; a worker once, with a
-  `PopChunkManager` holding the seed alone; an exception from `init` is
-  logged and the world does not load. So the world is opened on the server
-  thread's first call, where every refusal is raised by name, and workers
-  find it by seed and options string. A world whose generator is not
-  registered silently gets Nukkit's `Normal`, so the plugin registers before
-  anything that can fail, under a type id of its own (taking
-  `TYPE_INFINITE` would hand Nukkit's typed-but-unnamed `level.dat` files to
-  Stratum), and `cn.nukkit.*` is refused as a plugin's main package, so the
-  Java side moved to `stratum.nukkit`.
+  `PopChunkManager` holding the seed alone. So the world is opened on the
+  server thread's first call, and workers find it by seed and options
+  string. A world whose generator is not registered silently gets Nukkit's
+  `Normal`, so the plugin registers before anything that can fail, under a
+  type id of its own (taking `TYPE_INFINITE` would hand Nukkit's
+  typed-but-unnamed `level.dat` files to Stratum), and `cn.nukkit.*` is
+  refused as a plugin's main package, so the Java side moved to
+  `stratum.nukkit`.
+
+  *Refusals, at startup.* An exception from `init` is not a clean failure
+  in Nukkit: the `ThreadLocal` logs it and stores `null`, and
+  `Level.initLevel` then throws a `NullPointerException`.
+  `Server.generateLevel` catches that and logs a generation error, but only
+  after `LevelDBProvider.generate` has written the new world's `level.dat`;
+  `Server.loadLevel` does not catch it, so an existing refused world stops
+  the server as it starts (and `Nukkit.main` exits 0 regardless). So the
+  plugin refuses before Nukkit touches a world: loaded at `STARTUP`, after
+  Nukkit has opened its network interface and player database and before
+  any world, it lists the Stratum worlds Nukkit is about to load or create
+  (the configuration and each existing world's own `level.dat`, read as
+  `Server`'s constructor reads them), freezes each new one's pipeline, and
+  makes every check opening it would — options, frozen pipeline, the
+  engine's refusals, every block state resolved through Nukkit and bound,
+  none of it seed-dependent, so compiled once for seed 0 and released. On
+  any refusal it logs one `REFUSED` line per world by name, calls
+  `forceShutdown` and exits with status 1, having written nothing for the
+  refused world. The same checks run again when the world opens, for its
+  seed; a Stratum world a command or plugin creates or loads after startup
+  is refused only there, through Nukkit's path above (a refused new world
+  is left with a `level.dat`). Existing Anvil worlds are not read at
+  startup; opening one refuses it.
 
   *Block states.* As §9 planned, resolved on the Java side once per world:
   native code lists every state the world can place, Java resolves each
@@ -10876,13 +10899,12 @@ Open:
   steps have no measurement yet.
 
   *Worlds.* Generated from their frozen pipeline (§6), never a live pack.
-  Nukkit has no world-creation hook, so the plugin takes one: it loads at
-  `STARTUP`, before Nukkit loads or creates a world, and freezes the
-  options' `"pack"` into `"blob"` for each configured Stratum world not yet
-  created. A world that exists without its blob is refused, never refrozen.
-  In scope: noise settings shaped like Nukkit's overworld (−64..319), a
-  multi-noise source, a LevelDB world; the Nether, the End and Anvil are
-  refused by name.
+  Nukkit has no world-creation hook, so the plugin takes one at `STARTUP`
+  (above), freezing the options' `"pack"` into `"blob"` for each new
+  Stratum world. A world that exists without its blob is refused, never
+  refrozen. In scope: noise settings shaped like Nukkit's overworld
+  (−64..319), a multi-noise source, a LevelDB world; the Nether, the End and
+  Anvil are refused by name.
 
   *Biomes, read and not yet measured.* Nukkit keeps a biome per block,
   `getBiomeStorage(sectionY)` with block-local coordinates — the convention
@@ -10898,27 +10920,70 @@ Open:
   each section reads as the one 64 blocks higher and the top four as the
   bottom one — invisible to Nukkit's own 2D-biome generators. The smoke run
   counts disk mismatches explained by exactly that offset apart from any
-  other, and passes only on those.
+  other; when every mismatch is that offset it exits 3, which is not a pass
+  (CTest fails it): worlds would store and send wrong biomes wherever they
+  vary with height. Awaiting the owner's ruling on that defect. For the
+  other dimensions, read from the same `biome_id_map.json` (what
+  `Biome.getBiomeNameFromId` loads) against `lib/mapping`'s table: the
+  Nether's five biomes and the End source's five (all Bedrock 9) are all
+  known — so only the overworld's four are missing, though the binding
+  refuses both dimensions for their heights anyway.
 
   *Fluid updates.* `Level.scheduleUpdate(block, delay)`, server thread
   only; the plugin schedules each liquid among a chunk's fluid updates
   after its tick rate when Nukkit fires `ChunkPopulateEvent`, as `ext/`
-  does. Written, never run.
+  does, and counts them. Written, never run.
+
+  *The server, and what reaches the network.* Read at `b3caad67d`:
+  `server.properties`' defaults are `Server.ServerProperties` (`server-ip`
+  `0.0.0.0`, port 19132, `enable-query` and `enable-rcon` off,
+  `white-list` off, `xbox-auth` on); `nukkit.yml`'s, the jar's
+  `lang/eng/nukkit.yml` (`query-plugins` on, `async-workers: auto`, worlds
+  `world` and `nether`); bStats is `cn.nukkit.metrics.NukkitMetrics`,
+  switched by `plugins/bStats/config.yml`. `tools/nukkit-dev server` sets
+  every one of those that listens or talks. None of them stops
+  `EncryptionUtils`, which `Server`'s constructor initialises on every
+  start: it fetches Microsoft's Bedrock auth discovery document
+  (`client.discovery.minecraft-services.net`) and the OpenID configuration
+  it names, falls back to `discovery-cache.json`/`openid-cache.json` in the
+  working directory, and with neither stops the server. So a server
+  directory can be configured quiet but not hermetic: `server` writes
+  synthetic caches naming only `auth.invalid`, and only `smoke`, which runs
+  the jar in a network namespace holding loopback alone (`unshare -rn`), is
+  hermetic — the two failed fetches, each with an `UnknownHostException`
+  trace, are the only errors its log check accepts. The jar itself:
+  CloudburstMC's CI keeps the artifacts of its newest five builds only
+  (the Jenkinsfile's `logRotator(artifactNumToKeepStr: '5')`), so a pinned
+  build's jar is gone from the CI five builds later and the verified copy
+  under `$STRATUM_NUKKIT_DIR` is the durable one. Every javac against the
+  jar runs `-proc:none` (javac up to JDK 22 runs annotation processors a
+  class path jar registers, and the jar bundles log4j's), and CMake
+  refuses a `STRATUM_NUKKIT_JAR` that is not the pinned one, at configure
+  time and before each compile.
 
   *What ran.* The pipeline's unit tests (synthetic id tables, refusals,
   real-pack fills block for block against `CompiledDimension`, and fills on
-  two threads identical to one) in the dev preset; the JNI surface through
-  a real JVM with no Nukkit (`ext-nukkit.jni`, the `nukkit` preset, Azul
-  OpenJDK 25.0.4 compiling `--release 8`), including 12 chunks on 4 JVM
-  threads identical to one; the plugin compiled against stubs of the Nukkit
-  API it calls, not committed; `tools/nukkit-dev`'s smoke plumbing against a
-  stand-in server. *What did not:* Nukkit. No jar is pinned —
-  CloudburstMC's CI answered HTTP 502 on 2026-10-15 — so the headless smoke
-  (a hermetic server in a loopback-only network namespace, the spawn area
-  generated by Nukkit's async workers, then read back from disk and
-  compared with a single-threaded fill), the census through Nukkit's
-  mapping, the biome readings above, the generation time and thread count
-  are all still to come.
+  two threads identical to one: the 10 `[nukkit]` cases, 108 assertions,
+  with fixtures) in the dev preset; the JNI surface through a real JVM with
+  no Nukkit (`ext-nukkit.jni`, the `nukkit` preset, Azul OpenJDK 25.0.4
+  compiling `--release 8 -proc:none`, 35 checks), including 12 chunks on 4
+  JVM threads identical to one; the plugin and smoke sources type-checked
+  with `-Werror` against stubs of the Nukkit API they call, not committed,
+  and built through CMake against a stub jar pinned for the test (and
+  refused once a byte was appended to it); `tools/nukkit-dev smoke` end to
+  end against a stand-in server jar that makes Nukkit's two auth fetches
+  for real inside the namespace (each failed with a bare-host
+  `UnknownHostException`, as the log check expects) — PASS, exit 3 on an
+  all-offset biome report, exit 1 on a stray error, a leftover refused
+  world or an unexplained biome mismatch, and a refusal to empty a
+  directory it did not mark. *What did not:* Nukkit. No jar is pinned —
+  CloudburstMC's CI (`ci.opencollab.dev`) answered HTTP 502 to every
+  request, polled every five minutes from 2026-10-14 20:33 to 21:44 UTC
+  (2026-10-15 local) — so the headless smoke, the startup refusal inside
+  Nukkit, the census through Nukkit's mapping (block states, and the
+  runtime biome registry), the biome readings above, the generation time
+  and thread count, and generation on Nukkit's own workers against a
+  single-threaded fill are all still to come.
 
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**
