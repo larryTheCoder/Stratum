@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -828,8 +829,11 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             // than lower_bound, and lower_bound is at least -4064. With a
             // cell_height above 4064 the only such multiples are 0 and up, so
             // a step lands no lower than -cell_height; with one at most 4064
-            // it lands no lower than -8128.
+            // it lands no lower than -8128. Asserted, so that a change to the
+            // load checks that broke it would not go unnoticed in a debug run.
             for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
+                assert(std::int64_t{scanY} - cellHeight >=
+                       std::numeric_limits<std::int32_t>::min());
                 Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
                              scope.window(), scope.context());
                 if (evaluateNode(column, node.arguments[0]) > 0.0) {

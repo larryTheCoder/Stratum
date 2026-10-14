@@ -61,7 +61,7 @@
       "name": "sanitize",
       "inherits": "base",
       "displayName": "sanitize (Clang, UBSan, Debug)",
-      "description": "Every first-party target under UBSan (undefined plus float-cast-overflow, no recovery) with libstdc++'s assertions: cmake/StratumSanitize.cmake, SPEC 5.7. Clang is pinned because the checks are its; the determinism flags are unchanged.",
+      "description": "Every first-party target the default configuration builds (lib, cli, ext's plain C++ chunk encoder, the tests, tools/analysis; not ext's zend module or ext-nukkit, which it leaves off) under UBSan (undefined plus float-cast-overflow, no recovery) with libstdc++'s assertions: cmake/StratumSanitize.cmake, SPEC 5.7. Clang is pinned because the checks are its; the determinism flags are unchanged.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_COMPILER": "clang++",

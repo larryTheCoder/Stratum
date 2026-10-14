@@ -406,9 +406,15 @@ std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) 
 
 bool Executor::freezing(const std::int32_t x, const std::int32_t y, const std::int32_t z,
                         const float biomeTemperature) const noexcept {
-    // In range: compile() refuses a sea level within 17 of INT32_MAX for any
-    // tree that reaches this test.
-    const std::int32_t origin = seaLevel_ + kFreezingOriginAbove;
+    // Formed in 64 bits, so that this public method is defined for every sea
+    // level an executor can hold (SPEC §5.7): in 32 it overflowed for one
+    // within 17 of INT32_MAX. compile() refuses such a sea level for any tree
+    // that reaches this test — Java's int sum would wrap there, and nothing
+    // has measured what the server does — so the exact reading here, in which
+    // no y lies above an origin past INT32_MAX, is never what a pack
+    // generates. Wherever the sum fits an int, the comparison and the float
+    // conversion below are exactly the 32-bit ones.
+    const std::int64_t origin = std::int64_t{seaLevel_} + kFreezingOriginAbove;
     float value = biomeTemperature;
     if (y > origin) {
         // Float32 and left to right from here down. `* 0.05F / 40.0F` is NOT

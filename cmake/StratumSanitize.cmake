@@ -7,7 +7,12 @@
 # the same chunk differs between the two legs, or the optimiser removes the
 # code outright. So no input may reach it: §8 refuses, by name, every input
 # that would. This build is how that is held — every first-party target under
-# UBSan, the first report fatal.
+# UBSan, the first report fatal: under the `sanitize` preset, every one the
+# default configuration builds (lib/, cli/, ext/'s plain C++ chunk encoder,
+# the tests, tools/analysis). The two bindings behind options that configuration
+# leaves off — ext/'s zend module (STRATUM_BUILD_EXT, a ZTS PHP) and
+# ext-nukkit/ (STRATUM_BUILD_EXT_NUKKIT, a JDK) — would go through
+# stratum_set_sanitizers too if switched on, but no preset or CI job does.
 #
 # The checks are `undefined` plus `float-cast-overflow`, spelled out (it is
 # part of `undefined` in current Clang, and the conversion this build exists

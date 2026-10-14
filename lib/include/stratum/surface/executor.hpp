@@ -287,6 +287,10 @@ public:
     /// with the CONSTANT 1234 — no world seed, no salt. So this field is the
     /// same in every world, which is worth knowing before looking for a seed
     /// in it.
+    ///
+    /// Defined for every sea level: `sea_level + 17` is formed in 64 bits, so
+    /// above INT32_MAX - 17 no y is above it. compile() refuses that sea level
+    /// for a tree with a temperature condition, so generation never asks.
     [[nodiscard]] bool freezing(std::int32_t x, std::int32_t y, std::int32_t z,
                                 float biomeTemperature) const noexcept;
 

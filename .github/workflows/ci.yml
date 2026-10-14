@@ -254,10 +254,12 @@ jobs:
     # float-to-int conversion is INT32_MIN on x86-64 and saturates on ARM64,
     # so it is a cross-architecture divergence before it is anything else.
     # So the unit suite also runs on the `sanitize` preset: every first-party
-    # target under Clang's UBSan, float-cast-overflow included, the first
-    # report fatal (cmake/StratumSanitize.cmake). Unit only: the conformance
-    # suite under it is about twice its Debug time, past this workflow's
-    # budget; it runs locally as `ctest --preset sanitize-conformance`.
+    # target the default configuration builds (not ext/'s zend module or
+    # ext-nukkit/, which it leaves off) under Clang's UBSan,
+    # float-cast-overflow included, the first report fatal
+    # (cmake/StratumSanitize.cmake). Unit only: the conformance suite under it
+    # is about twice its Debug time, past this workflow's budget; it runs
+    # locally as `ctest --preset sanitize-conformance`.
     # Measured on an x86-64 dev box: the build in about a minute at six jobs,
     # the 563 unit cases in about ten seconds at four (38 s of test time).
     runs-on: ubuntu-24.04

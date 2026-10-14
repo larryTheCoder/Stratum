@@ -229,9 +229,16 @@ These are hard requirements; violations are release blockers.
    unmeasured. A bound that holds by construction is written at the
    operation and asserted in debug builds instead.
    The **`sanitize` preset** holds this: Clang, Debug, every first-party
-   target under UBSan — `undefined` plus `float-cast-overflow`,
-   `-fno-sanitize-recover=all` — with libstdc++'s assertions
-   (`cmake/StratumSanitize.cmake`, selected by `STRATUM_SANITIZE`). It leaves
+   target the default configuration builds under UBSan — `undefined` plus
+   `float-cast-overflow`, `-fno-sanitize-recover=all` — with libstdc++'s
+   assertions (`cmake/StratumSanitize.cmake`, selected by
+   `STRATUM_SANITIZE`). That is lib/ with its mapping, cli/, ext/'s plain C++
+   half (`stratum_pmmp_core`: the chunk encoder and the fluid-update outbox,
+   whose tests are in the unit suite), the unit and conformance suites and
+   tools/analysis. It is not the two bindings behind options that
+   configuration leaves off: ext/'s zend module (`STRATUM_BUILD_EXT`, which
+   needs a ZTS PHP) and ext-nukkit/ (`STRATUM_BUILD_EXT_NUKKIT`, whose CMake
+   needs a JDK, its plain C++ pipeline included). It leaves
    out the checks whose reports are defined behaviour the engine relies on:
    IEEE division by zero (`invert` of 0), unsigned wraparound (every seed and
    hash), and narrowing to an unsigned type (the lattice indices). The
@@ -1563,7 +1570,9 @@ Defaults chosen; flip only with a written note in this section:
   MSVC for Windows PHP builds (`/fp:precise`, see §5).
 - **Build:** CMake ≥ 3.24 with presets; core lib usable without PHP. The
   `sanitize` configure, build and test presets (and `sanitize-conformance`)
-  build every first-party target under Clang's UBSan (§5.7).
+  build every first-party target the default configuration builds under
+  Clang's UBSan — ext/'s zend module and ext-nukkit/, behind options it
+  leaves off, are not among them (§5.7).
 - **JSON:** nlohmann/json (parse happens once at world load; ergonomics
   over throughput). Revisit only if load-time profiling demands it.
 - **Tests:** Catch2 v3 for unit tests; golden/conformance via `cli diff`

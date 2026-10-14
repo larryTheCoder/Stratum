@@ -87,7 +87,7 @@ does not.
 | `release` | RelWithDebInfo; identical determinism flags to `dev` |
 | `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
 | `ci-conformance` | Build and test presets on `dev`'s tree: the conformance suite four cases at a time, an hour per case, as CI runs it |
-| `sanitize` | Clang, Debug, every first-party target under UBSan (float-cast-overflow included, the first report fatal): `ctest --preset sanitize` runs the unit suite, as CI does, and `sanitize-conformance` the conformance suite (SPEC §5.7) |
+| `sanitize` | Clang, Debug, every first-party target the default configuration builds under UBSan (float-cast-overflow included, the first report fatal), ext/'s chunk encoder among them; not ext/'s zend module or ext-nukkit/, which it leaves off: `ctest --preset sanitize` runs the unit suite, as CI does, and `sanitize-conformance` the conformance suite (SPEC §5.7) |
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
 zlib, and network access on first configure so Catch2 v3 can be fetched (or

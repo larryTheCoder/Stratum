@@ -814,6 +814,14 @@ TEST_CASE("a temperature condition refuses a sea level it cannot measure from", 
     // A tree without one takes the same sea level: nothing adds to it.
     const RuleGraph plain = resolve(block("minecraft:stone"));
     CHECK_NOTHROW(Executor::compile(plain, kSeed, overworldGeometry(), nullptr, kHighest));
+    // And freezing() is public, so it is defined there too: it used to add 17
+    // to INT32_MAX in 32 bits, which UBSan reports. No y is above an origin
+    // past INT32_MAX, so the biome's own temperature decides.
+    const Executor executor =
+        Executor::compile(plain, kSeed, overworldGeometry(), nullptr, kHighest);
+    CHECK(executor.freezing(0, kHighest, 0, 0.1F));
+    CHECK_FALSE(executor.freezing(0, kHighest, 0, 0.5F));
+    CHECK(executor.freezing(0, -2147483647 - 1, 0, 0.1F));
 }
 
 TEST_CASE("the conditions refuse 32-bit arithmetic that would overflow", "[surface][ub]") {
