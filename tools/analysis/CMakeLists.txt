@@ -76,6 +76,19 @@ foreach(tool IN ITEMS
     stratum_configure_target(${target})
 endforeach()
 
+# The end-to-end chunk-cost bench (M5): what one PocketMine-MP generation task
+# costs a chunk, fill, biomes and the chunkutils2 encode. Its own target rather
+# than one of the foreach above because it links ext/'s plain C++ half
+# (stratum::pmmp_core, which brings lib/ and lib/mapping/), not lib/ alone: the
+# encode is part of what it times. The build configuration is compiled in so a
+# run says what it measured; tools/perf-baseline builds it with the release
+# preset, and only an optimised build's figures are a measurement.
+add_executable(stratum_chunk_cost_bench chunk-cost-bench.cpp)
+target_link_libraries(stratum_chunk_cost_bench PRIVATE stratum::pmmp_core)
+target_compile_definitions(stratum_chunk_cost_bench PRIVATE
+    "STRATUM_BENCH_CONFIG=\"$<CONFIG>\"")
+stratum_configure_target(stratum_chunk_cost_bench)
+
 # The legacy-source aquifer probe's readback. It scores each arm through the
 # library's own aquifer and through tests/support/fluid_flow.hpp's flow
 # classifier, the one the conformance cases use, so it includes tests/.
@@ -112,6 +125,41 @@ stratum_configure_target(stratum_aquifer_tiebreak_analyze)
 if(NOT STRATUM_BUILD_TESTS)
     return()
 endif()
+
+# The chunk-cost bench's --compare, hermetically, on dump directories the
+# script writes itself: identical, a byte apart, a file on one side only, a
+# prefix, and the refusals. A perf change is called output-neutral on this
+# comparison's word, so the comparison is tested on its own, without fixtures.
+add_test(NAME unit.tools.chunk_cost_bench_compare
+    COMMAND "${CMAKE_COMMAND}"
+            "-DBENCH=$<TARGET_FILE:stratum_chunk_cost_bench>"
+            -DMODE=compare
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/chunk-cost-bench-compare"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run-chunk-cost-bench.cmake"
+)
+set_tests_properties(unit.tools.chunk_cost_bench_compare PROPERTIES LABELS "unit")
+
+# And on the real pipeline: one overworld and one End chunk, twice, through
+# every stage. The bench's encode stage must reproduce encodeChunk (it stops
+# otherwise), the two runs' dumps must be identical — a dump that differed run
+# to run could prove no change neutral — a different chunk's must not be, and
+# the JSON tools/perf-baseline reads must carry the figures. Conformance-
+# labelled because it reads the fetched worldgen tree (SPEC §12); it skips,
+# visibly, without one.
+add_test(NAME conformance.chunk_cost_bench
+    COMMAND "${CMAKE_COMMAND}"
+            "-DBENCH=$<TARGET_FILE:stratum_chunk_cost_bench>"
+            -DMODE=fixtures
+            "-DSTRATUM_FIXTURES_DIR=${STRATUM_FIXTURES_DIR}"
+            "-DSTRATUM_MINECRAFT_VERSION=${STRATUM_MINECRAFT_VERSION}"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/chunk-cost-bench-dumps"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run-chunk-cost-bench.cmake"
+)
+set_tests_properties(conformance.chunk_cost_bench PROPERTIES
+    LABELS "conformance"
+    SKIP_RETURN_CODE 77
+    SKIP_REGULAR_EXPRESSION "-- SKIP: "
+)
 
 # Conformance-labelled because it reads probe worlds, which are Mojang-derived
 # and never committed (SPEC §12). It exits 77 — CTest's skip code — when they

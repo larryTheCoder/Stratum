@@ -182,7 +182,8 @@ jobs:
                            tools/analysis/aquifer-waterlava-analyze.cpp \
                            tools/analysis/legacy-aquifer-analyze.cpp \
                            tools/analysis/legacy-orevein-analyze.cpp \
-                           tools/analysis/aquifer-tiebreak-analyze.cpp)
+                           tools/analysis/aquifer-tiebreak-analyze.cpp \
+                           tools/analysis/chunk-cost-bench.cpp)
           if [ ${#sources[@]} -eq 0 ]; then
             echo "no first-party sources to analyse"; exit 0
           fi

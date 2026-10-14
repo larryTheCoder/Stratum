@@ -83,7 +83,8 @@ if [[ $# -eq 0 ]]; then
                        tools/analysis/aquifer-waterlava-analyze.cpp \
                        tools/analysis/legacy-aquifer-analyze.cpp \
                        tools/analysis/legacy-orevein-analyze.cpp \
-                       tools/analysis/aquifer-tiebreak-analyze.cpp)
+                       tools/analysis/aquifer-tiebreak-analyze.cpp \
+                       tools/analysis/chunk-cost-bench.cpp)
 fi
 
 if [[ ${#sources[@]} -eq 0 ]]; then

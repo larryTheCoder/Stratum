@@ -68,6 +68,7 @@ analysis_targets=(
     tools/analysis/legacy-aquifer-analyze.cpp
     tools/analysis/legacy-orevein-analyze.cpp
     tools/analysis/aquifer-tiebreak-analyze.cpp
+    tools/analysis/chunk-cost-bench.cpp
 )
 
 # A read loop rather than mapfile: macOS still ships bash 3.2, where
