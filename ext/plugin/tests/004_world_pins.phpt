@@ -209,7 +209,7 @@ namespace {
 	unset($probe);
 	echo "chunk -3 2 marks: ", count($expected) > 2 ? "several" : "too few", "\n";
 
-	$worlds = new StratumWorlds($logger);
+	$worlds = new StratumWorlds($logger, static function(\Closure $task) : void{});
 	$scheduler = new FluidUpdateScheduler($worlds);
 
 	$options = GeneratorOptions::encode($blobs["pinned"]);
@@ -262,13 +262,8 @@ namespace {
 		echo "unpinned, a worker reads the replaced file: ", $e->getMessage(), "\n";
 	}
 
-	// A world whose blob cannot be opened when it loads — replaced after
-	// GeneratorOptions::validate() passed it — is logged by name, not
-	// thrown out of the event, and not pinned.
-	$late = new World(4, "stratum", GeneratorOptions::encode($garbage), $seed);
-	$worlds->onWorldLoad(new WorldLoadEvent($late));
-	var_dump($worlds->isPinned($late));
-	echo "logged: ", count($logged), "\n", str_replace($garbage, "<garbage>", $logged[0] ?? ""), "\n";
+	// A world whose pin fails at load is 007_failed_pin.phpt's.
+	echo "logged: ", count($logged), "\n";
 
 	// The plugin's onDisable(): every pin this made goes.
 	Stratum\freezePipeline($root, $blobs["pinned"]);
@@ -297,9 +292,7 @@ bool(true)
 bool(false)
 bool(false)
 unpinned, a worker reads the replaced file: not a frozen pipeline: %s
-bool(false)
-logged: 1
-Stratum world "world4": its state could not be pinned on the main thread, so its generators will open its frozen pipeline themselves: not a frozen pipeline: %s
+logged: 0
 bool(true)
 bool(false)
 bool(false)

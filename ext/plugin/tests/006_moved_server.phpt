@@ -174,7 +174,7 @@ namespace {
 			return "refused at load: " . $refused->getMessage();
 		}
 		$world = new World(1, $options, $seed);
-		$worlds = new StratumWorlds($logger);
+		$worlds = new StratumWorlds($logger, static function(\Closure $task) : void{});
 		$worlds->onWorldLoad(new WorldLoadEvent($world));
 		if(!$worlds->isPinned($world)){
 			return "not pinned";

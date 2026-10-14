@@ -65,12 +65,17 @@ final class Main extends PluginBase{
 	 * needs to look at the chunk locks.
 	 */
 	protected function onEnable() : void{
-		$this->worlds = new StratumWorlds($this->getLogger());
+		$scheduler = $this->getScheduler();
+		// A world whose state cannot be pinned is unloaded on the next tick,
+		// never inside the WorldLoadEvent that found it (StratumWorlds).
+		$this->worlds = new StratumWorlds($this->getLogger(), static function(\Closure $task) use ($scheduler) : void{
+			$scheduler->scheduleTask(new ClosureTask($task));
+		});
 		$fluids = new FluidUpdateScheduler($this->worlds);
 		$pluginManager = $this->getServer()->getPluginManager();
 		$pluginManager->registerEvents($this->worlds, $this);
 		$pluginManager->registerEvents($fluids, $this);
-		$this->getScheduler()->scheduleRepeatingTask(new ClosureTask(static function() use ($fluids) : void{
+		$scheduler->scheduleRepeatingTask(new ClosureTask(static function() use ($fluids) : void{
 			$fluids->release();
 		}), 1);
 	}

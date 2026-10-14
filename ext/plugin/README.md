@@ -66,7 +66,16 @@ PocketMine-MP itself can call.
   of every chunk generated but not yet populated went with them, and a
   restarted worker read the blob afresh, whatever it held by then. Pinned,
   every generator gets the state the world loaded with, without reading the
-  file. A pin that fails is logged by name, never thrown out of the event.
+  file. A pin that fails — the same full open a generator makes, so the
+  world would fail on its first worker and take the server down — is
+  logged by name and never thrown out of the event: the world is held off
+  generation instead. Every chunk within eight of its spawn is locked, so
+  the spawn area `WorldManager::generateWorld()` orders right after the
+  event is queued rather than handed to a worker, and on the next tick the
+  world is force-unloaded, which rejects all of it; a default world stops
+  the server instead, by name. (Unloading inside the event is not safe:
+  `generateWorld()` goes on to order populations on that same World, whose
+  provider an unload has closed.)
 - `FluidUpdateScheduler` makes aquifer water and lava flow. A Java server
   ticks every position in a generated chunk's `PostProcessing` lists once
   the chunk loads; PocketMine-MP has no such list, so when it fires
@@ -204,16 +213,28 @@ client.** Every check above passes. What that leaves:
   (`StratumWorlds` across a worker shut down and restarted),
   `005_world_factory.phpt` (`WorldFactory` leaving an existing world's
   blob byte for byte, and each dimension's options, relative blob path and
-  spawn) and `006_moved_server.phpt` (a world it made loading, pinning and
-  generating the same chunk after its server directory moved). The
-  real-server checks need the cache, so they are local.
-- Two facts about PocketMine-MP that the pins are built on come from the
-  M5 review that asked for them and have not been observed in the real
-  server: that the memory manager shuts idle workers down (and every
-  generator with them), and that `WorldLoadEvent` fires before any of the
-  world's chunks is requested. The third, that an exception on a
-  generation worker takes the server down, has been: a generator refusal
-  injected into the smoke crashes its workers and the server.
+  spawn), `006_moved_server.phpt` (a world it made loading, pinning and
+  generating the same chunk after its server directory moved) and
+  `007_failed_pin.phpt` (a world whose pin fails reaching no worker, and
+  unloaded or the server stopped). The real-server checks need the cache,
+  so they are local.
+- What the pins are built on: that the memory manager shuts idle workers
+  down (and every generator with them) has not been observed in the real
+  server. That `WorldLoadEvent` fires before any of the world's chunks is
+  requested is read from 5.44.3's `WorldManager`: it is the last thing
+  `loadWorld()` does, and `generateWorld()` fires it before it orders the
+  spawn area. That an exception on a generation worker takes the server
+  down has been observed: a generator refusal injected into the smoke
+  crashes its workers and the server.
+- **A world whose pin fails** is held off generation and unloaded
+  (`StratumWorlds`). Observed in the real server for a default world, with
+  a pin failure injected into a scratch copy of the plugin: the error by
+  name, the spawn area ordered and queued, no generator registered on any
+  worker, then at the first tick the emergency by name and a clean stop,
+  exit code 0, no crash dump. The non-default case — the world unloaded on
+  the next tick — is `007_failed_pin.phpt`'s, against stand-ins. Not held
+  back: a population some other code orders outside the locked spawn area
+  between the failed pin and the next tick.
 - **The fluid updates cost generation work.** A block update scheduled at
   each aquifer liquid when its chunk is populated makes that liquid flow
   while the spawn area is still generating, and a block change inside the

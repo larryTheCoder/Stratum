@@ -225,7 +225,7 @@ namespace {
 
 	$server = new Server();
 	$server->tick = 100;
-	$worlds = new StratumWorlds($logger);
+	$worlds = new StratumWorlds($logger, static function(\Closure $task) : void{});
 	$scheduler = new FluidUpdateScheduler($worlds);
 
 	// A world another generator owns holds nothing and takes nothing, even
