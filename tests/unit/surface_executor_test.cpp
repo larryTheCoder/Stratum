@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -1003,4 +1004,49 @@ TEST_CASE("a noise_threshold refuses a noise past its 32-bit lattice", "[surface
     CHECK_THROWS_WITH(
         executor.apply(at(1, 64, 0)),
         ContainsSubstring("noise 'minecraft:steep' cannot be sampled at column (1, 0)"));
+}
+
+namespace {
+
+/// A `condition` rule placing stone where @p nots `not`s over `steep` hold:
+/// @p nots + 2 rules and conditions, one inside the next.
+[[nodiscard]] nlohmann::json notChain(std::size_t nots) {
+    std::string text = R"({"type":"minecraft:condition","if_true":)";
+    for (std::size_t i = 0; i < nots; ++i) {
+        text += R"({"type":"minecraft:not","invert":)";
+    }
+    text += R"({"type":"minecraft:steep"})" + std::string(nots, '}') +
+            R"(,"then_run":{"type":"minecraft:block","result_state":{"Name":"minecraft:stone"}}})";
+    return nlohmann::json::parse(text);
+}
+
+} // namespace
+
+TEST_CASE("rules nested past kMaxRuleDepth are refused by name, and those at it run",
+          "[surface][ub]") {
+    // The resolver recurses once per rule and condition, and so does the
+    // executor running them: twenty thousand `not`s ran the stack out (SPEC
+    // §8). A pack's are bounded by its JSON's depth before they get here
+    // (pack_test.cpp); RuleGraph::resolve holds anything it is handed.
+    using stratum::surface::kMaxRuleDepth;
+    REQUIRE(kMaxRuleDepth == 128U);
+
+    // The condition rule, 126 `not`s and `steep`: 128.
+    const RuleGraph graph = resolve(notChain(kMaxRuleDepth - 2));
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry());
+    // An even number of `not`s over a flat column's false `steep`.
+    CHECK(executor.apply(at(0, 0, 0)) == nullptr);
+    Context steep = at(0, 0, 0);
+    steep.heightWest = 10;
+    const auto* placed = executor.apply(steep);
+    REQUIRE(placed != nullptr);
+    CHECK(placed->name == stratum::data::ResourceLocation::parse("minecraft:stone"));
+
+    for (const std::size_t nots : {kMaxRuleDepth - 1, std::size_t{20'000}}) {
+        CAPTURE(nots);
+        CHECK_THROWS_MATCHES(
+            resolve(notChain(nots)), stratum::surface::RuleError,
+            Catch::Matchers::MessageMatches(ContainsSubstring("surface rule of 'stratum:test'") &&
+                                            ContainsSubstring("nest more than 128 deep")));
+    }
 }

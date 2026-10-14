@@ -21,6 +21,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -41,14 +42,49 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-/// A ResolveError for a node whose numbers lie outside what this build
-/// accepts (SPEC §8), as against one that is malformed. A frozen blob tells
-/// the two apart: builds from before those refusals froze such values at the
-/// same pipeline engine version, so what to do about one differs (SPEC §6).
+/// A ResolveError for a graph whose numbers lie outside what this build
+/// accepts (SPEC §8) — a node's parameter, or a depth past kMaxDepth — as
+/// against one that is malformed. A frozen blob tells the two apart: builds
+/// from before those refusals froze such graphs at the same pipeline engine
+/// version, so what to do about one differs (SPEC §6).
 class OutOfRangeError : public ResolveError {
 public:
     using ResolveError::ResolveError;
 };
+
+/// The deepest graph this build resolves or evaluates, counted in nodes and
+/// splines (SPEC §8, "Inputs that would reach undefined behaviour").
+///
+/// A node's DEPTH is one more than the deepest of its arguments and its
+/// spline; a spline's is one more than the deeper of its coordinate and its
+/// nested splines. So a `constant` is 1, `abs(constant)` is 2, and a named
+/// function is as deep where it is referenced as where it is defined. The
+/// interpreter recurses once per level of that, and the resolver once per
+/// level of JSON and per reference it follows, so a graph deep enough runs
+/// the C++ stack out — undefined behaviour, not an error. Twenty thousand
+/// levels of `abs` did, in the resolver and, through a resealed blob, in the
+/// interpreter.
+///
+/// Sized by the stack, which is what it protects. Those recursions keep thin
+/// frames (density_graph.cpp, density_interpreter.cpp), and at 256 levels
+/// resolving and then evaluating a graph ran in 320 KiB of stack in the
+/// sanitize preset's build (Clang, unoptimised, UBSan, where every local and
+/// temporary has a slot of its own) and in 224 KiB in GCC's unoptimised
+/// build; a chain of 256 `interpolated`, the deepest frame per level, in 640
+/// and 320 KiB. That is inside the 1 MiB a Windows main thread or a JVM
+/// thread gets by default; before the frames were thinned a level took about
+/// 6 KiB there, and 512 levels did not fit in 2 MiB. Vanilla's deepest at
+/// 1.21.11 is 46, the `final_density` of the overworld, amplified and
+/// large_biomes settings, so this is five and a half times that. What the
+/// server does with a graph past it is unmeasured.
+///
+/// Refused by name from a pack (Graph::Builder, on the way down for the
+/// resolver's own nesting and on the way up for the depth, which a function
+/// named in one file and nested again in another can carry past either alone)
+/// and from a blob (Graph::Assembler::release, which also refuses the cycle
+/// only a blob can carry). Every Graph comes from one or the other, so
+/// nothing walks a deeper one.
+inline constexpr std::size_t kMaxDepth = 256;
 
 /// The density function types the pinned version defines. Generated from
 /// mcdoc — see tools/mcdoc-sync — so the set follows the schema rather than
@@ -240,10 +276,17 @@ class Graph::Assembler {
 public:
     /// Nodes must arrive in the order they were resolved in, because every
     /// argument index has to name a node already added — the same property
-    /// that makes the graph acyclic.
+    /// that makes the arguments acyclic. Nested splines likewise name only
+    /// earlier splines.
     NodeIndex addNode(Node node);
     SplineIndex addSpline(SplineDefinition spline);
     void addRoot(const data::ResourceLocation& id, NodeIndex root);
+
+    /// The graph, once the references between nodes and splines check out.
+    /// Nothing orders a node against its spline's coordinate, so a blob can
+    /// close a cycle through one — a ResolveError — and a blob can be deeper
+    /// than kMaxDepth — an OutOfRangeError, naming the node. Both are found
+    /// here with a stack of its own, before anything recurses over the graph.
     [[nodiscard]] Graph release();
 
 private:

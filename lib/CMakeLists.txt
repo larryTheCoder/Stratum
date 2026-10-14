@@ -68,6 +68,7 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/biome/source.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/biome/temperature_table.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/chunk/chunk.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/json_depth.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/json_integer.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/data/pack.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/density/graph.hpp"

@@ -255,6 +255,114 @@ void checkNode(const Node& node) {
     checkParameters(node);
 }
 
+/// One depth (kMaxDepth) as a message says it.
+[[nodiscard]] std::string tooDeep(std::size_t depth) {
+    return "sits " + std::to_string(depth) + " nodes and splines deep, past the " +
+           std::to_string(kMaxDepth) +
+           " this build evaluates; it refuses the graph rather than exhaust its stack walking "
+           "it (SPEC §8)";
+}
+
+/// Every node and spline of an assembled graph held to kMaxDepth, and to
+/// having no cycle, walked with a stack of its own: the walk that checks the
+/// depth must not be the recursion it bounds. Indices are already known to
+/// name something (Graph::Assembler). Arguments name only earlier nodes and
+/// nested splines only earlier splines, so a cycle has to pass from a node
+/// to its spline and back through a coordinate — which the resolver never
+/// builds and a resealed blob can.
+///
+/// Nodes and splines share one numbering here: node i is i, spline j is
+/// nodes.size() + j.
+void checkDepths(std::span<const Node> nodes, std::span<const SplineDefinition> splines) {
+    const std::size_t nodeCount = nodes.size();
+    const auto describe = [&](std::size_t item) {
+        if (item < nodeCount) {
+            return "frozen node " + std::to_string(item) + " ('" +
+                   std::string(nodeTypeName(nodes[item].type)) + "')";
+        }
+        return "frozen spline " + std::to_string(item - nodeCount);
+    };
+
+    // The child of @p item at or after position @p from, with the position
+    // after it: a node's arguments and then its spline, a spline's coordinate
+    // and then the nested splines among its points.
+    struct Next {
+        std::size_t child;
+        std::size_t position;
+    };
+
+    const auto nextChild = [&](std::size_t item, std::size_t from) -> std::optional<Next> {
+        if (item < nodeCount) {
+            const Node& node = nodes[item];
+            if (from < node.arguments.size()) {
+                return Next{.child = node.arguments[from], .position = from + 1};
+            }
+            if (from == node.arguments.size() && node.spline.has_value()) {
+                return Next{.child = nodeCount + *node.spline, .position = from + 1};
+            }
+            return std::nullopt;
+        }
+        const SplineDefinition& spline = splines[item - nodeCount];
+        if (from == 0) {
+            return Next{.child = spline.coordinate, .position = 1};
+        }
+        for (std::size_t point = from - 1; point < spline.points.size(); ++point) {
+            if (spline.points[point].nested.has_value()) {
+                return Next{.child = nodeCount + *spline.points[point].nested,
+                            .position = point + 2};
+            }
+        }
+        return std::nullopt;
+    };
+
+    enum class State : std::uint8_t { Unvisited, OnPath, Done };
+    std::vector<State> state(nodeCount + splines.size(), State::Unvisited);
+    std::vector<std::size_t> depth(nodeCount + splines.size(), 0);
+
+    struct Frame {
+        std::size_t item;
+        std::size_t position;
+    };
+
+    std::vector<Frame> path;
+
+    for (std::size_t start = 0; start < state.size(); ++start) {
+        if (state[start] != State::Unvisited) {
+            continue;
+        }
+        state[start] = State::OnPath;
+        path.push_back(Frame{.item = start, .position = 0});
+        while (!path.empty()) {
+            const Frame top = path.back();
+            if (const std::optional<Next> next = nextChild(top.item, top.position)) {
+                path.back().position = next->position;
+                if (state[next->child] == State::OnPath) {
+                    throw ResolveError(describe(top.item) + " leads back to " +
+                                       describe(next->child) +
+                                       ", so the graph has a cycle, which no build resolves");
+                }
+                if (state[next->child] == State::Unvisited) {
+                    state[next->child] = State::OnPath;
+                    path.push_back(Frame{.item = next->child, .position = 0});
+                }
+                continue;
+            }
+            // Every child is done: this one is one deeper than the deepest.
+            std::size_t deepest = 0;
+            for (std::optional<Next> child = nextChild(top.item, 0); child.has_value();
+                 child = nextChild(top.item, child->position)) {
+                deepest = std::max(deepest, depth[child->child]);
+            }
+            if (deepest + 1 > kMaxDepth) {
+                throw OutOfRangeError(describe(top.item) + " " + tooDeep(deepest + 1));
+            }
+            depth[top.item] = deepest + 1;
+            state[top.item] = State::Done;
+            path.pop_back();
+        }
+    }
+}
+
 } // namespace
 
 std::string_view nodeTypeName(NodeType type) noexcept {
@@ -277,6 +385,17 @@ std::span<const SchemaField> fieldsOf(NodeType type) noexcept {
 /// Walks the JSON and builds the graph, memoising by identifier so a
 /// function referenced from twenty places is resolved once, and keeping a
 /// stack so a cycle can name the path that closed it.
+///
+/// Held to kMaxDepth twice over (SPEC §8). Its own recursion is counted on
+/// the way down, a level per function, spline and reference followed, and
+/// refused before the level past the bound is entered: a nesting deep enough
+/// to matter runs the stack out before anything below it could be counted on
+/// the way back up, and a chain of files each naming the next is deep to the
+/// resolver while it is one node to the graph. And each node's depth is
+/// counted on the way up, as it is added, because memoising lets the graph
+/// grow deeper than the recursion that built it: a function nested a hundred
+/// deep in one file and named at the bottom of a second such nesting is two
+/// hundred deep, while the resolver never went past a hundred and one.
 class Resolver {
 public:
     explicit Resolver(const data::Pack& pack) : pack_(pack) {}
@@ -289,13 +408,48 @@ public:
     }
 
 private:
-    [[noreturn]] void fail(const std::string& what) const {
+    /// @p what, after the chain of identifiers that reached it.
+    [[nodiscard]] std::string chained(const std::string& what) const {
         std::string chain;
         for (const data::ResourceLocation& id : stack_) {
             chain += (chain.empty() ? "" : " -> ") + id.toString();
         }
-        throw ResolveError(chain.empty() ? what : chain + ": " + what);
+        return chain.empty() ? what : chain + ": " + what;
     }
+
+    [[noreturn]] void fail(const std::string& what) const { throw ResolveError(chained(what)); }
+
+    /// The same, for a graph deeper than kMaxDepth: an OutOfRangeError, as
+    /// the frozen-blob path raises for one.
+    [[noreturn]] void failTooDeep(const std::string& what) const {
+        throw OutOfRangeError(chained(what));
+    }
+
+    /// One level of the resolver's own recursion, entered on construction
+    /// and left on destruction; refused, before it is entered, past
+    /// kMaxDepth.
+    class Level {
+    public:
+        explicit Level(Resolver& resolver) : resolver_(resolver) {
+            if (resolver_.nesting_ == kMaxDepth) {
+                resolver_.failTooDeep(
+                    "density functions nest more than " + std::to_string(kMaxDepth) +
+                    " deep here, counting each function, spline and reference followed on the "
+                    "way down; this build refuses them rather than exhaust its stack (SPEC §8)");
+            }
+            ++resolver_.nesting_;
+        }
+
+        ~Level() { --resolver_.nesting_; }
+
+        Level(const Level&) = delete;
+        Level& operator=(const Level&) = delete;
+        Level(Level&&) = delete;
+        Level& operator=(Level&&) = delete;
+
+    private:
+        Resolver& resolver_;
+    };
 
     // THE RECURSION'S OWN FRAMES ARE KEPT THIN. resolveValue, resolveObject,
     // resolveSpline and resolveReference call one another once per level of
@@ -327,6 +481,7 @@ private:
     /// inline in a noise settings router through it.
 public:
     NodeIndex resolveValue(Graph& graph, const nlohmann::json& value) {
+        const Level level(*this);
         if (value.is_number()) {
             return addConstant(graph, value);
         }
@@ -363,6 +518,7 @@ private:
     }
 
     SplineIndex resolveSpline(Graph& graph, const nlohmann::json& value) {
+        const Level level(*this);
         checkSpline(value);
         SplineDefinition definition;
         definition.coordinate = resolveValue(graph, value.at("coordinate"));
@@ -403,7 +559,7 @@ private:
     }
 
     /// The documented shorthand: a bare number is a constant.
-    [[nodiscard]] static NodeIndex addConstant(Graph& graph, const nlohmann::json& value) {
+    [[nodiscard]] NodeIndex addConstant(Graph& graph, const nlohmann::json& value) {
         return addNode(graph, Node{.type = NodeType::Constant,
                                    .arguments = {},
                                    .parameters = {value.get<double>()},
@@ -581,11 +737,22 @@ private:
     }
 
     /// Appends @p spline, whose coordinate and nested splines are in the graph
-    /// already, refusing one with no points.
-    [[nodiscard]] SplineIndex addSpline(Graph& graph, SplineDefinition spline) const {
+    /// already, refusing one with no points and one past kMaxDepth.
+    [[nodiscard]] SplineIndex addSpline(Graph& graph, SplineDefinition spline) {
         if (spline.points.empty()) {
             fail("a spline has no points");
         }
+        std::size_t depth = nodeDepths_[spline.coordinate] + 1;
+        for (const SplinePoint& point : spline.points) {
+            if (point.nested.has_value()) {
+                depth = std::max(depth, splineDepths_[*point.nested] + 1);
+            }
+        }
+        if (depth > kMaxDepth) {
+            failTooDeep("a spline " + tooDeep(depth));
+        }
+
+        splineDepths_.push_back(depth);
         graph.splines_.push_back(std::move(spline));
         return static_cast<SplineIndex>(graph.splines_.size() - 1);
     }
@@ -598,7 +765,21 @@ private:
         }
     }
 
-    [[nodiscard]] static NodeIndex addNode(Graph& graph, Node node) {
+    /// Appends @p node, whose arguments and spline are in the graph already,
+    /// refusing it past kMaxDepth.
+    [[nodiscard]] NodeIndex addNode(Graph& graph, Node node) {
+        std::size_t depth = 1;
+        for (const NodeIndex argument : node.arguments) {
+            depth = std::max(depth, nodeDepths_[argument] + 1);
+        }
+        if (node.spline.has_value()) {
+            depth = std::max(depth, splineDepths_[*node.spline] + 1);
+        }
+        if (depth > kMaxDepth) {
+            failTooDeep("'" + std::string(nodeTypeName(node.type)) + "' " + tooDeep(depth));
+        }
+
+        nodeDepths_.push_back(depth);
         graph.nodes_.push_back(std::move(node));
         return static_cast<NodeIndex>(graph.nodes_.size() - 1);
     }
@@ -606,6 +787,12 @@ private:
     const data::Pack& pack_;
     std::map<data::ResourceLocation, NodeIndex> resolved_;
     std::vector<data::ResourceLocation> stack_;
+    /// How many levels of resolveValue and resolveSpline are under way.
+    std::size_t nesting_ = 0;
+    /// The depth (kMaxDepth) of each node and spline added so far, parallel
+    /// to the graph's own tables: one graph per resolver (Graph::Builder).
+    std::vector<std::size_t> nodeDepths_;
+    std::vector<std::size_t> splineDepths_;
 };
 
 /// The builder's innards, kept out of the header so that Resolver stays a
@@ -697,6 +884,9 @@ Graph Graph::Assembler::release() {
                                ", which is not a node");
         }
     }
+    // Last, once every index is known to name something: the cycle and the
+    // depth the evaluator would otherwise find by recursing into them.
+    checkDepths(graph_.nodes_, graph_.splines_);
     return std::move(graph_);
 }
 

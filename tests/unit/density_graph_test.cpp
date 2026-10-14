@@ -12,6 +12,8 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
@@ -64,7 +66,9 @@ public:
         out << json;
     }
 
-    [[nodiscard]] Graph resolve() const { return Graph::resolveAll(Pack::openWorldgenTree(path_)); }
+    [[nodiscard]] Graph resolve() const { return Graph::resolveAll(pack()); }
+
+    [[nodiscard]] Pack pack() const { return Pack::openWorldgenTree(path_); }
 
 private:
     [[nodiscard]] static std::string uniqueName() {
@@ -661,4 +665,241 @@ TEST_CASE("a frozen spline with no points is refused", "[density][graph][ub]") {
     one.points.push_back(stratum::density::SplinePoint{
         .location = 0.0, .derivative = 0.0, .value = 1.0, .nested = std::nullopt});
     CHECK_NOTHROW(assembler.addSpline(one));
+}
+
+namespace {
+
+using stratum::density::kMaxDepth;
+using stratum::density::OutOfRangeError;
+
+/// `abs` wrapped @p levels times around @p innermost, as JSON text: a
+/// function @p levels deeper than @p innermost, and as many objects deep.
+[[nodiscard]] std::string nestedAbs(std::size_t levels, std::string_view innermost) {
+    std::string text;
+    for (std::size_t i = 0; i < levels; ++i) {
+        text += R"({"type":"minecraft:abs","argument":)";
+    }
+    text += innermost;
+    text.append(levels, '}');
+    return text;
+}
+
+/// A `spline` node over @p splines splines, each the only point's value of
+/// the one outside it, the innermost one's a plain 1.0, every one sampled
+/// along @p coordinate: @p splines + 1 deeper than the coordinate.
+[[nodiscard]] std::string nestedSplines(std::size_t splines, std::string_view coordinate) {
+    std::string text = R"({"type":"minecraft:spline","spline":)";
+    for (std::size_t i = 0; i < splines; ++i) {
+        text += R"({"coordinate":)" + std::string(coordinate) +
+                R"(,"points":[{"location":0.0,"derivative":0.0,"value":)";
+    }
+    text += "1.0";
+    for (std::size_t i = 0; i < splines; ++i) {
+        text += "}]}";
+    }
+    return text + "}";
+}
+
+/// `constant` and then @p count - 1 `abs`, each over the one before: a
+/// chain @p count deep, as freeze::read hands one to the assembler.
+[[nodiscard]] Graph::Assembler absChain(std::size_t count) {
+    Graph::Assembler assembler;
+    stratum::density::Node constant;
+    constant.type = NodeType::Constant;
+    constant.parameters = {-0.25};
+    static_cast<void>(assembler.addNode(constant));
+    for (std::size_t i = 1; i < count; ++i) {
+        stratum::density::Node abs;
+        abs.type = NodeType::Abs;
+        abs.arguments = {static_cast<stratum::density::NodeIndex>(i - 1)};
+        static_cast<void>(assembler.addNode(abs));
+    }
+    return assembler;
+}
+
+} // namespace
+
+TEST_CASE("density functions nested past kMaxDepth are refused on the way down",
+          "[density][graph][ub]") {
+    // The resolver recurses once per function, spline and reference it is in
+    // the middle of, and twenty thousand levels of `abs` ran the stack out
+    // (SPEC §8). It counts them on the way down and refuses the level past
+    // the bound before entering it.
+    using Catch::Matchers::ContainsSubstring;
+    REQUIRE(kMaxDepth == 256U);
+    const TempTree tree;
+    const Pack pack = tree.pack();
+
+    // 255 `abs` around a constant: 256 levels, the most there may be. Through
+    // Builder::add, since one file holds no more than data::kMaxJsonDepth.
+    Graph::Builder atLimit(pack);
+    CHECK_NOTHROW(atLimit.add(nlohmann::json::parse(nestedAbs(kMaxDepth - 1, "0.5"))));
+
+    for (const std::size_t levels : {kMaxDepth, std::size_t{20'000}}) {
+        CAPTURE(levels);
+        Graph::Builder past(pack);
+        CHECK_THROWS_MATCHES(
+            past.add(nlohmann::json::parse(nestedAbs(levels, "0.5"))), OutOfRangeError,
+            Catch::Matchers::MessageMatches(ContainsSubstring("nest more than 256 deep")));
+    }
+}
+
+TEST_CASE("a chain of references past kMaxDepth is refused on the way down",
+          "[density][graph][ub]") {
+    // A file that only names the next is one node to the graph however long
+    // the chain, and one level of the resolver's recursion per file: no
+    // depth the graph carries sees it, so the descent counts it.
+    using Catch::Matchers::ContainsSubstring;
+    const auto name = [](std::size_t i) {
+        const std::string digits = std::to_string(i);
+        return "a" + std::string(3 - digits.size(), '0') + digits;
+    };
+    // Named so the head sorts first, and is resolved before anything it
+    // reaches: otherwise the chain would be resolved from its tail, a link
+    // at a time, and never be deep.
+    const auto chain = [&name](const TempTree& tree, std::size_t files) {
+        for (std::size_t i = 0; i + 1 < files; ++i) {
+            tree.define(name(i), "\"minecraft:" + name(i + 1) + "\"");
+        }
+        tree.define(name(files - 1), "0.5");
+    };
+
+    const TempTree atLimit;
+    chain(atLimit, kMaxDepth);
+    const Graph graph = atLimit.resolve();
+    CHECK(graph.nodeCount() == 1U);
+    CHECK(graph.rootOf(ResourceLocation::parse("a000")) ==
+          graph.rootOf(ResourceLocation::parse(name(kMaxDepth - 1))));
+
+    const TempTree past;
+    chain(past, kMaxDepth + 1);
+    CHECK_THROWS_MATCHES(
+        past.resolve(), OutOfRangeError,
+        Catch::Matchers::MessageMatches(ContainsSubstring("minecraft:a000 -> minecraft:a001 -> ") &&
+                                        ContainsSubstring("nest more than 256 deep")));
+}
+
+TEST_CASE("a graph deeper than kMaxDepth through functions resolved apart is refused on the way up",
+          "[density][graph][ub]") {
+    // Memoising lets the graph outgrow the recursion that built it. `a`, 128
+    // or 129 deep, is resolved first, and is then one memoised reference at
+    // the bottom of a function in another file, which the resolver enters only
+    // 129 levels deep: the depth is counted as each node is added, from its
+    // arguments' and its spline's. Every file is inside data::kMaxJsonDepth.
+    using Catch::Matchers::ContainsSubstring;
+    const std::string onA = nestedAbs(128, R"("minecraft:a")");
+
+    const TempTree atLimit;
+    atLimit.define("a", nestedAbs(127, "0.5"));
+    atLimit.define("b", onA);
+    const Graph graph = atLimit.resolve();
+    CHECK(graph.contains(ResourceLocation::parse("b")));
+
+    const TempTree past;
+    past.define("a", nestedAbs(128, "0.5"));
+    past.define("b", onA);
+    CHECK_THROWS_MATCHES(past.resolve(), OutOfRangeError,
+                         Catch::Matchers::MessageMatches(
+                             ContainsSubstring("minecraft:b: 'minecraft:abs' sits 257 nodes and "
+                                               "splines deep, past the 256 this build evaluates")));
+
+    // A spline is a level, and so is the node that holds it. Through
+    // Builder::add, because one file cannot nest a hundred splines inside
+    // data::kMaxJsonDepth: each is three levels of JSON.
+    const TempTree splines;
+    splines.define("a", nestedAbs(127, "0.5"));
+    const Pack pack = splines.pack();
+    const auto added = [&pack](std::size_t count) {
+        Graph::Builder builder(pack);
+        builder.addNamed();
+        return builder.add(nlohmann::json::parse(nestedSplines(count, R"("minecraft:a")")));
+    };
+    CHECK_NOTHROW(added(127));
+    CHECK_THROWS_MATCHES(
+        added(128), OutOfRangeError,
+        Catch::Matchers::MessageMatches(ContainsSubstring("'minecraft:spline' sits 257 nodes")));
+    CHECK_THROWS_MATCHES(
+        added(129), OutOfRangeError,
+        Catch::Matchers::MessageMatches(ContainsSubstring("a spline sits 257 nodes")));
+}
+
+TEST_CASE("a frozen graph past kMaxDepth, or with a cycle, is refused as it is released",
+          "[density][graph][ub]") {
+    // A resealed blob's 20 000-node chain into a router entry ran the
+    // interpreter's recursion out (SPEC §8). Graph::Assembler, which every
+    // frozen graph is rebuilt through, measures each node's depth with a
+    // stack of its own and refuses past kMaxDepth, naming the node.
+    using Catch::Matchers::ContainsSubstring;
+    CHECK_NOTHROW(absChain(kMaxDepth).release());
+    for (const std::size_t count : {kMaxDepth + 1, std::size_t{20'000}}) {
+        CAPTURE(count);
+        CHECK_THROWS_MATCHES(absChain(count).release(), OutOfRangeError,
+                             Catch::Matchers::MessageMatches(
+                                 ContainsSubstring("frozen node 256 ('minecraft:abs') sits 257 "
+                                                   "nodes and splines deep")));
+    }
+
+    // Splines count a level each: a constant, @p count splines each nesting
+    // the one before, and a node holding the last.
+    const auto splineChain = [](std::size_t count) {
+        Graph::Assembler assembler;
+        stratum::density::Node constant;
+        constant.type = NodeType::Constant;
+        constant.parameters = {0.25};
+        static_cast<void>(assembler.addNode(constant));
+        stratum::density::Node holder;
+        holder.type = NodeType::Spline;
+        holder.spline = static_cast<stratum::density::SplineIndex>(count - 1);
+        static_cast<void>(assembler.addNode(holder));
+        for (std::size_t k = 0; k < count; ++k) {
+            stratum::density::SplineDefinition spline;
+            spline.coordinate = 0;
+            spline.points.push_back(
+                k == 0 ? stratum::density::SplinePoint{.location = 0.0,
+                                                       .derivative = 0.0,
+                                                       .value = 1.0,
+                                                       .nested = std::nullopt}
+                       : stratum::density::SplinePoint{
+                             .location = 0.0,
+                             .derivative = 0.0,
+                             .value = std::nullopt,
+                             .nested = static_cast<stratum::density::SplineIndex>(k - 1)});
+            static_cast<void>(assembler.addSpline(spline));
+        }
+        return assembler;
+    };
+    CHECK_NOTHROW(splineChain(kMaxDepth - 2).release());
+    CHECK_THROWS_MATCHES(splineChain(kMaxDepth - 1).release(), OutOfRangeError,
+                         Catch::Matchers::MessageMatches(ContainsSubstring(
+                             "frozen node 1 ('minecraft:spline') sits 257 nodes")));
+    CHECK_THROWS_MATCHES(
+        splineChain(kMaxDepth).release(), OutOfRangeError,
+        Catch::Matchers::MessageMatches(ContainsSubstring("frozen spline 255 sits 257 nodes")));
+
+    // A node whose spline's coordinate is the node itself: nothing orders the
+    // two, so only a walk finds it. Malformed rather than out of range — no
+    // build writes one.
+    Graph::Assembler cyclic;
+    stratum::density::Node constant;
+    constant.type = NodeType::Constant;
+    constant.parameters = {0.25};
+    static_cast<void>(cyclic.addNode(constant));
+    stratum::density::Node holder;
+    holder.type = NodeType::Spline;
+    holder.spline = 0;
+    static_cast<void>(cyclic.addNode(holder));
+    stratum::density::SplineDefinition loop;
+    loop.coordinate = 1;
+    loop.points.push_back(stratum::density::SplinePoint{
+        .location = 0.0, .derivative = 0.0, .value = 1.0, .nested = std::nullopt});
+    static_cast<void>(cyclic.addSpline(loop));
+    try {
+        static_cast<void>(cyclic.release());
+        FAIL("a cycle was released");
+    } catch (const ResolveError& error) {
+        CHECK(dynamic_cast<const OutOfRangeError*>(&error) == nullptr);
+        CHECK_THAT(error.what(),
+                   ContainsSubstring("frozen spline 0 leads back to frozen node 1 "
+                                     "('minecraft:spline'), so the graph has a cycle"));
+    }
 }

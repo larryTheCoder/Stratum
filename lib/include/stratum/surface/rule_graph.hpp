@@ -34,6 +34,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -176,6 +177,24 @@ struct SchemaField {
 
 using RuleIndex = std::uint32_t;
 using ConditionIndex = std::uint32_t;
+
+/// The deepest tree of rules and conditions this build resolves or runs: a
+/// rule or condition inside another is one level deeper (SPEC §8, "Inputs
+/// that would reach undefined behaviour"). The resolver recurses once per
+/// level, and the executor once per level it runs, so a tree deep enough
+/// runs the C++ stack out — undefined behaviour, not an error.
+///
+/// The resolver keeps thin frames (surface_rule_graph.cpp), and resolving and
+/// then running a tree 128 levels deep ran in 256 KiB of stack in the
+/// sanitize preset's build (Clang, unoptimised, UBSan) and 192 KiB in GCC's
+/// unoptimised build, inside the 1 MiB a Windows main thread or a JVM thread
+/// gets by default. Vanilla's deepest at 1.21.11 is 14, in the overworld,
+/// amplified and large_biomes settings. A pack cannot reach the bound, because every level is at
+/// least one level of the JSON it is written in and the file it is in has at least one more, which
+/// data::kMaxJsonDepth bounds at this same 128; RuleGraph::resolve holds whatever it is handed to
+/// it all the same, refusing by name before the level past it is entered. What the server does with
+/// a tree past it is unmeasured.
+inline constexpr std::size_t kMaxRuleDepth = 128;
 
 struct Rule {
     RuleType type = RuleType::Block;

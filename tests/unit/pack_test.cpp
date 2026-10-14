@@ -7,14 +7,19 @@
 
 #include "support/temp_path.hpp"
 
+#include <stratum/data/json_depth.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -283,4 +288,73 @@ TEST_CASE("loading is deterministic", "[data][pack]") {
         CHECK(first.entries()[i].id == second.entries()[i].id);
     }
     CHECK(first.entries().front().id.path() == "a");
+}
+
+namespace {
+
+/// @p depth arrays, one inside the next, around a number: as many arrays and
+/// objects deep, to stratum::data::jsonDepth, as @p depth says.
+[[nodiscard]] std::string nestedArrays(std::size_t depth) {
+    return std::string(depth, '[') + "1" + std::string(depth, ']');
+}
+
+} // namespace
+
+TEST_CASE("a JSON value's depth is measured without recursion", "[data][json][ub]") {
+    using stratum::data::jsonDepth;
+    CHECK(jsonDepth(nlohmann::json::parse("1")) == 0U);
+    CHECK(jsonDepth(nlohmann::json::parse(R"("text")")) == 0U);
+    CHECK(jsonDepth(nlohmann::json::parse("[]")) == 1U);
+    CHECK(jsonDepth(nlohmann::json::parse("{}")) == 1U);
+    CHECK(jsonDepth(nlohmann::json::parse(R"({"a":1})")) == 1U);
+    CHECK(jsonDepth(nlohmann::json::parse(R"({"a":[]})")) == 2U);
+    // The deepest branch, wherever it sits among wider ones.
+    CHECK(jsonDepth(nlohmann::json::parse(R"([1,[2,[3]],{"x":{"y":[]}},4])")) == 4U);
+    // Deep enough that a recursive measure, copy or print would have run the
+    // stack out: nlohmann parses and destroys it without recursing, and this
+    // measures it the same way.
+    CHECK(jsonDepth(nlohmann::json::parse(nestedArrays(100'000))) == 100'000U);
+}
+
+TEST_CASE("a pack file nested past the bound is refused by name, before anything copies it",
+          "[data][pack][ub]") {
+    // A surface rule of twenty thousand `not`s ran the stack out in the copy
+    // that keeps it in its noise settings, before any of this build's own
+    // code read it (SPEC §8). Every file is held to kMaxJsonDepth as it is
+    // parsed, whatever registry it is in.
+    using Catch::Matchers::ContainsSubstring;
+    constexpr std::size_t kLimit = stratum::data::kMaxJsonDepth;
+    REQUIRE(kLimit == 128U);
+
+    const TempDirectory atLimit;
+    atLimit.write("density_function/deep.json", nestedArrays(kLimit));
+    CHECK_NOTHROW(Pack::openWorldgenTree(atLimit.path()));
+
+    const TempDirectory past;
+    past.write("density_function/deep.json", nestedArrays(kLimit + 1));
+    CHECK_THROWS_MATCHES(Pack::openWorldgenTree(past.path()), PackError,
+                         Catch::Matchers::MessageMatches(
+                             ContainsSubstring("deep.json") &&
+                             ContainsSubstring("nests arrays and objects 129 deep, past the 128")));
+
+    // The review's own case: a `not` chain in a noise settings file.
+    std::string rule = R"({"type":"minecraft:condition","if_true":)";
+    for (std::size_t i = 0; i < 20'000; ++i) {
+        rule += R"({"type":"minecraft:not","invert":)";
+    }
+    rule += R"({"type":"minecraft:steep"})" + std::string(20'000, '}') +
+            R"(,"then_run":{"type":"minecraft:block","result_state":{"Name":"minecraft:stone"}}})";
+    const TempDirectory rules;
+    rules.write("noise_settings/deep.json", R"({"surface_rule":)" + rule + "}");
+    CHECK_THROWS_MATCHES(Pack::openWorldgenTree(rules.path()), PackError,
+                         Catch::Matchers::MessageMatches(ContainsSubstring("deep.json") &&
+                                                         ContainsSubstring("20003 deep")));
+
+    // pack.mcmeta too, whose errors print what they read.
+    const TempDirectory meta;
+    meta.write("data/minecraft/worldgen/density_function/a.json", kConstantDensityFunction);
+    meta.write("pack.mcmeta",
+               R"({"pack":{"description":"t","pack_format":)" + nestedArrays(20'000) + "}}");
+    CHECK_THROWS_WITH(Pack::openDataPack(meta.path()),
+                      ContainsSubstring("pack.mcmeta") && ContainsSubstring("20002 deep"));
 }

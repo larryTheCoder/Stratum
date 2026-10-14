@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -377,6 +378,33 @@ struct Resolver {
     const data::ResourceLocation& id;
     std::vector<Rule>& rules;
     std::vector<Condition>& conditions;
+    /// How many rules and conditions are being read, one inside the next.
+    std::size_t nesting = 0;
+
+    /// One of them, entered on construction and left on destruction; refused
+    /// by name, before it is entered, past kMaxRuleDepth (SPEC §8).
+    class Level {
+    public:
+        explicit Level(Resolver& resolver) : resolver_(resolver) {
+            if (resolver_.nesting == kMaxRuleDepth) {
+                fail(resolver_.id, "rules and conditions nest more than " +
+                                       std::to_string(kMaxRuleDepth) +
+                                       " deep; this build refuses them rather than exhaust its "
+                                       "stack (SPEC §8)");
+            }
+            ++resolver_.nesting;
+        }
+
+        ~Level() { --resolver_.nesting; }
+
+        Level(const Level&) = delete;
+        Level& operator=(const Level&) = delete;
+        Level(Level&&) = delete;
+        Level& operator=(Level&&) = delete;
+
+    private:
+        Resolver& resolver_;
+    };
 
     [[nodiscard]] RuleIndex readRule(const nlohmann::json& json);
     [[nodiscard]] ConditionIndex readCondition(const nlohmann::json& json);
@@ -657,6 +685,7 @@ ConditionType Resolver::conditionTypeOf(const nlohmann::json& json) const {
 }
 
 RuleIndex Resolver::readRule(const nlohmann::json& json) {
+    const Level level(*this);
     Rule entry;
     entry.type = ruleTypeOf(json);
     // The table's own spelling of the name, which is the one "type" gave.
@@ -674,6 +703,7 @@ RuleIndex Resolver::readRule(const nlohmann::json& json) {
 }
 
 ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
+    const Level level(*this);
     Condition entry;
     entry.type = conditionTypeOf(json);
     const std::string_view name = conditionTypeName(entry.type);
@@ -693,7 +723,8 @@ ConditionIndex Resolver::readCondition(const nlohmann::json& json) {
 
 RuleGraph RuleGraph::resolve(const nlohmann::json& json, const data::ResourceLocation& id) {
     RuleGraph graph;
-    Resolver resolver{.id = id, .rules = graph.rules_, .conditions = graph.conditions_};
+    Resolver resolver{
+        .id = id, .rules = graph.rules_, .conditions = graph.conditions_, .nesting = 0};
     graph.root_ = resolver.readRule(json);
     return graph;
 }

@@ -1589,3 +1589,65 @@ TEST_CASE("a node of each type's exact shape is evaluated without reading past i
     CHECK(evaluated + refused == 34U);
     CHECK(evaluated > refused);
 }
+
+TEST_CASE("a graph at kMaxDepth is evaluated, from a pack and from an assembler",
+          "[density][interpreter][ub]") {
+    // The other side of the bound (density_graph_test.cpp refuses one level
+    // past it). At kMaxDepth the interpreter's recursion — through arguments
+    // and through splines, and requireEvaluable's beside it — fits the stack
+    // in every build, the sanitize preset's included.
+    using stratum::density::kMaxDepth;
+    REQUIRE(kMaxDepth == 256U);
+
+    // 255 `abs` around -0.25, written in a pack: as deep as a graph may be.
+    // Across two files, since one holds no more than data::kMaxJsonDepth:
+    // `deep_a` is 127 of them around the constant, and `deep_b` 128 around
+    // it. `deep_a` sorts first, so it is resolved first and `deep_b` meets it
+    // memoised: resolved from `deep_b` down, the reference would be a level
+    // of the resolver's own descent too, 257 in all, and refused.
+    const auto nested = [](std::size_t levels, const std::string& innermost) {
+        std::string text;
+        for (std::size_t i = 0; i < levels; ++i) {
+            text += R"({"type":"minecraft:abs","argument":)";
+        }
+        return text + innermost + std::string(levels, '}');
+    };
+    const TempTree tree;
+    tree.define("deep_a", nested(127, "-0.25"));
+    tree.define("deep_b", nested(128, R"("minecraft:deep_a")"));
+    const Pipeline pipeline(tree.pack());
+    CHECK_NOTHROW(pipeline.interpreter().requireEvaluable(pipeline.root("deep_b")));
+    CHECK(bits(pipeline.at("deep_b")) == bits(0.25));
+
+    // A constant, 254 splines each nesting the one before, and the node
+    // holding them: 256 deep, assembled as freeze::read assembles a blob's.
+    Graph::Assembler assembler;
+    stratum::density::Node constant;
+    constant.type = NodeType::Constant;
+    constant.parameters = {0.25};
+    static_cast<void>(assembler.addNode(constant));
+    stratum::density::Node holder;
+    holder.type = NodeType::Spline;
+    holder.spline = static_cast<stratum::density::SplineIndex>(kMaxDepth - 3);
+    const stratum::density::NodeIndex root = assembler.addNode(holder);
+    for (std::size_t k = 0; k + 2 < kMaxDepth; ++k) {
+        stratum::density::SplineDefinition spline;
+        spline.coordinate = 0;
+        spline.points.push_back(stratum::density::SplinePoint{
+            .location = 0.0,
+            .derivative = 0.0,
+            .value = k == 0 ? std::optional<double>{1.0} : std::nullopt,
+            .nested = k == 0 ? std::nullopt
+                             : std::optional<stratum::density::SplineIndex>{
+                                   static_cast<stratum::density::SplineIndex>(k - 1)}});
+        static_cast<void>(assembler.addSpline(std::move(spline)));
+    }
+    const Graph graph = assembler.release();
+    const NoiseRegistry noises = NoiseRegistry::create(
+        std::map<ResourceLocation, NoiseParameters>{}, std::vector<ResourceLocation>{}, 0,
+        stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises);
+    CHECK_NOTHROW(interpreter.requireEvaluable(root));
+    // Every spline reads its one knot off the end, flat: 1.0 all the way up.
+    CHECK(bits(interpreter.evaluate(root, Point{.x = 0, .y = 0, .z = 0})) == bits(1.0));
+}

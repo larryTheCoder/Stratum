@@ -3,6 +3,7 @@
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
+#include <stratum/data/json_depth.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -461,9 +462,14 @@ void writeSettings(Writer& out,
     }
 
     // release() is where the node/spline cross-references are checked, so it
-    // throws as readily as the adds do and has to be wrapped with them.
+    // throws as readily as the adds do and has to be wrapped with them. It is
+    // also where a graph deeper than density::kMaxDepth is refused, which a
+    // build from before that bound may have frozen: a refusal, as for the
+    // adds' out-of-range values, where a cycle is malformed.
     try {
         return assembler.release();
+    } catch (const density::OutOfRangeError& error) {
+        in.refuse(error.what());
     } catch (const density::ResolveError& error) {
         in.fail(error.what());
     }
@@ -518,6 +524,20 @@ void writeSettings(Writer& out,
             in.fail(std::string("a stored surface rule or spawn target is not JSON: ") +
                     error.what());
         }
+        // What a pack's loader holds every file to, held of the text a blob
+        // stores (SPEC §8): copying it, as the settings are copied into a
+        // dimension, recurses once per level. A refusal rather than a
+        // malformed blob, since a build from before the bound froze such text.
+        const auto refuseIfDeep = [&in, &one](const char* field, const nlohmann::json& json) {
+            if (const std::size_t depth = data::jsonDepth(json); depth > data::kMaxJsonDepth) {
+                in.refuse("stored noise settings '" + one.id.toString() + "' have a \"" +
+                          std::string(field) + "\" that nests arrays and objects " +
+                          std::to_string(depth) + " deep, past the " +
+                          std::to_string(data::kMaxJsonDepth) + " this build reads");
+            }
+        };
+        refuseIfDeep("surface_rule", one.surfaceRule);
+        refuseIfDeep("spawn_target", one.spawnTarget);
         const data::ResourceLocation id = one.id;
         all.emplace(id, std::move(one));
     }

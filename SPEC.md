@@ -227,7 +227,11 @@ These are hard requirements; violations are release blockers.
    `fluid_level_spread` and `sea_level`, which predate this rule and take
    Java's own `int` semantics, defined and the same on every architecture but
    unmeasured. A bound that holds by construction is written at the
-   operation and asserted in debug builds instead.
+   operation and asserted in debug builds instead. Running the C++ stack out
+   is undefined behaviour too, and the same rule holds of it: every
+   recursion over what a pack or a frozen blob nests is bounded, sized
+   against the stack it takes at the bound, and what nests past it is
+   refused by name (§8).
    The **`sanitize` preset** holds this: Clang, Debug, every first-party
    target the default configuration builds under UBSan — `undefined` plus
    `float-cast-overflow`, `-fno-sanitize-recover=all` — with libstdc++'s
@@ -286,7 +290,8 @@ container format this build does not write, **a pipeline engine version this
 build does not reproduce**, a schema pin that does not match, a payload whose
 length disagrees with the file, a content hash that does not match, and then
 the structural checks behind all of that — an unknown node type, a node not
-of its type's shape (§8), an index that names nothing, trailing bytes. The
+of its type's shape (§8), an index that names nothing, a cycle through a
+node's spline, trailing bytes. The
 engine-version refusal is the load-bearing one: a build that generates
 differently from the one that froze a world must not open it, because
 opening it and generating anyway is how a seam gets into terrain that
@@ -344,7 +349,7 @@ to bump the version and be called out; this is that call-out.
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
-they change no output that is still produced. What they stop is of four
+they change no output that is still produced. What they stop is of five
 kinds, and not all of it was undefined. (1) Inputs that reached undefined
 behaviour: what they produced was the platform's, not this engine's, and
 where it was an out-of-range conversion x86-64 and ARM64 already disagreed.
@@ -369,9 +374,16 @@ pack gives that its field's type cannot hold, which the JSON reader narrowed
 without a word, modulo 2^32 or 2^64: a surface rule's `{"absolute":
 4294967359}` generated as 63, a `min_y` of 2^64 - 64 as -64. Defined, the
 same on every architecture, and never what the pack said; refused at load
-now, from a pack or from the surface rules a v15 blob stores as text. A
-frozen node not of its type's shape is not among them: no build wrote one,
-so no world carries it. None of that needs a version, because a refusal
+now, from a pack or from the surface rules a v15 blob stores as text. (5)
+Nesting past the depth bounds (§8): a file of JSON more than 128 deep, a
+density function graph more than 256, surface rules more than 128. An
+earlier build resolved and generated these as deep as its stack held out
+— vanilla's own are 23, 46 and 14 deep — and crashed past that; they are
+refused at load now, from a pack or a v15 blob, and `freeze::read` reports
+the blob as carrying a value this build refuses. A frozen node not of its
+type's shape is not among them, nor a frozen graph with a cycle through a
+node's spline: no build wrote either, so no world carries one. None of
+that needs a version, because a refusal
 produces no chunk: a chunk is generated under its version's rules or not at
 all, so a world cannot grow a seam from one. Every input still accepted
 computes exactly what it did — the arithmetic that moved to 64 bits narrows
@@ -628,6 +640,28 @@ that is undefined, so some of what they stop computed defined output before
   their schema range (`{"absolute": 4294967359}` read as 63, a `min_y` of
   2^64 - 64 as -64 inside that range, a `pack_format` of 2^32 + 94 as the
   pin);
+- nesting deeper than the stack the recursions over it are sized for
+  (§5.7), each bound counted where the input is read, before anything
+  recurses over it: a pack file, or the surface rules or spawn target a
+  blob stores as text, nested more than 128 arrays and objects deep
+  (`data::kMaxJsonDepth`: nlohmann's copy, dump and == recurse once per
+  level, and twenty thousand levels of `not` ran the stack out in the copy
+  that keeps a surface rule in its noise settings); a density function
+  graph more than 256 nodes and splines deep (`density::kMaxDepth`: from a
+  pack on the way down for the resolver's own nesting, each function,
+  spline and reference it follows a level, and on the way up for each
+  node's depth, which memoised references can carry past the recursion that
+  built it; from a blob by a walk with a stack of its own in
+  `Graph::Assembler::release`, which also refuses, as malformed, a cycle
+  through a node's spline); and surface rules more than 128 rules and
+  conditions deep (`surface::kMaxRuleDepth`, which a pack cannot reach past
+  its JSON bound). The recursions keep thin frames, and at each bound the
+  most stack measured in the `sanitize` preset's build is 640 KiB, for a
+  chain of 256 `interpolated`; resolving and evaluating 256 levels
+  otherwise took 320 KiB, resolving and running 128 levels of rules
+  256 KiB, and a copy, a dump and an == of 128 levels of JSON 448 KiB —
+  inside the 1 MiB a Windows main thread or a JVM thread gets by default.
+  Vanilla's deepest are 23, 46 and 14;
 - when surface rules compile: a vertical anchor whose y is no 32-bit
   integer (`below_top: -2147483648`), and, under a `temperature` condition,
   a `sea_level` within 17 of INT32_MAX.

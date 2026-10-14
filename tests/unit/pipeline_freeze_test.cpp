@@ -15,6 +15,7 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
+#include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/hash/md5.hpp>
@@ -34,8 +35,10 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -642,6 +645,135 @@ TEST_CASE("a sealed blob whose node is not its type's shape is refused by name",
                               ContainsSubstring("'minecraft:clamp' has min") &&
                               ContainsSubstring("generate this world with that build") &&
                               !ContainsSubstring("malformed"));
+    }
+}
+
+namespace {
+
+/// `abs` wrapped @p levels times around @p innermost, as JSON text.
+[[nodiscard]] std::string nestedAbs(std::size_t levels, std::string_view innermost) {
+    std::string text;
+    for (std::size_t i = 0; i < levels; ++i) {
+        text += R"({"type":"minecraft:abs","argument":)";
+    }
+    text += innermost;
+    text.append(levels, '}');
+    return text;
+}
+
+/// The bytes the blob writes for a string: its length, then its bytes.
+[[nodiscard]] std::vector<std::byte> stored(std::string_view text) {
+    std::vector<std::byte> bytes = le32(static_cast<std::uint32_t>(text.size()));
+    for (const char character : text) {
+        bytes.push_back(static_cast<std::byte>(character));
+    }
+    return bytes;
+}
+
+/// The whole record the blob writes for an `abs` over @p argument: its type,
+/// one argument, no parameters, no noise, no spline, an empty selector.
+[[nodiscard]] std::vector<std::byte> absRecord(std::uint32_t argument) {
+    const auto type = static_cast<std::uint8_t>(stratum::density::NodeType::Abs);
+    return joined({{static_cast<std::byte>(type)},
+                   le32(1),
+                   le32(argument),
+                   le32(0),
+                   {std::byte{0}, std::byte{0}},
+                   le32(0)});
+}
+
+} // namespace
+
+TEST_CASE("a sealed blob deeper than kMaxDepth, or with a cycle, is refused by name",
+          "[freeze][ub]") {
+    // A resealed blob's 20 000-node chain into a router entry ran the
+    // interpreter's recursion out (SPEC §8). Past density::kMaxDepth a graph
+    // is refused as a value this build refuses — a build from before the
+    // bound may have frozen one (§6) — and evaluated at it; a cycle, which no
+    // build writes, is malformed. Each blob is sealed and differs from one
+    // this build wrote in one index, so its length is unchanged.
+    constexpr double kDeep = 0.2718281828459045;
+    constexpr double kFits = 0.5772156649015329;
+    constexpr double kPast = 0.6180339887498949;
+    const TempTree tree;
+    // Each inside data::kMaxJsonDepth, as a pack's file has to be.
+    tree.write("density_function", "deep_a", nestedAbs(128, "0.2718281828459045"));
+    tree.write("density_function", "deep_b", nestedAbs(127, "0.5772156649015329"));
+    tree.write("density_function", "deep_c", nestedAbs(128, "0.6180339887498949"));
+    const std::vector<std::byte> good = stratum::freeze::write(buildPipeline(tree));
+    const Pipeline thawed = stratum::freeze::read(good);
+    const auto indexOfConstant = [&thawed](double value) {
+        std::optional<std::uint32_t> found;
+        for (std::size_t i = 0; i < thawed.graph.nodeCount(); ++i) {
+            const auto& node = thawed.graph.node(static_cast<stratum::density::NodeIndex>(i));
+            if (node.type == stratum::density::NodeType::Constant &&
+                bits(node.parameters.front()) == bits(value)) {
+                found = static_cast<std::uint32_t>(i);
+            }
+        }
+        REQUIRE(found.has_value());
+        return found.value_or(0U);
+    };
+    const std::uint32_t deepTop = thawed.graph.rootOf(ResourceLocation::parse("deep_a"));
+    REQUIRE(deepTop == indexOfConstant(kDeep) + 128U);
+    // The `abs` around a function's constant made to name deep_a's top, 129
+    // deep, instead: deep_b comes to 256, deep_c to 257.
+    const auto relinked = [&](double constant) {
+        return respliced(good, absRecord(indexOfConstant(constant)), absRecord(deepTop));
+    };
+
+    SECTION("at the bound, read and evaluated") {
+        const Pipeline fits = stratum::freeze::read(relinked(kFits));
+        const auto noises = stratum::density::NoiseRegistry::create(
+            std::map<ResourceLocation, stratum::density::NoiseParameters>{},
+            std::vector<ResourceLocation>{}, 0, stratum::density::RandomSource::Xoroshiro);
+        const stratum::density::Interpreter interpreter(fits.graph, noises);
+        const stratum::density::NodeIndex root =
+            fits.graph.rootOf(ResourceLocation::parse("deep_b"));
+        CHECK_NOTHROW(interpreter.requireEvaluable(root));
+        CHECK(bits(interpreter.evaluate(root, stratum::density::Point{.x = 0, .y = 0, .z = 0})) ==
+              bits(kDeep));
+    }
+
+    SECTION("one past it, refused as a value this build refuses") {
+        CHECK_THROWS_WITH(stratum::freeze::read(relinked(kPast)),
+                          ContainsSubstring("carries a value this build refuses") &&
+                              ContainsSubstring("('minecraft:abs') sits 257 nodes and splines "
+                                                "deep, past the 256") &&
+                              ContainsSubstring("generate this world with that build") &&
+                              !ContainsSubstring("malformed"));
+    }
+
+    SECTION("a spline whose coordinate leads back to the node holding it, malformed") {
+        // `curved`'s outer spline is sampled along `field`; made to sample
+        // along `curved` itself, evaluating it would recurse without end.
+        const std::uint32_t field = thawed.graph.rootOf(ResourceLocation::parse("field"));
+        const std::uint32_t curved = thawed.graph.rootOf(ResourceLocation::parse("curved"));
+        const auto outer = [](std::uint32_t coordinate) {
+            return joined({le32(coordinate), le32(2), le64(-1.0), le64(0.25)});
+        };
+        CHECK_THROWS_WITH(
+            stratum::freeze::read(respliced(good, outer(field), outer(curved))),
+            ContainsSubstring("malformed") &&
+                ContainsSubstring("leads back to frozen node " + std::to_string(curved)) &&
+                ContainsSubstring("cycle"));
+    }
+
+    SECTION("stored surface rules or spawn targets nested past data::kMaxJsonDepth") {
+        // A pack's files are held to it as they are read; a blob stores these
+        // two as text, and copying what that text parses to recurses once per
+        // level, as the settings are copied into a dimension.
+        const std::string deepArrays = std::string(600, '[') + "1" + std::string(600, ']');
+        CHECK_THROWS_WITH(
+            stratum::freeze::read(
+                respliced(good, stored(R"({"type":"minecraft:bandlands"})"),
+                          stored(R"({"type":"minecraft:bandlands","deep":)" + deepArrays + "}"))),
+            ContainsSubstring("carries a value this build refuses") &&
+                ContainsSubstring("\"surface_rule\" that nests arrays and objects 601 deep") &&
+                !ContainsSubstring("malformed"));
+        CHECK_THROWS_WITH(
+            stratum::freeze::read(respliced(good, stored("[1,2,3]"), stored(deepArrays))),
+            ContainsSubstring("\"spawn_target\" that nests arrays and objects 600 deep"));
     }
 }
 

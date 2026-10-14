@@ -1,6 +1,7 @@
 // Stratum — worldgen data packs.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/data/json_depth.hpp>
 #include <stratum/data/json_integer.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/version.hpp>
@@ -26,13 +27,24 @@ namespace {
     if (!stream) {
         throw PackError("cannot open " + file.string());
     }
+    nlohmann::json json;
     try {
-        return nlohmann::json::parse(stream);
+        json = nlohmann::json::parse(stream);
     } catch (const nlohmann::json::parse_error& error) {
         // The library's message carries the byte offset; the file name is
         // what turns it into something you can act on.
         throw PackError(file.string() + ": " + error.what());
     }
+    // Before anything copies, prints or walks it: each of those recurses
+    // once per level, and a file nested deep enough ran the stack out
+    // (data/json_depth.hpp, SPEC §8).
+    if (const std::size_t depth = jsonDepth(json); depth > kMaxJsonDepth) {
+        throw PackError(file.string() + ": nests arrays and objects " + std::to_string(depth) +
+                        " deep, past the " + std::to_string(kMaxJsonDepth) +
+                        " this build reads; it refuses the file rather than run out of stack "
+                        "reading it (SPEC §8)");
+    }
+    return json;
 }
 
 /// `worldgen/density_function/overworld/base_3d_noise.json` relative to a
