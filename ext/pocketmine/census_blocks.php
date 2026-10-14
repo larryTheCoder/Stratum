@@ -30,7 +30,12 @@ declare(strict_types=1);
  * Also counted, not failed: states PocketMine-MP takes but serializes back
  * as a different Bedrock state than it was given (a property it does not
  * model, normalised away), which is how a translation can be lossy without
- * any fallback.
+ * any fallback — so the states placed as themselves are counted as those
+ * that come back exactly as given and those that do not, and any that come
+ * back as minecraft:air are named. The fallbacks are listed by Bedrock
+ * block in three groups: blocks PocketMine-MP does not implement at all,
+ * blocks it implements but not in the state given, and minecraft:unknown,
+ * which is no block (the mapping's placeholder).
  *
  * Fails, as well, on anything escaping translate() — on a server that is an
  * exception on a generation worker — and on any log record above warning.
@@ -160,24 +165,53 @@ foreach($logger->records as [$level, $message]){
 // --- the whole table --------------------------------------------------------
 
 $toUnknown = count(array_filter($fallbacks, static fn(array $f) : bool => $f[2] === "minecraft:info_update"));
+/** @var array<int, string> $toAir Java id => what was given: placed, but serialized back as minecraft:air */
+$toAir = array_filter($lossy, static fn(string $change) : bool => str_contains($change, " -> minecraft:air["));
 echo "Block state census, PocketMine-MP 5.44.3, through Stratum\\PMMP\\BlockStateTranslator\n";
 echo "  Java block states in Stratum's table: ", $total, "\n";
-echo "  placed as themselves (upgrader + deserializer): ", count($resolved) - count($fallbacks), "\n";
+echo "  placed as themselves (upgrader + deserializer): ", count($resolved) - count($fallbacks), ": ",
+	count($resolved) - count($fallbacks) - count($lossy), " serialized back exactly as given, ",
+	count($lossy), " as a different Bedrock state (lossy), ", count($toAir), " of those as minecraft:air\n";
+foreach($toAir as $javaId => $change){
+	echo "    as air: ", $javaNames[$javaId], ": ", $change, "\n";
+}
 echo "  fell back: ", count($fallbacks), " (", count($fallbacks) - $toUnknown, " to the plugin's configured fallback, ", $toUnknown, " to minecraft:info_update)\n";
 echo "  escaped translate(): ", count($escaped), "\n";
-echo "  placed, but serialized back as a different Bedrock state: ", count($lossy), "\n";
 
-/** @var array<string, array{int, string, string}> $byBlock Bedrock name => [states, target, a reason] */
-$byBlock = [];
-foreach($fallbacks as [$spelling, $why, $target]){
+/**
+ * Each fallback's Bedrock block, by why: one PocketMine-MP does not
+ * implement at all (its deserializer has no such id); one it implements, but
+ * not in this state; or minecraft:unknown, which is no block — the mapping's
+ * placeholder for a Java block Bedrock has no counterpart for.
+ *
+ * @var array<string, array<string, array{int, string, string, array<string, true>}>> $byBlock
+ *      group => Bedrock name => [states, target, a reason, Java blocks]
+ */
+$byBlock = ["unimplemented" => [], "state" => [], "placeholder" => []];
+foreach($fallbacks as $javaId => [$spelling, $why, $target]){
 	$name = explode("[", $spelling, 2)[0];
-	$byBlock[$name] ??= [0, $target, $why];
-	$byBlock[$name][0]++;
+	$group = match(true){
+		$name === "minecraft:unknown" => "placeholder",
+		str_starts_with($why, "Unknown block ID \"") => "unimplemented",
+		default => "state"
+	};
+	$byBlock[$group][$name] ??= [0, $target, $why, []];
+	$byBlock[$group][$name][0]++;
+	$byBlock[$group][$name][3][explode("[", $javaNames[$javaId], 2)[0]] = true;
 }
-ksort($byBlock);
-echo "  fallbacks by Bedrock block (", count($byBlock), " blocks):\n";
-foreach($byBlock as $name => [$count, $target, $why]){
-	echo "    ", str_pad($name, 44), " ", str_pad((string) $count, 4, " ", STR_PAD_LEFT), " state(s) -> ", $target, "  (", $why, ")\n";
+$headings = [
+	"unimplemented" => "Bedrock blocks PocketMine-MP 5.44.3 does not implement",
+	"state" => "Bedrock blocks it implements, but not in these states",
+	"placeholder" => "no block at all: the mapping's placeholder for a Java block Bedrock has none for"
+];
+echo "  fallbacks by Bedrock block (", array_sum(array_map(count(...), $byBlock)), " blocks):\n";
+foreach($headings as $group => $heading){
+	ksort($byBlock[$group]);
+	echo "   ", $heading, " (", count($byBlock[$group]), "):\n";
+	foreach($byBlock[$group] as $name => [$count, $target, $why, $javaBlocks]){
+		echo "    ", str_pad($name, 44), " ", str_pad((string) $count, 4, " ", STR_PAD_LEFT), " state(s) -> ", $target, "  (", $why, ")",
+			$group === "unimplemented" ? "" : "  from Java " . implode(", ", array_keys($javaBlocks)), "\n";
+	}
 }
 foreach($escaped as $javaId => $what){
 	$failures[] = "translate(" . $javaId . ") for " . $javaNames[$javaId] . " threw " . $what;
