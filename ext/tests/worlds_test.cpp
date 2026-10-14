@@ -75,6 +75,32 @@ public:
         // reaches below it.
         write("noise_settings", "overworld", settings(-64).dump());
         write("noise_settings", "deep", settings(-128).dump());
+        // And settings naming block states the mapping table cannot place:
+        // a property the block does not have, a block that does not exist,
+        // and a misspelt block in a surface rule beside a good one. Loading
+        // and freezing take a block state's name and properties as written
+        // (settings::BlockState), so each of these freezes.
+        nlohmann::json snowyStone = settings(-64);
+        snowyStone["default_block"] = {{"Name", "minecraft:stone"},
+                                       {"Properties", {{"snowy", "true"}}}};
+        write("noise_settings", "snowy_stone", snowyStone.dump());
+        nlohmann::json notABlock = settings(-64);
+        notABlock["default_block"] = {{"Name", "minecraft:not_a_block"}};
+        write("noise_settings", "not_a_block", notABlock.dump());
+        nlohmann::json misspelt = settings(-64);
+        misspelt["surface_rule"] = {
+            {"type", "minecraft:sequence"},
+            {"sequence",
+             {{{"type", "minecraft:block"}, {"result_state", {{"Name", "minecraft:stone"}}}},
+              {{"type", "minecraft:block"}, {"result_state", {{"Name", "minecraft:grass_blok"}}}},
+              {{"type", "minecraft:block"},
+               {"result_state", {{"Name", "minecraft:grass_blok"}}}}}}};
+        write("noise_settings", "misspelt_surface", misspelt.dump());
+        nlohmann::json everything = misspelt;
+        everything["default_block"] = notABlock["default_block"];
+        everything["default_fluid"] = {{"Name", "minecraft:water"},
+                                       {"Properties", {{"level", "16"}}}};
+        write("noise_settings", "all_wrong", everything.dump());
         write("biome", "plains", R"({"temperature":0.8})");
         // Not a vanilla biome, so not in the Bedrock table: a datapack's.
         write("biome", "moon", R"({"temperature":0.1})");
@@ -356,6 +382,48 @@ TEST_CASE("a dimension PocketMine-MP cannot hold is refused by name when it is o
     CHECK_THROWS_WITH(compileForPocketMine(std::vector<std::byte>(4), "minecraft:overworld",
                                            "minecraft:overworld", 1),
                       ContainsSubstring("not a frozen pipeline"));
+}
+
+TEST_CASE("a block state the pack names that the mapping table cannot place is refused at open",
+          "[pmmp]") {
+    // On a worker the first chunk holding one threw from the encoder and
+    // took PocketMine-MP down; refused here, every one is refused on the
+    // main thread, by the plugin's world-load validation.
+    const Scratch scratch;
+    const auto open = [&scratch](const char* settings) {
+        return compileForPocketMine(scratch.blob(), settings, "minecraft:overworld", 1);
+    };
+    CHECK_THROWS_WITH(
+        open("minecraft:snowy_stone"),
+        ContainsSubstring("noise settings 'minecraft:snowy_stone' name a block state this "
+                          "build's mapping table cannot place: default_block "
+                          "minecraft:stone[snowy=true] (stratum-mapping: 'minecraft:stone' has "
+                          "no property 'snowy'"));
+    CHECK_THROWS_WITH(open("minecraft:not_a_block"),
+                      ContainsSubstring("default_block minecraft:not_a_block (stratum-mapping: "
+                                        "'minecraft:not_a_block' is not a block at Minecraft"));
+    // Named once however many rules place it; the good rule beside it is
+    // not named at all.
+    CHECK_THROWS_WITH(open("minecraft:misspelt_surface"),
+                      ContainsSubstring("name a block state this build's mapping table cannot "
+                                        "place: surface rule result_state minecraft:grass_blok "
+                                        "(stratum-mapping: 'minecraft:grass_blok' is not a block"));
+    CHECK_THROWS_WITH(open("minecraft:misspelt_surface"),
+                      !ContainsSubstring("minecraft:stone") && !ContainsSubstring("; "));
+    // Every one at once, in the order named.
+    CHECK_THROWS_WITH(open("minecraft:all_wrong"),
+                      ContainsSubstring("name block states this build's mapping table cannot "
+                                        "place: default_block minecraft:not_a_block (") &&
+                          ContainsSubstring("); default_fluid minecraft:water[level=16] "
+                                            "(stratum-mapping: 'minecraft:water' property "
+                                            "'level' has no value '16'") &&
+                          ContainsSubstring("); surface rule result_state minecraft:grass_blok ("));
+    // After compile's own refusals and the geometry's, which come first.
+    CHECK_THROWS_WITH(
+        compileForPocketMine(scratch.blob(), "minecraft:all_wrong", "minecraft:nowhere", 1),
+        ContainsSubstring("no biome parameter list 'minecraft:nowhere'"));
+    // And the states the shipped test settings name are placed.
+    CHECK(open("minecraft:overworld")->geometry().minY == -64);
 }
 
 TEST_CASE("the registry shares by every byte, so a restamped or damaged twin is refused",

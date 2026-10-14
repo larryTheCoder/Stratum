@@ -40,6 +40,8 @@ namespace {
 
 	foreach([
 		"the overworld" => GeneratorOptions::encode($blob),
+		"large biomes" => GeneratorOptions::encode($blob, "minecraft:large_biomes", "minecraft:overworld"),
+		"amplified" => GeneratorOptions::encode($blob, "minecraft:amplified", "minecraft:overworld"),
 		"the End" => GeneratorOptions::encode($blob, "minecraft:end", "minecraft:the_end"),
 		// A pairing vanilla does not make is taken as asked, and opens.
 		"the End's terrain, the overworld's biomes" => GeneratorOptions::encode($blob, "minecraft:end", "minecraft:overworld"),
@@ -60,12 +62,58 @@ namespace {
 	$checked = GeneratorOptions::check(GeneratorOptions::encode($blob, "minecraft:end", "minecraft:the_end"));
 	var_dump($checked->blobPath === $blob, $checked->noiseSettings, $checked->biomeSource);
 
+	// A pack whose noise settings name a block state the mapping table
+	// cannot place froze and validated, and threw from the encoder at the
+	// first chunk holding it, on a worker. Three such settings beside
+	// vanilla's own, in a scratch copy of the version root: the overworld's
+	// with a property stone does not have, with a block that does not exist,
+	// and with its surface rules' grass block misspelt.
+	$scratch = sys_get_temp_dir() . "/stratum-unmapped-" . getmypid();
+	$copy = function(string $from, string $to) use (&$copy) : void{
+		@mkdir($to, 0o777, true);
+		foreach(array_diff(scandir($from), [".", ".."]) as $name){
+			is_dir("$from/$name") ? $copy("$from/$name", "$to/$name") : copy("$from/$name", "$to/$name");
+		}
+	};
+	foreach(["density_function", "noise", "noise_settings", "biome"] as $registry){
+		$copy("$root/worldgen/$registry", "$scratch/worldgen/$registry");
+	}
+	$copy("$root/biome_parameters", "$scratch/biome_parameters");
+	$overworld = json_decode(file_get_contents("$root/worldgen/noise_settings/overworld.json"), true);
+	$settings = "$scratch/worldgen/noise_settings";
+	file_put_contents("$settings/snowy_stone.json", json_encode(["default_block" => ["Name" => "minecraft:stone", "Properties" => ["snowy" => "true"]]] + $overworld));
+	file_put_contents("$settings/not_a_block.json", json_encode(["default_block" => ["Name" => "minecraft:not_a_block"]] + $overworld));
+	$misspelt = str_replace('"minecraft:grass_block"', '"minecraft:grass_blok"', json_encode($overworld), $count);
+	echo "grass blocks misspelt: ", $count > 0 ? "yes" : "none found", "\n";
+	file_put_contents("$settings/misspelt_surface.json", $misspelt);
+	$unmapped = "$scratch/stratum-pipeline.blob";
+	Stratum\freezePipeline($scratch, $unmapped);
+	foreach(["snowy_stone", "not_a_block", "misspelt_surface"] as $name){
+		$e = GeneratorOptions::validate(GeneratorOptions::encode($unmapped, "minecraft:$name", "minecraft:overworld"));
+		echo $name, ": ", $e === null ? "accepted" : str_replace($unmapped, "<blob>", $e->getMessage()), "\n";
+	}
+	// Vanilla's own, from the same blob, open.
+	var_dump(GeneratorOptions::validate(GeneratorOptions::encode($unmapped)));
+	$remove = function(string $path) use (&$remove) : void{
+		if(is_dir($path)){
+			foreach(array_diff(scandir($path), [".", ".."]) as $name){
+				$remove("$path/$name");
+			}
+			rmdir($path);
+		}else{
+			unlink($path);
+		}
+	};
+	$remove($scratch);
+
 	unlink($restamped);
 	unlink($blob);
 }
 ?>
 --EXPECTF--
 the overworld: accepted
+large biomes: accepted
+amplified: accepted
 the End: accepted
 the End's terrain, the overworld's biomes: accepted
 the legacy Nether: pocketmine\world\generator\InvalidGeneratorOptionsException: Stratum cannot generate this world from its frozen pipeline at <blob>: %slegacy_random_source%s
@@ -76,3 +124,8 @@ another engine version: pocketmine\world\generator\InvalidGeneratorOptionsExcept
 bool(true)
 string(13) "minecraft:end"
 string(17) "minecraft:the_end"
+grass blocks misspelt: yes
+snowy_stone: Stratum cannot generate this world from its frozen pipeline at <blob>: noise settings 'minecraft:snowy_stone' name a block state this build's mapping table cannot place: default_block minecraft:stone[snowy=true] (stratum-mapping: 'minecraft:stone' has no property 'snowy' (it has: none))
+not_a_block: Stratum cannot generate this world from its frozen pipeline at <blob>: noise settings 'minecraft:not_a_block' name a block state this build's mapping table cannot place: default_block minecraft:not_a_block (stratum-mapping: 'minecraft:not_a_block' is not a block at Minecraft 1.21.11)
+misspelt_surface: Stratum cannot generate this world from its frozen pipeline at <blob>: noise settings 'minecraft:misspelt_surface' name a block state this build's mapping table cannot place: surface rule result_state minecraft:grass_blok[snowy=false] (stratum-mapping: 'minecraft:grass_blok' is not a block at Minecraft 1.21.11)
+NULL

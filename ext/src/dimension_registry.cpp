@@ -6,6 +6,9 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/mapping/biome.hpp>
+#include <stratum/mapping/block_state.hpp>
+#include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/rule_graph.hpp>
 
 #include <stratum_pmmp/chunk_encoder.hpp>
 #include <stratum_pmmp/dimension_registry.hpp>
@@ -13,10 +16,15 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <exception>
 #include <fstream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace stratum::pmmp {
 
@@ -33,6 +41,57 @@ namespace {
         std::string name = entry.biome.toString();
         if (std::ranges::find(unmapped, name) == unmapped.end()) {
             unmapped.push_back(std::move(name));
+        }
+    }
+    return unmapped;
+}
+
+/// @p state as a pack spells it: `minecraft:stone`, or
+/// `minecraft:water[level=0]` with its properties.
+[[nodiscard]] std::string spelled(const settings::BlockState& state) {
+    std::string text = state.name.toString();
+    if (!state.properties.empty()) {
+        std::string properties;
+        for (const auto& [key, value] : state.properties) {
+            properties += properties.empty() ? "" : ",";
+            properties += key + "=" + value;
+        }
+        text += "[" + properties + "]";
+    }
+    return text;
+}
+
+/// Every block state @p noise names itself — its default block, its
+/// default fluid, and the block of every `minecraft:block` rule in
+/// @p surfaceRules — that this build's mapping table cannot place: each
+/// once, with where it is named and the table's own reason, in the order
+/// first named. Everything else a dimension places (bedrock, ore veins, the
+/// aquifer's lava, the bandlands' terracotta, air) is one of the engine's
+/// own vanilla constants, never the pack's, and the table carries them all.
+[[nodiscard]] std::vector<std::string> unmappedBlockStates(const settings::NoiseSettings& noise,
+                                                           const surface::RuleGraph& surfaceRules) {
+    std::vector<std::pair<std::string_view, const settings::BlockState*>> named = {
+        {"default_block", &noise.defaultBlock},
+        {"default_fluid", &noise.defaultFluid},
+    };
+    for (std::size_t index = 0; index < surfaceRules.ruleCount(); ++index) {
+        const surface::Rule& rule = surfaceRules.rule(static_cast<surface::RuleIndex>(index));
+        if (rule.type == surface::RuleType::Block) {
+            named.emplace_back("surface rule result_state", &rule.block);
+        }
+    }
+    std::vector<std::string> seen;
+    std::vector<std::string> unmapped;
+    for (const auto& [where, state] : named) {
+        std::string described = std::string(where) + " " + spelled(*state);
+        if (std::ranges::find(seen, described) != seen.end()) {
+            continue;
+        }
+        seen.push_back(described);
+        try {
+            static_cast<void>(mapping::javaBlockStateId(*state));
+        } catch (const mapping::BlockMappingError& error) {
+            unmapped.push_back(described + " (" + error.what() + ")");
         }
     }
     return unmapped;
@@ -117,7 +176,8 @@ compileForPocketMine(const std::span<const std::byte> blob, const std::string& n
     freeze::Pipeline pipeline = freeze::read(blob);
 
     // Read before compile takes the pipeline, refused after it, so that
-    // compile's own refusals (no such settings, no such list) come first.
+    // compile's own refusals (no such settings, no such list, a surface rule
+    // it cannot resolve) come first.
     std::string list;
     std::vector<std::string> unmapped;
     if (const auto& named = source.parameterList(); named.has_value()) {
@@ -127,9 +187,26 @@ compileForPocketMine(const std::span<const std::byte> blob, const std::string& n
             unmapped = unmappedBiomes(found->second);
         }
     }
+    std::vector<std::string> unmappedStates;
+    // compile resolves the same rules from the same JSON under the same id,
+    // so a tree that does not resolve here is refused by compile first. Kept
+    // and thrown after it all the same, rather than let through should
+    // compile ever accept what this refused.
+    std::exception_ptr unresolvedRules;
+    if (const auto found = pipeline.settings.find(settings); found != pipeline.settings.end()) {
+        try {
+            unmappedStates = unmappedBlockStates(
+                found->second, surface::RuleGraph::resolve(found->second.surfaceRule, settings));
+        } catch (const surface::RuleError&) {
+            unresolvedRules = std::current_exception();
+        }
+    }
 
     std::unique_ptr<const world::CompiledDimension> dimension =
         world::CompiledDimension::compile(std::move(pipeline), settings, source, worldSeed);
+    if (unresolvedRules) {
+        std::rethrow_exception(unresolvedRules);
+    }
     requireFitsChunk(dimension->geometry());
     if (!unmapped.empty()) {
         std::string names;
@@ -142,6 +219,16 @@ compileForPocketMine(const std::span<const std::byte> blob, const std::string& n
                           (unmapped.size() == 1 ? ", which has" : ", which have") +
                           " no Bedrock id in this build's table (a custom or datapack biome; "
                           "the nearest-biome fallback is not built yet)");
+    }
+    if (!unmappedStates.empty()) {
+        std::string states;
+        for (const std::string& state : unmappedStates) {
+            states += states.empty() ? "" : "; ";
+            states += state;
+        }
+        throw EncodeError("noise settings '" + settings.toString() + "' name " +
+                          (unmappedStates.size() == 1 ? "a block state" : "block states") +
+                          " this build's mapping table cannot place: " + states);
     }
     return dimension;
 }

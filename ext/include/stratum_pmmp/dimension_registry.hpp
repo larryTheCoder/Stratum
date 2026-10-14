@@ -69,13 +69,19 @@ void writePipelineFile(const std::filesystem::path& path, std::span<const std::b
 ///     interpreter cannot evaluate;
 ///   * and what PocketMine-MP cannot hold, which would otherwise surface at
 ///     the first chunk: a geometry outside its 24 sub-chunks
-///     (`requireFitsChunk`), and a multi-noise parameter list naming a
-///     biome with no Bedrock id. The End's source names only vanilla's own
-///     End biomes, every one of which the mapping table carries.
+///     (`requireFitsChunk`); a multi-noise parameter list naming a biome
+///     with no Bedrock id (the End's source names only vanilla's own End
+///     biomes, every one of which the mapping table carries); and a block
+///     state the pack itself names that the mapping table cannot place —
+///     the noise settings' `default_block` and `default_fluid` and every
+///     `minecraft:block` surface rule's `result_state` — each named, with
+///     where it is named and `mapping::javaBlockStateId`'s reason.
 ///
-/// NOT checked here, because nothing in lib/ can enumerate them: the block
-/// states the dimension can place. `mapping::javaBlockStateId` still refuses
-/// one it does not know, at the chunk that holds it.
+/// Those are every block state a pack controls. The rest a dimension places
+/// — bedrock, ore veins, the aquifer's lava, the bandlands' terracotta, air
+/// — are the engine's own vanilla constants, which the table carries; the
+/// encoder still maps every palette entry it writes, so one it could not
+/// place would be refused at its chunk, never written wrong.
 ///
 /// Every refusal is a std::runtime_error subclass whose message says what is
 /// wrong. No refusal depends on @p worldSeed.

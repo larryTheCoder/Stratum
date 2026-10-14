@@ -76,11 +76,10 @@ use const JSON_THROW_ON_ERROR;
  * its own content hash (SPEC section 6); "settings" that are no identifier,
  * settings or a parameter list the pipeline does not carry, a
  * legacy-random-source dimension (vanilla's Nether), a dimension this build
- * cannot compile; a dimension outside PocketMine-MP's 24 sub-chunks, or a
- * parameter list naming a biome with no Bedrock id. What is left to a worker
- * is what no check can see before a chunk is generated: a block state the
- * mapping table does not know (Stratum\checkDimension's documentation says
- * why).
+ * cannot compile; a dimension outside PocketMine-MP's 24 sub-chunks, a
+ * parameter list naming a biome with no Bedrock id, or a block state the
+ * pack names — the settings' default block or fluid, a surface rule's
+ * result — that the mapping table cannot place.
  *
  * NOT REFUSED: a pairing vanilla does not make. A datapack may pair noise
  * settings with any biome source, so the options take the pair they are

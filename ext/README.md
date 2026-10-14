@@ -28,10 +28,12 @@ will, and opens nothing (`zend/tests/006_biome_source.phpt`);
 `Stratum\checkDimension()` is the whole of opening one — read, every check
 the blob's header and content hash are held to, compile, and what
 PocketMine-MP cannot hold (a dimension outside its 24 sub-chunks, a
-parameter list naming a biome with no Bedrock id) — with no seed and
-nothing kept, so a caller can refuse on the main thread everything a worker
-would otherwise die on, as the plugin's world-load validation does
-(`zend/tests/008_pins.phpt`). Compiled dimensions
+parameter list naming a biome with no Bedrock id, a block state the pack
+names — `default_block`, `default_fluid`, a surface rule's `result_state` —
+that the mapping table cannot place) — with no seed and nothing kept, so a
+caller can refuse on the main thread everything a worker would otherwise
+die on, as the plugin's world-load validation does
+(`zend/tests/008_pins.phpt`, `plugin/tests/003_world_load_validation.phpt`). Compiled dimensions
 are shared by the blob's every byte, never by the header's payload hash, so
 a blob restamped with another engine version is refused even while its
 twin is open (`zend/tests/007_frozen_header.phpt`). `Stratum\pinWorld()`

@@ -46,9 +46,11 @@ PocketMine-MP itself can call.
   (`Stratum\checkDimension`) and nothing kept, so a blob that cannot be
   read, one frozen by another pipeline engine version or failing its
   content hash, settings or a parameter list the pipeline lacks, the legacy
-  Nether, a dimension outside PocketMine-MP's 24 sub-chunks, and a list
-  naming a biome with no Bedrock id are all refused at load, with the
-  engine's reason. `GeneratorOptions`' doc lists exactly what is accepted.
+  Nether, a dimension outside PocketMine-MP's 24 sub-chunks, a list naming
+  a biome with no Bedrock id, and a block state the pack names (the
+  settings' `default_block` or `default_fluid`, a surface rule's
+  `result_state`) that the mapping table cannot place are all refused at
+  load, with the engine's reason. `GeneratorOptions`' doc lists exactly what is accepted.
   A pairing vanilla does not make, such as the End's settings with the
   overworld's list, is taken as asked: a datapack may make it.
 - `StratumWorlds` pins each Stratum world's engine state — its compiled

@@ -54,14 +54,15 @@ function parseBiomeSource(string $biomeSource) : string{}
  * format, pipeline engine version, Minecraft pin, SPEC §6), compiles the
  * dimension (unknown settings or parameter list, a legacy-random-source
  * dimension, a biome source type this build does not implement), and refuses
- * what PocketMine-MP cannot hold: a dimension outside its 24 sub-chunks, or a
- * parameter list naming a biome with no Bedrock id. Takes no seed because no
- * refusal depends on one. Built for the main thread, where PocketMine-MP
- * validates a world's options at load: a worker that throws takes the server
- * down.
- *
- * Not checked, because nothing can enumerate them yet: the block states the
- * dimension places. encodeChunk still refuses one it cannot map.
+ * what PocketMine-MP cannot hold: a dimension outside its 24 sub-chunks, a
+ * parameter list naming a biome with no Bedrock id, or a block state the
+ * pack names that the mapping table cannot place — the noise settings'
+ * default_block and default_fluid and every surface rule's result_state,
+ * each named with the table's reason. Those are every block state a pack
+ * controls; the rest are the engine's own vanilla constants. Takes no seed
+ * because no refusal depends on one. Built for the main thread, where
+ * PocketMine-MP validates a world's options at load: a worker that throws
+ * takes the server down.
  *
  * @throws GenerationException naming what is wrong.
  */
