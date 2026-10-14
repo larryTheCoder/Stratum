@@ -706,9 +706,11 @@ check_server() {
     [[ -z "${other}" ]] || failures+=("a network interface other than 127.0.0.1:${port}, or a Query listener:"$'\n'"${other}")
 
     # Counted as PocketMine-MP logs it, before the generator is constructed
-    # there: a registration that then fails still counts.
+    # there: a registration that then fails still counts. None at all is a
+    # count of 0 and a failure below, never grep's exit status ending the
+    # script under pipefail before anything is reported.
     local registered
-    registered="$(grep -oE 'Registering generator on worker [0-9]+' "${server_log}" | sort -u | wc -l | tr -d ' ')"
+    registered="$({ grep -oE 'Registering generator on worker [0-9]+' "${server_log}" || true; } | sort -u | wc -l | tr -d ' ')"
     echo "generator registration started on ${registered} async worker(s) (pool size ${async_workers})"
     [[ "${registered}" -ge 1 ]] || failures+=("the generator was never registered on a worker")
 
