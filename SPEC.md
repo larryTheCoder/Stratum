@@ -10833,6 +10833,93 @@ Open:
   237 ms/chunk on record (the binding entry above) predates this
   instrument and is not comparable to it.
 
+- **M5-Nukkit: block states resolve once per world through Nukkit, worlds
+  generate from their frozen pipeline — built and JNI-tested, not yet run
+  inside Nukkit.** Owner rulings (2026-10-15): `ext-nukkit/` is M5 work in
+  parallel with the PocketMine-MP track; M5 closes on headless server
+  evidence, the owner checking with a real client later; the datapack route
+  and the nearest-biome fallback are v1 non-goals, so a biome with no
+  Bedrock id is refused by name; one download is approved, a prebuilt
+  Nukkit server jar from CloudburstMC's own CI pinned by build and SHA-256,
+  and nothing else (no building Nukkit, no JDK download). Read from
+  CloudburstMC/Nukkit `master` @ `b3caad67d` (2026-09-19, Bedrock 26.50).
+
+  *How Nukkit drives a generator.* `Level` keeps one `Generator` per thread
+  in a `ThreadLocal`, constructed with a fresh options map from `level.dat`
+  (`generatorOptions`). The server thread calls `init` twice, with the
+  `Level` and then with a new `PopChunkManager`; a worker once, with a
+  `PopChunkManager` holding the seed alone; an exception from `init` is
+  logged and the world does not load. So the world is opened on the server
+  thread's first call, where every refusal is raised by name, and workers
+  find it by seed and options string. A world whose generator is not
+  registered silently gets Nukkit's `Normal`, so the plugin registers before
+  anything that can fail, under a type id of its own (taking
+  `TYPE_INFINITE` would hand Nukkit's typed-but-unnamed `level.dat` files to
+  Stratum), and `cn.nukkit.*` is refused as a plugin's main package, so the
+  Java side moved to `stratum.nukkit`.
+
+  *Block states.* As §9 planned, resolved on the Java side once per world:
+  native code lists every state the world can place, Java resolves each
+  through `BlockStateMapping` with Nukkit's own palette version stamped
+  (`getStateUnsafe`, `runtimeToFullId`, then `legacyToRuntime` back to the
+  same state — every other path substitutes `info_update`), and native
+  `fill` only indexes the result. Under the rulings a miss refuses the
+  world, naming each state; §9's fallback table has no entry for Nukkit.
+  `lib/` does not publish the set of states a dimension can place, so the
+  binding mirrors the filler and the surface rules (35 for the overworld,
+  §11's earlier count, measured again here through JNI); a state outside it
+  refuses the chunk by name, and the unit tests fill real chunks to catch
+  the list falling behind. Nukkit's `block_palette_729.nbt` and
+  `runtime_block_states_729.dat` are byte-identical at `058e213`, where the
+  35 were measured present by name and states, and at `b3caad67d` (blob
+  `bb19c11`), so that measurement carries; the legacy-id and round-trip
+  steps have no measurement yet.
+
+  *Worlds.* Generated from their frozen pipeline (§6), never a live pack.
+  Nukkit has no world-creation hook, so the plugin takes one: it loads at
+  `STARTUP`, before Nukkit loads or creates a world, and freezes the
+  options' `"pack"` into `"blob"` for each configured Stratum world not yet
+  created. A world that exists without its blob is refused, never refrozen.
+  In scope: noise settings shaped like Nukkit's overworld (−64..319), a
+  multi-noise source, a LevelDB world; the Nether, the End and Anvil are
+  refused by name.
+
+  *Biomes, read and not yet measured.* Nukkit keeps a biome per block,
+  `getBiomeStorage(sectionY)` with block-local coordinates — the convention
+  the old `StratumGenerator` left unconfirmed; the generator writes each
+  quart's id to its 64 blocks. Two readings the smoke run is built to
+  settle: Nukkit's `biome_id_map.json` knows 50 of the overworld's 54
+  biomes (not `cherry_grove` 192, `deep_dark` 190, `mangrove_swamp` 191 or
+  `pale_garden` 193), and its network serializer sends unknown ids as ocean
+  — the binding stores the true ids and logs the four by name (refusing
+  instead would refuse every overworld; that call is the owner's); and
+  `Data3dSerializer`/`NetworkChunkSerializer` pass the array index to
+  `getBiomeStorage`, which takes a section y, so on disk and on the wire
+  each section reads as the one 64 blocks higher and the top four as the
+  bottom one — invisible to Nukkit's own 2D-biome generators. The smoke run
+  counts disk mismatches explained by exactly that offset apart from any
+  other, and passes only on those.
+
+  *Fluid updates.* `Level.scheduleUpdate(block, delay)`, server thread
+  only; the plugin schedules each liquid among a chunk's fluid updates
+  after its tick rate when Nukkit fires `ChunkPopulateEvent`, as `ext/`
+  does. Written, never run.
+
+  *What ran.* The pipeline's unit tests (synthetic id tables, refusals,
+  real-pack fills block for block against `CompiledDimension`, and fills on
+  two threads identical to one) in the dev preset; the JNI surface through
+  a real JVM with no Nukkit (`ext-nukkit.jni`, the `nukkit` preset, Azul
+  OpenJDK 25.0.4 compiling `--release 8`), including 12 chunks on 4 JVM
+  threads identical to one; the plugin compiled against stubs of the Nukkit
+  API it calls, not committed; `tools/nukkit-dev`'s smoke plumbing against a
+  stand-in server. *What did not:* Nukkit. No jar is pinned —
+  CloudburstMC's CI answered HTTP 502 on 2026-10-15 — so the headless smoke
+  (a hermetic server in a loopback-only network namespace, the spawn area
+  generated by Nukkit's async workers, then read back from disk and
+  compared with a single-threaded fill), the census through Nukkit's
+  mapping, the biome readings above, the generation time and thread count
+  are all still to come.
+
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**
   Until now every attempt on this question inverted a *synthetic probe
