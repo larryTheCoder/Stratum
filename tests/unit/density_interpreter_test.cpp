@@ -627,6 +627,28 @@ TEST_CASE("malformed noise parameters are refused by name", "[density][noise]") 
     CHECK(bits(good.amplitudes[2]) == bits(2.5));
 }
 
+TEST_CASE("a firstOctave past int64 is refused, not wrapped into range", "[density][noise][ub]") {
+    // get<std::int64_t>() takes an unsigned value past INT64_MAX modulo 2^64,
+    // so 2^64 - 1 read as -1 — inside [-64, 64] — and loaded (SPEC §8).
+    const auto parse = [](std::string_view json) {
+        return NoiseParameters::fromJson(nlohmann::json::parse(json),
+                                         ResourceLocation::parse("test:noise"));
+    };
+    CHECK_THROWS_WITH(parse(R"({"firstOctave":18446744073709551615,"amplitudes":[1.0]})"),
+                      ContainsSubstring("test:noise") &&
+                          ContainsSubstring("\"firstOctave\" is 18446744073709551615") &&
+                          ContainsSubstring("[-64, 64]"));
+    CHECK_THROWS_WITH(parse(R"({"firstOctave":18446744073709551552,"amplitudes":[1.0]})"),
+                      ContainsSubstring("18446744073709551552"));
+    CHECK_THROWS_WITH(
+        NoiseParameters::fromInline(
+            nlohmann::json::parse(R"({"firstOctave":18446744073709551615,"amplitudes":[1.0]})"),
+            "an inline noise"),
+        ContainsSubstring("an inline noise") && ContainsSubstring("18446744073709551615"));
+    CHECK(parse(R"({"firstOctave":-1,"amplitudes":[1.0]})").firstOctave == -1);
+    CHECK(parse(R"({"firstOctave":64,"amplitudes":[1.0]})").firstOctave == 64);
+}
+
 TEST_CASE("a noise is a pure function of the world seed and its own name", "[density][noise]") {
     const TempTree tree;
     tree.defineNoise("alpha", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");

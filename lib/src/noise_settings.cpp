@@ -1,6 +1,7 @@
 // Stratum — noise settings: a dimension's geometry, flags and noise router.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/data/json_integer.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -14,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -130,12 +132,26 @@ private:
                 }
                 break;
             }
-            case SettingsKind::Int:
+            case SettingsKind::Int: {
                 // sea_level is the only one, and the schema gives it no
                 // bounds at this version — a dimension may put its sea
                 // outside its own height, and vanilla's caves preset does.
-                settings.seaLevel = static_cast<std::int32_t>(readInt(field.name, value));
+                // Its type bounds it all the same: it is a Java int, and one
+                // outside that range is refused rather than narrowed modulo
+                // 2^32, as it was (SPEC §8).
+                if (!value.is_number_integer()) {
+                    fail(field.name, "must be an integer, not " + std::string(value.type_name()));
+                }
+                const std::optional<std::int32_t> seaLevel =
+                    data::exactInteger<std::int32_t>(value);
+                if (!seaLevel.has_value()) {
+                    fail(field.name, "is " + value.dump() +
+                                         ", which no 32-bit integer holds; this build refuses it "
+                                         "rather than wrap it");
+                }
+                settings.seaLevel = *seaLevel;
                 break;
+            }
             case SettingsKind::Geometry:
                 settings.geometry = readGeometry(value);
                 break;
@@ -151,11 +167,20 @@ private:
         }
     }
 
+    /// An integer field as 64 bits, exactly. Not `get<std::int64_t>()`, which
+    /// takes an unsigned value past INT64_MAX modulo 2^64: a `min_y` of
+    /// 18446744073709551552 read as -64 and passed the schema's range.
     [[nodiscard]] std::int64_t readInt(std::string_view field, const nlohmann::json& value) const {
         if (!value.is_number_integer()) {
             fail(field, "must be an integer, not " + std::string(value.type_name()));
         }
-        return value.get<std::int64_t>();
+        const std::optional<std::int64_t> wide = data::exactInteger<std::int64_t>(value);
+        if (!wide.has_value()) {
+            fail(field, "is " + value.dump() +
+                            ", which no 64-bit integer holds; this build refuses it rather than "
+                            "wrap it");
+        }
+        return *wide;
     }
 
     [[nodiscard]] BlockState readBlockState(std::string_view field,

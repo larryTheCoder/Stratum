@@ -1,6 +1,7 @@
 // Stratum — a `worldgen/noise` entry, as declared.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/data/json_integer.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/noise_parameters.hpp>
 
@@ -8,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -51,9 +53,13 @@ constexpr std::size_t kMaxAmplitudes = 64;
     if (!firstOctave.is_number_integer()) {
         fail(R"("firstOctave" must be an integer, not )" + std::string(firstOctave.type_name()));
     }
-    const auto octave = firstOctave.get<std::int64_t>();
+    // Exactly, not by `get<std::int64_t>()`: that takes an unsigned value past
+    // INT64_MAX modulo 2^64, and 18446744073709551615 read as -1, inside the
+    // range below (SPEC §8). One no int64 holds is past the range either way.
+    const std::int64_t octave = data::exactInteger<std::int64_t>(firstOctave)
+                                    .value_or(std::numeric_limits<std::int64_t>::max());
     if (octave < kMinFirstOctave || octave > kMaxFirstOctave) {
-        fail(R"("firstOctave" is )" + std::to_string(octave) + ", outside the supported range [" +
+        fail(R"("firstOctave" is )" + firstOctave.dump() + ", outside the supported range [" +
              std::to_string(kMinFirstOctave) + ", " + std::to_string(kMaxFirstOctave) + "]");
     }
 

@@ -288,10 +288,11 @@ one written in place has none. SPEC §11 lists why each is where it is.
 It also refuses, by name, every input that would carry its arithmetic into
 undefined behaviour, rather than generating whatever that produces (SPEC §8,
 "Inputs that would reach undefined behaviour"): a value outside the range
-the schema or minecraft.wiki gives its field, an int near 2^31 whose
-arithmetic would overflow, a function whose value no 32-bit integer holds
-where one is needed, and a noise sampled past where its lattice fits 32
-bits. One of those is reached by vanilla's own data: in all three overworld
+the schema or minecraft.wiki gives its field, an integer its field's type
+cannot hold (which the JSON reader used to narrow without a word), an int
+near 2^31 whose arithmetic would overflow, a function whose value no 32-bit
+integer holds where one is needed, a frozen node of any shape but its
+type's, and a noise sampled past where its lattice fits 32 bits. One of those is reached by vanilla's own data: in all three overworld
 presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits 2 812 333 blocks
 from the origin on either horizontal axis, so chunk coordinates 175 770 and
 up, and -175 771 and down, are refused there, inside the world border,

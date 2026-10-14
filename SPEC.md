@@ -337,7 +337,7 @@ to bump the version and be called out; this is that call-out.
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
-they change no output that is still produced. What they stop is of three
+they change no output that is still produced. What they stop is of four
 kinds, and not all of it was undefined. (1) Inputs that reached undefined
 behaviour: what they produced was the platform's, not this engine's, and
 where it was an out-of-range conversion x86-64 and ARM64 already
@@ -356,7 +356,14 @@ violated precondition of `std::clamp`, but the same answer on x86-64 and
 ARM64 under libstdc++ (which bound a standard library tests first is its
 own choice, so that was never promised across them); and a `find_top_surface`
 `cell_height` of 0, refused at its first evaluation before, is refused at
-load now. None of that needs a version, because a refusal produces no
+load now. (4) An integer a pack gives that its field's type cannot hold,
+which the JSON reader narrowed without a word, modulo 2^32 or 2^64: a
+surface rule's `{"absolute": 4294967359}` generated as 63, a `min_y` of
+2^64 - 64 as -64. Defined, the same on every architecture, and never what
+the pack said; refused at load now, from a pack or from the surface rules a
+v15 blob stores as text. A frozen node not of its type's shape is not among
+them: no build wrote one, so no world carries it. None of that needs a
+version, because a refusal produces no
 chunk: a chunk is generated under its version's rules or not at all, so a
 world cannot grow a seam from one. Every input still accepted computes
 exactly what it did — the arithmetic that moved to 64 bits narrows back to
@@ -603,6 +610,15 @@ that is undefined, so some of what they stop computed defined output before
   (`density_graph.cpp` `kShapes`), where a check per type had covered three
   and a sealed blob's parameterless `constant` or argumentless `clamp` read
   past the end of a vector; and a spline with no points;
+- an integer a pack gives that its field's type cannot hold, refused by
+  name where the JSON reader (`get<>`) narrowed it modulo 2^32 or 2^64 —
+  read through `data::exactInteger` instead: outside int32, a surface rule's
+  vertical anchor value or `int` field (`offset`, `surface_depth_multiplier`,
+  `secondary_depth_range`), `sea_level`, and a `pack.mcmeta` format; outside
+  int64, a noise's `firstOctave` and the geometry's fields, which then meet
+  their schema range (`{"absolute": 4294967359}` read as 63, a `min_y` of
+  2^64 - 64 as -64 inside that range, a `pack_format` of 2^32 + 94 as the
+  pin);
 - when surface rules compile: a vertical anchor whose y is no 32-bit
   integer (`below_top: -2147483648`), and, under a `temperature` condition,
   a `sea_level` within 17 of INT32_MAX.

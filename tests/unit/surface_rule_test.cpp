@@ -225,3 +225,72 @@ TEST_CASE("a vertical gradient is certain below, impossible above, and drawn bet
     }
     CHECK(alsoDiffering < differing);
 }
+
+TEST_CASE("a rule's integers are read as Java ints or refused, never narrowed", "[surface][ub]") {
+    // nlohmann's get<std::int32_t>() narrows modulo 2^32, which is defined
+    // C++ and so silent under every sanitizer: {"absolute": 4294967359} read
+    // as 63, and a stone_depth offset of -4294967296 as 0 (SPEC §8). Parsed
+    // from text, as a pack is, so each literal is held the way the loader
+    // sees it: as an int64, or a uint64 when non-negative.
+    const auto condition = [](const nlohmann::json& test) {
+        return nlohmann::json{{"type", "minecraft:condition"},
+                              {"if_true", test},
+                              {"then_run", block("minecraft:stone")}};
+    };
+    const auto yAbove = [&condition](const nlohmann::json& anchor) {
+        return condition(nlohmann::json{{"type", "minecraft:y_above"},
+                                        {"anchor", anchor},
+                                        {"surface_depth_multiplier", 0},
+                                        {"add_stone_depth", false}});
+    };
+    for (const char* literal :
+         {"4294967359", "2147483648", "-2147483649", "18446744073709551615"}) {
+        CAPTURE(literal);
+        for (const char* spelling : {"absolute", "above_bottom", "below_top"}) {
+            CAPTURE(spelling);
+            CHECK_THROWS_WITH(
+                resolve(yAbove(nlohmann::json{{spelling, nlohmann::json::parse(literal)}})),
+                ContainsSubstring("anchor's " + std::string(spelling) + " is " + literal) &&
+                    ContainsSubstring("no 32-bit integer"));
+        }
+    }
+    // Both ends of int32 are read as they are.
+    CHECK(resolve(yAbove(nlohmann::json{{"absolute", nlohmann::json::parse("2147483647")}}))
+              .condition(0)
+              .anchor.value == 2147483647);
+    CHECK(resolve(yAbove(nlohmann::json{{"above_bottom", nlohmann::json::parse("-2147483648")}}))
+              .condition(0)
+              .anchor.value == -2147483647 - 1);
+
+    // Every integer field, the same way.
+    const auto stoneDepth = [&condition](const nlohmann::json& offset,
+                                         const nlohmann::json& range) {
+        return condition(nlohmann::json{{"type", "minecraft:stone_depth"},
+                                        {"offset", offset},
+                                        {"add_surface_depth", false},
+                                        {"secondary_depth_range", range},
+                                        {"surface_type", "floor"}});
+    };
+    const nlohmann::json zero = 0;
+    CHECK_THROWS_WITH(resolve(stoneDepth(nlohmann::json::parse("-4294967296"), zero)),
+                      ContainsSubstring("'minecraft:stone_depth' has \"offset\" -4294967296") &&
+                          ContainsSubstring("no 32-bit integer"));
+    CHECK_THROWS_WITH(
+        resolve(stoneDepth(zero, nlohmann::json::parse("4294967296"))),
+        ContainsSubstring("'minecraft:stone_depth' has \"secondary_depth_range\" 4294967296"));
+    CHECK(resolve(stoneDepth(nlohmann::json::parse("-2147483648"), zero)).condition(0).offset ==
+          -2147483647 - 1);
+    CHECK_THROWS_WITH(
+        resolve(condition(nlohmann::json{{"type", "minecraft:water"},
+                                         {"offset", nlohmann::json::parse("18446744073709551615")},
+                                         {"surface_depth_multiplier", 0},
+                                         {"add_stone_depth", false}})),
+        ContainsSubstring("'minecraft:water' has \"offset\" 18446744073709551615"));
+    CHECK_THROWS_WITH(
+        resolve(condition(
+            nlohmann::json{{"type", "minecraft:y_above"},
+                           {"anchor", {{"absolute", 0}}},
+                           {"surface_depth_multiplier", nlohmann::json::parse("2147483648")},
+                           {"add_stone_depth", false}})),
+        ContainsSubstring("'minecraft:y_above' has \"surface_depth_multiplier\" 2147483648"));
+}

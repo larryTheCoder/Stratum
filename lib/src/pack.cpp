@@ -1,6 +1,7 @@
 // Stratum — worldgen data packs.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/data/json_integer.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/version.hpp>
 
@@ -94,14 +95,19 @@ void validatePackFormat(const nlohmann::json& mcmeta, const std::filesystem::pat
     // min_format/max_format range, and either half of the range may itself be
     // a [major, minor] pair.
     const auto majorOf = [&file](const nlohmann::json& value) -> int {
-        if (value.is_number_integer()) {
-            return value.get<int>();
+        const nlohmann::json& major = value.is_array() && !value.empty() ? value.at(0) : value;
+        if (!major.is_number_integer()) {
+            throw PackError(file.string() + ": pack format " + value.dump() +
+                            " is neither a number nor a [major, minor] pair");
         }
-        if (value.is_array() && !value.empty() && value.at(0).is_number_integer()) {
-            return value.at(0).get<int>();
+        // Not `get<int>()`, which narrows modulo 2^32: 4294967390 would read
+        // as 94, the pinned format (SPEC §8).
+        const std::optional<int> exact = exactInteger<int>(major);
+        if (!exact.has_value()) {
+            throw PackError(file.string() + ": pack format " + value.dump() +
+                            " has a major version no 32-bit integer holds");
         }
-        throw PackError(file.string() + ": pack format " + value.dump() +
-                        " is neither a number nor a [major, minor] pair");
+        return *exact;
     };
 
     std::optional<int> minimum;

@@ -335,3 +335,40 @@ TEST_CASE("one geometry check serves the loader and a frozen pipeline", "[settin
             NoiseGeometry{.minY = -64, .height = 400, .sizeHorizontal = 1, .sizeVertical = 3}, "t"),
         ContainsSubstring("12-block cells"));
 }
+
+TEST_CASE("an integer its field's type cannot hold is refused, not narrowed", "[settings][ub]") {
+    // `sea_level` is a Java int and was read through a 64-bit integer narrowed
+    // modulo 2^32; the geometry's fields were read through get<std::int64_t>(),
+    // which takes an unsigned value past INT64_MAX modulo 2^64 — so a `min_y`
+    // of 2^64 - 64 read as -64 and passed the schema's range check (SPEC §8).
+    // Parsed from text, as a pack is.
+    const auto loadWith = [](const char* field, const char* literal) {
+        const TempTree tree;
+        nlohmann::json json = workingSettings();
+        if (std::string_view(field) == "sea_level") {
+            json["sea_level"] = nlohmann::json::parse(literal);
+        } else {
+            json["noise"][field] = nlohmann::json::parse(literal);
+        }
+        tree.defineSettings("overworld", json);
+        return tree.load();
+    };
+
+    for (const char* literal :
+         {"4294967359", "2147483648", "-2147483649", "18446744073709551615"}) {
+        CAPTURE(literal);
+        CHECK_THROWS_WITH(loadWith("sea_level", literal),
+                          ContainsSubstring("\"sea_level\"") && ContainsSubstring(literal) &&
+                              ContainsSubstring("no 32-bit integer"));
+    }
+    CHECK(loadWith("sea_level", "2147483647").settings.begin()->second.seaLevel == 2147483647);
+    CHECK(loadWith("sea_level", "-2147483648").settings.begin()->second.seaLevel ==
+          -2147483647 - 1);
+
+    CHECK_THROWS_WITH(loadWith("min_y", "18446744073709551552"),
+                      ContainsSubstring("\"min_y\"") && ContainsSubstring("18446744073709551552") &&
+                          ContainsSubstring("no 64-bit integer"));
+    // Inside int64 and outside the schema is the range check's, as before.
+    CHECK_THROWS_WITH(loadWith("min_y", "4294967232"), ContainsSubstring("[-2048, 2047]"));
+    CHECK(loadWith("min_y", "-64").settings.begin()->second.geometry.minY == -64);
+}

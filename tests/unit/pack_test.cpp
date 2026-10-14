@@ -211,6 +211,27 @@ TEST_CASE("a pack that does not cover the pinned format is refused", "[data][pac
     CHECK_NOTHROW(Pack::openDataPack(pack.path()));
 }
 
+TEST_CASE("a pack format no 32-bit integer holds is refused, not narrowed onto the pin",
+          "[data][pack][pin][ub]") {
+    // get<int>() narrows modulo 2^32, so 2^32 + 94 read as 94 — the pinned
+    // format — and the pack loaded as one that claims to speak it (SPEC §8).
+    const TempDirectory pack;
+    pack.write("data/minecraft/worldgen/density_function/a.json", kConstantDensityFunction);
+
+    pack.write("pack.mcmeta", R"({"pack":{"description":"t","pack_format":4294967390}})");
+    CHECK_THROWS_WITH(Pack::openDataPack(pack.path()),
+                      Catch::Matchers::ContainsSubstring("pack format 4294967390") &&
+                          Catch::Matchers::ContainsSubstring("no 32-bit integer"));
+    pack.write("pack.mcmeta",
+               R"({"pack":{"description":"t","min_format":[4294967386,0],"max_format":94}})");
+    CHECK_THROWS_WITH(Pack::openDataPack(pack.path()),
+                      Catch::Matchers::ContainsSubstring("[4294967386,0]"));
+    pack.write("pack.mcmeta",
+               R"({"pack":{"description":"t","min_format":90,"max_format":18446744073709551615}})");
+    CHECK_THROWS_WITH(Pack::openDataPack(pack.path()),
+                      Catch::Matchers::ContainsSubstring("18446744073709551615"));
+}
+
 TEST_CASE("packs that cannot be read say why", "[data][pack][malformed]") {
     SECTION("no metadata at all") {
         const TempDirectory pack;

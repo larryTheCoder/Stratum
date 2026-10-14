@@ -1,11 +1,13 @@
 // Stratum — a dimension's surface rules, resolved.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 
+#include <stratum/data/json_integer.hpp>
 #include <stratum/surface/rule_graph.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -143,8 +145,17 @@ template<typename Type, std::size_t Count>
                      joinValues(spellings));
     }
 
+    // Not `get<std::int32_t>()`, which narrows modulo 2^32: 4294967359 would
+    // read as 63 (SPEC §8).
+    const std::optional<std::int32_t> y = data::exactInteger<std::int32_t>(value);
+    if (!y.has_value()) {
+        fail(id, std::string(where) + "'s " + key + " is " + value.dump() +
+                     ", which no 32-bit integer holds; this build refuses it rather than wrap "
+                     "it (SPEC §8)");
+    }
+
     VerticalAnchor anchor;
-    anchor.value = value.get<std::int32_t>();
+    anchor.value = *y;
     if (key == "absolute") {
         anchor.kind = VerticalAnchor::Kind::Absolute;
     } else if (key == "above_bottom") {
@@ -466,12 +477,22 @@ void Resolver::readScalar(const FieldKind kind, const SchemaField& field,
             }
             into.text = value.get<std::string>();
             break;
-        case FieldKind::Int:
+        case FieldKind::Int: {
             if (!value.is_number_integer()) {
                 wrongType(field, value, typeName, "a whole number");
             }
-            into.integer = value.get<std::int32_t>();
+            // A Java int: one outside its range is refused, not narrowed
+            // modulo 2^32 as `get<std::int32_t>()` would (SPEC §8).
+            const std::optional<std::int32_t> integer = data::exactInteger<std::int32_t>(value);
+            if (!integer.has_value()) {
+                fail(id, "'" + std::string(typeName) + "' has \"" + std::string(field.name) +
+                             "\" " + value.dump() +
+                             ", which no 32-bit integer holds; this build refuses it rather than "
+                             "wrap it (SPEC §8)");
+            }
+            into.integer = *integer;
             break;
+        }
         case FieldKind::Number:
             if (!value.is_number()) {
                 wrongType(field, value, typeName, "a number");
