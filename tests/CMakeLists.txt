@@ -99,6 +99,16 @@ if(UNIX)
     )
     set_tests_properties(unit.tools.check_skips PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
 
+    # tools/analysis/vanilla-chunk-cost.py's reading of the server's chunk
+    # events — the Java baseline M5's performance bar is set against — on
+    # synthetic events whose per-stage costs are known, and its refusal to
+    # start a server without --accept-eula. Offline.
+    add_test(NAME unit.tools.vanilla_chunk_cost
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/vanilla_chunk_cost_test.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    set_tests_properties(unit.tools.vanilla_chunk_cost PROPERTIES LABELS "unit" SKIP_RETURN_CODE 77)
+
     # check-determinism.sh rule 8 against every YAML spelling of an artifact
     # upload: lint.determinism only sees that today's tree has none.
     add_test(NAME unit.tools.no_artifact_upload
