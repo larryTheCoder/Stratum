@@ -109,22 +109,23 @@ namespace {
 /// What a write's partial file adds to the name of the file it replaces.
 constexpr std::string_view kPartialInfix = ".partial-";
 
-/// A name beside @p path that no other write in this process, and almost
-/// surely no other process, is using: the clock separates processes, the
-/// serial writes within one.
-[[nodiscard]] std::filesystem::path partialPathFor(const std::filesystem::path& path) {
-    static std::atomic<std::uint64_t> serial{0};
-    const std::uint64_t number = serial.fetch_add(1, std::memory_order_relaxed) + 1U;
-    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::filesystem::path partial = path;
-    partial += std::string(kPartialInfix) + std::to_string(ticks) + "-" + std::to_string(number);
-    return partial;
-}
-
 /// The directory @p path is in, as a path that can be opened.
 [[nodiscard]] std::filesystem::path directoryOf(const std::filesystem::path& path) {
     const std::filesystem::path parent = path.parent_path();
     return parent.empty() ? std::filesystem::path(".") : parent;
+}
+
+/// A name beside @p path that no other write in this process, and almost
+/// surely no other process, is using: the clock separates processes, the
+/// serial writes within one. Spelled as a directory_iterator over
+/// directoryOf(@p path) spells its entries, so the sweep of stale partials
+/// recognises the ones in flight.
+[[nodiscard]] std::filesystem::path partialPathFor(const std::filesystem::path& path) {
+    static std::atomic<std::uint64_t> serial{0};
+    const std::uint64_t number = serial.fetch_add(1, std::memory_order_relaxed) + 1U;
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    return directoryOf(path) / (path.filename().string() + std::string(kPartialInfix) +
+                                std::to_string(ticks) + "-" + std::to_string(number));
 }
 
 /// The partial files writes in this process are writing now.
