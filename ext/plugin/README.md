@@ -77,10 +77,10 @@ PocketMine-MP itself can call.
   would: freezing over an existing world's blob would change every chunk it
   generates from then on, a seam (SPEC §6). Otherwise it freezes the
   pipeline into the new world's own folder — whole or not at all: written
-  beside it, then renamed into place — checks it in full on the main
-  thread, and then creates the world from it, in that order: creating the
-  world immediately registers the generator on a worker, which opens the
-  blob.
+  beside it, synced to disk, then renamed into place — checks it in full on
+  the main thread, and then creates the world from it, in that order:
+  creating the world immediately registers the generator on a worker, which
+  opens the blob.
 
 ## Installing
 

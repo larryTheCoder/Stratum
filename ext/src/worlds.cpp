@@ -42,8 +42,10 @@ void Worlds::pin(const WorldOptions& options) {
             return;
         }
     }
-    // Opened outside the lock, so a worker opening another world never
-    // waits on this one's compile.
+    // Opened outside pinsMutex_, so a worker opening a world already pinned
+    // never waits on this compile. The registry still takes its one lock
+    // for every lookup and compile (dimension_registry.hpp), so an open of
+    // an unpinned world waits on it, and it on theirs.
     OpenWorld opened = openFile(options, key);
     const std::lock_guard<std::mutex> lock(pinsMutex_);
     // Another pin of the same world may have landed meanwhile; the first

@@ -41,7 +41,7 @@ std::shared_ptr<FluidUpdateOutbox> FluidUpdateOutboxes::attach(const std::string
         }
     }
     // Entries whose outbox has gone are dropped as new ones arrive, so the
-    // map never holds more than the worlds open now plus this one.
+    // map holds at most the worlds open at the last new one plus that one.
     std::erase_if(outboxes_, [](const auto& entry) { return entry.second.expired(); });
     auto created = std::make_shared<FluidUpdateOutbox>();
     outboxes_.insert_or_assign(world, created);

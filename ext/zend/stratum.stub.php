@@ -16,7 +16,10 @@ namespace Stratum;
  *
  * Written whole or not at all: the bytes go to a new file beside $blobPath,
  * which is then renamed over it, so a reader finds the file it replaced or
- * this one and never part of either. Overwrites whatever is at $blobPath —
+ * this one and never part of either. On POSIX the new file is synced to
+ * disk before the rename and its directory after, so a power cut leaves one
+ * or the other too. A `<blobPath>.partial-*` a process killed mid-write left
+ * beside it is removed first. Overwrites whatever is at $blobPath —
  * refusing to replace an existing world's blob is the caller's to do
  * (the plugin's WorldFactory::create does).
  */
@@ -98,8 +101,9 @@ function unpinWorld(string $blobPath, string $noiseSettings, string $biomeSource
  * once the chunk loads (spec Q8.1), which is what makes aquifer water and
  * lava flow; PocketMine-MP has no such list, so the caller schedules a block
  * update at each. Built for the main thread: it opens and compiles nothing,
- * and returns [] when no Dimension is open for that world or nothing is held
- * for the chunk. Each chunk's updates are returned once.
+ * and returns [] when neither a Dimension nor a pin (pinWorld) holds that
+ * world's outbox, or nothing is held for the chunk. Each chunk's updates
+ * are returned once.
  *
  * @return list<array{int, int, int}>
  */

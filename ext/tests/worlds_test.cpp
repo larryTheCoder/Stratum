@@ -34,6 +34,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -643,6 +644,29 @@ TEST_CASE("a frozen pipeline is written whole or not at all", "[pmmp]") {
                       ContainsSubstring("cannot read the frozen pipeline at"));
 }
 
+TEST_CASE("a write removes what writes killed part-way left beside its blob, and nothing else",
+          "[pmmp]") {
+    const Scratch scratch;
+    const std::filesystem::path path = scratch.blobs() / "stratum-pipeline.blob";
+    // What a process killed at the rename left, a whole blob, and what one
+    // killed at its first write left, nothing: nothing ever removed either.
+    static_cast<void>(scratch.put("stratum-pipeline.blob.partial-1193824-1", scratch.blob()));
+    static_cast<void>(scratch.put("stratum-pipeline.blob.partial-17-2", {}));
+    // Not this blob's: another blob's partial, and names that only begin
+    // alike.
+    static_cast<void>(scratch.put("other.blob.partial-1-1", {}));
+    static_cast<void>(scratch.put("stratum-pipeline.blob.partial", {}));
+    static_cast<void>(scratch.put("stratum-pipeline.blob.partially", {}));
+
+    writePipelineFile(path, scratch.blob());
+    std::vector<std::string> left = filesIn(scratch.blobs());
+    std::ranges::sort(left);
+    CHECK(left == std::vector<std::string>{"other.blob.partial-1-1", "stratum-pipeline.blob",
+                                           "stratum-pipeline.blob.partial",
+                                           "stratum-pipeline.blob.partially"});
+    CHECK(readPipelineFile(path) == scratch.blob());
+}
+
 // POSIX only. On Windows, renaming over a file that another handle holds
 // open is refused (the C++ runtime's streams do not share delete access), so
 // there a write that lands while a reader reads is refused instead, by
@@ -657,14 +681,17 @@ TEST_CASE("a reader racing a writer reads one whole blob or the other and is nev
     // taken from one file and bytes from the next refuse the read (the next
     // is shorter) or return a blob neither write wrote (it is longer). With
     // the size taken from the path before opening it, the reader did both,
-    // hundreds of times in every run of this case.
+    // hundreds of times in every run of 2000 writes. 400 since each write
+    // syncs the file and its directory to disk: 2000 took 18 s on a disk
+    // (tmpfs, where a sync is free, under half a second), and 400 still
+    // caught that reader, against a disk, in every run.
     const Scratch scratch;
     const std::filesystem::path path = scratch.blobs() / "stratum-pipeline.blob";
     const std::vector<std::byte> shorter(std::size_t{16} * 1024, std::byte{0x11});
     const std::vector<std::byte> longer(std::size_t{48} * 1024, std::byte{0x22});
     writePipelineFile(path, shorter);
 
-    constexpr int kWrites = 2000;
+    constexpr int kWrites = 400;
     constexpr int kReaders = 4;
     std::atomic<bool> writing{true};
     std::atomic<int> writesRefused{0};
@@ -706,6 +733,47 @@ TEST_CASE("a reader racing a writer reads one whole blob or the other and is nev
     CHECK(readsRefused == 0);
     CHECK(readsTorn == 0);
     CHECK(readPipelineFile(path) == shorter);
+    CHECK(filesIn(scratch.blobs()) == std::vector<std::string>{"stratum-pipeline.blob"});
+}
+
+TEST_CASE("writers to one path in one process never remove each other's partial file", "[pmmp]") {
+    // Each write first removes the partial files beside its blob that no
+    // write is writing; one that removed another thread's would make that
+    // thread's rename fail and its write refuse.
+    const Scratch scratch;
+    const std::filesystem::path path = scratch.blobs() / "stratum-pipeline.blob";
+    constexpr int kWriters = 4;
+    constexpr int kEach = 50;
+    std::vector<std::vector<std::byte>> blobs;
+    for (int w = 0; w < kWriters; ++w) {
+        blobs.emplace_back(std::size_t{8} * 1024, std::byte{static_cast<std::uint8_t>(w + 1)});
+    }
+    std::atomic<bool> go{false};
+    std::atomic<int> refused{0};
+    {
+        std::vector<std::thread> writers;
+        writers.reserve(kWriters);
+        for (int w = 0; w < kWriters; ++w) {
+            writers.emplace_back([&, w] {
+                while (!go.load()) {
+                    std::this_thread::yield();
+                }
+                for (int i = 0; i < kEach; ++i) {
+                    try {
+                        writePipelineFile(path, blobs[static_cast<std::size_t>(w)]);
+                    } catch (const std::runtime_error&) {
+                        ++refused;
+                    }
+                }
+            });
+        }
+        go = true;
+        for (std::thread& writer : writers) {
+            writer.join();
+        }
+    }
+    CHECK(refused == 0);
+    CHECK(std::ranges::find(blobs, readPipelineFile(path)) != blobs.end());
     CHECK(filesIn(scratch.blobs()) == std::vector<std::string>{"stratum-pipeline.blob"});
 }
 #endif

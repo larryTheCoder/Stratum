@@ -43,7 +43,10 @@ updates nor its compiled state with it. The registry, the pins and the
 outboxes are plain C++ in `stratum_pmmp_core`
 (`include/stratum_pmmp/dimension_registry.hpp`, `worlds.hpp`), held to
 `tests/worlds_test.cpp` under threads with a pipeline the test freezes
-itself; `Stratum\freezePipeline()` writes whole or not at all.
+itself; `Stratum\freezePipeline()` writes whole or not at all — beside
+the target, then renamed over it; on POSIX synced to disk before the rename
+and the directory after, so a power cut leaves one blob or the other — and
+first removes the `<blob>.partial-*` a write killed part-way left.
 C++ exceptions never cross into the engine; each becomes a
 `Stratum\GenerationException`. Build it against a thread-safe PHP:
 

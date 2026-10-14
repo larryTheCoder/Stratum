@@ -19,12 +19,21 @@
 #include <cstddef>
 #include <exception>
 #include <fstream>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#endif
 
 namespace stratum::pmmp {
 
@@ -97,6 +106,9 @@ namespace {
     return unmapped;
 }
 
+/// What a write's partial file adds to the name of the file it replaces.
+constexpr std::string_view kPartialInfix = ".partial-";
+
 /// A name beside @p path that no other write in this process, and almost
 /// surely no other process, is using: the clock separates processes, the
 /// serial writes within one.
@@ -105,9 +117,107 @@ namespace {
     const std::uint64_t number = serial.fetch_add(1, std::memory_order_relaxed) + 1U;
     const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
     std::filesystem::path partial = path;
-    partial += ".partial-" + std::to_string(ticks) + "-" + std::to_string(number);
+    partial += std::string(kPartialInfix) + std::to_string(ticks) + "-" + std::to_string(number);
     return partial;
 }
+
+/// The directory @p path is in, as a path that can be opened.
+[[nodiscard]] std::filesystem::path directoryOf(const std::filesystem::path& path) {
+    const std::filesystem::path parent = path.parent_path();
+    return parent.empty() ? std::filesystem::path(".") : parent;
+}
+
+/// The partial files writes in this process are writing now.
+class PartialsInFlight {
+public:
+    /// Registers @p partial, a partial of @p path about to be written, and
+    /// first removes every other `<path>.partial-*` beside @p path that no
+    /// write in this process is writing: what a process killed mid-write
+    /// left (a write that throws removes its own). Under one lock, so a
+    /// partial another thread is writing is either registered, and kept,
+    /// or not yet created.
+    static void begin(const std::filesystem::path& path, const std::filesystem::path& partial) {
+        const std::lock_guard<std::mutex> lock(mutex());
+        const std::string prefix = path.filename().string() + std::string(kPartialInfix);
+        std::error_code error;
+        std::vector<std::filesystem::path> stale;
+        std::filesystem::directory_iterator entry(directoryOf(path), error);
+        while (!error && entry != std::filesystem::directory_iterator()) {
+            const std::filesystem::path& found = entry->path();
+            if (found.filename().string().starts_with(prefix) && !written().contains(found)) {
+                stale.push_back(found);
+            }
+            entry.increment(error);
+        }
+        // Best effort, and harmless when it fails: a stale partial is
+        // never read, and the write below refuses loudly if the directory
+        // itself is unusable.
+        for (const std::filesystem::path& file : stale) {
+            std::filesystem::remove(file, error);
+        }
+        written().insert(partial);
+    }
+
+    static void end(const std::filesystem::path& partial) {
+        const std::lock_guard<std::mutex> lock(mutex());
+        written().erase(partial);
+    }
+
+private:
+    [[nodiscard]] static std::mutex& mutex() {
+        static std::mutex instance;
+        return instance;
+    }
+
+    [[nodiscard]] static std::set<std::filesystem::path>& written() {
+        static std::set<std::filesystem::path> instance;
+        return instance;
+    }
+};
+
+/// One write's partial file: registered while it is written, and removed
+/// with it unless renamed into place.
+class PartialFile {
+public:
+    explicit PartialFile(const std::filesystem::path& path) : path_(partialPathFor(path)) {
+        PartialsInFlight::begin(path, path_);
+    }
+
+    PartialFile(const PartialFile&) = delete;
+    PartialFile& operator=(const PartialFile&) = delete;
+    PartialFile(PartialFile&&) = delete;
+    PartialFile& operator=(PartialFile&&) = delete;
+
+    ~PartialFile() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        PartialsInFlight::end(path_);
+    }
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
+#if !defined(_WIN32)
+/// fsync(2) of @p path — a file's data, or a directory's entries — through
+/// a descriptor of its own: 0, or the errno it failed with.
+[[nodiscard]] int syncToDevice(const std::filesystem::path& path, const bool directory) {
+    const int descriptor =
+        ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    if (descriptor < 0) {
+        return errno;
+    }
+    int result = 0;
+    do {
+        result = ::fsync(descriptor);
+    } while (result != 0 && errno == EINTR);
+    const int failure = result == 0 ? 0 : errno;
+    ::close(descriptor);
+    return failure;
+}
+#endif
 
 } // namespace
 
@@ -143,28 +253,44 @@ std::vector<std::byte> readPipelineFile(const std::filesystem::path& path) {
 }
 
 void writePipelineFile(const std::filesystem::path& path, const std::span<const std::byte> blob) {
-    const std::filesystem::path partial = partialPathFor(path);
-    std::error_code ignored;
+    const std::string refusal = "cannot write the frozen pipeline to " + path.string();
+    const PartialFile partial(path);
     {
-        std::ofstream out(partial, std::ios::binary | std::ios::trunc);
+        std::ofstream out(partial.path(), std::ios::binary | std::ios::trunc);
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         out.write(reinterpret_cast<const char*>(blob.data()),
                   static_cast<std::streamsize>(blob.size()));
         out.close();
         if (!out) {
-            std::filesystem::remove(partial, ignored);
-            throw std::runtime_error("cannot write the frozen pipeline to " + path.string());
+            throw std::runtime_error(refusal);
         }
     }
+#if !defined(_WIN32)
+    // On the device before it is renamed into place: a rename can reach the
+    // disk before the data it names, and a power cut between the two left a
+    // blob of nothing under a world whose level.dat existed.
+    if (const int failure = syncToDevice(partial.path(), false); failure != 0) {
+        throw std::runtime_error(refusal + ": " + std::generic_category().message(failure));
+    }
+#endif
     // The one step a reader can observe: before it, the old file; after it,
     // the new one, whole.
     std::error_code error;
-    std::filesystem::rename(partial, path, error);
+    std::filesystem::rename(partial.path(), path, error);
     if (error) {
-        std::filesystem::remove(partial, ignored);
-        throw std::runtime_error("cannot write the frozen pipeline to " + path.string() + ": " +
-                                 error.message());
+        throw std::runtime_error(refusal + ": " + error.message());
     }
+#if !defined(_WIN32)
+    // And the rename itself, which is the directory's. EINVAL is a file
+    // system that cannot sync a directory, where there is nothing more to
+    // do; anything else is refused, the new blob already in place.
+    if (const int failure = syncToDevice(directoryOf(path), true);
+        failure != 0 && failure != EINVAL) {
+        throw std::runtime_error(
+            "wrote the frozen pipeline to " + path.string() +
+            ", but cannot sync its directory to disk: " + std::generic_category().message(failure));
+    }
+#endif
 }
 
 std::unique_ptr<const world::CompiledDimension>

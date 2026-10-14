@@ -20,9 +20,10 @@
 // accepted; anything else misses, and is read — and refused — afresh.
 //
 // The registry holds weak references: a dimension lives as long as some
-// thread holds it, and an entry whose dimension has gone is pruned as the
-// next one is added, so the map never holds more than the dimensions open
-// now plus the one being opened.
+// thread holds it. An entry whose dimension has gone is pruned at the next
+// miss, not when the dimension goes, so the map holds at most the
+// dimensions open at the last miss plus the one that miss added — an
+// expired entry until then is a control block, its dimension already freed.
 #pragma once
 
 #include <stratum/hash/md5.hpp>
@@ -50,9 +51,21 @@ namespace stratum::pmmp {
 
 /// Writes @p blob to @p path so that a reader finds the file it replaced or
 /// the new one, whole, and never a part of either: the bytes go to a fresh
-/// file beside it, which is then renamed over @p path. Throws
-/// std::runtime_error naming the path, leaving @p path as it was and no
-/// partial file behind, if any step fails.
+/// file beside it (`<path>.partial-<clock>-<serial>`), which is then renamed
+/// over @p path. On POSIX that file is fsync'd before the rename and the
+/// directory after it, so a power cut or a kernel crash too leaves one blob
+/// or the other; on Windows the guarantee is the rename's alone, against
+/// readers and process death.
+///
+/// Throws std::runtime_error naming the path, leaving @p path as it was and
+/// no partial file behind, if any step before the rename fails; one that
+/// fails syncing the directory after it says so, the new blob in place.
+///
+/// A process killed mid-write leaves its partial file; each write first
+/// removes every `<path>.partial-*` beside @p path that no write in this
+/// process is writing. One another process is writing to the same path at
+/// that moment would be removed too, and that write then refuses, by name,
+/// leaving @p path whole.
 void writePipelineFile(const std::filesystem::path& path, std::span<const std::byte> blob);
 
 /// Compiles the dimension @p noiseSettings / @p biomeSource of the frozen
