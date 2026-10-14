@@ -16,7 +16,9 @@ if(!is_dir("$root/worldgen/noise_settings") || !is_dir("$root/biome_parameters")
 // Stratum's) touch are stand-ins with the signatures they call, read from
 // PocketMine-MP 5.44.3's phar: World::getBlockAt(int, int, int),
 // World::scheduleDelayedBlockUpdate(Vector3, int), World::isChunkLocked(int,
-// int), World::isLoaded(), World::getServer()->getTick(), World::getId/
+// int), World::getChunk(int, int) (a loaded chunk or null, never read from
+// disk) and Chunk::isPopulated(), World::isLoaded(),
+// World::getServer()->getTick(), World::getId/
 // getSeed/getFolderName/getProvider()->getWorldData()->getGenerator/
 // getGeneratorOptions, Block::getPosition(), Liquid::tickRate() (water 5,
 // lava 30), ChunkEvent::getChunkX/getChunkZ, WorldEvent::getWorld,
@@ -85,15 +87,25 @@ namespace pocketmine\world\generator {
 	}
 }
 
+namespace pocketmine\world\format {
+	final class Chunk{
+		public function __construct(private bool $populated){}
+		public function isPopulated() : bool{ return $this->populated; }
+	}
+}
+
 namespace pocketmine\world {
 	use pocketmine\math\Vector3;
 	use pocketmine\Server;
+	use pocketmine\world\format\Chunk;
 
 	class World{
 		/** @var list<array{int, int, int, int, int}> x, y, z, delay, the tick it was scheduled on */
 		public array $scheduled = [];
 		/** @var array<string, true> "x z" of every locked chunk */
 		public array $locked = [];
+		/** @var array<string, bool> "x z" of every loaded chunk => whether it is populated */
+		public array $chunks = [];
 		public bool $loaded = true;
 
 		/** @param \Closure(int, int, int) : \pocketmine\block\Block $blockAt */
@@ -130,6 +142,18 @@ namespace pocketmine\world {
 		}
 		public function isChunkLocked(int $chunkX, int $chunkZ) : bool{
 			return isset($this->locked["$chunkX $chunkZ"]);
+		}
+		/** A loaded chunk, never one read from disk. */
+		public function getChunk(int $chunkX, int $chunkZ) : ?Chunk{
+			return isset($this->chunks["$chunkX $chunkZ"]) ? new Chunk($this->chunks["$chunkX $chunkZ"]) : null;
+		}
+		/** Every chunk within $radius of ($chunkX, $chunkZ), loaded and populated. */
+		public function populateAround(int $chunkX, int $chunkZ, int $radius) : void{
+			for($x = $chunkX - $radius; $x <= $chunkX + $radius; ++$x){
+				for($z = $chunkZ - $radius; $z <= $chunkZ + $radius; ++$z){
+					$this->chunks["$x $z"] = true;
+				}
+			}
 		}
 	}
 }
@@ -213,6 +237,7 @@ namespace {
 	// The Stratum world takes them as the chunk is populated, on tick 100,
 	// and ticks none yet: each liquid is due its own tick rate later.
 	$stratum = new World(2, "stratum", $options, $seed, $blockAt, $server);
+	$stratum->populateAround(-3, 2, 2);
 	$scheduler->onChunkPopulate(new ChunkPopulateEvent($stratum, -3, 2));
 	echo "held: ", $scheduler->chunksHeld(), " chunk, ", count($stratum->scheduled), " scheduled\n";
 	for(; $server->tick < 105; ++$server->tick){
@@ -220,10 +245,24 @@ namespace {
 	}
 	echo "before tick 105: ", count($stratum->scheduled), " scheduled\n";
 
-	// Tick 105, the water's due: but a population task is in flight next to
-	// the chunk, holding chunk (-2, 3) of its 3x3. A flow there would make
-	// PocketMine-MP discard that task's result, so nothing is ticked while
-	// it runs. A lock two chunks away, outside the 3x3, holds nothing back.
+	// Tick 105, the water's due, but a chunk two away, (-1, 4), is not
+	// populated yet. Its population would lock (-2, 3), in the 3x3 round
+	// this chunk, and a flow there would make PocketMine-MP discard its
+	// result; so nothing is ticked until every chunk within two is
+	// populated. Loaded but unpopulated, or not loaded at all, is the same.
+	$stratum->chunks["-1 4"] = false;
+	for(; $server->tick < 107; ++$server->tick){
+		$scheduler->release();
+	}
+	unset($stratum->chunks["-1 4"]);
+	$scheduler->release();
+	++$server->tick;
+	echo "while (-1, 4) is unpopulated: ", count($stratum->scheduled), " scheduled\n";
+
+	// Tick 108: its population is in flight, holding (-2, 3) of the 3x3:
+	// nothing is ticked while it runs either. A lock outside the 3x3, at
+	// (-1, 2), holds nothing back.
+	$stratum->chunks["-1 4"] = true;
 	$stratum->locked["-2 3"] = true;
 	$stratum->locked["-1 2"] = true;
 	for(; $server->tick < 110; ++$server->tick){
@@ -301,6 +340,7 @@ marked: several
 normal world held: 0
 held: 1 chunk, 0 scheduled
 before tick 105: 0 scheduled
+while (-1, 4) is unpopulated: 0 scheduled
 while (-2, 3) is locked: 0 scheduled
 bool(true)
 water: delay 0 on tick 110

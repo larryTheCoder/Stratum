@@ -37,24 +37,28 @@ use function count;
  * loaded; which worlds are Stratum's, and with what options, is
  * StratumWorlds' to say.
  *
- * NEVER WHILE A POPULATION AROUND IT IS IN FLIGHT. A population task locks
- * the 3x3 chunks it populates (World::lockChunk), and any block set in one
- * of them while it runs (World::setBlockAt unlocks the chunk) makes
- * PocketMine-MP discard the task's whole result and populate again
- * (World::generateChunkCallback, "Discarding population result"). A
- * liquid's first flow sets blocks in its own chunk and the four beside it,
- * so a chunk's held updates are released only on a tick when none of the
- * 3x3 around it is locked — that is, when no population task within two
- * chunks of it is in flight. Ticking them as the spawn area generated made
- * PocketMine-MP throw away 3 to 56 populations a run (SPEC section 11's M5
- * entry). release() runs from the plugin's scheduler, which PocketMine-MP
- * ticks before it collects finished population tasks — the only place new
- * ones start in a tick — and before the world ticks its scheduled updates;
- * so a liquid released there is ticked that same tick (a delay of 0), with
- * no population able to start in between except one a finished task's
- * completion orders. A flow already under way then carries on as
- * PocketMine-MP's own liquids do, one scheduled update after another,
- * whatever is populating near it.
+ * NEVER WHERE A POPULATION IS IN FLIGHT, OR STILL TO COME. A population
+ * task locks the 3x3 chunks it populates (World::lockChunk), and any block
+ * set in one of them while it runs (World::setBlockAt unlocks the chunk)
+ * makes PocketMine-MP discard the task's whole result and populate again
+ * (World::generateChunkCallback, "Discarding population result"). Ticking
+ * the liquids as their chunks were populated, while the spawn area was
+ * still generating, made PocketMine-MP throw away 3 to 56 populations a
+ * run (SPEC section 11's M5 entry); waiting only until no chunk of the 3x3
+ * was locked still lost 18 in one, to populations that started while the
+ * flow went on. A flow sets blocks in its own chunk's 3x3 (water runs seven
+ * blocks from a source), and a population locks that 3x3 only if it is of
+ * a chunk within two of this one. So a chunk's held liquids are released
+ * on a tick when none of its 3x3 is locked and every chunk within two of it
+ * is loaded and populated — which PocketMine-MP never populates again, so
+ * no population can lock that 3x3 from then on. A chunk at the edge of what
+ * is populated keeps its liquids, in memory, until the chunks beyond it are
+ * populated too. release() runs from the plugin's scheduler, which PocketMine-MP
+ * ticks before it collects finished population tasks and before the world
+ * ticks its scheduled updates; a liquid released there is ticked that same
+ * tick (a delay of 0), once its own tick rate has passed since its chunk
+ * was populated. A flow under way then carries on as PocketMine-MP's own
+ * liquids do, one scheduled update after another.
  *
  * What does not carry over: the updates live in memory, so a chunk generated
  * in one server run and first populated in a later one is populated without
@@ -123,7 +127,7 @@ final class FluidUpdateScheduler implements Listener{
 			}
 			$now = $world->getServer()->getTick();
 			foreach($chunks as $key => [$chunkX, $chunkZ, $updates]){
-				if(self::populationInFlightAround($world, $chunkX, $chunkZ)){
+				if(!self::settledAround($world, $chunkX, $chunkZ)){
 					continue;
 				}
 				$left = [];
@@ -174,18 +178,31 @@ final class FluidUpdateScheduler implements Listener{
 	}
 
 	/**
-	 * Whether any chunk of the 3x3 around ($chunkX, $chunkZ) is locked: by
-	 * a population task in flight, whose result a block set there would
-	 * make PocketMine-MP discard.
+	 * Whether no population task can make PocketMine-MP discard its result
+	 * for a block set in the 3x3 round ($chunkX, $chunkZ), now or later:
+	 * none of that 3x3 is locked by one in flight, and every chunk within
+	 * two of it is loaded and populated already — every chunk whose own
+	 * population would lock part of that 3x3, and none of which PocketMine-MP
+	 * populates again.
 	 */
-	private static function populationInFlightAround(World $world, int $chunkX, int $chunkZ) : bool{
+	private static function settledAround(World $world, int $chunkX, int $chunkZ) : bool{
 		for($dx = -1; $dx <= 1; ++$dx){
 			for($dz = -1; $dz <= 1; ++$dz){
 				if($world->isChunkLocked($chunkX + $dx, $chunkZ + $dz)){
-					return true;
+					return false;
 				}
 			}
 		}
-		return false;
+		for($dx = -2; $dx <= 2; ++$dx){
+			for($dz = -2; $dz <= 2; ++$dz){
+				// getChunk(), never loadChunk(): a chunk not in memory is
+				// not settled, and is not read from disk to find out.
+				$chunk = $world->getChunk($chunkX + $dx, $chunkZ + $dz);
+				if($chunk === null || !$chunk->isPopulated()){
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 }

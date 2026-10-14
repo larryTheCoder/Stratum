@@ -66,6 +66,12 @@ namespace pocketmine\block {
 	}
 }
 
+namespace pocketmine\world\format {
+	final class Chunk{
+		public function isPopulated() : bool{ return true; }
+	}
+}
+
 namespace pocketmine\world\generator {
 	class InvalidGeneratorOptionsException extends \UnexpectedValueException{}
 	final class GeneratorManagerEntry{
@@ -105,6 +111,8 @@ namespace pocketmine\world {
 		public function getServer() : \pocketmine\Server{ return \pocketmine\Server::get(); }
 		public function isLoaded() : bool{ return true; }
 		public function isChunkLocked(int $chunkX, int $chunkZ) : bool{ return false; }
+		/** Every chunk loaded and populated: the spawn area long since generated. */
+		public function getChunk(int $chunkX, int $chunkZ) : ?\pocketmine\world\format\Chunk{ return new \pocketmine\world\format\Chunk(); }
 		public function getProvider() : object{
 			$data = new class($this->generator, $this->generatorOptions){
 				public function __construct(private string $generator, private string $options){}
