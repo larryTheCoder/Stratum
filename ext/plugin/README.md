@@ -130,7 +130,9 @@ the `worlds:` entry above — and prints the command that starts it.
   every zend symbol it imports is exported, it loads beside pmmpthread,
   chunkutils2, leveldb, igbinary, morton and the rest, and PocketMine-MP's
   own startup gate accepts the environment.
-- `pmmp.phpt`: `ext/zend/tests` and this directory's `tests/` under that PHP.
+- `pmmp.phpt`: `ext/zend/tests` and this directory's `tests/` under that
+  PHP, driven by tools/php-dev's `run-tests.php` rather than the copy in
+  PocketMine-MP's PHP tarball.
 - `pmmp.census.blocks`: every Java block state through
   `BlockStateTranslator`, PocketMine-MP's own upgrader and deserializer;
   fails if a state v1 terrain places reaches `minecraft:info_update`.
@@ -141,7 +143,18 @@ the `worlds:` entry above — and prints the command that starts it.
   Dimension and encoding at once, byte-identical to one thread's encode.
 - `pmmp.smoke.overworld`, `pmmp.smoke.end`: a server boot that generates
   the spawn area (224 chunks populated) and stops from the console, with
-  `level.dat`, the chunks on disk, `server.log` and crash dumps checked.
+  `server.log`, crash dumps and `level.dat` checked, and then every chunk
+  on disk (292) read back through PocketMine-MP's own LevelDB provider and
+  compared, block by block and biome by biome, with what the engine
+  generates for it from the world's own options and seed, each block state
+  through `BlockStateTranslator` (`ext/pocketmine/inspect_world.php`). The
+  biomes must match exactly. A block may differ only as PocketMine-MP's own
+  liquid rules change the terrain once `FluidUpdateScheduler` sets the
+  aquifer water and lava flowing — air now water or lava, lava hardened to
+  obsidian or cobblestone beside water, water or flowed water turned to
+  stone where lava flowed into it — and each such change is counted.
+  Anything else fails, which is what a plugin writing empty or shifted
+  chunks does (both tried, both caught).
 
 ## What is not verified
 
