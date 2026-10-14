@@ -491,7 +491,17 @@ static const zend_function_entry dimension_methods[] = {
                     ZEND_ME(Stratum_Dimension, encodeChunk, arginfo_Dimension_encodeChunk,
                             ZEND_ACC_PUBLIC) ZEND_FE_END};
 
+// ZTS: every thread runs its own PHP request, and the zend globals macros
+// (EG, CG, ...) read them through a per-thread cache of the thread's
+// resource pointer. Built with ZEND_ENABLE_STATIC_TSRMLS_CACHE, that cache
+// is this module's own thread-local, set only by ZEND_TSRMLS_CACHE_UPDATE:
+// so the standard boilerplate, on the main thread at MINIT and on every
+// thread at the start of each of its requests (RINIT), before anything in
+// this module runs there.
 static PHP_MINIT_FUNCTION(stratum) {
+#if defined(ZTS) && defined(COMPILE_DL_STRATUM)
+    ZEND_TSRMLS_CACHE_UPDATE();
+#endif
     zend_class_entry exceptionClass;
     INIT_NS_CLASS_ENTRY(exceptionClass, "Stratum", "GenerationException", nullptr);
     generationExceptionEntry =
@@ -512,6 +522,13 @@ static PHP_MINIT_FUNCTION(stratum) {
     return SUCCESS;
 }
 
+static PHP_RINIT_FUNCTION(stratum) {
+#if defined(ZTS) && defined(COMPILE_DL_STRATUM)
+    ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+    return SUCCESS;
+}
+
 static PHP_MINFO_FUNCTION(stratum) {
     php_info_print_table_start();
     php_info_print_table_header(2, "stratum support", "enabled");
@@ -525,7 +542,7 @@ zend_module_entry stratum_module_entry = {
     stratum_functions,
     PHP_MINIT(stratum),
     nullptr,
-    nullptr,
+    PHP_RINIT(stratum),
     nullptr,
     PHP_MINFO(stratum),
     PHP_STRATUM_VERSION,
