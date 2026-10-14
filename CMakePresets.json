@@ -296,7 +296,7 @@
       "configurePreset": "ext-release",
       "configuration": "Release",
       "displayName": "inside PocketMine-MP 5.44.3's own PHP",
-      "description": "Local evidence, not CI: the Release stratum.so loaded into pmmp/PHP-Binaries' php beside its own extensions, the ext PHPTs under that php, the block state and biome censuses and a pmmpthread case under PocketMine-MP's own classes, and a headless server boot. Needs tools/pmmp-dev to have fetched ~/.cache/stratum-pmmp; every case SKIPs, naming what is missing, without it. One case at a time: the boot smoke runs a server.",
+      "description": "Local evidence, not CI: the Release stratum.so loaded into pmmp/PHP-Binaries' php beside its own extensions, the ext PHPTs under that php, the block state and biome censuses and a pmmpthread case under PocketMine-MP's own classes, headless server boots of the overworld and the End, and the overworld boot observed from inside the server through its idle workers' shutdown (about seven minutes). Needs tools/pmmp-dev to have fetched ~/.cache/stratum-pmmp; every case SKIPs, naming what is missing, without it. One case at a time: the smokes and the observation run a server.",
       "filter": {
         "include": {
           "label": "pmmp"
