@@ -32,6 +32,7 @@ add_executable(stratum_conformance_tests
     golden_terrain_no_aquifer_test.cpp
     golden_end_test.cpp
     golden_overworld_test.cpp
+    golden_generate_test.cpp
     golden_aquifer_tiebreak_test.cpp
     golden_regions_test.cpp
     nbt_structures_test.cpp
@@ -105,6 +106,15 @@ target_link_libraries(stratum_conformance_tests PRIVATE
 target_compile_definitions(stratum_conformance_tests PRIVATE
     "STRATUM_FIXTURES_DIR=\"${STRATUM_FIXTURES_DIR}\""
 )
+
+if(TARGET stratum_cli)
+    # golden_generate_test.cpp runs `stratum generate` itself and scores the
+    # regions it writes; without the CLI it skips, saying so.
+    target_compile_definitions(stratum_conformance_tests PRIVATE
+        "STRATUM_CLI_PATH=\"$<TARGET_FILE:stratum_cli>\""
+    )
+    add_dependencies(stratum_conformance_tests stratum_cli)
+endif()
 
 # vanilla_legacy_goldens_surface_test.cpp INCLUDES the analyzer's own decoder
 # rather than reimplementing it. A conformance case that re-derived which
