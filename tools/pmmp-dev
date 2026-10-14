@@ -56,7 +56,8 @@
 #   tools/pmmp-dev census-biomes --stratum-so <so> --version-root <root>
 #   tools/pmmp-dev threads --stratum-so <so> --version-root <root>
 #   tools/pmmp-dev smoke --stratum-so <so> --version-root <root> [--dimension overworld|end]
-#                  [--work-dir <dir>] [--keep] [--timeout S] [--async-workers N] [--no-netns]
+#                  [--max-discards N] [--work-dir <dir>] [--keep] [--timeout S]
+#                  [--async-workers N] [--no-netns]
 #       boot that server, let it generate the spawn area, stop it from the
 #       console, and check server.log (the network interface on loopback
 #       and nowhere else, no Query listener), crash dumps, level.dat and
@@ -72,10 +73,13 @@
 #       minutes of waiting), the console's `gc` — MemoryManager::
 #       triggerGarbageCollector(), as PocketMine-MP's periodic garbage
 #       collection runs it — shuts them all down; the chunks the old workers
-#       generated beside the spawn area are then populated on new ones, and
-#       every fluid position the engine marked in them must get its block
-#       update, from what the pin held. Counts PocketMine-MP's 'Discarding
-#       population result' lines, and fails above --max-discards when given.
+#       generated beside the spawn area are then populated on new ones,
+#       with every chunk within two of them (the plugin releases a chunk's
+#       liquids only once those are populated too), and every fluid
+#       position the engine marked in them must get its block update, from
+#       what the pin held. Counts PocketMine-MP's 'Discarding population
+#       result' lines, and fails above --max-discards when given (smoke
+#       too; the CTest cases give 0).
 #   server, smoke and observe take --plugin-dir <dir> to pack a plugin tree
 #   other than ext/plugin, for trying a change to it against the real server.
 #
