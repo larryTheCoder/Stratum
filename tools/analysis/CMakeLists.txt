@@ -76,8 +76,10 @@ foreach(tool IN ITEMS
     stratum_configure_target(${target})
 endforeach()
 
-# The end-to-end chunk-cost bench (M5): what one PocketMine-MP generation task
-# costs a chunk, fill, biomes and the chunkutils2 encode. Its own target rather
+# The end-to-end chunk-cost bench (M5): what the C++ a PocketMine-MP generation
+# task calls (stratum::pmmp::encodeChunk) costs a chunk, fill, biomes and the
+# chunkutils2 encode; the zend marshaling and the PHP side are not in it (its
+# header lists them). Its own target rather
 # than one of the foreach above because it links ext/'s plain C++ half
 # (stratum::pmmp_core, which brings lib/ and lib/mapping/), not lib/ alone: the
 # encode is part of what it times. The build configuration is compiled in so a

@@ -1,6 +1,6 @@
-// Stratum — what one PocketMine-MP generation task costs per chunk: the fill,
-// the biomes and the chunkutils2 encode, single-threaded, stage by stage and
-// end to end.
+// Stratum — what the C++ a PocketMine-MP generation task calls costs per chunk
+// (stratum::pmmp::encodeChunk): the fill, the biomes and the chunkutils2
+// encode, single-threaded, stage by stage and end to end.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
 //   stratum_chunk_cost_bench <fixtures-version-dir> [options]
@@ -21,13 +21,26 @@
 //     --json <file>          the summary as JSON (what tools/perf-baseline reads)
 //     --dump <dir>           every chunk's output, one file per dimension and seed
 //
-// WHAT IT TIMES is exactly what the zend module runs for one
-// `Stratum\Dimension::encodeChunk` (ext/zend/php_stratum.cpp), on one thread,
-// from a pipeline frozen and thawed the way `Stratum\freezePipeline` and
-// `Dimension::open` do it:
+// WHAT IT TIMES is the C++ that `Stratum\Dimension::encodeChunk`
+// (ext/zend/php_stratum.cpp) calls — stratum::pmmp::encodeChunk — on one
+// thread, from a pipeline frozen and thawed the way `Stratum\freezePipeline`
+// and `Dimension::open` do it. It is not the whole generation task. Left out:
+// the zend method's own marshaling of the result into PHP arrays (a layer
+// triple for each sub-chunk's blocks and biomes, up to 48 a chunk) and its put
+// of the fluid updates into the main thread's outbox; and everything the
+// PHP side then does — StratumGenerator::generateChunk's palette translation
+// to Bedrock states, a PalettedBlockArray::fromData per layer, the SubChunk
+// and Chunk construction — and PocketMine-MP's own serialisation of the task's
+// result back to the main thread. Small beside today's figures, but not shown
+// to be small beside the 35 ms best case: a measurement through PHP is what
+// shows that. The stages:
 //
 //   fill     CompiledDimension::fillBlocks into a fresh ChunkBuffer — the noise
-//            fill, aquifers, ore veins and the surface rules
+//            fill, aquifers, ore veins and the surface rules, which look the
+//            biome source up for themselves (vanilla's surface stage reads the
+//            biomes its biome stage stored), so the stages split differently
+//            from vanilla's and only the end-to-end sum compares with its
+//            biomes + noise + surface
 //   biomes   CompiledDimension::fillBiomes over PocketMine-MP's 96 quart layers
 //            (y -64..319), the range form encodeChunk calls
 //   encode   everything else encodeChunk does: Java state ids per palette entry,
@@ -200,10 +213,11 @@ constexpr std::string_view kUsage =
     "           [--spiral cx,cz,r] [--scattered on|off] [--warmup n] [--repeat n]\n"
     "           [--json file] [--dump dir]\n"
     "       stratum_chunk_cost_bench --compare <dump-dir-a> <dump-dir-b>\n"
-    "Times one PocketMine-MP generation task per chunk (fill, biomes, encode, and\n"
-    "stratum::pmmp::encodeChunk end to end) on one thread. Build it optimised (the\n"
-    "release preset) for numbers. Dumps are vanilla-derived (SPEC 12): NEVER commit\n"
-    "them; write them outside the repository, e.g. under $HOME/stratum-work/scratch.";
+    "Times the C++ a PocketMine-MP generation task calls per chunk (fill, biomes,\n"
+    "encode, and stratum::pmmp::encodeChunk end to end; not the zend marshaling or\n"
+    "the PHP side) on one thread. Build it optimised (the release preset) for\n"
+    "numbers. Dumps are vanilla-derived (SPEC 12): NEVER commit them; write them\n"
+    "outside the repository, e.g. under $HOME/stratum-work/scratch.";
 
 [[nodiscard]] std::vector<std::string> splitCommas(const std::string_view text) {
     std::vector<std::string> out;
