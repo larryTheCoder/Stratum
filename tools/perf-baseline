@@ -8,6 +8,7 @@
   tools/perf-baseline --accept-eula [--seeds a,b,...] [--dimensions a,b,...]
       [--area cx,cz,r] [--repeat n] [--require-quiet LOAD] [--out DIR]
       [--jdk DIR] [--heap 3G] [--work DIR] [--skip-stratum] [--skip-vanilla]
+      [--from OUT]
 
 1. Builds stratum_chunk_cost_bench with the release preset (RelWithDebInfo,
    the optimised configuration CMakePresets.json already has) and runs it over
@@ -23,6 +24,11 @@
    ms/chunk (10 chunks/s) the minimum. Stratum's figure is end to end
    (stratum::pmmp::encodeChunk), over the square's chunks, as a rate: 1000 /
    mean ms. Vanilla's is biomes + noise + surface over the same chunks.
+
+--skip-stratum or --skip-vanilla with --from OUT takes that half from an
+earlier run's OUT (its stratum.json or vanilla.json, load averages
+included) instead of measuring it again; both, with --from, recompute the
+comparison alone.
 
 The load average is recorded before and after each half, and a run whose
 one-minute load went above 1.0 anywhere is labelled PROVISIONAL. A number of
@@ -203,6 +209,20 @@ def compare(stratum, vanilla, dimensions):
     return lines, table
 
 
+def reused(reuse, half, out, report):
+    """An earlier run's @p half, copied into @p out, its load averages kept."""
+    if reuse is None:
+        return None
+    source = reuse / f'{half}.json'
+    data = json.loads(source.read_text(encoding='utf-8'))
+    if source.resolve() != (out / f'{half}.json').resolve():
+        shutil.copyfile(source, out / f'{half}.json')
+    report[f'{half}_from'] = str(reuse)
+    report[f'{half}_load_before'] = data.get('load_average_start', 'unknown')
+    report[f'{half}_load_after'] = data.get('load_average_end', 'unknown')
+    return data
+
+
 def main():
     parser = argparse.ArgumentParser(prog='tools/perf-baseline', description=__doc__.split('\n')[0])
     parser.add_argument('--accept-eula', action='store_true')
@@ -217,12 +237,17 @@ def main():
     parser.add_argument('--work')
     parser.add_argument('--skip-stratum', action='store_true')
     parser.add_argument('--skip-vanilla', action='store_true')
+    parser.add_argument('--from', dest='reuse')
     args = parser.parse_args()
     if not args.skip_vanilla and not args.accept_eula:
         die('the vanilla half runs the Minecraft server, so it needs --accept-eula '
             '(or --skip-vanilla)')
-    if args.skip_stratum and args.skip_vanilla:
+    if args.skip_stratum and args.skip_vanilla and not args.reuse:
         die('nothing to do: both halves skipped')
+    reuse = pathlib.Path(args.reuse).resolve() if args.reuse else None
+    for half, skipped in (('stratum', args.skip_stratum), ('vanilla', args.skip_vanilla)):
+        if reuse and skipped and not (reuse / f'{half}.json').is_file():
+            die(f'--from {reuse} has no {half}.json')
     start_load = load_average()
     if args.require_quiet is not None:
         one_minute = float(start_load.split()[0]) if start_load != 'unknown' else 0.0
@@ -240,7 +265,7 @@ def main():
     dimensions = args.dimensions.split(',')
     cx, cz, radius = (int(v) for v in args.area.split(','))
 
-    stratum = None
+    stratum = reused(reuse, 'stratum', out, report) if args.skip_stratum else None
     if not args.skip_stratum:
         bench = build_bench(out)
         report['stratum_load_before'] = load_average()
@@ -252,10 +277,10 @@ def main():
         if status != 0:
             die(f'the bench failed (see {out / "stratum.log"})')
         stratum = json.loads((out / 'stratum.json').read_text(encoding='utf-8'))
-        if not stratum['machine']['optimised']:
-            die('the bench was not built optimised; its numbers are not a measurement')
+    if stratum and not stratum['machine']['optimised']:
+        die('the bench was not built optimised; its numbers are not a measurement')
 
-    vanilla = None
+    vanilla = reused(reuse, 'vanilla', out, report) if args.skip_vanilla else None
     if not args.skip_vanilla:
         command = [sys.executable, VANILLA, 'run', '--accept-eula', '--seeds', args.seeds,
                    '--dimensions', args.dimensions, '--area', args.area,
@@ -286,6 +311,7 @@ def main():
         f'threads, governor {report["machine"]["governor"]}, boost {report["machine"]["boost"]}',
         f'load average: start {start_load}'
         + (f'; Stratum {report["stratum_load_before"]} -> {report["stratum_load_after"]}'
+           + (f' (from {report["stratum_from"]})' if 'stratum_from' in report else '')
            if stratum else '')
         + (f'; vanilla {report["vanilla_load_before"]} -> {report["vanilla_load_after"]}'
            if vanilla else '')

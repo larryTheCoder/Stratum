@@ -161,3 +161,33 @@ expect 1 "the baseline refuses the vanilla half without --accept-eula" "needs --
 expect 1 "the baseline refuses to do nothing" "both halves skipped" \
     "${baseline}" --skip-stratum --skip-vanilla
 
+# The comparison alone, from an earlier run's two halves (--from): a Stratum
+# end to end of 50 ms/chunk mean against vanilla's 10 is 5x, and between the
+# owner's minimum (100 ms) and best case (35 ms).
+mkdir -p "${work}/earlier"
+python3 - "${work}/earlier" <<'PY'
+import json, sys
+def figure(mean):
+    return {'available': True, 'chunks': 121, 'median_ms': mean, 'p10_ms': mean, 'p90_ms': mean,
+            'mean_ms': mean, 'chunks_per_s': 1000 / mean}
+stages = {s: {'wall': figure(m)} for s, m in (('fill', 30.0), ('biomes', 19.0), ('encode', 1.0),
+                                              ('e2e', 50.0))}
+json.dump({'machine': {'optimised': True}, 'load_average_start': '0.10 0.10 0.10',
+           'load_average_end': '0.20 0.10 0.10',
+           'dimensions': {'overworld': {'spiral': stages}}}, open(sys.argv[1] + '/stratum.json', 'w'))
+json.dump({'load_average_start': '0.30 0.10 0.10', 'load_average_end': '0.40 0.10 0.10',
+           'dimensions': {'overworld': {'comparable': figure(10.0), 'complete': True,
+                                        'pin_held': True,
+                                        'stages': {s: figure(m) for s, m in
+                                                   (('biomes', 2.0), ('noise', 6.0),
+                                                    ('surface', 2.0))}}}},
+          open(sys.argv[1] + '/vanilla.json', 'w'))
+PY
+expect 0 "the baseline recomputes the comparison from an earlier run" "Stratum / vanilla (mean): 5.00x" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/earlier" --dimensions overworld \
+    --out "${work}/again"
+grep -qF "between the minimum (100) and the best case (35 ms/chunk)" "${work}/again/summary.txt" \
+    || { echo "FAIL: the bar's verdict is not in the summary"; cat "${work}/again/summary.txt"; exit 1; }
+echo "ok: and judges it against the owner's bar"
+expect 1 "--from needs the half it stands in for" "has no stratum.json" \
+    "${baseline}" --skip-stratum --skip-vanilla --from "${work}/again/nowhere"
