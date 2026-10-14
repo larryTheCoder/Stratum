@@ -81,9 +81,10 @@ gives them to the main thread, once, by the world's options and seed.
 the generator, translates each sub-chunk's palette through PocketMine-MP's
 own deserializer, freezes a pipeline into a new world's folder, refuses on
 the main thread every world that cannot generate, and pins each Stratum
-world's state while it is loaded. Written against PocketMine-MP 5.44.4's
-source; CI checks that it parses and tests its classes against stand-ins
-for PocketMine-MP's, with this extension loaded.
+world's state while it is loaded. Read from PocketMine-MP 5.44.4-dev's
+source and 5.44.3's phar, and run in 5.44.3 (below); CI checks that it
+parses and tests its classes against stand-ins for PocketMine-MP's, with
+this extension loaded.
 
 **Run inside a real PocketMine-MP 5.44.3, headless** (`tools/pmmp-dev`,
 `ctest --preset pmmp`; local evidence, not CI). `cmake --preset

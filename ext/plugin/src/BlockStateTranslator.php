@@ -39,9 +39,11 @@ final class BlockStateTranslator{
 
 	/**
 	 * Blocks vanilla generates that PocketMine-MP has no block for, and what
-	 * to put there instead. Measured, not guessed: PocketMine-MP 5.44.4 has
-	 * no powder snow block at all (it appears only as a cauldron liquid),
-	 * and the overworld's surface rules place it on snowy slopes and peaks.
+	 * to put there instead. Measured, not guessed: PocketMine-MP has no
+	 * powder snow block at all (it appears only as a cauldron liquid) — read
+	 * in 5.44.4-dev's source, and refused by 5.44.3, the release this has
+	 * run in, as an unknown block id — and the overworld's surface rules
+	 * place it on snowy slopes and peaks.
 	 *
 	 * @return array<string, int> Bedrock state name => PocketMine-MP state id
 	 */

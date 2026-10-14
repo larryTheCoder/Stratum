@@ -1,8 +1,10 @@
 name: Stratum
 main: Stratum\PMMP\Main
 version: 0.1.0
-# What this was written against and read from: PocketMine-MP 5.44.4's own
-# source. Declared as 5.44.0 rather than 5.0.0 deliberately — the API check
+# What this has run in: PocketMine-MP 5.44.3, the release tools/pmmp-dev
+# pins (headless; ctest --preset pmmp). What it was read from: 5.44.4-dev's
+# source on GitHub, and 5.44.3's own phar. Declared as 5.44.0 rather than
+# 5.0.0 deliberately — the API check
 # accepts any server whose version is at or above the declared one within the
 # same major, so this refuses to load on an older 5.x whose block state and
 # world-format APIs this plugin has not been read against. Exactly one 5.x

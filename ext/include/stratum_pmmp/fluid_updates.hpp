@@ -13,11 +13,12 @@
 // generator runs on a worker thread with nothing but a `ChunkManager`, and
 // what comes back to the main thread is `FastChunkSerializer::
 // serializeTerrain()` — sub-chunks and the populated flag, nothing else
-// (read from PocketMine-MP 5.44.4's source, SPEC §11's M5 entries). Only the
-// main thread's `World::scheduleDelayedBlockUpdate()` can make a liquid
-// tick. The one thing every thread of the process shares is this extension,
-// so the worker leaves the positions here when it encodes a chunk and the
-// plugin takes them when PocketMine-MP announces the chunk populated.
+// (read from PocketMine-MP 5.44.4-dev's source and 5.44.3's phar, SPEC §11's
+// M5 entries). Only the main thread's `World::scheduleDelayedBlockUpdate()`
+// can make a liquid tick. The one thing every thread of the process shares
+// is this extension, so the worker leaves the positions here when it
+// encodes a chunk and the plugin takes them when PocketMine-MP announces
+// the chunk populated.
 //
 // One lock per chunk, taken after generation and never during it — the same
 // shape as the zend module's registry of compiled dimensions — so nothing
