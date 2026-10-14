@@ -2,13 +2,20 @@
  * Copyright 2026 the Stratum contributors.
  * SPDX-License-Identifier: Apache-2.0 AND MIT
  *
- * ADAPTED (CLAUDE.md, NOTICE): `getSplineStrict` below is a copy of cubiomes'
- * biomenoise.c `getSpline` (https://github.com/Cubitect/cubiomes, MIT
- * License, Copyright (c) 2020 Cubitect), read at
- * e61f90580cbdd883214a8054670dacae655e59c0, with its double `lerp` helper
- * replaced by the float `lerpF`. That function is MIT-licensed code, which is
- * why this file's licence expression names MIT beside Apache-2.0; the rest of
- * the file is this project's own driver. Recorded in NOTICE.
+ * ADAPTED (CLAUDE.md, NOTICE) from cubiomes
+ * (https://github.com/Cubitect/cubiomes, MIT License, Copyright (c) 2020
+ * Cubitect), biomenoise.c, read at e61f90580cbdd883214a8054670dacae655e59c0:
+ *
+ *   * `getSplineStrict` below is a copy of `getSpline`, with its double
+ *     `lerp` helper replaced by the float `lerpF`;
+ *   * `emitClimateChain` reproduces the opening of `sampleBiomeNoise`: the
+ *     shift noise sampled at (x, 0, z) and at (z, x, 0), each times 4.0 and
+ *     added to the quart position, then continentalness, erosion and
+ *     weirdness sampled at the shifted (x, 0, z).
+ *
+ * That is MIT-licensed code, which is why this file's licence expression
+ * names MIT beside Apache-2.0; the rest of the file is this project's own
+ * driver. Recorded in NOTICE.
  *
  * cubiomes (MIT, Cubitect) is the reference SPEC §2 names for noise and biome
  * math. tools/vectors/noise_vectors.c already checks the noise primitives
@@ -35,8 +42,15 @@
  *
  * cubiomes is fetched at a pinned commit by
  * tools/vectors/generate-climate-vectors.sh and is never vendored into this
- * repository. Nothing Mojang-derived appears in the output: the spline knots
- * are cubiomes', and the sample coordinates are ours.
+ * repository. ONE VALUE IN THE OUTPUT IS VANILLA'S DATA: every `offset`
+ * vector adds -0.5037500262260437, which the comment where it is added gives
+ * as what overworld/offset.json computes — a value from vanilla's worldgen
+ * JSON, which CLAUDE.md's provenance rule never lets the repository commit.
+ * Whether that one constant may stay is a question for the owner; until it
+ * is answered it stays as it was. Nothing else in the output is
+ * Mojang-derived: the spline knots are cubiomes', the ridges fold is
+ * cubiomes' -3, 2/3 and 1/3 computed in double, and the sample coordinates
+ * are ours.
  */
 
 #include "biomenoise.h"

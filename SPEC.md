@@ -1690,6 +1690,26 @@ Defaults chosen; flip only with a written note in this section:
   normal-noise composition on top of it" — where this series had
   paraphrased it as naming "the standard simplex construction": it named no
   document, and none is on record for that composition.
+  A fourth review, at f85f8e0, found three more, each now recorded. The
+  order blended.cpp draws its three stacks in from one generator — sixteen
+  minimum, sixteen maximum, eight blend — is the opening of biomenoise.c's
+  `initSurfaceNoise`, which e3afede had checked against cubiomes while
+  NOTICE credited only `octaveInit`'s order within a stack; deepslate and
+  the server confirmed it later and are not its source.
+  climate_vectors.c's `emitClimateChain` reproduces `sampleBiomeNoise`'s
+  opening, the shift at (x, 0, z) and (z, x, 0) times 4 and the three
+  climate samples at the shifted point. And end_islands.cpp's 8 off the
+  height is `sampleNoiseColumnEnd`'s, while its 128 has no source on record
+  but the goldens (minecraft.wiki's range for the function, read since,
+  agrees) and its double -0.9 threshold, where cubiomes compares against the
+  float -0.9f, is this project's own unmeasured reading. The same review
+  corrected four records: `seedFromHashOf` arrived in 0cbc0be, before the
+  factory's d47c53d; the seed upgrade's composition was first confirmed
+  independently by `xSetSeed`, not the JDK, which checked only its mix;
+  `maintainPrecision` wraps into ±2^24, and its half-up floor and C's
+  `round` part in four places, which NOTICE lists, not one; and
+  climate_vectors.c's output carries one value from vanilla's own data,
+  `offset`'s -0.5037500262260437, which its header had said it did not.
 
 - **StrictMath parity for transcendental functions:** vendor from
   **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
@@ -1715,10 +1735,12 @@ Open:
   vanilla's seed derivation "including MD5-based position-independent salts
   from resource-location strings", verified against known-answer vectors.
   The generator itself and `mixStafford13` are verified against the JDK's
-  own implementations, and the 64→128-bit seed upgrade against an
-  independent implementation of the documented formula — and, since the
-  noise work, against cubiomes, whose `xSetSeed` derives the same state
-  constant for constant.
+  own implementations. The 64→128-bit seed upgrade was written from a
+  formula M1 called documented and named no document for, and checked then
+  only against the project's own Java restatement of it, whose mix alone
+  is the JDK's; since the noise work it is confirmed against cubiomes,
+  whose `xSetSeed` derives the same state constant for constant, and since
+  M3 by the goldens.
 
   `nextInt(bound)` and the MD5 salt derivation are verified too: the bounded
   draw against cubiomes, whose `xNextInt` it is adapted from (NOTICE), and

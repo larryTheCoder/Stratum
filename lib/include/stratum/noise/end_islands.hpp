@@ -14,17 +14,24 @@
 // around a column's `/16` cell, only where that cell's squared distance
 // exceeds 4096 and the simplex reads below -0.9; each island's steepness
 // `(|x| * 3439 + |z| * 147) % 13 + 9` (the integer form, cubiomes'
-// commented-out line); the offsets `within - 2 * cell`; and the clamp to
-// [-100, 80]. An earlier note here called it "the community-documented End
-// island field" and named no document; no source but cubiomes is on record,
-// so it is recorded as adapted (NOTICE), on the grounds NOTICE gives for
-// density_interpreter.cpp's evaluateSpline. NOT taken from cubiomes, and
-// measured instead: floorDiv/floorMod where cubiomes truncates; each island's
-// height clamped and the highest taken, where cubiomes takes the smallest
-// steepness-weighted squared distance and one square root; and the 17292-step
-// seeding skip, found by scoring every skip in [0, 65536] against the
-// server's own field (fromWorldSeed) — cubiomes' `setEndSeed` carries the
-// same literal, which corroborates it.
+// commented-out line); the offsets `within - 2 * cell`; the clamp to
+// [-100, 80]; and the 8 sample() takes off the height, which is
+// `sampleNoiseColumnEnd`'s `- 8.0f`. An earlier note here called it "the
+// community-documented End island field" and named no document; no source
+// but cubiomes is on record, so it is recorded as adapted (NOTICE), on the
+// grounds NOTICE gives for density_interpreter.cpp's evaluateSpline. The
+// 128 sample() divides by is not cubiomes' and no source for it is on
+// record but the goldens; minecraft.wiki's range for the function, -0.84375
+// to 0.5625, read since, is the clamp through both numbers. THIS PROJECT'S
+// OWN READING: the gate compares against the double -0.9 where cubiomes'
+// compares against the float -0.9f (-0.8999999761581421); unmeasured, as a
+// probe separates the two only through a cell whose value is in between.
+// NOT taken from cubiomes, and measured instead: floorDiv/floorMod where
+// cubiomes truncates; each island's height clamped and the highest taken,
+// where cubiomes takes the smallest steepness-weighted squared distance and
+// one square root; and the 17292-step seeding skip, found by scoring every
+// skip in [0, 65536] against the server's own field (fromWorldSeed) —
+// cubiomes' `setEndSeed` carries the same literal, which corroborates it.
 //
 // SETTLED against the vanilla server's own output: eight golden End regions
 // and two probe regions block by block (tests/conformance/golden_end_test.cpp),

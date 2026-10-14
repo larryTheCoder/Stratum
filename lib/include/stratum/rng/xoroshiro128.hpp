@@ -15,12 +15,16 @@
 //     own jdk.internal.random.Xoroshiro128PlusPlus — seeded to an exact
 //     state through its public (x0, x1) constructor — and against
 //     RandomSupport.mixStafford13. Those are genuine independent oracles.
-//   * upgradeSeedTo128Bit and the derived nextInt/nextDouble/nextFloat/
-//     nextBoolean are implementations of the *documented* algorithms,
-//     checked against an implementation that is not ours. That catches a
-//     porting mistake. It does not prove Mojang composes the pieces this
-//     way; only diffing generated terrain against the goldens does, which
-//     needs the density-function pipeline (M3).
+//   * The derived nextInt()/nextDouble/nextFloat/nextBoolean are checked
+//     against the JDK's own draws from the same state.
+//   * upgradeSeedTo128Bit is written from a formula M1 (dfce50c) called
+//     documented but named no document for. Only its mix is the JDK's: the
+//     composition, seed ^ 0x6A09E667F3BCC909 and that plus
+//     0x9E3779B97F4A7C15, was checked then only against this project's own
+//     Java restatement of it (tools/vectors/XoroshiroVectors.java), which
+//     catches a porting mistake and nothing more. cubiomes' xSetSeed was
+//     its first independent confirmation (0cbc0be), and the goldens, which
+//     every modern noise's seeding passes through, the second (M3).
 //
 // ADAPTED (CLAUDE.md, NOTICE): nextInt(bound), seedFromHashOf and the
 // positional factory below are adapted from cubiomes
@@ -39,12 +43,15 @@
 //     the halves of md5("minecraft:<noise>") XORed in, the first eight bytes
 //     into the low word.
 //
+// XoroshiroPositionalFactory and the registry's path arrived in d47c53d;
+// seedFromHashOf before them, in 0cbc0be, for the octave salts.
+//
 // THIS PROJECT'S OWN: the digest computed at run time from any identifier
 // (cubiomes carries its climate names' halves as constants), and checked
 // against md5sum independently of cubiomes. Not adapted: the generator, the
-// seed upgrade and the other draws above, written and checked against the
-// JDK before cubiomes was consulted (cubiomes' xSetSeed later confirmed the
-// upgrade); and PositionalSource below, recovered against the server.
+// seed upgrade and the other draws above, written before any commit records
+// consulting cubiomes and checked as the first list says; and
+// PositionalSource below, recovered against the server.
 //
 // Still absent for want of an oracle: nextGaussian and the general-purpose
 // fork() that derives a child generator for a sub-task — a different

@@ -5,12 +5,14 @@
 // noises and an eight-octave blend between them, the shape terrain had
 // before 1.18 and still the backbone of every dimension's `base_3d_noise`.
 //
-// Adapted from cubiomes' `sampleSurfaceNoise` and `octaveInit`
-// (https://github.com/Cubitect/cubiomes, MIT, noise.c and biomenoise.c),
-// which is the reference SPEC §2 names, and `maintainPrecision` from the line
-// noise.h keeps commented out in its function of that name — with this
-// project's own half-up rounding, applied where cubiomes' is a no-op
-// (blended.cpp's header says exactly what is whose). See NOTICE.
+// Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT), which
+// is the reference SPEC §2 names: `sampleSurfaceNoise` and the opening of
+// `initSurfaceNoise` (biomenoise.c) — the minimum, maximum and blend stacks
+// drawn from one generator in that order — and `octaveInit` (noise.c); and
+// `maintainPrecision` from the line noise.h keeps commented out in its
+// function of that name — with this project's own half-up rounding, applied
+// where cubiomes' is a no-op (blended.cpp's header says exactly what is
+// whose). See NOTICE.
 //
 // WHAT IS AND IS NOT ESTABLISHED. This is the sharpest example in the
 // project so far of an oracle that covers some of a computation and not all
@@ -59,9 +61,11 @@
 namespace stratum::noise {
 
 /// Vanilla's coordinate wrap, applied before every octave is sampled: it
-/// folds a coordinate back into ±2^25 so that the lattice arithmetic keeps
-/// its precision far from the origin. Identity for everything nearer than
-/// that, which is why cubiomes leaves it out and why the two still agree.
+/// folds a coordinate back into ±2^24, half its period of 2^25, so that the
+/// lattice arithmetic keeps its precision far from the origin. Identity on
+/// [-2^24, 2^24) but at 2^24 - 2^-29, which the half-up rounding folds to
+/// just below -2^24 (blended.cpp). That is why cubiomes can leave it a
+/// no-op, and why the two agree wherever no coordinate reaches the wrap.
 [[nodiscard]] double maintainPrecision(double value) noexcept;
 
 class BlendedNoise {

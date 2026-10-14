@@ -3,15 +3,20 @@
 //
 // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
 // Cubitect), read at e61f90580cbdd883214a8054670dacae655e59c0: the octave
-// loop and blend in `sampleSurfaceNoise` (biomenoise.c), the seeding order in
-// `octaveInit` (noise.c), and `maintainPrecision`, which is noise.h's
-// function of that name with the body noise.h keeps as a commented-out line,
-// `x - round(x / 33554432.0) * 33554432.0` — the name, the wrap into ±2^25
-// and its period. THIS PROJECT'S OWN: the half-up rounding, floor(v + 0.5),
-// where C's `round` takes a half away from zero, and applying the wrap at
-// all, where cubiomes' function returns its argument. The clean-room
-// spec/blended-noise-spec.md (Q1.6), which arrived later, states the same
-// wrap and rounding. Recorded in NOTICE.
+// loop and blend in `sampleSurfaceNoise` (biomenoise.c); the order the three
+// stacks are drawn in from one generator — sixteen minimum, sixteen maximum,
+// eight blend — which is the opening of `initSurfaceNoise` (biomenoise.c);
+// the seeding order within a stack, `octaveInit` (noise.c); and
+// `maintainPrecision`, which is noise.h's function of that name with the
+// body noise.h keeps as a commented-out line,
+// `x - round(x / 33554432.0) * 33554432.0` — the name, the wrap into ±2^24
+// and its period of 2^25. THIS PROJECT'S OWN: the half-up rounding,
+// floor(v / 2^25 + 0.5), where C's `round` takes a half away from zero, and
+// applying the wrap at all, where cubiomes' function returns its argument.
+// The clean-room spec/blended-noise-spec.md (Q1.6), which arrived later,
+// states the same wrap and rounding. deepslate (`modern`) and the server
+// (`legacyFromWorldSeed`) later confirmed the order across the stacks; they
+// are not its source. Recorded in NOTICE.
 
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
@@ -48,9 +53,12 @@ constexpr double kPrecisionPeriod = 33554432.0;
 } // namespace
 
 double maintainPrecision(double value) noexcept {
-    // Java rounds half up rather than away from zero, so this is floor(v+0.5)
-    // and not std::round. The two differ only at exact half-integers, and
-    // only ever at coordinates 2^25 apart, but "only" is not "never".
+    // Half up, floor(v / 2^25 + 0.5), not std::round, which takes a half away
+    // from zero (spec Q1.6's reading; this project's own, NOTICE). The two
+    // part where v / 2^25 is a negative half-integer, at v = 2^24 - 2^-29 —
+    // the largest quotient below one half, which the added half rounds up to
+    // one — at odd quotients of magnitude 2^52 to 2^53, and in the sign of a
+    // zero at v = -0. NOTICE says so too.
     return value - (std::floor((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
 }
 
@@ -127,8 +135,9 @@ BlendedNoise BlendedNoise::build(rng::JavaRandom& random, Parameters parameters,
     noise.reading_ = reading;
 
     // Drawn in this order from one generator: the two limits, then the
-    // blend. Sequenced through separate loops rather than interleaved,
-    // because which stack takes which draw is the whole seeding.
+    // blend — initSurfaceNoise's order (header). Sequenced through separate
+    // loops rather than interleaved, because which stack takes which draw is
+    // the whole seeding.
     noise.minimum_.reserve(kLimitOctaves);
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
         noise.minimum_.push_back(PerlinNoise::fromRandom(random));

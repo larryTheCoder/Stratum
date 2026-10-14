@@ -3,9 +3,9 @@
 //
 // ADAPTED from cubiomes (https://github.com/Cubitect/cubiomes, MIT License,
 // Copyright (c) 2020 Cubitect), biomenoise.c `getEndHeightNoise`, at
-// e61f905: the field's shape and constants. Recorded in NOTICE; see
-// end_islands.hpp for what was adapted, what was measured instead, and what
-// is not measured.
+// e61f905: the field's shape and constants, and `sampleNoiseColumnEnd`'s 8
+// off the height. Recorded in NOTICE; see end_islands.hpp for what was
+// adapted, what was measured instead, and what is not measured.
 
 #include <stratum/javamath.hpp>
 #include <stratum/noise/end_islands.hpp>
@@ -26,6 +26,12 @@ constexpr std::int32_t kCellRadius = 12;
 /// island owns the middle of the dimension outright.
 constexpr std::int64_t kInnerVoidRadiusSquared = 4096;
 /// How selective the simplex gate is. Roughly one cell in a hundred.
+///
+/// A double, and that is this project's own reading: cubiomes compares
+/// against the float -0.9f, -0.8999999761581421 once widened, so a cell whose
+/// value lies between the two is an island there and not here. Unmeasured:
+/// a probe separates the two only through a cell inside that gap of 2.4e-8
+/// (NOTICE).
 constexpr double kIslandThreshold = -0.9;
 /// LCG steps discarded between seeding with the world seed and building the
 /// simplex. See fromWorldSeed.
@@ -124,6 +130,9 @@ float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) c
 }
 
 double EndIslands::sample(const std::int32_t blockX, const std::int32_t blockZ) const noexcept {
+    // The 8 is cubiomes' (sampleNoiseColumnEnd); the 128 is no source's on
+    // record but the goldens', and minecraft.wiki's range for the function,
+    // -0.84375 to 0.5625, is the clamp through both (NOTICE).
     const float height = heightAt(javamath::floorDiv(blockX, 8), javamath::floorDiv(blockZ, 8));
     return (static_cast<double>(height) - 8.0) / 128.0;
 }

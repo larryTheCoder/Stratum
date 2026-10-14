@@ -45,16 +45,27 @@ file names its upstream file and licence in its header.
 
 lib/src/blended.cpp is adapted from cubiomes by Cubitect
 (https://github.com/Cubitect/cubiomes): the octave loop and blend of
-`sampleSurfaceNoise` in biomenoise.c, and the octave seeding order of
-`octaveInit` in noise.c. Its `maintainPrecision` is noise.h's function of
-that name with the body noise.h keeps as a commented-out line,
-`x - round(x / 33554432.0) * 33554432.0`: the name, the wrap into +/-2^25
-and its period are adapted from that line. This project's own: the
+`sampleSurfaceNoise` in biomenoise.c; the order its three octave stacks are
+drawn in from one generator, sixteen minimum, sixteen maximum, then eight
+blend octaves, which is the opening of biomenoise.c's `initSurfaceNoise`
+(e3afede lists that order among what it checked against cubiomes); and,
+within a stack, the octave seeding order of `octaveInit` in noise.c.
+deepslate's values for `BlendedNoise::modern` and the server's for
+`legacyFromWorldSeed` (SPEC.md section 11) later confirmed the order across
+the stacks; they are not its source. Its `maintainPrecision` is noise.h's
+function of that name with the body noise.h keeps as a commented-out line,
+`x - round(x / 33554432.0) * 33554432.0`: the name, the wrap into +/-2^24
+and its period of 2^25 are adapted from that line. This project's own: the
 rounding, half up as `floor(v / 2^25 + 0.5)`, where C's `round` takes a
-half away from zero (the two part at every negative odd multiple of 2^24),
-and applying the wrap at all, where cubiomes' function returns its argument
-unchanged. spec/blended-noise-spec.md Q1.6, which arrived later (3e41d5f),
-states the same wrap with the same half-up floor.
+half away from zero, and applying the wrap at all, where cubiomes' function
+returns its argument unchanged. The two roundings part where v / 2^25 is a
+negative half-integer (v a negative odd multiple of 2^24); at
+v = 2^24 - 2^-29, whose quotient is the largest double below one half and
+rounds up to one when the half is added; where the quotient is an odd
+integer of magnitude 2^52 to 2^53, which the added half takes to its even
+neighbour; and in the sign of a zero result at v = -0. Nowhere else.
+spec/blended-noise-spec.md Q1.6, which arrived later (3e41d5f), states the
+same wrap with the same half-up floor.
 lib/include/stratum/noise/blended.hpp declares both and carries the same
 attribution.
 
@@ -114,10 +125,17 @@ the paper does not say which 32 bits of a 64-bit draw to take, and nothing
 but cubiomes is on record for that choice: M1 declined to write the
 function for want of an oracle (dfce50c), and it arrived with perlin.cpp,
 checked against cubiomes alone (0cbc0be). It is recorded as adapted on the
-same grounds as `evaluateSpline` below. Not adapted: the generator, the
-64-to-128-bit seed upgrade and the other draws, which M1 wrote and checked
-against the JDK before cubiomes was consulted (dfce50c); cubiomes'
-`xSetSeed` later confirmed the seed upgrade constant for constant.
+same grounds as `evaluateSpline` below. Not adapted, and written before any
+commit records consulting cubiomes (dfce50c): the generator,
+`mixStafford13` and the unbounded draws, each checked against the JDK's
+own; and the 64-to-128-bit seed upgrade, written from a formula dfce50c
+calls documented but names no document for. Of the upgrade only the mix is
+the JDK's. Its composition, `lo = seed ^ 0x6A09E667F3BCC909` and
+`hi = lo + 0x9E3779B97F4A7C15`, each then mixed, was checked at the time
+only against the project's own Java restatement of it
+(tools/vectors/XoroshiroVectors.java); cubiomes' `xSetSeed` was its first
+independent confirmation (0cbc0be), constant for constant, and the goldens,
+which every modern noise's seeding passes through, the second.
 
 The named-noise seeding — `XoroshiroPositionalFactory` and `seedFromHashOf`
 in the same header, with the modern path of lib/src/noise_registry.cpp's
@@ -125,9 +143,12 @@ in the same header, with the modern path of lib/src/noise_registry.cpp's
 `init_climate_seed`: the world seed through `xSetSeed`, two `xNextLong`
 draws taken once as a 128-bit base, and each noise's generator that base
 XORed with the halves of md5("minecraft:<noise>"), the digest's first eight
-bytes, big-endian, into the low word. It arrived in the same commit as
-`evaluateSpline` (d47c53d) and is recorded on the same grounds; its
-octave-level form, `xOctaveInit`, is recorded above. This project's own:
+bytes, big-endian, into the low word. `XoroshiroPositionalFactory` and the
+registry's modern path arrived in the same commit as `evaluateSpline`
+(d47c53d); `seedFromHashOf` arrived before them, with perlin.cpp in
+0cbc0be, for the octave salts of `xOctaveInit` (recorded above), the first
+thing it seeded. Both commits name cubiomes as the oracle, and both are
+recorded on `evaluateSpline`'s grounds. This project's own:
 the digest computed at run time from whatever identifier a pack names
 (lib/src/md5.cpp, from RFC 1321), where cubiomes carries the halves for
 its climate noises' names as constants; and each noise's octaves taken from
@@ -174,13 +195,19 @@ project's own (SPEC.md section 11).
 
 tools/vectors/climate_vectors.c carries `getSplineStrict`, a copy of
 biomenoise.c's `getSpline` with its double `lerp` helper replaced by a
-float one; that file's licence expression is Apache-2.0 AND MIT for it.
+float one, and its `emitClimateChain` reproduces the opening of
+biomenoise.c's `sampleBiomeNoise`: the shift noise sampled at (x, 0, z) and
+at (z, x, 0), each times 4.0 and added to the quart position, then
+continentalness, erosion and weirdness sampled at the shifted (x, 0, z);
+that file's licence expression is Apache-2.0 AND MIT for both.
 tools/vectors/blended_vectors.c's `initBlended` reproduces the opening of
 biomenoise.c's `initSurfaceNoise`: a Java LCG seeded with the world seed,
 then `octaveInit` from octave -15 with 16 octaves twice and from -7 with 8,
 into the octave buffer at 0, 16 and 32; that file's licence expression is
 Apache-2.0 AND MIT for it. The vector drivers otherwise call cubiomes' own
-functions, built from a checkout fetched at run time.
+functions, built from a checkout fetched at run time, at sample points of
+their own, but for tools/vectors/nether_vectors.c's (x, 0, z), which is
+where `getNetherBiome` samples the legacy Nether climate.
 
 tools/analysis/legacy-goldens-biome-analyze.cpp reproduces the same legacy
 Nether climate a second time, for analysis: `setNetherSeed`, `octaveInit`
@@ -197,16 +224,30 @@ adapt the shape of the End's island field from biomenoise.c's
 squared distance exceeds 4096 and the simplex reads below -0.9; each
 island's steepness `(|x| * 3439 + |z| * 147) % 13 + 9` (the integer form,
 which cubiomes keeps as a commented-out line); the offsets
-`within - 2 * cell`; and the clamp to [-100, 80]. The header used to call
-this "the community-documented End island field" without naming a
+`within - 2 * cell`; the clamp to [-100, 80]; and the 8 taken off the
+height in the density function's value, `(height - 8) / 128`, which is
+`sampleNoiseColumnEnd`'s `getEndHeightNoise(...) - 8.0f`. The header used
+to call this "the community-documented End island field" without naming a
 document; no source but cubiomes is on record, so it is recorded as an
-adaptation on the same grounds as `evaluateSpline`. NOT adapted, and
-measured against the server instead (SPEC.md section 11): floorDiv and
-floorMod where cubiomes truncates; each island's height clamped and the
-highest taken, where cubiomes takes the smallest steepness-weighted
-squared distance and one square root; and the 17292-step seeding skip,
-found by scoring every skip in [0, 65536] against the server's own field.
-`setEndSeed` carries the same literal, which corroborates the measurement.
+adaptation on the same grounds as `evaluateSpline`. The 128 is not
+cubiomes', which keeps the pre-1.18 density scale and does not divide the
+height, and no source for it is on record from the commit that wrote it
+(6738bd0). minecraft.wiki's Density function page, read since, gives the
+function's range as -0.84375 to 0.5625 (under its 26.3 name,
+`end_outer_islands`), which with the clamp is (-100 - 8) / 128 and
+(80 - 8) / 128; the golden End regions confirm both numbers block for
+block. This project's own reading: the threshold compared as the double
+-0.9, where cubiomes compares the simplex value against the float -0.9f,
+which widens to -0.8999999761581421. A cell whose value lies between the
+two is an island to cubiomes and not here; nothing measures which is the
+server's, and no probe separates them unless a probed cell's value falls
+in that gap of 2.4e-8. NOT adapted, and measured against the server
+instead (SPEC.md section 11): floorDiv and floorMod where cubiomes
+truncates; each island's height clamped and the highest taken, where
+cubiomes takes the smallest steepness-weighted squared distance and one
+square root; and the 17292-step seeding skip, found by scoring every skip
+in [0, 65536] against the server's own field. `setEndSeed` carries the same
+literal, which corroborates the measurement.
 
 lib/src/biome_source.cpp and lib/include/stratum/biome/source.hpp adapt
 the structure of the End's biome source from cubiomes' biomenoise.c,
