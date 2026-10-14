@@ -83,10 +83,16 @@ PocketMine-MP itself can call.
 ## Installing
 
 The engine is a PHP extension, not part of the plugin: build it with
-`tools/php-dev` + `cmake --preset ext` (see `ext/README.md`) and load
-`stratum.so` in the server's `php.ini`. `plugin.yml` declares
-`extensions: {stratum: "*"}`, so a server without it refuses the plugin by
-name at load time instead of failing inside a worker thread.
+`tools/php-dev` + `cmake --preset ext-release` (see `ext/README.md`) and
+load `stratum.so` in the server's `php.ini` with an absolute `extension=`
+line. `plugin.yml` declares `extensions: {stratum: "*"}`, so a server
+without it refuses the plugin by name at load time instead of failing
+inside a worker thread.
+
+PocketMine-MP 5.44.3 loads plugins from phars only — without DevTools it
+registers no folder loader — so pack this directory first:
+`php -d phar.readonly=0 ext/pocketmine/build_plugin_phar.php ext/plugin
+plugins/Stratum.phar` (`plugin.yml` at the root, `src/` beside it).
 
 ```php
 // Creating a Stratum world, e.g. from a command or another plugin:
@@ -96,17 +102,57 @@ name at load time instead of failing inside a worker thread.
 `versionRoot` is a version root as `tools/fetch-vanilla` leaves it —
 `worldgen/` and `biome_parameters/` side by side.
 
+A world can come from `pocketmine.yml` too, with no code: freeze the
+pipeline into the world's folder first, as `WorldFactory` does
+(`Stratum\freezePipeline($versionRoot, "<server>/worlds/<name>/stratum-pipeline.blob")`),
+then name the generator and give the options as its preset:
+
+```yaml
+worlds:
+  <name>:
+    generator: stratum
+    preset: '{"blob":"<server>/worlds/<name>/stratum-pipeline.blob","settings":"minecraft:overworld","biomes":"minecraft:overworld"}'
+    seed: 12345
+```
+
+## Running on PocketMine-MP
+
+`tools/pmmp-dev` fetches PocketMine-MP 5.44.3 and its own PHP
+(pmmp/PHP-Binaries php-build-524), digest-checked, into
+`~/.cache/stratum-pmmp`, and runs this plugin and the extension inside
+them. `tools/pmmp-dev server <dir> --stratum-so <so> --version-root
+<root>` writes a hermetic headless server directory — loopback only,
+nothing that phones home, the plugin packed into `plugins/`, the world as
+the `worlds:` entry above — and prints the command that starts it.
+`ctest --preset pmmp` is the evidence, local and not CI:
+
+- `pmmp.load`: the module's build id and the ABI lines of both PHPs agree,
+  every zend symbol it imports is exported, it loads beside pmmpthread,
+  chunkutils2, leveldb, igbinary, morton and the rest, and PocketMine-MP's
+  own startup gate accepts the environment.
+- `pmmp.phpt`: `ext/zend/tests` and this directory's `tests/` under that PHP.
+- `pmmp.census.blocks`: every Java block state through
+  `BlockStateTranslator`, PocketMine-MP's own upgrader and deserializer;
+  fails if a state v1 terrain places reaches `minecraft:info_update`.
+- `pmmp.census.biomes`: every biome each vanilla world preset's dimension
+  can emit, against `LegacyBiomeIdToStringIdMap` (what the wire asks) and
+  the biome definitions clients are sent.
+- `pmmp.threads`: four `pocketmine\thread\Thread`s opening one blob's
+  Dimension and encoding at once, byte-identical to one thread's encode.
+- `pmmp.smoke.overworld`, `pmmp.smoke.end`: a server boot that generates
+  the spawn area (224 chunks populated) and stops from the console, with
+  `level.dat`, the chunks on disk, `server.log` and crash dumps checked.
+
 ## What is not verified
 
-**This plugin has never run.** PocketMine-MP cannot be installed here: its
-own PHP releases ship no headers, and it needs a stack of extensions
-(pmmpthread, leveldb, igbinary, morton, …) that `tools/php-dev` does not
-build. So:
+**It has run in a real, headless PocketMine-MP 5.44.3, never with a
+client.** Every check above passes. What that leaves:
 
-- Every API it calls was read from PocketMine-MP 5.44.4's source and
-  independently re-checked (SPEC §11's M5-PMMP entry lists what that
-  corrected), but nothing here has been executed against a real server.
-- CI checks that every file parses (`php -l`) and runs the PHPT suites in
+- Nothing has connected to it. Whether a Bedrock client renders the
+  terrain, the biomes and the flowing fluids as a Java client would is the
+  owner's check to make (SPEC §11, "M5: Stratum inside a real
+  PocketMine-MP").
+- CI still checks only that every file parses and runs the PHPT suites in
   `tests/`, each with the real extension loaded against stand-ins for the
   PocketMine-MP classes the code calls: `001_generator_options.phpt`
   (`GeneratorOptions`, fixture-free), `002_fluid_update_scheduler.phpt`
@@ -114,26 +160,39 @@ build. So:
   open `validate()` makes at world load), `004_world_pins.phpt`
   (`StratumWorlds` across a worker shut down and restarted) and
   `005_world_factory.phpt` (`WorldFactory` leaving an existing world's
-  blob byte for byte).
-- Three facts about PocketMine-MP that the main-thread checks and the pins
-  are built on come from the M5 review that asked for them, and have not
-  been re-read from PocketMine-MP's source: that an exception on a
-  generation worker takes the server down, that the memory manager shuts
-  idle workers down (and every generator with them), and that
-  `WorldLoadEvent` fires before any of the world's chunks is requested.
-- The rest — registration, chunk assembly, block translation, and whether
-  the scheduled fluid updates flow as a Java server's do — needs a real
-  PocketMine-MP server to verify, and that is the next real step for this
-  binding (PROGRESS.md).
-- **How an End world reaches a Bedrock client is unverified.** Generation
-  matches the server's (SPEC §11, "The End's biome source"), but nothing
-  here says how PocketMine-MP presents the result: as far as this binding
-  knows, a PocketMine-MP world carries no dimension of its own, so an End
-  world may well be sent to clients as the overworld — its sky, fog and
-  light — and `WorldFactory::create()` only ever writes the overworld's
-  options, so an End world needs its generator options written by hand.
-  Neither has been checked against PocketMine-MP's source or a client
-  (SPEC §11's End entry, "Still open").
+  blob byte for byte). The real-server checks need the cache, so they are
+  local.
+- Two facts about PocketMine-MP that the pins are built on come from the
+  M5 review that asked for them and have not been observed in the real
+  server: that the memory manager shuts idle workers down (and every
+  generator with them), and that `WorldLoadEvent` fires before any of the
+  world's chunks is requested. The third, that an exception on a
+  generation worker takes the server down, has been: a generator refusal
+  injected into the smoke crashes its workers and the server.
+- **The fluid updates cost generation work.** A block update scheduled at
+  each aquifer liquid when its chunk is populated makes that liquid flow
+  while the spawn area is still generating, and a block change inside the
+  3x3 of a population task still in flight makes PocketMine-MP discard
+  that task's result and populate again (`World::generateChunkCallback`).
+  Measured on the overworld smoke: 3 to 56 discarded populations a run,
+  and slower spawn generation in each of three paired runs, against none
+  with the scheduler left out. Whether the flow is Java's is unobserved.
+- **A Stratum world cannot move.** Its generator options hold the frozen
+  pipeline's absolute path, and PocketMine-MP validates them on every
+  load: move or rename the server directory and the world no longer
+  loads, and when it is the default world the server stops at startup.
+  Measured, not inferred.
+- **An End world generates, and is presented as the overworld.** The End
+  smoke boots, generates and stops cleanly, every biome Bedrock's one End
+  biome. But PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to every
+  client whatever the world (`PreSpawnPacketHandler`, `NetworkSession`),
+  so its sky, fog and light will be the overworld's; a new world gets
+  PocketMine-MP's default spawn, (256, 70, 256), which in the End is over
+  the void between the main island and the outer ones — the whole
+  224-chunk spawn area is air; and `WorldFactory::create()` only ever
+  writes the overworld's options, so an End world needs its options
+  written by hand, as the smoke's `worlds:` entry does. Read from source
+  and measured headless; no client has seen it.
 - Fluid updates live in memory between a chunk's generation and its
   population — held through worker restarts while the world is loaded and
   pinned, but not through an unload: a chunk generated as a neighbour in
@@ -158,4 +217,5 @@ found by reading PocketMine-MP's source rather than by running it:
 - A block PocketMine-MP does not implement (`minecraft:powder_snow` is a
   real, measured example that the overworld's surface rules place) would
   otherwise become PocketMine-MP's `info_update`; the fallback table names
-  it, and every miss is logged once.
+  it, and every miss is logged once per worker thread (each has its own
+  translator), so a server with three workers may say it three times.

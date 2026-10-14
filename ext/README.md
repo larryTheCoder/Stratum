@@ -71,9 +71,18 @@ the generator, translates each sub-chunk's palette through PocketMine-MP's
 own deserializer, freezes a pipeline into a new world's folder, refuses on
 the main thread every world that cannot generate, and pins each Stratum
 world's state while it is loaded. Written against PocketMine-MP 5.44.4's
-source but **never run** — PocketMine-MP cannot be installed here — so CI
-checks that it parses and tests its classes against stand-ins for
-PocketMine-MP's, with this extension loaded.
+source; CI checks that it parses and tests its classes against stand-ins
+for PocketMine-MP's, with this extension loaded.
+
+**Run inside a real PocketMine-MP 5.44.3, headless** (`tools/pmmp-dev`,
+`ctest --preset pmmp`; local evidence, not CI). `cmake --preset
+ext-release` builds the optimised stratum.so for it, against tools/php-dev's
+PHP: PocketMine-MP's own PHP (pmmp/PHP-Binaries) is the same 8.2.30 ZTS
+with the same build id, and the module loads into it beside pmmpthread,
+chunkutils2, leveldb and the rest and passes every PHPT there.
+`pocketmine/` holds the checks that run under PocketMine-MP's own classes:
+the block state and biome censuses, a pmmpthread case, and what a stopped
+server left on disk. `plugin/README.md` says what they found.
 
 ## How the pieces fit
 
