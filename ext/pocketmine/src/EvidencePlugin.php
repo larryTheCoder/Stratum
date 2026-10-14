@@ -16,6 +16,7 @@ use pocketmine\player\ChunkSelector;
 use pocketmine\plugin\PluginBase;
 use pocketmine\scheduler\AsyncPool;
 use pocketmine\scheduler\ClosureTask;
+use pocketmine\world\ChunkLoader;
 use pocketmine\world\World;
 use function array_map;
 use function count;
@@ -71,7 +72,17 @@ use const JSON_THROW_ON_ERROR;
  *    (the world's scheduled-update index, by reflection, before the first
  *    handler and after the last) and, from then on, every position in it
  *    that is ever in that index, checked each tick, so an update scheduled
- *    later than the event is seen too.
+ *    later than the event is seen too. The plugin's FluidUpdateScheduler
+ *    releases a chunk's liquids only once every chunk within two of it is
+ *    loaded and populated, so those chunks are populated too where they are
+ *    not, and all of them held loaded by this plugin's own chunk loader —
+ *    after the idle wait the spawn area has long been unloaded — until the
+ *    server stops. The tick each update is seen on: this plugin's task
+ *    scheduler runs after the Stratum plugin's (it depends on Stratum, so
+ *    it is enabled after it, and PocketMine-MP ticks enabled plugins'
+ *    schedulers in that order) and before the world ticks, so an update the
+ *    Stratum plugin's release schedules with no delay is in the index when
+ *    this looks.
  * Each is logged as it happens and written to "report" when the plugin is
  * disabled, as the server stops.
  */
@@ -87,6 +98,8 @@ final class EvidencePlugin extends PluginBase implements Listener{
 	private array $report = ["status" => [], "populated" => []];
 	/** @var array<int, true> chunk hash => true: chunks ordered populated by `populate` */
 	private array $watched = [];
+	/** Holds every chunk `populate` needs loaded until the server stops. */
+	private ?ChunkLoader $loader = null;
 	/** @var array<int, int> chunk hash => the scheduled updates before its ChunkPopulateEvent's handlers ran */
 	private array $before = [];
 	/** @var array<int, array<int, true>> chunk hash => block hash => true: every position seen in the scheduled-update index */
@@ -248,10 +261,32 @@ final class EvidencePlugin extends PluginBase implements Listener{
 				$targets[$hash] = [$chunkX, $chunkZ];
 			}
 		}
+		// Everything within two of a target: what the plugin's
+		// FluidUpdateScheduler waits for, loaded and populated, before it
+		// releases the target's liquids. Held loaded from here on — loaded
+		// from disk where it is generated — and populated where it is not.
+		$around = [];
+		foreach($targets as [$chunkX, $chunkZ]){
+			for($dx = -2; $dx <= 2; ++$dx){
+				for($dz = -2; $dz <= 2; ++$dz){
+					$around[World::chunkHash($chunkX + $dx, $chunkZ + $dz)] = [$chunkX + $dx, $chunkZ + $dz];
+				}
+			}
+		}
+		$loader = $this->loader ??= new class implements ChunkLoader{};
+		$settle = [];
+		foreach($around as $hash => [$chunkX, $chunkZ]){
+			$world->registerChunkLoader($loader, $chunkX, $chunkZ);
+			if(!isset($targets[$hash]) && !$world->isChunkPopulated($chunkX, $chunkZ)){
+				$settle[$hash] = [$chunkX, $chunkZ];
+			}
+		}
 		$this->report["ordered"] = count($targets);
+		$this->report["settleOrdered"] = count($settle);
 		$this->getLogger()->info("populate: ordering the population of " . count($targets) .
 			" chunk(s) next to the spawn area, generated and not populated: " .
-			implode(" ", array_map(static fn(array $c) : string => $c[0] . "," . $c[1], $targets)));
+			implode(" ", array_map(static fn(array $c) : string => $c[0] . "," . $c[1], $targets)) .
+			"; and of " . count($settle) . " more within two of them, so that they settle");
 		if(count($targets) === 0){
 			return true;
 		}
@@ -262,13 +297,18 @@ final class EvidencePlugin extends PluginBase implements Listener{
 			}), 1);
 		}
 		$done = 0;
-		$total = count($targets);
-		foreach($targets as $hash => [$chunkX, $chunkZ]){
-			$this->watched[$hash] = true;
-			$world->orderChunkPopulation($chunkX, $chunkZ, null)->onCompletion(
-				function() use (&$done, $total) : void{
+		$total = count($targets) + count($settle);
+		$this->report["completed"] = 0;
+		$this->report["settleCompleted"] = 0;
+		foreach($targets + $settle as $hash => [$chunkX, $chunkZ]){
+			$target = isset($targets[$hash]);
+			if($target){
+				$this->watched[$hash] = true;
+			}
+			$world->orderChunkPopulation($chunkX, $chunkZ, $loader)->onCompletion(
+				function() use (&$done, $total, $target) : void{
+					++$this->report[$target ? "completed" : "settleCompleted"];
 					if(++$done === $total){
-						$this->report["completed"] = $done;
 						$this->getLogger()->info("populate: all " . $total . " chunk(s) populated");
 					}
 				},

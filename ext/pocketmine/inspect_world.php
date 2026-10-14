@@ -76,7 +76,7 @@ declare(strict_types=1);
  * own liquid: no more blocks changed than MAX_CHANGES_PER_MARKED for each
  * fluid position the engine marked for an update in the populated chunks —
  * the positions Stratum\takeFluidUpdates hands the plugin's
- * FluidUpdateScheduler as each is populated, where every flow starts — so a
+ * FluidUpdateScheduler as each settles, where every flow starts — so a
  * run that flooded the world cannot pass however locally plausible each
  * block is. How
  * much flowed varies from run to run — the server populates chunks on three

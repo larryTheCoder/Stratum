@@ -28,7 +28,9 @@ declare(strict_types=1);
  *     (inspect_world.php encodes each and takes them, in a process of its
  *     own) had a block update scheduled: the updates the old workers left
  *     when they generated those chunks, before the shutdown, held by the
- *     pin and delivered once the chunks were populated. At least one such
+ *     pin and delivered once the chunks had settled — populated, with
+ *     every chunk within two of them populated too, which the evidence
+ *     plugin orders as well. At least one such
  *     position, or nothing was shown. This, not StratumWorlds' record, is
  *     what shows the extension's pin held — the extension cannot be asked
  *     whether a world is pinned without changing its pins — and a plugin
@@ -145,11 +147,16 @@ if($shutdown !== null && count($again) === 0){
 $populated = $report["populated"] ?? [];
 $ordered = $report["ordered"] ?? 0;
 echo "chunks next to the spawn area, generated before the shutdown and populated after it: ", $ordered, " ordered, ",
-	$report["completed"] ?? 0, " populated\n";
+	$report["completed"] ?? 0, " populated; and within two of them, so that they settle: ", $report["settleOrdered"] ?? 0,
+	" ordered, ", $report["settleCompleted"] ?? 0, " populated\n";
 if($ordered < 1){
 	$failures[] = "no chunk generated before the shutdown was left to populate after it";
 }elseif(($report["completed"] ?? 0) !== $ordered){
 	$failures[] = "only " . ($report["completed"] ?? 0) . " of the " . $ordered . " chunks ordered populated were";
+}
+if(($report["settleCompleted"] ?? 0) !== ($report["settleOrdered"] ?? 0)){
+	$failures[] = "only " . ($report["settleCompleted"] ?? 0) . " of the " . ($report["settleOrdered"] ?? 0) .
+		" chunks ordered populated round them were";
 }
 $markedTotal = 0;
 $deliveredTotal = 0;
