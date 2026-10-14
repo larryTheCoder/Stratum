@@ -108,6 +108,11 @@ public:
 
     /// The raw height field, in blocks, on the `/8` grid. Exposed because it
     /// is what a probe reads back and what the goldens pin.
+    ///
+    /// PRECONDITION: |gridX| and |gridZ| at most 2^28, the whole `/8` grid
+    /// of an int32 block coordinate (sample() cannot pass anything else). The
+    /// island cells it samples then stay within 2^27 + 12, inside
+    /// PerlinNoise::sampleSimplex2D's 2^29. Asserted in debug builds.
     [[nodiscard]] float heightAt(std::int32_t gridX, std::int32_t gridZ) const noexcept;
 
     /// The central island alone — the seed-independent radial term. Exposed
@@ -116,6 +121,9 @@ public:
 
     /// The simplex field the outer islands are gated on, at one cell. The
     /// seeding's single call site; see the file comment.
+    ///
+    /// PRECONDITION: |cellX| and |cellZ| below 2^29, sampleSimplex2D's own
+    /// bound. Asserted in debug builds.
     [[nodiscard]] double sampleSimplexSeeding(std::int32_t cellX,
                                               std::int32_t cellZ) const noexcept;
 

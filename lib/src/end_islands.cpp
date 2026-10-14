@@ -12,6 +12,7 @@
 #include <stratum/rng/java_random.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 
@@ -75,10 +76,17 @@ float EndIslands::centralIslandHeight(const std::int32_t gridX, const std::int32
 
 double EndIslands::sampleSimplexSeeding(const std::int32_t cellX,
                                         const std::int32_t cellZ) const noexcept {
+    // The header's precondition: sampleSimplex2D's own bound.
+    assert(std::abs(std::int64_t{cellX}) < (std::int64_t{1} << 29) &&
+           std::abs(std::int64_t{cellZ}) < (std::int64_t{1} << 29));
     return source_.sampleSimplex2D(static_cast<double>(cellX), static_cast<double>(cellZ));
 }
 
 float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) const noexcept {
+    // The header's precondition, which keeps every island cell below inside
+    // sampleSimplex2D's 2^29: at most 2^27 + 12 from a grid of at most 2^28.
+    assert(std::abs(std::int64_t{gridX}) <= (std::int64_t{1} << 28) &&
+           std::abs(std::int64_t{gridZ}) <= (std::int64_t{1} << 28));
     // floorDiv/floorMod, not `/` and `%`: the grid runs through the origin
     // and the field is NOT symmetric under truncation — Java's own `/` here
     // is applied to a coordinate that has already been floor-divided by 8 on

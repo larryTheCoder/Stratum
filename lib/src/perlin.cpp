@@ -251,8 +251,9 @@ double PerlinNoise::sampleSimplex2D(double x, double y) const noexcept {
     const double kSkew = 0.5 * (std::sqrt(3.0) - 1.0);
     const double kUnskew = (3.0 - std::sqrt(3.0)) / 6.0;
 
-    // The header's precondition, which keeps every index below in int32.
-    assert(std::fabs(x) < 1073741824.0 && std::fabs(y) < 1073741824.0);
+    // The header's precondition, which keeps every index below in int32 —
+    // `cellX + cellY` the largest of them.
+    assert(std::fabs(x) < 536870912.0 && std::fabs(y) < 536870912.0);
     const double skewed = (x + y) * kSkew;
     const auto cellX = static_cast<std::int32_t>(std::floor(x + skewed));
     const auto cellY = static_cast<std::int32_t>(std::floor(y + skewed));

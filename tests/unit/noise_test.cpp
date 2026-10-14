@@ -199,3 +199,23 @@ TEST_CASE("a normal noise knows where its lattice leaves int32", "[noise][ub]") 
     // source.
     CHECK(std::isinf(stratum::noise::NormalNoise::zero().inputLimit()));
 }
+
+TEST_CASE("simplex is defined to its stated bound, at every corner of it", "[noise][ub]") {
+    // sampleSimplex2D's precondition is |x|, |y| < 2^29: the unskew adds the
+    // two skewed cells in int32, and each is up to sqrt(3) times the larger
+    // input, so 2^30 — the bound this used to state — let that sum overflow
+    // from about 6.2e8 on both axes. Here, the largest double under 2^29 on
+    // every corner and edge: under the sanitize preset an int32 overflow on
+    // the way aborts this case.
+    Xoroshiro128PlusPlus random = seeded(42);
+    const PerlinNoise noise = PerlinNoise::fromRandom(random);
+    const double edge = std::nextafter(536870912.0, 0.0);
+    for (const double x : {edge, -edge, 0.0}) {
+        for (const double y : {edge, -edge, 0.0}) {
+            CAPTURE(x, y);
+            const double value = noise.sampleSimplex2D(x, y);
+            CHECK(std::isfinite(value));
+            CHECK(std::fabs(value) <= 1.0);
+        }
+    }
+}

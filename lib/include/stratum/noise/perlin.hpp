@@ -71,11 +71,15 @@ public:
     /// 2D simplex noise over the same permutation, which is what the End's
     /// island noise samples.
     ///
-    /// PRECONDITION: |x| and |y| below 2^30, so the skewed cell and the sums
-    /// of cell and row indices built from it stay in int32. Both callers hold
-    /// it by construction: the End's island field samples block / 16 and the
-    /// freezing test block / 8, and an int32 block coordinate is under 2^31.
-    /// Asserted in debug builds.
+    /// PRECONDITION: |x| and |y| below 2^29. The skew puts each cell index
+    /// at up to sqrt(3) times the larger input, and the unskew adds the two
+    /// cells together in int32, so 2^29 is what keeps that sum below 2^31
+    /// (2 * sqrt(3) * 2^29 is about 1.86e9); 2^30 kept each cell in range but
+    /// not their sum. Both callers hold it by construction: the End's island
+    /// field samples block / 16 give or take 12 cells (at most 2^27 + 12),
+    /// and the freezing test block / 8 (at most 2^28), from an int32 block
+    /// coordinate; EndIslands' two raw-coordinate entry points state the
+    /// bound for their own inputs. Asserted in debug builds.
     [[nodiscard]] double sampleSimplex2D(double x, double y) const noexcept;
 
     [[nodiscard]] double originX() const noexcept { return originX_; }

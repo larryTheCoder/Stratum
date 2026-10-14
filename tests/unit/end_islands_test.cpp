@@ -27,6 +27,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <limits>
 
 using Catch::Approx;
 using stratum::noise::EndIslands;
@@ -146,4 +147,28 @@ TEST_CASE("the simplex seeding is the world seed plus a 17292-step skip",
     // a seeding that silently ignored the seed, and false of this one.
     CHECK(EndIslands::fromWorldSeed(0).sampleSimplexSeeding(2048, 0) !=
           Approx(EndIslands::fromWorldSeed(1).sampleSimplexSeeding(2048, 0)));
+}
+
+TEST_CASE("the field is defined across the whole int32 block range", "[noise][end_islands][ub]") {
+    // sample() hands heightAt a `/8` grid of at most 2^28, whose island cells
+    // stay within 2^27 + 12, well inside sampleSimplex2D's 2^29 (SPEC §8).
+    // The four corners of the int32 block range, and the grid's own extremes:
+    // under the sanitize preset any int32 overflow on the way aborts this case.
+    const EndIslands islands = EndIslands::fromWorldSeed(42);
+    constexpr std::int32_t kLow = std::numeric_limits<std::int32_t>::min();
+    constexpr std::int32_t kHigh = std::numeric_limits<std::int32_t>::max();
+    for (const std::int32_t x : {kLow, kHigh, 0}) {
+        for (const std::int32_t z : {kLow, kHigh, 0}) {
+            CAPTURE(x, z);
+            const double value = islands.sample(x, z);
+            CHECK(value >= (-100.0 - 8.0) / 128.0);
+            CHECK(value <= (80.0 - 8.0) / 128.0);
+        }
+    }
+    constexpr std::int32_t kGrid = std::int32_t{1} << 28;
+    for (const std::int32_t grid : {kGrid, -kGrid}) {
+        CAPTURE(grid);
+        CHECK(islands.heightAt(grid, -grid) >= -100.0F);
+        CHECK(islands.heightAt(grid, grid) <= 80.0F);
+    }
 }
