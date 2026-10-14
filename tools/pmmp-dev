@@ -49,6 +49,10 @@
 #   tools/pmmp-dev threads --stratum-so <so> --version-root <root>
 #   tools/pmmp-dev smoke --stratum-so <so> --version-root <root> [--dimension overworld|end]
 #                  [--work-dir <dir>] [--keep] [--timeout S] [--async-workers N] [--no-netns]
+#       boot that server, let it generate the spawn area, stop it from the
+#       console, and check server.log, crash dumps, level.dat and every chunk
+#       on disk, block by block and biome by biome, against what the engine
+#       generates for it (ext/pocketmine/inspect_world.php)
 #   server and smoke take --plugin-dir <dir> to pack a plugin tree other than
 #   ext/plugin, for trying a change to it against the real server.
 #
@@ -637,11 +641,11 @@ cmd_smoke() {
     echo "PocketMine-MP's own warnings:"
     grep -v 'Stratum: PocketMine-MP cannot place' <<<"${warnings}" | grep -vi 'stratum' | sed -E 's/^[^]]*\] /  /' || true
 
-    echo "on disk:"
+    echo "on disk, and against what the engine generates for it:"
     local inspect_rc=0
     evidence_php "${evidence}/inspect_world.php" --phar="${phar}" --world="${dir}/worlds/${world}" \
         --generator=stratum --options="${options}" --seed="${seed}" | sed 's/^/  /' || inspect_rc=$?
-    [[ ${inspect_rc} -eq 0 ]] || failures+=("the world on disk is not what the server should have left")
+    [[ ${inspect_rc} -eq 0 ]] || failures+=("the world on disk is incomplete, or not what the engine generates for it")
 
     if [[ ${keep} -eq 0 ]]; then
         rm -rf "${dir}/worlds" "${dir}/plugins" "${dir}/tmp" "${dir}/console.in"
