@@ -10,8 +10,12 @@
 # an idle worker, and `full` on the server thread. The second adds a
 # fork-join spare whose stage overlaps the worker's: with one worker allowed
 # the two are one timeline, with two they are two. The third commits a stage
-# off the worldgen workers, which must be reported. Then the refusals that
-# keep the server and the baseline from running without --accept-eula.
+# off the worldgen workers, which must be reported. Then the checks a
+# recording is judged by (its pin, its estimates against its workers' CPU),
+# the JVM's helper threads read from a jstack, the refusals that keep the
+# server and the baseline from running without --accept-eula, a failed run
+# that keeps its own directory and nothing else, and tools/perf-baseline's
+# comparison from two earlier halves.
 # Plain bash 3.2 and python3: this runs on the macOS legs too.
 set -euo pipefail
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found; skipping"; exit 77; }
@@ -51,6 +55,9 @@ def event(status, x, z, start, duration, thread='Worker-Main-1', level='minecraf
         'startTime': instant(start), 'duration': f'PT{whole}.{nanos:09d}S',
         'eventThread': {'javaName': thread, 'osName': thread},
         'chunkPosX': x, 'chunkPosZ': z, 'status': f'minecraft:{status}', 'level': level}}
+def collection(name, pauses, cause):
+    return {'type': 'jdk.GarbageCollection',
+            'values': {'name': name, 'sumOfPauses': pauses, 'cause': cause}}
 recorded = [
     event('biomes', 0, 0, 0, 4),            # costs 4
     event('biomes', 5, 5, 0, 7),            # outside the area; queued, costs 3
@@ -60,6 +67,9 @@ recorded = [
     event('features', 0, 0, 24.5, 1.5),     # the worker was idle from 24: costs 1.5
     event('full', 0, 0, 26, 0.8, thread='Server thread'),
     {'type': 'jdk.CPULoad', 'values': {}},  # not a chunk event: ignored
+    collection('G1Full', 'PT0.0125S', 'Heap Inspection Initiated GC'),
+    collection('G1Full', 'PT0.0075S', 'Heap Inspection Initiated GC'),
+    collection('G1New', 'PT0.002S', 'G1 Evacuation Pause'),
 ]
 if extra == 'spare':
     # Scheduled at 24, done at 30: one timeline charges it 30 - 26 = 4, its
@@ -105,6 +115,8 @@ check "${work}/one.out.json" "r['workers_only'] and r['commits'] == {'Worker-Mai
     "one worker committed every stage but full"
 check "${work}/one.out.json" "abs(r['worker_busy_s'] - 0.0255) < 1e-9" \
     "the worker's busy time is every estimate on it, other levels and chunks included"
+check "${work}/one.out.json" "r['collections']['Heap Inspection Initiated GC'] == {'count': 2, 'pause_ms': 20.0, 'collectors': ['G1Full']} and r['collections']['G1 Evacuation Pause']['count'] == 1" \
+    "the recording's garbage collections are counted by cause"
 
 events "${work}/two.json" +08:00 spare
 expect 0 "an instant with an offset reads as the same instant" "comparable median    19.00" \
@@ -120,9 +132,12 @@ expect 0 "with two allowed, two timelines" "comparable" \
 check "${work}/three.out.json" "abs(r['stages']['carvers']['median_ms'] - 6) < 1e-6 and abs(r['worker_busy_s'] - 0.0315) < 1e-9" \
     "each charged on its own"
 
-# The pin's CPU half, as run() applies it after jstack: the one-worker
-# recording's workers span 26 ms, so 25 ms of their CPU is one thread's worth
-# and 40 ms is not.
+# The pin's CPU half and the estimates' check, as run() applies them after
+# jstack: the one-worker recording's workers span 26 ms, so 25 ms of their CPU
+# is one thread's worth and 40 ms is not; its estimates sum to 25.5 ms, so
+# 25.5 ms of CPU backs them, 20 ms says the worker was descheduled for some of
+# them, and 27 ms (still one thread's worth) says some of its work ended in no
+# event.
 pin() {  # pin <result json> <allowed> <worker:cpu_s,...>
     python3 - "${tool}" "$@" <<'PY'
 import importlib.util, json, sys
@@ -132,7 +147,10 @@ spec.loader.exec_module(tool)
 result = json.load(open(sys.argv[2]))
 cpu = {name: float(value) for name, value in (p.split(':') for p in sys.argv[4].split(','))}
 judged = tool.judge_pin(result, cpu, int(sys.argv[3]))
-print(f"pin_held={judged['pin_held']} parallelism={judged['parallelism']:.3f}")
+scaled = judged['comparable_cpu_scaled']
+print(f"pin_held={judged['pin_held']} parallelism={judged['parallelism']:.3f} "
+      f"ratio={judged['estimate_cpu_ratio']:.3f} scaled={scaled['median_ms']:.2f} "
+      f"flags={' | '.join(judged['flags']) or '-'}")
 PY
 }
 expect 0 "one thread's worth of CPU holds the pin" "pin_held=True parallelism=0.962" \
@@ -141,6 +159,59 @@ expect 0 "more than one thread's worth breaks it" "pin_held=False parallelism=1.
     pin "${work}/one.out.json" 1 Worker-Main-1:0.025,Worker-Main-2:0.015
 expect 0 "which a pin of two allows" "pin_held=True" \
     pin "${work}/one.out.json" 2 Worker-Main-1:0.025,Worker-Main-2:0.015
+expect 0 "estimates the CPU backs are not flagged" "ratio=1.000 scaled=19.00 flags=-" \
+    pin "${work}/one.out.json" 1 Worker-Main-1:0.0255
+expect 0 "estimates above the CPU are flagged: the wall overstates" \
+    "ratio=1.275 scaled=14.90 flags=worker descheduled: wall overstates (the estimates are 1.275x" \
+    pin "${work}/one.out.json" 1 Worker-Main-1:0.020
+expect 0 "estimates below it are flagged too" \
+    "pin_held=True parallelism=1.038 ratio=0.944 scaled=20.12 flags=the estimates miss worker CPU (they are 0.944x" \
+    pin "${work}/one.out.json" 1 Worker-Main-1:0.027
+
+# The JVM's helper threads from two jstacks, by native id: a compiler thread
+# that ended between them is in the process total but no listed thread; one
+# that started between them started from nothing; Worker-Main-2 here is a new
+# thread under an old name.
+helpers() {
+    python3 - "${tool}" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('tool', sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+def stack(*threads):
+    return '\n'.join(f'"{name}" #{i} [{nid}] daemon prio=5 os_prio=0 cpu={ms}ms elapsed=9.0s '
+                     f'tid=0x0 nid={nid} waiting on condition  [0x0]\n   java.lang.Thread.State: X'
+                     for i, (name, nid, ms) in enumerate(threads))
+before = tool.parse_jstack(stack(('Worker-Main-1', 11, 1000), ('Worker-Main-2', 12, 500),
+                                 ('C2 CompilerThread0', 13, 100), ('C2 CompilerThread1', 14, 50),
+                                 ('GC Thread#0', 15, 10), ('Server thread', 16, 20)))
+after = tool.parse_jstack(stack(('Worker-Main-1', 11, 3000), ('Worker-Main-2', 19, 400),
+                                ('C2 CompilerThread0', 13, 600), ('C1 CompilerThread0', 17, 100),
+                                ('GC Thread#0', 15, 310), ('G1 Conc#0', 18, 200),
+                                ('VM Thread', 20, 100), ('VM Periodic Task Thread', 21, 5),
+                                ('Server thread', 16, 120), ('IO-Worker-1', 22, 30),
+                                ('JFR Recorder Thread', 23, 40), ('Netty Epoll IO #0', 24, 1)))
+# C2 CompilerThread1 ended: /proc's last look (its name cut to 15
+# characters) saw 0.3 s spent inside the recording.
+kinds = tool.thread_kinds(before, after, 5.0, {'14': ('C2 CompilerThre', 0.3)})
+workers = tool.worker_deltas(before, after)
+share = tool.helper_shares(kinds)
+expected = {'worker': 2.4, 'jit': 0.9, 'gc': 0.6, 'server': 0.1, 'io': 0.03, 'jfr': 0.04,
+            'other': 0.006}
+for kind, value in expected.items():
+    assert abs(kinds[kind] - value) < 1e-9, (kind, kinds)
+assert abs(kinds['ended'] - 0.3) < 1e-9, kinds
+assert abs(kinds['unlisted'] - (5.0 - sum(expected.values()))) < 1e-9, kinds
+assert workers == {'Worker-Main-1': 2.0, 'Worker-Main-2': 0.4}, workers
+assert abs(share['jit'] - 0.375) < 1e-9 and abs(share['gc'] - 0.25) < 1e-9, share
+assert 'ended' not in share, share
+hexadecimal = '"VM Thread" os_prio=0 cpu=1.50ms elapsed=2.0s tid=0x1 nid=0x1f runnable'
+assert tool.parse_jstack(hexadecimal) == {'31': ('VM Thread', 1.5)}
+print('helpers told apart')
+PY
+}
+expect 0 "the JVM's helper threads are told apart by kind, ended or renamed ones by native id" \
+    "helpers told apart" helpers
 
 events "${work}/stray.json" Z stray
 expect 0 "a stage off the worldgen workers is reported" "NOT ONLY ON WORLDGEN WORKERS" \
@@ -160,6 +231,41 @@ expect 1 "the baseline refuses the vanilla half without --accept-eula" "needs --
     "${baseline}" --skip-stratum
 expect 1 "the baseline refuses to do nothing" "both halves skipped" \
     "${baseline}" --skip-stratum --skip-vanilla
+
+# A run that fails keeps its own directory, inside --work, and leaves what was
+# already in --work alone: a server that exits at once, from a stand-in JDK
+# and an empty jar. run reads /proc, so Linux only.
+if [[ -d /proc/self/task ]]; then
+    mkdir -p "${work}/jdk/bin" "${work}/fixtures/1.21.11" "${work}/scratch/keepme"
+    echo notes > "${work}/scratch/keepme/notes.txt"
+    : > "${work}/fixtures/1.21.11/server-1.21.11.jar"
+    cat > "${work}/jdk/bin/java" <<'SH'
+#!/bin/sh
+if [ "$1" = -version ]; then echo "stand-in 0" >&2; exit 0; fi
+echo "stand-in server: exiting"
+exit 1
+SH
+    printf '#!/bin/sh\nexit 1\n' > "${work}/jdk/bin/jfr"
+    cp "${work}/jdk/bin/jfr" "${work}/jdk/bin/jstack"
+    chmod +x "${work}/jdk/bin/java" "${work}/jdk/bin/jfr" "${work}/jdk/bin/jstack"
+    expect 1 "a server that exits is a failure" "the server exited (see" \
+        env STRATUM_FIXTURES_DIR="${work}/fixtures" "${tool}" run --accept-eula \
+        --jdk "${work}/jdk" --work "${work}/scratch" --seeds 0 --dimensions overworld
+    [[ -f "${work}/scratch/keepme/notes.txt" ]] \
+        || { echo "FAIL: what --work held was removed"; ls -R "${work}/scratch"; exit 1; }
+    echo "ok: what --work already held is left alone"
+    named="$(sed -n 's/.*the server exited (see \(.*server\.log\)).*/\1/p' "${work}/out" | head -n 1)"
+    if [[ -z "${named}" || ! -f "${named}" ]] || ! grep -qF "stand-in server: exiting" "${named}"; then
+        echo "FAIL: the server.log the error names (${named}) is gone"; cat "${work}/out"; exit 1
+    fi
+    case "${named}" in
+        "${work}/scratch/stratum-vanilla-cost-"*) ;;
+        *) echo "FAIL: the run's directory is not its own, inside --work: ${named}"; exit 1 ;;
+    esac
+    grep -qF "kept ${work}/scratch/stratum-vanilla-cost-" "${work}/out" \
+        || { echo "FAIL: the kept directory is not named"; cat "${work}/out"; exit 1; }
+    echo "ok: the failed run keeps its own directory, and the server.log its error names"
+fi
 
 # The comparison alone, from an earlier run's two halves (--from): a Stratum
 # end to end of 50 ms/chunk mean against vanilla's 10 is 5x, and between the
