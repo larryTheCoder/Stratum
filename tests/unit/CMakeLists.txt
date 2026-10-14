@@ -119,11 +119,14 @@ if(TARGET stratum_cli)
         PASS_REGULAR_EXPRESSION "schema pin MC 1\\.21\\.11, pack format 94\\.1"
     )
 
-    add_test(NAME unit.cli.unimplemented_subcommand_is_loud
+    # Every subcommand is implemented now; `generate` given nothing to
+    # generate from is a usage error that says what it wants, not a quiet
+    # exit 0.
+    add_test(NAME unit.cli.generate_without_arguments_is_loud
         COMMAND stratum_cli generate)
-    set_tests_properties(unit.cli.unimplemented_subcommand_is_loud PROPERTIES
+    set_tests_properties(unit.cli.generate_without_arguments_is_loud PROPERTIES
         LABELS "unit"
-        PASS_REGULAR_EXPRESSION "not implemented"
+        PASS_REGULAR_EXPRESSION "expects one version root or pipeline blob"
     )
 
     add_test(NAME unit.cli.unknown_subcommand_fails COMMAND stratum_cli nonsense)

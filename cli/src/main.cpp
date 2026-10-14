@@ -3,10 +3,13 @@
 //
 // The commands are thin: argument handling and reporting live here, while
 // everything they actually do lives in lib/, where it is unit-tested without
-// spawning a process. Subcommands that are not implemented yet say which
-// milestone owns them and exit non-zero — a tool that silently succeeds while
-// doing nothing is the failure mode this project treats as most severe
-// (SPEC §8).
+// spawning a process — except `generate`'s chunk assembly, which lib/ does
+// not hold yet and generate.cpp does. Subcommands that are not implemented
+// yet say which milestone owns them and exit non-zero — a tool that silently
+// succeeds while doing nothing is the failure mode this project treats as
+// most severe (SPEC §8).
+
+#include "generate.hpp"
 
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
@@ -23,11 +26,14 @@
 
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -64,6 +70,27 @@ constexpr auto kSubcommands = std::to_array<Subcommand>({
      .summary = "generate region files for a seed and chunk range"},
 });
 
+void printGenerateUsage(std::ostream& out) {
+    out << "  stratum generate <version-root | pipeline.blob> --dimension <name> --seed N\n"
+        << "      (--region RX,RZ[:RX,RZ] | --chunks X,Z[:X,Z]) --out <dir>\n"
+        << "      [--threads N] [--force]\n"
+        << "      Writes Anvil region files, r.<x>.<z>.mca, holding the blocks and\n"
+        << "      biomes this build generates (terrain, aquifers, ore veins, biomes,\n"
+        << "      surface rules; no carvers, features or structures) in Java block\n"
+        << "      space, from a tools/fetch-vanilla version root or a frozen pipeline.\n"
+        << "      --dimension names vanilla's pairing of noise settings and biome\n"
+        << "      source, stored over its dimension type's column:\n"
+        << "       ";
+    for (const stratum::cli::DimensionPreset& preset : stratum::cli::dimensionPresets()) {
+        out << ' ' << preset.name;
+    }
+    out << "\n"
+        << "      One the library cannot compile is refused, saying why. Ranges\n"
+        << "      include both corners; a region the range covers in part holds only\n"
+        << "      the chunks asked for. An existing region file is refused unless\n"
+        << "      --force. --threads (default 1) does not change a byte of the output.\n";
+}
+
 void printUsage(std::ostream& out) {
     out << stratum::versionBanner() << "\n\n"
         << "usage: stratum <subcommand> [options]\n\n"
@@ -87,8 +114,9 @@ void printUsage(std::ostream& out) {
         << "      height: terrain needs the cell sampler (M3).\n"
         << "  stratum validate <pack-dir> [--seed N] [--strict]\n"
         << "      Exits 0 when clean, 1 when there are warnings, 4 on errors.\n"
-        << "      --strict makes warnings fatal too.\n"
-        << "\noptions:\n"
+        << "      --strict makes warnings fatal too.\n";
+    printGenerateUsage(out);
+    out << "\noptions:\n"
         << "  -h, --help       show this message\n"
         << "  -V, --version    print version, engine version and schema pin\n";
 }
@@ -475,6 +503,198 @@ int runValidate(const std::vector<std::string_view>& args) {
     return kExitOk;
 }
 
+/// "X,Z" for one corner, or "X,Z:X,Z" for two — both included, the second
+/// at or above the first on each axis. A range given backwards is refused
+/// rather than turned round: it is likelier a typo than a request.
+[[nodiscard]] bool parseCorners(std::string_view text, std::int32_t& minX, std::int32_t& minZ,
+                                std::int32_t& maxX, std::int32_t& maxZ) {
+    const std::size_t colon = text.find(':');
+    if (colon == std::string_view::npos) {
+        if (!parseOrigin(text, minX, minZ)) {
+            return false;
+        }
+        maxX = minX;
+        maxZ = minZ;
+        return true;
+    }
+    return parseOrigin(text.substr(0, colon), minX, minZ) &&
+           parseOrigin(text.substr(colon + 1), maxX, maxZ) && minX <= maxX && minZ <= maxZ;
+}
+
+/// Milliseconds per chunk, to one decimal place.
+[[nodiscard]] std::string perChunk(std::chrono::nanoseconds total, std::size_t chunks) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(1)
+         << (std::chrono::duration<double, std::milli>(total).count() / static_cast<double>(chunks))
+         << " ms";
+    return text.str();
+}
+
+int runGenerate(const std::vector<std::string_view>& args) {
+    std::vector<std::string_view> paths;
+    std::string_view dimensionName;
+    std::string_view output;
+    std::string_view regionText;
+    std::string_view chunkText;
+    bool seedGiven = false;
+    stratum::cli::GenerateRequest request;
+
+    const auto needsValue = [](std::string_view option) {
+        std::cerr << "stratum generate: " << option << " needs a value\n";
+        return kExitUsage;
+    };
+
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        const std::string_view argument = args[i];
+        if (argument == "-h" || argument == "--help") {
+            printGenerateUsage(std::cout);
+            return kExitOk;
+        }
+        if (argument == "--force") {
+            request.force = true;
+            continue;
+        }
+        if (!argument.starts_with("-")) {
+            paths.push_back(argument);
+            continue;
+        }
+        if (argument != "--dimension" && argument != "--seed" && argument != "--region" &&
+            argument != "--chunks" && argument != "--out" && argument != "--threads") {
+            std::cerr << "stratum generate: unknown option '" << argument << "'\n";
+            return kExitUsage;
+        }
+        if (i + 1 >= args.size()) {
+            return needsValue(argument);
+        }
+        const std::string_view value = args[++i];
+        if (argument == "--dimension") {
+            dimensionName = value;
+        } else if (argument == "--seed") {
+            if (!parseInt64(value, request.seed)) {
+                std::cerr << "stratum generate: --seed must be a 64-bit integer\n";
+                return kExitUsage;
+            }
+            seedGiven = true;
+        } else if (argument == "--region") {
+            regionText = value;
+        } else if (argument == "--chunks") {
+            chunkText = value;
+        } else if (argument == "--out") {
+            output = value;
+        } else {
+            std::size_t threads = 0;
+            constexpr std::size_t kMaxThreads = 256;
+            if (!parseSize(value, threads) || threads == 0 || threads > kMaxThreads) {
+                std::cerr << "stratum generate: --threads must be 1 to " << kMaxThreads << '\n';
+                return kExitUsage;
+            }
+            request.threads = static_cast<unsigned>(threads);
+        }
+    }
+
+    // Each missing piece by name: none of them has a default worth guessing.
+    if (paths.size() != 1) {
+        std::cerr << "stratum generate: expects one version root or pipeline blob, got "
+                  << paths.size() << "\n\n";
+        printGenerateUsage(std::cerr);
+        return kExitUsage;
+    }
+    if (dimensionName.empty()) {
+        std::cerr << "stratum generate: --dimension <name> is required\n";
+        return kExitUsage;
+    }
+    request.dimension = stratum::cli::findDimensionPreset(dimensionName);
+    if (request.dimension == nullptr) {
+        std::cerr << "stratum generate: unknown dimension '" << dimensionName
+                  << "'; --dimension is one of:";
+        for (const stratum::cli::DimensionPreset& preset : stratum::cli::dimensionPresets()) {
+            std::cerr << ' ' << preset.name;
+        }
+        std::cerr << '\n';
+        return kExitUsage;
+    }
+    if (!seedGiven) {
+        std::cerr << "stratum generate: --seed N is required\n";
+        return kExitUsage;
+    }
+    if (output.empty()) {
+        std::cerr << "stratum generate: --out <dir> is required\n";
+        return kExitUsage;
+    }
+    if (regionText.empty() == chunkText.empty()) {
+        std::cerr << "stratum generate: give exactly one of --region and --chunks\n";
+        return kExitUsage;
+    }
+
+    stratum::cli::ChunkRange& range = request.chunks;
+    if (!chunkText.empty()) {
+        if (!parseCorners(chunkText, range.minX, range.minZ, range.maxX, range.maxZ)) {
+            std::cerr << "stratum generate: --chunks must be X,Z or X,Z:X,Z, the second "
+                         "corner at or above the first\n";
+            return kExitUsage;
+        }
+    } else {
+        std::int32_t minX = 0;
+        std::int32_t minZ = 0;
+        std::int32_t maxX = 0;
+        std::int32_t maxZ = 0;
+        constexpr std::int64_t kRegionChunks = stratum::region::kChunksPerAxis;
+        // Regions whose chunks would leave the world limit are refused
+        // here, in 64 bits, before any multiplication can overflow.
+        constexpr std::int64_t kRegionLimit =
+            (std::int64_t{stratum::cli::kMaxChunkCoordinate} + 1) / kRegionChunks;
+        if (!parseCorners(regionText, minX, minZ, maxX, maxZ) || minX < -kRegionLimit ||
+            minZ < -kRegionLimit || maxX >= kRegionLimit || maxZ >= kRegionLimit) {
+            std::cerr << "stratum generate: --region must be RX,RZ or RX,RZ:RX,RZ, the second "
+                         "corner at or above the first, each within "
+                      << -kRegionLimit << ".." << (kRegionLimit - 1) << '\n';
+            return kExitUsage;
+        }
+        range.minX = static_cast<std::int32_t>(minX * kRegionChunks);
+        range.minZ = static_cast<std::int32_t>(minZ * kRegionChunks);
+        range.maxX = static_cast<std::int32_t>((maxX * kRegionChunks) + kRegionChunks - 1);
+        range.maxZ = static_cast<std::int32_t>((maxZ * kRegionChunks) + kRegionChunks - 1);
+    }
+    if (range.minX < stratum::cli::kMinChunkCoordinate ||
+        range.minZ < stratum::cli::kMinChunkCoordinate ||
+        range.maxX > stratum::cli::kMaxChunkCoordinate ||
+        range.maxZ > stratum::cli::kMaxChunkCoordinate) {
+        std::cerr << "stratum generate: chunks must lie within the 30 000 000-block world "
+                     "limit, chunk coordinates "
+                  << stratum::cli::kMinChunkCoordinate << ".." << stratum::cli::kMaxChunkCoordinate
+                  << '\n';
+        return kExitUsage;
+    }
+    request.source = std::filesystem::path(paths.front());
+    request.out = std::filesystem::path(output);
+
+    const stratum::cli::DimensionPreset& preset = *request.dimension;
+    std::cout << "generating " << preset.name << " (noise settings " << preset.noiseSettings
+              << ", biome source " << preset.biomeSource << "), seed " << request.seed
+              << ", chunks (" << range.minX << ", " << range.minZ << ") to (" << range.maxX << ", "
+              << range.maxZ << "): " << range.count() << " chunk(s)\n";
+
+    const stratum::cli::GenerateReport report =
+        stratum::cli::generate(request, [](const std::filesystem::path& path, std::size_t chunks) {
+            std::cout << "wrote " << path.string() << " (" << chunks << " chunk(s))\n";
+        });
+
+    // Per chunk on ONE generation thread, whatever --threads said: the
+    // stage times are summed over threads. The rate is wall clock.
+    const double seconds = std::chrono::duration<double>(report.wall).count();
+    std::cout << "generated " << report.chunks << " chunk(s) in " << report.regions
+              << " region(s) in " << std::fixed << std::setprecision(1) << seconds << " s on "
+              << request.threads << " thread(s)";
+    if (seconds > 0.0) {
+        std::cout << ", " << (static_cast<double>(report.chunks) / seconds) << " chunk(s)/s";
+    }
+    std::cout << "\nper chunk on one thread: fill " << perChunk(report.stages.fill, report.chunks)
+              << ", biomes " << perChunk(report.stages.biomes, report.chunks) << ", encode "
+              << perChunk(report.stages.encode, report.chunks) << "; region writes "
+              << perChunk(report.stages.write, report.chunks) << '\n';
+    return kExitOk;
+}
+
 int run(const std::vector<std::string_view>& args) {
     if (args.size() < 2U) {
         printUsage(std::cerr);
@@ -499,6 +719,9 @@ int run(const std::vector<std::string_view>& args) {
     }
     if (command == "validate") {
         return runValidate(args);
+    }
+    if (command == "generate") {
+        return runGenerate(args);
     }
 
     for (const Subcommand& cmd : kSubcommands) {
