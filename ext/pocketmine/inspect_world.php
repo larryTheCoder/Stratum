@@ -153,7 +153,11 @@ if($seed !== (int) $args["seed"]){
 }
 
 // What the engine generates for this world: its options as the plugin reads
-// them, its seed as level.dat holds it.
+// them, its seed as level.dat holds it. A blob the options name relatively
+// is read as the server reads it, against its data path — the directory
+// worlds/ is in, as the plugin's Main gives PocketMine-MP's data path to the
+// extension; one named absolutely is read as it is.
+\Stratum\setDataPath(dirname(realpath($world) ?: $world, 2) . "/");
 $parsed = GeneratorOptions::parse($options);
 $dimension = \Stratum\Dimension::open($parsed->blobPath, $parsed->noiseSettings, $parsed->biomeSource, $seed);
 $translatorLog = new CapturingLogger();

@@ -36,7 +36,8 @@
 #       write a hermetic headless server directory: loopback only, IPv6,
 #       Query, UPnP, Xbox Live authentication, crash reports, statistics and
 #       update checks all off; the Stratum plugin packed into plugins/; the
-#       pipeline frozen from <root> into the world's own folder, as
+#       pipeline frozen from <root> into the world's own folder and named in
+#       the options relative to the server directory, as
 #       Stratum\PMMP\WorldFactory leaves it; the world as a pocketmine.yml
 #       `worlds:` entry and the default world. For the End, the evidence
 #       plugin too (ext/pocketmine's plugin.yml and src/), which sets the new
@@ -457,13 +458,16 @@ write_server_dir() {
 
     # As WorldFactory does it: the blob in the world's own folder, before the
     # world exists; a folder holding only the blob is not a generated world.
-    local blob="${dir}/worlds/${world}/stratum-pipeline.blob"
+    # And named as WorldFactory names it, relative to the server's data path
+    # (which the plugin gives the extension in onLoad, and every generation
+    # worker reads it against), so the world moves with the directory.
+    local blob_rel="worlds/${world}/stratum-pipeline.blob"
     "${php_bin}" -n -d extension="${so}" -r 'Stratum\freezePipeline($argv[1], $argv[2]);' \
-        "${version_root}" "${blob}"
+        "${version_root}" "${dir}/${blob_rel}"
     # The options string exactly as the plugin's own GeneratorOptions writes it.
     local options
     options="$("${php_bin}" -n -r 'require $argv[1]; echo Stratum\PMMP\GeneratorOptions::encode($argv[2], $argv[3], $argv[4]);' \
-        "${plugin_dir}/src/GeneratorOptions.php" "${blob}" "${settings}" "${biomes}")"
+        "${plugin_dir}/src/GeneratorOptions.php" "${blob_rel}" "${settings}" "${biomes}")"
     printf '%s' "${options}" >"${dir}/generator-options.json"
 
     "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
