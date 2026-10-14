@@ -15,7 +15,8 @@
 //   * refused by name, at open, for what PocketMine-MP cannot hold;
 //   * a pinned world outliving every generator, and the file it was read
 //     from, until it is unpinned;
-//   * a pipeline written whole or not at all.
+//   * a pipeline written whole or not at all, and read whole while one is
+//     written over it.
 
 #include "support/temp_path.hpp"
 
@@ -424,3 +425,70 @@ TEST_CASE("a frozen pipeline is written whole or not at all", "[pmmp]") {
     CHECK_THROWS_WITH(readPipelineFile(scratch.blobs() / "missing.blob"),
                       ContainsSubstring("cannot read the frozen pipeline at"));
 }
+
+// POSIX only. On Windows, renaming over a file that another handle holds
+// open is refused (the C++ runtime's streams do not share delete access), so
+// there a write that lands while a reader reads is refused instead, by
+// writePipelineFile's own refusal, leaving the file as it was: the
+// interleaving raced here does not arise.
+#if !defined(_WIN32)
+TEST_CASE("a reader racing a writer reads one whole blob or the other and is never refused",
+          "[pmmp]") {
+    // Two blobs of different sizes written over one path, again and again,
+    // while readers read it: a worker opening an unpinned world while the
+    // main thread freezes over its blob. The sizes differ so that a size
+    // taken from one file and bytes from the next refuse the read (the next
+    // is shorter) or return a blob neither write wrote (it is longer). With
+    // the size taken from the path before opening it, the reader did both,
+    // hundreds of times in every run of this case.
+    const Scratch scratch;
+    const std::filesystem::path path = scratch.blobs() / "stratum-pipeline.blob";
+    const std::vector<std::byte> shorter(std::size_t{16} * 1024, std::byte{0x11});
+    const std::vector<std::byte> longer(std::size_t{48} * 1024, std::byte{0x22});
+    writePipelineFile(path, shorter);
+
+    constexpr int kWrites = 2000;
+    constexpr int kReaders = 4;
+    std::atomic<bool> writing{true};
+    std::atomic<int> writesRefused{0};
+    std::atomic<int> reads{0};
+    std::atomic<int> readsRefused{0};
+    std::atomic<int> readsTorn{0};
+    std::vector<std::thread> threads;
+    threads.reserve(kReaders + 1);
+    for (int r = 0; r < kReaders; ++r) {
+        threads.emplace_back([&] {
+            while (writing.load()) {
+                try {
+                    const std::vector<std::byte> read = readPipelineFile(path);
+                    if (read != shorter && read != longer) {
+                        ++readsTorn;
+                    }
+                } catch (const std::runtime_error&) {
+                    ++readsRefused;
+                }
+                ++reads;
+            }
+        });
+    }
+    threads.emplace_back([&] {
+        for (int i = 0; i < kWrites; ++i) {
+            try {
+                writePipelineFile(path, i % 2 == 0 ? longer : shorter);
+            } catch (const std::runtime_error&) {
+                ++writesRefused;
+            }
+        }
+        writing = false;
+    });
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+    CHECK(writesRefused == 0);
+    CHECK(reads > 0);
+    CHECK(readsRefused == 0);
+    CHECK(readsTorn == 0);
+    CHECK(readPipelineFile(path) == shorter);
+    CHECK(filesIn(scratch.blobs()) == std::vector<std::string>{"stratum-pipeline.blob"});
+}
+#endif

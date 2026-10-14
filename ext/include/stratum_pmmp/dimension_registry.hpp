@@ -43,6 +43,9 @@ namespace stratum::pmmp {
 
 /// The bytes of the frozen pipeline at @p path. Throws std::runtime_error
 /// naming the path if it is not a regular file that can be read whole.
+/// Its size and its bytes come from one open of the file, so a
+/// writePipelineFile to @p path landing meanwhile yields the file it
+/// replaced or the new one, whole, and never a refusal.
 [[nodiscard]] std::vector<std::byte> readPipelineFile(const std::filesystem::path& path);
 
 /// Writes @p blob to @p path so that a reader finds the file it replaced or

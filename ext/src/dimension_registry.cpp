@@ -60,9 +60,18 @@ std::vector<std::byte> readPipelineFile(const std::filesystem::path& path) {
     if (!std::filesystem::is_regular_file(path, error)) {
         throw std::runtime_error(refusal);
     }
-    const std::uintmax_t size = std::filesystem::file_size(path, error);
-    std::ifstream file(path, std::ios::binary);
-    if (error || !file) {
+    // The size from the open file itself, never from the path: a write
+    // (writePipelineFile) renames a new file over the path, and one landing
+    // between a stat of the path and an open of it paired the size of one
+    // file with the bytes of the next, refusing a blob that was whole in
+    // both or returning one neither write wrote.
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) {
+        throw std::runtime_error(refusal);
+    }
+    const auto size = static_cast<std::streamoff>(file.tellg());
+    file.seekg(0, std::ios::beg);
+    if (size < 0 || !file) {
         throw std::runtime_error(refusal);
     }
     std::vector<std::byte> blob(static_cast<std::size_t>(size));
