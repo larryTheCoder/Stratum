@@ -295,7 +295,11 @@ bits. One of those is reached by vanilla's own data: in all three overworld
 presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits 2 812 333 blocks
 from the origin on either horizontal axis, so chunk coordinates 175 770 and
 up, and -175 771 and down, are refused there, inside the world border,
-until the server's reading past that point is measured.
+until the server's reading past that point is measured. The aquifer is the
+one named exception: it reads `preliminary_surface_level`,
+`fluid_level_spread` and `sea_level` with Java's own int semantics
+(saturating, NaN to 0, wrapping), which is defined and portable but not yet
+measured against the server.
 
 ### Density function types
 

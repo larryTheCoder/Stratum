@@ -259,7 +259,7 @@ jobs:
     # suite under it is about twice its Debug time, past this workflow's
     # budget; it runs locally as `ctest --preset sanitize-conformance`.
     # Measured on an x86-64 dev box: the build in about a minute at six jobs,
-    # the 559 unit cases in about ten seconds at four (38 s of test time).
+    # the 563 unit cases in about ten seconds at four (38 s of test time).
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:

@@ -222,8 +222,12 @@ These are hard requirements; violations are release blockers.
    (§8, "Inputs that would reach undefined behaviour"): at load when it is a
    constant, at evaluation when it is a function's value. A wrapped,
    saturated or clamped value is never substituted unless a server probe
-   measured that reading (§11). A bound that holds by construction is
-   written at the operation and asserted in debug builds instead.
+   measured that reading (§11) — with one exception, named in §8 rather than
+   left implicit: the aquifer's reads of `preliminary_surface_level`,
+   `fluid_level_spread` and `sea_level`, which predate this rule and take
+   Java's own `int` semantics, defined and the same on every architecture but
+   unmeasured. A bound that holds by construction is written at the
+   operation and asserted in debug builds instead.
    The **`sanitize` preset** holds this: Clang, Debug, every first-party
    target under UBSan — `undefined` plus `float-cast-overflow`,
    `-fno-sanitize-recover=all` — with libstdc++'s assertions
@@ -235,7 +239,7 @@ These are hard requirements; violations are release blockers.
    `tools/lint/check-determinism.sh` and `stratum_assert_no_banned_flags`
    accept it as they find it. CI runs the unit suite under it (job
    `linux-x86_64 (clang, UBSan)`; on an x86-64 dev box, a clean build in
-   about a minute at six jobs and the 559 unit cases in ten seconds at
+   about a minute at six jobs and the 563 unit cases in ten seconds at
    four); `ctest --preset sanitize-conformance` runs the conformance suite
    under it locally, at about twice the Debug time. Measured when it landed:
    176 of 176 with nothing skipped and no report, 74 minutes at four jobs
@@ -332,20 +336,32 @@ to bump the version and be called out; this is that call-out.
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
-they change no output. Every input whose handling changed either reached
-undefined behaviour before — so what it produced was the platform's, not
-this engine's, and x86-64 and ARM64 already disagreed there — or sits within
-the stated margin of such a point (a noise's 512 lattice units, the chunk
-domain's hundred-odd blocks), and it now stops generation by name, which
-cannot put a seam in a world: a chunk is generated under its version's rules
-or not at all. Every other input computes exactly what it did — the
-arithmetic that moved to 64 bits narrows back to the same int wherever it
-was one — and the pinned overworld hash, the golden cases and the full
-conformance preset hold unchanged. The load-time refusals fail a pack or
-blob that carries such a node even where nothing evaluates it, as a
-dangling reference always has; a `find_top_surface` `cell_height` of 0,
-refused at its first evaluation before, is among them. A bump would refuse
-every v15 world outright, for nothing they generate differently.
+they change no output that is still produced. What they stop is of three
+kinds, and not all of it was undefined. (1) Inputs that reached undefined
+behaviour: what they produced was the platform's, not this engine's, and
+where it was an out-of-range conversion x86-64 and ARM64 already
+disagreed. (2) Evaluation-time inputs within a stated margin of such a
+point (a noise's 512 lattice units, the chunk domain's hundred-odd blocks, a
+climate sample past ±1e5), which computed defined output before. (3) The
+load-time checks' whole out-of-schema range (vanilla-mcdoc,
+minecraft.wiki), which takes in the undefined values but does not stop at
+them: a climate bound of 3.0, an offset of -0.25, a `find_top_surface`
+`lower_bound` of -5000, an `old_blended_noise` `xz_scale` of 2000 or a
+factor of 0.0005 each computed defined output at c7b060f and now stop the
+pack, or a v15 blob carrying them, from loading — even where nothing
+evaluates the node, as a dangling reference always has. A reversed `clamp`
+belongs here too: a
+violated precondition of `std::clamp`, but the same answer on x86-64 and
+ARM64 under libstdc++ (which bound a standard library tests first is its
+own choice, so that was never promised across them); and a `find_top_surface`
+`cell_height` of 0, refused at its first evaluation before, is refused at
+load now. None of that needs a version, because a refusal produces no
+chunk: a chunk is generated under its version's rules or not at all, so a
+world cannot grow a seam from one. Every input still accepted computes
+exactly what it did — the arithmetic that moved to 64 bits narrows back to
+the same int wherever it was one — and the pinned overworld hash, the
+golden cases and the full conformance preset hold unchanged. A bump would
+refuse every v15 world outright, for nothing they generate differently.
 
 A blob frozen under an earlier version is refused by a later build through
 the existing engine-version check, which is the point: a world frozen under
@@ -557,7 +573,10 @@ node, noise, condition or field and the value. None is a reading of the
 server's: what it does with these inputs is unmeasured, and only the
 `jagged` case below is reachable from vanilla's own data.
 
-At load, from a pack or a frozen blob alike (one check serves both paths):
+At load, from a pack or a frozen blob alike (one check serves both paths).
+These refuse the schema's whole out-of-range set, not only the part of it
+that is undefined, so some of what they stop computed defined output before
+(§6, "No version for the undefined-behaviour refusals"):
 
 - a multi-noise parameter-list bound outside the schema's [-2, 2]
   (vanilla-mcdoc `ClimateParameter`) or an offset outside [0, 1], NaN and
@@ -610,18 +629,46 @@ At evaluation:
   `above_preliminary_surface`, `bandlands`' index — that leaves int32;
 - two aquifer fluid levels more than INT32_MAX apart (a
   `fluid_level_spread` in the hundreds of millions, which `spreadOffset`
-  already saturates);
+  saturates under the exception below);
 - a chunk outside ±(2^27 - 8) on either axis (`density::kMaxChunkCoordinate`),
   where the block arithmetic and the reads past a chunk's edge leave int32,
   and biome layers whose block y does. Vanilla's world border is at
   ±29 999 984 blocks; the End generated defined output in the few chunks
   between the margin and the overflow, which are refused with the rest.
 
-Bounds that hold rather than checks: `PerlinNoise::sampleSimplex2D`'s two
-callers stay under 2^30 (the End's island field and the freezing test divide
-a block coordinate by 16 and 8), and `find_top_surface`'s scan steps over
-multiples of `cell_height` no lower than `lower_bound` >= -4064, so a step
-cannot leave int32. Both are asserted in debug builds.
+Bounds that hold rather than checks: `PerlinNoise::sampleSimplex2D` is
+defined for |x| and |y| below 2^29 — its unskew adds two cells of up to
+sqrt(3) times the input in int32, which 2^30, the bound first stated here,
+let overflow from about 6.2e8 on both axes — and its two callers stay far
+inside it (the End's island field samples a block coordinate over 16, give
+or take 12 cells, and the freezing test one over 8: at most 2^27 + 12 and
+2^28); and `find_top_surface`'s scan steps over multiples of `cell_height` no
+lower than `lower_bound` >= -4064, so a step cannot leave int32. Both are
+asserted in debug builds, and a unit case samples the simplex at its bound's
+corners under the `sanitize` preset.
+
+**One exception: the aquifer's Java-int readings.** The aquifer reads
+`preliminary_surface_level` (Q2.5's `y_skip` samples, and each source's
+anchor and window), `fluid_level_spread` (Q5.7's `3·⌊10·Spread/3⌋`) and
+`sea_level` as 32-bit integers the way Java's own `int` does: `(int)
+Math.floor` saturates at the int range and takes NaN to 0
+(`javamath::floorToInt`), and the arithmetic on those ints wraps
+(`javamath::wrappingAdd`, `wrappingSub` and `wrappingMul`, in
+`aquifer::spreadOffset`, `ladderLevel`, `ySkip`, `abortThreshold` and
+`cellLevel`); a NaN sample in a source's window is passed over by the
+window's minimum. That predates §5.7's rule, is defined C++ and the same on
+every architecture — the determinism half of the rule holds — but it is a
+reading no probe has measured, which the rule would otherwise refuse. No
+vanilla router comes near it: vanilla's spread stays within a few units and
+its surface inside the dimension. So, for now: a `preliminary_surface_level`
+that floors past int32 generates where only the aquifer reads it, and is
+refused by name where the surface rules read it too (the lattice-corner
+refusal above); a `fluid_level_spread` past about 2.1e8 saturates; and a
+pair of levels that saturation puts more than INT32_MAX apart is refused at
+the barrier. Measuring it would take an aquifer probe in the house style —
+`tools/analysis/aquifer-level-probe.sh`'s constant surfaces, at a surface of
+±3e9, and a constant spread of ±3e8 — and its result would either define
+these readings or turn them into refusals.
 
 **Open question, raised by the loader (M2).** "Hard error at load" has two
 readings, and the difference matters: taken literally it makes vanilla's own
@@ -1524,7 +1571,13 @@ Defaults chosen; flip only with a written note in this section:
   `getSpline`'s copy in tools/vectors/climate_vectors.c and two analysis
   tools' reproductions — plus `evaluateSpline`, recorded as an adaptation
   because it cannot be shown independent of `getSpline` — are now in both,
-  and NOTICE no longer says cubiomes is never vendored.
+  and NOTICE no longer says cubiomes is never vendored. Its review applied
+  the same standard to two more that had been called references: the rest
+  of perlin.cpp (`perlinInit`, `samplePerlin`'s y fold, `simplexGrad`,
+  `xOctaveInit`, `xDoublePerlinInit` and `sampleDoublePerlin`, whose
+  Minecraft-specific parts no cited document carries) and the End's island
+  field (`getEndHeightNoise`'s shape, end_islands.cpp). Both are recorded as
+  adaptations, each with what is this project's own or measured instead.
 
 - **StrictMath parity for transcendental functions:** vendor from
   **netlib fdlibm**, decided in M1. Java's `StrictMath` is fdlibm and is
@@ -6729,10 +6782,14 @@ Open:
   both hard-wired rather than read from a router, and `old_blended_noise`'s
   octave loop (`sampleSurfaceNoise`, which `blended.cpp` adapts; NOTICE).
   "The End's biome source" uses its island model as corroboration (the
-  17292 literal) and as the source of the End biome rule's structure;
-  `end_islands` itself was settled on the server's own output
-  ("`end_islands`' simplex is seeded by a 17292-step skip"), not on
-  cubiomes.
+  17292 literal) and as the source of the End biome rule's structure.
+  `end_islands`' seeding and its reading of negative coordinates were
+  settled on the server's own output ("`end_islands`' simplex is seeded by
+  a 17292-step skip"), not on cubiomes. Its shape was not: every constant
+  of it is `getEndHeightNoise`'s, its header called it "community-
+  documented" without naming a document, and no source but cubiomes is on
+  record, so since the 2026-10-14 audit it is recorded as adapted from
+  `getEndHeightNoise` (NOTICE, and the licence decision above).
 
   Two types *are* implemented on documentation alone: `squeeze` and `invert`
   (the latter documented only through its later rename to `reciprocal`).
@@ -10713,6 +10770,25 @@ Open:
   would replace it without a bump of its own, as lifting a refusal never
   needed one (§6, v14's legacy vein source): every chunk it would change is
   refused today.
+
+  *What its review corrected.* Three statements the change first made were
+  wider than the code. `sampleSimplex2D`'s stated bound of 2^30 kept each
+  skewed cell in int32 but not their sum, which overflowed from about 6.2e8
+  on both axes (`sampleSimplex2D(1e9, 1e9)` passed the assert and UBSan
+  reported it); the bound is 2^29 now, asserted, with the End's two
+  raw-coordinate entry points held to it, and a unit case samples it at its
+  corners under the sanitize preset. Neither caller ever came near either
+  bound. The no-version argument (§6) said every refused input had been
+  undefined or near it; the load-time checks refuse the schema's whole
+  out-of-range set, some of which computed defined output, and §6 now says
+  so — the conclusion stands, since a refusal produces no chunk. And §5.7
+  said no unmeasured saturation or wrap is ever substituted, while the
+  aquifer's reads of `preliminary_surface_level`, `fluid_level_spread` and
+  `sea_level` do exactly that with Java's int semantics; §8 now names them
+  as the rule's one exception, with the probe that would settle them, and
+  nothing in the aquifer changed. The filler's `preliminary_surface_level`
+  refusal and the executor's secondary-depth and `bandlands` index steps,
+  each refused but never driven, now have [ub] unit cases.
 
 ---
 
