@@ -9,5 +9,13 @@ api: [5.44.0]
 load: STARTUP
 depend: [Stratum]
 src-namespace-prefix: Stratum\PocketMineEvidence
+commands:
+  stratumevidence:
+    description: "tools/pmmp-dev's observation steps: status, populate"
+    usage: "/stratumevidence status|populate"
+    permission: stratum.evidence
+permissions:
+  stratum.evidence:
+    default: op
 author: Stratum contributors
 description: Evidence for tools/pmmp-dev, from inside a real PocketMine-MP server.

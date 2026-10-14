@@ -136,8 +136,18 @@ if(STRATUM_BUILD_EXT)
                 COMMAND "${pmmp_dev}" smoke ${pmmp_so} --version-root "${pmmp_root}"
                     --dimension ${dimension} --work-dir "${CMAKE_CURRENT_BINARY_DIR}/pmmp-smoke-${dimension}")
         endforeach()
+        # The overworld smoke observed from inside the server (the evidence
+        # plugin, ext/pocketmine/plugin.yml): WorldLoadEvent before the first
+        # chunk request, and the pinned world's fluid updates delivered after
+        # PocketMine-MP shuts its idle async workers down. About seven
+        # minutes, five of them the 300 s idle wait shutdownUnusedWorkers()
+        # asks for. Reports PocketMine-MP's discarded population results;
+        # pass --max-discards to fail above a count.
+        add_test(NAME pmmp.observe
+            COMMAND "${pmmp_dev}" observe ${pmmp_so} --version-root "${pmmp_root}"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/pmmp-observe")
         set_tests_properties(pmmp.load pmmp.phpt pmmp.census.blocks pmmp.census.biomes pmmp.threads
-            pmmp.smoke.overworld pmmp.smoke.end PROPERTIES
+            pmmp.smoke.overworld pmmp.smoke.end pmmp.observe PROPERTIES
             LABELS "pmmp"
             SKIP_RETURN_CODE 77
             RUN_SERIAL TRUE

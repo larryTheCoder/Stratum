@@ -61,8 +61,22 @@
 #       and nowhere else, no Query listener), crash dumps, level.dat and
 #       every chunk on disk, block by block and biome by biome, against what
 #       the engine generates for it (ext/pocketmine/inspect_world.php)
-#   server and smoke take --plugin-dir <dir> to pack a plugin tree other than
-#   ext/plugin, for trying a change to it against the real server.
+#   tools/pmmp-dev observe --stratum-so <so> --version-root <root> [--max-discards N]
+#                  [--work-dir <dir>] [--keep] [--timeout S] [--async-workers N] [--no-netns]
+#       the overworld smoke, observed from inside the server by the evidence
+#       plugin, and taken further: that the world's WorldLoadEvent fires, with
+#       the world pinned and none of its chunks loaded, before its first
+#       chunk is requested; then, once every async worker has been idle the
+#       300 seconds AsyncPool::shutdownUnusedWorkers() asks for (about five
+#       minutes of waiting), the console's `gc` — MemoryManager::
+#       triggerGarbageCollector(), as PocketMine-MP's periodic garbage
+#       collection runs it — shuts them all down; the chunks the old workers
+#       generated beside the spawn area are then populated on new ones, and
+#       every fluid position the engine marked in them must get its block
+#       update, from what the pin held. Counts PocketMine-MP's 'Discarding
+#       population result' lines, and fails above --max-discards when given.
+#   server, smoke and observe take --plugin-dir <dir> to pack a plugin tree
+#   other than ext/plugin, for trying a change to it against the real server.
 #
 # The checks (check-load onwards) never download: without the cache, or
 # without the fixtures they need, each exits 77 — CTest's SKIP — saying
@@ -271,6 +285,7 @@ netns=1
 build_php_config=""
 report=""
 fixtures_dir=""
+max_discards=""
 plugin_dir="${repo_root}/ext/plugin"
 rest=()
 
@@ -290,6 +305,11 @@ parse_options() {
             --build-php-config) build_php_config="$2"; shift 2 ;;
             --report) report="$2"; shift 2 ;;
             --fixtures-dir) fixtures_dir="$2"; shift 2 ;;
+            --max-discards)
+                [[ "$2" =~ ^[0-9]+$ ]] || die "--max-discards takes a count, not $2"
+                max_discards="$2"
+                shift 2
+                ;;
             --plugin-dir) plugin_dir="$2"; shift 2 ;;
             --) shift; rest=("$@"); return ;;
             *) die "unknown option $1" ;;
@@ -414,9 +434,10 @@ refuse_in_checkout() {
     fi
 }
 
-# write_server_dir <dir>: the server directory `server` describes.
+# write_server_dir <dir> [observe]: the server directory `server` describes;
+# with "observe", the evidence plugin observes (cmd_observe).
 write_server_dir() {
-    local dir="$1"
+    local dir="$1" observe="${2:-}"
     local settings biomes
     read -r settings biomes < <(dimension_pair)
     local world="stratum_${dimension}"
@@ -448,14 +469,23 @@ write_server_dir() {
     "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
         "${plugin_dir}" "${dir}/plugins/Stratum.phar" >&2
 
-    # The evidence plugin (ext/pocketmine's plugin.yml and src/), for the
-    # End: it sets the new world's spawn over the main island. The plugin
-    # under test is the same either way.
-    if [[ "${dimension}" == "end" ]]; then
+    # The evidence plugin (ext/pocketmine's plugin.yml and src/), when there
+    # is something for it to do: the End's spawn over the main island, or
+    # observing. The plugin under test is the same either way.
+    local spawn=""
+    [[ "${dimension}" == "end" ]] && spawn="0 70 0"
+    if [[ -n "${spawn}" || "${observe}" == "observe" ]]; then
         "${php_bin}" -n -d phar.readonly=0 "${evidence}/build_plugin_phar.php" \
             "${evidence}" "${dir}/plugins/StratumEvidence.phar" >&2
-        "${php_bin}" -n -r 'echo json_encode(["world" => $argv[1], "spawn" => [0, 70, 0]], JSON_THROW_ON_ERROR), "\n";' \
-            "${world}" >"${dir}/stratum-evidence.json"
+        "${php_bin}" -n -r '
+            [, $world, $spawn, $observe, $report] = $argv;
+            echo json_encode([
+                "world" => $world,
+                "spawn" => $spawn === "" ? null : array_map(intval(...), explode(" ", $spawn)),
+                "observe" => $observe === "observe",
+                "report" => $report,
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), "\n";' \
+            "${world}" "${spawn}" "${observe}" "${dir}/stratum-evidence-report.json" >"${dir}/stratum-evidence.json"
     fi
 
     cat >"${dir}/php.ini" <<EOF
@@ -690,11 +720,15 @@ check_server() {
         echo "spawn generation: $(sed -nE 's/.*Generating spawn terrain: ([0-9]+) .*/\1/p' <<<"${end}") chunks populated in $((ms / 1000)).$(printf '%03d' $((ms % 1000)))s wall"
     fi
     grep -m1 'Done (' "${server_log}" | sed 's/^/  /' || true
-    # Reported, not failed: PocketMine-MP redoing population whose 3x3 a
-    # block change touched while it ran, and main-thread ticks over budget.
+    # PocketMine-MP redoing population whose 3x3 a block change touched
+    # while it ran, and main-thread ticks over budget. Reported; a failure
+    # only above --max-discards.
     local discards
     discards="$(grep -c 'Discarding population result' "${server_log}" || true)"
     echo "population results discarded because the terrain changed while populating: ${discards}"
+    if [[ -n "${max_discards}" && "${discards}" -gt "${max_discards}" ]]; then
+        failures+=("${discards} population results discarded, more than --max-discards ${max_discards}")
+    fi
     echo "main-thread ticks over budget: $(grep -c 'Tick took too long' "${server_log}" || true)"
 
     local crashes=0
@@ -796,6 +830,116 @@ cmd_smoke() {
     finish "${own_dir}"
 }
 
+# --- observe --------------------------------------------------------------------
+
+# the latest `stratumevidence status` line's "last given a task at T, now N", as "T N"
+last_status() {
+    grep 'status: async workers running' "${server_dir}/console.out" | tail -1 |
+        sed -nE 's/.*last given a task at ([0-9]+), now ([0-9]+).*/\1 \2/p'
+}
+
+# status_count: how many `stratumevidence status` lines the server has printed
+status_count() {
+    grep -c 'status: async workers running' "${server_dir}/console.out" || true
+}
+
+# ask_status: types `stratumevidence status` and waits for its line.
+ask_status() {
+    local before
+    before="$(status_count)"
+    console "stratumevidence status"
+    local waited=${SECONDS}
+    while [[ "$(status_count)" -le "${before}" ]]; do
+        kill -0 "${server_pid}" 2>/dev/null || return 1
+        ((SECONDS - waited < 60)) || return 2
+        sleep 1
+    done
+}
+
+cmd_observe() {
+    parse_options "$@"
+    require_cache
+    require_so "${so}"
+    require_version_root "${version_root}"
+    [[ "${dimension}" == "overworld" ]] ||
+        die "observe runs the overworld, whose aquifer fluid the engine marks for updates; not --dimension ${dimension}"
+    local settings biomes
+    read -r settings biomes < <(dimension_pair)
+    local world="stratum_${dimension}"
+    local own_dir=0
+    if [[ -z "${work_dir}" ]]; then
+        work_dir="$(mktemp -d "${TMPDIR:-/tmp}/stratum-pmmp-observe.XXXXXX")"
+        own_dir=1
+    fi
+    write_server_dir "${work_dir}" observe
+    local dir
+    dir="$(cd "${work_dir}" && pwd)"
+    local options
+    options="$(cat "${dir}/generator-options.json")"
+
+    failures=()
+    start_server "${dir}"
+    local started=${SECONDS} outcome="spawn" step=""
+    wait_for "${spawn_re}" 'Done \(' "${timeout}" || case $? in
+        1) outcome="exited" ;;
+        *) outcome="timeout" ;;
+    esac
+    echo "PocketMine-MP ${PMMP_VERSION}, headless, observed; world ${world} (${settings} / ${biomes}), seed ${seed}; async-workers ${async_workers}"
+    echo "server: ${outcome} after $((SECONDS - started))s"
+
+    if [[ "${outcome}" == "spawn" ]]; then
+        # Every worker idle for the 300 seconds AsyncPool::shutdownUnusedWorkers()
+        # asks for (lastUsed + 300 < time()), as the evidence plugin reads
+        # each worker's lastUsed; waited for, and read again, until it holds.
+        local last now waited_from=${SECONDS}
+        step="status"
+        while ask_status; do
+            read -r last now < <(last_status) || break
+            if ((now > last + 300)); then
+                step=""
+                break
+            fi
+            if ((SECONDS - waited_from > 900)); then
+                step="idle"
+                break
+            fi
+            echo "waiting $((last + 302 - now))s for every async worker to have been idle 300s"
+            sleep $((last + 302 - now))
+        done
+        if [[ -z "${step}" ]]; then
+            # The real trigger: the console's gc, which calls
+            # MemoryManager::triggerGarbageCollector() — what the periodic
+            # garbage collection (memory.garbage-collection.period) calls.
+            console "gc"
+            step="gc"
+            if wait_for 'Garbage collection result' 60 && ask_status; then
+                console "stratumevidence populate"
+                step="populate"
+                if wait_for 'populate: (all [0-9]+ chunk\(s\) populated|ordering the population of 0 chunk)' 600; then
+                    # time for the fluid updates to run, and for any
+                    # scheduled later than the population to be seen
+                    sleep 15
+                    step=""
+                fi
+            fi
+        fi
+    fi
+    stop_server
+
+    [[ "${outcome}" == "spawn" ]] || failures+=("the spawn area never finished generating (${outcome})")
+    [[ -z "${step}" ]] || failures+=("the observation stopped at its ${step} step")
+    check_server "${world}"
+    local marked="${dir}/fluid-updates.json"
+    inspect "${world}" "${options}" --fluid-updates="${marked}"
+    echo "observed from inside the server:"
+    local observe_rc=0
+    evidence_php "${evidence}/check_observation.php" --server-log="${dir}/server.log" \
+        --report="${dir}/stratum-evidence-report.json" --fluid-updates="${marked}" --world="${world}" |
+        sed 's/^/  /' || observe_rc=$?
+    [[ ${observe_rc} -eq 0 ]] || failures+=("what the server was observed doing is not what the plugin needs (listed above)")
+    finish "${own_dir}"
+}
+
 # --- main -----------------------------------------------------------------------
 
 command="${1:-}"
@@ -854,6 +998,7 @@ case "${command}" in
         evidence_php "${evidence}/threads.php" --phar="${phar}" --version-root="${version_root}"
         ;;
     smoke) cmd_smoke "$@" ;;
+    observe) cmd_observe "$@" ;;
     *)
         sed -n '/^# Usage:/,/^# The checks/p' "$0" | sed 's/^# \{0,1\}//' >&2
         exit 2

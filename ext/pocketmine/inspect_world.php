@@ -5,11 +5,11 @@ declare(strict_types=1);
 /*
  * Stratum — what a stopped PocketMine-MP server left on disk for a world,
  * read with PocketMine-MP 5.44.3's own classes, against what Stratum's
- * engine generates for it (tools/pmmp-dev smoke).
+ * engine generates for it (tools/pmmp-dev smoke and observe).
  *
  *   php -d extension=stratum.so inspect_world.php --phar=PocketMine-MP.phar
  *       --world=<server>/worlds/<name> --generator=stratum --options=<json>
- *       --seed=<seed>
+ *       --seed=<seed> [--fluid-updates=<file>]
  *
  * level.dat is read raw — its little-endian NBT after the 8-byte header,
  * with none of BedrockWorldData's fix-ups — so the generator name, options
@@ -83,6 +83,10 @@ declare(strict_types=1);
  * workers, in whatever order they finish — so the counts are reported, not
  * pinned.
  *
+ * --fluid-updates=<file> also writes, as JSON, each chunk's marked
+ * positions ("x,z" => [[x, y, z], ...]): tools/pmmp-dev observe checks what
+ * the server delivered against them.
+ *
  * Fails on a wrong generator, options or seed, on no chunks at all, on a
  * spawn-area chunk missing or unpopulated, on a spawn area the engine fills
  * with nothing but air, and on any chunk that is not what the engine
@@ -120,7 +124,7 @@ require __DIR__ . "/bootstrap.php";
  */
 const MAX_CHANGES_PER_MARKED = 4;
 
-$args = arguments($argv, ["phar", "world", "generator", "options", "seed"]);
+$args = arguments($argv, ["phar", "world", "generator", "options", "seed"], ["fluid-updates"]);
 bootstrap($args["phar"]);
 $world = $args["world"];
 $failures = [];
@@ -198,6 +202,8 @@ $onDiskSubChunks = [];
 $expectedLayers = [];
 /** @var array<int, true> $changed block hash => true: every block that differs from the engine's */
 $changed = [];
+/** @var array<string, list<array{int, int, int}>> $marked "x,z" => the fluid positions the engine marked for an update */
+$marked = [];
 $markedCount = 0;
 /** The same, in the populated chunks alone: those the plugin was handed. */
 $markedPopulated = 0;
@@ -251,6 +257,7 @@ foreach($provider->getAllChunks() as $coordinates => $chunk){
 	// What encodeChunk left for the plugin: the positions a server's
 	// FluidUpdateScheduler sets flowing when this chunk is populated.
 	$updates = \Stratum\takeFluidUpdates($parsed->blobPath, $parsed->noiseSettings, $parsed->biomeSource, $seed, $chunkX, $chunkZ);
+	$marked[$chunkX . "," . $chunkZ] = $updates;
 	$markedCount += count($updates);
 	if(isset($populated[$hash])){
 		$markedPopulated += count($updates);
@@ -672,6 +679,10 @@ if(count($differences) === 0){
 }
 foreach($differences as $kind => [$count, $where]){
 	echo "  DIFFERENT: ", $kind, " x", $count, ", first at ", $where, "\n";
+}
+
+if(isset($args["fluid-updates"])){
+	file_put_contents($args["fluid-updates"], json_encode($marked, JSON_THROW_ON_ERROR) . "\n");
 }
 
 if($onDisk === 0){
