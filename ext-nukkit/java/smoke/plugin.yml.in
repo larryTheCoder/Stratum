@@ -1,0 +1,10 @@
+# The headless smoke test's driver. Configured by ext-nukkit/CMakeLists.txt;
+# installed only into the throwaway server tools/nukkit-dev smoke writes.
+name: StratumSmoke
+main: stratum.nukkit.smoke.SmokePlugin
+version: "@PROJECT_VERSION@"
+api: ["1.0.0"]
+load: POSTWORLD
+depend: [Stratum]
+author: the Stratum contributors
+description: "Drives and checks Stratum's headless smoke run; inert unless -Dstratum.smoke.mode is set"

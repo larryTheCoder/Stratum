@@ -1,87 +1,146 @@
 // Stratum — the Nukkit binding's own generation pipeline.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 //
-// This is the boundary `ext-nukkit/src/jni_bridge.cpp` wraps in JNI, not the
-// JNI surface itself — plain C++, buildable and testable without a JVM.
-// Splitting it this way is the same shape `ext/`'s own "marshaling only, no
-// generation logic" rule takes for PocketMine-MP: this file calls straight
+// The boundary `ext-nukkit/src/jni_bridge.cpp` wraps in JNI, not the JNI
+// surface itself: plain C++, built and unit-tested without a JVM. It calls
 // into `world::CompiledDimension`, the compile-and-fill core every native
-// binding shares, and adds exactly two things a Java caller
-// needs that `lib/` does not provide on its own — a Bedrock biome id per
-// cell (via `stratum::mapping`, already built and reused verbatim rather
-// than re-derived) and Nukkit's own block id (see `resolveNukkitFullId`'s
-// own doc for why that one is a refusal, not an answer, today).
+// binding shares, and adds what a Nukkit caller needs that `lib/` does not
+// give it on its own:
 //
-// SCOPED TO THE OVERWORLD, matching `tools/analysis/generate-world.cpp`'s
-// own scope. That is this binding's choice, not the library's limit: lib
-// compiles the End, blocks and its own `minecraft:the_end` biome source, and
-// refuses the legacy dimensions (the Nether, caves, floating islands) only
-// for the named noises their surface rules read (M4). What is missing here
-// is Nukkit's side — no other dimension's height and biome column have been
-// matched to Nukkit's own, and no dimension can place a block until
-// Nukkit's block id table is sourced (`resolveNukkitFullId`). `compile`
-// names the dimension in its signature anyway, and already pairs it with
-// the biome source vanilla's presets do (the End's own for `minecraft:end`),
-// so extending this to another dimension means removing a check in
-// `pipeline.cpp` once that matching is done, not changing this interface.
+//   * the closed set of Java block states a dimension can place, so the Java
+//     side can resolve each one ONCE, at world load, through Nukkit's own
+//     `BlockStateMapping` (SPEC §9) and hand the answers back as a
+//     `BlockIdTable`;
+//   * a fill that only indexes that table, so no block is ever resolved,
+//     guessed or substituted while a chunk generates;
+//   * Bedrock biome ids per quart (`lib/mapping/`, reused, not re-derived).
+//
+// SCOPE: noise settings shaped like Nukkit's overworld (y -64..319, which
+// is vanilla's overworld, amplified and large_biomes) with a multi-noise
+// biome source. Nukkit's other dimensions (the Nether 0..127, the End
+// 0..255) are not matched to anything here yet, so settings of any other
+// height, and the End's own biome source, are refused by name when a world
+// opens (SPEC §8).
 #pragma once
 
-#include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/freeze/pipeline.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/world/dimension.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace stratum::nukkit {
 
-/// Raised by `resolveNukkitFullId` for a Java block state this build cannot
-/// yet place into a Nukkit chunk, and by `Pipeline::compile` for a dimension
-/// this pipeline does not support yet. Named, not a crash and not a
-/// silently-wrong block (SPEC §8) — `jni_bridge.cpp` turns this into a
-/// thrown Java exception rather than letting it cross the JNI boundary as a
-/// native fault.
+/// Everything this binding refuses rather than guesses at: a world it cannot
+/// open, a block state its table cannot place, an output buffer of the wrong
+/// size. Named in the message (SPEC §8). `jni_bridge.cpp` turns it into a
+/// Java `StratumGenerationException` rather than letting it cross the JNI
+/// boundary.
 class NukkitError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
 
-/// One dimension's terrain, compiled once and reused for every chunk and
-/// every generation worker thread Nukkit hands it to.
+/// Nukkit's overworld, `DimensionEnum.OVERWORLD`: y -64..319 inclusive.
+inline constexpr std::int32_t kOverworldMinY = -64;
+inline constexpr std::int32_t kOverworldHeight = 384;
+
+/// The file a world's frozen pipeline lives in when its generator options
+/// name none, beside `level.dat` — the same name `ext/`'s plugin uses.
+inline constexpr const char* kBlobFileName = "stratum-pipeline.blob";
+
+/// Freezes the pinned version's datapack rooted at @p versionRoot (its
+/// `worldgen/` and `biome_parameters/` as siblings, as `tools/fetch-vanilla`
+/// leaves them) into @p blobPath (SPEC §6). Refuses, by path, to replace a
+/// file that already exists: a world's pipeline is written once, before the
+/// world has a chunk, and never again. Written to a sibling temporary file
+/// and renamed into place, so a crash never leaves half a blob behind.
+void freezePack(const std::filesystem::path& versionRoot, const std::filesystem::path& blobPath);
+
+/// Java block state id (`mapping::javaBlockStateId`) → Nukkit full block id
+/// (`legacyId << 13 | meta`, what `FullChunk.setFullBlockId` takes). Built
+/// from what the Java side resolved through Nukkit's own `BlockStateMapping`;
+/// this class never resolves anything itself. Immutable once built.
+class BlockIdTable {
+public:
+    /// @p javaStateIds[i] resolved to @p fullIds[i]. Throws `NukkitError` for
+    /// spans of different lengths, a Java state id outside the pinned
+    /// version's registry, a negative full id, or one state given two
+    /// different ids.
+    [[nodiscard]] static BlockIdTable fromResolved(std::span<const std::int32_t> javaStateIds,
+                                                   std::span<const std::int32_t> fullIds);
+
+    /// The full id of @p javaStateId, or nothing if it was not resolved.
+    [[nodiscard]] std::optional<std::int32_t> find(std::uint32_t javaStateId) const noexcept;
+
+    /// How many states resolved.
+    [[nodiscard]] std::size_t size() const noexcept { return resolved_; }
+
+private:
+    BlockIdTable() = default;
+
+    std::vector<std::int32_t> byJavaState_;
+    std::size_t resolved_ = 0;
+};
+
+/// Every Java block state a dimension with @p settings can place, deduplicated,
+/// in a stable order: air, lava (`level=0`), the default block, the default
+/// fluid, the six ore-vein blocks when veins are on, every `block` rule of
+/// the surface rules, and the seven terracottas when they use `bandlands`.
 ///
-/// Immutable after `compile()` — the same invariant `terrain::ChunkFiller`
-/// itself already documents and relies on (CLAUDE.md's determinism rules:
-/// "Pipeline objects are immutable after compile"). Nukkit's own generation
-/// model (confirmed by reading its source, not assumed) gives every async
-/// worker thread its own `Generator` instance via a `ThreadLocal`, created
-/// once and reused for that thread's whole lifetime — so the natural home
-/// for a `Pipeline` is one shared instance per world, constructed when the
-/// first `Generator` initializes and read by every thread afterward, not
-/// one per thread. `fill()` needs no caller-provided scratch state to do
-/// that safely: `terrain::ChunkFiller::fill()` already builds whatever
-/// per-call cache it needs internally, and this class's own extra step
-/// (the biome quart-grid walk) does the same, mirroring
-/// `tools/analysis/generate-world.cpp`'s own per-chunk cache lifetime
-/// rather than inventing a different one.
+/// This mirrors what `terrain::ChunkFiller` and `surface::Executor` place —
+/// `lib/` does not publish the set itself (a gap, see ext-nukkit/README.md).
+/// `Pipeline::fill` refuses, by name, a block outside the table it is given,
+/// so a block `lib/` starts placing that this list misses fails loudly rather
+/// than silently; the unit tests also fill real chunks and check every
+/// palette entry is listed. Throws whatever `surface::RuleGraph::resolve`
+/// throws for rules it cannot read.
+[[nodiscard]] std::vector<settings::BlockState>
+emittableBlockStates(const settings::NoiseSettings& settings);
+
+/// `minecraft:snow_layer[layers=1]`: a Java block state, spelled the way the
+/// game's own commands spell one, for messages.
+[[nodiscard]] std::string describe(const settings::BlockState& state);
+
+/// One dimension of one world, compiled once and shared by every generation
+/// thread Nukkit runs (SPEC §4.1: immutable after compile).
 class Pipeline {
 public:
-    /// Compiles @p dimension from the datapack rooted at @p packDir for
-    /// @p worldSeed. @p packDir is the pinned version's own root —
-    /// `worldgen/` and `biome_parameters/` as siblings underneath it,
-    /// exactly what `tools/fetch-vanilla` leaves behind and what
-    /// `tools/analysis/generate-world.cpp` already reads the same way —
-    /// not the `worldgen/` tree itself. Throws `NukkitError` naming the
-    /// dimension if it is not `minecraft:overworld` — the only one in this
-    /// binding's scope today — and whatever `lib/`'s own loaders throw
-    /// (`PackError`, `FillError`, ...) for a malformed or unsupported pack,
-    /// unchanged: this layer adds no tolerance `lib/` does not already
-    /// have.
-    [[nodiscard]] static std::unique_ptr<Pipeline> compile(const std::filesystem::path& packDir,
-                                                           const data::ResourceLocation& dimension,
+    /// One biome the biome source can return, with the Bedrock id
+    /// `lib/mapping/` gives it.
+    struct Biome {
+        data::ResourceLocation java;
+        std::int32_t bedrockId = 0;
+    };
+
+    /// Compiles noise settings @p settings of @p pipeline with @p biomes for
+    /// @p worldSeed. Refuses by name (NukkitError): settings whose height is
+    /// not Nukkit's overworld's, the End's biome source, and any biome the
+    /// source can return that has no Bedrock id — the nearest-biome fallback
+    /// is not a v1 goal, so a biome outside the table is refused when the
+    /// world opens, never discovered mid-generation. `lib/`'s own errors
+    /// (an unknown settings or parameter list name, an unrunnable rule)
+    /// pass through unchanged.
+    [[nodiscard]] static std::unique_ptr<Pipeline> compile(freeze::Pipeline pipeline,
+                                                           const data::ResourceLocation& settings,
+                                                           const world::BiomeSource& biomes,
                                                            std::int64_t worldSeed);
+
+    /// The same from a world's frozen pipeline on disk (`freeze::read`, which
+    /// refuses a blob this engine cannot reproduce).
+    [[nodiscard]] static std::unique_ptr<Pipeline> open(const std::filesystem::path& blobPath,
+                                                        const data::ResourceLocation& settings,
+                                                        const world::BiomeSource& biomes,
+                                                        std::int64_t worldSeed);
 
     ~Pipeline();
     Pipeline(const Pipeline&) = delete;
@@ -89,39 +148,40 @@ public:
     Pipeline(Pipeline&&) = delete;
     Pipeline& operator=(Pipeline&&) = delete;
 
-    /// This dimension's vertical extent, for a caller sizing its own
-    /// section-count-aware output buffers before calling `fill()`.
     [[nodiscard]] std::int32_t minY() const noexcept;
     [[nodiscard]] std::int32_t height() const noexcept;
 
-    /// Fills one chunk. Both spans are caller-owned and caller-sized —
-    /// `16*16*height()` for `fullBlockIds`, `4*4*(height()/4)` for
-    /// `biomeIds` (the quart grid this engine's own biome search already
-    /// uses) — so `jni_bridge.cpp` can size them from Java-side arrays
-    /// without an extra copy in either direction.
+    /// `emittableBlockStates` of this dimension's settings, and the Java
+    /// state id of each, index for index.
+    [[nodiscard]] const std::vector<settings::BlockState>& emittableStates() const noexcept;
+    [[nodiscard]] const std::vector<std::uint32_t>& emittableStateIds() const noexcept;
+
+    /// Every biome the biome source can return, sorted by Java id.
+    [[nodiscard]] const std::vector<Biome>& emittableBiomes() const noexcept;
+
+    /// Throws NukkitError naming every emittable state @p table does not
+    /// resolve. A binding calls this once, when a world opens.
+    void requireComplete(const BlockIdTable& table) const;
+
+    /// Fills chunk (@p chunkX, @p chunkZ). Spans are caller-sized:
+    /// `16*16*height()` full block ids, index `(ly * 16 + lz) * 16 + lx`
+    /// with `ly` counted up from `minY()`; and `16*(height()/4)` Bedrock
+    /// biome ids, one per quart, index `(qy * 4 + qz) * 4 + qx`. A quart is
+    /// 4x4x4 blocks; Nukkit stores a biome per block, so the caller writes
+    /// each quart's id to its 64 blocks.
     ///
-    /// Order within each span is y-major, matching Nukkit's own
-    /// `PalettedBlockStorage` layout (confirmed by reading
-    /// `cn.nukkit.level.format.leveldb.structure.LevelDBChunk` and
-    /// `cn.nukkit.level.util.PalettedBlockStorage`, not assumed): for
-    /// blocks, `index = (ly * 16 + lz) * 16 + lx` within each of
-    /// `height() / 16` sections, sections ordered bottom to top; for
-    /// biomes, the same shape one quart-section at a time.
+    /// When @p fluidUpdates is given, it receives the chunk's fluid updates
+    /// (`terrain::ChunkBuffer::fluidUpdates`, in the server's order), each
+    /// packed as `lx | lz << 4 | (y - minY()) << 8`.
     ///
-    /// Throws `NukkitError` — naming the block, by its Java identifier —
-    /// the first time it meets a block `resolveNukkitFullId` cannot place,
-    /// which is every real column right now (see that function's own doc).
-    /// The scan order is bottom-to-top, so today that is always the very
-    /// first block visited, but that is incidental to the mapping being
-    /// entirely unbuilt rather than a guarantee: once real blocks resolve
-    /// and only some fail, an exception may leave both output spans
-    /// PARTIALLY written, in an unspecified state neither committed to nor
-    /// rolled back. A caller must treat any thrown `fill()` as having
-    /// produced nothing usable — read the spans only after a call that did
-    /// not throw — the same discipline any exception-returning API already
-    /// requires, not a special case of this one.
-    void fill(std::int32_t chunkX, std::int32_t chunkZ, std::span<std::int32_t> fullBlockIds,
-              std::span<std::int32_t> biomeIds) const;
+    /// Throws NukkitError, naming the block, for a placed state @p table
+    /// does not resolve — unreachable after `requireComplete(table)` unless
+    /// `emittableBlockStates` has fallen behind `lib/` — and for spans of
+    /// the wrong size. A call that throws leaves the spans in an unspecified
+    /// state.
+    void fill(std::int32_t chunkX, std::int32_t chunkZ, const BlockIdTable& table,
+              std::span<std::int32_t> fullBlockIds, std::span<std::int32_t> biomeIds,
+              std::vector<std::int32_t>* fluidUpdates = nullptr) const;
 
 private:
     Pipeline();
@@ -129,16 +189,5 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-
-/// Nukkit's own "full id" for one Java block state — `id << DATA_BITS |
-/// meta`, `BlockID.java`'s int constants for `id` — or a refusal.
-///
-/// STILL OPEN (PROGRESS.md's M5 section). The planned resolution (SPEC §9)
-/// is `lib/mapping/`'s shared Java → Bedrock blockstate table, fed through
-/// Nukkit's own `BlockStateMapping` — which lives on the Java side, so this
-/// C++ function is expected to be replaced by a Java-built lookup that
-/// `fill()` only indexes. Always throws `NukkitError` today, naming
-/// @p block's own identifier — a refusal rather than a guess (SPEC §8).
-[[nodiscard]] std::int32_t resolveNukkitFullId(const settings::BlockState& block);
 
 } // namespace stratum::nukkit

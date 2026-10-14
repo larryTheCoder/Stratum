@@ -92,6 +92,18 @@
         "STRATUM_BUILD_EXT": "ON",
         "STRATUM_PHP_CONFIG": "$env{STRATUM_PHP_CONFIG}"
       }
+    },
+    {
+      "name": "nukkit",
+      "displayName": "CloudburstMC/Nukkit JNI binding",
+      "description": "Debug, warnings as errors, with ext-nukkit/'s JNI shim, its Java classes and, when STRATUM_NUKKIT_JAR names a Nukkit server jar, the plugin and the headless smoke test. JAVA_HOME must be a JDK with javac and jni.h: JAVA_HOME=$(tools/nukkit-dev --print-java-home) STRATUM_NUKKIT_JAR=$(tools/nukkit-dev --print-jar) cmake --preset nukkit",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "STRATUM_WERROR": "ON",
+        "STRATUM_BUILD_EXT_NUKKIT": "ON",
+        "STRATUM_NUKKIT_JAR": "$env{STRATUM_NUKKIT_JAR}"
+      }
     }
   ],
   "buildPresets": [
@@ -137,6 +149,11 @@
       "name": "ext-release",
       "configurePreset": "ext-release",
       "configuration": "Release"
+    },
+    {
+      "name": "nukkit",
+      "configurePreset": "nukkit",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -309,6 +326,24 @@
         "noTestsAction": "error",
         "jobs": 1,
         "timeout": 1800
+      }
+    },
+    {
+      "name": "nukkit",
+      "configurePreset": "nukkit",
+      "configuration": "Debug",
+      "displayName": "ext-nukkit: JNI in a bare JVM, the plugin, the headless smoke",
+      "description": "The JNI check always runs; the plugin and smoke tests skip, saying so, without a Nukkit server jar.",
+      "filter": {
+        "include": {
+          "label": "nukkit"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
       }
     }
   ]

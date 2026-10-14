@@ -101,9 +101,10 @@ endif()
 # builds with STRATUM_BUILD_EXT (ext/CMakeLists.txt refuses without one).
 add_subdirectory(ext)
 
-if(STRATUM_BUILD_EXT_NUKKIT)
-    add_subdirectory(ext-nukkit)
-endif()
+# The same split for ext-nukkit/: its plain C++ pipeline always builds and is
+# unit-tested everywhere; the JNI shim, the Java classes and the Nukkit plugin
+# need a JDK and only build with STRATUM_BUILD_EXT_NUKKIT.
+add_subdirectory(ext-nukkit)
 
 if(STRATUM_BUILD_TESTS)
     add_subdirectory(tests)
