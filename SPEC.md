@@ -8591,7 +8591,11 @@ Open:
 
   The rule stays in every table as an anonymous candidate, scored by name as
   before (`kForkedMd5Rule` in the decoder header); the attribution is gone
-  from the code, the scripts and this section. What the old wording implied —
+  from the code, the scripts and this section. One comment kept it past
+  a94adca: `NoiseRegistry::create`'s note on the legacy search, until the
+  review of bd90507 found it; it now names the candidate as
+  `legacy-seed-analyze.cpp` does, rule 290 of the widened scan and 182 of
+  the 900. What the old wording implied —
   that deepslate's derivation lies in the scanned space and the server
   refutes it — does not follow: deepslate's construction is not a candidate
   of either scanned space for any noise either one scores (each stack passes

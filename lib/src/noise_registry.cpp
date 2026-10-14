@@ -213,12 +213,29 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         //     salt spellings x 3 combining operators x 0-2 extra LCG forks x
         //     2 generators) x 300 block offsets — over 9 probe dimensions and
         //     2 world seeds. Not one reached half agreement on the probe
-        //     subset. The scan's own header lists the space exactly; the
-        //     tool prints the count on every run.
-        //   * Among them, at rule 182 block 0, the derivation deepslate uses:
-        //     base = JavaRandom(worldSeed).nextLong(), XOR the first eight
-        //     bytes of MD5("ns:path"), one further LCG fork. It scores at the
-        //     dimension's null.
+        //     subset. The scan has since been widened, to 1,440 seed rules,
+        //     36 stack shapes and 7 frequency offsets beside the 300 block
+        //     offsets — 729,535,800 candidates scanned over the two worlds'
+        //     dimensions — and has no survivor there either (SPEC §11). Its
+        //     header lists the widened space exactly; the tool prints the
+        //     count on every run.
+        //   * Among them, one candidate scored by name: base =
+        //     JavaRandom(worldSeed).nextLong(), XOR the first eight bytes of
+        //     MD5("ns:path"), one further LCG fork, at block offset 0 — rule
+        //     182 of the 900 (`kForkedMd5Rule` in
+        //     tools/analysis/legacy-goldens-surface-decoder.hpp), rule 290 of
+        //     the widened scan. It scores at the dimension's null. It is an
+        //     anonymous candidate: it was once labelled deepslate's own
+        //     derivation, and deepslate, observed through its public API,
+        //     refutes that. The long the rule seeds its LCG with is the first
+        //     long deepslate's named generator yields, but deepslate builds
+        //     the noise from that generator itself, not from a second LCG
+        //     seeded with that long
+        //     (tests/unit/deepslate_legacy_noise_oracle_test.cpp, SPEC §11);
+        //     what it builds lies outside both scanned spaces, and scores
+        //     under the majority-class null on the golden Nether's
+        //     nether_state_selector, the one noise it has been scored on
+        //     (tests/conformance/vanilla_legacy_goldens_surface_test.cpp).
         //
         // The search is calibrated rather than merely large, in both of the
         // ways it has to be:
@@ -240,9 +257,11 @@ NoiseRegistry::create(const std::map<data::ResourceLocation, NoiseParameters>& p
         //     the seeding and not a readback that accepts anything.
         //
         // So the null result is a null result and not a blind spot — within
-        // the space, which covers one stack rule and no frequency variation,
-        // and subject to the control having been run on the flag-off
-        // dimensions only. SPEC §11 states that second caveat, and the
+        // the space, and subject to the control having been run on the
+        // flag-off dimensions only. The 900-rule space covered one stack rule
+        // and no frequency variation; what the widened one still leaves out
+        // is listed in legacy-seed-analyze.cpp's header ("AFTER THE
+        // WIDENING"). SPEC §11 states the control's caveat, and the
         // spread/autocorrelation measurement that bounds it.
         //
         // What IS settled, and lives next door: this dimension's
