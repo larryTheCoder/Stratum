@@ -201,7 +201,7 @@ private:
 /// The last payload byte changed and the header left as it was, content
 /// hash included.
 [[nodiscard]] std::vector<std::byte> damaged(std::vector<std::byte> blob) {
-    blob.back() ^= std::byte{0x01};
+    blob.at(blob.size() - 1) ^= std::byte{0x01};
     return blob;
 }
 
