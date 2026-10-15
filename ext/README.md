@@ -119,7 +119,11 @@ found.
    way or still to come in its 3x3, where its flow first sets blocks —
    `plugin/` takes its fluid updates and schedules a block update at each
    liquid, so aquifer water and lava flow by PocketMine-MP's own liquid
-   rules, from where a Java server would set them flowing.
+   rules, from where a Java server would set them flowing. A chunk waiting
+   to settle is looked at only when a chunk within two of it is populated
+   or loaded, let go when it unloads and held again when it is next
+   loaded; its positions wait in the extension's outbox meanwhile, for as
+   long as the world is loaded.
 
 No per-protocol table appears anywhere in this: a generator never learns
 which Bedrock version will connect. That translation belongs to

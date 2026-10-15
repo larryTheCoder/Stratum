@@ -93,14 +93,24 @@ PocketMine-MP itself can call.
   3x3 (`World::lockChunk`), and any block set there while it runs makes
   PocketMine-MP discard its result and populate again. So a populated chunk
   is held — its coordinates and the tick, its positions left in the
-  extension — until none of its 3x3 is locked and every chunk within two
-  of it, every chunk whose population could lock that 3x3, is loaded and
-  populated: PocketMine-MP never populates those again, so the chunk has
-  settled for good. A chunk at the edge of what is populated is held until
-  the chunks beyond it are. `Main` runs the release once a tick from its
-  task scheduler, which PocketMine-MP ticks before it collects finished
-  population tasks and before the worlds tick. Registered in `onEnable()`,
-  which at `load: STARTUP` is still before any world loads.
+  extension — until every chunk within two of it, every chunk whose
+  population could lock that 3x3, is loaded and populated and none of its
+  3x3 is locked: PocketMine-MP never populates those again, so the chunk
+  has settled for good. A held chunk is looked at only on the tick after a
+  chunk within two of it is populated (`ChunkPopulateEvent`) or loaded
+  already populated (`ChunkLoadEvent`) — the ways PocketMine-MP itself
+  makes a chunk loaded and populated; a chunk another plugin swaps in
+  with `World::setChunk()` announces nothing, so a held chunk beside it
+  waits for the next event round it — and again every tick only while a
+  lock in its 3x3 holds it back, which once its 5x5 is populated only
+  another plugin's lock can. So a chunk at the edge of what is populated
+  waits for the chunks beyond it at no cost per tick. It is let go as it unloads
+  (`ChunkUnloadEvent`), and held again, from that tick, when it is next
+  loaded populated; so what is held in PHP never exceeds the chunks
+  loaded. `Main` runs the release once a tick from its task scheduler,
+  which PocketMine-MP ticks before it collects finished population tasks
+  and before the worlds tick. Registered in `onEnable()`, which at `load:
+  STARTUP` is still before any world loads.
 - `WorldFactory::create()` makes one of four dimensions, as vanilla's world
   presets pair settings and biome source: `OVERWORLD` (the default),
   `LARGE_BIOMES` and `AMPLIFIED` (their settings, the overworld's parameter
@@ -228,7 +238,9 @@ published, and every server directory it writes ignores itself.
   spawn area, populated on new workers together with every chunk within
   two of them (so that they settle), must get a block update at every
   fluid position the engine marks in them — updates only the pin held. A
-  copy of the plugin that records a pin and never makes one fails it.
+  copy of the plugin that records a pin and never makes one fails it. At
+  every status it asks for, `FluidUpdateScheduler` must hold no more
+  chunks than the world has loaded.
 
 ## What is not verified
 
@@ -262,10 +274,13 @@ client.** Every check above passes. What that leaves:
   run makes — shuts all three down, new workers register the generator
   again, and the
   chunks the old ones generated get every fluid update the engine marked
-  in them (2637 of 2637) — from the pin, since a copy of the plugin that
-  never pins delivers 0 of 2637. That an exception on a generation worker
-  takes the server down has been observed too: a generator refusal
-  injected into the smoke crashes its workers and the server.
+  in them (2637 of 2637) — from the pin, since a copy of the round
+  before's plugin that never pins delivered 0 of 2637. The scheduler held
+  112 chunks of the 292 loaded just after the spawn area, and 0 of 9 once
+  the area had unloaded over the idle wait. That an exception on a
+  generation worker takes the server down has been observed too: a
+  generator refusal injected into the smoke crashes its workers and the
+  server.
 - **A world whose pin fails** is held off generation and unloaded
   (`StratumWorlds`). Observed in the real server for a default world, with
   a pin failure injected into a scratch copy of the plugin: the error by
@@ -283,15 +298,19 @@ client.** Every check above passes. What that leaves:
   (`World::generateChunkCallback`): 3 to 56 discarded populations an
   overworld smoke. Holding a chunk's liquids only until its 3x3 was
   unlocked still lost 18 in one run; held until every chunk within two is
-  populated as well, no overworld boot of this plugin has discarded one:
-  241 to 462 blocks of air turned to flowing water in each of the plugin
-  owner's runs, 264 to 369 in three CTest smokes (spawn area 16.5 to
-  19.7 s), and 2792 after the observation's five minutes of flow, 32 of
-  them the engine's lava hardened to obsidian — nothing else different
-  from the engine in any. The CTest smokes and the observation now fail
-  on a single discarded population. The price: a chunk at the edge of
-  what is populated keeps its aquifer fluid still until the chunks beyond
-  it are populated. Whether the flow is Java's is unobserved.
+  populated as well, no overworld boot has discarded one. This plugin, as
+  it is now: 387, 340, 405 and 330 blocks of air turned to flowing,
+  falling or formed-source water in four CTest smokes (spawn area 27.1,
+  26.4 and 23.4 s on a machine other builds were loading, where the round
+  before's plugin took 25.4 s, and 17.5 s once it had quietened), and
+  2723 and 2794 after two observations' five minutes of flow, 32 of each
+  the engine's lava hardened to obsidian — nothing else different from
+  the engine in any. The round before's: 241 to 462 in the
+  plugin owner's runs, 264 to 369 in three CTest smokes, 2792 in the
+  observation. The CTest smokes and the observation fail on a single
+  discarded population. The price: a chunk at the edge of what is
+  populated keeps its aquifer fluid still until the chunks beyond it are
+  populated. Whether the flow is Java's is unobserved.
 - **Where a flow could still go wrong**, read from 5.44.3 and not
   observed: `World::getBlockAt()` answers air for a chunk that is not
   loaded, and `World::setBlockAt()` loads a generated chunk to write into
@@ -332,13 +351,20 @@ client.** Every check above passes. What that leaves:
   that the smoke compares the main island. Read from source and measured
   headless; no client has seen it.
 - Fluid updates live in memory between a chunk's generation and their
-  release once it has settled — held through worker restarts while the
-  world is loaded and pinned, but not through an unload: a chunk generated
-  as a neighbour, or populated at the edge of what is populated, in one
-  server run (or one load of the world) and settled only in a later one
-  gets none, and its aquifer fluid stays as generated until something
-  beside it changes. PocketMine-MP saves no scheduled updates either, so a
-  flow the server stops mid-way stops there.
+  release once it has settled — held through worker restarts and through
+  the chunk's own unloads while the world is loaded and pinned, but not
+  through the world's unload: a chunk generated as a neighbour, or
+  populated at the edge of what is populated, in one server run (or one
+  load of the world) and settled only in a later one gets none, and its
+  aquifer fluid stays as generated until something beside it changes.
+  PocketMine-MP saves no scheduled updates either, so a flow the server
+  stops mid-way stops there. And what has not settled costs memory in the
+  extension for as long as the world is loaded: a dozen bytes a position —
+  round the smoke world's spawn, 101 positions a chunk on average and
+  1,346 at most (about 1.2 KB and 16 KB) — for every chunk generated and
+  not settled, the ring round what has: it grows with the terrain
+  generated and is freed with the world's unload. What is held in PHP is
+  only the coordinates of loaded chunks.
 
 ## Traps this code is written around
 

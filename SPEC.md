@@ -231,12 +231,17 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   $noiseSettings, $biomeSource, $seed, $cx, $cz)`, as world
   `[x, y, z]` positions, once; it opens and compiles nothing. The plugin
   does so once PocketMine-MP has populated the chunk and the chunk has
-  settled — none of its 3x3 chunk-locked, and every chunk within two of it
-  loaded and populated, so no population can be under way or still to
+  settled — every chunk within two of it loaded and populated, and none of
+  its 3x3 chunk-locked, so no population can be under way or still to
   come in that 3x3, where its flow first sets blocks — and schedules a
   block update at each liquid, what is left of the liquid's tick rate
-  after the population. One lock per chunk, after generation, never during
-  it (§4.2).
+  after the chunk was held. It looks at a held chunk only on the tick
+  after a chunk within two of it is populated or loaded already populated,
+  and every tick only while a lock in its 3x3 holds it back; it lets the
+  chunk go as it unloads and holds it again when it is next loaded
+  populated. What has not settled stays in the outbox, a dozen bytes a
+  position, until the world unloads. One lock per chunk, after
+  generation, never during it (§4.2).
 - Every failure is a `Stratum\GenerationException` naming what failed.
 - Optional main-thread post-population hooks for plugins (decoration in PHP,
   outside the parity contract).
@@ -10594,15 +10599,45 @@ Open:
   whose 3x3 changed while it ran (the same entry has the measurement). So
   the plugin's `FluidUpdateScheduler` holds a populated chunk — its
   coordinates and the tick, its positions left in the extension — until it
-  has settled: none of its 3x3 chunk-locked, and every chunk within two of
-  it, every chunk whose population could lock that 3x3, loaded and
-  populated, which PocketMine-MP never populates again. Then, from the
+  has settled: every chunk within two of it, every chunk whose population
+  could lock that 3x3, loaded and populated, which PocketMine-MP never
+  populates again, and none of its 3x3 chunk-locked. Then, from the
   plugin's task scheduler at the top of a server tick, it takes the
   chunk's positions and schedules each that still holds a `Liquid`, after
-  what is left of its `tickRate()` since the population; a block a plugin
-  has since replaced is left alone. A world another generator owns is not
-  touched, and a Stratum world whose options no longer parse is logged
-  once by name rather than crashing the tick.
+  what is left of its `tickRate()` since the chunk was held; a block a
+  plugin has since replaced is left alone. A world another generator owns
+  is not touched, and a Stratum world whose options no longer parse is
+  logged once by name rather than crashing the tick.
+
+  *Looked at only when something round it changes.* Whether a held chunk
+  has settled changes only when a chunk within two of it is populated
+  (`ChunkPopulateEvent`) or loaded already populated (`ChunkLoadEvent`) —
+  the ways 5.44.3 itself makes a chunk loaded and populated
+  (`World::generateChunkCallback`, `World::loadChunk`); a chunk another
+  plugin swaps in with `World::setChunk()` announces nothing, so a held
+  chunk beside it waits for the next event round it — or when a lock in
+  its 3x3 goes. So each such event marks the held chunks within two of it,
+  and the release looks only at those: a chunk still missing a populated
+  neighbour is not looked at again until the next event round it, and one
+  held back by a lock is looked at every tick, since nothing announces an
+  unlock. A population locks round a chunk not yet populated, so once
+  every chunk within two is populated no population can hold a lock in
+  the 3x3; only another plugin's can. A held chunk is let go as it
+  unloads (`ChunkUnloadEvent`) and held again, from that tick, when it is
+  next loaded populated, so one unloaded before it settled is released
+  when it next settles, and what PHP holds never exceeds the chunks
+  loaded. Before this, every held chunk was looked at every tick, and a
+  chunk at the edge of what is populated, or one whose 5x5 was never all
+  loaded at once, stayed held for the life of the world: a verifier
+  measured 0.52 ms a tick at 1000 such chunks, 2.5 ms at 5000 and 10.3 ms
+  at 20,000 on PocketMine-MP's own World, and 249 chunks still held after
+  one spawn boot. Now a chunk waiting on its neighbours costs one look
+  when an event wakes it and nothing on the ticks between
+  (`ext/plugin/tests/002_fluid_update_scheduler.phpt`: 2000 such chunks,
+  2000 lookups on the first tick, 0 over the next 100), and the
+  observation (the M5 entry "Stratum inside a real PocketMine-MP") fails
+  if, at any status it asks for, the scheduler holds more chunks than the
+  world has loaded.
 
   *What does not carry over, by construction.* The outbox is memory: a
   chunk generated as a neighbour, or populated at the edge of what is
@@ -10611,7 +10646,13 @@ Open:
   generated until something beside it changes; a chunk at that edge keeps
   its fluid still until the chunks beyond it are populated. A flow the
   server stops in the middle of stops there, as any PocketMine-MP liquid's
-  does. Neither is measured; both follow from the source above.
+  does. Neither is measured; both follow from the source above. And while
+  the world is loaded, what has not settled — every chunk generated round
+  the edge of what has, as a neighbour or populated — keeps its positions
+  in the outbox, a dozen bytes each: over the 289 chunks round the smoke
+  world's spawn (seed 20260915), 29,193 positions, 101 a chunk on average
+  and 1,346 at most. It grows with the terrain generated and goes with the
+  world's unload.
 
   *Verified.* The C++ hand-over is unit-tested, four workers against a
   taking main thread included; the zend function and the scheduler are
@@ -10621,9 +10662,10 @@ Open:
   against stand-ins for the PocketMine-MP classes it calls, written to the
   signatures above. In a real, headless PocketMine-MP 5.44.3 (the M5 entry
   "Stratum inside a real PocketMine-MP"), the liquids flow by
-  PocketMine-MP's own rules, no population is discarded for them, and the
-  updates a pinned world holds survive its workers' shutdown. Whether the
-  flow is the one a Java server would make is unobserved.
+  PocketMine-MP's own rules, no population is discarded for them, the
+  updates a pinned world holds survive its workers' shutdown, and the
+  scheduler holds no chunk that is not loaded. Whether the flow is the one
+  a Java server would make is unobserved.
 
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**
@@ -11153,17 +11195,29 @@ Open:
   seed, and the console's `stop` returns with exit 0 — no crash dump,
   error, exception or PHP diagnostic, no discarded population (the CTest
   cases fail on one), and no warning from the plugin but its documented
-  powder-snow fallback, at most once per worker. Spawn area wall time with
-  this plugin, overworld: 19.7, 16.5 and 19.7 s over three CTest smokes,
-  and 16.3 s for the observation's boot (thirteen runs over two earlier
-  rounds, before the scheduler fix: 17.1 to 46.5 s). A restart loads the
-  world from disk. The End's spawn area is the main island: PocketMine-MP gives every
+  powder-snow fallback, at most once per worker. The runs this entry gives
+  as this plugin's, from here on, are of the plugin as it now is —
+  pinning each world at `WorldLoadEvent`, opening every world in full on
+  the main thread (`checkDimension`) as it loads, freezing whole or not at
+  all, and releasing fluid updates as chunks settle, each held chunk
+  looked at only when a chunk round it changes; the mutant copies
+  (`--plugin-dir`) and the figures it gives as a round before's are of
+  earlier ones. Spawn area wall time,
+  overworld: 27.1, 26.4 and 23.4 s over three CTest smokes and 28.0 s for
+  the observation's boot, with other builds loading the 12-core machine
+  (load average 7 to 11); the round before's plugin, run once right after
+  them under the same load, took 25.4 s; and a whole `ctest --preset pmmp`
+  once the machine had quietened, 17.5 s for its smoke and 17.0 s for its
+  observation, where the round before took 16.3 to 19.7 s on a quiet one.
+  So the change costs generation nothing measurable. Thirteen runs over
+  two earlier rounds, before the settled release, took 17.1 to 46.5 s. The End's spawn area is the main island: PocketMine-MP gives every
   new world (256, 70, 256), over the End's void, and a `worlds:` entry
   cannot say otherwise, so `tools/pmmp-dev` packs a test-only evidence
   plugin (`ext/pocketmine/plugin.yml`) beside the plugin under test, which
   sets the new world's spawn to (0, 70, 0) on its `WorldInitEvent` —
   after `generateWorld()` writes level.dat and before it orders the spawn
-  area. It passes the same checks in 0.5 s.
+  area. It passes the same checks, its spawn area generated in 1.4 s
+  under that load and 0.9 s without it.
 
   *What the chunks hold.* After the stop, every chunk on disk is read back
   through PocketMine-MP's own LevelDB provider and compared with what the
@@ -11201,13 +11255,17 @@ Open:
   too, since comparing air with air would pass that last one. Round 1's
   check, which allowed a liquid change by its kind alone with no bound,
   passed the water-as-stone and air-as-water plugins. Overworld runs with
-  this plugin at seed 20260915: three smokes changed 309, 264 and 369
-  blocks, every one air now water (8 formed sources each, the rest falling
-  or flowing), against 22,772 fluid positions marked in the populated
-  chunks; the observation, after five minutes of flow over 444 populated
-  chunks, 2792 (10 formed sources, 1696 falling, 1054 flowing, and 32 of
-  the engine's lava blocks hardened to obsidian beside flowed water).
-  Earlier runs, before the scheduler fix, also passed at seeds 42, 31337,
+  this plugin at seed 20260915: four smokes changed 387, 340, 405 and 330
+  blocks, every one air now water (8, 6, 8 and 8 formed sources; 143,
+  120, 200 and 183 falling; 236, 214, 197 and 139 flowing), against
+  22,772 fluid positions marked in the populated chunks and a bound of
+  91,088; two observations, after five minutes of flow over 444 populated
+  chunks, 2723 and 2794 (10 formed sources each; 1663 and 1697 falling;
+  1018 and 1055 flowing; and 32 of the engine's lava blocks hardened to
+  obsidian beside flowed water in each) against 42,801 marked. The
+  round before, whose scheduler looked at every held chunk every tick,
+  changed 264 to 369 in its smokes and 2792 in its observation.
+  Earlier runs, before the settled release, also passed at seeds 42, 31337,
   8675309 (with lava flowing) and -4242 (2212 changes against 4652 marked
   positions, the highest ratio: a waterfall into caves). No gravel or sand
   has moved in any run, so the falling-block rules have been exercised
@@ -11234,9 +11292,19 @@ Open:
   more within two of them that the plugin waits for before it releases a
   chunk's liquids: the engine marks 2637 fluid positions in the 60, and
   every one got a block update — updates only the pin held across the
-  shutdown. A copy of the plugin that records a pin and never makes one
-  fails exactly there: everything the same up to the delivery, then 0 of
-  2637. No population was discarded, in the boot or the 220 after it.
+  shutdown. A copy of the round before's plugin that records a pin and
+  never makes one fails exactly there: everything the same up to the
+  delivery, then 0 of 2637. No population was discarded, in the boot or
+  the 220 after it. (3) Besides the pins, the plugin's fluid scheduler
+  holds only loaded chunks: 112 held of the 292 loaded just after the
+  spawn area was generated, and 0 of 9 after the idle wait, before the
+  shutdown and after it, in both observations — where the round before's, which let no chunk go
+  before it settled, kept 249 of a spawn boot's chunks held for good (a
+  reviewer's count). The observation now fails if, at any status it asks
+  for, the scheduler holds more chunks than the world has loaded. And in
+  a scratch run, not a CTest case, a kept smoke server restarted loads the
+  world from disk, generates nothing, and stops cleanly, exit 0, with no
+  error, no warning from the plugin and no discarded population.
 
   *Found by the first run, and fixed since.* (1) The fluid scheduler made
   PocketMine-MP redo population: a liquid it set flowing inside the 3x3 of
@@ -11284,7 +11352,15 @@ Open:
   by name and a clean stop, exit 0, no crash dump; the unload branch is
   `ext/plugin/tests/007_failed_pin.phpt`'s, against stand-ins. A frozen
   pipeline reaches the disk before it is renamed into place, and a killed
-  write's partial file is swept (§4.3).
+  write's partial file is swept (§4.3). And the fluid scheduler looked at
+  every chunk it held on every server tick and let none go before it
+  settled, so the chunks round the edge of what was populated cost the
+  main thread more each tick as terrain was explored and never less —
+  10.3 ms a tick at 20,000 of them, as a reviewer measured on
+  PocketMine-MP's own World. It now looks at a held chunk only when a chunk within two of it is
+  populated or loaded, and lets it go as it unloads (§4.3; the M5 entry
+  "aquifer fluid updates reach PocketMine-MP"); (3) above is the real
+  server's side of it.
 
   *Still open.* (a) An End world is presented as the overworld:
   PocketMine-MP 5.44.3 names `DimensionIds::OVERWORLD` to every client

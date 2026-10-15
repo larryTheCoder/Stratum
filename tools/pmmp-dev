@@ -77,7 +77,9 @@
 #       with every chunk within two of them (the plugin releases a chunk's
 #       liquids only once those are populated too), and every fluid
 #       position the engine marked in them must get its block update, from
-#       what the pin held. Counts PocketMine-MP's 'Discarding population
+#       what the pin held; and at each status, the plugin's fluid
+#       scheduler must hold no more chunks than the world has loaded.
+#       Counts PocketMine-MP's 'Discarding population
 #       result' lines, and fails above --max-discards when given (smoke
 #       too; the CTest cases give 0).
 #   server, smoke and observe take --plugin-dir <dir> to pack a plugin tree
