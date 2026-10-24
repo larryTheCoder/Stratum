@@ -62,6 +62,7 @@
 #include <stratum/noise/perlin.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -237,6 +238,89 @@ enum class ReadContext : std::uint8_t {
 };
 
 class Interpreter {
+    /// The storage behind every Scope one top-level call opens: the memo a
+    /// point's evaluation keeps, as a stack of frames, one per level of
+    /// nesting — an evaluate(), an interpolated corner inside it, a
+    /// flat_cache relocation inside that, a find_top_surface step.
+    ///
+    /// WHY IT EXISTS. A Scope used to own two vectors sized to the whole
+    /// graph — every dimension's nodes, 730 for vanilla's pack — so every
+    /// point, corner, relocation and scan step paid two allocations and
+    /// about 6.5 KB of zeroing for a scope that executes thirteen nodes on
+    /// average: 202 000 scopes and 1.3 GB of memset per overworld chunk.
+    /// Here a frame is allocated once per level and reused by every scope
+    /// that opens at that level.
+    ///
+    /// WHAT REPLACES THE ZEROING is an epoch per frame. Each slot carries
+    /// the epoch of the scope that wrote it, and a node is computed for a
+    /// scope exactly when its slot carries that scope's epoch. Opening a
+    /// scope takes the frame's next epoch, which no slot carries yet —
+    /// every stamp is at most the frame's current epoch — so every node
+    /// reads as not computed, which is what a freshly zeroed vector said.
+    /// When the counter wraps, the frame's stamps are cleared and counting
+    /// restarts at 1, so a stamp from before the wrap can never be taken
+    /// for the work of a scope after it. Nothing else changes: the same
+    /// nodes are computed in the same order, and the memo holds the same
+    /// values for the same scope.
+    ///
+    /// It belongs to one top-level call at a time — through the caller's
+    /// CornerCache, or local to evaluate(root, at) — and never to the
+    /// interpreter, which is shared between threads and stays immutable
+    /// (SPEC §4.1).
+    class ScopeArena {
+    public:
+        /// One node's memo entry in a frame.
+        struct Slot {
+            double value = 0.0;
+            /// The epoch of the scope that wrote the value; 0 for never.
+            std::uint32_t stamp = 0;
+        };
+
+        /// What one scope holds of the frame it was given: where its
+        /// slots are, and the epoch that marks a slot as its own.
+        struct Lease {
+            Slot* slots = nullptr;
+            std::uint32_t epoch = 0;
+        };
+
+        /// The frame one level deeper than every scope still open, sized
+        /// for @p nodeCount nodes and at a fresh epoch, in which nothing
+        /// reads as computed. If it throws (an allocation), nothing was
+        /// leased and leave() must not be called.
+        [[nodiscard]] Lease enter(std::size_t nodeCount);
+
+        /// Gives back the frame the innermost open scope was leased.
+        void leave() noexcept { --depth_; }
+
+        /// Moves every frame's epoch counter forward to at least @p epoch,
+        /// including the frames not allocated yet; never back. For tests:
+        /// see CornerCache::advanceScopeEpochs.
+        void advanceEpochs(std::uint32_t epoch) noexcept;
+
+        /// How many times a frame's epoch counter has wrapped.
+        [[nodiscard]] std::uint64_t wraps() const noexcept { return wraps_; }
+
+    private:
+        struct Frame {
+            std::vector<Slot> slots;
+            /// The epoch of the scope that holds or last held this frame.
+            /// Every stamp in `slots` is at most this.
+            std::uint32_t epoch = 0;
+        };
+
+        /// Open scopes hold raw pointers into these frames' slots, so a
+        /// frame must keep its slot buffer when the vector of frames grows.
+        /// A moved std::vector keeps its buffer, and the vector of frames
+        /// moves rather than copies its elements when their move cannot
+        /// throw; enter() asserts that it cannot.
+        std::vector<Frame> frames_;
+        /// How many scopes are open, which is the index of the next frame.
+        std::size_t depth_ = 0;
+        /// The epoch a frame allocated from now on starts from.
+        std::uint32_t floor_ = 0;
+        std::uint64_t wraps_ = 0;
+    };
+
 public:
     /// Binds a graph to the noises it names. Throws EvalError if any `noise`
     /// field has nothing behind it, so that a missing noise is found once at
@@ -281,17 +365,38 @@ public:
     /// Using one is not supposed to change any value it returns. That is
     /// asserted rather than assumed: see the unit tests, which compare cached
     /// and uncached evaluation bit-for-bit over a whole cell.
+    ///
+    /// It also carries the frames every evaluation through it keeps its
+    /// per-point memo in (ScopeArena), so that a chunk allocates those once
+    /// rather than twice for every point, corner and relocation it reads.
+    /// They hold nothing from one evaluation to the next: every scope
+    /// starts as empty as a fresh one, which the unit tests assert across
+    /// a wrap of the epoch counter.
     class CornerCache {
     public:
         explicit CornerCache(std::size_t nodeCount) : entries_(nodeCount) {}
 
         /// Forgets everything. Cheap, and only needed if the same cache is
-        /// reused for a different world or pipeline.
+        /// reused for a different world or pipeline. The scope frames need
+        /// no forgetting: a scope never reads what an earlier one wrote.
         void reset() noexcept {
             for (Entry& entry : entries_) {
                 entry.filled = false;
             }
         }
+
+        /// FOR TESTS. Moves the scope frames' epoch counters forward to at
+        /// least @p epoch, as though that many scopes had opened at every
+        /// level of nesting — never back, so nothing written so far can be
+        /// taken for the work of a scope still to come. A counter wraps
+        /// after 2^32 scopes at one level, which no chunk comes near, and
+        /// the wrap must forget its frame exactly as a fresh scope does;
+        /// this is how a test gets there.
+        void advanceScopeEpochs(std::uint32_t epoch) noexcept { scopes_.advanceEpochs(epoch); }
+
+        /// FOR TESTS. How many times a scope frame's epoch counter has
+        /// wrapped, so that a test of the wrap can show it happened.
+        [[nodiscard]] std::uint64_t scopeEpochWraps() const noexcept { return scopes_.wraps(); }
 
     private:
         friend class Interpreter;
@@ -306,6 +411,7 @@ public:
         };
 
         std::vector<Entry> entries_;
+        ScopeArena scopes_;
     };
 
     /// The value of @p root at @p at.
@@ -316,7 +422,8 @@ public:
     /// (find_top_surface's scan), has a corner outside int32: within one
     /// cell's width or height of either end of an axis. Inside a chunk of
     /// kMaxChunkCoordinate's domain no x or z comes near one; y does only
-    /// through find_top_surface.
+    /// through find_top_surface. A @p root that names no node is refused
+    /// the same way, by all three forms.
     [[nodiscard]] double evaluate(NodeIndex root, Point at) const;
 
     /// The same, reusing @p cache for the cell corners `interpolated` needs.
@@ -356,7 +463,11 @@ private:
     /// times by vanilla's overworld — is computed once and remembered. This
     /// is not the compiled program SPEC §4.1 asks for; it is what keeps the
     /// interpreter from being exponential in the depth of a spline tree.
+    /// Its memo lives in a frame of a ScopeArena.
     class Scope;
+
+    /// @p root refused by name unless it names a node of the graph.
+    void requireNode(NodeIndex root) const;
 
     [[nodiscard]] double evaluateNode(Scope& scope, NodeIndex index) const;
 

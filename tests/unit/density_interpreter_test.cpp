@@ -1691,3 +1691,176 @@ TEST_CASE("a graph at kMaxDepth is evaluated, from a pack and from an assembler"
     // Every spline reads its one knot off the end, flat: 1.0 all the way up.
     CHECK(bits(interpreter.evaluate(root, Point{.x = 0, .y = 0, .z = 0})) == bits(1.0));
 }
+
+// ---------------------------------------------------------------------------
+// The scope frames a CornerCache carries (Interpreter::ScopeArena). Every
+// evaluation through one cache leases its per-point memo from frames that
+// earlier evaluations wrote, and is told apart from them by an epoch rather
+// than by zeroing. These are the claims that makes: nothing an earlier
+// evaluation wrote is ever read by a later one — across the counter's wrap,
+// which no chunk reaches and a test has to force, and across a refusal.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A pack whose `mix` opens scopes at three levels: an interpolated cell's
+/// corners, a flat_cache relocation inside each, and a find_top_surface
+/// scan. `branch` takes `field` only at y >= 1 and `column` below, so the
+/// nodes it reaches differ from one point to the next — which is what lets
+/// a memo slot keep a stale stamp at all, since a slot every scope rewrites
+/// can never be mistaken for anything.
+void defineScratchPack(const TempTree& tree) {
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("column", R"({"type":"minecraft:flat_cache","argument":"field"})");
+    tree.define("smooth", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"field","argument2":"column"}})");
+    tree.define("branch", R"({"type":"minecraft:range_choice",
+        "input":{"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":1,
+            "from_value":0.0,"to_value":1.0},
+        "min_inclusive":0.5,"max_exclusive":2.0,
+        "when_in_range":{"type":"minecraft:mul","argument1":"field","argument2":3.0},
+        "when_out_of_range":{"type":"minecraft:mul","argument1":"column","argument2":-2.0}})");
+    tree.define("surface", R"({"type":"minecraft:find_top_surface",
+        "density":{"type":"minecraft:add",
+            "argument1":{"type":"minecraft:y_clamped_gradient","from_y":-24,"to_y":24,
+                "from_value":1.0,"to_value":-1.0},
+            "argument2":{"type":"minecraft:mul","argument1":"field","argument2":4.0}},
+        "upper_bound":24.0,"lower_bound":-24,"cell_height":8})");
+    tree.define("mix", R"({"type":"minecraft:add",
+        "argument1":{"type":"minecraft:add","argument1":"smooth","argument2":"branch"},
+        "argument2":{"type":"minecraft:mul","argument1":"surface","argument2":0.01}})");
+}
+
+/// The @p i-th point of the sweeps below: x and z wander over a few dozen
+/// cells, and y is at or above 1 (`branch` reads `field`) when @p high, at
+/// or below 0 (`column`) otherwise.
+[[nodiscard]] Point scratchPoint(std::uint32_t i, bool high) {
+    const auto x = static_cast<std::int32_t>((i * 37U) % 211U) - 105;
+    const auto z = static_cast<std::int32_t>((i * 53U) % 199U) - 99;
+    const auto lift = static_cast<std::int32_t>((i * 7U) % 40U);
+    return Point{.x = x, .y = high ? 1 + lift : -lift, .z = z};
+}
+
+[[nodiscard]] std::string spell(const Point& at) {
+    return "(" + std::to_string(at.x) + ", " + std::to_string(at.y) + ", " + std::to_string(at.z) +
+           ")";
+}
+
+} // namespace
+
+TEST_CASE("one corner cache reused for 10^5 evaluations, through the epoch's wrap, changes no "
+          "value",
+          "[density][interpreter][scratch]") {
+    const TempTree tree;
+    defineScratchPack(tree);
+    const Pipeline pipeline(tree.pack(), 2026, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const stratum::density::NodeIndex root = pipeline.root("mix");
+
+    Interpreter::CornerCache reused(interpreter.cacheSize());
+    std::uint32_t evaluations = 0;
+    std::uint32_t differing = 0;
+    std::string firstDiffering = "none";
+    const auto evaluate = [&](bool high) {
+        ++evaluations;
+        const Point at = scratchPoint(evaluations, high);
+        // Fresh scopes two ways: through a cache of its own, and with no
+        // cache at all.
+        Interpreter::CornerCache fresh(interpreter.cacheSize());
+        const std::uint64_t own = bits(interpreter.evaluate(root, at, fresh));
+        const std::uint64_t none = bits(interpreter.evaluate(root, at));
+        const std::uint64_t shared = bits(interpreter.evaluate(root, at, reused));
+        if (shared != own || shared != none) {
+            if (differing == 0U) {
+                firstDiffering = spell(at) + " at evaluation " + std::to_string(evaluations);
+            }
+            ++differing;
+        }
+    };
+
+    // The schedule is counted in evaluations, which are epochs at the
+    // outermost level: this cache opens exactly one scope there per call.
+    //
+    // 1. 64 evaluations at y >= 1, then the rest of 2 000 below it: the
+    //    nodes only `field`'s branch reaches are left stamped 64, the last
+    //    epoch that wrote them.
+    constexpr std::uint32_t kHigh = 64;
+    for (std::uint32_t i = 0; i < 2000; ++i) {
+        evaluate(i < kHigh);
+    }
+    // 2. Every counter to 4 096 short of the wrap, and up to it below y = 1,
+    //    so the outermost frame's last epoch before the wrap is 2^32 - 1.
+    constexpr std::uint32_t kBeforeWrap = 4096;
+    reused.advanceScopeEpochs(std::numeric_limits<std::uint32_t>::max() - kBeforeWrap);
+    for (std::uint32_t i = 0; i < kBeforeWrap; ++i) {
+        evaluate(false);
+    }
+    // The inner levels open several scopes per evaluation, so they are past
+    // it already.
+    REQUIRE(reused.scopeEpochWraps() >= 2U);
+    // 3. Past the wrap the outermost epochs run 1, 2, ... again: 63 of them
+    //    below y = 1, which leave `field`'s branch alone, and then epoch 64
+    //    reads it at a new point. A wrap that kept the old stamps would hand
+    //    that point the value step 1's 64th point stored there.
+    for (std::uint32_t i = 1; i <= kHigh; ++i) {
+        evaluate(i == kHigh);
+    }
+    // 4. The rest of 10^5, mixed.
+    while (evaluations < 100000U) {
+        evaluate(evaluations % 3U == 0U);
+    }
+
+    CAPTURE(firstDiffering);
+    CHECK(differing == 0U);
+    CHECK(evaluations == 100000U);
+    // Every level that had a frame when the counters were moved wrapped:
+    // the outermost; the corners and scan steps; the relocations inside the
+    // corners.
+    CHECK(reused.scopeEpochWraps() >= 3U);
+}
+
+TEST_CASE("a refusal leaves a corner cache's scope frames as good as new",
+          "[density][interpreter][scratch]") {
+    // A refusal thrown inside a find_top_surface step — an `interpolated`
+    // whose cell there leaves int32 — unwinds through the step's scope and
+    // the evaluation's. Each gives its frame back on the way, so the cache
+    // that saw it evaluates the next point exactly as a fresh one does.
+    const TempTree tree;
+    defineScratchPack(tree);
+    tree.define("past", findTopSurface(R"({"type":"minecraft:interpolated","argument":-1.0})",
+                                       "2147483640.0", -64, 2147483640));
+    const Pipeline pipeline(tree.pack(), 7, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const stratum::density::NodeIndex mix = pipeline.root("mix");
+    const stratum::density::NodeIndex past = pipeline.root("past");
+
+    Interpreter::CornerCache reused(interpreter.cacheSize());
+    for (std::uint32_t i = 1; i <= 200; ++i) {
+        const Point at = scratchPoint(i, i % 2U == 0U);
+        CAPTURE(spell(at));
+        CHECK_THROWS_WITH(interpreter.evaluate(past, at, reused),
+                          ContainsSubstring("'minecraft:interpolated'") &&
+                              ContainsSubstring("32-bit"));
+        CHECK(bits(interpreter.evaluate(mix, at, reused)) == bits(interpreter.evaluate(mix, at)));
+    }
+}
+
+TEST_CASE("every form of evaluate refuses a root that names no node",
+          "[density][interpreter][scratch]") {
+    // The two forms with a cache used to index the scope's memo with the
+    // root before anything had checked it.
+    const TempTree tree;
+    defineScratchPack(tree);
+    const Pipeline pipeline(tree.pack(), 7, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    const auto missing = static_cast<stratum::density::NodeIndex>(interpreter.cacheSize());
+    const Point at{.x = 1, .y = 2, .z = 3};
+    CHECK_THROWS_WITH(interpreter.evaluate(missing, at), ContainsSubstring("out of range"));
+    CHECK_THROWS_WITH(interpreter.evaluate(missing, at, cache), ContainsSubstring("out of range"));
+    CHECK_THROWS_WITH(
+        interpreter.evaluate(missing, at, cache, stratum::density::FlatCacheWindow::none()),
+        ContainsSubstring("out of range"));
+}

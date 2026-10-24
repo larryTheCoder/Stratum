@@ -31,6 +31,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace stratum::density {
@@ -163,21 +164,66 @@ template<typename T>
 
 } // namespace
 
+Interpreter::ScopeArena::Lease Interpreter::ScopeArena::enter(const std::size_t nodeCount) {
+    // See frames_: growing the vector of frames must move each frame, slot
+    // buffer and all, and never copy one out from under an open scope.
+    static_assert(std::is_nothrow_move_constructible_v<Frame>);
+    if (depth_ == frames_.size()) {
+        frames_.push_back(Frame{.slots = {}, .epoch = floor_});
+    }
+    Frame& frame = frames_[depth_];
+    if (frame.slots.size() < nodeCount) {
+        // Every stamp 0, which is at most any epoch: nothing reads as
+        // computed, whatever the counter says.
+        frame.slots.assign(nodeCount, Slot{});
+    }
+    ++frame.epoch;
+    if (frame.epoch == 0) {
+        // Wrapped. Every stamp in the frame is some earlier scope's epoch,
+        // and the counter is about to hand those out again, so the frame is
+        // forgotten first — exactly what zeroing it for every scope did,
+        // once in 2^32 scopes instead of every time.
+        for (Slot& slot : frame.slots) {
+            slot.stamp = 0;
+        }
+        frame.epoch = 1;
+        ++wraps_;
+    }
+    ++depth_;
+    return Lease{.slots = frame.slots.data(), .epoch = frame.epoch};
+}
+
+void Interpreter::ScopeArena::advanceEpochs(const std::uint32_t epoch) noexcept {
+    for (Frame& frame : frames_) {
+        frame.epoch = std::max(frame.epoch, epoch);
+    }
+    floor_ = std::max(floor_, epoch);
+}
+
 /// One point's evaluation, with the values already computed for it. Nodes
 /// are pure functions of the point, so this is only ever a speed-up — except
 /// that without it a spline tree 47 knots wide over three shared coordinates
 /// re-walks the same noise sampling thousands of times.
+///
+/// Its memo is a frame leased from @p arena for as long as the scope is open
+/// (ScopeArena), given back when it closes — on the way out of a refusal
+/// too, so a cache that saw one is as good as new for the next evaluation.
 class Interpreter::Scope {
 public:
-    Scope(Point at, std::size_t nodeCount) : at_(at), values_(nodeCount), computed_(nodeCount, 0) {}
-
-    Scope(Point at, std::size_t nodeCount, CornerCache* cache)
-        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache) {}
-
-    Scope(Point at, std::size_t nodeCount, CornerCache* cache, const FlatCacheWindow* window,
-          ReadContext context = ReadContext::Block)
-        : at_(at), values_(nodeCount), computed_(nodeCount, 0), cache_(cache), window_(window),
+    Scope(ScopeArena& arena, std::size_t nodeCount, Point at, CornerCache* cache,
+          const FlatCacheWindow* window, ReadContext context)
+        : arena_(&arena), frame_(arena.enter(nodeCount)), at_(at), cache_(cache), window_(window),
           context_(context) {}
+
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+    Scope(Scope&&) = delete;
+    Scope& operator=(Scope&&) = delete;
+
+    ~Scope() { arena_->leave(); }
+
+    /// Where every scope this one opens for another point leases its frame.
+    [[nodiscard]] ScopeArena& arena() const noexcept { return *arena_; }
 
     [[nodiscard]] Point at() const noexcept { return at_; }
 
@@ -193,23 +239,28 @@ public:
     [[nodiscard]] const FlatCacheWindow* window() const noexcept { return window_; }
 
     [[nodiscard]] bool has(NodeIndex index) const noexcept {
-        return computed_[static_cast<std::size_t>(index)] != 0;
+        return frame_.slots[static_cast<std::size_t>(index)].stamp == frame_.epoch;
     }
 
     [[nodiscard]] double get(NodeIndex index) const noexcept {
-        return values_[static_cast<std::size_t>(index)];
+        return frame_.slots[static_cast<std::size_t>(index)].value;
     }
 
+    // Not const, although it writes only through the lease's pointer: it is
+    // what makes a node computed in this scope, and a const Scope (as
+    // interpolate() is handed) must not be able to.
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     double store(NodeIndex index, double value) noexcept {
-        values_[static_cast<std::size_t>(index)] = value;
-        computed_[static_cast<std::size_t>(index)] = 1;
+        ScopeArena::Slot& slot = frame_.slots[static_cast<std::size_t>(index)];
+        slot.value = value;
+        slot.stamp = frame_.epoch;
         return value;
     }
 
 private:
+    ScopeArena* arena_;
+    ScopeArena::Lease frame_;
     Point at_;
-    std::vector<double> values_;
-    std::vector<char> computed_;
     CornerCache* cache_ = nullptr;
     const FlatCacheWindow* window_ = nullptr;
     ReadContext context_ = ReadContext::Block;
@@ -641,22 +692,33 @@ std::size_t Interpreter::cacheSize() const noexcept {
     return graph_->nodeCount();
 }
 
+void Interpreter::requireNode(const NodeIndex root) const {
+    if (root >= graph_->nodeCount()) {
+        throw EvalError("node index " + std::to_string(root) + " is out of range");
+    }
+}
+
+// Each top-level call is where a ScopeArena is chosen: the caller's, through
+// its CornerCache, which a chunk's whole fill shares; or one of this call's
+// own when there is no cache, which is what a fresh Scope always was.
+
 double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache) const {
-    Scope scope(at, graph_->nodeCount(), &cache);
+    requireNode(root);
+    Scope scope(cache.scopes_, graph_->nodeCount(), at, &cache, nullptr, ReadContext::Block);
     return evaluateNode(scope, root);
 }
 
 double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache,
                              const FlatCacheWindow& window, ReadContext context) const {
-    Scope scope(at, graph_->nodeCount(), &cache, &window, context);
+    requireNode(root);
+    Scope scope(cache.scopes_, graph_->nodeCount(), at, &cache, &window, context);
     return evaluateNode(scope, root);
 }
 
 double Interpreter::evaluate(NodeIndex root, Point at) const {
-    if (root >= graph_->nodeCount()) {
-        throw EvalError("node index " + std::to_string(root) + " is out of range");
-    }
-    Scope scope(at, graph_->nodeCount());
+    requireNode(root);
+    ScopeArena arena;
+    Scope scope(arena, graph_->nodeCount(), at, nullptr, nullptr, ReadContext::Block);
     return evaluateNode(scope, root);
 }
 
@@ -975,8 +1037,8 @@ double Interpreter::findTopSurface(Scope& scope, const Node& node) const {
     // go unnoticed in a debug run.
     for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
         assert(std::int64_t{scanY} - cellHeight >= std::numeric_limits<std::int32_t>::min());
-        Scope column(Point{.x = at.x, .y = scanY, .z = at.z}, graph_->nodeCount(), nullptr,
-                     scope.window(), scope.context());
+        Scope column(scope.arena(), graph_->nodeCount(), Point{.x = at.x, .y = scanY, .z = at.z},
+                     nullptr, scope.window(), scope.context());
         if (evaluateNode(column, node.arguments[0]) > 0.0) {
             return scanY;
         }
@@ -1015,7 +1077,7 @@ double Interpreter::flatCache(Scope& scope, const Node& node) const {
     if (!relocates || corner == at) {
         return evaluateNode(scope, node.arguments[0]);
     }
-    Scope cornerScope(corner, graph_->nodeCount(), nullptr, window, scope.context());
+    Scope cornerScope(scope.arena(), graph_->nodeCount(), corner, nullptr, window, scope.context());
     return evaluateNode(cornerScope, node.arguments[0]);
 }
 
@@ -1045,10 +1107,11 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
         // The corner's own scope carries the same cache: a nested
         // `interpolated` caches its own cell under its own node index, and
         // the cell check below keeps the two from being confused.
-        Scope inner(Point{.x = x0 + (dx * cells.width),
+        Scope inner(scope.arena(), graph_->nodeCount(),
+                    Point{.x = x0 + (dx * cells.width),
                           .y = y0 + (dy * cells.height),
                           .z = z0 + (dz * cells.width)},
-                    graph_->nodeCount(), scope.cache(), scope.window(), scope.context());
+                    scope.cache(), scope.window(), scope.context());
         return evaluateNode(inner, argument);
     };
 
