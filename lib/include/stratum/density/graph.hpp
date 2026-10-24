@@ -164,6 +164,16 @@ struct SchemaField {
 /// The fields a node type takes, in the order the schema declares them.
 [[nodiscard]] std::span<const SchemaField> fieldsOf(NodeType type) noexcept;
 
+/// The most arguments (Function fields) and numeric parameters (Number
+/// fields) any node type takes at the pinned schema: `range_choice` and
+/// `shifted_noise` take three functions, `old_blended_noise` five numbers.
+/// A node carries exactly its type's counts (the graph refuses any other
+/// shape), so these bound every node. density_graph.cpp checks them against
+/// the schema at compile time, so a schema that grew past them stops the
+/// build rather than a node.
+inline constexpr std::size_t kMaxNodeArguments = 3;
+inline constexpr std::size_t kMaxNodeParameters = 5;
+
 class Graph {
 public:
     /// Resolves every density function in @p pack, so that a cycle or a
@@ -207,6 +217,17 @@ public:
 
     [[nodiscard]] const Node& node(NodeIndex index) const;
     [[nodiscard]] const SplineDefinition& spline(SplineIndex index) const;
+
+    /// Every node, by index, and every spline. Unchecked, unlike node() and
+    /// spline() above, and inline: for the hot path of a caller indexing with
+    /// what the graph itself holds. Every index a graph holds — a node's
+    /// arguments and spline, a spline's coordinate and nested splines, a
+    /// root — names something in it, because Builder and Assembler refuse a
+    /// graph in which one does not; an index from anywhere else goes through
+    /// the checked accessors.
+    [[nodiscard]] std::span<const Node> nodes() const noexcept { return nodes_; }
+
+    [[nodiscard]] std::span<const SplineDefinition> splines() const noexcept { return splines_; }
 
     /// The node a named density function resolves to. Throws if the pack has
     /// no such entry.

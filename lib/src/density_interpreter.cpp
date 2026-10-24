@@ -311,12 +311,45 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises, CellGe
                         " is not usable: both dimensions must be positive");
     }
     cells_ = cells;
+    // The lattice makes `interpolated` and `cache_all_in_cell` evaluable, so
+    // the refusals the delegated constructor settled without one are
+    // settled again with it.
+    settleRefusals();
 }
 
 Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : graph_(&graph) {
-    noiseOf_.assign(graph.nodeCount(), nullptr);
+    ops_.assign(graph.nodeCount(), Op{});
     for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
         const Node& node = graph.node(static_cast<NodeIndex>(i));
+        Op& op = ops_[i];
+        op.type = node.type;
+        // The graph holds every node to its type's shape, and no type has
+        // more operands than an Op does (kMaxNodeArguments,
+        // kMaxNodeParameters, checked against the schema at compile time).
+        // Refused rather than truncated all the same, should a graph ever
+        // arrive by some other road.
+        if (node.arguments.size() > op.arguments.size() ||
+            node.parameters.size() > op.parameters.size()) {
+            throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' (node " +
+                            std::to_string(i) + ") carries more operands than any type takes");
+        }
+        std::ranges::copy(node.arguments, op.arguments.begin());
+        std::ranges::copy(node.parameters, op.parameters.begin());
+        if (node.spline.has_value()) {
+            op.hasSpline = true;
+            op.spline = *node.spline;
+        }
+        if (node.type == NodeType::WeirdScaledSampler) {
+            // The same two names rarityValueMapper() knows, and anything else
+            // left for it to refuse at the sample.
+            if (node.selector == "type_1") {
+                op.rarity = Rarity::Type1;
+            } else if (node.selector == "type_2") {
+                op.rarity = Rarity::Type2;
+            } else {
+                op.rarity = Rarity::Unknown;
+            }
+        }
         if (!node.noise.has_value()) {
             // Either the node samples no noise, or it carries one inline.
             // The second is left unbound rather than refused here: a graph
@@ -343,7 +376,7 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         // will sample, so a reached node is still refused before a single
         // block is filled. SPEC §8's rule is about not generating a wrong
         // world quietly, and a node no root reaches generates nothing.
-        noiseOf_[i] = noises.find(*node.noise);
+        op.noise = noises.find(*node.noise);
     }
 
     // The blended noises, built once. Forty Perlin permutations each, from the
@@ -498,6 +531,14 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         }
         columnInvariant_[i] = invariant ? 1 : 0;
     }
+
+    settleRefusals();
+}
+
+void Interpreter::settleRefusals() noexcept {
+    for (std::size_t i = 0; i < ops_.size(); ++i) {
+        ops_[i].refuses = refusalOf(static_cast<NodeIndex>(i)) != Refusal::None;
+    }
 }
 
 void Interpreter::substitute(UnsettledSubstitutions substitutions) {
@@ -512,7 +553,7 @@ bool Interpreter::isColumnInvariant(NodeIndex index) const {
 }
 
 const noise::NormalNoise& Interpreter::noiseFor(NodeIndex index) const {
-    const noise::NormalNoise* noise = noiseOf_[static_cast<std::size_t>(index)];
+    const noise::NormalNoise* noise = ops_[static_cast<std::size_t>(index)].noise;
     if (noise == nullptr) {
         // The same sentence refuseIfUnevaluable() produces up front, so the
         // late refusal is as informative as the early one it replaced: the
@@ -557,36 +598,50 @@ const noise::BlendedNoise& Interpreter::blendedFor(NodeIndex index) const {
     return *blended;
 }
 
-double rarityValueMapper(std::string_view mapper, double input) {
-    // Written as ladders rather than as arithmetic because that is what they
-    // are: five and four steps with no pattern between them, and any formula
-    // that appeared to fit would be a coincidence over this many points.
-    if (mapper == "type_1") {
-        if (input < -0.5) {
-            return 0.75;
-        }
-        if (input < 0.0) {
-            return 1.0;
-        }
-        if (input < 0.5) {
-            return 1.5;
-        }
+namespace {
+
+// The two ladders, written as ladders rather than as arithmetic because that
+// is what they are: five and four steps with no pattern between them, and any
+// formula that appeared to fit would be a coincidence over this many points.
+// rarityValueMapper() picks one by name; an Op has picked it already.
+
+[[nodiscard]] double rarityType1(const double input) noexcept {
+    if (input < -0.5) {
+        return 0.75;
+    }
+    if (input < 0.0) {
+        return 1.0;
+    }
+    if (input < 0.5) {
+        return 1.5;
+    }
+    return 2.0;
+}
+
+[[nodiscard]] double rarityType2(const double input) noexcept {
+    if (input < -0.75) {
+        return 0.5;
+    }
+    if (input < -0.5) {
+        return 0.75;
+    }
+    if (input < 0.5) {
+        return 1.0;
+    }
+    if (input < 0.75) {
         return 2.0;
     }
+    return 3.0;
+}
+
+} // namespace
+
+double rarityValueMapper(std::string_view mapper, double input) {
+    if (mapper == "type_1") {
+        return rarityType1(input);
+    }
     if (mapper == "type_2") {
-        if (input < -0.75) {
-            return 0.5;
-        }
-        if (input < -0.5) {
-            return 0.75;
-        }
-        if (input < 0.5) {
-            return 1.0;
-        }
-        if (input < 0.75) {
-            return 2.0;
-        }
-        return 3.0;
+        return rarityType2(input);
     }
     throw EvalError("'minecraft:weird_scaled_sampler' has rarity_value_mapper '" +
                     std::string(mapper) +
@@ -594,39 +649,58 @@ double rarityValueMapper(std::string_view mapper, double input) {
                     "and 'type_2'");
 }
 
-void Interpreter::refuseIfUnevaluable(const NodeIndex index) const {
-    const Node& node = graph_->node(index);
-    if (const std::optional<std::string_view> reason = unevaluableReason(node.type)) {
-        throw EvalError("'" + std::string(nodeTypeName(node.type)) +
-                        "' cannot be evaluated by this build: " + std::string(*reason));
+Interpreter::Refusal Interpreter::refusalOf(const NodeIndex index) const noexcept {
+    // Indexed unchecked: every caller holds an index the graph handed out, or
+    // one refuseIfUnevaluable() has checked.
+    const Node& node = graph_->nodes()[static_cast<std::size_t>(index)];
+    if (unevaluableReason(node.type).has_value()) {
+        return Refusal::Type;
     }
-    if (node.noise.has_value() && noiseOf_[static_cast<std::size_t>(index)] == nullptr) {
-        // Moved here from the constructor — see the note there. It used to
-        // throw for every node in the graph, including the ones belonging to
-        // other dimensions; it is refused here instead, where "is this node
-        // reached" is known. Same loudness, same name, and still before a
-        // single block is filled (SPEC §8).
-        throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' samples noise '" +
-                        node.noise->toString() +
-                        "', which was not built for this world seed. A dimension's registry "
-                        "holds only the noises that dimension names");
+    if (node.noise.has_value() && ops_[static_cast<std::size_t>(index)].noise == nullptr) {
+        return Refusal::UnbuiltNoise;
     }
     if (node.inlineNoise.has_value()) {
-        // Not an admission that this build is behind: vanilla does not build
-        // it either. The server takes such a pack, loads the JSON without a
-        // word, and then dies constructing the dimension's random state with
-        // NoSuchElementException from Optional.orElseThrow, because the seed
-        // it needs is the MD5 of the noise's identifier and this noise has
-        // none. Measured over every field that takes the union, over two
-        // different sets of parameters, and over a router entry the dimension
-        // never samples: tools/analysis/inline-noise-probe.sh (SPEC §11).
-        throw UnbuildableError(
-            "'" + std::string(nodeTypeName(node.type)) +
-            "' carries its noise parameters inline rather than naming a worldgen/noise "
-            "entry. mcdoc allows that and this build loads it, but a noise is seeded from "
-            "the MD5 of its identifier and this one has none — and the vanilla server does "
-            "not work around that either: it refuses to build a world whose noise router "
-            "reaches such a node. Name the parameters as a worldgen/noise entry (SPEC §11)");
+        return Refusal::InlineNoise;
+    }
+    return Refusal::None;
+}
+
+void Interpreter::refuseIfUnevaluable(const NodeIndex index) const {
+    const Node& node = graph_->node(index);
+    switch (refusalOf(index)) {
+        case Refusal::None:
+            return;
+        case Refusal::Type:
+            throw EvalError("'" + std::string(nodeTypeName(node.type)) +
+                            "' cannot be evaluated by this build: " +
+                            std::string(unevaluableReason(node.type).value_or("")));
+        case Refusal::UnbuiltNoise:
+            // Moved here from the constructor — see the note there. It used
+            // to throw for every node in the graph, including the ones
+            // belonging to other dimensions; it is refused here instead,
+            // where "is this node reached" is known. Same loudness, same
+            // name, and still before a single block is filled (SPEC §8).
+            throw EvalError("'" + std::string(nodeTypeName(node.type)) + "' samples noise '" +
+                            (node.noise.has_value() ? node.noise->toString() : std::string()) +
+                            "', which was not built for this world seed. A dimension's registry "
+                            "holds only the noises that dimension names");
+        case Refusal::InlineNoise:
+            // Not an admission that this build is behind: vanilla does not
+            // build it either. The server takes such a pack, loads the JSON
+            // without a word, and then dies constructing the dimension's
+            // random state with NoSuchElementException from
+            // Optional.orElseThrow, because the seed it needs is the MD5 of
+            // the noise's identifier and this noise has none. Measured over
+            // every field that takes the union, over two different sets of
+            // parameters, and over a router entry the dimension never
+            // samples: tools/analysis/inline-noise-probe.sh (SPEC §11).
+            throw UnbuildableError(
+                "'" + std::string(nodeTypeName(node.type)) +
+                "' carries its noise parameters inline rather than naming a worldgen/noise "
+                "entry. mcdoc allows that and this build loads it, but a noise is seeded from "
+                "the MD5 of its identifier and this one has none — and the vanilla server does "
+                "not work around that either: it refuses to build a world whose noise router "
+                "reaches such a node. Name the parameters as a worldgen/noise entry (SPEC §11)");
     }
 }
 
@@ -727,8 +801,15 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         return scope.get(index);
     }
 
-    refuseIfUnevaluable(index);
-    const Node& node = graph_->node(index);
+    // Unchecked: a root is checked by evaluate(), and every index below it
+    // is one the graph holds (Graph::nodes()).
+    const Op& op = ops_[static_cast<std::size_t>(index)];
+    if (op.refuses) {
+        // Settled at construction (Op::refuses), so the refusal is the same,
+        // with the same message, at the same visit, without being worked
+        // out again on every visit to every node that draws none.
+        refuseIfUnevaluable(index);
+    }
 
     const Point at = scope.at();
     const auto x = static_cast<double>(at.x);
@@ -736,13 +817,13 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     const auto z = static_cast<double>(at.z);
 
     const auto argument = [&](std::size_t which) {
-        return evaluateNode(scope, node.arguments[which]);
+        return evaluateNode(scope, op.arguments[which]);
     };
 
     double value = 0.0;
-    switch (node.type) {
+    switch (op.type) {
         case NodeType::Constant:
-            value = node.parameters[0];
+            value = op.parameters[0];
             break;
 
         // --- arithmetic ----------------------------------------------------
@@ -814,31 +895,31 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             value = 1.0 / argument(0);
             break;
         case NodeType::Clamp:
-            value = std::clamp(argument(0), node.parameters[0], node.parameters[1]);
+            value = std::clamp(argument(0), op.parameters[0], op.parameters[1]);
             break;
         case NodeType::RangeChoice: {
             const double input = argument(0);
-            const bool inRange = input >= node.parameters[0] && input < node.parameters[1];
+            const bool inRange = input >= op.parameters[0] && input < op.parameters[1];
             // Only the chosen branch is evaluated: the other may be far more
             // expensive, and vanilla does not evaluate it either.
             value = inRange ? argument(1) : argument(2);
             break;
         }
         case NodeType::YClampedGradient:
-            value = clampedMap(y, node.parameters[0], node.parameters[1], node.parameters[2],
-                               node.parameters[3]);
+            value = clampedMap(y, op.parameters[0], op.parameters[1], op.parameters[2],
+                               op.parameters[3]);
             break;
 
         // --- noise ---------------------------------------------------------
         case NodeType::Noise: {
-            const double xzScale = node.parameters[0];
-            const double yScale = node.parameters[1];
+            const double xzScale = op.parameters[0];
+            const double yScale = op.parameters[1];
             value = sampleNoise(index, at, x * xzScale, y * yScale, z * xzScale);
             break;
         }
         case NodeType::ShiftedNoise: {
-            const double xzScale = node.parameters[0];
-            const double yScale = node.parameters[1];
+            const double xzScale = op.parameters[0];
+            const double yScale = op.parameters[1];
             const double shiftX = argument(0);
             const double shiftY = argument(1);
             const double shiftZ = argument(2);
@@ -860,29 +941,29 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
 
         // --- splines -------------------------------------------------------
         case NodeType::OldBlendedNoise:
-            value = oldBlendedNoise(index, node, at);
+            value = oldBlendedNoise(index, op, at);
             break;
         case NodeType::EndIslands:
             value = endIslands(at);
             break;
         case NodeType::FindTopSurface:
-            value = findTopSurface(scope, node);
+            value = findTopSurface(scope, op);
             break;
         case NodeType::WeirdScaledSampler:
-            value = weirdScaledSampler(scope, index, node);
+            value = weirdScaledSampler(scope, index, op);
             break;
         case NodeType::Spline:
             // The resolver never builds one without a spline, but this layer
             // does not get to assume its input came from that resolver.
-            if (!node.spline.has_value()) {
+            if (!op.hasSpline) {
                 throw EvalError("'minecraft:spline' carries no spline");
             }
-            value = static_cast<double>(evaluateSpline(scope, *node.spline));
+            value = static_cast<double>(evaluateSpline(scope, op.spline));
             break;
 
         // --- caches --------------------------------------------------------
         case NodeType::FlatCache:
-            value = flatCache(scope, node);
+            value = flatCache(scope, op);
             break;
         case NodeType::BlendDensity:
             // The third member of the same interface as blend_alpha and
@@ -915,9 +996,8 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             // every aquifer entry, where the blend is wrong on 61 295 to
             // 785 454 blocks an arm and seed, and the argument exact on every
             // block (SPEC §11).
-            value = scope.context() == ReadContext::Detached
-                        ? argument(0)
-                        : interpolate(node.arguments[0], scope);
+            value = scope.context() == ReadContext::Detached ? argument(0)
+                                                             : interpolate(op.arguments[0], scope);
             break;
 
         // --- blending ------------------------------------------------------
@@ -932,7 +1012,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
 
         default:
-            refuseUnevaluated(node.type);
+            refuseUnevaluated(op.type);
     }
 
     return scope.store(index, value);
@@ -947,17 +1027,16 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
 // took evaluateNode's frame from 3.1 KiB to 1.0 in the sanitize preset's
 // build (SPEC §8).
 
-double Interpreter::oldBlendedNoise(const NodeIndex index, const Node& node, const Point at) const {
+double Interpreter::oldBlendedNoise(const NodeIndex index, const Op& op, const Point at) const {
     // Built at construction; see blendedOf_. A substitution still wins if one
     // is in place, so an experiment can put a candidate in front of the
     // settled reading.
     if (substitutions_.blendedNoise != nullptr) {
-        const noise::BlendedNoise::Parameters parameters{.xzScale = node.parameters[0],
-                                                         .yScale = node.parameters[1],
-                                                         .xzFactor = node.parameters[2],
-                                                         .yFactor = node.parameters[3],
-                                                         .smearScaleMultiplier =
-                                                             node.parameters[4]};
+        const noise::BlendedNoise::Parameters parameters{.xzScale = op.parameters[0],
+                                                         .yScale = op.parameters[1],
+                                                         .xzFactor = op.parameters[2],
+                                                         .yFactor = op.parameters[3],
+                                                         .smearScaleMultiplier = op.parameters[4]};
         return substitutions_.blendedNoise(parameters, at);
     }
     return blendedFor(index).sample(at.x, at.y, at.z);
@@ -974,7 +1053,7 @@ double Interpreter::endIslands(const Point at) const {
     return endIslands_->sample(at.x, at.z);
 }
 
-double Interpreter::findTopSurface(Scope& scope, const Node& node) const {
+double Interpreter::findTopSurface(Scope& scope, const Op& op) const {
     // "Scans through a column of an input density and returns the topmost
     // y-level that is above 0. If no such position exists within the bounds,
     // the lower_bound is returned" — minecraft.wiki. Everything the wiki
@@ -990,12 +1069,12 @@ double Interpreter::findTopSurface(Scope& scope, const Node& node) const {
     //   * the test is a strict `> 0`: a density of exactly zero at a lattice
     //     point is not a surface.
     const Point at = scope.at();
-    const double upperBound = evaluateNode(scope, node.arguments[1]);
+    const double upperBound = evaluateNode(scope, op.arguments[1]);
     // Both conversions are defined: the graph refuses, at load, a lower_bound
     // outside the schema's [-4064, 4062] and a cell_height outside [1, 2^31)
     // (density_graph.cpp, checkNode; SPEC §8).
-    const auto lowerBound = static_cast<std::int32_t>(node.parameters[0]);
-    const auto cellHeight = static_cast<std::int32_t>(node.parameters[1]);
+    const auto lowerBound = static_cast<std::int32_t>(op.parameters[0]);
+    const auto cellHeight = static_cast<std::int32_t>(op.parameters[1]);
     if (cellHeight <= 0) {
         refuseCellHeight(cellHeight);
     }
@@ -1039,15 +1118,14 @@ double Interpreter::findTopSurface(Scope& scope, const Node& node) const {
         assert(std::int64_t{scanY} - cellHeight >= std::numeric_limits<std::int32_t>::min());
         Scope column(scope.arena(), graph_->nodeCount(), Point{.x = at.x, .y = scanY, .z = at.z},
                      nullptr, scope.window(), scope.context());
-        if (evaluateNode(column, node.arguments[0]) > 0.0) {
+        if (evaluateNode(column, op.arguments[0]) > 0.0) {
             return scanY;
         }
     }
     return lowerBound;
 }
 
-double Interpreter::weirdScaledSampler(Scope& scope, const NodeIndex index,
-                                       const Node& node) const {
+double Interpreter::weirdScaledSampler(Scope& scope, const NodeIndex index, const Op& op) const {
     // abs(rarity * noise(x/rarity, y/rarity, z/rarity)). The rarity scales the
     // sampled position AND the value, and the absolute value is what makes
     // this a cave function: the tunnels are where the result is near zero,
@@ -1058,11 +1136,25 @@ double Interpreter::weirdScaledSampler(Scope& scope, const NodeIndex index,
         return *substitutions_.weirdScaledSampler;
     }
     const Point at = scope.at();
-    const double rarity = rarityValueMapper(node.selector, evaluateNode(scope, node.arguments[0]));
+    const double input = evaluateNode(scope, op.arguments[0]);
+    double rarity = 0.0;
+    switch (op.rarity) {
+        case Rarity::Type1:
+            rarity = rarityType1(input);
+            break;
+        case Rarity::Type2:
+            rarity = rarityType2(input);
+            break;
+        default:
+            // A name the graph does not allow, refused by rarityValueMapper()
+            // with the message it always gave, after the input as before.
+            rarity = rarityValueMapper(graph_->node(index).selector, input);
+            break;
+    }
     return std::abs(rarity * sampleNoise(index, at, at.x / rarity, at.y / rarity, at.z / rarity));
 }
 
-double Interpreter::flatCache(Scope& scope, const Node& node) const {
+double Interpreter::flatCache(Scope& scope, const Op& op) const {
     // Relocated, not merely remembered: vanilla fills this cache once per 4x4
     // column at y = 0, so every block in that column reads the corner's value
     // — inside the window that grid covers. Outside it there is no grid point
@@ -1075,10 +1167,10 @@ double Interpreter::flatCache(Scope& scope, const Node& node) const {
     const bool relocates = window == nullptr || window->covers(at.x, at.z);
     const Point corner{.x = columnCorner(at.x), .y = 0, .z = columnCorner(at.z)};
     if (!relocates || corner == at) {
-        return evaluateNode(scope, node.arguments[0]);
+        return evaluateNode(scope, op.arguments[0]);
     }
     Scope cornerScope(scope.arena(), graph_->nodeCount(), corner, nullptr, window, scope.context());
-    return evaluateNode(cornerScope, node.arguments[0]);
+    return evaluateNode(cornerScope, op.arguments[0]);
 }
 
 double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
@@ -1165,7 +1257,9 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
 }
 
 float Interpreter::evaluateSpline(Scope& scope, SplineIndex index) const {
-    const SplineDefinition& spline = graph_->spline(index);
+    // Unchecked: a node's spline and a point's nested spline are indices the
+    // graph holds (Graph::splines()).
+    const SplineDefinition& spline = graph_->splines()[static_cast<std::size_t>(index)];
     const auto& points = spline.points;
 
     // Narrowed here, once: everything downstream is float, including the

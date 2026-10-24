@@ -466,6 +466,61 @@ private:
     /// Its memo lives in a frame of a ScopeArena.
     class Scope;
 
+    /// weird_scaled_sampler's `rarity_value_mapper`, resolved from its name
+    /// once rather than compared as a string on every sample.
+    enum class Rarity : std::uint8_t {
+        /// Not a weird_scaled_sampler.
+        None,
+        Type1,
+        Type2,
+        /// A name rarityValueMapper does not know, which it refuses — by
+        /// name, at the sample, as it always did. The graph allows only the
+        /// two above, so nothing reaches this.
+        Unknown,
+    };
+
+    /// One node as evaluateNode reads it, copied out of the graph's Node at
+    /// construction: its type and every operand, flat, instead of behind
+    /// the two vectors and the optionals a Node holds; and the facts about
+    /// it that are fixed once the interpreter is built.
+    ///
+    /// Exact by construction: the same doubles and indices, read in the
+    /// same order. A node carries exactly its type's counts of arguments
+    /// and parameters (the graph refuses any other shape), and no type has
+    /// more than kMaxNodeArguments and kMaxNodeParameters.
+    struct Op {
+        NodeType type = NodeType::Constant;
+        /// Whether refuseIfUnevaluable() throws for this node, decided once
+        /// both constructors are done (settleRefusals). It depends on the
+        /// node's type and noise fields, on the registry the interpreter
+        /// bound and on its cell lattice, none of which a visit or
+        /// substitute() changes; so a visit that finds it set throws the
+        /// same message refuseIfUnevaluable always threw, at the same visit.
+        bool refuses = false;
+        /// Whether the node owns a spline; `spline` names it when it does.
+        bool hasSpline = false;
+        Rarity rarity = Rarity::None;
+        SplineIndex spline = 0;
+        std::array<NodeIndex, kMaxNodeArguments> arguments{};
+        std::array<double, kMaxNodeParameters> parameters{};
+        /// The noise the node samples, resolved once; null for a node that
+        /// samples none, and for a named noise the registry does not hold
+        /// (which refuseIfUnevaluable refuses).
+        const noise::NormalNoise* noise = nullptr;
+    };
+
+    /// Why refuseIfUnevaluable() refuses a node, in the order it checks.
+    enum class Refusal : std::uint8_t { None, Type, UnbuiltNoise, InlineNoise };
+
+    /// Which refusal, if any, the node at @p index draws. The one definition
+    /// both refuseIfUnevaluable() and Op::refuses are read from.
+    [[nodiscard]] Refusal refusalOf(NodeIndex index) const noexcept;
+
+    /// Sets every Op::refuses from refusalOf(). Run last by each constructor,
+    /// since the cell lattice is part of the answer and the one with a
+    /// lattice sets it after delegating.
+    void settleRefusals() noexcept;
+
     /// @p root refused by name unless it names a node of the graph.
     void requireNode(NodeIndex root) const;
 
@@ -474,11 +529,11 @@ private:
     /// The cases of evaluateNode that hold more than a few doubles, kept out
     /// of its frame, which a graph pays once per level of its depth (SPEC
     /// §8). Each is that case exactly.
-    [[nodiscard]] double oldBlendedNoise(NodeIndex index, const Node& node, Point at) const;
+    [[nodiscard]] double oldBlendedNoise(NodeIndex index, const Op& op, Point at) const;
     [[nodiscard]] double endIslands(Point at) const;
-    [[nodiscard]] double findTopSurface(Scope& scope, const Node& node) const;
-    [[nodiscard]] double weirdScaledSampler(Scope& scope, NodeIndex index, const Node& node) const;
-    [[nodiscard]] double flatCache(Scope& scope, const Node& node) const;
+    [[nodiscard]] double findTopSurface(Scope& scope, const Op& op) const;
+    [[nodiscard]] double weirdScaledSampler(Scope& scope, NodeIndex index, const Op& op) const;
+    [[nodiscard]] double flatCache(Scope& scope, const Op& op) const;
 
     /// Splines are evaluated in float, not double: their knot locations,
     /// derivatives and values are floats in vanilla, and the coordinate is
@@ -527,9 +582,9 @@ private:
 
     const Graph* graph_;
     std::optional<CellGeometry> cells_;
-    /// The noise each node samples, resolved once, indexed by node. Null for
-    /// the nodes that sample none.
-    std::vector<const noise::NormalNoise*> noiseOf_;
+    /// Every node as evaluateNode reads it (Op), indexed by node, with the
+    /// noise each samples resolved once.
+    std::vector<Op> ops_;
     /// The blended noise each `old_blended_noise` node needs, built once at
     /// construction, indexed by node. Building one draws forty Perlin
     /// permutations, which is not something to do per sample; and the noise is

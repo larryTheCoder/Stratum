@@ -1864,3 +1864,113 @@ TEST_CASE("every form of evaluate refuses a root that names no node",
         interpreter.evaluate(missing, at, cache, stratum::density::FlatCacheWindow::none()),
         ContainsSubstring("out of range"));
 }
+
+// ---------------------------------------------------------------------------
+// The refusals a visit makes are settled when the interpreter is built
+// (Interpreter::Op::refuses) rather than worked out on every visit. That is
+// only allowed to change the cost: the same message, word for word, from the
+// same visit — the node's own, before anything under it is evaluated, and
+// only when a point actually reaches it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// What evaluating @p root at @p at throws, or "no refusal" and the value.
+[[nodiscard]] std::string refusalAt(const Interpreter& interpreter,
+                                    stratum::density::NodeIndex root, Point at) {
+    try {
+        const double value = interpreter.evaluate(root, at);
+        return "no refusal: " + std::to_string(value);
+    } catch (const EvalError& error) {
+        return error.what();
+    }
+}
+
+/// What requireEvaluable(@p root) throws, or "no refusal".
+[[nodiscard]] std::string upFront(const Interpreter& interpreter,
+                                  stratum::density::NodeIndex root) {
+    try {
+        interpreter.requireEvaluable(root);
+    } catch (const EvalError& error) {
+        return error.what();
+    }
+    return "no refusal";
+}
+
+} // namespace
+
+TEST_CASE("a visit refuses word for word what the up-front check refuses",
+          "[density][interpreter][refusal]") {
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("slide", R"({"type":"minecraft:slide","argument":0.0})");
+    tree.define("interpolated", R"({"type":"minecraft:interpolated","argument":1.0})");
+    tree.define("cell", R"({"type":"minecraft:cache_all_in_cell","argument":1.0})");
+    tree.define("unbuilt", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("inlined", R"({"type":"minecraft:shift_a",
+        "argument":{"firstOctave":-4,"amplitudes":[1.0]}})");
+    // The node's own refusal comes before its argument's.
+    tree.define("slide_over_inline", R"({"type":"minecraft:slide","argument":"inlined"})");
+    // Reached only where y >= 1: below it the slide is never visited.
+    tree.define("gated", R"({"type":"minecraft:range_choice",
+        "input":{"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":1,
+            "from_value":0.0,"to_value":1.0},
+        "min_inclusive":0.5,"max_exclusive":2.0,
+        "when_in_range":"slide","when_out_of_range":0.25})");
+
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    // Nothing built, so `test` is a named noise the registry lacks.
+    const std::vector<ResourceLocation> nothing;
+    const NoiseRegistry empty =
+        NoiseRegistry::create(pack, nothing, 7, stratum::density::RandomSource::Legacy);
+    const Interpreter interpreter(graph, empty);
+    const auto root = [&graph](std::string_view name) {
+        return graph.rootOf(ResourceLocation::parse(std::string(name)));
+    };
+    const Point at{.x = 3, .y = 5, .z = -7};
+
+    const std::string cellReason =
+        "' cannot be evaluated by this build: its value is defined by the cell it sits in, not "
+        "by the point alone, so it needs an interpreter built with a cell geometry — which "
+        "comes from a noise settings entry (SPEC §4.1)";
+    const std::string slide =
+        "'minecraft:slide' cannot be evaluated by this build: it applies the vertical slides "
+        "from a noise settings entry, which this pipeline does not carry yet (SPEC §10, M3)";
+    const std::string inlined =
+        "'minecraft:shift_a' carries its noise parameters inline rather than naming a "
+        "worldgen/noise entry. mcdoc allows that and this build loads it, but a noise is seeded "
+        "from the MD5 of its identifier and this one has none — and the vanilla server does not "
+        "work around that either: it refuses to build a world whose noise router reaches such a "
+        "node. Name the parameters as a worldgen/noise entry (SPEC §11)";
+    const std::map<std::string_view, std::string> expected{
+        {"slide", slide},
+        {"interpolated", "'minecraft:interpolated" + cellReason},
+        {"cell", "'minecraft:cache_all_in_cell" + cellReason},
+        {"unbuilt", "'minecraft:noise' samples noise 'minecraft:test', which was not built for "
+                    "this world seed. A dimension's registry holds only the noises that "
+                    "dimension names"},
+        {"inlined", inlined},
+        {"slide_over_inline", slide},
+        {"gated", slide},
+    };
+    for (const auto& [name, message] : expected) {
+        CAPTURE(name);
+        CHECK(refusalAt(interpreter, root(name), at) == message);
+        CHECK(upFront(interpreter, root(name)) == message);
+    }
+
+    // Only a visit refuses: below y = 1 nothing reaches the slide.
+    CHECK(refusalAt(interpreter, root("gated"), Point{.x = 3, .y = -5, .z = -7}) ==
+          "no refusal: " + std::to_string(0.25));
+    // The inline refusal keeps its type through the settled flag.
+    CHECK_THROWS_AS(interpreter.evaluate(root("inlined"), at), stratum::density::UnbuildableError);
+
+    // With a lattice the two cell types evaluate: the refusal is settled
+    // again once the constructor that takes one has set it.
+    const Interpreter withCells(graph, empty, kOverworldCells);
+    CHECK(refusalAt(withCells, root("interpolated"), at) == "no refusal: " + std::to_string(1.0));
+    CHECK(refusalAt(withCells, root("cell"), at) == "no refusal: " + std::to_string(1.0));
+    CHECK(refusalAt(withCells, root("slide"), at) == slide);
+}

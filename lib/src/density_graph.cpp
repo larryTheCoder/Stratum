@@ -113,6 +113,23 @@ constexpr std::array<Shape, kTypeTable.size()> kShapes = [] {
     return shapes;
 }();
 
+/// Whether the header's kMaxNodeArguments and kMaxNodeParameters are exactly
+/// the largest counts in the schema: never below one, which would let a node
+/// carry more than the interpreter's operand table holds, and not above
+/// every one either, so that the bound stays the schema's and not a guess.
+[[nodiscard]] constexpr bool operandBoundsMatchSchema() {
+    std::size_t arguments = 0;
+    std::size_t parameters = 0;
+    for (const Shape& shape : kShapes) {
+        arguments = std::max(arguments, shape.arguments);
+        parameters = std::max(parameters, shape.parameters);
+    }
+    return arguments == kMaxNodeArguments && parameters == kMaxNodeParameters;
+}
+
+static_assert(operandBoundsMatchSchema(),
+              "kMaxNodeArguments or kMaxNodeParameters no longer match the schema");
+
 /// Whether @p type names a row of the table at all. A NodeType that came out
 /// of a file rather than out of the resolver can be any byte, and indexing
 /// the table with one of those aborts in a checked build — which is how this
