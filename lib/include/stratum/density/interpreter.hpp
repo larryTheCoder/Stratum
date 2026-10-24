@@ -321,6 +321,73 @@ class Interpreter {
         std::uint64_t wraps_ = 0;
     };
 
+    /// Values a CornerCache's evaluations have already computed and may need
+    /// again at another point, keyed by everything each value depends on
+    /// (see CornerCache).
+    ///
+    /// An open-addressed table with a full key in every slot, so a miss is
+    /// only ever a recomputation and never a wrong value: a slot is used only
+    /// when all five words of its key match. Bounded: it grows to
+    /// kMaxCapacity slots and is then forgotten whole and refilled, which
+    /// costs recomputation and changes nothing. Forgetting is an epoch, as in
+    /// ScopeArena: a slot holds a value exactly when its stamp is the table's
+    /// epoch.
+    ///
+    /// Nothing is held between a lookup and an insert — an evaluation in
+    /// between may grow or forget the table — so neither returns a pointer
+    /// into it.
+    class MemoTable {
+    public:
+        /// The node, three coordinates (as their int32 bits) and a tag that
+        /// says what kind of value it is and what it was read through.
+        using Key = std::array<std::uint32_t, 5>;
+
+        /// The table's largest size, in slots of 32 bytes: 2 MiB. A chunk's
+        /// fill stores about 8 000 values.
+        static constexpr std::size_t kMaxCapacity = std::size_t{1} << 16;
+
+        /// Whether @p key is held, and if so its value in @p value.
+        [[nodiscard]] bool find(const Key& key, double& value) const noexcept;
+
+        /// Holds @p value under @p key, replacing what the key held.
+        void insert(const Key& key, double value);
+
+        /// Forgets every value.
+        void clear() noexcept;
+
+        /// How many values it holds.
+        [[nodiscard]] std::size_t size() const noexcept { return size_; }
+
+        /// Moves the epoch forward to at least @p epoch, never back, which
+        /// forgets every value as clear() does. For tests: see
+        /// CornerCache::advanceMemoEpoch.
+        void advanceEpoch(std::uint32_t epoch) noexcept;
+
+        /// How many times the epoch has wrapped.
+        [[nodiscard]] std::uint64_t wraps() const noexcept { return wraps_; }
+
+    private:
+        struct Slot {
+            Key key{};
+            /// The table's epoch when this slot was written; 0 for never.
+            std::uint32_t stamp = 0;
+            double value = 0.0;
+        };
+
+        [[nodiscard]] static std::size_t hash(const Key& key) noexcept;
+
+        /// Where @p key is, or the empty slot where it would go.
+        [[nodiscard]] std::size_t probe(const Key& key) const noexcept;
+
+        /// Twice the slots, every value moved across.
+        void grow();
+
+        std::vector<Slot> slots_;
+        std::uint32_t epoch_ = 1;
+        std::size_t size_ = 0;
+        std::uint64_t wraps_ = 0;
+    };
+
 public:
     /// Binds a graph to the noises it names. Throws EvalError if any `noise`
     /// field has nothing behind it, so that a missing noise is found once at
@@ -372,18 +439,71 @@ public:
     /// They hold nothing from one evaluation to the next: every scope
     /// starts as empty as a fresh one, which the unit tests assert across
     /// a wrap of the epoch counter.
+    ///
+    /// AND IT SHARES CORNERS BETWEEN CELLS (Sharing::Lattice). A corner
+    /// belongs to up to eight cells, and each `interpolated` argument used to
+    /// keep only its last cell's eight, so a chunk evaluated 28 000 corners
+    /// for 5 700 distinct ones. Each corner is now kept in a MemoTable by its
+    /// argument, its position and what it was read through, and filled
+    /// lazily: a corner is evaluated the first time a cell that has it is
+    /// read, in that cell's corner order, and never if no such cell is read.
+    /// So the corners evaluated are the same set as before, in the same
+    /// order of first evaluation, and the first refusal is the same one. A
+    /// corner is stored only once its evaluation has returned; what the
+    /// lattice skips is a repeat of an evaluation that already returned, at
+    /// the same point, where it returns the same double. The unit tests
+    /// compare it with uncached evaluation bit for bit over whole chunks.
+    /// None of it is used while the interpreter carries
+    /// UnsettledSubstitutions, whose functions nothing here can prove pure.
     class CornerCache {
     public:
+        /// How the cache serves `interpolated`'s corners.
+        enum class Sharing : std::uint8_t {
+            /// The corner lattice: every corner kept by argument, position
+            /// and — when the argument reaches a `flat_cache` — the window it
+            /// was read through, and the last cell's corners each argument
+            /// read kept the same way. Each corner is a pure function of
+            /// that key, so one cache can serve reads through any windows.
+            Lattice,
+            /// What every CornerCache did before the lattice: each argument
+            /// keeps its last cell's eight corners, whichever window they
+            /// were read through, and nothing else. A cache that serves
+            /// Block reads of one corner through two windows that tell its
+            /// value apart answers by which read came first; that is this
+            /// mode's semantics, kept bit for bit for the one caller that can
+            /// meet it (terrain::ChunkFiller, when a pack's `barrier` reaches
+            /// an `interpolated` over a `flat_cache`).
+            LastCell,
+        };
+
         explicit CornerCache(std::size_t nodeCount) : entries_(nodeCount) {}
+
+        CornerCache(std::size_t nodeCount, Sharing sharing)
+            : entries_(nodeCount), sharing_(sharing) {}
 
         /// Forgets everything. Cheap, and only needed if the same cache is
         /// reused for a different world or pipeline. The scope frames need
         /// no forgetting: a scope never reads what an earlier one wrote.
-        void reset() noexcept {
-            for (Entry& entry : entries_) {
-                entry.filled = false;
-            }
-        }
+        void reset() noexcept { forget(); }
+
+        [[nodiscard]] Sharing sharing() const noexcept { return sharing_; }
+
+        /// The most slots the memo grows to; it holds at most half as many
+        /// values, and is forgotten whole and refilled past that.
+        static constexpr std::size_t kMemoCapacity = MemoTable::kMaxCapacity;
+
+        /// FOR TESTS. How many values the memo holds.
+        [[nodiscard]] std::size_t memoSize() const noexcept { return memo_.size(); }
+
+        /// FOR TESTS. Moves the memo's epoch forward to at least @p epoch,
+        /// as though it had been forgotten that many times, never back. The
+        /// epoch wraps after 2^32 forgettings, which no chunk comes near, and
+        /// the wrap must forget the memo exactly as each forgetting does;
+        /// this is how a test gets there.
+        void advanceMemoEpoch(std::uint32_t epoch) noexcept { memo_.advanceEpoch(epoch); }
+
+        /// FOR TESTS. How many times the memo's epoch has wrapped.
+        [[nodiscard]] std::uint64_t memoEpochWraps() const noexcept { return memo_.wraps(); }
 
         /// FOR TESTS. Moves the scope frames' epoch counters forward to at
         /// least @p epoch, as though that many scopes had opened at every
@@ -401,17 +521,42 @@ public:
     private:
         friend class Interpreter;
 
+        /// How many distinct windows the memo tells apart before it is
+        /// forgotten whole: a chunk reads through two (none, and its own).
+        static constexpr std::size_t kMaxWindows = 8;
+
         struct Entry {
             /// The cell these corners belong to, by its lower corner.
             std::int32_t x = 0;
             std::int32_t y = 0;
             std::int32_t z = 0;
+            /// What the corners were read through (Interpreter's corner
+            /// tag); compared only under Sharing::Lattice.
+            std::uint32_t tag = 0;
             bool filled = false;
             std::array<double, 8> corners{};
         };
 
+        /// A small number standing for @p window in memo keys: 0 for none,
+        /// and the same number for every window with the same bounds until
+        /// the cache is forgotten. A ninth distinct window forgets it first.
+        [[nodiscard]] std::uint32_t windowId(const FlatCacheWindow* window) noexcept;
+
+        /// Every corner, memo value and window number dropped.
+        void forget() noexcept {
+            for (Entry& entry : entries_) {
+                entry.filled = false;
+            }
+            memo_.clear();
+            windowCount_ = 0;
+        }
+
         std::vector<Entry> entries_;
         ScopeArena scopes_;
+        MemoTable memo_;
+        std::array<FlatCacheWindow, kMaxWindows> windows_{};
+        std::uint32_t windowCount_ = 0;
+        Sharing sharing_ = Sharing::Lattice;
     };
 
     /// The value of @p root at @p at.
@@ -466,6 +611,12 @@ private:
     /// Its memo lives in a frame of a ScopeArena.
     class Scope;
 
+    /// What every scope one top-level call opens shares: where scopes lease
+    /// their frames, the caller's CornerCache, the window and the read
+    /// context, and which of the cache's memos the call may use. Fixed for
+    /// the whole call: a scope opened for another point inherits all of it.
+    struct Call;
+
     /// weird_scaled_sampler's `rarity_value_mapper`, resolved from its name
     /// once rather than compared as a string on every sample.
     enum class Rarity : std::uint8_t {
@@ -499,6 +650,12 @@ private:
         bool refuses = false;
         /// Whether the node owns a spline; `spline` names it when it does.
         bool hasSpline = false;
+        /// Whether a `flat_cache` is reachable from the node, through its
+        /// arguments and splines: the one way the FlatCacheWindow a value
+        /// is read through can change it. An `interpolated` argument with
+        /// this set keeps its corners per window; one without keeps one
+        /// set for every window, since every window gives it the same.
+        bool readsWindow = false;
         Rarity rarity = Rarity::None;
         SplineIndex spline = 0;
         std::array<NodeIndex, kMaxNodeArguments> arguments{};
@@ -574,11 +731,20 @@ private:
 
     /// Trilinear interpolation over the eight corners of @p at's cell.
     /// Vanilla computes each corner once per cell and reuses it across every
-    /// block in that cell; this recomputes them per point, which is the same
-    /// value at eight times the cost — the density function is a pure
-    /// function of position. The chunk filler is what makes that once-per-cell
-    /// again (SPEC §4.1).
+    /// block in that cell; without a CornerCache this recomputes them per
+    /// point, which is the same value at eight times the cost — the density
+    /// function is a pure function of position. A cache makes that once per
+    /// cell again (SPEC §4.1), and its lattice once per corner.
     [[nodiscard]] double interpolate(NodeIndex argument, const Scope& scope) const;
+
+    /// @p argument at the cell corner @p corner, from the cache's lattice
+    /// under @p tag, or evaluated there and kept. @p scope's cache is set.
+    [[nodiscard]] double sharedCorner(NodeIndex argument, const Scope& scope, Point corner,
+                                      std::uint32_t tag) const;
+
+    /// The Call a top-level evaluation through @p cache makes.
+    [[nodiscard]] Call callThrough(CornerCache& cache, const FlatCacheWindow* window,
+                                   ReadContext context) const noexcept;
 
     const Graph* graph_;
     std::optional<CellGeometry> cells_;

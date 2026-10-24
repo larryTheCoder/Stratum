@@ -285,6 +285,19 @@ public:
     /// how much work they cost.
     [[nodiscard]] bool readsBarrierOnEveryBlock() const noexcept { return barrierReadsAlways_; }
 
+    /// How fill()'s CornerCache shares `interpolated`'s cell corners:
+    /// Sharing::Lattice, except where aquifers are enabled and the `barrier`
+    /// entry reaches an `interpolated` whose argument reaches a
+    /// `flat_cache`. The barrier is the one Block read the fill makes
+    /// through its chunk's window, the terrain's and the veins' are made
+    /// through none, and there a corner's value can depend on which window
+    /// read it; the cache then keeps each argument's last cell, as every
+    /// fill did before the lattice (Sharing::LastCell), so that pack's
+    /// blocks are what they were. Every vanilla preset shares the lattice.
+    [[nodiscard]] density::Interpreter::CornerCache::Sharing cornerSharing() const noexcept {
+        return cornerSharing_;
+    }
+
     /// The horizontal pitch the router's `preliminary_surface_level` is
     /// SAMPLED on before it reaches `above_preliminary_surface` — measured,
     /// and not a column (SPEC §11). 16 blocks, anchored at the world origin
@@ -421,6 +434,12 @@ private:
     // entry reaches a node whose read is not provably a pure, total function
     // of the block. Decided once, at compile(); see there.
     bool barrierReadsAlways_ = false;
+
+    // How fill()'s CornerCache shares cell corners: the lattice, unless the
+    // barrier reads corners whose value its window can change (compile()
+    // says when, and why that keeps the last-cell cache).
+    density::Interpreter::CornerCache::Sharing cornerSharing_ =
+        density::Interpreter::CornerCache::Sharing::Lattice;
 };
 
 } // namespace stratum::terrain

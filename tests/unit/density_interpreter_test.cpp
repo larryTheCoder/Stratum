@@ -27,6 +27,7 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -1973,4 +1974,409 @@ TEST_CASE("a visit refuses word for word what the up-front check refuses",
     CHECK(refusalAt(withCells, root("interpolated"), at) == "no refusal: " + std::to_string(1.0));
     CHECK(refusalAt(withCells, root("cell"), at) == "no refusal: " + std::to_string(1.0));
     CHECK(refusalAt(withCells, root("slide"), at) == slide);
+}
+
+// ---------------------------------------------------------------------------
+// The corner lattice (Interpreter::CornerCache::Sharing::Lattice): one corner
+// of a cell belongs to up to eight cells, and a cache keeps each corner by its
+// argument, its position and — when the argument reaches a flat_cache — the
+// window it was read through, filled lazily in each cell's corner order. The
+// claims: over whole chunks in the order the filler reads them, every value
+// is the bit pattern a fresh evaluation gives; a corner no read needs is
+// never evaluated, so a refusal is thrown where and as it always was; reads
+// through several windows on one cache each get their own window's corners;
+// and the memo forgets cleanly, at its capacity, at a ninth window and across
+// its epoch's wrap. The reference is a fresh evaluation at every point: with
+// no cache at all where the read has no window, and otherwise through a
+// fresh last-cell cache (Sharing::LastCell), which is what every cache was
+// before the lattice.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using stratum::density::FlatCacheWindow;
+using stratum::density::NodeIndex;
+using stratum::density::ReadContext;
+using Sharing = Interpreter::CornerCache::Sharing;
+
+/// The columns a chunk's flat_cache grid holds: terrain::ChunkFiller's
+/// window, written out here, where the density layer is tested alone.
+[[nodiscard]] FlatCacheWindow chunkWindow(std::int32_t chunkX, std::int32_t chunkZ) {
+    return FlatCacheWindow{.minX = chunkX * 16,
+                           .maxX = (chunkX * 16) + 19,
+                           .minZ = chunkZ * 16,
+                           .maxZ = (chunkZ * 16) + 19};
+}
+
+/// Every block of chunk (@p chunkX, @p chunkZ) from @p minY, @p height blocks
+/// up, in the order terrain::ChunkFiller::fill visits them: cell by cell, z
+/// then x, each column of cells bottom up, and within a cell y, then z, then
+/// x.
+template<typename Visit>
+void forEachBlockInFillOrder(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minY,
+                             std::int32_t height, CellGeometry cells, const Visit& visit) {
+    for (std::int32_t cellZ = 0; cellZ < 16; cellZ += cells.width) {
+        for (std::int32_t cellX = 0; cellX < 16; cellX += cells.width) {
+            for (std::int32_t bottom = minY; bottom < minY + height; bottom += cells.height) {
+                for (std::int32_t y = bottom; y < bottom + cells.height; ++y) {
+                    for (std::int32_t z = cellZ; z < cellZ + cells.width; ++z) {
+                        for (std::int32_t x = cellX; x < cellX + cells.width; ++x) {
+                            visit(Point{.x = (chunkX * 16) + x, .y = y, .z = (chunkZ * 16) + z});
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Graphs that put a shared corner where it can go wrong: an argument with
+/// a flat_cache over a y-varying field in it, whose corners differ by
+/// window; an interpolated nested in another's corners; one under a
+/// flat_cache, which keeps no corners; two interpolated over one argument,
+/// which share its corners; and one reached only above y = 0.
+void defineLatticePack(const TempTree& tree) {
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("column", R"({"type":"minecraft:flat_cache","argument":"field"})");
+    tree.define("smooth", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"field","argument2":"column"}})");
+    tree.define("nested", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":{"type":"minecraft:mul","argument1":"field",
+            "argument2":0.5},"argument2":"smooth"}})");
+    tree.define("under_flat", R"({"type":"minecraft:flat_cache","argument":{
+        "type":"minecraft:interpolated","argument":"field"}})");
+    tree.define("shared_a", R"({"type":"minecraft:interpolated","argument":"field"})");
+    tree.define("shared_b", R"({"type":"minecraft:interpolated","argument":"field"})");
+    tree.define("gated", R"({"type":"minecraft:range_choice",
+        "input":{"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":1,
+            "from_value":0.0,"to_value":1.0},
+        "min_inclusive":0.5,"max_exclusive":2.0,
+        "when_in_range":{"type":"minecraft:interpolated","argument":{
+            "type":"minecraft:mul","argument1":"field","argument2":-3.0}},
+        "when_out_of_range":-1.0})");
+    tree.define("all", R"({"type":"minecraft:add",
+        "argument1":{"type":"minecraft:add","argument1":"smooth","argument2":"nested"},
+        "argument2":{"type":"minecraft:add",
+            "argument1":{"type":"minecraft:add","argument1":"under_flat",
+                "argument2":{"type":"minecraft:mul","argument1":"shared_a",
+                    "argument2":"shared_b"}},
+            "argument2":"gated"}})");
+}
+
+/// The reference: @p root at @p at, evaluated afresh — with no cache when
+/// @p window is null, else through a fresh last-cell cache.
+[[nodiscard]] double freshly(const Interpreter& interpreter, NodeIndex root, Point at,
+                             const FlatCacheWindow* window, ReadContext context) {
+    if (window == nullptr) {
+        return interpreter.evaluate(root, at);
+    }
+    Interpreter::CornerCache fresh(interpreter.cacheSize(), Sharing::LastCell);
+    return interpreter.evaluate(root, at, fresh, *window, context);
+}
+
+/// @p root at @p at through @p cache, with @p window when it is set.
+[[nodiscard]] double through(const Interpreter& interpreter, NodeIndex root, Point at,
+                             Interpreter::CornerCache& cache, const FlatCacheWindow* window,
+                             ReadContext context) {
+    if (window == nullptr) {
+        return interpreter.evaluate(root, at, cache);
+    }
+    return interpreter.evaluate(root, at, cache, *window, context);
+}
+
+/// What @p evaluate throws as EvalError, or "no refusal".
+template<typename Evaluate>
+[[nodiscard]] std::string refusalOf(const Evaluate& evaluate) {
+    try {
+        static_cast<void>(evaluate());
+    } catch (const EvalError& error) {
+        return error.what();
+    }
+    return "no refusal";
+}
+
+/// One way the differential tests below read a chunk.
+struct ChunkRead {
+    const char* name;
+    /// Through the chunk's own window; else through none() when `none` is
+    /// set; else through no window at all.
+    bool chunkWindow;
+    bool none;
+    ReadContext context;
+};
+
+/// Every way the tests read: the terrain's (no window), the barrier's (the
+/// chunk's window, Block), a read through none(), and an aquifer read (the
+/// chunk's window, Detached).
+[[nodiscard]] std::vector<ChunkRead> chunkReads() {
+    return {
+        {.name = "no window", .chunkWindow = false, .none = false, .context = ReadContext::Block},
+        {.name = "the chunk's window",
+         .chunkWindow = true,
+         .none = false,
+         .context = ReadContext::Block},
+        {.name = "none()", .chunkWindow = false, .none = true, .context = ReadContext::Block},
+        {.name = "detached, through the chunk's window",
+         .chunkWindow = true,
+         .none = false,
+         .context = ReadContext::Detached},
+    };
+}
+
+/// Reads @p roots at every block of three chunks — one at the origin, one
+/// at negative coordinates, one far out — in the filler's order, each way
+/// chunkReads() lists, through one cache per chunk and way; then the three
+/// Block ways interleaved block by block on ONE cache. Every value is
+/// compared with freshly()'s, as a bit pattern. Returns how many differed,
+/// and where the first did in @p first.
+[[nodiscard]] std::size_t differencesOverChunks(const Interpreter& interpreter,
+                                                const std::vector<NodeIndex>& roots,
+                                                std::int32_t minY, std::int32_t height,
+                                                std::string& first) {
+    std::size_t differing = 0;
+    const auto compare = [&](double shared, double fresh, Point at, const char* how) {
+        if (bits(shared) != bits(fresh)) {
+            if (differing++ == 0) {
+                first = spell(at) + " " + how;
+            }
+        }
+    };
+    const FlatCacheWindow none = FlatCacheWindow::none();
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{-1, 2}, std::pair{-5000, 70}}) {
+        const FlatCacheWindow window = chunkWindow(chunkX, chunkZ);
+        const auto windowOf = [&](const ChunkRead& read) -> const FlatCacheWindow* {
+            if (read.chunkWindow) {
+                return &window;
+            }
+            return read.none ? &none : nullptr;
+        };
+        const std::vector<ChunkRead> reads = chunkReads();
+        for (const ChunkRead& read : reads) {
+            Interpreter::CornerCache cache(interpreter.cacheSize());
+            forEachBlockInFillOrder(chunkX, chunkZ, minY, height, kOverworldCells, [&](Point at) {
+                for (const NodeIndex root : roots) {
+                    compare(through(interpreter, root, at, cache, windowOf(read), read.context),
+                            freshly(interpreter, root, at, windowOf(read), read.context), at,
+                            read.name);
+                }
+            });
+        }
+        Interpreter::CornerCache mixed(interpreter.cacheSize());
+        forEachBlockInFillOrder(chunkX, chunkZ, minY, height, kOverworldCells, [&](Point at) {
+            for (const NodeIndex root : roots) {
+                for (std::size_t r = 0; r < 3; ++r) {
+                    compare(
+                        through(interpreter, root, at, mixed, windowOf(reads[r]), reads[r].context),
+                        freshly(interpreter, root, at, windowOf(reads[r]), reads[r].context), at,
+                        "interleaved");
+                }
+            }
+        });
+    }
+    return differing;
+}
+
+} // namespace
+
+TEST_CASE("the corner lattice changes no value over whole chunks, through any window",
+          "[density][interpreter][lattice]") {
+    const TempTree tree;
+    defineLatticePack(tree);
+    const Pipeline pipeline(tree.pack(), 4242, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+
+    std::string first = "none";
+    const std::size_t differing =
+        differencesOverChunks(interpreter, {pipeline.root("all")}, -8, 16, first);
+    CAPTURE(first);
+    CHECK(differing == 0U);
+
+    // The windows tell `smooth`'s corners apart, or the interleaved reads
+    // would test nothing.
+    const FlatCacheWindow none = FlatCacheWindow::none();
+    const Point at{.x = 5, .y = 3, .z = 6};
+    CHECK(bits(freshly(interpreter, pipeline.root("smooth"), at, nullptr, ReadContext::Block)) !=
+          bits(freshly(interpreter, pipeline.root("smooth"), at, &none, ReadContext::Block)));
+}
+
+TEST_CASE("the corner lattice evaluates a corner only when a cell that has it is read",
+          "[density][interpreter][lattice][refusal]") {
+    // `far` refuses at every corner whose x or z is 16: its noise is scaled
+    // so that 12 * scale is inside the noise's 32-bit lattice and 16 * scale
+    // is past it. Read in the filler's order, chunk (0, 0)'s cells at x and
+    // z below 12 never reach such a corner and must never evaluate one; a
+    // cell that does throws the message a fresh evaluation throws, naming
+    // the same corner — the first of its eight in order that refuses.
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("far", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:noise","noise":"test","xz_scale":1.25e9,"y_scale":0.0}})");
+    const Pipeline pipeline(tree.pack(), 99, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("far");
+
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    std::size_t read = 0;
+    std::size_t refused = 0;
+    std::size_t differing = 0;
+    forEachBlockInFillOrder(0, 0, -8, 16, kOverworldCells, [&](Point at) {
+        const std::string shared = refusalOf([&] { return interpreter.evaluate(root, at, cache); });
+        const std::string fresh = refusalOf([&] { return interpreter.evaluate(root, at); });
+        if (at.x >= 12 || at.z >= 12) {
+            ++refused;
+            differing += shared != fresh || shared.find("32-bit") == std::string::npos ? 1U : 0U;
+            return;
+        }
+        ++read;
+        differing += shared != "no refusal" || bits(interpreter.evaluate(root, at, cache)) !=
+                                                   bits(interpreter.evaluate(root, at))
+                         ? 1U
+                         : 0U;
+    });
+    CHECK(read == std::size_t{9} * 16U * 16U);
+    CHECK(refused == std::size_t{7} * 16U * 16U);
+    CHECK(differing == 0U);
+}
+
+TEST_CASE("a corner that throws leaves no cell behind it", "[density][interpreter][lattice]") {
+    // A cell whose fifth corner throws must not be remembered with the
+    // corners it had before: the next read of that cell throws again,
+    // whichever way the cache shares corners. (A cell used to be marked
+    // filled before its corners were computed, so the next read of one
+    // whose corner had thrown returned the previous cell's blend.)
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("far", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:noise","noise":"test","xz_scale":1.25e9,"y_scale":0.0}})");
+    const Pipeline pipeline(tree.pack(), 99, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("far");
+    for (const Sharing sharing : {Sharing::Lattice, Sharing::LastCell}) {
+        CAPTURE(sharing == Sharing::Lattice);
+        Interpreter::CornerCache cache(interpreter.cacheSize(), sharing);
+        const Point inside{.x = 9, .y = 3, .z = 2};
+        const Point past{.x = 13, .y = 3, .z = 2};
+        const double before = interpreter.evaluate(root, inside, cache);
+        CHECK(bits(before) == bits(interpreter.evaluate(root, inside)));
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            CHECK_THROWS_WITH(interpreter.evaluate(root, past, cache),
+                              ContainsSubstring("for block (16, 0, 0)"));
+        }
+        CHECK(bits(interpreter.evaluate(root, inside, cache)) == bits(before));
+    }
+}
+
+TEST_CASE("a last-cell cache serves a cell's corners to every window, and the lattice does not",
+          "[density][interpreter][lattice]") {
+    // Sharing::LastCell is what every cache did before the lattice: an
+    // argument keeps its last cell's corners whichever window filled them.
+    // Pinned as that, since terrain::ChunkFiller keeps it for the one pack
+    // that can tell. The lattice keeps each window's own.
+    const TempTree tree;
+    defineLatticePack(tree);
+    const Pipeline pipeline(tree.pack(), 4242, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("smooth");
+    const FlatCacheWindow none = FlatCacheWindow::none();
+    const Point at{.x = 5, .y = 3, .z = 6};
+
+    const double relocated = interpreter.evaluate(root, at);
+    const double unrelocated = freshly(interpreter, root, at, &none, ReadContext::Block);
+    REQUIRE(bits(relocated) != bits(unrelocated));
+
+    Interpreter::CornerCache last(interpreter.cacheSize(), Sharing::LastCell);
+    CHECK(last.sharing() == Sharing::LastCell);
+    CHECK(bits(interpreter.evaluate(root, at, last)) == bits(relocated));
+    CHECK(bits(interpreter.evaluate(root, at, last, none)) == bits(relocated));
+    CHECK(last.memoSize() == 0U);
+
+    Interpreter::CornerCache lattice(interpreter.cacheSize());
+    CHECK(lattice.sharing() == Sharing::Lattice);
+    CHECK(bits(interpreter.evaluate(root, at, lattice)) == bits(relocated));
+    CHECK(bits(interpreter.evaluate(root, at, lattice, none)) == bits(unrelocated));
+    CHECK(bits(interpreter.evaluate(root, at, lattice)) == bits(relocated));
+}
+
+TEST_CASE("the corner lattice forgets cleanly: at its capacity, at a ninth window, across its "
+          "epoch's wrap",
+          "[density][interpreter][lattice][scratch]") {
+    const TempTree tree;
+    defineLatticePack(tree);
+    const Pipeline pipeline(tree.pack(), 4242, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("smooth");
+
+    SECTION("more corners than it holds") {
+        // Cells three apart on x and z, so no two share a corner: 8 new
+        // corners a read, and 6 000 reads are 48 000 corners, past what a
+        // table at its largest holds.
+        Interpreter::CornerCache cache(interpreter.cacheSize());
+        std::size_t largest = 0;
+        bool forgot = false;
+        std::size_t differing = 0;
+        for (std::int32_t i = 0; i < 6000; ++i) {
+            const Point at{.x = ((i % 80) * 12) + 1, .y = 3, .z = ((i / 80) * 12) + 2};
+            differing +=
+                bits(interpreter.evaluate(root, at, cache)) != bits(interpreter.evaluate(root, at))
+                    ? 1U
+                    : 0U;
+            forgot = forgot || cache.memoSize() < largest;
+            largest = std::max(largest, cache.memoSize());
+        }
+        CHECK(differing == 0U);
+        CHECK(forgot);
+        CHECK(largest <= Interpreter::CornerCache::kMemoCapacity / 2);
+    }
+
+    SECTION("a ninth window, and the wrap") {
+        // Windows that cover the point's column relocate `column`, and
+        // windows that do not read it in place, so `smooth`'s corners differ
+        // between the two kinds. The ninth distinct window forgets the memo
+        // and numbers windows from 1 again, so a corner kept under the first
+        // window's number must not be served to the ninth's. With the memo's
+        // epoch moved to its edge first, that forgetting also wraps it, and a
+        // stamp from before the wrap must not read as current either.
+        const auto windowNumbered = [](std::int32_t n) {
+            // Up to 8, odd n covers (5, 6) and even n does not; past 8 the
+            // other way round, so that window 9, numbered 1 after the
+            // forgetting, is not the kind window 1 was, and window 10,
+            // numbered 2, not the kind window 2 was.
+            const bool covers = (n % 2 == 1) != (n > 8);
+            const std::int32_t low = covers ? -100 * n : 100 * n;
+            return FlatCacheWindow{
+                .minX = low, .maxX = low + (200 * n), .minZ = low, .maxZ = low + (200 * n)};
+        };
+        const Point at{.x = 5, .y = 3, .z = 6};
+        const FlatCacheWindow odd = windowNumbered(1);
+        const FlatCacheWindow even = windowNumbered(2);
+        REQUIRE(bits(freshly(interpreter, root, at, &odd, ReadContext::Block)) !=
+                bits(freshly(interpreter, root, at, &even, ReadContext::Block)));
+        for (const bool wrap : {false, true}) {
+            CAPTURE(wrap);
+            Interpreter::CornerCache cache(interpreter.cacheSize());
+            std::size_t differing = 0;
+            const auto readThrough = [&](std::int32_t n) {
+                const FlatCacheWindow window = windowNumbered(n);
+                differing +=
+                    bits(interpreter.evaluate(root, at, cache, window)) !=
+                            bits(freshly(interpreter, root, at, &window, ReadContext::Block))
+                        ? 1U
+                        : 0U;
+            };
+            readThrough(1);
+            if (wrap) {
+                cache.advanceMemoEpoch(std::numeric_limits<std::uint32_t>::max());
+            }
+            for (std::int32_t n = 2; n <= 9; ++n) {
+                readThrough(n);
+            }
+            // Window 9 is numbered 1 now, and window 10 will be 2.
+            readThrough(10);
+            readThrough(9);
+            CHECK(differing == 0U);
+            CHECK(cache.memoEpochWraps() == (wrap ? 1U : 0U));
+        }
+    }
 }

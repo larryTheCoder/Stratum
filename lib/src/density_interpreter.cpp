@@ -134,6 +134,24 @@ template<typename T>
                     "than wrap them");
 }
 
+/// One corner of a cell, as offsets of whole cells from its lower corner.
+struct CornerOffset {
+    std::int32_t dx = 0;
+    std::int32_t dy = 0;
+    std::int32_t dz = 0;
+};
+
+/// The order interpolate() has always evaluated a cell's eight corners in:
+/// x outermost, then y, then z.
+constexpr std::array<CornerOffset, 8> kCornerOrder{{{.dx = 0, .dy = 0, .dz = 0},
+                                                    {.dx = 0, .dy = 0, .dz = 1},
+                                                    {.dx = 0, .dy = 1, .dz = 0},
+                                                    {.dx = 0, .dy = 1, .dz = 1},
+                                                    {.dx = 1, .dy = 0, .dz = 0},
+                                                    {.dx = 1, .dy = 0, .dz = 1},
+                                                    {.dx = 1, .dy = 1, .dz = 0},
+                                                    {.dx = 1, .dy = 1, .dz = 1}}};
+
 /// Whether a cell from @p lower, @p size long, has both its ends in int32.
 [[nodiscard]] constexpr bool cellFits(const std::int64_t lower, const std::int32_t size) noexcept {
     return lower >= std::numeric_limits<std::int32_t>::min() &&
@@ -200,43 +218,178 @@ void Interpreter::ScopeArena::advanceEpochs(const std::uint32_t epoch) noexcept 
     floor_ = std::max(floor_, epoch);
 }
 
+std::size_t Interpreter::MemoTable::hash(const Key& key) noexcept {
+    // Any mixing does: a slot is used only on a full-key match, so the hash
+    // decides where a value is looked for and never what it is. Unsigned
+    // throughout.
+    std::uint64_t h = UINT64_C(0x9E3779B97F4A7C15);
+    for (const std::uint32_t word : key) {
+        h ^= word;
+        h *= UINT64_C(0xBF58476D1CE4E5B9);
+        h ^= h >> 29U;
+    }
+    return static_cast<std::size_t>(h);
+}
+
+std::size_t Interpreter::MemoTable::probe(const Key& key) const noexcept {
+    const std::size_t mask = slots_.size() - 1;
+    std::size_t at = hash(key) & mask;
+    // At most half full (insert), so an empty slot ends every probe.
+    while (slots_[at].stamp == epoch_ && slots_[at].key != key) {
+        at = (at + 1) & mask;
+    }
+    return at;
+}
+
+bool Interpreter::MemoTable::find(const Key& key, double& value) const noexcept {
+    if (slots_.empty()) {
+        return false;
+    }
+    const Slot& slot = slots_[probe(key)];
+    if (slot.stamp != epoch_) {
+        return false;
+    }
+    value = slot.value;
+    return true;
+}
+
+void Interpreter::MemoTable::insert(const Key& key, const double value) {
+    if ((size_ + 1) * 2 > slots_.size()) {
+        if (slots_.size() < kMaxCapacity) {
+            grow();
+        } else {
+            // Full at its largest: forgotten whole, and refilled from here.
+            clear();
+        }
+    }
+    Slot& slot = slots_[probe(key)];
+    if (slot.stamp != epoch_) {
+        ++size_;
+    }
+    slot.key = key;
+    slot.stamp = epoch_;
+    slot.value = value;
+}
+
+void Interpreter::MemoTable::clear() noexcept {
+    size_ = 0;
+    ++epoch_;
+    if (epoch_ == 0) {
+        // Wrapped: every stamp is some earlier epoch that is about to be
+        // handed out again, so they are cleared first, as ScopeArena does.
+        for (Slot& slot : slots_) {
+            slot.stamp = 0;
+        }
+        epoch_ = 1;
+        ++wraps_;
+    }
+}
+
+void Interpreter::MemoTable::advanceEpoch(const std::uint32_t epoch) noexcept {
+    if (epoch > epoch_) {
+        // Every stamp is at most the old epoch, so none is the new one:
+        // forgotten, as by clear().
+        epoch_ = epoch;
+        size_ = 0;
+    }
+}
+
+void Interpreter::MemoTable::grow() {
+    constexpr std::size_t kInitialCapacity = 256;
+    const std::vector<Slot> old = std::move(slots_);
+    // Every stamp 0, which no epoch is: the new table starts empty.
+    slots_.assign(old.empty() ? kInitialCapacity : old.size() * 2, Slot{});
+    for (const Slot& slot : old) {
+        if (slot.stamp == epoch_) {
+            slots_[probe(slot.key)] = slot;
+        }
+    }
+}
+
+std::uint32_t Interpreter::CornerCache::windowId(const FlatCacheWindow* window) noexcept {
+    if (window == nullptr) {
+        return 0;
+    }
+    for (std::uint32_t i = 0; i < windowCount_; ++i) {
+        const FlatCacheWindow& known = windows_[i];
+        if (known.minX == window->minX && known.maxX == window->maxX &&
+            known.minZ == window->minZ && known.maxZ == window->maxZ) {
+            return i + 1;
+        }
+    }
+    if (windowCount_ == windows_.size()) {
+        // The numbers are about to be handed out again, and every corner
+        // kept under one of them would then be taken for another window's.
+        forget();
+    }
+    windows_[windowCount_] = *window;
+    return ++windowCount_;
+}
+
+/// What every scope of one top-level call shares (see the header).
+struct Interpreter::Call {
+    /// Where every scope of the call leases its frame.
+    ScopeArena* arena = nullptr;
+    /// How large a frame is.
+    std::size_t nodeCount = 0;
+    /// The caller's cache, or null for evaluate(root, at), which has none.
+    CornerCache* cache = nullptr;
+    /// Where `flat_cache` may relocate a read, or null for everywhere.
+    const FlatCacheWindow* window = nullptr;
+    ReadContext context = ReadContext::Block;
+    /// Whether `interpolated` shares corners through the cache's lattice:
+    /// the cache asks for it (Sharing::Lattice) and nothing is substituted.
+    bool lattice = false;
+    /// The cache's number for `window` (CornerCache::windowId), set when
+    /// `lattice` is.
+    std::uint32_t windowId = 0;
+};
+
 /// One point's evaluation, with the values already computed for it. Nodes
 /// are pure functions of the point, so this is only ever a speed-up — except
 /// that without it a spline tree 47 knots wide over three shared coordinates
 /// re-walks the same noise sampling thousands of times.
 ///
-/// Its memo is a frame leased from @p arena for as long as the scope is open
-/// (ScopeArena), given back when it closes — on the way out of a refusal
-/// too, so a cache that saw one is as good as new for the next evaluation.
+/// Its memo is a frame leased from the call's arena for as long as the scope
+/// is open (ScopeArena), given back when it closes — on the way out of a
+/// refusal too, so a cache that saw one is as good as new for the next
+/// evaluation.
 class Interpreter::Scope {
 public:
-    Scope(ScopeArena& arena, std::size_t nodeCount, Point at, CornerCache* cache,
-          const FlatCacheWindow* window, ReadContext context)
-        : arena_(&arena), frame_(arena.enter(nodeCount)), at_(at), cache_(cache), window_(window),
-          context_(context) {}
+    /// A scope at @p at; @p cells says whether `interpolated` may keep its
+    /// corners in the call's cache, which a top-level scope and a cell
+    /// corner's may and a `flat_cache` relocation's and a
+    /// `find_top_surface` step's may not.
+    Scope(const Call& call, Point at, bool cells)
+        : call_(&call), frame_(call.arena->enter(call.nodeCount)), at_(at), cells_(cells) {}
 
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
     Scope(Scope&&) = delete;
     Scope& operator=(Scope&&) = delete;
 
-    ~Scope() { arena_->leave(); }
+    ~Scope() { call_->arena->leave(); }
 
-    /// Where every scope this one opens for another point leases its frame.
-    [[nodiscard]] ScopeArena& arena() const noexcept { return *arena_; }
+    /// What this scope shares with every other scope of its call, and every
+    /// scope it opens for another point inherits.
+    [[nodiscard]] const Call& call() const noexcept { return *call_; }
 
     [[nodiscard]] Point at() const noexcept { return at_; }
 
     /// Whose read this is: the generating block's, or a point it reads
     /// elsewhere. Carried into every scope a node opens for another point.
-    [[nodiscard]] ReadContext context() const noexcept { return context_; }
+    [[nodiscard]] ReadContext context() const noexcept { return call_->context; }
 
     /// Where `interpolated` keeps its cell corners, or null when the caller
-    /// supplied nowhere and every point pays for its own eight.
-    [[nodiscard]] CornerCache* cache() const noexcept { return cache_; }
+    /// supplied nowhere, or this scope may not, and every point pays for its
+    /// own eight.
+    [[nodiscard]] CornerCache* cache() const noexcept { return cells_ ? call_->cache : nullptr; }
+
+    /// Whether a scope this one opens at a cell corner may keep corners.
+    [[nodiscard]] bool cells() const noexcept { return cells_; }
 
     /// Where `flat_cache` may relocate a read, or null for everywhere.
-    [[nodiscard]] const FlatCacheWindow* window() const noexcept { return window_; }
+    [[nodiscard]] const FlatCacheWindow* window() const noexcept { return call_->window; }
 
     [[nodiscard]] bool has(NodeIndex index) const noexcept {
         return frame_.slots[static_cast<std::size_t>(index)].stamp == frame_.epoch;
@@ -258,12 +411,10 @@ public:
     }
 
 private:
-    ScopeArena* arena_;
+    const Call* call_;
     ScopeArena::Lease frame_;
     Point at_;
-    CornerCache* cache_ = nullptr;
-    const FlatCacheWindow* window_ = nullptr;
-    ReadContext context_ = ReadContext::Block;
+    bool cells_ = false;
 };
 
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
@@ -532,6 +683,37 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
         columnInvariant_[i] = invariant ? 1 : 0;
     }
 
+    // Which nodes reach a `flat_cache` (Op::readsWindow), in the same
+    // forward order, splines included.
+    std::vector<char> splineReadsWindow(graph.splineCount(), 0);
+    const auto splineReaches = [&graph, &splineReadsWindow, this](auto&& self,
+                                                                  SplineIndex spline) -> bool {
+        char& cached = splineReadsWindow[static_cast<std::size_t>(spline)];
+        if (cached != 0) {
+            return cached == 1;
+        }
+        const SplineDefinition& definition = graph.spline(spline);
+        bool reaches = ops_[static_cast<std::size_t>(definition.coordinate)].readsWindow;
+        for (const SplinePoint& point : definition.points) {
+            if (point.nested.has_value() && self(self, *point.nested)) {
+                reaches = true;
+            }
+        }
+        cached = reaches ? 1 : 2;
+        return reaches;
+    };
+    for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
+        const Node& node = graph.node(static_cast<NodeIndex>(i));
+        Op& op = ops_[i];
+        op.readsWindow =
+            node.type == NodeType::FlatCache ||
+            std::ranges::any_of(node.arguments,
+                                [this](NodeIndex argument) {
+                                    return ops_[static_cast<std::size_t>(argument)].readsWindow;
+                                }) ||
+            (node.spline.has_value() && splineReaches(splineReaches, *node.spline));
+    }
+
     settleRefusals();
 }
 
@@ -774,25 +956,50 @@ void Interpreter::requireNode(const NodeIndex root) const {
 
 // Each top-level call is where a ScopeArena is chosen: the caller's, through
 // its CornerCache, which a chunk's whole fill shares; or one of this call's
-// own when there is no cache, which is what a fresh Scope always was.
+// own when there is no cache, which is what a fresh Scope always was. And
+// where the call learns which of the cache's memos it may use.
+
+Interpreter::Call Interpreter::callThrough(CornerCache& cache, const FlatCacheWindow* window,
+                                           const ReadContext context) const noexcept {
+    Call call{.arena = &cache.scopes_,
+              .nodeCount = graph_->nodeCount(),
+              .cache = &cache,
+              .window = window,
+              .context = context,
+              .lattice = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty(),
+              .windowId = 0};
+    if (call.lattice) {
+        call.windowId = cache.windowId(window);
+    }
+    return call;
+}
 
 double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache) const {
     requireNode(root);
-    Scope scope(cache.scopes_, graph_->nodeCount(), at, &cache, nullptr, ReadContext::Block);
+    const Call call = callThrough(cache, nullptr, ReadContext::Block);
+    Scope scope(call, at, true);
     return evaluateNode(scope, root);
 }
 
 double Interpreter::evaluate(NodeIndex root, Point at, CornerCache& cache,
                              const FlatCacheWindow& window, ReadContext context) const {
     requireNode(root);
-    Scope scope(cache.scopes_, graph_->nodeCount(), at, &cache, &window, context);
+    const Call call = callThrough(cache, &window, context);
+    Scope scope(call, at, true);
     return evaluateNode(scope, root);
 }
 
 double Interpreter::evaluate(NodeIndex root, Point at) const {
     requireNode(root);
     ScopeArena arena;
-    Scope scope(arena, graph_->nodeCount(), at, nullptr, nullptr, ReadContext::Block);
+    const Call call{.arena = &arena,
+                    .nodeCount = graph_->nodeCount(),
+                    .cache = nullptr,
+                    .window = nullptr,
+                    .context = ReadContext::Block,
+                    .lattice = false,
+                    .windowId = 0};
+    Scope scope(call, at, true);
     return evaluateNode(scope, root);
 }
 
@@ -1116,8 +1323,7 @@ double Interpreter::findTopSurface(Scope& scope, const Op& op) const {
     // go unnoticed in a debug run.
     for (std::int32_t scanY = start; scanY >= lowerBound; scanY -= cellHeight) {
         assert(std::int64_t{scanY} - cellHeight >= std::numeric_limits<std::int32_t>::min());
-        Scope column(scope.arena(), graph_->nodeCount(), Point{.x = at.x, .y = scanY, .z = at.z},
-                     nullptr, scope.window(), scope.context());
+        Scope column(scope.call(), Point{.x = at.x, .y = scanY, .z = at.z}, false);
         if (evaluateNode(column, op.arguments[0]) > 0.0) {
             return scanY;
         }
@@ -1169,7 +1375,7 @@ double Interpreter::flatCache(Scope& scope, const Op& op) const {
     if (!relocates || corner == at) {
         return evaluateNode(scope, op.arguments[0]);
     }
-    Scope cornerScope(scope.arena(), graph_->nodeCount(), corner, nullptr, window, scope.context());
+    Scope cornerScope(scope.call(), corner, false);
     return evaluateNode(cornerScope, op.arguments[0]);
 }
 
@@ -1199,11 +1405,11 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
         // The corner's own scope carries the same cache: a nested
         // `interpolated` caches its own cell under its own node index, and
         // the cell check below keeps the two from being confused.
-        Scope inner(scope.arena(), graph_->nodeCount(),
+        Scope inner(scope.call(),
                     Point{.x = x0 + (dx * cells.width),
                           .y = y0 + (dy * cells.height),
                           .z = z0 + (dz * cells.width)},
-                    scope.cache(), scope.window(), scope.context());
+                    scope.cells());
         return evaluateNode(inner, argument);
     };
 
@@ -1215,14 +1421,45 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
     const std::array<double, 8>* corners = &own;
     CornerCache* cache = scope.cache();
     if (cache != nullptr) {
+        const Call& call = scope.call();
+        // What the corners are kept under besides their positions: the
+        // window, when the argument can tell windows apart (Op::readsWindow);
+        // nothing otherwise, since then every window gives the same corners.
+        // A cell corner is always a Block read (a Detached read never
+        // interpolates), so the context needs no place in it.
+        const std::uint32_t tag =
+            call.lattice && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId
+                                                                                 : 0U;
         CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
-        if (!entry.filled || entry.x != x0 || entry.y != y0 || entry.z != z0) {
+        if (!entry.filled || entry.x != x0 || entry.y != y0 || entry.z != z0 ||
+            (call.lattice && entry.tag != tag)) {
+            // Marked empty while it fills, so that a corner that throws
+            // leaves no cell behind with another cell's corners in it. No
+            // evaluation below touches this entry: it would have to reach
+            // this same argument from inside it, and the graph is acyclic.
+            entry.filled = false;
+            if (call.lattice) {
+                // The order the eight were always evaluated in, so that a
+                // corner evaluated here for the first time is evaluated
+                // after the same corners it always followed.
+                for (std::size_t k = 0; k < entry.corners.size(); ++k) {
+                    const CornerOffset offset = kCornerOrder[k];
+                    entry.corners[k] = sharedCorner(argument, scope,
+                                                    Point{.x = x0 + (offset.dx * cells.width),
+                                                          .y = y0 + (offset.dy * cells.height),
+                                                          .z = z0 + (offset.dz * cells.width)},
+                                                    tag);
+                }
+            } else {
+                entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0),
+                                 corner(0, 1, 1), corner(1, 0, 0), corner(1, 0, 1),
+                                 corner(1, 1, 0), corner(1, 1, 1)};
+            }
             entry.x = x0;
             entry.y = y0;
             entry.z = z0;
+            entry.tag = tag;
             entry.filled = true;
-            entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
-                             corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
         }
         corners = &entry.corners;
     } else {
@@ -1254,6 +1491,29 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
     const double farZ = lerp(tx, x0z1, x1z1);
 
     return lerp(tz, nearZ, farZ);
+}
+
+double Interpreter::sharedCorner(const NodeIndex argument, const Scope& scope, const Point corner,
+                                 const std::uint32_t tag) const {
+    // Kept by the argument, the corner's own position and its tag (see
+    // interpolate), and the tag's kind bit, which is a corner's. The value is
+    // the argument at the corner, read through the call's window in the Block
+    // context — the same evaluation every cell sharing this corner made of it
+    // before — and it is stored only once that evaluation has returned.
+    CornerCache& cache = *scope.cache();
+    const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x),
+                             std::bit_cast<std::uint32_t>(corner.y),
+                             std::bit_cast<std::uint32_t>(corner.z), tag << 1U};
+    double value = 0.0;
+    if (cache.memo_.find(key, value)) {
+        return value;
+    }
+    {
+        Scope inner(scope.call(), corner, scope.cells());
+        value = evaluateNode(inner, argument);
+    }
+    cache.memo_.insert(key, value);
+    return value;
 }
 
 float Interpreter::evaluateSpline(Scope& scope, SplineIndex index) const {

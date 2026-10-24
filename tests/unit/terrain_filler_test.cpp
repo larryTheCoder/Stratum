@@ -655,6 +655,55 @@ TEST_CASE("the barrier is read on every block only where its read is not provabl
     }
 }
 
+TEST_CASE("the fill shares corners in a lattice except where its window can change a barrier's",
+          "[terrain][filler][aquifer][lattice]") {
+    // The barrier is the fill's one Block read through its chunk's window;
+    // the terrain's are through none. A corner both read can differ by window
+    // only through a flat_cache under the interpolated, and only there does
+    // the fill keep the last-cell cache every fill had before the lattice.
+    using Sharing = stratum::density::Interpreter::CornerCache::Sharing;
+    const nlohmann::json gradient{{"type", "minecraft:y_clamped_gradient"},
+                                  {"from_y", -16},
+                                  {"to_y", 32},
+                                  {"from_value", -1.0},
+                                  {"to_value", 1.0}};
+    const nlohmann::json interpolated{{"type", "minecraft:interpolated"}, {"argument", gradient}};
+    const nlohmann::json overFlat{
+        {"type", "minecraft:interpolated"},
+        {"argument",
+         {{"type", "minecraft:add"},
+          {"argument1", gradient},
+          {"argument2", {{"type", "minecraft:flat_cache"}, {"argument", gradient}}}}}};
+    const nlohmann::json flatOverInterpolated{{"type", "minecraft:flat_cache"},
+                                              {"argument", interpolated}};
+    const nlohmann::json nested{
+        {"type", "minecraft:add"}, {"argument1", 0.25}, {"argument2", overFlat}};
+
+    struct Case {
+        const char* name;
+        nlohmann::json barrier;
+        bool aquifers;
+        Sharing sharing;
+    };
+
+    for (const Case& c :
+         {Case{"constant", 0.0, true, Sharing::Lattice},
+          Case{"interpolated over a gradient", interpolated, true, Sharing::Lattice},
+          Case{"a flat_cache over an interpolated", flatOverInterpolated, true, Sharing::Lattice},
+          Case{"interpolated over a flat_cache", overFlat, true, Sharing::LastCell},
+          Case{"the same under add", nested, true, Sharing::LastCell},
+          Case{"the same, aquifers off", overFlat, false, Sharing::Lattice}}) {
+        INFO(c.name);
+        nlohmann::json settings = flatSettings(c.aquifers, /*oreVeins=*/false);
+        settings["noise_router"]["barrier"] = c.barrier;
+        const TempTree tree;
+        tree.defineSettings("test", settings);
+        const LoadedSettings loaded = tree.load();
+        const ChunkFiller filler = compileFrom(tree, loaded);
+        CHECK(filler.cornerSharing() == c.sharing);
+    }
+}
+
 TEST_CASE("ore veins place without aquifers too, the same blocks", "[terrain][filler][ore]") {
     // Since pipeline engine v14. Veins were gated on aquifers_enabled from one
     // probe world with veins on and aquifers off that came back unbroken

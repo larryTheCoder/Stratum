@@ -427,6 +427,32 @@ ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
                 return type == density::NodeType::Interpolated ||
                        type == density::NodeType::FindTopSurface;
             });
+        // And how the fill's CornerCache shares corners. The barrier is the
+        // one read this fill makes through its chunk's window in the Block
+        // context; the terrain's and the veins' are read through none, and
+        // the rest are detached and never blend. So a cell corner is read
+        // through two windows only where the barrier reaches an
+        // `interpolated` — and the window can change a corner's value only
+        // where that argument reaches a `flat_cache`. There the cache keeps
+        // what every fill did before the corner lattice: each argument's
+        // last cell, whichever window filled it (Sharing::LastCell), so the
+        // blocks stay the same bit for bit. No vanilla preset and no probe
+        // arm is that pack: vanilla's barrier is a bare noise.
+        const bool barrierCornersReadWindow =
+            std::ranges::any_of(barrierTree, [&graph](const density::NodeIndex index) {
+                const density::Node& node = graph.node(index);
+                if (node.type != density::NodeType::Interpolated || node.arguments.empty()) {
+                    return false;
+                }
+                const std::vector<density::NodeIndex> argumentTree =
+                    graph.reachableFrom(node.arguments.front());
+                return std::ranges::any_of(argumentTree, [&graph](const density::NodeIndex inner) {
+                    return graph.node(inner).type == density::NodeType::FlatCache;
+                });
+            });
+        if (barrierCornersReadWindow) {
+            filler.cornerSharing_ = density::Interpreter::CornerCache::Sharing::LastCell;
+        }
     }
 
     if (surfaceRules != nullptr) {
@@ -537,7 +563,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     const std::int32_t cellHeight = geometry.cellHeight();
     const std::int32_t topY = geometry.minY + geometry.height;
 
-    density::Interpreter::CornerCache cache(interpreter_.cacheSize());
+    density::Interpreter::CornerCache cache(interpreter_.cacheSize(), cornerSharing_);
     // A chunk touches dozens of distinct cell centres, not thousands of
     // blocks' worth of them — see aquifer::StatusCache's own doc.
     aquifer::StatusCache aquiferStatusCache;
