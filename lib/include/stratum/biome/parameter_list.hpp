@@ -200,6 +200,66 @@ struct Entry {
     data::ResourceLocation biome{"minecraft", "plains"};
 };
 
+/// The widest a quantised sample coordinate can be: kMaxClimateSample through
+/// quantizeCoord. `ParameterList::findRow` over a QuantizedSample refuses
+/// anything past it, for the same overflow reason.
+inline constexpr std::int64_t kMaxQuantizedSample = quantizeCoord(kMaxClimateSample);
+static_assert(kMaxQuantizedSample == 1'000'000'000);
+
+/// How much of the search tree queries looked at. The tests' and the bench's
+/// window into the search, never consulted by it: what a query returns does
+/// not depend on it, and the plain `find` does not count at all.
+struct SearchCounts {
+    /// Table rows whose fitness was computed.
+    std::uint64_t rows = 0;
+    /// Tree nodes whose lower bound was computed.
+    std::uint64_t nodes = 0;
+};
+
+/// What the search tree costs to hold: its size, built once per list.
+struct SearchTreeShape {
+    std::size_t nodes = 0;
+    std::size_t leaves = 0;
+    /// Edges from the root to the deepest leaf; 0 for a list one leaf holds.
+    std::size_t depth = 0;
+    /// The tree's own arrays (nodes and their rows), not the entries.
+    std::size_t bytes = 0;
+};
+
+namespace detail {
+
+/// One axis-aligned box in the space the search runs in, axes in
+/// QuantizedPoint's order. For a table row it is that row's ranges and
+/// offset, `row` its index in the list. For a tree node it is the smallest
+/// box holding every row under the node, `offset` the smallest offset under
+/// it and `row` the LARGEST row index under it. One function scores both,
+/// which is what makes a node's score a lower bound on every row's below it.
+///
+/// int32 rather than QuantizedPoint's int64, to halve what a query reads:
+/// `ParameterList::fromEntries` holds every bound to the schema's ±2 (±20000
+/// quantised) and every offset to [0, 1] ([0, 10000]), and a list to a
+/// million rows, so each field fits with room to spare. The arithmetic over
+/// them is int64, exactly QuantizedPoint::fitness's.
+struct SearchBox {
+    std::array<std::int32_t, 6> min{};
+    std::array<std::int32_t, 6> max{};
+    std::int32_t offset = 0;
+    std::int32_t row = 0;
+};
+
+/// A node of the search tree. Children are allocated in pairs, so an inner
+/// node names only its left child.
+struct SearchNode {
+    SearchBox box;
+    /// A leaf: its first row in the tree's row array. An inner node: its left
+    /// child, the right being `first + 1`.
+    std::uint32_t first = 0;
+    /// A leaf: how many rows it holds, at least one. An inner node: zero.
+    std::uint32_t count = 0;
+};
+
+} // namespace detail
+
 /// A dimension's table, and the search over it.
 class ParameterList {
 public:
@@ -250,6 +310,25 @@ public:
     /// because inverting it is strictly worse; the twenty are attributed,
     /// not fixed, and the [biome] cases now state the measured extent.
     ///
+    /// HOW IT IS FOUND, which is not how it is defined. The answer is defined
+    /// as the linear scan `findRowLinear` does: every row scored, the
+    /// lexicographic minimum of (fitness, -row) kept, so the least fitness
+    /// and, among rows tied at it, the last. Scoring all 7593 of the
+    /// overworld's rows was nearly half of what a chunk cost, so `find`
+    /// instead searches a tree of axis-aligned boxes over the quantised rows,
+    /// built once by `fromEntries` (a frozen pipeline's thaw included) and
+    /// never changed after. A node's box holds every row under it, so its
+    /// score — the same int64 arithmetic as a row's fitness, over the box,
+    /// with the smallest offset under it — is never more than any of theirs.
+    /// The search skips a node only when that bound is ABOVE the best fitness
+    /// so far, or equal to it with every row under the node earlier than the
+    /// best row so far — rows that could at most tie and would then lose the
+    /// tie. Every other row is scored, and the best is kept by the same
+    /// strict order the scan keeps, so the row is the scan's row, the tie
+    /// rule above included, whatever the tree's shape: the shape decides only
+    /// how many rows are scored. It is not vanilla's tree — that one's leaf
+    /// order would BE the tie-break — and it cannot move a biome.
+    ///
     /// Throws ParameterError on an empty list rather than inventing a biome:
     /// there is no sensible default, and a world full of one wrong biome is
     /// worse than a refusal. And throws ParameterError, naming the climate
@@ -257,11 +336,59 @@ public:
     /// where the search's own arithmetic is undefined (SPEC §8).
     [[nodiscard]] const data::ResourceLocation& find(const ClimateSample& sample) const;
 
+    /// The row `find` takes, as an index into `entries()`. Refuses what
+    /// `find` refuses.
+    [[nodiscard]] std::size_t findRow(const ClimateSample& sample) const;
+
+    /// The same search from a sample already quantised. Refuses an empty
+    /// list, and a coordinate outside ±kMaxQuantizedSample by axis name.
+    [[nodiscard]] std::size_t findRow(const QuantizedSample& sample) const;
+
+    /// `findRow`, counting what it looked at into @p counts (added to, not
+    /// reset). The same search and the same row; for the tests and the bench.
+    [[nodiscard]] std::size_t findRow(const QuantizedSample& sample, SearchCounts& counts) const;
+
+    /// The definition `find` is held to: every row scored in list order,
+    /// `<=` keeping the later of a tie. Kept as the reference the tree's
+    /// answers are tested against, row index for row index; costs a scan of
+    /// the whole list per call. Refuses what the matching `findRow` refuses.
+    [[nodiscard]] std::size_t findRowLinear(const ClimateSample& sample) const;
+    [[nodiscard]] std::size_t findRowLinear(const QuantizedSample& sample) const;
+
+    /// The tree's size and what it costs to hold.
+    [[nodiscard]] SearchTreeShape searchTreeShape() const noexcept;
+
+    /// Checks the tree is one the search may trust: every row in exactly one
+    /// leaf, carrying exactly the bounds and offset the list quantises to,
+    /// and every node's box, offset and largest row holding each child's —
+    /// which makes every node's score a lower bound on every row's below it.
+    /// Empty when sound; otherwise the first defect, named.
+    [[nodiscard]] std::string auditSearchTree() const;
+
 private:
+    /// The deepest a tree is built (edges, root to leaf), so that a query's
+    /// pending stack is a fixed array on the call stack and a query
+    /// allocates nothing. The build guarantees it: see biome_parameter_list.cpp.
+    static constexpr std::size_t kMaxSearchDepth = 64;
+
+    void buildSearchTree();
+
+    template<bool Counting>
+    [[nodiscard]] std::size_t searchTree(const QuantizedSample& sample,
+                                         SearchCounts* counts) const noexcept;
+
+    [[nodiscard]] std::size_t scanLinear(const QuantizedSample& sample) const noexcept;
+
     std::vector<Entry> entries_;
     /// entries_[i] in the space the search runs in. Kept parallel rather
     /// than inside Entry so that Entry stays the table as it was written.
+    /// The linear reference scores these, independently of the tree.
     std::vector<QuantizedPoint> quantized_;
+    /// The search tree: nodes, root first, and the rows its leaves hold,
+    /// grouped by leaf. Built once by fromEntries and const after.
+    std::vector<detail::SearchNode> searchNodes_;
+    std::vector<detail::SearchBox> searchRows_;
+    std::size_t searchDepth_ = 0;
 };
 
 } // namespace stratum::biome

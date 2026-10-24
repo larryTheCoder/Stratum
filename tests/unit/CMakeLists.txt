@@ -1,5 +1,6 @@
 add_executable(stratum_unit_tests
     biome_parameters_test.cpp
+    biome_search_test.cpp
     biome_source_test.cpp
     biome_temperature_table_test.cpp
     blended_test.cpp

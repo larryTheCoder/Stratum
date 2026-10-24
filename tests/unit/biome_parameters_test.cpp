@@ -127,6 +127,9 @@ TEST_CASE("near-misses in the reals are exact ties once quantised", "[biome][par
     CHECK(list.entries()[0].parameters.fitness(sample) ==
           list.entries()[1].parameters.fitness(sample));
     CHECK(list.find(sample) == ResourceLocation::parse("minecraft:second"));
+    // By row, from the tree and from the scan that defines it.
+    CHECK(list.findRow(sample) == 1U);
+    CHECK(list.findRowLinear(sample) == 1U);
 }
 
 TEST_CASE("the search takes the nearest entry, and the later one on a tie", "[biome][parameters]") {
@@ -150,6 +153,12 @@ TEST_CASE("the search takes the nearest entry, and the later one on a tie", "[bi
     // row of the table: `cold` is not tied and does not win.
     CHECK(tied.find(ClimateSample{.temperature = -1.0}) ==
           ResourceLocation::parse("minecraft:cold"));
+    // The same by row, so a search that took the right biome from the wrong
+    // row could not pass: rows 1 and 2 are the tie, row 2 the later.
+    CHECK(tied.findRow(ClimateSample{.temperature = 1.0}) == 2U);
+    CHECK(tied.findRowLinear(ClimateSample{.temperature = 1.0}) == 2U);
+    CHECK(tied.findRow(ClimateSample{.temperature = -1.0}) == 0U);
+    CHECK(tied.findRowLinear(ClimateSample{.temperature = -1.0}) == 0U);
 }
 
 TEST_CASE("the offset is a penalty on every distance", "[biome][parameters]") {
