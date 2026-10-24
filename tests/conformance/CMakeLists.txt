@@ -70,6 +70,7 @@ add_executable(stratum_conformance_tests
     vanilla_vertical_gradient_test.cpp
     vanilla_biomes_test.cpp
     vanilla_biome_tie_break_test.cpp
+    vanilla_biome_search_test.cpp
     vanilla_biome_mapping_test.cpp
     vanilla_compiled_dimension_test.cpp
     vanilla_end_biome_source_test.cpp
