@@ -85,6 +85,7 @@ add_executable(stratum_conformance_tests
     vanilla_legacy_gradient_gap_test.cpp
     vanilla_legacy_goldens_surface_test.cpp
     vanilla_climate_test.cpp
+    vanilla_column_invariance_test.cpp
     vanilla_density_test.cpp
     vanilla_freeze_test.cpp
     vanilla_inline_noise_test.cpp

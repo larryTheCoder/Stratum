@@ -342,8 +342,10 @@ class Interpreter {
         /// says what kind of value it is and what it was read through.
         using Key = std::array<std::uint32_t, 5>;
 
-        /// The table's largest size, in slots of 32 bytes: 2 MiB. A chunk's
-        /// fill stores about 8 000 values.
+        /// The table's largest size, in slots of 32 bytes: 2 MiB, of which
+        /// it fills at most half. A vanilla chunk's fill keeps 15 000 to
+        /// 20 000 values (measured over the bench's overworld, amplified and
+        /// End chunks), inside that.
         static constexpr std::size_t kMaxCapacity = std::size_t{1} << 16;
 
         /// Whether @p key is held, and if so its value in @p value.
@@ -440,32 +442,52 @@ public:
     /// starts as empty as a fresh one, which the unit tests assert across
     /// a wrap of the epoch counter.
     ///
-    /// AND IT SHARES CORNERS BETWEEN CELLS (Sharing::Lattice). A corner
-    /// belongs to up to eight cells, and each `interpolated` argument used to
-    /// keep only its last cell's eight, so a chunk evaluated 28 000 corners
-    /// for 5 700 distinct ones. Each corner is now kept in a MemoTable by its
-    /// argument, its position and what it was read through, and filled
-    /// lazily: a corner is evaluated the first time a cell that has it is
-    /// read, in that cell's corner order, and never if no such cell is read.
-    /// So the corners evaluated are the same set as before, in the same
-    /// order of first evaluation, and the first refusal is the same one. A
-    /// corner is stored only once its evaluation has returned; what the
-    /// lattice skips is a repeat of an evaluation that already returned, at
-    /// the same point, where it returns the same double. The unit tests
-    /// compare it with uncached evaluation bit for bit over whole chunks.
-    /// None of it is used while the interpreter carries
-    /// UnsettledSubstitutions, whose functions nothing here can prove pure.
+    /// AND IT REMEMBERS WHAT IS THE SAME FROM ONE POINT TO THE NEXT, in a
+    /// MemoTable (Sharing::Lattice), which is where most of a chunk's
+    /// density work went:
+    ///
+    ///   * the corner lattice. A corner belongs to up to eight cells, and
+    ///     each `interpolated` argument used to keep only its last cell's
+    ///     eight, so a chunk evaluated 28 000 corners for 5 700 distinct
+    ///     ones. Each corner is now kept by its argument, its position and
+    ///     what it was read through, and filled lazily: a corner is
+    ///     evaluated the first time a cell that has it is read, in that
+    ///     cell's corner order, and never if no such cell is read. So the
+    ///     corners evaluated are the same set as before, in the same order
+    ///     of first evaluation, and the first refusal is the same one;
+    ///   * `flat_cache`'s relocated reads: its argument at the column corner
+    ///     (floorDiv(x, 4) * 4, 0, floorDiv(z, 4) * 4), which every block of
+    ///     that 4x4 column reads, and which was evaluated afresh on every
+    ///     read — 30 000 times an overworld chunk;
+    ///   * the column memo: a node with one value at every y of its column
+    ///     (Op::columnMemo), such as the five climate entries a biome is
+    ///     chosen by, kept per (x, z) rather than recomputed at every y.
+    ///
+    /// Each value is kept under everything it depends on — the node, its
+    /// point or column, the window it was read through (when it can depend
+    /// on one) and the read context — and only once its evaluation has
+    /// returned. What the memo skips is only a repeat of an evaluation that
+    /// already returned, of the same node where it returns the same double;
+    /// a refusal is thrown at the same point and in the same words. The unit
+    /// tests compare it with uncached evaluation bit for bit over whole
+    /// chunks, and a conformance case holds every node of vanilla's routers
+    /// the column memo keeps to one bit pattern down its column. None of it
+    /// is used while the interpreter carries UnsettledSubstitutions, whose
+    /// functions nothing here can prove pure.
     class CornerCache {
     public:
-        /// How the cache serves `interpolated`'s corners.
+        /// How the cache serves `interpolated`'s corners, and whether it
+        /// keeps anything else.
         enum class Sharing : std::uint8_t {
-            /// The corner lattice: every corner kept by argument, position
-            /// and — when the argument reaches a `flat_cache` — the window it
-            /// was read through, and the last cell's corners each argument
-            /// read kept the same way. Each corner is a pure function of
-            /// that key, so one cache can serve reads through any windows.
+            /// The memo: every corner kept by argument, position and — when
+            /// the argument reaches a `flat_cache` — the window it was read
+            /// through, the last cell's corners each argument read kept the
+            /// same way, and `flat_cache`'s relocated reads and the column
+            /// memo kept by node, column, window and context. Each value is
+            /// a pure function of its key, so one cache can serve reads
+            /// through any windows.
             Lattice,
-            /// What every CornerCache did before the lattice: each argument
+            /// What every CornerCache did before the memo: each argument
             /// keeps its last cell's eight corners, whichever window they
             /// were read through, and nothing else. A cache that serves
             /// Block reads of one corner through two windows that tell its
@@ -600,6 +622,23 @@ public:
     /// Whether @p index has the same value everywhere in a column — which is
     /// what makes caching it on (x, z) alone sound. Conservative: a node it
     /// cannot prove column-invariant is reported as varying.
+    ///
+    /// The rule, by type, with no default: constants, the two blend states,
+    /// `end_islands`, `shift_a` and `shift_b` (which pin y) are invariant;
+    /// `noise` is when its y_scale is zero, `shifted_noise` when that holds
+    /// and its three shifts are; `spline` when its coordinate and every
+    /// nested spline's are; the pure arithmetic, `range_choice`, the
+    /// transparent caches (`cache_2d`, `cache_once`, `blend_density`),
+    /// `flat_cache` and `find_top_surface` when all their arguments are;
+    /// `interpolated` and `cache_all_in_cell` when the interpreter has a
+    /// lattice and their argument is — though the lattice is set after this
+    /// is computed, so today they are always reported varying; and
+    /// `y_clamped_gradient`, `shift`, `old_blended_noise`,
+    /// `weird_scaled_sampler` and `slide` never are. A node whose noise is
+    /// written inline is reported varying. Exact to the bit, signed zeros
+    /// included: y reaches an invariant noise only as y * 0.0, a zero of
+    /// either sign, which every octave adds to its origin (never -0.0) or a
+    /// shift adds to, before anything reads it.
     [[nodiscard]] bool isColumnInvariant(NodeIndex index) const;
 
 private:
@@ -656,6 +695,16 @@ private:
         /// this set keeps its corners per window; one without keeps one
         /// set for every window, since every window gives it the same.
         bool readsWindow = false;
+        /// Whether a CornerCache keeps the node's value per column
+        /// (CornerCache's column memo): the node is column-invariant
+        /// (isColumnInvariant); nothing it reaches reads the cell structure
+        /// or the caller's corners, or is a type an UnsettledSubstitutions
+        /// can replace — no `interpolated`, `cache_all_in_cell`,
+        /// `find_top_surface`, `old_blended_noise` or
+        /// `weird_scaled_sampler` — so its value is a function of the
+        /// column, the window and the read context alone; and it reaches a
+        /// noise or a spline, so that keeping it saves more than it costs.
+        bool columnMemo = false;
         Rarity rarity = Rarity::None;
         SplineIndex spline = 0;
         std::array<NodeIndex, kMaxNodeArguments> arguments{};
@@ -677,6 +726,10 @@ private:
     /// since the cell lattice is part of the answer and the one with a
     /// lattice sets it after delegating.
     void settleRefusals() noexcept;
+
+    /// Sets every Op::readsWindow and Op::columnMemo, from what each node
+    /// reaches and from column invariance, which must be settled first.
+    void settleReach(const Graph& graph);
 
     /// @p root refused by name unless it names a node of the graph.
     void requireNode(NodeIndex root) const;
@@ -741,6 +794,10 @@ private:
     /// under @p tag, or evaluated there and kept. @p scope's cache is set.
     [[nodiscard]] double sharedCorner(NodeIndex argument, const Scope& scope, Point corner,
                                       std::uint32_t tag) const;
+
+    /// The memo key of node @p index's value in @p scope's column (see
+    /// Op::columnMemo).
+    [[nodiscard]] static MemoTable::Key columnKey(NodeIndex index, const Scope& scope) noexcept;
 
     /// The Call a top-level evaluation through @p cache makes.
     [[nodiscard]] Call callThrough(CornerCache& cache, const FlatCacheWindow* window,

@@ -1760,7 +1760,14 @@ TEST_CASE("one corner cache reused for 10^5 evaluations, through the epoch's wra
     const Interpreter& interpreter = pipeline.interpreter();
     const stratum::density::NodeIndex root = pipeline.root("mix");
 
-    Interpreter::CornerCache reused(interpreter.cacheSize());
+    // Two reused caches. `reused` keeps no memo (Sharing::LastCell), so
+    // every flat_cache relocation and corner opens its scope as it always
+    // did, and the inner levels' counters run past the wrap below; the memo
+    // would answer most of them without a scope. `memoised` keeps one, and
+    // is held to the same values through the same schedule.
+    Interpreter::CornerCache reused(interpreter.cacheSize(),
+                                    Interpreter::CornerCache::Sharing::LastCell);
+    Interpreter::CornerCache memoised(interpreter.cacheSize());
     std::uint32_t evaluations = 0;
     std::uint32_t differing = 0;
     std::string firstDiffering = "none";
@@ -1773,7 +1780,8 @@ TEST_CASE("one corner cache reused for 10^5 evaluations, through the epoch's wra
         const std::uint64_t own = bits(interpreter.evaluate(root, at, fresh));
         const std::uint64_t none = bits(interpreter.evaluate(root, at));
         const std::uint64_t shared = bits(interpreter.evaluate(root, at, reused));
-        if (shared != own || shared != none) {
+        const std::uint64_t kept = bits(interpreter.evaluate(root, at, memoised));
+        if (shared != own || shared != none || kept != none) {
             if (differing == 0U) {
                 firstDiffering = spell(at) + " at evaluation " + std::to_string(evaluations);
             }
@@ -1795,6 +1803,7 @@ TEST_CASE("one corner cache reused for 10^5 evaluations, through the epoch's wra
     //    so the outermost frame's last epoch before the wrap is 2^32 - 1.
     constexpr std::uint32_t kBeforeWrap = 4096;
     reused.advanceScopeEpochs(std::numeric_limits<std::uint32_t>::max() - kBeforeWrap);
+    memoised.advanceScopeEpochs(std::numeric_limits<std::uint32_t>::max() - kBeforeWrap);
     for (std::uint32_t i = 0; i < kBeforeWrap; ++i) {
         evaluate(false);
     }
@@ -1820,6 +1829,9 @@ TEST_CASE("one corner cache reused for 10^5 evaluations, through the epoch's wra
     // the outermost; the corners and scan steps; the relocations inside the
     // corners.
     CHECK(reused.scopeEpochWraps() >= 3U);
+    // The memo's outermost level wraps too: one scope a call there, as ever.
+    CHECK(memoised.scopeEpochWraps() >= 1U);
+    CHECK(memoised.memoSize() > 0U);
 }
 
 TEST_CASE("a refusal leaves a corner cache's scope frames as good as new",
@@ -2127,14 +2139,16 @@ struct ChunkRead {
 
 /// Reads @p roots at every block of three chunks — one at the origin, one
 /// at negative coordinates, one far out — in the filler's order, each way
-/// chunkReads() lists, through one cache per chunk and way; then the three
-/// Block ways interleaved block by block on ONE cache. Every value is
+/// chunkReads() lists, through one cache per chunk and way; then all four
+/// interleaved block by block on ONE cache, as a fill reads. Every value is
 /// compared with freshly()'s, as a bit pattern. Returns how many differed,
 /// and where the first did in @p first.
 [[nodiscard]] std::size_t differencesOverChunks(const Interpreter& interpreter,
                                                 const std::vector<NodeIndex>& roots,
                                                 std::int32_t minY, std::int32_t height,
                                                 std::string& first) {
+    // In the interpreter's own cells, which the filler's order follows.
+    const CellGeometry cells = interpreter.cells().value_or(kOverworldCells);
     std::size_t differing = 0;
     const auto compare = [&](double shared, double fresh, Point at, const char* how) {
         if (bits(shared) != bits(fresh)) {
@@ -2155,7 +2169,7 @@ struct ChunkRead {
         const std::vector<ChunkRead> reads = chunkReads();
         for (const ChunkRead& read : reads) {
             Interpreter::CornerCache cache(interpreter.cacheSize());
-            forEachBlockInFillOrder(chunkX, chunkZ, minY, height, kOverworldCells, [&](Point at) {
+            forEachBlockInFillOrder(chunkX, chunkZ, minY, height, cells, [&](Point at) {
                 for (const NodeIndex root : roots) {
                     compare(through(interpreter, root, at, cache, windowOf(read), read.context),
                             freshly(interpreter, root, at, windowOf(read), read.context), at,
@@ -2164,13 +2178,12 @@ struct ChunkRead {
             });
         }
         Interpreter::CornerCache mixed(interpreter.cacheSize());
-        forEachBlockInFillOrder(chunkX, chunkZ, minY, height, kOverworldCells, [&](Point at) {
+        forEachBlockInFillOrder(chunkX, chunkZ, minY, height, cells, [&](Point at) {
             for (const NodeIndex root : roots) {
-                for (std::size_t r = 0; r < 3; ++r) {
-                    compare(
-                        through(interpreter, root, at, mixed, windowOf(reads[r]), reads[r].context),
-                        freshly(interpreter, root, at, windowOf(reads[r]), reads[r].context), at,
-                        "interleaved");
+                for (const ChunkRead& read : reads) {
+                    compare(through(interpreter, root, at, mixed, windowOf(read), read.context),
+                            freshly(interpreter, root, at, windowOf(read), read.context), at,
+                            "interleaved");
                 }
             }
         });
@@ -2379,4 +2392,316 @@ TEST_CASE("the corner lattice forgets cleanly: at its capacity, at a ninth windo
             CHECK(cache.memoEpochWraps() == (wrap ? 1U : 0U));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The column memo and flat_cache's relocated reads (CornerCache's memo, with
+// the lattice above). A node the interpreter proves column-invariant, and
+// that reads no cell structure, is kept per (x, z), window and context; a
+// flat_cache's argument at its column corner per corner, window and context.
+// The same claims as the lattice's: every value the bit pattern of a fresh
+// evaluation over whole chunks, through every window and context; and a
+// refusal thrown where and as it always was, though the memo now answers
+// the same node in the same column at every other y.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The shapes where keeping a value per column could go wrong: flat_cache
+/// over a y-varying argument, which relocates to y = 0 and is invariant
+/// only inside a window; a shifted_noise with y_scale 0 whose shift_y is
+/// -0.0, so that the y it hands its noise is a zero whose sign follows y's;
+/// a noise with y_scale -0.0; a flat_cache nested under a spline; a chain of
+/// cache_2d; a column-invariant part under an interpolated and under a
+/// find_top_surface; and an invariant child of a varying node, as `depth`
+/// is.
+void defineColumnPack(const TempTree& tree) {
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,0.5]})");
+    tree.defineNoise("shift", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("flat_y", R"({"type":"minecraft:flat_cache","argument":"field"})");
+    tree.define("shift_x", R"({"type":"minecraft:flat_cache","argument":{
+        "type":"minecraft:cache_2d","argument":{"type":"minecraft:shift_a",
+            "argument":"minecraft:shift"}}})");
+    tree.define("shift_z", R"({"type":"minecraft:flat_cache","argument":{
+        "type":"minecraft:cache_2d","argument":{"type":"minecraft:shift_b",
+            "argument":"minecraft:shift"}}})");
+    tree.define("shifted_zero", R"({"type":"minecraft:shifted_noise","noise":"test",
+        "xz_scale":0.5,"y_scale":0.0,"shift_x":"shift_x","shift_y":-0.0,"shift_z":"shift_z"})");
+    tree.define("noise_negzero", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":0.75,"y_scale":-0.0})");
+    tree.define("climate", R"({"type":"minecraft:flat_cache","argument":"shifted_zero"})");
+    tree.define("spline_flat", R"({"type":"minecraft:spline","spline":{
+        "coordinate":"climate","points":[
+            {"location":-0.5,"derivative":0.25,"value":-0.2},
+            {"location":0.0,"derivative":1.5,"value":{
+                "coordinate":{"type":"minecraft:flat_cache","argument":"noise_negzero"},
+                "points":[{"location":-1.0,"derivative":0.0,"value":0.1},
+                          {"location":1.0,"derivative":0.5,"value":0.9}]}},
+            {"location":0.5,"derivative":-0.75,"value":0.4}]}})");
+    tree.define("chain", R"({"type":"minecraft:cache_2d","argument":{
+        "type":"minecraft:cache_2d","argument":{"type":"minecraft:add",
+            "argument1":"noise_negzero","argument2":{"type":"minecraft:flat_cache",
+                "argument":{"type":"minecraft:cache_2d","argument":"spline_flat"}}}}})");
+    tree.define("gradient", R"({"type":"minecraft:y_clamped_gradient",
+        "from_y":-16,"to_y":16,"from_value":1.0,"to_value":-1.0})");
+    tree.define("depthlike", R"({"type":"minecraft:add","argument1":"gradient",
+        "argument2":{"type":"minecraft:flat_cache","argument":"chain"}})");
+    tree.define("smooth", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"depthlike","argument2":{
+            "type":"minecraft:mul","argument1":"field","argument2":0.25}}})");
+    tree.define("scan", R"({"type":"minecraft:find_top_surface",
+        "density":{"type":"minecraft:add","argument1":"gradient",
+            "argument2":{"type":"minecraft:mul","argument1":"spline_flat","argument2":4.0}},
+        "upper_bound":{"type":"minecraft:add","argument1":12.0,
+            "argument2":{"type":"minecraft:mul","argument1":"shifted_zero","argument2":3.0}},
+        "lower_bound":-16,"cell_height":4})");
+    tree.define("all", R"({"type":"minecraft:add",
+        "argument1":{"type":"minecraft:add","argument1":"flat_y","argument2":"chain"},
+        "argument2":{"type":"minecraft:add",
+            "argument1":{"type":"minecraft:add","argument1":"depthlike","argument2":"smooth"},
+            "argument2":{"type":"minecraft:mul","argument1":"scan","argument2":0.01}}})");
+}
+
+} // namespace
+
+TEST_CASE("the column memo and flat_cache's relocated reads change no value over whole chunks",
+          "[density][interpreter][memo]") {
+    const TempTree tree;
+    defineColumnPack(tree);
+    const Pipeline pipeline(tree.pack(), 777, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+
+    // The premises: what the memo keeps, and what it must not.
+    for (const std::string_view kept :
+         {"shifted_zero", "noise_negzero", "climate", "spline_flat", "chain"}) {
+        CAPTURE(kept);
+        CHECK(interpreter.isColumnInvariant(pipeline.root(kept)));
+    }
+    for (const std::string_view varying : {"flat_y", "depthlike", "smooth", "scan", "all"}) {
+        CAPTURE(varying);
+        CHECK_FALSE(interpreter.isColumnInvariant(pipeline.root(varying)));
+    }
+    // shift_y -0.0 really does hand the noise a zero whose sign follows y's,
+    // and the noise really does not care.
+    CHECK(std::signbit(0.0 * -1.0 + -0.0));
+    CHECK_FALSE(std::signbit(0.0 * 1.0 + -0.0));
+
+    // The 2D ones each as a root of its own, where the memo answers the
+    // root itself, and `all` over the rest, at every block.
+    std::string first = "none";
+    std::vector<NodeIndex> roots;
+    for (const std::string_view name :
+         {"shifted_zero", "noise_negzero", "spline_flat", "chain", "all"}) {
+        roots.push_back(pipeline.root(name));
+    }
+    const std::size_t differing = differencesOverChunks(interpreter, roots, -8, 16, first);
+    CAPTURE(first);
+    CHECK(differing == 0U);
+
+    // The lattice pack over the End's 8x4 cells, where a flat_cache's column
+    // corner is a cell's midpoint: an interpolated under one blends there in
+    // the Block context and reads its argument detached, so a relocated read
+    // kept without its context would be served to the other.
+    const TempTree latticeTree;
+    defineLatticePack(latticeTree);
+    const Pipeline end(latticeTree.pack(), 4242, CellGeometry{.width = 8, .height = 4});
+    std::string firstEnd = "none";
+    const std::size_t differingEnd =
+        differencesOverChunks(end.interpreter(), {end.root("all")}, -8, 16, firstEnd);
+    CAPTURE(firstEnd);
+    CHECK(differingEnd == 0U);
+    const Point midpoint{.x = 5, .y = 3, .z = 6};
+    const FlatCacheWindow window = chunkWindow(0, 0);
+    CHECK(bits(freshly(end.interpreter(), end.root("under_flat"), midpoint, &window,
+                       ReadContext::Block)) !=
+          bits(freshly(end.interpreter(), end.root("under_flat"), midpoint, &window,
+                       ReadContext::Detached)));
+
+    // And the memo answered: one evaluation through a cache keeps values.
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    static_cast<void>(
+        interpreter.evaluate(pipeline.root("all"), Point{.x = 3, .y = 5, .z = -9}, cache));
+    CHECK(cache.memoSize() > 0U);
+}
+
+TEST_CASE("a column-invariant node is the same bit pattern at every y, negative and far columns "
+          "included",
+          "[density][interpreter][memo]") {
+    // The proof the column memo rests on, held to the bit for every node of
+    // the column pack the interpreter calls invariant: 100 y values from
+    // INT32_MIN to INT32_MAX, negative ones among them, over columns at the
+    // origin, at negative coordinates and far out.
+    const TempTree tree;
+    defineColumnPack(tree);
+    const Pipeline pipeline(tree.pack(), 777, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    std::vector<std::int32_t> ys{
+        std::numeric_limits<std::int32_t>::min(), -2049, -64, -1, 0, 1, 63, 319, 320,
+        std::numeric_limits<std::int32_t>::max()};
+    for (std::int32_t y = -2000; ys.size() < 100U; y += 47) {
+        ys.push_back(y);
+    }
+    std::size_t invariantNodes = 0;
+    std::size_t differing = 0;
+    for (NodeIndex node = 0; node < interpreter.cacheSize(); ++node) {
+        if (!interpreter.isColumnInvariant(node)) {
+            continue;
+        }
+        ++invariantNodes;
+        for (const auto& [x, z] : {std::pair{0, 0}, std::pair{-1, -1}, std::pair{-12345, 6789},
+                                   std::pair{1000003, -77}, std::pair{-20000000, 20000000}}) {
+            const std::uint64_t at0 =
+                bits(interpreter.evaluate(node, Point{.x = x, .y = 0, .z = z}));
+            for (const std::int32_t y : ys) {
+                differing += bits(interpreter.evaluate(node, Point{.x = x, .y = y, .z = z})) != at0
+                                 ? 1U
+                                 : 0U;
+            }
+        }
+    }
+    CHECK(invariantNodes > 10U);
+    CHECK(differing == 0U);
+}
+
+TEST_CASE("the column memo keeps no refusal, and each y refuses as it always did",
+          "[density][interpreter][memo][refusal]") {
+    // A column-invariant noise past its 32-bit lattice at x = 16, and a
+    // find_top_surface whose upper bound is a kept NaN (1 / (noise * 0) * 0).
+    // Nothing that throws is kept, so every y of the column refuses, naming
+    // its own block, word for word as a fresh evaluation does; and a NaN
+    // that was kept is still refused by the scan at every y.
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("far", R"({"type":"minecraft:noise","noise":"test","xz_scale":1.25e9,
+        "y_scale":0.0})");
+    tree.define("near", R"({"type":"minecraft:noise","noise":"test","xz_scale":1.0,
+        "y_scale":0.0})");
+    tree.define("nan_bound", R"({"type":"minecraft:find_top_surface","density":1.0,
+        "upper_bound":{"type":"minecraft:mul","argument1":{"type":"minecraft:invert",
+            "argument":{"type":"minecraft:mul","argument1":"near","argument2":0.0}},
+            "argument2":0.0},
+        "lower_bound":-16,"cell_height":4})");
+    const Pipeline pipeline(tree.pack(), 5, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    REQUIRE(interpreter.isColumnInvariant(pipeline.root("far")));
+
+    for (const std::string_view name : {"far", "nan_bound"}) {
+        CAPTURE(name);
+        const NodeIndex root = pipeline.root(name);
+        Interpreter::CornerCache cache(interpreter.cacheSize());
+        std::size_t refused = 0;
+        std::size_t differing = 0;
+        for (std::int32_t y = -40; y <= 40; y += 3) {
+            const Point at{.x = 16, .y = y, .z = 5};
+            const std::string kept =
+                refusalOf([&] { return interpreter.evaluate(root, at, cache); });
+            const std::string fresh = refusalOf([&] { return interpreter.evaluate(root, at); });
+            refused += kept != "no refusal" ? 1U : 0U;
+            differing += kept != fresh ? 1U : 0U;
+            CHECK_THAT(kept, ContainsSubstring(spell(at)));
+        }
+        CHECK(refused == 27U);
+        CHECK(differing == 0U);
+    }
+}
+
+TEST_CASE("the invariance rule, type by type", "[density][interpreter][memo]") {
+    // The rule names every type, with no default (isColumnInvariant). Pinned
+    // here for a node of each type's exact shape over constant arguments —
+    // every Number field 1.0, so a noise's y_scale is 1.0 — and evaluated
+    // with a lattice, which the rule is computed without.
+    const std::map<std::string_view, bool> invariant{
+        {"minecraft:abs", true},
+        {"minecraft:add", true},
+        {"minecraft:blend_alpha", true},
+        {"minecraft:blend_density", true},
+        {"minecraft:blend_offset", true},
+        {"minecraft:cache_2d", true},
+        {"minecraft:cache_all_in_cell", false},
+        {"minecraft:cache_once", true},
+        {"minecraft:clamp", true},
+        {"minecraft:constant", true},
+        {"minecraft:cube", true},
+        {"minecraft:end_islands", true},
+        {"minecraft:find_top_surface", true},
+        {"minecraft:flat_cache", true},
+        {"minecraft:half_negative", true},
+        {"minecraft:interpolated", false},
+        {"minecraft:invert", true},
+        {"minecraft:max", true},
+        {"minecraft:min", true},
+        {"minecraft:mul", true},
+        {"minecraft:noise", false},
+        {"minecraft:old_blended_noise", false},
+        {"minecraft:quarter_negative", true},
+        {"minecraft:range_choice", true},
+        {"minecraft:shift", false},
+        {"minecraft:shift_a", true},
+        {"minecraft:shift_b", true},
+        {"minecraft:shifted_noise", false},
+        {"minecraft:slide", false},
+        {"minecraft:spline", true},
+        {"minecraft:square", true},
+        {"minecraft:squeeze", true},
+        {"minecraft:weird_scaled_sampler", false},
+        {"minecraft:y_clamped_gradient", false},
+    };
+    const ResourceLocation noiseId = ResourceLocation::parse("stratum:shaped");
+    const std::map<ResourceLocation, NoiseParameters> parameters{
+        {noiseId, NoiseParameters{.firstOctave = -4, .amplitudes = {1.0, 0.5}}}};
+    const NoiseRegistry noises =
+        NoiseRegistry::create(parameters, std::vector<ResourceLocation>{noiseId}, 42,
+                              stratum::density::RandomSource::Xoroshiro);
+    std::size_t types = 0;
+    for (int raw = 0; stratum::density::nodeTypeName(static_cast<NodeType>(raw)) != "unknown";
+         ++raw) {
+        const auto type = static_cast<NodeType>(raw);
+        const std::string_view name = stratum::density::nodeTypeName(type);
+        CAPTURE(name);
+        Graph::Assembler assembler;
+        stratum::density::Node constant;
+        constant.type = NodeType::Constant;
+        constant.parameters = {0.25};
+        static_cast<void>(assembler.addNode(constant));
+        stratum::density::Node node;
+        node.type = type;
+        for (const stratum::density::SchemaField& field : stratum::density::fieldsOf(type)) {
+            switch (field.kind) {
+                case stratum::density::FieldKind::Function:
+                    node.arguments.push_back(0);
+                    break;
+                case stratum::density::FieldKind::Number:
+                    node.parameters.push_back(1.0);
+                    break;
+                case stratum::density::FieldKind::Noise:
+                    node.noise = noiseId;
+                    break;
+                case stratum::density::FieldKind::Spline:
+                    node.spline = 0;
+                    break;
+                case stratum::density::FieldKind::Selector:
+                    node.selector = std::string(field.selectorValues.front());
+                    break;
+            }
+        }
+        const bool hasSpline = node.spline.has_value();
+        const NodeIndex root = assembler.addNode(std::move(node));
+        if (hasSpline) {
+            stratum::density::SplineDefinition spline;
+            spline.coordinate = 0;
+            spline.points.push_back(stratum::density::SplinePoint{
+                .location = 0.0, .derivative = 0.5, .value = 1.0, .nested = std::nullopt});
+            static_cast<void>(assembler.addSpline(std::move(spline)));
+        }
+        assembler.addRoot(ResourceLocation::parse("stratum:root"), root);
+        const Graph graph = assembler.release();
+        const Interpreter interpreter(graph, noises, kOverworldCells);
+        const auto expected = invariant.find(name);
+        REQUIRE(expected != invariant.end());
+        CHECK(interpreter.isColumnInvariant(root) == expected->second);
+        ++types;
+    }
+    CHECK(types == invariant.size());
 }

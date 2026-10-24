@@ -45,6 +45,44 @@ namespace {
     return (std::bit_cast<std::uint64_t>(value) & UINT64_C(0x7FFFFFFFFFFFFFFF)) == 0U;
 }
 
+/// Whether a node of @p type keeps the column memo from everything above it
+/// (Interpreter::Op::columnMemo): its value depends on the caller's cell
+/// corners or on a scan of points (`interpolated`, `cache_all_in_cell`,
+/// `find_top_surface`), or it is one an UnsettledSubstitutions can replace
+/// (`old_blended_noise`, `weird_scaled_sampler`).
+[[nodiscard]] bool cellBound(const NodeType type) noexcept {
+    switch (type) {
+        case NodeType::Interpolated:
+        case NodeType::CacheAllInCell:
+        case NodeType::FindTopSurface:
+        case NodeType::OldBlendedNoise:
+        case NodeType::WeirdScaledSampler:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// Whether a node of @p type samples a noise or walks a spline: the work a
+/// kept value saves. Below one, a node is a few arithmetic operations, which
+/// a memo lookup costs more than.
+[[nodiscard]] bool samplesOrSplines(const NodeType type) noexcept {
+    switch (type) {
+        case NodeType::Noise:
+        case NodeType::ShiftedNoise:
+        case NodeType::Shift:
+        case NodeType::ShiftA:
+        case NodeType::ShiftB:
+        case NodeType::EndIslands:
+        case NodeType::Spline:
+        case NodeType::OldBlendedNoise:
+        case NodeType::WeirdScaledSampler:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// A double as an error message spells it: every digit it carries.
 [[nodiscard]] std::string describe(double value) {
     std::ostringstream text;
@@ -235,7 +273,13 @@ std::size_t Interpreter::MemoTable::probe(const Key& key) const noexcept {
     const std::size_t mask = slots_.size() - 1;
     std::size_t at = hash(key) & mask;
     // At most half full (insert), so an empty slot ends every probe.
-    while (slots_[at].stamp == epoch_ && slots_[at].key != key) {
+    // Word by word rather than the array's operator==, which goes through
+    // memcmp and a call per probe.
+    const auto same = [&key](const Key& other) noexcept {
+        return other[0] == key[0] && other[1] == key[1] && other[2] == key[2] &&
+               other[3] == key[3] && other[4] == key[4];
+    };
+    while (slots_[at].stamp == epoch_ && !same(slots_[at].key)) {
         at = (at + 1) & mask;
     }
     return at;
@@ -337,13 +381,30 @@ struct Interpreter::Call {
     /// Where `flat_cache` may relocate a read, or null for everywhere.
     const FlatCacheWindow* window = nullptr;
     ReadContext context = ReadContext::Block;
-    /// Whether `interpolated` shares corners through the cache's lattice:
-    /// the cache asks for it (Sharing::Lattice) and nothing is substituted.
-    bool lattice = false;
+    /// Whether the call uses the cache's memo — the corner lattice,
+    /// `flat_cache`'s relocated reads, the column memo: the cache asks for
+    /// it (Sharing::Lattice) and nothing is substituted.
+    bool memo = false;
     /// The cache's number for `window` (CornerCache::windowId), set when
-    /// `lattice` is.
+    /// `memo` is.
     std::uint32_t windowId = 0;
 };
+
+namespace {
+
+/// The last word of a memo key: what kind of value it is (bit 0: a cell
+/// corner, or a column's — a column-invariant node's or a relocated read's,
+/// the same thing for a node that is both) and what it was read through.
+[[nodiscard]] constexpr std::uint32_t cornerTag(const std::uint32_t windowId) noexcept {
+    return windowId << 1U;
+}
+
+[[nodiscard]] constexpr std::uint32_t columnTag(const std::uint32_t windowId,
+                                                const ReadContext context) noexcept {
+    return (((windowId << 1U) | (context == ReadContext::Detached ? 1U : 0U)) << 1U) | 1U;
+}
+
+} // namespace
 
 /// One point's evaluation, with the values already computed for it. Nodes
 /// are pure functions of the point, so this is only ever a speed-up — except
@@ -622,6 +683,13 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
             continue;
         }
 
+        // The rule by type, every type named and no default, so that a type
+        // added to the schema is a compile error here (-Wswitch) rather than
+        // a guess. A default branch called anything invariant whose
+        // arguments were, which is how old_blended_noise and
+        // weird_scaled_sampler, which read y themselves, were once reported
+        // invariant and the End's biome source, trusting that, read a
+        // datapack's 3D erosion once per chunk (tests/unit/biome_source_test).
         bool invariant = false;
         switch (node.type) {
             case NodeType::Constant:
@@ -629,92 +697,135 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
             case NodeType::BlendOffset:
             case NodeType::ShiftA:
             case NodeType::ShiftB:
+            case NodeType::EndIslands:
                 // Constants and the two blend states do not vary at all;
                 // shift_a and shift_b sample with y pinned, where plain
                 // shift does not, which is the entire difference between
-                // them.
+                // them; the island field is sampled at (x, z) alone.
                 invariant = true;
                 break;
-            case NodeType::FlatCache:
-                // flat_cache asks for whatever it wraps at y = 0 — inside
-                // the window its grid covers. Outside one it reads its
-                // argument where it was asked (SPEC §11), so it is only as
-                // invariant as that argument.
-                invariant = argumentsInvariant();
-                break;
             case NodeType::Noise:
+                // y reaches the noise only as y * y_scale: a zero of either
+                // sign when the scale is a zero of either sign, which each
+                // octave adds to its origin, a non-negative double, so the
+                // lattice, the fade and the gradients never see y.
                 invariant = isZero(node.parameters[1]);
                 break;
             case NodeType::ShiftedNoise:
+                // The same zero, plus shift_y: a shift of -0.0 leaves a zero
+                // whose sign follows y's, which the octaves' origins then
+                // absorb as above.
                 invariant = isZero(node.parameters[1]) && argumentsInvariant();
                 break;
             case NodeType::Spline:
                 invariant = node.spline.has_value() && settleSpline(settleSpline, *node.spline);
                 break;
+            case NodeType::Abs:
+            case NodeType::Add:
+            case NodeType::Clamp:
+            case NodeType::Cube:
+            case NodeType::HalfNegative:
+            case NodeType::Invert:
+            case NodeType::Max:
+            case NodeType::Min:
+            case NodeType::Mul:
+            case NodeType::QuarterNegative:
+            case NodeType::RangeChoice:
+            case NodeType::Square:
+            case NodeType::Squeeze:
+            case NodeType::BlendDensity:
+            case NodeType::Cache2d:
+            case NodeType::CacheOnce:
+            case NodeType::FlatCache:
+            case NodeType::FindTopSurface:
+                // Pure functions of their arguments, the transparent caches
+                // among them. flat_cache asks for whatever it wraps at y = 0
+                // inside the window its grid covers, and outside one reads
+                // its argument where it was asked (SPEC §11), so it is only as
+                // invariant as that argument. find_top_surface scans its own
+                // column from its upper bound down, the same scan at every y
+                // when its density and bound are invariant.
+                invariant = argumentsInvariant();
+                break;
+            case NodeType::Interpolated:
+            case NodeType::CacheAllInCell:
+                // Interpolating along y cannot remove a dependence on y, and
+                // interpolating a column-invariant function cannot create
+                // one: the four corner pairs it blends are equal. Only with a
+                // lattice, and the lattice constructor sets it after this
+                // has run, so both are reported varying today.
+                invariant = cells_.has_value() && argumentsInvariant();
+                break;
             case NodeType::YClampedGradient:
             case NodeType::Shift:
             case NodeType::OldBlendedNoise:
             case NodeType::WeirdScaledSampler:
+            case NodeType::Slide:
                 // Each reads y itself, whatever its arguments do: the
                 // gradient is a function of y, plain shift samples its noise
                 // with y unpinned, old_blended_noise is 3D noise, and
                 // weird_scaled_sampler samples its noise at the point's own
-                // y over the rarity. The last two once reached the default
-                // below, where a node with no varying argument —
-                // old_blended_noise has none at all — was reported
-                // invariant, and the End's biome source, trusting that, read
-                // a datapack's 3D erosion once per chunk (measured in
-                // tests/unit/biome_source_test.cpp).
+                // y over the rarity. slide is never evaluated at all.
                 invariant = false;
-                break;
-            case NodeType::Interpolated:
-                // Interpolating along y cannot remove a dependence on y, and
-                // interpolating a column-invariant function cannot create
-                // one: the four corner pairs it blends are equal.
-                invariant = cells_.has_value() && argumentsInvariant();
-                break;
-            default:
-                // What is left is a pure function of its arguments — or is
-                // unevaluable, and then "varies" is the safe answer, though
-                // the refusal comes first anyway.
-                invariant = !unevaluableReason(node.type).has_value() && argumentsInvariant();
                 break;
         }
         columnInvariant_[i] = invariant ? 1 : 0;
     }
 
-    // Which nodes reach a `flat_cache` (Op::readsWindow), in the same
-    // forward order, splines included.
-    std::vector<char> splineReadsWindow(graph.splineCount(), 0);
-    const auto splineReaches = [&graph, &splineReadsWindow, this](auto&& self,
-                                                                  SplineIndex spline) -> bool {
-        char& cached = splineReadsWindow[static_cast<std::size_t>(spline)];
-        if (cached != 0) {
-            return cached == 1;
+    settleReach(graph);
+    settleRefusals();
+}
+
+void Interpreter::settleReach(const Graph& graph) {
+    // What each node reaches, in the same forward order as column invariance,
+    // splines included: a `flat_cache` (Op::readsWindow); a type the column
+    // memo may not see past (cellBound); a noise or a spline, what makes a
+    // value worth keeping. Together with column invariance, Op::columnMemo.
+    struct Reach {
+        bool window = false;
+        bool cells = false;
+        bool noise = false;
+    };
+
+    const auto merge = [](Reach& into, const Reach& from) {
+        into.window = into.window || from.window;
+        into.cells = into.cells || from.cells;
+        into.noise = into.noise || from.noise;
+    };
+    std::vector<Reach> nodeReach(graph.nodeCount());
+    std::vector<std::optional<Reach>> splineReach(graph.splineCount());
+    const auto reachOfSpline = [&graph, &nodeReach, &splineReach,
+                                &merge](auto&& self, SplineIndex spline) -> Reach {
+        std::optional<Reach>& cached = splineReach[static_cast<std::size_t>(spline)];
+        if (cached.has_value()) {
+            return *cached;
         }
         const SplineDefinition& definition = graph.spline(spline);
-        bool reaches = ops_[static_cast<std::size_t>(definition.coordinate)].readsWindow;
+        Reach reach = nodeReach[static_cast<std::size_t>(definition.coordinate)];
         for (const SplinePoint& point : definition.points) {
-            if (point.nested.has_value() && self(self, *point.nested)) {
-                reaches = true;
+            if (point.nested.has_value()) {
+                merge(reach, self(self, *point.nested));
             }
         }
-        cached = reaches ? 1 : 2;
-        return reaches;
+        cached = reach;
+        return reach;
     };
     for (std::size_t i = 0; i < graph.nodeCount(); ++i) {
         const Node& node = graph.node(static_cast<NodeIndex>(i));
+        Reach reach{.window = node.type == NodeType::FlatCache,
+                    .cells = cellBound(node.type),
+                    .noise = samplesOrSplines(node.type)};
+        for (const NodeIndex argument : node.arguments) {
+            merge(reach, nodeReach[static_cast<std::size_t>(argument)]);
+        }
+        if (node.spline.has_value()) {
+            merge(reach, reachOfSpline(reachOfSpline, *node.spline));
+        }
+        nodeReach[i] = reach;
         Op& op = ops_[i];
-        op.readsWindow =
-            node.type == NodeType::FlatCache ||
-            std::ranges::any_of(node.arguments,
-                                [this](NodeIndex argument) {
-                                    return ops_[static_cast<std::size_t>(argument)].readsWindow;
-                                }) ||
-            (node.spline.has_value() && splineReaches(splineReaches, *node.spline));
+        op.readsWindow = reach.window;
+        op.columnMemo = columnInvariant_[i] != 0 && !reach.cells && reach.noise;
     }
-
-    settleRefusals();
 }
 
 void Interpreter::settleRefusals() noexcept {
@@ -966,9 +1077,9 @@ Interpreter::Call Interpreter::callThrough(CornerCache& cache, const FlatCacheWi
               .cache = &cache,
               .window = window,
               .context = context,
-              .lattice = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty(),
+              .memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty(),
               .windowId = 0};
-    if (call.lattice) {
+    if (call.memo) {
         call.windowId = cache.windowId(window);
     }
     return call;
@@ -997,7 +1108,7 @@ double Interpreter::evaluate(NodeIndex root, Point at) const {
                     .cache = nullptr,
                     .window = nullptr,
                     .context = ReadContext::Block,
-                    .lattice = false,
+                    .memo = false,
                     .windowId = 0};
     Scope scope(call, at, true);
     return evaluateNode(scope, root);
@@ -1016,6 +1127,17 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         // with the same message, at the same visit, without being worked
         // out again on every visit to every node that draws none.
         refuseIfUnevaluable(index);
+    }
+
+    // The column memo (Op::columnMemo): a node with one value down its
+    // column, kept from the first point in this column that computed it.
+    // After the refusal above, as before: a node that refuses is never kept.
+    const bool keepsColumn = op.columnMemo && scope.call().memo;
+    if (keepsColumn) {
+        double kept = 0.0;
+        if (scope.call().cache->memo_.find(columnKey(index, scope), kept)) {
+            return scope.store(index, kept);
+        }
     }
 
     const Point at = scope.at();
@@ -1222,7 +1344,23 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             refuseUnevaluated(op.type);
     }
 
+    if (keepsColumn) {
+        scope.call().cache->memo_.insert(columnKey(index, scope), value);
+    }
     return scope.store(index, value);
+}
+
+Interpreter::MemoTable::Key Interpreter::columnKey(const NodeIndex index,
+                                                   const Scope& scope) noexcept {
+    // The node, its column and what it was read through; y is no part of
+    // it, which is the whole of what Op::columnMemo proves. Shared with
+    // flat_cache's relocated reads (flatCache), whose key is the argument at
+    // the column corner: for a node that is both, the two values are one.
+    const Point at = scope.at();
+    const Call& call = scope.call();
+    return MemoTable::Key{index, std::bit_cast<std::uint32_t>(at.x), 0U,
+                          std::bit_cast<std::uint32_t>(at.z),
+                          columnTag(call.windowId, call.context)};
 }
 
 // --- the cases evaluateNode hands off ------------------------------------
@@ -1375,8 +1513,29 @@ double Interpreter::flatCache(Scope& scope, const Op& op) const {
     if (!relocates || corner == at) {
         return evaluateNode(scope, op.arguments[0]);
     }
-    Scope cornerScope(scope.call(), corner, false);
-    return evaluateNode(cornerScope, op.arguments[0]);
+    // The relocated read is the argument at the column corner, through this
+    // call's window and in its context, with no cell corners kept: the same
+    // evaluation for every block of the 4x4 column, so kept from the first
+    // (CornerCache's memo), and only once it has returned.
+    const Call& call = scope.call();
+    const NodeIndex argument = op.arguments[0];
+    if (!call.memo) {
+        Scope cornerScope(call, corner, false);
+        return evaluateNode(cornerScope, argument);
+    }
+    const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x), 0U,
+                             std::bit_cast<std::uint32_t>(corner.z),
+                             columnTag(call.windowId, call.context)};
+    double value = 0.0;
+    if (call.cache->memo_.find(key, value)) {
+        return value;
+    }
+    {
+        Scope cornerScope(call, corner, false);
+        value = evaluateNode(cornerScope, argument);
+    }
+    call.cache->memo_.insert(key, value);
+    return value;
 }
 
 double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
@@ -1428,17 +1587,16 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
         // A cell corner is always a Block read (a Detached read never
         // interpolates), so the context needs no place in it.
         const std::uint32_t tag =
-            call.lattice && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId
-                                                                                 : 0U;
+            call.memo && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId : 0U;
         CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
         if (!entry.filled || entry.x != x0 || entry.y != y0 || entry.z != z0 ||
-            (call.lattice && entry.tag != tag)) {
+            (call.memo && entry.tag != tag)) {
             // Marked empty while it fills, so that a corner that throws
             // leaves no cell behind with another cell's corners in it. No
             // evaluation below touches this entry: it would have to reach
             // this same argument from inside it, and the graph is acyclic.
             entry.filled = false;
-            if (call.lattice) {
+            if (call.memo) {
                 // The order the eight were always evaluated in, so that a
                 // corner evaluated here for the first time is evaluated
                 // after the same corners it always followed.
@@ -1503,7 +1661,7 @@ double Interpreter::sharedCorner(const NodeIndex argument, const Scope& scope, c
     CornerCache& cache = *scope.cache();
     const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x),
                              std::bit_cast<std::uint32_t>(corner.y),
-                             std::bit_cast<std::uint32_t>(corner.z), tag << 1U};
+                             std::bit_cast<std::uint32_t>(corner.z), cornerTag(tag)};
     double value = 0.0;
     if (cache.memo_.find(key, value)) {
         return value;
