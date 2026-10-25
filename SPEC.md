@@ -809,7 +809,10 @@ At evaluation:
   bound. An `upper_bound` and `cell_height` of 2147483644 over an
   `interpolated`, in a dimension whose cells are 4 high, blended over the
   cell from 2147483644 to 2^31; one lower fills. Through
-  `Interpreter::evaluate` itself, any axis gets there;
+  `Interpreter::evaluate` itself, any axis gets there. Every form of
+  `evaluate` also refuses a root that is no node of its graph, with
+  `EvalError` naming the index (since 2026-10-25; before, the cached forms
+  read their memo out of bounds);
 - a `preliminary_surface_level` lattice corner whose floor is no 32-bit
   integer;
 - a surface depth, secondary depth or `bandlands` offset no int32 holds (a
@@ -1033,7 +1036,11 @@ mapping has two halves, split at a platform-neutral midpoint:
   §4.1 permits only as an M2 stepping stone. M3 closed on terrain parity,
   which the interpreter delivers; the compiled program is speed rather than
   correctness, so it moves to M5's performance pass, where a measured
-  237 ms/chunk gives it a target. It is written down here because a
+  237 ms/chunk gives it a target. The first pass (2026-10-25, §11, "M5's
+  performance bar") made the interpreter itself cheaper — per-call frames,
+  a flat operand table, shared corners and a per-call memo, 6.3x fewer
+  instructions a chunk with the biome search — and still did not build the
+  flat program. It is written down here because a
   milestone marked closed with one of its named deliverables missing is a
   claim nobody re-checks.
 
@@ -10006,6 +10013,19 @@ Open:
   every tie observed across 98304 cells and four seeds, and it is adopted on
   that evidence, flagged here as an empirical match rather than a derivation.
 
+  *Not a scan any more (2026-10-25).* `ParameterList::find` searches a
+  static tree of the quantised rows' boxes, built with the list (and so on
+  every thaw: the frozen blob is unchanged), by branch and bound on the
+  same int64 fitness, and returns exactly the scan's row — the least
+  (fitness, -row), so every tie still goes to the later row. The scan is
+  kept as `findRowLinear`, the definition the tree is held to row for row
+  (tests/unit/biome_search_test.cpp; tests/conformance/
+  vanilla_biome_search_test.cpp over the server's own tables, about two
+  million samples, no mismatch). It is a faster search of the same rule,
+  not vanilla's tree: which leaf vanilla's tree resolves a tie to is still
+  the measured proxy above. On the bench's queries it scores 20.6 rows a
+  query on average (p99 34) where the scan scored 7593.
+
   Neither change is sufficient alone, which is what makes this more than
   fitting seed 42: seed -4172144997902289642 is exact under the old
   double-precision search, and quantising *without* the tie-break breaks one
@@ -10702,9 +10722,9 @@ Open:
   scheduler holds no chunk that is not loaded. Whether the flow is the one
   a Java server would make is unobserved.
 
-- **M5's performance bar, and the method that measures against it — the
-  figures here are provisional; the baseline of record waits for a quiet
-  box.** *The bar* (owner, 2026-10-15) is referenced to the Java Edition
+- **M5's performance bar, and the method that measures against it — with
+  the baseline of record (2026-10-25), before and after the first
+  performance pass.** *The bar* (owner, 2026-10-15) is referenced to the Java Edition
   baseline: 35 ms/chunk (about 28 chunks/s) is the best case, about 10
   chunks/s (100 ms/chunk) the absolute minimum. *The working reading*,
   flagged to the owner for confirmation: per generation thread, end to end
@@ -10827,11 +10847,56 @@ Open:
   End, against vanilla's 14.8 to 18.4 and 3.6. Stratum's wall was within
   1% of its thread CPU in both, so the box slowed the thread itself
   (shared cores, caches and clocks) rather than taking it off the CPU, and
-  no correction recovers a quiet box's figure. These are not the baseline
-  of record; that is `tools/perf-baseline --accept-eula --require-quiet
-  0.5` on a quiet machine after the large branch now in flight merges. The
-  237 ms/chunk on record (the binding entry above) predates this
-  instrument and is not comparable to it.
+  no correction recovers a quiet box's figure. These were not the baseline
+  of record. The 237 ms/chunk on record (the binding entry above) predates
+  this instrument and is not comparable to it.
+
+  *The baseline of record (2026-10-25)* is `tools/perf-baseline
+  --accept-eula --require-quiet 0.5`, on the same AMD Ryzen 5 7600
+  (governor performance, boost on), every half quiet: other processes used
+  0.13 to 0.16 cores on average and at most 0.27 over any minute. Its
+  Stratum half was run twice: on main as pushed (cfa5d93, before) and on
+  main with the first performance pass (after). The vanilla half (JDK:
+  Azul Zulu 25.0.4, since the system Java is a JRE without `jfr` or
+  `jstack`) was run once and reused for both, every recording within 0.977
+  to 1.010 of its workers' CPU. Wall ms/chunk, means (medians), all three
+  seeds over the square and the scattered set:
+
+  | dimension | Stratum e2e at cfa5d93 | Stratum e2e after the merge | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
+  | --- | --- | --- | --- | --- | --- |
+  | overworld | 155.7 (160.4), 6.4/s | 23.7 (24.7), 42.1/s | 22.3 / 0.63 / 0.65 | 13.5 (14.0), 73.9/s | 11.5x, 1.75x (1.76x) |
+  | amplified | 159.8 (161.0), 6.3/s | 26.0 (25.9), 38.5/s | 24.6 / 0.63 / 0.66 | 15.9 (15.0), 63.1/s | 10.1x, 1.64x (1.63x) |
+  | large_biomes | 160.4 (160.4), 6.2/s | 24.6 (23.9), 40.7/s | 23.3 / 0.64 / 0.65 | 15.2 (15.4), 65.7/s | 10.6x, 1.62x (1.60x) |
+  | end | 13.0 (12.9), 77.0/s | 2.56 (2.49), 390.8/s | 2.20 / 0.01 / 0.35 | 2.80 (2.55), 357.6/s | 4.6x, 0.91x (0.90x) |
+
+  *What the pass changed*, none of it output: every chunk's blocks,
+  biomes, encoded sub-chunks and fluid updates are byte-identical before
+  and after, over the four presets, the three seeds and the 137 chunks
+  (the bench's `--compare` and `cmp`, 12 dumps, 555 831 785 bytes).
+  Instructions per chunk generation (seed 42): overworld 3201.3M to 511.5M
+  (6.26x fewer), amplified 3503.7M to 645.1M, large_biomes 3395.6M to
+  544.0M, the End 235.2M to 53.8M. Two levers did it. The biome search
+  (§11, "The biome search runs on quantised integers") was a scan of all
+  7593 overworld rows, 2061 times a chunk — about 45% of every cycle — and
+  is now an exact search of a tree over them. The interpreter (§10, M3: still no compiled flat
+  program) no longer builds two vectors sized to the whole frozen graph
+  for every evaluation, flat_cache relocation and interpolated corner
+  (202K a chunk, 1.33 GB zeroed): frames come from the caller's
+  `CornerCache`, told apart by an epoch; dispatch reads a flat operand
+  table with each node's refusal settled at construction; a corner shared
+  by up to eight cells is evaluated once; and one call keeps flat_cache's
+  relocated reads per column corner and column-invariant subgraphs per
+  column. Together they take the biome stage from 64 ms/chunk to 0.63 and
+  the fill from 91 to 22. Each was verified adversarially before it
+  merged.
+
+  *Against the bar*, for the C++ alone: every preset now meets the 35
+  ms/chunk best case, and the End is faster than vanilla's own rate. The
+  task through PHP is still unmeasured, so the best case is not yet
+  claimed for the whole generation task. The owner's goal (2026-10-25) is
+  vanilla's own rate, about 14 ms/chunk on the overworld: the three
+  overworld presets are 1.62x to 1.75x from it, and the fill — 94% of
+  what is left — is where the rest is.
 
 - **M5-Nukkit: block states resolve once per world through Nukkit, worlds
   generate from their frozen pipeline and are refused at startup — built

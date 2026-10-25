@@ -18,7 +18,7 @@ Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below), under both random sources and with no aquifer coupling since pipeline engine v14. Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10). Since the undefined-behaviour audit (2026-10-14) every overworld preset refuses chunks 175 770 and up and -175 771 and down, on either axis, by name, where vanilla's own `jagged` leaves int32 (SPEC §8) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates exactly through the public compile path — its blocks, and its biomes through its own `minecraft:the_end` source (pipeline engine v15), exact on every stored quart of 45 End regions (47 185 920 quarts, eight distinct End worlds). What keeps M4 open is the legacy named-noise seeding alone |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling, run only in a headless server so far, so whether its flow is Java's is unobserved (M5) |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Open — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments all landed, and Stratum has run inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`, local evidence); M5 closes on that headless evidence (owner, 2026-10-15), the owner checking with a Bedrock client afterwards. Still open: the perf bar (35 ms/chunk best case, 100 ms/chunk minimum, its working reading unconfirmed) — provisionally the three overworld presets at 176.4 to 220.9 ms/chunk end to end, below the minimum, and the End at 13.2; still the per-point interpreter, and the biome fill 66.0 to 86.4 of it; ext-nukkit built and JNI-tested but never run inside Nukkit (no jar: CloudburstMC's CI answered HTTP 502); and the open ends SPEC §11's M5 entry lists for the headless runs (M5 below) |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | Open — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments all landed, and Stratum has run inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`, local evidence); M5 closes on that headless evidence (owner, 2026-10-15), the owner checking with a Bedrock client afterwards. Speed (baseline of record, 2026-10-25, quiet box): after the first performance pass every preset meets the 35 ms/chunk best case for the C++ alone — overworld 23.7 ms/chunk (was 155.7), amplified 26.0, large_biomes 24.6, the End 2.56, faster than vanilla's 2.80 — output byte-identical; the owner's goal of vanilla's own ~14 ms is 1.62x to 1.75x away on the overworld presets, the PHP side is unmeasured, the bar's working reading unconfirmed, and still no compiled flat program. Still open: ext-nukkit built and JNI-tested but never run inside Nukkit (no jar: CloudburstMC's CI answered HTTP 502); and the open ends SPEC §11's M5 entry lists for the headless runs (M5 below) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -305,17 +305,16 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 2. Performance (M5's generation-speed item). The owner's goal since
    2026-10-25 is vanilla's own rate, about 14 ms/chunk (SPEC's provisional
    table: 13.9 on the overworld, one worldgen thread); the bar itself is
-   unchanged, and SPEC does not record the goal yet. First the baseline of record:
-   `tools/perf-baseline --accept-eula --require-quiet 0.5` on a quiet
-   machine, which SPEC put after "the large branch now in flight merges" —
-   every branch of 2026-10-15 is on main now — and the generation task
-   measured through PHP, without which the 35 ms best case is not to be
-   claimed. Then the two levers: the fill, whose density values all still
-   come from `density::Interpreter` — the compiled flat execution program
-   M3 deferred to this pass (SPEC §10), and the interpreter's per-read
-   scope with it — and the biome fill, 66.0 to 86.4 ms/chunk on the
-   overworld presets provisionally. Every change shown to move no output
-   with the bench's `--dump` and `--compare`.
+   unchanged. *Done 2026-10-25:* the baseline of record, and the first
+   pass — the biome search tree and the interpreter's frames, dispatch,
+   shared corners and memo — which takes the overworld from 155.7 to 23.7
+   ms/chunk on a quiet box, byte-identical (SPEC §11). Next: the generation
+   task measured through PHP, without which the 35 ms best case is not
+   claimed for the task; then the fill, which is now 94% of a chunk — the
+   surface pass's own biome lookups, the surface rules' column noise, the
+   ChunkBuffer, the vein toggle, and the compiled flat program M3 deferred
+   (SPEC §10). Every change shown to move no output with the bench's
+   `--dump` and `--compare`.
 3. ext-nukkit inside a real Nukkit: the one approved download, a prebuilt
    jar from CloudburstMC's CI pinned by build and SHA-256, retried
    (`tools/nukkit-dev pin <build>`, the owner's step); building Nukkit from
@@ -2066,8 +2065,9 @@ PocketMine-MP's own upgrader and deserializer (slices 1-5 below). Since
 2026-10-15 it has run inside a real, headless PocketMine-MP 5.44.3 on
 PocketMine-MP's own PHP, and by the owner's ruling of that day M5 closes on
 headless evidence, the owner checking with a real Bedrock client
-afterwards (SPEC §11). What keeps it open: the performance bar, which the
-three overworld presets measure below, provisionally; `ext-nukkit/` never
+afterwards (SPEC §11). What keeps it open: the generation task measured
+through PHP (the C++ alone meets the 35 ms best case on every preset since
+2026-10-25; SPEC §11, "M5's performance bar"); `ext-nukkit/` never
 run inside Nukkit; and the open ends the headless runs left (below), if
 they gate it — SPEC does not say, and that is the owner's call (handoff).
 `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) resolves block states
@@ -2300,7 +2300,24 @@ JNI-tested; no Nukkit jar could be fetched to run it in.
       a quiet box, a row whose checks fail is NOT A MEASUREMENT (exit 3),
       and `--from` reuses an earlier run's half. SPEC §11, "M5's
       performance bar".
-- [ ] **Generation speed, against the owner's bar.** The bar (owner,
+- [ ] **Generation speed, against the owner's bar — the C++ meets the best
+      case since 2026-10-25; the task through PHP is unmeasured, and the
+      owner's goal is vanilla's own rate.** The baseline of record (SPEC
+      §11, quiet box, means): before the first performance pass (cfa5d93)
+      overworld 155.7, amplified 159.8, large_biomes 160.4 and the End 13.0
+      ms/chunk; after it 23.7, 26.0, 24.6 and 2.56, against vanilla's 13.5,
+      15.9, 15.2 and 2.80 — 1.75x, 1.64x, 1.62x and 0.91x. Output
+      byte-identical (12 dumps); overworld instructions 6.26x fewer. The
+      pass: an exact tree search for the biome list and a cheaper
+      interpreter (per-call frames, a flat operand table, shared corners, a
+      per-call memo), which together take the biome stage from 64 ms to
+      0.63 and the fill from 91 to 22. What is left is the fill
+      (22.3 of the overworld's 23.7). Next levers, not started: the surface
+      pass reading fillBiomes' grid instead of looking biomes up again; a
+      per-column memo of the surface rules' noise; a palette-index
+      ChunkBuffer; skipping vein_toggle in cells whose corners cannot
+      clear; the compiled block kernel (§4.1's flat program). The earlier
+      provisional figures follow. The bar (owner,
       2026-10-15), referenced to the Java Edition baseline: 35 ms/chunk
       (about 28 chunks/s) the best case, about 10 chunks/s (100 ms/chunk)
       the absolute minimum. Its working reading, flagged to the owner for
