@@ -108,13 +108,20 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       `vertical_gradient` branches could now be evaluated with the legacy
       coin rather than enumerated.
 - [ ] `CornerCache` keys `interpolated` corners by cell, not by the
-      `flat_cache` window they were read through. Only an exotic
-      datapack could tell; the cost cut keeps today's behaviour
-      bit-exact (`BarrierReads::Always`) rather than change it.
-- [ ] M5's biggest speed lever, measured during the cost work: the
+      `flat_cache` window they were read through — *narrowed 2026-10-25
+      (ab5dc44, 2af0134):* the default `CornerCache::Sharing::Lattice`
+      keys each corner by argument, position and, where the argument
+      reaches a `flat_cache`, the window. The old window-blind behaviour
+      (`Sharing::LastCell`) is kept bit for bit only where it could be
+      told apart: aquifers on and a pack's `barrier` reaching an
+      `interpolated` over a `flat_cache`, which only an exotic datapack
+      builds. Whether the server keys that case by window is unmeasured.
+- [x] M5's biggest speed lever, measured during the cost work: the
       interpreter zeroes a whole-graph scope on every router read — 41%
-      of all instructions in a first pass. The compiled program M5 owes
-      removes it.
+      of all instructions in a first pass. *Closed 2026-10-25 (49db532):*
+      scopes are frames the caller's `CornerCache` reuses, told apart by
+      an epoch, with nothing zeroed per read; the compiled program is
+      still not built (SPEC §10, M3).
 
 *Follow-ups of 2026-10-12 and -13.*
 
@@ -139,9 +146,18 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       minutes on two consecutive runs (38192289975, 38273558475), against
       69 the run before. Every case over a minute slowed by a similar
       factor, cases this work never touched among them, which points at
-      the runner; an A/B of an untouched case, old tree against new on
-      one machine, would settle it. If it nears 150: shard the leg or
-      build it optimised (the owner's call).
+      the runner. *The ARM64 leg is the control (2026-10-25):* from run
+      40120830007 to 40176302407 the x86-64 leg went from 59 to 93
+      minutes, its 44 shared cases over a minute median 1.75x slower
+      (0.10x to 2.08x), while the ARM64 leg on the same commit went from
+      64 to 53 minutes, its 50 shared cases median 0.93x — a slower x86-64
+      runner, not the tree. The six cases that run added (the biome
+      search's five and the column-invariance check) took 1013 s of test
+      time on x86-64 and 479 on ARM64, about four minutes of wall time at
+      four jobs. Each conformance leg now logs its
+      runner's CPU model and core count, so the next swing can be put on
+      the hardware. If it nears 150: shard the leg or build it optimised
+      (the owner's call).
 - [ ] `ChunkFiller::fill` executes up to 10 M instructions a chunk more on
       one pass than the next of the same configuration, deterministically
       and alike under v13 and v14 — probably allocator state; unexplained.
@@ -162,10 +178,14 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       cubiomes' float beyond about 78 000 blocks, and cubiomes' int32 empty
       rings from about 370 400 blocks; NaN erosion going to end_barrens
       (this build's choice) and the 64-bit central square.
-- [ ] `Interpreter::isColumnInvariant`'s default branch calls a node
+- [x] `Interpreter::isColumnInvariant`'s default branch calls a node
       invariant if every argument is, so a future node that reads y would
       be miscalled; `fillEndChunk` trusts it. List the pure node types
-      explicitly.
+      explicitly. *Closed 2026-10-25 (2af0134):* the rule names every node
+      type with no default, so a type added to the schema is a compile
+      error there (-Wswitch); a unit case checks it type by type and a
+      conformance case holds every node of vanilla's routers it calls
+      invariant to one bit pattern down its column.
 - [ ] The five End biome conformance cases take about 458 s locally in
       Debug; they could score every quart only where erosion is not
       column-invariant.
@@ -245,9 +265,10 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       (SPEC.md:8543-8545); c317da1 and `pmmp.smoke.end` answer both.
 - [ ] §11 says `maintainPrecision` folds into ±2^25 (SPEC.md:7457), where
       its licence entry (SPEC.md:1820) and NOTICE say ±2^24 since 0274f13.
-- [ ] §10's M3 entry still gives the compiled program "a measured
+- [x] §10's M3 entry still gives the compiled program "a measured
       237 ms/chunk" as its target (SPEC.md:1035-1036), which §11's perf
-      entry calls not comparable to its instrument.
+      entry calls not comparable to its instrument. *Closed 2026-10-26:*
+      it points at §11's baseline of record instead.
 - [ ] §11's M5-Nukkit entry says the Nukkit plugin schedules fluid
       updates at `ChunkPopulateEvent` "as `ext/` does"; `ext/` waits for
       the chunk to settle now (§4.3).

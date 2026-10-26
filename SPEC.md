@@ -1035,8 +1035,8 @@ mapping has two halves, split at a platform-neutral midpoint:
   this tree still comes from `density::Interpreter`, the per-point evaluator
   §4.1 permits only as an M2 stepping stone. M3 closed on terrain parity,
   which the interpreter delivers; the compiled program is speed rather than
-  correctness, so it moves to M5's performance pass, where a measured
-  237 ms/chunk gives it a target. The first pass (2026-10-25, §11, "M5's
+  correctness, so it moves to M5's performance pass, where the baseline
+  of record (§11, "M5's performance bar") gives it a target. The first pass (2026-10-25, §11, "M5's
   performance bar") made the interpreter itself cheaper — per-call frames,
   a flat operand table, shared corners and a per-call memo, 6.3x fewer
   instructions a chunk with the biome search — and still did not build the
