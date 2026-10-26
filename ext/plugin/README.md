@@ -22,7 +22,10 @@ PocketMine-MP itself can call.
   noise settings, biome source and seed) and, per chunk, hands each
   sub-chunk's already-packed layers to `PalettedBlockArray::fromData()`.
   The only PHP work per chunk is translating a handful of palette entries;
-  there is no per-block PHP.
+  there is no per-block PHP. `generateChunk()` is `encode()` (the engine's
+  half, `Dimension::encodeChunk`) then `assemble()` (the PHP half, the
+  `Chunk`), public and apart only so that `tools/pmmp-task-cost` can time
+  each on its own; a method boundary, not a hook.
 - `BlockStateTranslator` turns Java block state ids into PocketMine-MP's own
   state ids through **PocketMine-MP's own** upgrader and deserializer — the
   same path its world loader takes for every palette entry on disk — cached

@@ -60,8 +60,37 @@ final class StratumGenerator extends Generator{
 	}
 
 	public function generateChunk(ChunkManager $world, int $chunkX, int $chunkZ) : void{
+		$world->setChunk($chunkX, $chunkZ, $this->assemble($this->encode($chunkX, $chunkZ)));
+	}
+
+	/**
+	 * generateChunk()'s engine half: the chunk generated and packed in C++,
+	 * as Dimension::encodeChunk() hands it to PHP, its fluid updates left
+	 * in the world's outbox.
+	 *
+	 * @internal Public, and apart from assemble(), only so that
+	 * tools/pmmp-task-cost can time each half of a generation task on its
+	 * own (ext/pocketmine/src/TimedGenerator.php); generateChunk() is the
+	 * only caller in the plugin. A method boundary, not a hook: nothing is
+	 * tested or recorded here, and the price is one PHP call per chunk.
+	 *
+	 * @return array<int, array{blocks: array{int, string, list<int>}|null, biomes: array{int, string, list<int>}}>
+	 */
+	public function encode(int $chunkX, int $chunkZ) : array{
+		return $this->dimension->encodeChunk($chunkX, $chunkZ);
+	}
+
+	/**
+	 * generateChunk()'s PHP half: encode()'s sub-chunks as PocketMine-MP's
+	 * own Chunk, each palette entry translated to a PocketMine-MP state id.
+	 *
+	 * @internal Public only for tools/pmmp-task-cost, as encode() is.
+	 *
+	 * @param array<int, array{blocks: array{int, string, list<int>}|null, biomes: array{int, string, list<int>}}> $encoded
+	 */
+	public function assemble(array $encoded) : Chunk{
 		$subChunks = [];
-		foreach($this->dimension->encodeChunk($chunkX, $chunkZ) as $subChunkY => $layers){
+		foreach($encoded as $subChunkY => $layers){
 			$blockLayers = [];
 			if($layers["blocks"] !== null){
 				[$bitsPerBlock, $wordArray, $javaPalette] = $layers["blocks"];
@@ -95,7 +124,7 @@ final class StratumGenerator extends Generator{
 		// all-ocean biome array, which would be a visibly wrong world with
 		// no error. encodeChunk returns every one — for the End, whose
 		// terrain is y 0..127, the rest as air with the End's own biomes.
-		$world->setChunk($chunkX, $chunkZ, new Chunk($subChunks, terrainPopulated: false));
+		return new Chunk($subChunks, terrainPopulated: false);
 	}
 
 	public function populateChunk(ChunkManager $world, int $chunkX, int $chunkZ) : void{
