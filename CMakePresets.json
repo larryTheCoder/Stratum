@@ -329,6 +329,26 @@
       }
     },
     {
+      "name": "pmmp-task-cost",
+      "configurePreset": "ext-release",
+      "configuration": "Release",
+      "displayName": "the generation task through PHP: the instrument's check",
+      "description": "Local evidence, not CI: tools/pmmp-task-cost --check, the overworld and the End through PocketMine-MP 5.44.3's own PHP and PopulationTask over a few of stratum_chunk_cost_bench's chunks, every chunk held to the bench's own output, and a perf counting and profiling run when perf is here; no claim about time (tools/pmmp-task-cost without --check is the measurement). Needs tools/pmmp-dev's cache and the fixtures; SKIPs, naming what is missing, without them.",
+      "filter": {
+        "include": {
+          "label": "^task-cost$"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "jobs": 1,
+        "timeout": 1800
+      }
+    },
+    {
       "name": "nukkit",
       "configurePreset": "nukkit",
       "configuration": "Debug",

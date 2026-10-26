@@ -156,5 +156,28 @@ if(STRATUM_BUILD_EXT)
             SKIP_RETURN_CODE 77
             RUN_SERIAL TRUE
         )
+
+        # What PocketMine-MP's generation task costs per chunk through PHP
+        # (tools/pmmp-task-cost; SPEC §11, "M5's performance bar"): its
+        # --check, the overworld and the End through the release PHP over a
+        # few of the bench's chunks, every chunk of every sweep held to the
+        # bench's own output, and a counting and a profiling run when perf
+        # is here — the instrument checking itself, no claim about time.
+        # Local evidence, not CI, and not one of `ctest --preset pmmp`'s
+        # cases either: its own label, which no other preset's filter
+        # matches (the pmmp preset's "pmmp" would match "pmmp-…"), and its
+        # own preset, `ctest --preset pmmp-task-cost`. SKIPs, naming what is
+        # missing, without the cache or the fixtures.
+        add_test(NAME pmmp.task_cost
+            COMMAND "${CMAKE_SOURCE_DIR}/tools/pmmp-task-cost" --check
+                --stratum-so "$<TARGET_FILE:stratum_php>"
+                --bench "$<TARGET_FILE:stratum_chunk_cost_bench>"
+                --out "${CMAKE_CURRENT_BINARY_DIR}/pmmp-task-cost-check")
+        set_tests_properties(pmmp.task_cost PROPERTIES
+            LABELS "task-cost"
+            SKIP_RETURN_CODE 77
+            RUN_SERIAL TRUE
+            ENVIRONMENT "STRATUM_FIXTURES_DIR=${STRATUM_FIXTURES_DIR}"
+        )
     endif()
 endif()

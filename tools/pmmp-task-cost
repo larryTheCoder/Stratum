@@ -1,0 +1,762 @@
+#!/usr/bin/env python3
+# Stratum — what a PocketMine-MP generation task costs per chunk through PHP,
+# split into the C++ the bench already times and everything it leaves out.
+# Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+"""M5's generation task, measured through PHP (SPEC §11, "M5's performance bar").
+
+  tools/pmmp-task-cost [--dimensions a,b] [--seeds a,b] [--area cx,cz,r]
+      [--scattered on|off] [--warmup n] [--repeat n] [--require-quiet CORES]
+      [--quiet-wait S] [--no-counts] [--no-profile] [--count-seeds a,b]
+      [--counts-only] [--from OUT] [--stratum-so SO] [--bench BENCH]
+      [--out DIR] [--keep-dumps] [--check]
+
+WHAT IT TIMES. The task PocketMine-MP runs to generate a chunk of a Stratum
+world, one chunk at a time on one generation thread, through PHP: the
+release PHP of tools/pmmp-dev (pmmp/PHP-Binaries php-build-524, PocketMine-MP
+5.44.3's own classes from its phar, a server's php.ini: opcache on,
+assertions off) with the Release stratum.so (`cmake --preset ext-release`).
+ext/pocketmine/task_cost.php is the harness and says in its header exactly
+what each segment holds; in short, per chunk:
+
+  (i)   the C++ stratum::pmmp::encodeChunk, as the zend method calls it —
+        what stratum_chunk_cost_bench times, here inside PHP;
+  (ii)  the zend method's own work round it: marshaling the result into PHP
+        arrays (a layer triple per sub-chunk's blocks and biomes, up to 48)
+        and putting the fluid updates in the outbox;
+  (iii) the plugin's PHP: StratumGenerator::assemble() — palette translation
+        to PocketMine-MP state ids, a PalettedBlockArray::fromData per layer,
+        the SubChunk and Chunk construction — and the ChunkManager's setChunk;
+  (iv)  PocketMine-MP's own task work: the rest of PopulationTask::onRun(),
+        chiefly its serialisation of the result (FastChunkSerializer) into
+        the task for the main thread; and the worker's cycle collector,
+        which AsyncTask::run() calls after every task;
+
+and end to end, the generation thread's whole task, PopulationTask::onRun()
+over the plugin's own StratumGenerator plus the collector. The main thread's
+side of the hand-back, onCompletion()'s deserialisation, is reported apart:
+it is not the generation thread's time. (i) and (ii) are one zend call; the
+harness times the call, and a perf profile of that call alone, with call
+graphs, gives the share inside stratum::pmmp::encodeChunk and the share
+outside it, in instructions and in cycles. LEFT OUT (the harness's header
+has the list): AsyncPool's queueing and AsyncTask::run()'s framework (its
+SleeperNotifier wake-up), the 3x3 bookkeeping of a population task whose
+neighbours are missing, lighting, and the main thread's fluid scheduling.
+
+THE SAME CHUNKS AS THE BENCH, AND ITS OUTPUT AS THE CHECK. Per dimension it
+first runs stratum_chunk_cost_bench, built in the same tree with the same
+flags as the stratum.so (build/ext-release), over the same seeds and chunks
+(the 121 within 5 of chunk (-64, 64) and its 16 scattered ones), with --dump.
+That gives the C++-only figure in the same quiet window, and the dump the
+harness reads its chunk list from and holds every chunk to: what the zend
+method returned, the Chunk PocketMine-MP's task handed back to the main
+thread (each block palette the plugin's translation of the C++'s), and the
+fluid updates, all identical, for every chunk of both of the harness's
+sweeps. A difference fails the run (exit 1). The dumps are vanilla-derived
+(SPEC §12): written under OUT/dumps, which ignores itself, and removed at the
+end unless --keep-dumps.
+
+THE CLOCKS. Wall and CPU per chunk, each chunk's median over the timed
+passes, then median, p10, p90 and mean over chunks, chunks/s as 1000 / mean,
+as the bench reports them. Instruction counts (`perf stat -e instructions:u`,
+load-independent, valid on a busy box) come from counting runs that switch
+perf's events on for one segment alone (`--control`), less the cost of an
+empty counting window, measured the same way.
+
+QUIET OR PROVISIONAL, as tools/perf-baseline judges it (its Watch, imported):
+other processes' CPU (/proc/stat less this run's process tree) is watched
+through every timed half — each bench run and each harness timing run — and
+a figure is QUIET only if other processes used at most 0.5 cores on average
+and 1.0 over any minute through it; PROVISIONAL otherwise, with the cores
+printed. --require-quiet CORES waits before each timed half for the box to
+be that quiet, re-checking every 15 s, for at most --quiet-wait seconds
+(default 1200) over the whole run; once that is spent, the halves left run
+without waiting, each still watched and labelled. A row whose
+generation-thread wall time is more than 5% above its CPU time is NOT A
+MEASUREMENT (exit 3).
+
+On a busy box, --counts-only measures what load cannot move — the counts,
+the profile and the output check — with no timed half, and a later
+`--no-counts --no-profile --from OUT` times the halves when the box is
+quiet, taking the counts and profile from that OUT (refused unless it
+counted the same chunks).
+
+--check is the CTest case (`ctest --preset pmmp-task-cost`; local evidence,
+not CI): the overworld and the End at seed 0 over the 9 chunks within 1 of
+(-64, 64) and the scattered set, one pass, every check above, every counting
+run and the profile if perf is here, and no claim about time.
+
+SKIP (exit 77), naming what is missing: no PocketMine-MP cache
+(tools/pmmp-dev), or no fixtures (tools/fetch-vanilla). A missing stratum.so
+or bench is a build to run, and an error. OUT defaults to
+build/pmmp-task-cost/<UTC time>: timing summaries, logs and perf data only.
+"""
+import argparse
+import csv
+import datetime
+import importlib.machinery
+import importlib.util
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+VERSION = '1.21.11'
+DIMENSIONS = ('overworld', 'amplified', 'large_biomes', 'end')
+DEFAULT_SEEDS = '0,42,-4172144997902289642'
+DEFAULT_AREA = '-64,64,5'
+BEST_MS = 35.0
+MINIMUM_MS = 100.0
+WALL_SLACK = 0.05
+# Segments the harness can count, the order they are reported in.
+COUNTED = ('window', 'engine', 'plugin', 'pmmp', 'serialize', 'task', 'gc', 'worker', 'completion')
+# The profile of the zend call: fixed periods, so samples are in proportion
+# to the event (and at most about 45 000 a second between them, under the
+# kernel's default cap of 100 000), and a short stack. The marshaling's
+# samples are at most three frames from the zend method (measured with 4 KB
+# stacks: leaf, addLayer or a zend API function, the method), so 1 KB
+# reaches it; a C++ sample too deep to reach encodeChunk is still told
+# apart, since it never reaches PHP's own frames either.
+PROFILE_EVENTS = ('cpu/instructions,period=1000003/u', 'cpu/cycles,period=200003/u')
+PROFILE_STACK = 1024
+ENCODE_CHUNK = 'stratum::pmmp::encodeChunk('
+ZEND_METHOD = 'zim_Stratum_Dimension_encodeChunk'
+# What perf says each time --control switches its events: kept in the log,
+# not shown.
+PERF_SWITCH = ('Events enabled', 'Events disabled')
+
+
+def log(message):
+    print(f'==> {message}', file=sys.stderr, flush=True)
+
+
+def die(message, code=1):
+    print(f'pmmp-task-cost: {message}', file=sys.stderr)
+    sys.exit(code)
+
+
+def skip(message):
+    print(f'SKIP: {message}')
+    sys.exit(77)
+
+
+def perf_baseline():
+    """tools/perf-baseline, imported for its Watch: the same reading of what
+    other processes ran."""
+    path = REPO / 'tools' / 'perf-baseline'
+    loader = importlib.machinery.SourceFileLoader('stratum_perf_baseline', str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+PB = perf_baseline()
+
+
+def tee(command, log_path, env=None):
+    """Runs @p command, its output kept in @p log_path and shown, but for
+    perf's line at each switch of its events."""
+    log('$ ' + ' '.join(str(c) for c in command))
+    with open(log_path, 'w', encoding='utf-8') as kept:
+        process = subprocess.Popen([str(c) for c in command], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, cwd=REPO, env=env)
+        for line in process.stdout:
+            kept.write(line)
+            if line.strip() not in PERF_SWITCH:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+        return process.wait()
+
+
+QUIET_WAITED = [0.0]
+
+
+def wait_for_quiet(cores, wait_s, what):
+    """Watches the machine PB.PROBE_S at a time until other processes use at
+    most @p cores, for at most what is left of @p wait_s over the whole run;
+    returns the last reading."""
+    if cores is None:
+        return None
+    while True:
+        watch = PB.Watch()
+        if not watch.available:
+            log('cannot read other processes\' CPU here (/proc): not waiting')
+            return None
+        started = datetime.datetime.now()
+        with watch:
+            PB.time.sleep(PB.PROBE_S)
+        used = watch.summary()['mean_other_cores']
+        if used <= cores:
+            log(f'before {what}: other processes use {used:.2f} cores (at most {cores})')
+            return used
+        QUIET_WAITED[0] += (datetime.datetime.now() - started).total_seconds()
+        if QUIET_WAITED[0] >= wait_s:
+            log(f'before {what}: other processes use {used:.2f} cores, and the run has waited '
+                f'{QUIET_WAITED[0]:.0f} s of its --quiet-wait {wait_s:.0f}: measuring anyway, '
+                'PROVISIONAL')
+            return used
+        log(f'before {what}: other processes use {used:.2f} cores, above {cores}; waiting '
+            f'({QUIET_WAITED[0]:.0f} of {wait_s:.0f} s)')
+
+
+def watched(command, log_path, cores, wait_s, what, env=None):
+    """Runs @p command under a Watch, after waiting for quiet; returns its exit
+    code and the watch's summary."""
+    before = wait_for_quiet(cores, wait_s, what)
+    watch = PB.Watch()
+    with watch:
+        rc = tee(command, log_path, env=env)
+    summary = watch.summary()
+    summary['before'] = before
+    return rc, summary
+
+
+def label(summary):
+    if not summary or not summary.get('available'):
+        return 'PROVISIONAL (nobody watched)', False
+    text = (f'other processes {summary["mean_other_cores"]:.2f} cores mean, '
+            f'{summary["peak_other_cores"]:.2f} busiest minute')
+    return (('QUIET: ' if summary['quiet'] else 'PROVISIONAL: ') + text), summary['quiet']
+
+
+# --- perf -------------------------------------------------------------------
+
+def perf_available():
+    perf = shutil.which('perf')
+    if not perf:
+        return None, 'no perf on PATH'
+    probe = subprocess.run([perf, 'stat', '-x,', '-e', 'instructions:u', '--', 'true'],
+                           capture_output=True, text=True, check=False)
+    if probe.returncode != 0 or 'instructions' not in probe.stderr:
+        return None, f'perf cannot count instructions:u here: {probe.stderr.strip()[:200]}'
+    return perf, None
+
+
+def fifos(directory):
+    control = directory / 'control.fifo'
+    ack = directory / 'ack.fifo'
+    for fifo in (control, ack):
+        if fifo.exists():
+            fifo.unlink()
+        os.mkfifo(fifo)
+    return control, ack
+
+
+def read_counts(path):
+    counts = {}
+    with open(path, encoding='utf-8') as handle:
+        for row in csv.reader(line for line in handle if line.strip() and not line.startswith('#')):
+            if len(row) >= 3 and row[0].strip() not in ('', '<not counted>', '<not supported>'):
+                counts[row[2].strip()] = int(float(row[0]))
+    return counts
+
+
+def classify(script_path):
+    """Samples of a profile of the zend call by event: under
+    stratum::pmmp::encodeChunk (the C++), in the zend method outside it (the
+    marshaling), or the counting window's own PHP; and how many C++ samples
+    were too deep for their stack to reach the method."""
+    tallies = {}
+    event = None
+    frames = []
+
+    def flush():
+        if event is None:
+            return
+        names = [name for name, _ in frames]
+        php = any(dso.endswith('/php') for _, dso in frames)
+        if any(name.startswith(ENCODE_CHUNK) for name in names):
+            kind = 'cpp'
+        elif any(ZEND_METHOD in name for name in names):
+            kind = 'marshal'
+        elif not php:
+            # Truncated: never reached PHP's frames, so not the window's PHP
+            # and not the marshaling (whose stacks are shallow): deep C++.
+            kind = 'cpp_deep'
+        else:
+            kind = 'window'
+        tally = tallies.setdefault(event, {'cpp': 0, 'cpp_deep': 0, 'marshal': 0, 'window': 0})
+        tally[kind] += 1
+
+    with open(script_path, encoding='utf-8', errors='replace') as handle:
+        for line in handle:
+            line = line.rstrip('\n')
+            if not line.strip():
+                flush()
+                event, frames = None, []
+                continue
+            if not line[0].isspace():
+                flush()
+                frames = []
+                # "<tid> cpu/instructions,period=N/u:" — which of the two
+                fields = line.split()
+                name = fields[-1] if fields else '?'
+                event = next((e for e in ('instructions', 'cycles') if f'/{e},' in name), name)
+                event += ':u'
+                continue
+            parts = line.strip().split(' ', 1)
+            rest = parts[1] if len(parts) > 1 else ''
+            cut = rest.rfind(' (')
+            frames.append((rest[:cut], rest[cut + 2:-1]) if cut >= 0 else (rest, ''))
+    flush()
+    return tallies
+
+
+# --- the run ----------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='The PocketMine-MP generation task through PHP, per chunk (see the header).')
+    parser.add_argument('--dimensions', default=','.join(DIMENSIONS))
+    parser.add_argument('--seeds', default=DEFAULT_SEEDS)
+    parser.add_argument('--area', default=DEFAULT_AREA, help='cx,cz,r: the bench\'s spiral')
+    parser.add_argument('--scattered', default='on', choices=('on', 'off'))
+    parser.add_argument('--warmup', type=int, default=1)
+    parser.add_argument('--repeat', type=int, default=3)
+    parser.add_argument('--require-quiet', type=float, default=None, metavar='CORES')
+    parser.add_argument('--quiet-wait', type=float, default=1200.0, metavar='S')
+    parser.add_argument('--no-counts', action='store_true', help='no perf stat counting runs')
+    parser.add_argument('--no-profile', action='store_true', help='no perf profile of the zend call')
+    parser.add_argument('--counts-only', action='store_true',
+                        help='no timed halves: the bench runs once, untimed, for its dumps, and '
+                        'only the counting and profiling runs (and their checks) follow — what a '
+                        'busy box can still measure')
+    parser.add_argument('--from', dest='from_dir', type=pathlib.Path, default=None,
+                        help='take the instruction counts and the profile from an earlier run\'s '
+                        'OUT where this run makes none (--no-counts, --no-profile)')
+    parser.add_argument('--count-seeds', default=None,
+                        help='the seeds the counting runs use (default: --seeds)')
+    parser.add_argument('--stratum-so', type=pathlib.Path,
+                        default=REPO / 'build' / 'ext-release' / 'ext' / 'stratum.so')
+    parser.add_argument('--bench', type=pathlib.Path,
+                        default=REPO / 'build' / 'ext-release' / 'tools' / 'analysis' /
+                        'stratum_chunk_cost_bench')
+    parser.add_argument('--out', type=pathlib.Path, default=None)
+    parser.add_argument('--keep-dumps', action='store_true')
+    parser.add_argument('--check', action='store_true',
+                        help='the CTest case: a short run of every check, no claim about time')
+    args = parser.parse_args()
+    if args.check:
+        args.dimensions = 'overworld,end'
+        args.seeds = '0'
+        args.area = '-64,64,1'
+        args.warmup = 0
+        args.repeat = 1
+        args.require_quiet = None
+    try:
+        args.seed_list = [int(s) for s in args.seeds.split(',')]
+        args.count_seed_list = ([int(s) for s in args.count_seeds.split(',')] if args.count_seeds
+                                else args.seed_list)
+        cx, cz, radius = (int(v) for v in args.area.split(','))
+    except ValueError:
+        die('--seeds and --count-seeds are comma-separated integers, --area cx,cz,r')
+    args.spiral = (cx, cz, radius)
+    args.dimension_list = args.dimensions.split(',')
+    for name in args.dimension_list:
+        if name not in DIMENSIONS:
+            die(f'unknown dimension {name!r} ({", ".join(DIMENSIONS)})')
+    if any(s not in args.seed_list for s in args.count_seed_list):
+        die('--count-seeds must be among --seeds: the counting runs read the bench\'s dumps')
+    if args.warmup < 0 or args.repeat < 1:
+        die('--warmup is at least 0 and --repeat at least 1')
+    if args.counts_only and (args.no_counts and args.no_profile):
+        die('--counts-only with neither counts nor a profile measures nothing')
+    return args
+
+
+def reused_report(args):
+    """--from: the earlier run's report, refused unless it measured the same
+    chunks: its seeds include the counting seeds, and its square, scattered
+    set and dimensions are this run's."""
+    if args.from_dir is None:
+        return None
+    path = args.from_dir / 'report.json'
+    if not path.is_file():
+        die(f'--from: no report.json in {args.from_dir}')
+    report = json.loads(path.read_text(encoding='utf-8'))
+    if tuple(report.get('area', ())) != args.spiral or report.get('scattered') != args.scattered:
+        die(f'--from: {args.from_dir} measured the square {report.get("area")} with scattered '
+            f'{report.get("scattered")}, not {list(args.spiral)} and {args.scattered}')
+    for name in args.dimension_list:
+        entry = report.get('dimensions', {}).get(name)
+        if entry is None:
+            die(f'--from: {args.from_dir} has no {name}')
+        counted = entry.get('count_seeds') or report.get('seeds')
+        if sorted(counted or []) != sorted(args.count_seed_list):
+            die(f'--from: {args.from_dir} counted {name} at seeds {counted}, not '
+                f'{args.count_seed_list}')
+    return report
+
+
+def preflight(args):
+    """SKIP without the PocketMine-MP cache or the fixtures; an error without
+    the binaries."""
+    pmmp_dev = REPO / 'tools' / 'pmmp-dev'
+    probe = subprocess.run([str(pmmp_dev), 'check-cache'], capture_output=True, text=True,
+                           check=False)
+    if probe.returncode == 77:
+        skip(probe.stdout.strip().removeprefix('SKIP: '))
+    if probe.returncode != 0:
+        die(f'tools/pmmp-dev check-cache: {(probe.stdout + probe.stderr).strip()}')
+    fixtures = pathlib.Path(os.environ.get('STRATUM_FIXTURES_DIR') or REPO / '.fixtures')
+    root = fixtures / VERSION
+    if not (root / 'worldgen' / 'noise_settings').is_dir() or not (root / 'biome_parameters').is_dir():
+        skip(f'no vanilla version root at {root}; run tools/fetch-vanilla (or set '
+             'STRATUM_FIXTURES_DIR)')
+    for path, what in ((args.stratum_so, 'stratum.so'), (args.bench, 'stratum_chunk_cost_bench')):
+        if not path.is_file():
+            die(f'no {what} at {path}: STRATUM_PHP_CONFIG=$(tools/php-dev --print-config) cmake '
+                '--preset ext-release && cmake --build --preset ext-release --target stratum_php '
+                'stratum_chunk_cost_bench')
+    return root
+
+
+def harness(args, root, dimension, dumps, spiral_chunks, extra, seeds=None):
+    return [str(REPO / 'tools' / 'pmmp-dev'), 'task-cost', '--stratum-so', str(args.stratum_so),
+            '--version-root', str(root), '--',
+            f'--dimension={dimension}', f'--seeds={",".join(str(s) for s in (seeds or args.seed_list))}',
+            f'--dumps={dumps}', f'--spiral-chunks={spiral_chunks}'] + extra
+
+
+def count_segments(args, root, dimension, dumps, spiral_chunks, out, perf):
+    """One perf stat run per segment: instructions and cycles per chunk, less
+    the empty window's."""
+    work = pathlib.Path(tempfile.mkdtemp(prefix='counts-', dir=out))
+    control, ack = fifos(work)
+    raw = {}
+    for segment in COUNTED:
+        stat = out / f'count-{dimension}-{segment}.csv'
+        report = out / f'count-{dimension}-{segment}.json'
+        command = [perf, 'stat', '-x,', '-e', 'instructions:u,cycles:u', '-D', '-1',
+                   '--control', f'fifo:{control},{ack}', '-o', str(stat), '--'] + harness(
+            args, root, dimension, dumps, spiral_chunks,
+            ['--warmup=1', '--repeat=1', f'--count={segment}', f'--perf-control={control},{ack}',
+             f'--json={report}'], seeds=args.count_seed_list)
+        rc = tee(command, out / f'count-{dimension}-{segment}.log')
+        if rc != 0:
+            die(f'the counting run for {dimension} {segment} failed (see '
+                f'{out / f"count-{dimension}-{segment}.log"})')
+        data = json.loads(report.read_text(encoding='utf-8'))
+        raw[segment] = {'counts': read_counts(stat),
+                        'windows': sum(r['windows'] for r in data['runs']),
+                        'enables': sum(r['enables'] for r in data['runs'])}
+    shutil.rmtree(work, ignore_errors=True)
+    window = raw['window']
+    per_enable = {event: window['counts'].get(event, 0) / max(1, window['enables'])
+                  for event in ('instructions:u', 'cycles:u')}
+    result = {'per_window_overhead': per_enable, 'segments': {}}
+    for segment in COUNTED[1:]:
+        entry = raw[segment]
+        tasks = max(1, entry['windows'])
+        result['segments'][segment] = {
+            event: (entry['counts'].get(event, 0) - per_enable[event] * entry['enables']) / tasks
+            for event in ('instructions:u', 'cycles:u')}
+        result['segments'][segment]['tasks'] = entry['windows']
+    return result
+
+
+def profile_engine(args, root, dimension, dumps, spiral_chunks, out, perf):
+    """The zend call alone, profiled with call graphs: the shares inside and
+    outside stratum::pmmp::encodeChunk, by instructions and by cycles."""
+    work = pathlib.Path(tempfile.mkdtemp(prefix='profile-', dir=out))
+    control, ack = fifos(work)
+    data = work / 'perf.data'
+    seed = args.count_seed_list[0]
+    events = [argument for event in PROFILE_EVENTS for argument in ('-e', event)]
+    command = [perf, 'record', *events, '--call-graph', f'dwarf,{PROFILE_STACK}',
+               '-D', '-1', '--control', f'fifo:{control},{ack}', '-o', str(data), '--'] + harness(
+        args, root, dimension, dumps, spiral_chunks,
+        ['--warmup=1', '--repeat=1', '--count=engine', f'--perf-control={control},{ack}'],
+        seeds=[seed])
+    rc = tee(command, out / f'profile-{dimension}.log')
+    if rc != 0:
+        die(f'the profiling run for {dimension} failed (see {out / f"profile-{dimension}.log"})')
+    script = work / 'perf.script'
+    with open(script, 'w', encoding='utf-8') as handle:
+        rc = subprocess.run([perf, 'script', '-i', str(data), '-F', 'tid,event,ip,sym,dso'],
+                            stdout=handle, stderr=subprocess.DEVNULL, check=False).returncode
+    if rc != 0:
+        die(f'perf script could not read the profile of {dimension}')
+    tallies = classify(script)
+    shutil.rmtree(work, ignore_errors=True)
+    result = {'seed': seed, 'events': {}}
+    for event, tally in tallies.items():
+        cpp = tally['cpp'] + tally['cpp_deep']
+        inside = cpp + tally['marshal']
+        result['events'][event] = dict(tally, cpp_share=cpp / inside if inside else None,
+                                       marshal_share=tally['marshal'] / inside if inside else None)
+    return result
+
+
+def figure(table, segment, clock='wall'):
+    entry = (table or {}).get(segment, {}).get(clock, {})
+    return entry if entry.get('available') else None
+
+
+def fmt(entry, key='mean_ms', digits=3):
+    return f'{entry[key]:.{digits}f}' if entry else '-'
+
+
+def mean_of(table, segment, clock='wall'):
+    entry = figure(table, segment, clock)
+    return entry['mean_ms'] if entry else None
+
+
+def millions(value):
+    return f'{value / 1e6:.3f}M' if value is not None else '-'
+
+
+def verdict(mean_ms):
+    if mean_ms is None:
+        return '-'
+    if mean_ms <= BEST_MS:
+        return f'meets the best case ({BEST_MS:.0f} ms/chunk)'
+    if mean_ms <= MINIMUM_MS:
+        return f'between the minimum ({MINIMUM_MS:.0f}) and the best case ({BEST_MS:.0f})'
+    return f'BELOW the minimum ({MINIMUM_MS:.0f} ms/chunk)'
+
+
+def share(profile, event, key):
+    entry = (profile or {}).get('events', {}).get(event)
+    return entry.get(key) if entry else None
+
+
+def summarise_dimension(name, bench, php, counts, profile, watches, reused_from=None):
+    """The dimension's rows, its problems (a row that is not a measurement),
+    and whether both its timed halves were quiet. Without @p php (no timed
+    halves) the rows carry instruction counts alone."""
+    dimension = bench['dimensions'][name]
+    bench_all = dimension['all'] if php is not None else {}
+    table = php['all'] if php is not None else {}
+    bench_label, bench_quiet = label(watches.get('bench'))
+    php_label, php_quiet = label(watches.get('php'))
+    chunks = bench['spiral']['chunks'] + bench['scattered_chunks']
+    lines = [f'{name} ({dimension["noise_settings"]} / {dimension["biome_source"]}); seeds '
+             f'{", ".join(str(s) for s in bench["seeds"])}; {chunks} chunks each']
+    if php is None:
+        lines.append('  no timed halves (--counts-only): instruction counts and the profile only')
+    else:
+        lines += [f'  bench half {bench_label}', f'  PHP half   {php_label}']
+    if reused_from:
+        lines.append(f'  instruction counts and the profile taken from {reused_from}')
+    segments = (counts or {}).get('segments', {})
+
+    def instructions(segment):
+        return segments.get(segment, {}).get('instructions:u')
+
+    def measured(title, source, segment, instr=None):
+        return (title, figure(source, segment), figure(source, segment, 'cpu'), instr)
+
+    def scaled(title, kind):
+        """A part of the zend call: its time and its counted instructions,
+        each times the profile's share of samples in that event."""
+        wall, cpu = mean_of(table, 'engine'), mean_of(table, 'engine', 'cpu')
+        cycles = share(profile, 'cycles:u', kind)
+        instr = share(profile, 'instructions:u', kind)
+        engine_instr = instructions('engine')
+        return (title,
+                {'mean_ms': wall * cycles} if wall is not None and cycles is not None else None,
+                {'mean_ms': cpu * cycles} if cpu is not None and cycles is not None else None,
+                engine_instr * instr if engine_instr is not None and instr is not None else None)
+
+    rows = [
+        measured('C++ alone: the bench\'s encodeChunk e2e (same build)', bench_all, 'e2e'),
+        measured('(i)+(ii) the zend call (encode())', table, 'engine', instructions('engine')),
+        scaled('  (i) C++ encodeChunk, from PHP [profile share]', 'cpp_share'),
+        scaled('  (ii) zend marshaling + fluid put [profile share]', 'marshal_share'),
+        measured('(iii) the plugin\'s PHP (assemble() + setChunk())', table, 'plugin',
+                 instructions('plugin')),
+        measured('(iv) PocketMine-MP\'s task work (rest of onRun)', table, 'pmmp',
+                 instructions('pmmp')),
+        measured('  of which serializeTerrain, alone', table, 'serialize', instructions('serialize')),
+        measured('(iv) the worker\'s cycle collector', table, 'gc', instructions('gc')),
+        measured('PopulationTask::onRun, end to end', table, 'task', instructions('task')),
+        measured('= the generation task, end to end', table, 'worker', instructions('worker')),
+        measured('main thread: onCompletion (deserialise), apart', table, 'completion',
+                 instructions('completion')),
+    ]
+    lines.append(f'  {"":52} {"wall mean":>10} {"median":>8} {"p10":>8} {"p90":>8} '
+                 f'{"CPU mean":>9} {"chunks/s":>10} {"instr/chunk":>12}')
+    for title, wall, cpu, instr in rows:
+        rate = f'{1000 / wall["mean_ms"]:.1f}' if wall and wall.get('mean_ms') else '-'
+        spread = [fmt(wall, key) if wall and key in wall else '' for key in
+                  ('median_ms', 'p10_ms', 'p90_ms')]
+        lines.append(f'  {title:52} {fmt(wall):>10} {spread[0]:>8} {spread[1]:>8} {spread[2]:>8} '
+                     f'{fmt(cpu):>9} {rate:>10} {millions(instr):>12}')
+
+    problems = []
+    for what, source, segment in (('the generation thread', table, 'worker'),
+                                  ('the bench thread', bench_all, 'e2e')):
+        wall, cpu = figure(source, segment), figure(source, segment, 'cpu')
+        if wall and cpu and wall['mean_ms'] > (1 + WALL_SLACK) * cpu['mean_ms']:
+            problems.append(f'{name}: {what} was descheduled: its wall time is '
+                            f'{wall["mean_ms"] / cpu["mean_ms"]:.3f}x its CPU')
+    worker = figure(table, 'worker')
+    bench_e2e = figure(bench_all, 'e2e')
+    engine = figure(table, 'engine')
+    if worker and engine:
+        added = worker['mean_ms'] - engine['mean_ms']
+        lines.append(f'  the generation task less its zend call — the PHP and PocketMine-MP round '
+                     f'it: {added:+.3f} ms/chunk ({100 * added / worker["mean_ms"]:.2f}% of the task)')
+    if worker and bench_e2e:
+        through = worker['mean_ms'] - bench_e2e['mean_ms']
+        lines.append(f'  the task through PHP less the C++ alone (separate runs): {through:+.3f} '
+                     f'ms/chunk ({100 * through / bench_e2e["mean_ms"]:+.2f}%)')
+    if worker:
+        lines.append(f'  against the bar: the whole task {verdict(worker["mean_ms"])} — '
+                     f'{"QUIET" if bench_quiet and php_quiet else "PROVISIONAL"}')
+    if profile:
+        engine_wall = mean_of(table, 'engine')
+        for event, entry in sorted(profile['events'].items()):
+            inside = entry['cpp'] + entry['cpp_deep'] + entry['marshal']
+            text = (f'  profile of the zend call, {event}, seed {profile["seed"]}: {inside} samples, '
+                    f'{entry["marshal"]} in the zend method outside encodeChunk')
+            if inside and event == 'cycles:u' and engine_wall is not None:
+                # a Poisson count's rough 95% interval, as time
+                low = max(0.0, entry['marshal'] - 2 * entry['marshal'] ** 0.5)
+                high = entry['marshal'] + 2 * max(1.0, entry['marshal']) ** 0.5
+                text += (f' ((ii) {1000 * engine_wall * low / inside:.1f} to '
+                         f'{1000 * engine_wall * high / inside:.1f} us/chunk)')
+            text += (f'; {entry["cpp_deep"]} C++ samples too deep for the stack copy to reach '
+                     f'encodeChunk, {entry["window"]} in the counting window\'s own PHP, left out')
+            lines.append(text)
+    if counts:
+        overhead = counts['per_window_overhead']
+        lines.append(f'  instruction counts: {segments.get("engine", {}).get("tasks", 0)} counted '
+                     f'tasks a segment, less an empty counting window\'s '
+                     f'{overhead["instructions:u"]:.0f} instructions per switch')
+    return lines, problems, php is not None and bench_quiet and php_quiet
+
+
+def main():
+    args = parse_args()
+    root = preflight(args)
+    perf, why_not = perf_available()
+    if perf is None and not (args.no_counts and args.no_profile):
+        log(f'no instruction counts or profile: {why_not}')
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    out = args.out or (REPO / 'build' / 'pmmp-task-cost' / stamp)
+    if args.out is None:
+        out = out.resolve()
+    if args.check and args.out is None:
+        out = REPO / 'build' / 'pmmp-task-cost' / 'check'
+        shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True, exist_ok=True)
+    dumps = out / 'dumps'
+    log(f'writing to {out}')
+
+    report = {'tool': 'tools/pmmp-task-cost', 'stamp': stamp, 'machine': PB.machine(),
+              'load_average_start': PB.load_average(), 'seeds': args.seed_list,
+              'area': list(args.spiral), 'scattered': args.scattered, 'warmup': args.warmup,
+              'repeat': args.repeat, 'check': args.check, 'dimensions': {}}
+    lines = []
+    problems = []
+    failures = []
+    all_quiet = True
+    reused = reused_report(args)
+    cx, cz, radius = args.spiral
+    for name in args.dimension_list:
+        watches = {}
+        bench_json = out / f'bench-{name}.json'
+        bench_command = [args.bench, root, '--dimensions', name, '--seeds',
+                         ','.join(str(s) for s in args.seed_list), '--spiral', f'{cx},{cz},{radius}',
+                         '--scattered', args.scattered, '--json', bench_json, '--dump', dumps]
+        if args.counts_only:
+            # Its dumps alone: one untimed pass.
+            rc = tee(bench_command + ['--warmup', '0', '--repeat', '1'], out / f'bench-{name}.log')
+        else:
+            rc, watches['bench'] = watched(
+                bench_command + ['--warmup', str(args.warmup), '--repeat', str(args.repeat)],
+                out / f'bench-{name}.log', args.require_quiet, args.quiet_wait, f'the {name} bench')
+        if rc != 0:
+            die(f'the bench failed for {name} (see {out / f"bench-{name}.log"})')
+        bench = json.loads(bench_json.read_text(encoding='utf-8'))
+        spiral_chunks = bench['spiral']['chunks']
+
+        php = None
+        if not args.counts_only:
+            php_json = out / f'php-{name}.json'
+            rc, watches['php'] = watched(
+                harness(args, root, name, dumps, spiral_chunks,
+                        [f'--warmup={args.warmup}', f'--repeat={args.repeat}', f'--json={php_json}']),
+                out / f'php-{name}.log', args.require_quiet, args.quiet_wait,
+                f'the {name} task through PHP')
+            if not php_json.is_file():
+                die(f'the harness wrote nothing for {name} (see {out / f"php-{name}.log"})')
+            php = json.loads(php_json.read_text(encoding='utf-8'))
+            if rc != 0 or php.get('failures'):
+                failures.extend(php.get('failures') or [f'{name}: the harness exited {rc}'])
+
+        counts = None
+        if perf and not args.no_counts:
+            counts = count_segments(args, root, name, dumps, spiral_chunks, out, perf)
+        profile = None
+        if perf and not args.no_profile:
+            profile = profile_engine(args, root, name, dumps, spiral_chunks, out, perf)
+        reused_from = None
+        if reused is not None:
+            entry = reused['dimensions'][name]
+            if counts is None and entry.get('counts'):
+                counts, reused_from = entry['counts'], str(args.from_dir)
+            if profile is None and entry.get('profile'):
+                profile, reused_from = entry['profile'], str(args.from_dir)
+
+        dimension_lines, dimension_problems, quiet = summarise_dimension(
+            name, bench, php, counts, profile, watches, reused_from)
+        lines.extend(dimension_lines + [''])
+        problems.extend(dimension_problems)
+        all_quiet = all_quiet and quiet
+        report['dimensions'][name] = {'bench': bench['dimensions'][name], 'php': php,
+                                      'counts': counts, 'profile': profile, 'watches': watches,
+                                      'count_seeds': args.count_seed_list,
+                                      'counts_from': reused_from}
+        if not args.keep_dumps:
+            for seed in args.seed_list:
+                (dumps / f'{name}_seed{seed}.dump').unlink(missing_ok=True)
+
+    report['load_average_end'] = PB.load_average()
+    report['failures'] = failures
+    report['not_a_measurement'] = problems
+    machine = report['machine']
+    header = [
+        f'The PocketMine-MP generation task through PHP, {stamp}',
+        f'machine: {machine["cpu"]}, {machine["hardware_threads"]} hardware threads, governor '
+        f'{machine["governor"]}, boost {machine["boost"]}',
+        f'PHP: pmmp/PHP-Binaries php-build-524 (PocketMine-MP 5.44.3), stratum.so {args.stratum_so}; '
+        f'one generation thread; {args.warmup} warm-up pass(es), {args.repeat} timed',
+        f'load average (the record only): start {report["load_average_start"]}, end '
+        f'{report["load_average_end"]}',
+        ('no timed halves (--counts-only): instruction counts and profiles only' if args.counts_only
+         else 'every half QUIET' if all_quiet
+         else 'PROVISIONAL: a half was not quiet (each says which)'),
+        'ms/chunk over every chunk of every seed, each chunk its median over the timed passes; '
+        'instr/chunk from counting runs',
+    ]
+    if args.check:
+        header.append('--check: a check of the instrument, not a measurement')
+    if failures:
+        header.append('OUTPUT CHECK FAILED: ' + '; '.join(failures))
+    else:
+        header.append('output check: every chunk of every sweep identical to the C++\'s (the '
+                      'bench\'s dump), through PocketMine-MP\'s task and back')
+    if problems:
+        header.append('NOT A MEASUREMENT: ' + '; '.join(problems))
+    summary = '\n'.join(header + [''] + lines)
+    print(summary)
+    (out / 'summary.txt').write_text(summary + '\n', encoding='utf-8')
+    (out / 'report.json').write_text(json.dumps(report, indent=2, default=str) + '\n',
+                                     encoding='utf-8')
+    log(f'written: {out / "summary.txt"}, {out / "report.json"}')
+    if failures:
+        return 1
+    if problems and not args.check:
+        return 3
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

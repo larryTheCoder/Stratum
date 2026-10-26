@@ -84,6 +84,14 @@
 #       too; the CTest cases give 0).
 #   server, smoke and observe take --plugin-dir <dir> to pack a plugin tree
 #   other than ext/plugin, for trying a change to it against the real server.
+#   tools/pmmp-dev task-cost --stratum-so <so> --version-root <root> -- <task_cost.php options>
+#       ext/pocketmine/task_cost.php — the generation task, PocketMine-MP's
+#       own PopulationTask over the plugin's StratumGenerator, timed per
+#       chunk through PHP — under PocketMine-MP's php with a server's own
+#       php.ini (opcache on, assertions off, as write_php_ini writes it).
+#       tools/pmmp-task-cost drives it; see there.
+#   tools/pmmp-dev check-cache
+#       exits 0 with the cache in place, 77 (SKIP) saying what is missing.
 #
 # The checks (check-load onwards) never download: without the cache, or
 # without the fixtures they need, each exits 77 — CTest's SKIP — saying
@@ -441,6 +449,41 @@ refuse_in_checkout() {
     fi
 }
 
+# write_php_ini <file> <sys_temp_dir>: the php.ini a server here runs with,
+# and task-cost too, so that what it times runs as PocketMine-MP runs it.
+write_php_ini() {
+    cat >"$1" <<EOF
+; Written by tools/pmmp-dev. pmmp/PHP-Binaries' own php.ini settings, with
+; extension_dir pointed at this machine's copy (the release's compiled-in
+; path is its CI runner's), temporary files kept inside the server directory
+; (the phar's stub caches itself there), and stratum.so loaded. opcache.so
+; is the release's own, which its php.ini enables, so the server runs as
+; PocketMine-MP runs it. Read through PHPRC, so PocketMine-MP's console
+; reader child process reads it too.
+memory_limit=1024M
+date.timezone=UTC
+short_open_tag=0
+phar.require_hash=1
+igbinary.compact_strings=0
+zend.assertions=-1
+error_reporting=-1
+display_errors=1
+display_startup_errors=1
+recursionguard.enabled=0
+extension_dir="${php_ext_dir}"
+zend_extension=opcache.so
+opcache.enable=1
+opcache.enable_cli=1
+opcache.save_comments=1
+opcache.validate_timestamps=1
+opcache.revalidate_freq=0
+opcache.file_update_protection=0
+opcache.optimization_level=0x7FFEBFFF
+sys_temp_dir="$2"
+extension="${so}"
+EOF
+}
+
 # write_server_dir <dir> [observe]: the server directory `server` describes;
 # with "observe", the evidence plugin observes (cmd_observe).
 write_server_dir() {
@@ -498,36 +541,7 @@ write_server_dir() {
             "${world}" "${spawn}" "${observe}" "${dir}/stratum-evidence-report.json" >"${dir}/stratum-evidence.json"
     fi
 
-    cat >"${dir}/php.ini" <<EOF
-; Written by tools/pmmp-dev. pmmp/PHP-Binaries' own php.ini settings, with
-; extension_dir pointed at this machine's copy (the release's compiled-in
-; path is its CI runner's), temporary files kept inside the server directory
-; (the phar's stub caches itself there), and stratum.so loaded. opcache.so
-; is the release's own, which its php.ini enables, so the server runs as
-; PocketMine-MP runs it. Read through PHPRC, so PocketMine-MP's console
-; reader child process reads it too.
-memory_limit=1024M
-date.timezone=UTC
-short_open_tag=0
-phar.require_hash=1
-igbinary.compact_strings=0
-zend.assertions=-1
-error_reporting=-1
-display_errors=1
-display_startup_errors=1
-recursionguard.enabled=0
-extension_dir="${php_ext_dir}"
-zend_extension=opcache.so
-opcache.enable=1
-opcache.enable_cli=1
-opcache.save_comments=1
-opcache.validate_timestamps=1
-opcache.revalidate_freq=0
-opcache.file_update_protection=0
-opcache.optimization_level=0x7FFEBFFF
-sys_temp_dir="${dir}/tmp"
-extension="${so}"
-EOF
+    write_php_ini "${dir}/php.ini" "${dir}/tmp"
 
     cat >"${dir}/server.properties" <<EOF
 #Properties Config file
@@ -952,6 +966,26 @@ cmd_observe() {
     finish "${own_dir}"
 }
 
+# --- task-cost ------------------------------------------------------------------
+
+# ext/pocketmine/task_cost.php under PocketMine-MP's php with a server's own
+# php.ini (write_php_ini: opcache as PHP-Binaries enables it, assertions
+# off), so that what it times runs as it would in the server. The options
+# after `--` are task_cost.php's own; tools/pmmp-task-cost passes them.
+cmd_task_cost() {
+    parse_options "$@"
+    require_cache
+    require_so "${so}"
+    require_version_root "${version_root}"
+    local tmp rc=0
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/stratum-pmmp-task-cost.XXXXXX")"
+    write_php_ini "${tmp}/php.ini" "${tmp}"
+    env -u PHPRC PHP_INI_SCAN_DIR= "${php_bin}" -c "${tmp}/php.ini" "${evidence}/task_cost.php" \
+        --phar="${phar}" --version-root="${version_root}" "${rest[@]}" || rc=$?
+    rm -rf "${tmp}"
+    exit "${rc}"
+}
+
 # --- main -----------------------------------------------------------------------
 
 command="${1:-}"
@@ -965,6 +999,7 @@ case "${command}" in
     --print-php) install_all; echo "${php_bin}" ;;
     --print-phar) install_all; echo "${phar}" ;;
     --print-dir) echo "${cache_dir}" ;;
+    check-cache) require_cache; echo "PocketMine-MP ${PMMP_VERSION} and its PHP are at ${cache_dir}" ;;
     server) cmd_server "$@" ;;
     check-load) parse_options "$@"; cmd_check_load ;;
     phpt)
@@ -1011,6 +1046,7 @@ case "${command}" in
         ;;
     smoke) cmd_smoke "$@" ;;
     observe) cmd_observe "$@" ;;
+    task-cost) cmd_task_cost "$@" ;;
     *)
         sed -n '/^# Usage:/,/^# The checks/p' "$0" | sed 's/^# \{0,1\}//' >&2
         exit 2

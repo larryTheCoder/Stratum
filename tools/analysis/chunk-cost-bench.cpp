@@ -32,8 +32,9 @@
 // to Bedrock states, a PalettedBlockArray::fromData per layer, the SubChunk
 // and Chunk construction — and PocketMine-MP's own serialisation of the task's
 // result back to the main thread. Small beside today's figures, but not shown
-// to be small beside the 35 ms best case: a measurement through PHP is what
-// shows that. The stages:
+// to be small beside the 35 ms best case by this bench: tools/pmmp-task-cost
+// measures the task through PHP, part by part, over this bench's own chunks
+// and held to its --dump. The stages:
 //
 //   fill     CompiledDimension::fillBlocks into a fresh ChunkBuffer — the noise
 //            fill, aquifers, ore veins and the surface rules, which look the

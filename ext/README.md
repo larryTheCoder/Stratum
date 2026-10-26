@@ -102,6 +102,18 @@ the End smoke's spawn over the main island and reports, from inside the
 server, what the observation needs. `plugin/README.md` says what they
 found.
 
+**What the generation task costs through PHP** (`tools/pmmp-task-cost`;
+`ctest --preset pmmp-task-cost` runs its check; local evidence, not CI).
+`pocketmine/task_cost.php` plays a PocketMine-MP worker on a
+`pocketmine\thread\Thread` (`src/TaskCostThread.php`): PocketMine-MP's own
+`AsyncGeneratorRegisterTask` builds the plugin's `StratumGenerator`, and each
+chunk is PocketMine-MP's own `PopulationTask`, timed per chunk in parts —
+the zend call, the plugin's PHP (`src/TimedGenerator.php` times the two
+halves of `generateChunk()` apart), PocketMine-MP's serialisation of the
+result, and the whole — over the bench's own chunks, every one held to the
+bench's dump (`src/ChunkDump.php`). The script's header says what is timed
+and what is left out; `tools/README.md` says how it is run.
+
 ## How the pieces fit
 
 1. `lib/` generates Java block states and biomes; `lib/mapping/` turns those
