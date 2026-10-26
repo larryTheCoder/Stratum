@@ -126,6 +126,44 @@ struct SurfaceNeeds {
 /// Snaps down onto the biome grid: vanilla resolves one biome per 4x4x4
 /// cell and surface rules read that grid rather than resampling per block
 /// (measured in `vanilla_biomes_test.cpp` — the lower corner of the cell).
+/// The palette indices of the blocks one fill places, kept by the ADDRESS of
+/// the state placed. Every state the fill places lives in storage that
+/// outlives the fill and never changes — air() and lava(), the vein blocks,
+/// the dimension's own default block and fluid, the surface rules' blocks
+/// and bandlands' table — so one address is one value for the whole fill,
+/// and the index ChunkBuffer::intern gave it the first time is the index it
+/// would give it every time: the palette only grows, and holds each value
+/// once. A state not seen yet is interned by value then, in the order it is
+/// first placed, which is the palette order a value-by-value set() made.
+///
+/// Bounded: past kCapacity distinct addresses a state is interned by value
+/// on every placement, which is what set() always did.
+class StablePalette {
+public:
+    template<typename Intern>
+    [[nodiscard]] std::uint16_t indexOf(const settings::BlockState& block, Intern&& intern) {
+        for (std::size_t i = 0; i < size_; ++i) {
+            if (keys_[i] == &block) {
+                return values_[i];
+            }
+        }
+        const std::uint16_t index = intern(block);
+        if (size_ < kCapacity) {
+            keys_[size_] = &block;
+            values_[size_] = index;
+            ++size_;
+        }
+        return index;
+    }
+
+private:
+    static constexpr std::size_t kCapacity = 32;
+
+    std::array<const settings::BlockState*, kCapacity> keys_{};
+    std::array<std::uint16_t, kCapacity> values_{};
+    std::size_t size_ = 0;
+};
+
 [[nodiscard]] std::int32_t quartSnap(const std::int32_t value) noexcept {
     return javamath::floorDiv(value, std::int32_t{4}) * std::int32_t{4};
 }
@@ -212,26 +250,13 @@ ChunkBuffer::ChunkBuffer(const settings::NoiseGeometry& geometry)
         static_cast<std::size_t>(kChunkWidth) * kChunkWidth * static_cast<std::size_t>(height_), 0);
 }
 
-std::size_t ChunkBuffer::indexOf(int localX, std::int32_t y, int localZ) const {
+void ChunkBuffer::refuseOutside(int localX, std::int32_t y, int localZ) const {
     if (localX < 0 || localX >= kChunkWidth || localZ < 0 || localZ >= kChunkWidth) {
         throw FillError("block (" + std::to_string(localX) + ", " + std::to_string(localZ) +
                         ") is outside the chunk; local coordinates run 0 to 15");
     }
-    if (y < minY_ || y >= minY_ + height_) {
-        throw FillError("y " + std::to_string(y) + " is outside this dimension, which runs " +
-                        std::to_string(minY_) + " to " + std::to_string(minY_ + height_ - 1));
-    }
-    const auto layer = static_cast<std::size_t>(y - minY_);
-    return (((layer * kChunkWidth) + static_cast<std::size_t>(localZ)) * kChunkWidth) +
-           static_cast<std::size_t>(localX);
-}
-
-const settings::BlockState& ChunkBuffer::at(int localX, std::int32_t y, int localZ) const {
-    return palette_[blocks_[indexOf(localX, y, localZ)]];
-}
-
-std::uint16_t ChunkBuffer::paletteIndexAt(int localX, std::int32_t y, int localZ) const {
-    return blocks_[indexOf(localX, y, localZ)];
+    throw FillError("y " + std::to_string(y) + " is outside this dimension, which runs " +
+                    std::to_string(minY_) + " to " + std::to_string(minY_ + height_ - 1));
 }
 
 std::uint16_t ChunkBuffer::intern(const settings::BlockState& block) {
@@ -568,6 +593,14 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // blocks' worth of them — see aquifer::StatusCache's own doc.
     aquifer::StatusCache aquiferStatusCache;
 
+    // Each block is written as its palette index (StablePalette), at a
+    // position the loops below keep inside the chunk and the dimension —
+    // the buffer's geometry was checked against the dimension's above — so
+    // what set() did per block, a bounds check and a search of the palette
+    // by value, is done once per distinct state.
+    StablePalette stablePalette;
+    const auto intern = [&into](const settings::BlockState& block) { return into.intern(block); };
+
     // Only ever populated when settings_->aquifersEnabled; the five lambdas
     // below capture these by reference and are only ever called from inside
     // that same condition, so they never see a moved-from or absent
@@ -796,7 +829,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                     }
                                 }
                             }
-                            into.set(static_cast<int>(localX), y, static_cast<int>(localZ), *block);
+                            into.blocks_[into.linearIndex(localX, y, localZ)] =
+                                stablePalette.indexOf(*block, intern);
                         }
                     }
                 }
@@ -840,6 +874,34 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     const std::int32_t minY = geometry.minY;
     const std::int32_t topY = geometry.minY + geometry.height;
 
+    // The pass reads and writes the buffer by palette index, at positions
+    // its loops keep inside the chunk and the dimension (fill() checked the
+    // buffer's geometry). A block's category is a pure function of its state
+    // (categorize), so it is worked out once per palette entry, the entries
+    // this pass adds included, rather than once per block. And the palette
+    // holds each state once (ChunkBuffer::intern), so a position holds the
+    // default block exactly when it holds the default block's index — found
+    // once, after the first pass: an index this pass adds is a block it
+    // placed over a default block, so if the first pass placed none this pass
+    // places nothing and the default block never enters the palette.
+    std::vector<Category> categoryOf;
+    const auto categoryAt = [&](const int localX, const std::int32_t y, const int localZ) {
+        const std::uint16_t index = into.blocks_[into.linearIndex(localX, y, localZ)];
+        while (categoryOf.size() <= index) {
+            categoryOf.push_back(categorize(into.palette_[categoryOf.size()], *settings_));
+        }
+        return categoryOf[index];
+    };
+    std::int32_t defaultIndex = -1;
+    for (std::size_t i = 0; i < into.palette_.size(); ++i) {
+        if (into.palette_[i] == settings_->defaultBlock) {
+            defaultIndex = static_cast<std::int32_t>(i);
+            break;
+        }
+    }
+    StablePalette stablePalette;
+    const auto intern = [&into](const settings::BlockState& block) { return into.intern(block); };
+
     // WORLD_SURFACE per column of this chunk, for `steep`'s neighbours —
     // clamped inside the chunk by fillSteepNeighbours(), which is what keeps
     // this from ever touching a column outside it. Fluid counts as surface,
@@ -850,7 +912,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             for (int localX = 0; localX < kChunkWidth; ++localX) {
                 std::int32_t height = minY - 1;
                 for (std::int32_t y = topY - 1; y >= minY; --y) {
-                    if (categorize(into.at(localX, y, localZ), *settings_) != Category::Air) {
+                    if (categoryAt(localX, y, localZ) != Category::Air) {
                         height = y;
                         break;
                     }
@@ -977,8 +1039,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // (surface_column.hpp carries the measured rules), the same code
             // the golden decoder reconstructs them with.
             for (std::int32_t y = minY; y < topY; ++y) {
-                categories[static_cast<std::size_t>(y - minY)] =
-                    categorize(into.at(localX, y, localZ), *settings_);
+                categories[static_cast<std::size_t>(y - minY)] = categoryAt(localX, y, localZ);
             }
             column.read(categories, minY);
 
@@ -1030,7 +1091,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // the loop runs zero times.
             const std::int32_t scanFrom = column.top();
             for (std::int32_t y = scanFrom; y >= minY; --y) {
-                if (!(into.at(localX, y, localZ) == settings_->defaultBlock)) {
+                if (into.blocks_[into.linearIndex(localX, y, localZ)] != defaultIndex) {
                     continue;
                 }
                 if (needsBiomeIdentity) {
@@ -1068,7 +1129,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
 
                 if (const settings::BlockState* placed = executor.apply(context, columnMemo);
                     placed != nullptr) {
-                    into.set(localX, y, localZ, *placed);
+                    into.blocks_[into.linearIndex(localX, y, localZ)] =
+                        stablePalette.indexOf(*placed, intern);
                 }
             }
         }

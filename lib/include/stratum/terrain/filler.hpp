@@ -116,7 +116,9 @@ public:
 
     /// Throws FillError for a position outside the chunk or the dimension,
     /// rather than reading whatever is next to it in memory.
-    [[nodiscard]] const settings::BlockState& at(int localX, std::int32_t y, int localZ) const;
+    [[nodiscard]] const settings::BlockState& at(int localX, std::int32_t y, int localZ) const {
+        return palette_[blocks_[indexOf(localX, y, localZ)]];
+    }
 
     void set(int localX, std::int32_t y, int localZ, const settings::BlockState& block);
 
@@ -131,7 +133,9 @@ public:
 
     /// Which `palette()` entry a position holds; `palette()[paletteIndexAt(
     /// ...)]` is `at(...)`. Throws FillError like `at`.
-    [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const;
+    [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const {
+        return blocks_[indexOf(localX, y, localZ)];
+    }
 
     /// A position whose fluid the server ticks once the chunk loads — what
     /// vanilla records in a chunk's `PostProcessing` list (spec Q8.1). Ticks
@@ -175,7 +179,36 @@ public:
     void clear();
 
 private:
-    [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const;
+    /// The filler writes and reads by palette index (ChunkFiller::fill):
+    /// through the private members below, at positions its own loops keep
+    /// inside the chunk.
+    friend class ChunkFiller;
+
+    static constexpr int kWidth = 16;
+
+    /// Where (@p localX, @p y, @p localZ) is in blocks_; refused by name
+    /// (refuseOutside) for a position outside the chunk or the dimension,
+    /// x and z checked first, as they always were.
+    [[nodiscard]] std::size_t indexOf(int localX, std::int32_t y, int localZ) const {
+        if (localX < 0 || localX >= kWidth || localZ < 0 || localZ >= kWidth || y < minY_ ||
+            y >= minY_ + height_) [[unlikely]] {
+            refuseOutside(localX, y, localZ);
+        }
+        return linearIndex(localX, y, localZ);
+    }
+
+    /// indexOf without the check, for a position the caller holds inside.
+    [[nodiscard]] std::size_t linearIndex(int localX, std::int32_t y, int localZ) const noexcept {
+        const auto layer = static_cast<std::size_t>(y - minY_);
+        return (((layer * kWidth) + static_cast<std::size_t>(localZ)) * kWidth) +
+               static_cast<std::size_t>(localX);
+    }
+
+    [[noreturn]] void refuseOutside(int localX, std::int32_t y, int localZ) const;
+
+    /// @p block's palette index: the entry equal to it, or a new one at the
+    /// end. So the palette holds each state once, in the order states were
+    /// first set.
     [[nodiscard]] std::uint16_t intern(const settings::BlockState& block);
 
     std::int32_t minY_ = 0;

@@ -1249,6 +1249,85 @@ TEST_CASE("bandlands runs through the whole filler pipeline, not just the execut
     CHECK(buffer.at(0, 8, 0).name.toString() == "minecraft:air");
 }
 
+TEST_CASE("the palette holds each state once, in the order the fill first placed it",
+          "[terrain][filler][surface]") {
+    // The fill writes palette indices, interning each state once (by value,
+    // the first time its storage is placed) rather than searching the
+    // palette on every block. The palette it leaves must be exactly the one
+    // setting every block by value would: each state once, in the order the
+    // first pass visits blocks (cell by cell; within a cell y, then z, then
+    // x), then the surface pass's new states in the order it writes them
+    // (column by column, z outer, each from the top down). Rebuilt here from
+    // the first pass alone and the blocks the second pass changed.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    tree.defineClayBandsOffsetNoise();
+    const LoadedSettings loaded = tree.load();
+    const auto& settings =
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test"));
+    auto wanted = loaded.graph.referencedNoises();
+    wanted.push_back(stratum::data::ResourceLocation::parse("minecraft:clay_bands_offset"));
+    const auto noises = stratum::density::NoiseRegistry::create(
+        tree.pack(), wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    const RuleGraph surface = resolveSurface(nlohmann::json{{"type", "minecraft:bandlands"}});
+    const ChunkFiller withRules =
+        ChunkFiller::compile(loaded.graph, noises, settings, &surface, /*biomeParameters=*/nullptr);
+    const ChunkFiller firstPassOnly = ChunkFiller::compile(loaded.graph, noises, settings);
+    const auto& geometry = settings.geometry;
+
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{-3, 5}}) {
+        CAPTURE(chunkX, chunkZ);
+        ChunkBuffer first(geometry);
+        firstPassOnly.fill(chunkX, chunkZ, first);
+        ChunkBuffer both(geometry);
+        withRules.fill(chunkX, chunkZ, both);
+
+        std::vector<stratum::settings::BlockState> expected{
+            first.palette().front()}; // air, every buffer's entry 0
+        const auto see = [&expected](const stratum::settings::BlockState& state) {
+            if (std::ranges::find(expected, state) == expected.end()) {
+                expected.push_back(state);
+            }
+        };
+        const std::int32_t cellWidth = geometry.cellWidth();
+        const std::int32_t cellHeight = geometry.cellHeight();
+        const std::int32_t topY = geometry.minY + geometry.height;
+        for (std::int32_t cellZ = 0; cellZ < 16; cellZ += cellWidth) {
+            for (std::int32_t cellX = 0; cellX < 16; cellX += cellWidth) {
+                for (std::int32_t bottom = geometry.minY; bottom < topY; bottom += cellHeight) {
+                    for (std::int32_t y = bottom; y < std::min(bottom + cellHeight, topY); ++y) {
+                        for (std::int32_t z = cellZ; z < cellZ + cellWidth; ++z) {
+                            for (std::int32_t x = cellX; x < cellX + cellWidth; ++x) {
+                                see(first.at(x, y, z));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        REQUIRE(first.palette() == expected);
+        std::size_t changed = 0;
+        for (int z = 0; z < 16; ++z) {
+            for (int x = 0; x < 16; ++x) {
+                for (std::int32_t y = topY - 1; y >= geometry.minY; --y) {
+                    if (!(both.at(x, y, z) == first.at(x, y, z))) {
+                        see(both.at(x, y, z));
+                        ++changed;
+                    }
+                }
+            }
+        }
+        CHECK(changed > 1000U);
+        CHECK(both.palette() == expected);
+        CHECK(both.palette().size() > 4U);
+        for (int z = 0; z < 16; ++z) {
+            for (std::int32_t y = geometry.minY; y < topY; ++y) {
+                CHECK(both.palette()[both.paletteIndexAt(7, y, z)] == both.at(7, y, z));
+            }
+        }
+    }
+}
+
 TEST_CASE("a runnable tree's replacement reaches the buffer through the whole pipeline",
           "[terrain][filler][surface]") {
     const TempTree tree;
