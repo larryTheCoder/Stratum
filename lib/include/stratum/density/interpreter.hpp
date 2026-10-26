@@ -5,8 +5,11 @@
 // resolved graph is compiled into a flat execution program ... interpretation
 // of the graph per block is acceptable only as a Milestone-M2 stepping
 // stone." The compiled program was due in M3 and was not built; it is
-// deferred to M5's performance pass (SPEC §10, M3). Until it lands, this is
-// what every density value in the engine comes from.
+// deferred to M5's performance pass (SPEC §10, M3). Its first part is here:
+// a root's per-block arithmetic over its `interpolated` values, the part
+// evaluated at every block, runs as a straight list of ops (BlockKernel).
+// Everything else — every cell corner, every read off the block — is still
+// this walk.
 //
 // WHAT IT WILL NOT DO. A node type it cannot evaluate correctly at a point
 // is refused by name, with the reason (SPEC §8). That covers two groups:
@@ -579,7 +582,123 @@ public:
         std::array<FlatCacheWindow, kMaxWindows> windows_{};
         std::uint32_t windowCount_ = 0;
         Sharing sharing_ = Sharing::Lattice;
+        /// A BlockKernel evaluation's registers: each written before it is
+        /// read, so never cleared. Scratch, as the scope frames are.
+        std::vector<double> kernelValues_;
+        /// The last cell a BlockKernel found a point in (cellCorner), with
+        /// the geometry it was found under: a point inside it is in it, and
+        /// its corners passed cellCorner's check, so a kernel takes it
+        /// without dividing again. Never a value, only where to find one.
+        bool kernelCellKnown_ = false;
+        CellGeometry kernelCellGeometry_{};
+        Point kernelCell_{};
     };
+
+    /// SPEC §4.1's compiled block program, for the part of a root that is
+    /// evaluated at every block: the arithmetic from the root down to its
+    /// `interpolated` nodes, lowered at construction to a straight list of
+    /// ops over registers that evaluate(kernel, at, cache) runs instead of
+    /// walking the graph.
+    ///
+    /// WHAT IT LOWERS. A root's block part is the root and every node
+    /// reached from it without passing through an `interpolated`: there the
+    /// blend of the argument's cell corners is an op, and the argument is
+    /// evaluated at the corners by the interpreter, exactly as before. Every
+    /// node of the block part must be one of: constant, the two blend states,
+    /// abs, add, clamp, cube, half_negative, invert, max, min, mul,
+    /// quarter_negative, range_choice, square, squeeze, y_clamped_gradient,
+    /// interpolated, and the transparent caches (blend_density, cache_2d,
+    /// cache_once, cache_all_in_cell); none may draw a refusal or keep a
+    /// column memo; and the list may not pass kMaxOps ops or kMaxRegisters
+    /// registers. Otherwise there is no kernel, and the caller evaluates the
+    /// root as before (blockKernel).
+    ///
+    /// EXACT. The list is the walk evaluateNode makes, in its order:
+    /// arguments before their node, first to last; range_choice tests its
+    /// input and jumps over the branch it does not take, so only the taken
+    /// one is evaluated. Each op computes its node's value with
+    /// evaluateNode's own expression. A node the block part reaches twice is
+    /// lowered at each reach and so computed again where the walk read its
+    /// memo — the same value, and nothing besides: arithmetic has no effect,
+    /// and an `interpolated` evaluated again at the same point finds its cell
+    /// already in the CornerCache's entry. An `interpolated` finds its cell
+    /// with cellCorner at the first one evaluated at the point, where the
+    /// walk first found it, and its corners in the CornerCache's entry,
+    /// filled by the same code in the same order when the cell is not the
+    /// entry's, so every corner is evaluated at the same moment it always
+    /// was. No op of the block part can refuse (built only where none does),
+    /// so the refusals are the corners' own, thrown where they always were.
+    ///
+    /// Immutable, and free of pointers into the interpreter: node indices
+    /// only. Its scratch lives in the caller's CornerCache.
+    class BlockKernel {
+    public:
+        /// The most ops a kernel's list holds.
+        static constexpr std::size_t kMaxOps = 128;
+        /// The most registers it writes.
+        static constexpr std::size_t kMaxRegisters = 64;
+
+        /// The root this kernel evaluates.
+        [[nodiscard]] NodeIndex root() const noexcept { return root_; }
+
+        /// How many ops its list holds.
+        [[nodiscard]] std::size_t size() const noexcept { return ops_.size(); }
+
+    private:
+        friend class Interpreter;
+
+        enum class Code : std::uint8_t {
+            /// Registers: `target` from `first` and `second` as the node
+            /// type's own expression; parameters as the node holds them.
+            Constant,
+            Add,
+            Mul,
+            Min,
+            Max,
+            Abs,
+            Square,
+            Cube,
+            HalfNegative,
+            QuarterNegative,
+            Squeeze,
+            Invert,
+            Clamp,
+            YClampedGradient,
+            /// `target` is the blend of `interpolated`'s cell corners.
+            Interpolated,
+            /// `target` = `first`.
+            Move,
+            /// Continues at `jump` unless `first` is in range_choice's range.
+            BranchOutOfRange,
+            /// Continues at `jump`.
+            Jump,
+        };
+
+        struct KernelOp {
+            Code code = Code::Constant;
+            std::uint8_t target = 0;
+            std::uint8_t first = 0;
+            std::uint8_t second = 0;
+            std::uint8_t jump = 0;
+            /// For Interpolated, its argument's node.
+            NodeIndex interpolated = 0;
+            std::array<double, 4> parameters{};
+        };
+
+        std::vector<KernelOp> ops_;
+        std::size_t registers_ = 0;
+        std::uint8_t result_ = 0;
+        NodeIndex root_ = 0;
+    };
+
+    /// @p root's BlockKernel, or nothing when its block part holds a node the
+    /// kernel does not lower (see BlockKernel). Refuses, as evaluate() does,
+    /// a @p root that names no node.
+    [[nodiscard]] std::optional<BlockKernel> blockKernel(NodeIndex root) const;
+
+    /// evaluate(kernel.root(), at, cache), bit for bit, refusals included —
+    /// through the kernel. @p kernel must be one this interpreter built.
+    [[nodiscard]] double evaluate(const BlockKernel& kernel, Point at, CornerCache& cache) const;
 
     /// The value of @p root at @p at.
     ///
@@ -791,9 +910,24 @@ private:
     [[nodiscard]] double interpolate(NodeIndex argument, const Scope& scope) const;
 
     /// @p argument at the cell corner @p corner, from the cache's lattice
-    /// under @p tag, or evaluated there and kept. @p scope's cache is set.
-    [[nodiscard]] double sharedCorner(NodeIndex argument, const Scope& scope, Point corner,
-                                      std::uint32_t tag) const;
+    /// under @p tag, or evaluated there (in a scope on @p call keeping cell
+    /// corners as @p cells says) and kept. @p call's cache is set.
+    [[nodiscard]] double sharedCorner(NodeIndex argument, const Call& call, bool cells,
+                                      Point corner, std::uint32_t tag) const;
+
+    /// Fills @p entry with @p argument's eight corners for the cell whose
+    /// lower corner is @p lower, kept under @p tag: through the cache's
+    /// lattice when @p call keeps a memo, each evaluated afresh otherwise, in
+    /// kCornerOrder either way. Corner scopes open on @p call, keeping cell
+    /// corners as @p cells says. What interpolate() and a BlockKernel both do
+    /// when the cell is not the entry's.
+    void fillCell(NodeIndex argument, const Call& call, bool cells, CornerCache::Entry& entry,
+                  Point lower, std::uint32_t tag) const;
+
+    /// Lowers @p index, reached at @p depth, onto @p kernel's list, and
+    /// returns the register holding its value, or -1 where it does not lower.
+    [[nodiscard]] std::int32_t lowerBlock(BlockKernel& kernel, NodeIndex index,
+                                          std::size_t depth) const;
 
     /// The memo key of node @p index's value in @p scope's column (see
     /// Op::columnMemo).

@@ -2705,3 +2705,267 @@ TEST_CASE("the invariance rule, type by type", "[density][interpreter][memo]") {
     }
     CHECK(types == invariant.size());
 }
+
+// --- the block kernel (Interpreter::BlockKernel, SPEC §4.1) ----------------
+//
+// A kernel runs a root's block part — the arithmetic down to its
+// `interpolated` nodes — as a straight list of ops. It must give
+// evaluate(root, at, cache)'s bit pattern at every block, evaluate every
+// corner when and where the walk does, refuse where the walk refuses in the
+// same words, and leave a shared CornerCache as the walk would.
+
+namespace {
+
+/// Every type a kernel lowers, at the block, around several `interpolated`:
+/// one reached three times, one nested in another's corners, two behind a
+/// range_choice whose input changes sign across a chunk, and arithmetic
+/// that reaches infinities and NaN (invert of a gradient that crosses 0).
+void defineKernelPack(const TempTree& tree) {
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("smooth", R"({"type":"minecraft:interpolated","argument":"field"})");
+    tree.define("rough", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:mul","argument1":"field","argument2":"field"}})");
+    tree.define("toggle", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"field","argument2":-0.05}})");
+    tree.define("grad", R"({"type":"minecraft:y_clamped_gradient","from_y":-8,"to_y":8,
+        "from_value":-1.0,"to_value":1.0})");
+    tree.define("noodle", R"({"type":"minecraft:range_choice","input":"toggle",
+        "min_inclusive":-1000000.0,"max_exclusive":0.0,"when_in_range":64.0,
+        "when_out_of_range":{"type":"minecraft:add",
+            "argument1":{"type":"minecraft:interpolated","argument":{
+                "type":"minecraft:mul","argument1":"field","argument2":-0.5}},
+            "argument2":{"type":"minecraft:mul","argument1":1.5,"argument2":{
+                "type":"minecraft:max",
+                "argument1":{"type":"minecraft:abs","argument":"smooth"},
+                "argument2":{"type":"minecraft:abs","argument":"rough"}}}}})");
+    tree.define("arith", R"({"type":"minecraft:add",
+        "argument1":{"type":"minecraft:clamp","input":{"type":"minecraft:cube","argument":{
+            "type":"minecraft:half_negative","argument":{"type":"minecraft:quarter_negative",
+                "argument":{"type":"minecraft:add","argument1":"smooth","argument2":"grad"}}}},
+            "min":-0.3,"max":0.3},
+        "argument2":{"type":"minecraft:add",
+            "argument1":{"type":"minecraft:square","argument":{"type":"minecraft:blend_density",
+                "argument":{"type":"minecraft:cache_once","argument":{
+                    "type":"minecraft:cache_all_in_cell","argument":"rough"}}}},
+            "argument2":{"type":"minecraft:add",
+                "argument1":{"type":"minecraft:mul","argument1":{"type":"minecraft:blend_alpha"},
+                    "argument2":{"type":"minecraft:cache_2d",
+                        "argument":{"type":"minecraft:blend_offset"}}},
+                "argument2":{"type":"minecraft:invert","argument":"grad"}}}})");
+    tree.define("nested", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"field","argument2":"smooth"}})");
+    tree.define("terrain", R"({"type":"minecraft:add","argument1":{"type":"minecraft:squeeze",
+            "argument":{"type":"minecraft:mul","argument1":0.64,"argument2":"smooth"}},
+        "argument2":"arith"})");
+    // At y = 0 `grad` is 0 and `arith` +infinity: min passes the other side,
+    // and max the infinity.
+    tree.define("root", R"({"type":"minecraft:max",
+        "argument1":{"type":"minecraft:min","argument1":"terrain",
+            "argument2":{"type":"minecraft:add","argument1":"noodle","argument2":"nested"}},
+        "argument2":"arith"})");
+    // Roots with nothing to lower, or a block part that does not lower.
+    tree.define("bare_noise", R"({"type":"minecraft:add","argument1":"smooth",
+        "argument2":"field"})");
+    tree.define("flat", R"({"type":"minecraft:flat_cache","argument":"smooth"})");
+}
+
+} // namespace
+
+TEST_CASE("a block kernel gives the walk's bit pattern at every block of whole chunks",
+          "[density][interpreter][kernel]") {
+    const TempTree tree;
+    defineKernelPack(tree);
+    const Pipeline pipeline(tree.pack(), 7171, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("root");
+    const std::optional<Interpreter::BlockKernel> kernel = interpreter.blockKernel(root);
+    REQUIRE(kernel.has_value());
+    CHECK(kernel->root() == root);
+    CHECK(kernel->size() > 30U);
+
+    std::size_t compared = 0;
+    std::size_t differing = 0;
+    std::size_t outOfRange = 0;
+    std::size_t notFinite = 0;
+    std::string first = "none";
+    const auto compare = [&](double viaKernel, double viaWalk, Point at, const char* how) {
+        ++compared;
+        if (bits(viaKernel) != bits(viaWalk) && differing++ == 0) {
+            first = spell(at) + " " + how;
+        }
+    };
+    for (const auto& [chunkX, chunkZ] : {std::pair{0, 0}, std::pair{-1, 2}, std::pair{-5000, 70}}) {
+        for (const Sharing sharing : {Sharing::Lattice, Sharing::LastCell}) {
+            // Each through its own cache, in the filler's order.
+            Interpreter::CornerCache kernelCache(interpreter.cacheSize(), sharing);
+            Interpreter::CornerCache walkCache(interpreter.cacheSize(), sharing);
+            // And both on ONE cache, kernel first then walk, block by block.
+            Interpreter::CornerCache shared(interpreter.cacheSize(), sharing);
+            forEachBlockInFillOrder(chunkX, chunkZ, -8, 16, kOverworldCells, [&](Point at) {
+                const double viaWalk = interpreter.evaluate(root, at, walkCache);
+                compare(interpreter.evaluate(*kernel, at, kernelCache), viaWalk, at, "own cache");
+                compare(interpreter.evaluate(root, at), viaWalk, at, "fresh");
+                compare(interpreter.evaluate(*kernel, at, shared), viaWalk, at, "shared, kernel");
+                compare(interpreter.evaluate(root, at, shared), viaWalk, at, "shared, walk");
+                outOfRange += interpreter.evaluate(pipeline.root("toggle"), at) >= 0.0 ? 1U : 0U;
+                notFinite += std::isfinite(viaWalk) ? 0U : 1U;
+            });
+        }
+    }
+    CAPTURE(first);
+    CHECK(differing == 0U);
+    CHECK(compared == std::size_t{3} * 2U * 16U * 16U * 16U * 4U);
+    // Both of range_choice's branches were taken, and the infinities and
+    // NaN were reached.
+    CHECK(outOfRange > 100U);
+    CHECK(outOfRange < std::size_t{3} * 2U * 16U * 16U * 16U - 100U);
+    CHECK(notFinite > 0U);
+}
+
+TEST_CASE("a block kernel leaves a corner cache as the walk would",
+          "[density][interpreter][kernel]") {
+    // A kernel fills a cell's corners through the same code as the walk, on
+    // the first block of the cell that reads the `interpolated` — so after
+    // the same reads, the cache's entries and its memo hold the same.
+    const TempTree tree;
+    defineKernelPack(tree);
+    const Pipeline pipeline(tree.pack(), 7171, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("root");
+    const std::optional<Interpreter::BlockKernel> kernel = interpreter.blockKernel(root);
+    REQUIRE(kernel.has_value());
+    Interpreter::CornerCache kernelCache(interpreter.cacheSize());
+    Interpreter::CornerCache walkCache(interpreter.cacheSize());
+    std::size_t blocks = 0;
+    forEachBlockInFillOrder(3, -2, -8, 16, kOverworldCells, [&](Point at) {
+        static_cast<void>(interpreter.evaluate(*kernel, at, kernelCache));
+        static_cast<void>(interpreter.evaluate(root, at, walkCache));
+        if (++blocks % 512U == 0U) {
+            REQUIRE(kernelCache.memoSize() == walkCache.memoSize());
+        }
+    });
+    CHECK(kernelCache.memoSize() > 0U);
+    CHECK(kernelCache.memoSize() == walkCache.memoSize());
+}
+
+TEST_CASE("a block kernel evaluates a corner only where the walk does, and refuses as it does",
+          "[density][interpreter][kernel][refusal]") {
+    // `far` refuses at every corner whose x or z is 16 (see the lattice case
+    // above); `gated` reads it only above y = 0. Read in the filler's order,
+    // the kernel must refuse at exactly the blocks the walk refuses at, in
+    // its words, and nowhere else.
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.define("far", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:noise","noise":"test","xz_scale":1.25e9,"y_scale":0.0}})");
+    tree.define("gated", R"({"type":"minecraft:range_choice",
+        "input":{"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":1,
+            "from_value":0.0,"to_value":1.0},
+        "min_inclusive":0.5,"max_exclusive":2.0,
+        "when_in_range":{"type":"minecraft:mul","argument1":"far","argument2":-3.0},
+        "when_out_of_range":-1.0})");
+    const Pipeline pipeline(tree.pack(), 99, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    for (const char* name : {"far", "gated"}) {
+        CAPTURE(name);
+        const NodeIndex root = pipeline.root(name);
+        const std::optional<Interpreter::BlockKernel> kernel = interpreter.blockKernel(root);
+        REQUIRE(kernel.has_value());
+        Interpreter::CornerCache kernelCache(interpreter.cacheSize());
+        Interpreter::CornerCache walkCache(interpreter.cacheSize());
+        std::size_t refused = 0;
+        std::size_t differing = 0;
+        forEachBlockInFillOrder(0, 0, -8, 16, kOverworldCells, [&](Point at) {
+            const std::string viaKernel =
+                refusalOf([&] { return interpreter.evaluate(*kernel, at, kernelCache); });
+            const std::string viaWalk =
+                refusalOf([&] { return interpreter.evaluate(root, at, walkCache); });
+            differing += viaKernel != viaWalk ? 1U : 0U;
+            if (viaWalk != "no refusal") {
+                ++refused;
+            } else {
+                differing += bits(interpreter.evaluate(*kernel, at, kernelCache)) !=
+                                     bits(interpreter.evaluate(root, at, walkCache))
+                                 ? 1U
+                                 : 0U;
+            }
+        });
+        CHECK(differing == 0U);
+        CHECK(refused > 0U);
+        CHECK(refused < std::size_t{16} * 16U * 16U);
+    }
+}
+
+TEST_CASE("only a block part the kernel lowers has a kernel", "[density][interpreter][kernel]") {
+    const TempTree tree;
+    defineKernelPack(tree);
+    const Pipeline pipeline(tree.pack(), 7171, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    // A noise or a flat_cache at the block: none.
+    CHECK_FALSE(interpreter.blockKernel(pipeline.root("bare_noise")).has_value());
+    CHECK_FALSE(interpreter.blockKernel(pipeline.root("flat")).has_value());
+    CHECK_FALSE(interpreter.blockKernel(pipeline.root("field")).has_value());
+    // An `interpolated` alone, or a gradient alone: one op.
+    const std::optional<Interpreter::BlockKernel> smooth =
+        interpreter.blockKernel(pipeline.root("smooth"));
+    REQUIRE(smooth.has_value());
+    CHECK(smooth->size() == 1U);
+    CHECK(interpreter.blockKernel(pipeline.root("grad")).has_value());
+    // Without a lattice `interpolated` refuses, so a root reaching one has
+    // no kernel, and evaluating it still refuses as before.
+    const Pipeline flatPipeline(tree.pack(), 7171);
+    CHECK_FALSE(flatPipeline.interpreter().blockKernel(flatPipeline.root("smooth")).has_value());
+    CHECK(flatPipeline.interpreter().blockKernel(flatPipeline.root("grad")).has_value());
+    // A root that names no node is refused, as every evaluate refuses it.
+    CHECK_THROWS_WITH(interpreter.blockKernel(NodeIndex{1U << 30U}),
+                      ContainsSubstring("out of range"));
+}
+
+TEST_CASE("a block part past the kernel's bounds has none, and a shared node lowers at each reach",
+          "[density][interpreter][kernel]") {
+    // A chain of adds deeper than kMaxOps, and a DAG whose expansion passes
+    // kMaxOps although it holds few distinct nodes: no kernel either way.
+    // The chain is one function per link, a file nesting 128 deep being
+    // refused as a file.
+    const TempTree tree;
+    tree.define("c0", R"({"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":1,
+        "from_value":0.0,"to_value":1.0})");
+    const std::size_t links = Interpreter::BlockKernel::kMaxOps + 5;
+    for (std::size_t i = 1; i <= links; ++i) {
+        tree.define("c" + std::to_string(i),
+                    R"({"type":"minecraft:add","argument1":0.5,"argument2":"c)" +
+                        std::to_string(i - 1) + "\"}");
+    }
+    const std::string chain = "c" + std::to_string(links);
+    tree.define("d0", R"({"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":4,
+        "from_value":0.0,"to_value":1.0})");
+    for (int level = 1; level <= 8; ++level) {
+        const std::string below = "d" + std::to_string(level - 1);
+        std::string json = R"({"type":"minecraft:mul","argument1":")";
+        json += below;
+        json += R"(","argument2":")";
+        json += below;
+        json += "\"}";
+        tree.define("d" + std::to_string(level), json);
+    }
+    const Pipeline pipeline(tree.pack(), 1, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    CHECK_FALSE(interpreter.blockKernel(pipeline.root(chain)).has_value());
+    // Its first links do lower.
+    CHECK(interpreter.blockKernel(pipeline.root("c10")).has_value());
+    // d3 expands to 15 ops; d8 to 511.
+    const std::optional<Interpreter::BlockKernel> small =
+        interpreter.blockKernel(pipeline.root("d3"));
+    REQUIRE(small.has_value());
+    CHECK(small->size() == 15U);
+    CHECK_FALSE(interpreter.blockKernel(pipeline.root("d8")).has_value());
+    // And the expanded DAG is the walk's value.
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    for (std::int32_t y = -3; y <= 6; ++y) {
+        const Point at{.x = 1, .y = y, .z = 2};
+        CHECK(bits(interpreter.evaluate(*small, at, cache)) ==
+              bits(interpreter.evaluate(pipeline.root("d3"), at)));
+    }
+}

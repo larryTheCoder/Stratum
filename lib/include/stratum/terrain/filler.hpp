@@ -456,6 +456,26 @@ private:
     // source, same as the aquifer's centres below and for the same reason.
     std::optional<ore::VeinSource> oreVeins_;
 
+    // The block kernels (density::Interpreter::BlockKernel) of the four
+    // entries fill() reads at every block — final_density and the three vein
+    // entries — built at compile where an entry's block part lowers, and
+    // evaluated in place of the interpreter's walk, bit for bit. Absent
+    // where it does not lower, or where the entry is never read.
+    std::optional<density::Interpreter::BlockKernel> finalDensityKernel_;
+    std::optional<density::Interpreter::BlockKernel> veinToggleKernel_;
+    std::optional<density::Interpreter::BlockKernel> veinRidgedKernel_;
+    std::optional<density::Interpreter::BlockKernel> veinGapKernel_;
+
+    /// @p node at @p at through @p cache: through @p kernel when there is
+    /// one, which is evaluate(node, at, cache) bit for bit, else that.
+    [[nodiscard]] double
+    evaluateAtBlock(const std::optional<density::Interpreter::BlockKernel>& kernel,
+                    density::NodeIndex node, density::Point at,
+                    density::Interpreter::CornerCache& cache) const {
+        return kernel.has_value() ? interpreter_.evaluate(*kernel, at, cache)
+                                  : interpreter_.evaluate(node, at, cache);
+    }
+
     // Present only when settings_->aquifersEnabled — its own RNG derivation
     // is per-world (the salted positional source, SPEC §4), so it is built
     // once at compile() from the registry's own worldSeed() rather than

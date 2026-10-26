@@ -384,6 +384,20 @@ ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
         }
     }
 
+    // The block kernels of the entries fill() reads at every block, each
+    // after its entry was required evaluable (density::Interpreter::
+    // BlockKernel says what lowers; where nothing does, fill() walks the
+    // graph as before).
+    filler.finalDensityKernel_ = filler.interpreter_.blockKernel(filler.finalDensity_);
+    if (settings.oreVeinsEnabled) {
+        filler.veinToggleKernel_ =
+            filler.interpreter_.blockKernel(settings.router.at(settings::RouterEntry::VeinToggle));
+        filler.veinRidgedKernel_ =
+            filler.interpreter_.blockKernel(settings.router.at(settings::RouterEntry::VeinRidged));
+        filler.veinGapKernel_ =
+            filler.interpreter_.blockKernel(settings.router.at(settings::RouterEntry::VeinGap));
+    }
+
     if (settings.aquifersEnabled) {
         // NOT refused under a legacy source, as the veins above are not. The
         // lattice's centre jitter is a positional random from the
@@ -600,6 +614,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // by value, is done once per distinct state.
     StablePalette stablePalette;
     const auto intern = [&into](const settings::BlockState& block) { return into.intern(block); };
+    // air()'s one state, looked up once rather than once a block.
+    const settings::BlockState* const airBlock = &air();
 
     // Only ever populated when settings_->aquifersEnabled; the five lambdas
     // below capture these by reference and are only ever called from inside
@@ -721,8 +737,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                         for (std::int32_t localX = cellX;
                              localX < std::min(cellX + cellWidth, std::int32_t{kChunkWidth});
                              ++localX) {
-                            const double density = interpreter_.evaluate(
-                                finalDensity_,
+                            const double density = evaluateAtBlock(
+                                finalDensityKernel_, finalDensity_,
                                 density::Point{.x = baseX + localX, .y = y, .z = baseZ + localZ},
                                 cache);
 
@@ -732,7 +748,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                             // puts one extra water block on top of every
                             // column in the world, which is 256 a chunk and
                             // exactly what the golden comparison found.
-                            const settings::BlockState* block = &air();
+                            const settings::BlockState* block = airBlock;
                             const std::int32_t blockX = baseX + localX;
                             const std::int32_t blockZ = baseZ + localZ;
                             if (density > 0.0) {
@@ -812,17 +828,18 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // three costs a full density evaluation.
                                 const density::Point here{.x = blockX, .y = y, .z = blockZ};
                                 const double toggle =
-                                    interpreter_.evaluate(veinToggleNode, here, cache);
+                                    evaluateAtBlock(veinToggleKernel_, veinToggleNode, here, cache);
                                 if (ore::clearsRichness(y, toggle)) {
-                                    const double ridged =
-                                        interpreter_.evaluate(veinRidgedNode, here, cache);
+                                    const double ridged = evaluateAtBlock(
+                                        veinRidgedKernel_, veinRidgedNode, here, cache);
                                     if (ridged < 0.0) {
                                         const ore::Vein vein = oreVeins_->at(
                                             blockX, y, blockZ,
                                             ore::VeinInputs{.toggle = toggle,
                                                             .ridged = ridged,
-                                                            .gap = interpreter_.evaluate(
-                                                                veinGapNode, here, cache)});
+                                                            .gap = evaluateAtBlock(veinGapKernel_,
+                                                                                   veinGapNode,
+                                                                                   here, cache)});
                                         if (vein.placed()) {
                                             block = &veinBlock(vein);
                                         }

@@ -121,6 +121,68 @@ template<typename T>
     return lerp(part, fromOut, toOut);
 }
 
+// The arithmetic node types, each one expression, shared by evaluateNode and
+// a BlockKernel so that the two compute every value the same way.
+
+[[nodiscard]] double minOf(const double first, const double second) noexcept {
+    return first < second ? first : second;
+}
+
+[[nodiscard]] double maxOf(const double first, const double second) noexcept {
+    return first > second ? first : second;
+}
+
+[[nodiscard]] double cubeOf(const double input) noexcept {
+    return input * input * input;
+}
+
+[[nodiscard]] double halfNegative(const double input) noexcept {
+    return input < 0.0 ? input * 0.5 : input;
+}
+
+[[nodiscard]] double quarterNegative(const double input) noexcept {
+    return input < 0.0 ? input * 0.25 : input;
+}
+
+[[nodiscard]] double squeezeOf(const double argument) noexcept {
+    const double input = std::clamp(argument, -1.0, 1.0);
+    return (input / 2.0) - ((input * input * input) / 24.0);
+}
+
+/// Whether range_choice takes its `when_in_range` branch for @p input.
+[[nodiscard]] bool inRange(const double input, const double minInclusive,
+                           const double maxExclusive) noexcept {
+    return input >= minInclusive && input < maxExclusive;
+}
+
+/// The trilinear blend of a cell's corners, in kCornerOrder: y first, then
+/// x, then z. Both matter: lerp is not associative across dimensions in
+/// floating point, so a different order is a different world in the last
+/// bits. The order is the documented one and is *not* yet checked against
+/// vanilla — nothing available here samples terrain density — so SPEC §11
+/// carries it as open until the goldens can settle it.
+[[nodiscard]] double blendCell(const std::array<double, 8>& corners, const double tx,
+                               const double ty, const double tz) noexcept {
+    const double v000 = corners[0];
+    const double v001 = corners[1];
+    const double v010 = corners[2];
+    const double v011 = corners[3];
+    const double v100 = corners[4];
+    const double v101 = corners[5];
+    const double v110 = corners[6];
+    const double v111 = corners[7];
+
+    const double x0z0 = lerp(ty, v000, v010);
+    const double x1z0 = lerp(ty, v100, v110);
+    const double x0z1 = lerp(ty, v001, v011);
+    const double x1z1 = lerp(ty, v101, v111);
+
+    const double nearZ = lerp(tx, x0z0, x1z0);
+    const double farZ = lerp(tx, x0z1, x1z1);
+
+    return lerp(tz, nearZ, farZ);
+}
+
 /// The corner of the 4x4 column a block sits in. flat_cache samples there,
 /// and floorDiv is the point: at negative coordinates a truncating division
 /// would round towards zero and pick the wrong column.
@@ -1175,13 +1237,13 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         case NodeType::Min: {
             const double first = argument(0);
             const double second = argument(1);
-            value = first < second ? first : second;
+            value = minOf(first, second);
             break;
         }
         case NodeType::Max: {
             const double first = argument(0);
             const double second = argument(1);
-            value = first > second ? first : second;
+            value = maxOf(first, second);
             break;
         }
         case NodeType::Abs:
@@ -1192,26 +1254,18 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             value = input * input;
             break;
         }
-        case NodeType::Cube: {
-            const double input = argument(0);
-            value = input * input * input;
+        case NodeType::Cube:
+            value = cubeOf(argument(0));
             break;
-        }
-        case NodeType::HalfNegative: {
-            const double input = argument(0);
-            value = input < 0.0 ? input * 0.5 : input;
+        case NodeType::HalfNegative:
+            value = halfNegative(argument(0));
             break;
-        }
-        case NodeType::QuarterNegative: {
-            const double input = argument(0);
-            value = input < 0.0 ? input * 0.25 : input;
+        case NodeType::QuarterNegative:
+            value = quarterNegative(argument(0));
             break;
-        }
-        case NodeType::Squeeze: {
-            const double input = std::clamp(argument(0), -1.0, 1.0);
-            value = (input / 2.0) - ((input * input * input) / 24.0);
+        case NodeType::Squeeze:
+            value = squeezeOf(argument(0));
             break;
-        }
         case NodeType::Invert:
             // Documented only through its later rename to `reciprocal`.
             //
@@ -1228,10 +1282,9 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             break;
         case NodeType::RangeChoice: {
             const double input = argument(0);
-            const bool inRange = input >= op.parameters[0] && input < op.parameters[1];
             // Only the chosen branch is evaluated: the other may be far more
             // expensive, and vanilla does not evaluate it either.
-            value = inRange ? argument(1) : argument(2);
+            value = inRange(input, op.parameters[0], op.parameters[1]) ? argument(1) : argument(2);
             break;
         }
         case NodeType::YClampedGradient:
@@ -1552,113 +1605,103 @@ double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
     // The cell a point is in, refused by name where its corners leave int32
     // (cellCorner), so the corner arithmetic below stays inside it.
     const Point lower = cellCorner(at, cells);
-    const std::int32_t x0 = lower.x;
-    const std::int32_t y0 = lower.y;
-    const std::int32_t z0 = lower.z;
 
-    const double tx = static_cast<double>(at.x - x0) / static_cast<double>(cells.width);
-    const double ty = static_cast<double>(at.y - y0) / static_cast<double>(cells.height);
-    const double tz = static_cast<double>(at.z - z0) / static_cast<double>(cells.width);
-
-    const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
-        // The corner's own scope carries the same cache: a nested
-        // `interpolated` caches its own cell under its own node index, and
-        // the cell check below keeps the two from being confused.
-        Scope inner(scope.call(),
-                    Point{.x = x0 + (dx * cells.width),
-                          .y = y0 + (dy * cells.height),
-                          .z = z0 + (dz * cells.width)},
-                    scope.cells());
-        return evaluateNode(inner, argument);
-    };
+    const double tx = static_cast<double>(at.x - lower.x) / static_cast<double>(cells.width);
+    const double ty = static_cast<double>(at.y - lower.y) / static_cast<double>(cells.height);
+    const double tz = static_cast<double>(at.z - lower.z) / static_cast<double>(cells.width);
 
     // With a cache, the eight corners are computed once for the cell and
     // reused; without one, every point computes its own. The two paths
     // must produce identical values, and the arithmetic below is shared
     // between them precisely so that they cannot drift apart.
-    std::array<double, 8> own{};
-    const std::array<double, 8>* corners = &own;
     CornerCache* cache = scope.cache();
-    if (cache != nullptr) {
-        const Call& call = scope.call();
-        // What the corners are kept under besides their positions: the
-        // window, when the argument can tell windows apart (Op::readsWindow);
-        // nothing otherwise, since then every window gives the same corners.
-        // A cell corner is always a Block read (a Detached read never
-        // interpolates), so the context needs no place in it.
-        const std::uint32_t tag =
-            call.memo && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId : 0U;
-        CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
-        if (!entry.filled || entry.x != x0 || entry.y != y0 || entry.z != z0 ||
-            (call.memo && entry.tag != tag)) {
-            // Marked empty while it fills, so that a corner that throws
-            // leaves no cell behind with another cell's corners in it. No
-            // evaluation below touches this entry: it would have to reach
-            // this same argument from inside it, and the graph is acyclic.
-            entry.filled = false;
-            if (call.memo) {
-                // The order the eight were always evaluated in, so that a
-                // corner evaluated here for the first time is evaluated
-                // after the same corners it always followed.
-                for (std::size_t k = 0; k < entry.corners.size(); ++k) {
-                    const CornerOffset offset = kCornerOrder[k];
-                    entry.corners[k] = sharedCorner(argument, scope,
-                                                    Point{.x = x0 + (offset.dx * cells.width),
-                                                          .y = y0 + (offset.dy * cells.height),
-                                                          .z = z0 + (offset.dz * cells.width)},
-                                                    tag);
-                }
-            } else {
-                entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0),
-                                 corner(0, 1, 1), corner(1, 0, 0), corner(1, 0, 1),
-                                 corner(1, 1, 0), corner(1, 1, 1)};
-            }
-            entry.x = x0;
-            entry.y = y0;
-            entry.z = z0;
-            entry.tag = tag;
-            entry.filled = true;
-        }
-        corners = &entry.corners;
-    } else {
-        own = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
-               corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
+    if (cache == nullptr) {
+        const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
+            // The corner's own scope: with no cache it keeps no corners.
+            Scope inner(scope.call(),
+                        Point{.x = lower.x + (dx * cells.width),
+                              .y = lower.y + (dy * cells.height),
+                              .z = lower.z + (dz * cells.width)},
+                        scope.cells());
+            return evaluateNode(inner, argument);
+        };
+        const std::array<double, 8> own{corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0),
+                                        corner(0, 1, 1), corner(1, 0, 0), corner(1, 0, 1),
+                                        corner(1, 1, 0), corner(1, 1, 1)};
+        return blendCell(own, tx, ty, tz);
     }
-
-    // Sequenced through named locals, and blended y first, then x, then z.
-    // Both matter: lerp is not associative across dimensions in floating
-    // point, so a different order is a different world in the last bits.
-    // The order is the documented one and is *not* yet checked against
-    // vanilla — nothing available here samples terrain density — so SPEC §11
-    // carries it as open until the goldens can settle it.
-    const double v000 = (*corners)[0];
-    const double v001 = (*corners)[1];
-    const double v010 = (*corners)[2];
-    const double v011 = (*corners)[3];
-    const double v100 = (*corners)[4];
-    const double v101 = (*corners)[5];
-    const double v110 = (*corners)[6];
-    const double v111 = (*corners)[7];
-
-    const double x0z0 = lerp(ty, v000, v010);
-    const double x1z0 = lerp(ty, v100, v110);
-    const double x0z1 = lerp(ty, v001, v011);
-    const double x1z1 = lerp(ty, v101, v111);
-
-    const double nearZ = lerp(tx, x0z0, x1z0);
-    const double farZ = lerp(tx, x0z1, x1z1);
-
-    return lerp(tz, nearZ, farZ);
+    const Call& call = scope.call();
+    // What the corners are kept under besides their positions: the window,
+    // when the argument can tell windows apart (Op::readsWindow); nothing
+    // otherwise, since then every window gives the same corners. A cell
+    // corner is always a Block read (a Detached read never interpolates), so
+    // the context needs no place in it.
+    const std::uint32_t tag =
+        call.memo && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId : 0U;
+    CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
+    if (!entry.filled || entry.x != lower.x || entry.y != lower.y || entry.z != lower.z ||
+        (call.memo && entry.tag != tag)) {
+        fillCell(argument, call, scope.cells(), entry, lower, tag);
+    }
+    return blendCell(entry.corners, tx, ty, tz);
 }
 
-double Interpreter::sharedCorner(const NodeIndex argument, const Scope& scope, const Point corner,
-                                 const std::uint32_t tag) const {
+void Interpreter::fillCell(const NodeIndex argument, const Call& call, const bool cells,
+                           CornerCache::Entry& entry, const Point lower,
+                           const std::uint32_t tag) const {
+    // Only interpolate() and a BlockKernel call this, each with a lattice.
+    if (!cells_.has_value()) {
+        throw EvalError("'minecraft:interpolated' needs a cell geometry and this interpreter "
+                        "has none");
+    }
+    const CellGeometry geometry = *cells_;
+    // Marked empty while it fills, so that a corner that throws leaves no
+    // cell behind with another cell's corners in it. No evaluation below
+    // touches this entry: it would have to reach this same argument from
+    // inside it, and the graph is acyclic.
+    entry.filled = false;
+    if (call.memo) {
+        // The order the eight were always evaluated in, so that a corner
+        // evaluated here for the first time is evaluated after the same
+        // corners it always followed.
+        for (std::size_t k = 0; k < entry.corners.size(); ++k) {
+            const CornerOffset offset = kCornerOrder[k];
+            entry.corners[k] = sharedCorner(argument, call, cells,
+                                            Point{.x = lower.x + (offset.dx * geometry.width),
+                                                  .y = lower.y + (offset.dy * geometry.height),
+                                                  .z = lower.z + (offset.dz * geometry.width)},
+                                            tag);
+        }
+    } else {
+        // The corner's own scope carries the same cache: a nested
+        // `interpolated` caches its own cell under its own node index, and
+        // the cell check keeps the two from being confused.
+        const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
+            Scope inner(call,
+                        Point{.x = lower.x + (dx * geometry.width),
+                              .y = lower.y + (dy * geometry.height),
+                              .z = lower.z + (dz * geometry.width)},
+                        cells);
+            return evaluateNode(inner, argument);
+        };
+        entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
+                         corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
+    }
+    entry.x = lower.x;
+    entry.y = lower.y;
+    entry.z = lower.z;
+    entry.tag = tag;
+    entry.filled = true;
+}
+
+double Interpreter::sharedCorner(const NodeIndex argument, const Call& call, const bool cells,
+                                 const Point corner, const std::uint32_t tag) const {
     // Kept by the argument, the corner's own position and its tag (see
     // interpolate), and the tag's kind bit, which is a corner's. The value is
     // the argument at the corner, read through the call's window in the Block
     // context — the same evaluation every cell sharing this corner made of it
     // before — and it is stored only once that evaluation has returned.
-    CornerCache& cache = *scope.cache();
+    CornerCache& cache = *call.cache;
     const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x),
                              std::bit_cast<std::uint32_t>(corner.y),
                              std::bit_cast<std::uint32_t>(corner.z), cornerTag(tag)};
@@ -1667,11 +1710,385 @@ double Interpreter::sharedCorner(const NodeIndex argument, const Scope& scope, c
         return value;
     }
     {
-        Scope inner(scope.call(), corner, scope.cells());
+        Scope inner(call, corner, cells);
         value = evaluateNode(inner, argument);
     }
     cache.memo_.insert(key, value);
     return value;
+}
+
+// --- the block kernel (SPEC §4.1) ------------------------------------------
+
+namespace {
+
+/// Whether a BlockKernel lowers a node of @p type (see BlockKernel).
+[[nodiscard]] bool lowersType(const NodeType type) noexcept {
+    switch (type) {
+        case NodeType::Constant:
+        case NodeType::BlendAlpha:
+        case NodeType::BlendOffset:
+        case NodeType::Abs:
+        case NodeType::Add:
+        case NodeType::Clamp:
+        case NodeType::Cube:
+        case NodeType::HalfNegative:
+        case NodeType::Invert:
+        case NodeType::Max:
+        case NodeType::Min:
+        case NodeType::Mul:
+        case NodeType::QuarterNegative:
+        case NodeType::RangeChoice:
+        case NodeType::Square:
+        case NodeType::Squeeze:
+        case NodeType::YClampedGradient:
+        case NodeType::Interpolated:
+        case NodeType::BlendDensity:
+        case NodeType::Cache2d:
+        case NodeType::CacheOnce:
+        case NodeType::CacheAllInCell:
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
+std::optional<Interpreter::BlockKernel> Interpreter::blockKernel(const NodeIndex root) const {
+    requireNode(root);
+    BlockKernel kernel;
+    kernel.root_ = root;
+    const std::int32_t result = lowerBlock(kernel, root, 0);
+    if (result < 0) {
+        return std::nullopt;
+    }
+    kernel.result_ = static_cast<std::uint8_t>(result);
+    return kernel;
+}
+
+std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
+                                     const std::size_t depth) const {
+    using Code = BlockKernel::Code;
+    using KernelOp = BlockKernel::KernelOp;
+    // The depth is bounded by kMaxOps: a path longer than that holds more
+    // nodes than a kernel's list, so nothing deeper is lowered and the
+    // recursion stays shallow whatever the graph's depth.
+    const Op& op = ops_[static_cast<std::size_t>(index)];
+    if (depth > BlockKernel::kMaxOps || op.refuses || op.columnMemo || !lowersType(op.type)) {
+        return -1;
+    }
+    const auto newRegister = [&kernel]() -> std::int32_t {
+        if (kernel.registers_ >= BlockKernel::kMaxRegisters) {
+            return -1;
+        }
+        return static_cast<std::int32_t>(kernel.registers_++);
+    };
+    const auto emit = [&kernel](const KernelOp& lowered) {
+        if (kernel.ops_.size() >= BlockKernel::kMaxOps) {
+            return false;
+        }
+        kernel.ops_.push_back(lowered);
+        return true;
+    };
+    const auto argument = [&](const std::size_t which) {
+        return lowerBlock(kernel, op.arguments[which], depth + 1);
+    };
+    // Where the next op will sit, as a jump target: at most kMaxOps, which
+    // a byte holds.
+    const auto here = [&kernel]() { return static_cast<std::uint8_t>(kernel.ops_.size()); };
+    static_assert(BlockKernel::kMaxOps < 256 && BlockKernel::kMaxRegisters < 256);
+
+    switch (op.type) {
+        case NodeType::BlendDensity:
+        case NodeType::Cache2d:
+        case NodeType::CacheOnce:
+        case NodeType::CacheAllInCell:
+            // evaluateNode: `value = argument(0)`. The argument's register.
+            return argument(0);
+        case NodeType::RangeChoice: {
+            // The input, a test that skips the in-range branch, that branch
+            // and a jump past the other, then the other: only the branch
+            // taken runs, as only the branch chosen is evaluated.
+            const std::int32_t input = argument(0);
+            const std::int32_t target = input < 0 ? -1 : newRegister();
+            if (target < 0) {
+                return -1;
+            }
+            const std::size_t branch = kernel.ops_.size();
+            if (!emit(KernelOp{.code = Code::BranchOutOfRange,
+                               .target = 0,
+                               .first = static_cast<std::uint8_t>(input),
+                               .second = 0,
+                               .jump = 0,
+                               .interpolated = 0,
+                               .parameters = {op.parameters[0], op.parameters[1], 0.0, 0.0}})) {
+                return -1;
+            }
+            const std::int32_t inRangeValue = argument(1);
+            if (inRangeValue < 0 || !emit(KernelOp{.code = Code::Move,
+                                                   .target = static_cast<std::uint8_t>(target),
+                                                   .first = static_cast<std::uint8_t>(inRangeValue),
+                                                   .second = 0,
+                                                   .jump = 0,
+                                                   .interpolated = 0,
+                                                   .parameters = {}})) {
+                return -1;
+            }
+            const std::size_t skip = kernel.ops_.size();
+            if (!emit(KernelOp{.code = Code::Jump,
+                               .target = 0,
+                               .first = 0,
+                               .second = 0,
+                               .jump = 0,
+                               .interpolated = 0,
+                               .parameters = {}})) {
+                return -1;
+            }
+            kernel.ops_[branch].jump = here();
+            const std::int32_t outOfRangeValue = argument(2);
+            if (outOfRangeValue < 0 ||
+                !emit(KernelOp{.code = Code::Move,
+                               .target = static_cast<std::uint8_t>(target),
+                               .first = static_cast<std::uint8_t>(outOfRangeValue),
+                               .second = 0,
+                               .jump = 0,
+                               .interpolated = 0,
+                               .parameters = {}})) {
+                return -1;
+            }
+            kernel.ops_[skip].jump = here();
+            return target;
+        }
+        default:
+            break;
+    }
+
+    // Every other type: its arguments, first to last (an `interpolated`'s
+    // is the corners', not the block's), then the node itself.
+    KernelOp lowered{
+        .code = Code::Constant,
+        .target = 0,
+        .first = 0,
+        .second = 0,
+        .jump = 0,
+        .interpolated = 0,
+        .parameters = {op.parameters[0], op.parameters[1], op.parameters[2], op.parameters[3]}};
+    const std::size_t count =
+        op.type == NodeType::Interpolated
+            ? 0
+            : graph_->nodes()[static_cast<std::size_t>(index)].arguments.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::int32_t value = i < 2 ? argument(i) : -1;
+        if (value < 0) {
+            return -1;
+        }
+        (i == 0 ? lowered.first : lowered.second) = static_cast<std::uint8_t>(value);
+    }
+    switch (op.type) {
+        case NodeType::Constant:
+            lowered.code = Code::Constant;
+            break;
+        case NodeType::BlendAlpha:
+            // evaluateNode: 1.0, this engine never blending.
+            lowered.code = Code::Constant;
+            lowered.parameters = {1.0, 0.0, 0.0, 0.0};
+            break;
+        case NodeType::BlendOffset:
+            lowered.code = Code::Constant;
+            lowered.parameters = {0.0, 0.0, 0.0, 0.0};
+            break;
+        case NodeType::Add:
+            lowered.code = Code::Add;
+            break;
+        case NodeType::Mul:
+            lowered.code = Code::Mul;
+            break;
+        case NodeType::Min:
+            lowered.code = Code::Min;
+            break;
+        case NodeType::Max:
+            lowered.code = Code::Max;
+            break;
+        case NodeType::Abs:
+            lowered.code = Code::Abs;
+            break;
+        case NodeType::Square:
+            lowered.code = Code::Square;
+            break;
+        case NodeType::Cube:
+            lowered.code = Code::Cube;
+            break;
+        case NodeType::HalfNegative:
+            lowered.code = Code::HalfNegative;
+            break;
+        case NodeType::QuarterNegative:
+            lowered.code = Code::QuarterNegative;
+            break;
+        case NodeType::Squeeze:
+            lowered.code = Code::Squeeze;
+            break;
+        case NodeType::Invert:
+            lowered.code = Code::Invert;
+            break;
+        case NodeType::Clamp:
+            lowered.code = Code::Clamp;
+            break;
+        case NodeType::YClampedGradient:
+            lowered.code = Code::YClampedGradient;
+            break;
+        case NodeType::Interpolated:
+            lowered.code = Code::Interpolated;
+            lowered.interpolated = op.arguments[0];
+            break;
+        default:
+            // lowersType admits nothing else.
+            return -1;
+    }
+    const std::int32_t target = newRegister();
+    if (target < 0) {
+        return -1;
+    }
+    lowered.target = static_cast<std::uint8_t>(target);
+    return emit(lowered) ? target : -1;
+}
+
+double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCache& cache) const {
+    using Code = BlockKernel::Code;
+    // evaluate(root, at, cache)'s own check, which a kernel built here has
+    // already passed.
+    if (kernel.root_ >= graph_->nodeCount()) {
+        requireNode(kernel.root_);
+    }
+    if (cache.kernelValues_.size() < kernel.registers_) {
+        cache.kernelValues_.resize(kernel.registers_);
+    }
+    double* const values = cache.kernelValues_.data();
+    // callThrough's Call::memo, for this read: no window, Block.
+    const bool memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty();
+    // The point's cell and fractions, found at its first `interpolated`.
+    bool cellKnown = false;
+    Point lower;
+    double tx = 0.0;
+    double ty = 0.0;
+    double tz = 0.0;
+
+    const std::size_t count = kernel.ops_.size();
+    std::size_t pc = 0;
+    while (pc < count) {
+        const BlockKernel::KernelOp& op = kernel.ops_[pc];
+        // evaluateNode's cases, expression for expression (see there); the
+        // arguments are already in their registers, computed in its order.
+        switch (op.code) {
+            case Code::Constant:
+                values[op.target] = op.parameters[0];
+                break;
+            case Code::Add:
+                values[op.target] = values[op.first] + values[op.second];
+                break;
+            case Code::Mul:
+                values[op.target] = values[op.first] * values[op.second];
+                break;
+            case Code::Min:
+                values[op.target] = minOf(values[op.first], values[op.second]);
+                break;
+            case Code::Max:
+                values[op.target] = maxOf(values[op.first], values[op.second]);
+                break;
+            case Code::Abs:
+                values[op.target] = std::abs(values[op.first]);
+                break;
+            case Code::Square: {
+                const double input = values[op.first];
+                values[op.target] = input * input;
+                break;
+            }
+            case Code::Cube:
+                values[op.target] = cubeOf(values[op.first]);
+                break;
+            case Code::HalfNegative:
+                values[op.target] = halfNegative(values[op.first]);
+                break;
+            case Code::QuarterNegative:
+                values[op.target] = quarterNegative(values[op.first]);
+                break;
+            case Code::Squeeze:
+                values[op.target] = squeezeOf(values[op.first]);
+                break;
+            case Code::Invert:
+                values[op.target] = 1.0 / values[op.first];
+                break;
+            case Code::Clamp:
+                values[op.target] =
+                    std::clamp(values[op.first], op.parameters[0], op.parameters[1]);
+                break;
+            case Code::YClampedGradient:
+                values[op.target] =
+                    clampedMap(static_cast<double>(at.y), op.parameters[0], op.parameters[1],
+                               op.parameters[2], op.parameters[3]);
+                break;
+            case Code::Interpolated: {
+                if (!cellKnown) {
+                    // blockKernel lowers `interpolated` only where it does
+                    // not refuse, which takes a lattice; checked all the
+                    // same, as interpolate() does.
+                    if (!cells_.has_value()) {
+                        throw EvalError("'minecraft:interpolated' needs a cell geometry and this "
+                                        "interpreter has none");
+                    }
+                    const CellGeometry cells = *cells_;
+                    // interpolate()'s cellCorner, refused where it refuses —
+                    // at the point's first `interpolated`, as the walk first
+                    // asked — unless the point is inside the cache's last
+                    // cell: then floorDiv lands on that cell's own corner,
+                    // whose check it passed.
+                    if (cache.kernelCellKnown_ && cache.kernelCellGeometry_ == cells &&
+                        at.x >= cache.kernelCell_.x &&
+                        std::int64_t{at.x} - cache.kernelCell_.x < cells.width &&
+                        at.y >= cache.kernelCell_.y &&
+                        std::int64_t{at.y} - cache.kernelCell_.y < cells.height &&
+                        at.z >= cache.kernelCell_.z &&
+                        std::int64_t{at.z} - cache.kernelCell_.z < cells.width) {
+                        lower = cache.kernelCell_;
+                    } else {
+                        lower = cellCorner(at, cells);
+                        cache.kernelCell_ = lower;
+                        cache.kernelCellGeometry_ = cells;
+                        cache.kernelCellKnown_ = true;
+                    }
+                    tx = static_cast<double>(at.x - lower.x) / static_cast<double>(cells.width);
+                    ty = static_cast<double>(at.y - lower.y) / static_cast<double>(cells.height);
+                    tz = static_cast<double>(at.z - lower.z) / static_cast<double>(cells.width);
+                    cellKnown = true;
+                }
+                // interpolate()'s entry check. A kernel reads through no
+                // window, whose number is 0 (callThrough), so the tag is 0
+                // whatever the argument reaches.
+                CornerCache::Entry& entry =
+                    cache.entries_[static_cast<std::size_t>(op.interpolated)];
+                if (!entry.filled || entry.x != lower.x || entry.y != lower.y ||
+                    entry.z != lower.z || (memo && entry.tag != 0U)) {
+                    const Call call = callThrough(cache, nullptr, ReadContext::Block);
+                    fillCell(op.interpolated, call, true, entry, lower, 0U);
+                }
+                values[op.target] = blendCell(entry.corners, tx, ty, tz);
+                break;
+            }
+            case Code::Move:
+                values[op.target] = values[op.first];
+                break;
+            case Code::BranchOutOfRange:
+                if (!inRange(values[op.first], op.parameters[0], op.parameters[1])) {
+                    pc = op.jump;
+                    continue;
+                }
+                break;
+            case Code::Jump:
+                pc = op.jump;
+                continue;
+        }
+        ++pc;
+    }
+    return values[kernel.result_];
 }
 
 float Interpreter::evaluateSpline(Scope& scope, SplineIndex index) const {
