@@ -262,7 +262,11 @@ jobs:
     # is about twice its Debug time, past this workflow's budget; it runs
     # locally as `ctest --preset sanitize-conformance`.
     # Measured on an x86-64 dev box: the build in about a minute at six jobs,
-    # the 583 unit cases in about fourteen seconds at three (41 s of test time).
+    # the 631 unit cases in about twenty seconds at eight. The pinned pack is
+    # fetched first: six unit cases (ext-nukkit/tests/pipeline_test.cpp —
+    # opening a frozen world, fill's spans, fills on several threads at once)
+    # compile a real dimension and SKIP without it, which they all did here
+    # until 2026-10-26.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
@@ -270,6 +274,15 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Pin the JDK
+        # fetch-vanilla runs the server's own data generator for the biome
+        # parameters those cases read, and 1.21.11 needs Java 21+ (the
+        # conformance job's own step says why the runner's default will not do).
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
 
       - name: Clang and its UBSan runtime
         # Ubuntu ships the sanitizer runtime as a package of its own; this is
@@ -282,6 +295,28 @@ jobs:
 
       - name: Build
         run: cmake --build --preset sanitize --parallel 4
+
+      # The same content-addressed, SHA-1-verified jar cache the conformance
+      # job uses, under the same key; nothing fetched here is committed or
+      # uploaded (SPEC §12).
+      - name: Cache the vanilla server jar
+        uses: actions/cache@v4
+        with:
+          path: .fixtures/${{ env.MINECRAFT_VERSION }}/server-${{ env.MINECRAFT_VERSION }}.jar
+          key: vanilla-server-jar-${{ env.MINECRAFT_VERSION }}
+
+      - name: Fetch vanilla worldgen data
+        run: tools/fetch-vanilla
+
+      - name: Check the fixtures really arrived
+        # A fetch that produced nothing would leave the six cases skipping
+        # and the job green, which is what this step is here to stop.
+        run: |
+          root=".fixtures/${MINECRAFT_VERSION}"
+          test -d "${root}/worldgen/density_function"
+          test -d "${root}/worldgen/noise_settings"
+          test -d "${root}/biome_parameters"
+          echo "worldgen JSON: $(find "${root}/worldgen" -name '*.json' | wc -l)"
 
       - name: Unit suite under UBSan
         run: ctest --preset sanitize --parallel 4
@@ -606,6 +641,16 @@ jobs:
         if: steps.probe-keys.outcome == 'success'
         continue-on-error: true
         run: tools/probe-worlds verify
+
+      - name: The runner's CPU
+        # So a leg's time can be put on the hardware. GitHub's x86-64 runners
+        # differ in speed between runs of the same image: on 2026-10-25 one
+        # commit's x86-64 cases ran a median 1.75x slower than the commit
+        # before's while the ARM64 leg ran 0.93x (PROGRESS.md, the x86-64
+        # long pole), and no log said which machine either run had.
+        run: |
+          grep -m1 'model name' /proc/cpuinfo || true
+          echo "cores: $(nproc)"
 
       - name: Conformance suite
         # Four wide, an hour per case: the probe-backed psl sweep alone takes

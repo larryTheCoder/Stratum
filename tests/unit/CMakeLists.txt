@@ -100,8 +100,15 @@ if(TARGET stratum_nukkit_pipeline)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../ext-nukkit/tests/pipeline_test.cpp"
     )
     target_link_libraries(stratum_unit_tests PRIVATE stratum::nukkit_pipeline)
+    # The configured fixture location, declared with the default
+    # tests/conformance/ gives it, as ext/ does — not a hard-coded
+    # ${CMAKE_SOURCE_DIR}/.fixtures, which ignored -DSTRATUM_FIXTURES_DIR
+    # and so left a git worktree's six fixture cases here, the multi-thread
+    # fill equality among them, skipping without a word.
+    set(STRATUM_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/.fixtures" CACHE PATH
+        "Location of locally generated, never-committed vanilla fixtures")
     target_compile_definitions(stratum_unit_tests PRIVATE
-        "STRATUM_FIXTURES_DIR=\"${CMAKE_SOURCE_DIR}/.fixtures\""
+        "STRATUM_FIXTURES_DIR=\"${STRATUM_FIXTURES_DIR}\""
     )
 endif()
 
