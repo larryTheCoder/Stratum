@@ -346,35 +346,60 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     // golden Nether's bedrock floor and roof, where the Xoroshiro coin agrees
     // at chance (SPEC §11; vanilla_legacy_gradient_gap_test.cpp). This build
     // refused a legacy gradient by name until the executor ran that coin.
+    const bool legacy = noises != nullptr && noises->source() == density::RandomSource::Legacy;
+    std::map<std::string, std::size_t> gradientOf;
     // Each noise_threshold's slot in a ColumnMemo: one per distinct name, in
     // the order the conditions first name it.
-    executor.noiseSlot_.assign(graph.conditionCount(), 0);
-    {
-        std::map<data::ResourceLocation, std::size_t> slots;
-        for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
-            const Condition& condition = graph.condition(index);
-            if (condition.type != ConditionType::NoiseThreshold || !condition.noise.has_value()) {
-                continue;
-            }
-            const auto found = slots.emplace(*condition.noise, slots.size()).first;
-            executor.noiseSlot_[index] = found->second;
-        }
-        executor.noiseSlots_ = slots.size();
-    }
-    const bool legacy = noises != nullptr && noises->source() == density::RandomSource::Legacy;
+    std::map<data::ResourceLocation, std::size_t> noiseSlotOf;
+    executor.compiled_.assign(graph.conditionCount(), CompiledCondition{});
     for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
         const Condition& condition = graph.condition(index);
-        if (condition.type != ConditionType::VerticalGradient ||
-            executor.gradients_.contains(condition.randomName)) {
-            continue;
+        CompiledCondition& compiled = executor.compiled_[index];
+        switch (condition.type) {
+            case ConditionType::VerticalGradient: {
+                // Both anchors resolve: the loop at the top refused any that
+                // do not.
+                compiled.trueAtAndBelow = condition.trueAtAndBelow.resolve(*executor.geometry_);
+                compiled.falseAtAndAbove = condition.falseAtAndAbove.resolve(*executor.geometry_);
+                const auto [found, added] =
+                    gradientOf.emplace(condition.randomName, executor.gradientSources_.size());
+                if (added) {
+                    if (legacy) {
+                        executor.gradientSources_.emplace_back(
+                            rng::legacyPositionalSourceFor(worldSeed, condition.randomName));
+                    } else {
+                        executor.gradientSources_.emplace_back(
+                            rng::positionalSourceFor(worldSeed, condition.randomName));
+                    }
+                }
+                compiled.gradient = found->second;
+                break;
+            }
+            case ConditionType::YAbove:
+                // Resolves, likewise.
+                compiled.anchor = condition.anchor.resolve(*executor.geometry_);
+                break;
+            case ConditionType::NoiseThreshold:
+                if (condition.noise.has_value()) {
+                    compiled.noiseSlot =
+                        noiseSlotOf.emplace(*condition.noise, noiseSlotOf.size()).first->second;
+                }
+                break;
+            case ConditionType::StoneDepth:
+                compiled.ceiling = condition.surfaceType == "ceiling";
+                break;
+            default:
+                break;
         }
-        if (legacy) {
-            executor.gradients_.emplace(condition.randomName, rng::legacyPositionalSourceFor(
-                                                                  worldSeed, condition.randomName));
-        } else {
-            executor.gradients_.emplace(condition.randomName,
-                                        rng::positionalSourceFor(worldSeed, condition.randomName));
-        }
+    }
+    executor.noiseSlots_ = noiseSlotOf.size();
+    executor.rules_.reserve(graph.ruleCount());
+    for (RuleIndex index = 0; index < graph.ruleCount(); ++index) {
+        executor.rules_.push_back(&graph.rule(index));
+    }
+    executor.conditions_.reserve(graph.conditionCount());
+    for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
+        executor.conditions_.push_back(&graph.condition(index));
     }
     return executor;
 }
@@ -576,7 +601,7 @@ const settings::BlockState& Executor::bandAt(const std::int32_t y,
 
 const settings::BlockState* Executor::runRule(const RuleIndex index, const Context& at,
                                               ColumnMemo& memo) const {
-    const Rule& rule = graph_->rule(index);
+    const Rule& rule = ruleAt(index);
     switch (rule.type) {
         case RuleType::Block:
             return &rule.block;
@@ -608,25 +633,24 @@ std::int32_t Executor::depthFor(const Condition& condition, const Context& at,
 }
 
 bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& memo) const {
-    const Condition& condition = graph_->condition(index);
+    const Condition& condition = conditionAt(index);
     switch (condition.type) {
         case ConditionType::Not:
             return !test(condition.invert, at, memo);
 
         case ConditionType::VerticalGradient: {
-            const auto found = gradients_.find(condition.randomName);
-            if (found == gradients_.end()) {
+            // The source and both anchors, found and resolved at compile.
+            const CompiledCondition& compiled = compiled_[index];
+            if (compiled.gradient == kNoSource) {
                 throw ExecutionError("no positional source for random_name '" +
                                      condition.randomName + "'");
             }
-            const std::int32_t trueAtAndBelow = condition.trueAtAndBelow.resolve(*geometry_);
-            const std::int32_t falseAtAndAbove = condition.falseAtAndAbove.resolve(*geometry_);
             return std::visit(
                 [&](const auto& source) {
-                    return verticalGradientFires(source, at.x, at.y, at.z, trueAtAndBelow,
-                                                 falseAtAndAbove);
+                    return verticalGradientFires(source, at.x, at.y, at.z, compiled.trueAtAndBelow,
+                                                 compiled.falseAtAndAbove);
                 },
-                found->second);
+                gradientSources_[compiled.gradient]);
         }
 
         case ConditionType::YAbove: {
@@ -646,9 +670,8 @@ bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& m
             const std::int32_t scaled = narrowed(
                 std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
                 "y_above's surface_depth_multiplier times the surface depth");
-            const std::int32_t right =
-                narrowed(std::int64_t{condition.anchor.resolve(*geometry_)} + scaled,
-                         "y_above's anchor plus its scaled surface depth");
+            const std::int32_t right = narrowed(std::int64_t{compiled_[index].anchor} + scaled,
+                                                "y_above's anchor plus its scaled surface depth");
             return left >= right;
         }
 
@@ -673,7 +696,7 @@ bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& m
         }
 
         case ConditionType::StoneDepth: {
-            const bool ceiling = condition.surfaceType == "ceiling";
+            const bool ceiling = compiled_[index].ceiling;
             const std::int32_t run = ceiling ? at.stoneDepthBelow : at.stoneDepthAbove;
             // 0 means the position is not in a solid run AT ALL — reset by
             // air, per Context's own doc — and "N blocks deep in stone"
@@ -729,7 +752,8 @@ bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& m
             // y is the literal 0.0 for every block, so this is constant down a
             // column, and kept in the memo; x and z are absolute and
             // unquantised. Closed interval.
-            const double value = columnNoise(*condition.noise, noiseSlot_[index], at, memo);
+            const double value =
+                columnNoise(*condition.noise, compiled_[index].noiseSlot, at, memo);
             return condition.minThreshold <= value && value <= condition.maxThreshold;
         }
 

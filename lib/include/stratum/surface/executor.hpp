@@ -431,13 +431,49 @@ private:
     /// declared random source calls for, built at compile so that running a
     /// rule costs no hashing and no forking.
     using GradientSource = std::variant<rng::PositionalSource, rng::LegacyPositionalSource>;
-    std::map<std::string, GradientSource> gradients_;
+    std::vector<GradientSource> gradientSources_;
 
-    /// Each `noise_threshold`'s slot in a ColumnMemo, by condition index:
-    /// one slot per distinct noise name, so two conditions over one noise
-    /// read it once a column. Unused for every other condition type.
-    std::vector<std::size_t> noiseSlot_;
+    /// What a condition's test reads that is fixed once the tree is
+    /// compiled, worked out at compile instead of at every block: its
+    /// anchors resolved against the geometry (compile() has refused any that
+    /// do not resolve), its gradient's source found by name, its noise's
+    /// ColumnMemo slot and its `surface_type` read. By condition index; each
+    /// field is meaningful only for the type that reads it.
+    struct CompiledCondition {
+        /// `y_above`'s anchor.
+        std::int32_t anchor = 0;
+        /// `vertical_gradient`'s two anchors.
+        std::int32_t trueAtAndBelow = 0;
+        std::int32_t falseAtAndAbove = 0;
+        /// `vertical_gradient`'s source in gradientSources_, or kNoSource
+        /// for a name with none (which test() refuses, as it always did).
+        std::size_t gradient = kNoSource;
+        /// `noise_threshold`'s slot in a ColumnMemo: one per distinct noise
+        /// name, so two conditions over one noise read it once a column.
+        std::size_t noiseSlot = 0;
+        /// `stone_depth`'s `surface_type` is "ceiling".
+        bool ceiling = false;
+    };
+
+    static constexpr std::size_t kNoSource = static_cast<std::size_t>(-1);
+
+    std::vector<CompiledCondition> compiled_;
     std::size_t noiseSlots_ = 0;
+
+    /// The graph's rules and conditions, by index, read without the graph's
+    /// range check: compile() takes every index the tree holds from the
+    /// graph itself. An index past them goes through the graph's own checked
+    /// accessor, which refuses it as it always did.
+    std::vector<const Rule*> rules_;
+    std::vector<const Condition*> conditions_;
+
+    [[nodiscard]] const Rule& ruleAt(const RuleIndex index) const {
+        return index < rules_.size() ? *rules_[index] : graph_->rule(index);
+    }
+
+    [[nodiscard]] const Condition& conditionAt(const ConditionIndex index) const {
+        return index < conditions_.size() ? *conditions_[index] : graph_->condition(index);
+    }
 
     /// `bandlands`' own state: the table, built once (empty/default-filled
     /// until clayBandsBuilt_ says otherwise), and the noise its per-column

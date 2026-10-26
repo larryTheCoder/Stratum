@@ -930,8 +930,20 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // rather than reusing the first column's answer. Measured
     // (tools/analysis/generate-world.cpp): this took a real chunk's second
     // pass from about 8 seconds to about 0.5.
-    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, data::ResourceLocation>
-        biomeCache;
+    //
+    // Each entry keeps the biome as the source's own identifier (stable for
+    // the source's life, which outlives this filler) and, when the rules read
+    // `temperature`, that biome's declared temperature: looked up once, on
+    // the block that first resolves the quart, which is the first block that
+    // ever asked for it. A biome the table does not hold is refused there, as
+    // it always was; every later lookup of one it holds returned the same
+    // float, and is not repeated.
+    struct QuartBiome {
+        const data::ResourceLocation* id = nullptr;
+        float temperature = 0.0F;
+    };
+
+    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, QuartBiome> biomeCache;
 
     // What the rules read that is constant down a column — the surface depth
     // above all, which vanilla's overworld reads on every default block it
@@ -984,7 +996,6 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             const std::int32_t qz = quartSnap(z);
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
-            data::ResourceLocation biomeId{"minecraft", "plains"};
             // ONLY THE DEFAULT BLOCK IS A SURFACE-RULE POSITION. A rule's
             // block replaces `default_block` and nothing else: not fluid, not
             // air, not lava the aquifer placed, not a vein block. Measured on
@@ -1023,25 +1034,30 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     continue;
                 }
                 if (needsBiomeIdentity) {
+                    // The context's biome and temperature change only where
+                    // the quart does: assigned there, and left standing for
+                    // the blocks below it in the same quart.
                     const std::int32_t quartY = quartSnap(y);
                     if (!biomeQuartYKnown || biomeQuartY != quartY) {
                         const auto key = std::tuple{qx, quartY, qz};
-                        const auto cached = biomeCache.find(key);
-                        if (cached != biomeCache.end()) {
-                            biomeId = cached->second;
-                        } else {
-                            biomeId = surfaceBiomeAt(density::Point{.x = qx, .y = quartY, .z = qz},
-                                                     surfaceCache);
-                            biomeCache.emplace(key, biomeId);
+                        auto cached = biomeCache.find(key);
+                        if (cached == biomeCache.end()) {
+                            QuartBiome resolved;
+                            resolved.id = &surfaceBiomeAt(
+                                density::Point{.x = qx, .y = quartY, .z = qz}, surfaceCache);
+                            if (surfaceNeedsTemperature_) {
+                                resolved.temperature = biomeTemperatures_->at(*resolved.id);
+                            }
+                            cached = biomeCache.emplace(key, resolved).first;
+                        }
+                        if (surfaceNeedsBiome_) {
+                            context.biome = *cached->second.id;
+                        }
+                        if (surfaceNeedsTemperature_) {
+                            context.biomeTemperature = cached->second.temperature;
                         }
                         biomeQuartY = quartY;
                         biomeQuartYKnown = true;
-                    }
-                    if (surfaceNeedsBiome_) {
-                        context.biome = biomeId;
-                    }
-                    if (surfaceNeedsTemperature_) {
-                        context.biomeTemperature = biomeTemperatures_->at(biomeId);
                     }
                 }
 

@@ -1641,6 +1641,44 @@ TEST_CASE("temperature reads the biome's own declared value, not a made-up one",
     CHECK(buffer.at(15, -1, 9).name.toString() == "minecraft:packed_ice");
 }
 
+TEST_CASE("a biome the temperature table does not hold is refused by the fill, by name",
+          "[terrain][filler][surface]") {
+    // The pass looks a quart's declared temperature up once, on the block
+    // that first resolves the quart, and keeps it for the quart's other
+    // blocks. A biome the table lacks is refused on that first block, as the
+    // per-block lookup refused it — whether or not the rules would have
+    // reached their temperature test there, since the lookup always came
+    // before them.
+    const TempTree tree;
+    tree.defineSettings("test", flatSettings(false, false));
+    const LoadedSettings loaded = tree.load();
+    const RuleGraph surface = resolveSurface(nlohmann::json{
+        {"type", "minecraft:sequence"},
+        {"sequence",
+         {condition(gradient("minecraft:never", -1000, -999), block("minecraft:bedrock")),
+          condition(nlohmann::json{{"type", "minecraft:temperature"}},
+                    block("minecraft:packed_ice"))}}});
+    const ParameterList biomes = plainsEverywhere();
+    const TemperatureTable elsewhere = TemperatureTable::fromMap(
+        {{stratum::data::ResourceLocation::parse("minecraft:desert"), 2.0F}});
+    const ChunkFiller filler = compileFrom(tree, loaded, &surface, &biomes, &elsewhere);
+    REQUIRE(filler.runsSurfaceRules());
+
+    ChunkBuffer buffer(
+        loaded.settings.at(stratum::data::ResourceLocation::parse("minecraft:test")).geometry);
+    CHECK_THROWS_AS(filler.fill(0, 0, buffer), stratum::biome::TemperatureError);
+    CHECK_THROWS_WITH(filler.fill(0, 0, buffer), ContainsSubstring("'minecraft:plains'"));
+
+    // With the biome in the table, the same tree fills, and the kept
+    // temperature decides every block of every quart.
+    const TemperatureTable plains = plainsTemperature(tree, 0.1);
+    const ChunkFiller held = compileFrom(tree, loaded, &surface, &biomes, &plains);
+    held.fill(0, 0, buffer);
+    for (const std::int32_t y : {-16, -13, -12, -5, -4, -1}) {
+        CHECK(buffer.at(7, y, 7).name.toString() == "minecraft:packed_ice");
+    }
+}
+
 TEST_CASE("above_preliminary_surface's edge carries surfaceDepth - 8 under a constant level",
           "[terrain][filler][surface]") {
     // Built directly rather than through compileFrom()'s shared registry for

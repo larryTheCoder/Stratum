@@ -1167,6 +1167,60 @@ TEST_CASE("apply with a column memo places what apply places, block for block", 
     CHECK(placedNames.size() >= 8U);
 }
 
+TEST_CASE("each vertical_gradient draws its own name's coin between its own anchors", "[surface]") {
+    // compile() finds each gradient's source by name and resolves its
+    // anchors once. Three gradients, two sharing a name, anchors of all
+    // three kinds: every block placed is the one the public coin says.
+    const auto anchored = [](const std::string& name, const nlohmann::json& trueAt,
+                             const nlohmann::json& falseAt) {
+        return nlohmann::json{{"type", "minecraft:vertical_gradient"},
+                              {"random_name", name},
+                              {"true_at_and_below", trueAt},
+                              {"false_at_and_above", falseAt}};
+    };
+    const nlohmann::json first = anchored("stratum:a", {{"absolute", -8}}, {{"absolute", 8}});
+    const nlohmann::json second =
+        anchored("stratum:b", {{"above_bottom", 40}}, {{"above_bottom", 80}});
+    const nlohmann::json third = anchored("stratum:a", {{"below_top", 300}}, {{"below_top", 250}});
+    const auto when = [](const nlohmann::json& condition, const std::string& name) {
+        return nlohmann::json{
+            {"type", "minecraft:condition"}, {"if_true", condition}, {"then_run", block(name)}};
+    };
+    const RuleGraph graph =
+        resolve(nlohmann::json{{"type", "minecraft:sequence"},
+                               {"sequence",
+                                {when(first, "minecraft:stone"), when(second, "minecraft:dirt"),
+                                 when(third, "minecraft:sand")}}});
+    const auto geometry = overworldGeometry();
+    const Executor executor = Executor::compile(graph, kSeed, geometry);
+
+    const stratum::rng::PositionalSource a = stratum::rng::positionalSourceFor(kSeed, "stratum:a");
+    const stratum::rng::PositionalSource b = stratum::rng::positionalSourceFor(kSeed, "stratum:b");
+    // overworldGeometry(): min_y -64, height 384, so the top block is 319.
+    std::size_t fired = 0;
+    for (std::int32_t x = -6; x <= 6; ++x) {
+        for (std::int32_t y = -64; y <= 100; ++y) {
+            const auto* placed = executor.apply(at(x, y, 3));
+            std::string expected;
+            if (stratum::surface::verticalGradientFires(a, x, y, 3, -8, 8)) {
+                expected = "minecraft:stone";
+            } else if (stratum::surface::verticalGradientFires(b, x, y, 3, -24, 16)) {
+                expected = "minecraft:dirt";
+            } else if (stratum::surface::verticalGradientFires(a, x, y, 3, 19, 69)) {
+                expected = "minecraft:sand";
+            }
+            if (expected.empty()) {
+                CHECK(placed == nullptr);
+            } else {
+                REQUIRE(placed != nullptr);
+                CHECK(placed->name.toString() == expected);
+                ++fired;
+            }
+        }
+    }
+    CHECK(fired > 100U);
+}
+
 TEST_CASE("apply with a column memo refuses where apply refuses, and keeps nothing from it",
           "[surface][memo][ub]") {
     // The surface depth refused (a datapack's amplitudes put it past int32)
