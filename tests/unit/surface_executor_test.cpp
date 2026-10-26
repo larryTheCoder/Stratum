@@ -1050,3 +1050,157 @@ TEST_CASE("rules nested past kMaxRuleDepth are refused by name, and those at it 
                                             ContainsSubstring("nest more than 128 deep")));
     }
 }
+
+// --- the column memo (surface::ColumnMemo) ---------------------------------
+//
+// apply(at, memo) keeps the reads that are constant down a column — the
+// surface depth, surface_secondary, each noise_threshold's noise, bandlands'
+// offset and the freezing field — from the first block of the column that
+// reads them. It must place what apply(at) places at every block, and refuse
+// what it refuses at the same block in the same words.
+
+namespace {
+
+/// A tree that reads every value the memo keeps, each behind its own
+/// condition, so that a block reaches a different subset of them depending
+/// on where it sits.
+[[nodiscard]] nlohmann::json everyColumnRead() {
+    const auto rule = [](const nlohmann::json& condition, const nlohmann::json& then) {
+        return nlohmann::json{
+            {"type", "minecraft:condition"}, {"if_true", condition}, {"then_run", then}};
+    };
+    return nlohmann::json{
+        {"type", "minecraft:sequence"},
+        {"sequence",
+         {rule(nlohmann::json{{"type", "minecraft:noise_threshold"},
+                              {"noise", "minecraft:steep"},
+                              {"min_threshold", -0.05},
+                              {"max_threshold", 0.05}},
+               block("minecraft:red_sand")),
+          rule(nlohmann::json{{"type", "minecraft:temperature"}}, block("minecraft:snow_block")),
+          rule(nlohmann::json{{"type", "minecraft:stone_depth"},
+                              {"offset", 1},
+                              {"surface_type", "floor"},
+                              {"add_surface_depth", true},
+                              {"secondary_depth_range", 6}},
+               block("minecraft:dirt")),
+          rule(nlohmann::json{{"type", "minecraft:hole"}}, block("minecraft:air")),
+          rule(nlohmann::json{{"type", "minecraft:noise_threshold"},
+                              {"noise", "minecraft:steep"},
+                              {"min_threshold", 0.2},
+                              {"max_threshold", 1.0}},
+               block("minecraft:gravel")),
+          rule(nlohmann::json{{"type", "minecraft:noise_threshold"},
+                              {"noise", "minecraft:surface"},
+                              {"min_threshold", -0.3},
+                              {"max_threshold", 0.0}},
+               block("minecraft:sand")),
+          rule(nlohmann::json{{"type", "minecraft:y_above"},
+                              {"anchor", {{"absolute", 70}}},
+                              {"surface_depth_multiplier", 2},
+                              {"add_stone_depth", true}},
+               nlohmann::json{{"type", "minecraft:bandlands"}}),
+          rule(nlohmann::json{{"type", "minecraft:above_preliminary_surface"}},
+               block("minecraft:grass_block")),
+          rule(nlohmann::json{{"type", "minecraft:water"},
+                              {"offset", -1},
+                              {"surface_depth_multiplier", -1},
+                              {"add_stone_depth", false}},
+               block("minecraft:clay"))}}};
+}
+
+/// A block of the column (@p x, @p z) at @p y, with column facts that vary
+/// with y, so that every condition above is true somewhere and false
+/// elsewhere.
+[[nodiscard]] Context columnBlock(std::int32_t x, std::int32_t y, std::int32_t z) {
+    // Every operand of % is kept non-negative (CLAUDE.md): x and z run from
+    // -40 and -3, y from 40 to 140.
+    Context context = at(x, y, z, 60 + ((x + 100) % 7));
+    context.stoneDepthAbove = 1 + ((170 - y) % 9);
+    context.stoneDepthBelow = 1 + ((y + 64) % 5);
+    context.biomeTemperature = ((x + 99) % 3 == 0) ? 0.1F : 0.5F;
+    if ((z + 4) % 2 == 0) {
+        context.waterHeight = 63;
+    }
+    return context;
+}
+
+} // namespace
+
+TEST_CASE("apply with a column memo places what apply places, block for block", "[surface][memo]") {
+    const NoiseTree tree{{"surface", kTameSurface},
+                         {"surface_secondary", kTameSecondary},
+                         {"clay_bands_offset", kTameSurface},
+                         {"steep", kTameSecondary}};
+    const auto noises = tree.registry();
+    const RuleGraph graph = resolve(everyColumnRead());
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry(), &noises, 63);
+
+    stratum::surface::ColumnMemo memo;
+    std::set<std::string> placedNames;
+    std::size_t compared = 0;
+    const auto same = [&](const Context& context) {
+        const auto* expected = executor.apply(context);
+        const auto* actual = executor.apply(context, memo);
+        REQUIRE(expected == actual);
+        if (actual != nullptr) {
+            placedNames.insert(actual->name.toString());
+        }
+        ++compared;
+    };
+    // Column by column, top down, as the filler walks them.
+    for (std::int32_t z = -3; z <= 3; ++z) {
+        for (std::int32_t x = -40; x <= 40; ++x) {
+            for (std::int32_t y = 140; y >= 40; --y) {
+                same(columnBlock(x, y, z));
+            }
+        }
+    }
+    // Two columns interleaved block by block, so that the memo is rebound at
+    // every call and each column is revisited after the other.
+    for (std::int32_t y = 140; y >= 40; --y) {
+        same(columnBlock(5, y, 1));
+        same(columnBlock(-5, y, 2));
+    }
+    CHECK(compared > 50000U);
+    // Most rules placed somewhere, so the kept reads decided blocks.
+    CHECK(placedNames.size() >= 8U);
+}
+
+TEST_CASE("apply with a column memo refuses where apply refuses, and keeps nothing from it",
+          "[surface][memo][ub]") {
+    // The surface depth refused (a datapack's amplitudes put it past int32)
+    // in some columns and not in others.
+    const NoiseTree tree{{"surface", kHugeAmplitude}, {"surface_secondary", kTameSecondary}};
+    const auto noises = tree.registry();
+    const RuleGraph graph = resolve(when(nlohmann::json{{"type", "minecraft:hole"}}));
+    const Executor executor = Executor::compile(graph, kSeed, overworldGeometry(), &noises);
+
+    stratum::surface::ColumnMemo memo;
+    std::size_t refusedColumns = 0;
+    std::size_t runColumns = 0;
+    for (std::int32_t x = 0; x < 64; ++x) {
+        std::string expected;
+        try {
+            static_cast<void>(executor.apply(at(x, 64, 0)));
+        } catch (const ExecutionError& error) {
+            expected = error.what();
+        }
+        for (const std::int32_t y : {64, 63, 10}) {
+            if (expected.empty()) {
+                CHECK(executor.apply(at(x, y, 0), memo) == executor.apply(at(x, y, 0)));
+            } else {
+                // Every block of the column refuses, the second as the first:
+                // nothing was kept from the refusal.
+                CHECK_THROWS_WITH(executor.apply(at(x, y, 0), memo), expected);
+            }
+        }
+        if (expected.empty()) {
+            ++runColumns;
+        } else {
+            ++refusedColumns;
+        }
+    }
+    CHECK(refusedColumns > 0U);
+    CHECK(runColumns > 0U);
+}

@@ -346,6 +346,21 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     // golden Nether's bedrock floor and roof, where the Xoroshiro coin agrees
     // at chance (SPEC §11; vanilla_legacy_gradient_gap_test.cpp). This build
     // refused a legacy gradient by name until the executor ran that coin.
+    // Each noise_threshold's slot in a ColumnMemo: one per distinct name, in
+    // the order the conditions first name it.
+    executor.noiseSlot_.assign(graph.conditionCount(), 0);
+    {
+        std::map<data::ResourceLocation, std::size_t> slots;
+        for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
+            const Condition& condition = graph.condition(index);
+            if (condition.type != ConditionType::NoiseThreshold || !condition.noise.has_value()) {
+                continue;
+            }
+            const auto found = slots.emplace(*condition.noise, slots.size()).first;
+            executor.noiseSlot_[index] = found->second;
+        }
+        executor.noiseSlots_ = slots.size();
+    }
     const bool legacy = noises != nullptr && noises->source() == density::RandomSource::Legacy;
     for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
         const Condition& condition = graph.condition(index);
@@ -420,16 +435,77 @@ bool Executor::freezing(const std::int32_t x, const std::int32_t y, const std::i
         // Float32 and left to right from here down. `* 0.05F / 40.0F` is NOT
         // `* 0.00125F`: the grouping is what was measured, and the folded
         // constant disagrees with the server.
-        const auto field =
-            static_cast<float>(8.0 * temperature_.sampleSimplex2D(static_cast<double>(x) / 8.0,
-                                                                  static_cast<double>(z) / 8.0));
+        const float field = freezingField(x, z);
         value -= (field + static_cast<float>(y) - static_cast<float>(origin)) * 0.05F / 40.0F;
     }
     return value < 0.15F;
 }
 
+float Executor::freezingField(const std::int32_t x, const std::int32_t z) const noexcept {
+    return static_cast<float>(8.0 * temperature_.sampleSimplex2D(static_cast<double>(x) / 8.0,
+                                                                 static_cast<double>(z) / 8.0));
+}
+
+bool Executor::freezing(const Context& at, ColumnMemo& memo) const noexcept {
+    // freezing(x, y, z, temperature) step for step, with the field, a
+    // function of the column alone, kept in the memo.
+    const std::int64_t origin = std::int64_t{seaLevel_} + kFreezingOriginAbove;
+    float value = at.biomeTemperature;
+    if (at.y > origin) {
+        if (!memo.hasFreezingField_) {
+            memo.freezingField_ = freezingField(at.x, at.z);
+            memo.hasFreezingField_ = true;
+        }
+        const float field = memo.freezingField_;
+        value -= (field + static_cast<float>(at.y) - static_cast<float>(origin)) * 0.05F / 40.0F;
+    }
+    return value < 0.15F;
+}
+
 const settings::BlockState* Executor::apply(const Context& at) const {
-    return runRule(graph_->root(), at);
+    ColumnMemo memo;
+    return apply(at, memo);
+}
+
+const settings::BlockState* Executor::apply(const Context& at, ColumnMemo& memo) const {
+    memo.bind(at.x, at.z);
+    return runRule(graph_->root(), at, memo);
+}
+
+std::int32_t Executor::columnSurfaceDepth(const Context& at, ColumnMemo& memo) const {
+    if (!memo.hasDepth_) {
+        memo.depth_ = surfaceDepth(at.x, at.z);
+        memo.hasDepth_ = true;
+    }
+    return memo.depth_;
+}
+
+double Executor::columnSecondary(const Context& at, ColumnMemo& memo) const {
+    if (!memo.hasSecondary_) {
+        memo.secondary_ = sampleColumn(*surfaceSecondary_, kSurfaceSecondaryNoise, at.x, at.z);
+        memo.hasSecondary_ = true;
+    }
+    return memo.secondary_;
+}
+
+double Executor::columnNoise(const data::ResourceLocation& name, const std::size_t slot,
+                             const Context& at, ColumnMemo& memo) const {
+    if (memo.hasNoise_.size() < noiseSlots_) {
+        memo.noise_.resize(noiseSlots_, 0.0);
+        memo.hasNoise_.resize(noiseSlots_, char{0});
+    }
+    if (memo.hasNoise_[slot] == 0) {
+        // The same lookup and the same refusals, in the same order, as the
+        // uncached read always made: the condition's noise found in the
+        // registry by name, then sampled at the column.
+        const noise::NormalNoise* sampled = noises_->find(name);
+        if (sampled == nullptr) {
+            throw ExecutionError("no noise '" + name.toString() + "' for a noise_threshold");
+        }
+        memo.noise_[slot] = sampleColumn(*sampled, name.toString(), at.x, at.z);
+        memo.hasNoise_[slot] = 1;
+    }
+    return memo.noise_[slot];
 }
 
 const settings::BlockState& Executor::clayBandAt(const std::size_t index) const {
@@ -444,16 +520,37 @@ const settings::BlockState& Executor::clayBandAt(const std::size_t index) const 
     return clayBands_[index];
 }
 
-const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const std::int32_t y,
-                                                  const std::int32_t z) const {
-    const double raw = sampleColumn(*clayBandsOffset_, kClayBandsOffsetNoise, x, z);
+namespace {
+
+/// `bandlands`' per-column shift, from its noise's raw sample at the column.
+[[nodiscard]] std::int32_t bandOffset(const double raw) {
     // Round-half-up (Java's Math.round: floor(v + 0.5)) — ties go toward
     // positive infinity, not away from zero (spec/bandlands-spec.md Q4.4).
     // Refused where no int holds it (SPEC §8): a datapack's amplitudes can
     // put it there, and what the server makes of such an offset is
     // unmeasured.
-    const std::int32_t offset =
-        truncated(std::floor((raw * 4.0) + 0.5), "bandlands' offset (minecraft:clay_bands_offset)");
+    return truncated(std::floor((raw * 4.0) + 0.5),
+                     "bandlands' offset (minecraft:clay_bands_offset)");
+}
+
+} // namespace
+
+const settings::BlockState& Executor::bandlandsAt(const Context& at, ColumnMemo& memo) const {
+    if (!memo.hasBandOffset_) {
+        memo.bandOffset_ =
+            bandOffset(sampleColumn(*clayBandsOffset_, kClayBandsOffsetNoise, at.x, at.z));
+        memo.hasBandOffset_ = true;
+    }
+    return bandAt(at.y, memo.bandOffset_);
+}
+
+const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const std::int32_t y,
+                                                  const std::int32_t z) const {
+    return bandAt(y, bandOffset(sampleColumn(*clayBandsOffset_, kClayBandsOffsetNoise, x, z)));
+}
+
+const settings::BlockState& Executor::bandAt(const std::int32_t y,
+                                             const std::int32_t offset) const {
     // Vanilla's OWN index arithmetic: one Java '%' after a single '+192', not
     // a safe floorMod (spec/bandlands-spec.md Q4.5). C++'s '%' on int32_t
     // already matches Java's here — both truncate toward zero — so this is
@@ -477,7 +574,8 @@ const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const st
     return clayBands_[static_cast<std::size_t>(index)];
 }
 
-const settings::BlockState* Executor::runRule(const RuleIndex index, const Context& at) const {
+const settings::BlockState* Executor::runRule(const RuleIndex index, const Context& at,
+                                              ColumnMemo& memo) const {
     const Rule& rule = graph_->rule(index);
     switch (rule.type) {
         case RuleType::Block:
@@ -485,15 +583,16 @@ const settings::BlockState* Executor::runRule(const RuleIndex index, const Conte
         case RuleType::Sequence:
             // First rule that places something wins; the rest are not tried.
             for (const RuleIndex child : rule.sequence) {
-                if (const settings::BlockState* placed = runRule(child, at); placed != nullptr) {
+                if (const settings::BlockState* placed = runRule(child, at, memo);
+                    placed != nullptr) {
                     return placed;
                 }
             }
             return nullptr;
         case RuleType::Condition:
-            return test(rule.condition, at) ? runRule(rule.thenRun, at) : nullptr;
+            return test(rule.condition, at, memo) ? runRule(rule.thenRun, at, memo) : nullptr;
         case RuleType::Bandlands:
-            return &bandlandsAt(at.x, at.y, at.z);
+            return &bandlandsAt(at, memo);
         default:
             // compile() refuses anything else this build cannot run, so
             // reaching one here is a bug in this file rather than a real
@@ -502,16 +601,17 @@ const settings::BlockState* Executor::runRule(const RuleIndex index, const Conte
     }
 }
 
-std::int32_t Executor::depthFor(const Condition& condition, const Context& at) const {
+std::int32_t Executor::depthFor(const Condition& condition, const Context& at,
+                                ColumnMemo& memo) const {
     // Only pay for the noise and the draw when a multiplier actually uses it.
-    return condition.surfaceDepthMultiplier == 0 ? 0 : surfaceDepth(at.x, at.z);
+    return condition.surfaceDepthMultiplier == 0 ? 0 : columnSurfaceDepth(at, memo);
 }
 
-bool Executor::test(const ConditionIndex index, const Context& at) const {
+bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& memo) const {
     const Condition& condition = graph_->condition(index);
     switch (condition.type) {
         case ConditionType::Not:
-            return !test(condition.invert, at);
+            return !test(condition.invert, at, memo);
 
         case ConditionType::VerticalGradient: {
             const auto found = gradients_.find(condition.randomName);
@@ -543,9 +643,9 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             const std::int32_t left =
                 narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
                          "y_above's y plus the stone depth");
-            const std::int32_t scaled =
-                narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at),
-                         "y_above's surface_depth_multiplier times the surface depth");
+            const std::int32_t scaled = narrowed(
+                std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
+                "y_above's surface_depth_multiplier times the surface depth");
             const std::int32_t right =
                 narrowed(std::int64_t{condition.anchor.resolve(*geometry_)} + scaled,
                          "y_above's anchor plus its scaled surface depth");
@@ -564,9 +664,9 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
                          "water's y plus the stone depth");
             const std::int32_t raised = narrowed(std::int64_t{*at.waterHeight} + condition.offset,
                                                  "water's water height plus its offset");
-            const std::int32_t scaled =
-                narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at),
-                         "water's surface_depth_multiplier times the surface depth");
+            const std::int32_t scaled = narrowed(
+                std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
+                "water's surface_depth_multiplier times the surface depth");
             const std::int32_t right = narrowed(std::int64_t{raised} + scaled,
                                                 "water's level plus its scaled surface depth");
             return left >= right;
@@ -592,12 +692,11 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             const std::int32_t depth = run - 1;
             std::int32_t threshold = condition.offset;
             if (condition.addSurfaceDepth) {
-                threshold = narrowed(std::int64_t{threshold} + surfaceDepth(at.x, at.z),
+                threshold = narrowed(std::int64_t{threshold} + columnSurfaceDepth(at, memo),
                                      "stone_depth's offset plus the surface depth");
             }
             if (condition.secondaryDepthRange != 0) {
-                const double secondary =
-                    sampleColumn(*surfaceSecondary_, kSurfaceSecondaryNoise, at.x, at.z);
+                const double secondary = columnSecondary(at, memo);
                 // From [-1, 1], truncated, no clamp — `round` and the other
                 // three mappings were all refuted. Refused where no int holds
                 // it (a datapack's amplitudes), never converted undefined.
@@ -612,7 +711,7 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
 
         case ConditionType::Hole:
             // A pure function of the column: it never looks at the terrain.
-            return surfaceDepth(at.x, at.z) <= 0;
+            return columnSurfaceDepth(at, memo) <= 0;
 
         case ConditionType::Steep:
             // WEST minus EAST, and SOUTH minus NORTH. The asymmetry is real
@@ -627,14 +726,10 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             if (!condition.noise.has_value()) {
                 throw ExecutionError("a noise_threshold reached the executor without a noise");
             }
-            const noise::NormalNoise* sampled = noises_->find(*condition.noise);
-            if (sampled == nullptr) {
-                throw ExecutionError("no noise '" + condition.noise->toString() +
-                                     "' for a noise_threshold");
-            }
             // y is the literal 0.0 for every block, so this is constant down a
-            // column; x and z are absolute and unquantised. Closed interval.
-            const double value = sampleColumn(*sampled, condition.noise->toString(), at.x, at.z);
+            // column, and kept in the memo; x and z are absolute and
+            // unquantised. Closed interval.
+            const double value = columnNoise(*condition.noise, noiseSlot_[index], at, memo);
             return condition.minThreshold <= value && value <= condition.maxThreshold;
         }
 
@@ -652,7 +747,7 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
             // was unknown was C, and C is not `preliminarySurface`.
             return at.y >=
                    narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
-                                                      surfaceDepth(at.x, at.z),
+                                                      columnSurfaceDepth(at, memo),
                                                   "the preliminary surface plus the surface "
                                                   "depth")} -
                                 8,
@@ -669,7 +764,7 @@ bool Executor::test(const ConditionIndex index, const Context& at) const {
         }
 
         case ConditionType::Temperature:
-            return freezing(at.x, at.y, at.z, at.biomeTemperature);
+            return freezing(at, memo);
 
         default:
             throw ExecutionError("reached a condition type compile() should have refused");

@@ -933,6 +933,13 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, data::ResourceLocation>
         biomeCache;
 
+    // What the rules read that is constant down a column — the surface depth
+    // above all, which vanilla's overworld reads on every default block it
+    // walks — kept from the first block of each column that reads it
+    // (surface::ColumnMemo: exact, refusals included). It forgets on its own
+    // whenever a block of another column is asked about.
+    surface::ColumnMemo columnMemo;
+
     for (int localZ = 0; localZ < kChunkWidth; ++localZ) {
         for (int localX = 0; localX < kChunkWidth; ++localX) {
             const std::int32_t x = baseX + localX;
@@ -1043,7 +1050,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 context.stoneDepthBelow = column.stoneDepthBelow(y);
                 context.waterHeight = column.waterHeight();
 
-                if (const settings::BlockState* placed = executor.apply(context);
+                if (const settings::BlockState* placed = executor.apply(context, columnMemo);
                     placed != nullptr) {
                     into.set(localX, y, localZ, *placed);
                 }

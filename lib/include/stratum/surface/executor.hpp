@@ -178,6 +178,71 @@ void fillSteepNeighbours(Context& at, HeightAt&& heightAt) {
     at.heightSouth = heightAt(bx + lx, bz + std::min(lz + 1, 15));
 }
 
+/// Per-call scratch for Executor::apply: what the rules read that is the
+/// same at every y of a column, kept from the first block of the column that
+/// reads it.
+///
+/// WHY IT EXISTS. Every one of these reads is a pure function of the world
+/// seed and (x, z) alone: the surface depth (a `minecraft:surface` sample at
+/// (x, 0, z) and one positional draw at (x, 0, z)), `minecraft:surface_secondary`
+/// at (x, 0, z), each `noise_threshold`'s noise at (x, 0, z), `bandlands`'
+/// offset and the freezing field `temperature` reads above its origin. Yet a
+/// rule tree asks for them per block — vanilla's overworld asks for the
+/// surface depth on every default block it walks, through
+/// `above_preliminary_surface`, 38 000 noise samples a chunk for 256 columns.
+///
+/// EXACT, refusals included. A read that throws (a sample the noise refuses,
+/// a depth no int holds) throws at the first block that asks for it, exactly
+/// as before, and the exception leaves the call, so nothing is kept from it;
+/// a read that returns is kept, and every later block of the column would
+/// have computed the same value and returned. What depends on more than the
+/// column — the y, a condition's own range or multiplier, and every
+/// refusal those can draw — is still computed per block.
+///
+/// Keyed by its column: a call for another (x, z) forgets everything first,
+/// so one memo can be handed every block of a chunk in any order. It belongs
+/// to one caller at a time and never to the Executor, which is shared
+/// between threads (SPEC §4.1).
+class ColumnMemo {
+public:
+    ColumnMemo() = default;
+
+private:
+    friend class Executor;
+
+    /// Binds the memo to the column (@p x, @p z), forgetting what it held if
+    /// that is another column.
+    void bind(const std::int32_t x, const std::int32_t z) noexcept {
+        if (bound_ && x == x_ && z == z_) {
+            return;
+        }
+        x_ = x;
+        z_ = z;
+        bound_ = true;
+        hasDepth_ = false;
+        hasSecondary_ = false;
+        hasBandOffset_ = false;
+        hasFreezingField_ = false;
+        std::fill(hasNoise_.begin(), hasNoise_.end(), char{0});
+    }
+
+    std::int32_t x_ = 0;
+    std::int32_t z_ = 0;
+    bool bound_ = false;
+    bool hasDepth_ = false;
+    bool hasSecondary_ = false;
+    bool hasBandOffset_ = false;
+    bool hasFreezingField_ = false;
+    std::int32_t depth_ = 0;
+    double secondary_ = 0.0;
+    std::int32_t bandOffset_ = 0;
+    float freezingField_ = 0.0F;
+    /// One per noise a `noise_threshold` names, by the slot compile() gave
+    /// it; sized on the first such read.
+    std::vector<double> noise_;
+    std::vector<char> hasNoise_;
+};
+
 /// A compiled rule tree, immutable and safe to share across threads.
 class Executor {
 public:
@@ -298,6 +363,11 @@ public:
     /// which is the ordinary case, and means the filler's block stands.
     [[nodiscard]] const settings::BlockState* apply(const Context& at) const;
 
+    /// The same, keeping the column's constant reads in @p memo (ColumnMemo)
+    /// for the next block of the column instead of recomputing them. The
+    /// same block, and the same refusal at the same block, as apply(at).
+    [[nodiscard]] const settings::BlockState* apply(const Context& at, ColumnMemo& memo) const;
+
     /// The block `bandlands` places at @p x, @p y, @p z: one entry of this
     /// dimension's clay-bands table, indexed by a per-column noise-derived
     /// shift (spec/bandlands-spec.md Q4). Throws ExecutionError if @p x/@p z's
@@ -322,9 +392,25 @@ private:
         : graph_(&graph), geometry_(&geometry), noises_(noises), seaLevel_(seaLevel),
           temperature_(temperature), jitter_(rng::XoroshiroPositionalFactory{worldSeed}.base()) {}
 
-    [[nodiscard]] const settings::BlockState* runRule(RuleIndex index, const Context& at) const;
-    [[nodiscard]] bool test(ConditionIndex index, const Context& at) const;
-    [[nodiscard]] std::int32_t depthFor(const Condition& condition, const Context& at) const;
+    [[nodiscard]] const settings::BlockState* runRule(RuleIndex index, const Context& at,
+                                                      ColumnMemo& memo) const;
+    [[nodiscard]] bool test(ConditionIndex index, const Context& at, ColumnMemo& memo) const;
+    [[nodiscard]] std::int32_t depthFor(const Condition& condition, const Context& at,
+                                        ColumnMemo& memo) const;
+
+    /// The column reads ColumnMemo keeps, each computed exactly as its
+    /// uncached form and kept only once it has returned. @p memo is bound
+    /// to (at.x, at.z).
+    [[nodiscard]] std::int32_t columnSurfaceDepth(const Context& at, ColumnMemo& memo) const;
+    [[nodiscard]] double columnSecondary(const Context& at, ColumnMemo& memo) const;
+    [[nodiscard]] double columnNoise(const data::ResourceLocation& name, std::size_t slot,
+                                     const Context& at, ColumnMemo& memo) const;
+    [[nodiscard]] const settings::BlockState& bandlandsAt(const Context& at,
+                                                          ColumnMemo& memo) const;
+    /// `bandlands`' table entry at @p y for a column shifted by @p offset.
+    [[nodiscard]] const settings::BlockState& bandAt(std::int32_t y, std::int32_t offset) const;
+    [[nodiscard]] float freezingField(std::int32_t x, std::int32_t z) const noexcept;
+    [[nodiscard]] bool freezing(const Context& at, ColumnMemo& memo) const noexcept;
 
     const RuleGraph* graph_;
     const settings::NoiseGeometry* geometry_;
@@ -346,6 +432,12 @@ private:
     /// rule costs no hashing and no forking.
     using GradientSource = std::variant<rng::PositionalSource, rng::LegacyPositionalSource>;
     std::map<std::string, GradientSource> gradients_;
+
+    /// Each `noise_threshold`'s slot in a ColumnMemo, by condition index:
+    /// one slot per distinct noise name, so two conditions over one noise
+    /// read it once a column. Unused for every other condition type.
+    std::vector<std::size_t> noiseSlot_;
+    std::size_t noiseSlots_ = 0;
 
     /// `bandlands`' own state: the table, built once (empty/default-filled
     /// until clayBandsBuilt_ says otherwise), and the noise its per-column
