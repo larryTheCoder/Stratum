@@ -600,6 +600,16 @@ public:
         bool kernelCellKnown_ = false;
         CellGeometry kernelCellGeometry_{};
         Point kernelCell_{};
+        /// interpolate()'s fractions for kernelCellGeometry_, by offset into
+        /// the cell — offset / width and offset / height, the same
+        /// divisions, made once per geometry rather than three a block —
+        /// where both sizes are at most kKernelFractions; tables are
+        /// unused otherwise. Never a value of their own.
+        static constexpr std::size_t kKernelFractions = 16;
+        bool kernelFractionTables_ = false;
+        bool kernelGeometryKnown_ = false;
+        std::array<double, kKernelFractions> kernelWidthFractions_{};
+        std::array<double, kKernelFractions> kernelHeightFractions_{};
     };
 
     /// SPEC §4.1's compiled block program, for the part of a root that is

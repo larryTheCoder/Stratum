@@ -2060,13 +2060,33 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
                                         "interpreter has none");
                     }
                     const CellGeometry cells = *cells_;
+                    if (!cache.kernelGeometryKnown_ || !(cache.kernelCellGeometry_ == cells)) {
+                        // Another lattice than the cache last served: no
+                        // cell known in it, and its fractions tabled.
+                        cache.kernelCellGeometry_ = cells;
+                        cache.kernelGeometryKnown_ = true;
+                        cache.kernelCellKnown_ = false;
+                        cache.kernelFractionTables_ =
+                            static_cast<std::size_t>(cells.width) <=
+                                CornerCache::kKernelFractions &&
+                            static_cast<std::size_t>(cells.height) <= CornerCache::kKernelFractions;
+                        if (cache.kernelFractionTables_) {
+                            for (std::int32_t k = 0; k < cells.width; ++k) {
+                                cache.kernelWidthFractions_[static_cast<std::size_t>(k)] =
+                                    static_cast<double>(k) / static_cast<double>(cells.width);
+                            }
+                            for (std::int32_t k = 0; k < cells.height; ++k) {
+                                cache.kernelHeightFractions_[static_cast<std::size_t>(k)] =
+                                    static_cast<double>(k) / static_cast<double>(cells.height);
+                            }
+                        }
+                    }
                     // interpolate()'s cellCorner, refused where it refuses —
                     // at the point's first `interpolated`, as the walk first
                     // asked — unless the point is inside the cache's last
                     // cell: then floorDiv lands on that cell's own corner,
                     // whose check it passed.
-                    if (cache.kernelCellKnown_ && cache.kernelCellGeometry_ == cells &&
-                        at.x >= cache.kernelCell_.x &&
+                    if (cache.kernelCellKnown_ && at.x >= cache.kernelCell_.x &&
                         std::int64_t{at.x} - cache.kernelCell_.x < cells.width &&
                         at.y >= cache.kernelCell_.y &&
                         std::int64_t{at.y} - cache.kernelCell_.y < cells.height &&
@@ -2076,12 +2096,22 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
                     } else {
                         lower = cellCorner(at, cells);
                         cache.kernelCell_ = lower;
-                        cache.kernelCellGeometry_ = cells;
                         cache.kernelCellKnown_ = true;
                     }
-                    tx = static_cast<double>(at.x - lower.x) / static_cast<double>(cells.width);
-                    ty = static_cast<double>(at.y - lower.y) / static_cast<double>(cells.height);
-                    tz = static_cast<double>(at.z - lower.z) / static_cast<double>(cells.width);
+                    // interpolate()'s fractions: each offset over its size,
+                    // from the table where there is one (the same division).
+                    const std::int32_t dx = at.x - lower.x;
+                    const std::int32_t dy = at.y - lower.y;
+                    const std::int32_t dz = at.z - lower.z;
+                    if (cache.kernelFractionTables_) {
+                        tx = cache.kernelWidthFractions_[static_cast<std::size_t>(dx)];
+                        ty = cache.kernelHeightFractions_[static_cast<std::size_t>(dy)];
+                        tz = cache.kernelWidthFractions_[static_cast<std::size_t>(dz)];
+                    } else {
+                        tx = static_cast<double>(dx) / static_cast<double>(cells.width);
+                        ty = static_cast<double>(dy) / static_cast<double>(cells.height);
+                        tz = static_cast<double>(dz) / static_cast<double>(cells.width);
+                    }
                     cellKnown = true;
                 }
                 // interpolate()'s entry check. A kernel reads through no
