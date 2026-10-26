@@ -475,6 +475,48 @@ private:
         return index < conditions_.size() ? *conditions_[index] : graph_->condition(index);
     }
 
+    /// The rule tree as a straight list, run by apply() instead of runRule's
+    /// recursion: the same tests in the same order, the same block placed.
+    ///
+    /// The walk runs a sequence's children in order and returns the first
+    /// block one places; a condition returns nothing where its test fails,
+    /// and its rule's answer otherwise. So a placed block always leaves the
+    /// whole walk, and "nothing" always continues with what follows: a
+    /// sequence's code is its children's code in order, and a condition's is
+    /// a test that jumps past its rule's code when it fails. A `not` chain
+    /// is the condition it ends in, tested and negated once per `not` —
+    /// exactly what the walk computes, which evaluates nothing besides the
+    /// condition at its end. Built only from a tree whose every index is in
+    /// range and every rule type runnable, and under kMaxProgram ops; any
+    /// other tree is walked, as it always was.
+    struct ProgramOp {
+        enum class Code : std::uint8_t {
+            /// test(condition), negated when `negate`; on false, go to `jump`.
+            Test,
+            /// Return `block`.
+            Place,
+            /// Return bandlandsAt's block.
+            Bandlands,
+            /// Return nothing: the root placed nothing.
+            Nothing,
+        };
+        Code code = Code::Nothing;
+        bool negate = false;
+        ConditionIndex condition = 0;
+        std::uint32_t jump = 0;
+        const settings::BlockState* block = nullptr;
+    };
+
+    static constexpr std::size_t kMaxProgram = std::size_t{1} << 16;
+
+    /// Empty where the tree is walked instead (see ProgramOp).
+    std::vector<ProgramOp> program_;
+
+    /// Appends @p index's code to program_; false where it cannot be built.
+    [[nodiscard]] bool lowerRule(const RuleGraph& graph, RuleIndex index, std::size_t depth);
+
+    [[nodiscard]] const settings::BlockState* runProgram(const Context& at, ColumnMemo& memo) const;
+
     /// `bandlands`' own state: the table, built once (empty/default-filled
     /// until clayBandsBuilt_ says otherwise), and the noise its per-column
     /// shift reads. Built only when the tree names `bandlands` at all.

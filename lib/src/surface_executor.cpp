@@ -40,12 +40,18 @@ constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary
 /// something this build knows — so it neither wraps nor widens, it refuses.
 /// Every schema-valid int can reach here (an anchor, an offset or a sea level
 /// near 2^31), and no vanilla pack comes within a factor of 10^6.
+[[noreturn]] void refuseNarrowing(const std::int64_t value, const char* what) {
+    throw ExecutionError(std::string(what) + " comes to " + std::to_string(value) +
+                         ", outside the 32-bit range; this build refuses it rather than "
+                         "guess how the server's own arithmetic wraps there (SPEC §8)");
+}
+
+/// The check inline, its refusal (refuseNarrowing) out of line: it sits on
+/// every surface test's path.
 [[nodiscard]] std::int32_t narrowed(const std::int64_t value, const char* what) {
     if (value < std::numeric_limits<std::int32_t>::min() ||
-        value > std::numeric_limits<std::int32_t>::max()) {
-        throw ExecutionError(std::string(what) + " comes to " + std::to_string(value) +
-                             ", outside the 32-bit range; this build refuses it rather than "
-                             "guess how the server's own arithmetic wraps there (SPEC §8)");
+        value > std::numeric_limits<std::int32_t>::max()) [[unlikely]] {
+        refuseNarrowing(value, what);
     }
     return static_cast<std::int32_t>(value);
 }
@@ -401,7 +407,99 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
         executor.conditions_.push_back(&graph.condition(index));
     }
+    // The tree as a list (ProgramOp), or walked as before where it cannot be.
+    if (executor.lowerRule(graph, graph.root(), 0) && executor.program_.size() < kMaxProgram) {
+        executor.program_.push_back(ProgramOp{.code = ProgramOp::Code::Nothing,
+                                              .negate = false,
+                                              .condition = 0,
+                                              .jump = 0,
+                                              .block = nullptr});
+    } else {
+        executor.program_.clear();
+    }
     return executor;
+}
+
+bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const std::size_t depth) {
+    // Bounded as the walk is: no tree the resolver accepts nests deeper than
+    // kMaxRuleDepth, and the list is bounded by kMaxProgram.
+    if (depth > kMaxRuleDepth || index >= graph.ruleCount() || program_.size() >= kMaxProgram) {
+        return false;
+    }
+    const Rule& rule = graph.rule(index);
+    switch (rule.type) {
+        case RuleType::Block:
+            program_.push_back(ProgramOp{.code = ProgramOp::Code::Place,
+                                         .negate = false,
+                                         .condition = 0,
+                                         .jump = 0,
+                                         .block = &rule.block});
+            return true;
+        case RuleType::Bandlands:
+            program_.push_back(ProgramOp{.code = ProgramOp::Code::Bandlands,
+                                         .negate = false,
+                                         .condition = 0,
+                                         .jump = 0,
+                                         .block = nullptr});
+            return true;
+        case RuleType::Sequence:
+            // Each child in order; one that places leaves the list.
+            return std::ranges::all_of(rule.sequence, [&](const RuleIndex child) {
+                return lowerRule(graph, child, depth + 1);
+            });
+        case RuleType::Condition: {
+            // The `not`s around the condition, as a parity on the one at
+            // their end, which is all the walk evaluates.
+            ConditionIndex tested = rule.condition;
+            bool negate = false;
+            for (std::size_t nots = 0;; ++nots) {
+                if (tested >= graph.conditionCount() || nots > kMaxRuleDepth) {
+                    return false;
+                }
+                const Condition& condition = graph.condition(tested);
+                if (condition.type != ConditionType::Not) {
+                    break;
+                }
+                negate = !negate;
+                tested = condition.invert;
+            }
+            const std::size_t test = program_.size();
+            program_.push_back(ProgramOp{.code = ProgramOp::Code::Test,
+                                         .negate = negate,
+                                         .condition = tested,
+                                         .jump = 0,
+                                         .block = nullptr});
+            if (!lowerRule(graph, rule.thenRun, depth + 1) || program_.size() >= kMaxProgram) {
+                return false;
+            }
+            // A failed test goes past the rule's code, to what follows the
+            // condition, as the walk's nothing does.
+            program_[test].jump = static_cast<std::uint32_t>(program_.size());
+            return true;
+        }
+        default:
+            // The walk refuses it where it reaches it; so the walk it is.
+            return false;
+    }
+}
+
+const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& memo) const {
+    const ProgramOp* const ops = program_.data();
+    std::size_t pc = 0;
+    while (true) {
+        const ProgramOp& op = ops[pc];
+        switch (op.code) {
+            case ProgramOp::Code::Test:
+                pc = test(op.condition, at, memo) != op.negate ? pc + 1 : op.jump;
+                break;
+            case ProgramOp::Code::Place:
+                return op.block;
+            case ProgramOp::Code::Bandlands:
+                return &bandlandsAt(at, memo);
+            case ProgramOp::Code::Nothing:
+                return nullptr;
+        }
+    }
 }
 
 double Executor::surfaceDepthRaw(const std::int32_t x, const std::int32_t z) const {
@@ -494,7 +592,7 @@ const settings::BlockState* Executor::apply(const Context& at) const {
 
 const settings::BlockState* Executor::apply(const Context& at, ColumnMemo& memo) const {
     memo.bind(at.x, at.z);
-    return runRule(graph_->root(), at, memo);
+    return program_.empty() ? runRule(graph_->root(), at, memo) : runProgram(at, memo);
 }
 
 std::int32_t Executor::columnSurfaceDepth(const Context& at, ColumnMemo& memo) const {

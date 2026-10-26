@@ -1167,6 +1167,180 @@ TEST_CASE("apply with a column memo places what apply places, block for block", 
     CHECK(placedNames.size() >= 8U);
 }
 
+namespace {
+
+/// A small deterministic generator for the random trees below.
+class TreeDice {
+public:
+    explicit TreeDice(std::uint64_t seed) : state_(seed) {}
+
+    [[nodiscard]] std::uint32_t below(std::uint32_t bound) {
+        state_ = (state_ * UINT64_C(6364136223846793005)) + UINT64_C(1442695040888963407);
+        return static_cast<std::uint32_t>(state_ >> 33U) % bound;
+    }
+
+private:
+    std::uint64_t state_;
+};
+
+/// A condition whose answer the reference below can work out by hand.
+[[nodiscard]] nlohmann::json randomCondition(TreeDice& dice, int depth) {
+    switch (dice.below(depth < 3 ? 6U : 5U)) {
+        case 0:
+            return nlohmann::json{{"type", "minecraft:y_above"},
+                                  {"anchor", {{"absolute", static_cast<int>(dice.below(40)) - 20}}},
+                                  {"surface_depth_multiplier", 0},
+                                  {"add_stone_depth", dice.below(2) == 0U}};
+        case 1:
+            return nlohmann::json{{"type", "minecraft:steep"}};
+        case 2:
+            return nlohmann::json{{"type", "minecraft:water"},
+                                  {"offset", static_cast<int>(dice.below(10)) - 5},
+                                  {"surface_depth_multiplier", 0},
+                                  {"add_stone_depth", dice.below(2) == 0U}};
+        case 3:
+            return nlohmann::json{{"type", "minecraft:stone_depth"},
+                                  {"offset", static_cast<int>(dice.below(4))},
+                                  {"surface_type", dice.below(2) == 0U ? "floor" : "ceiling"},
+                                  {"add_surface_depth", false},
+                                  {"secondary_depth_range", 0}};
+        case 4:
+            return gradient(dice.below(2) == 0U ? "stratum:a" : "stratum:b", -10, 10);
+        default:
+            return nlohmann::json{{"type", "minecraft:not"},
+                                  {"invert", randomCondition(dice, depth + 1)}};
+    }
+}
+
+[[nodiscard]] nlohmann::json randomRule(TreeDice& dice, int depth) {
+    const std::uint32_t kind = depth >= 5 ? 0U : dice.below(4);
+    if (kind == 0U) {
+        return block("stratum:b" + std::to_string(dice.below(6)));
+    }
+    if (kind == 1U) {
+        nlohmann::json children = nlohmann::json::array();
+        const std::uint32_t count = 1U + dice.below(4);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            children.push_back(randomRule(dice, depth + 1));
+        }
+        return nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", children}};
+    }
+    return nlohmann::json{{"type", "minecraft:condition"},
+                          {"if_true", randomCondition(dice, 0)},
+                          {"then_run", randomRule(dice, depth + 1)}};
+}
+
+/// The documented semantics, walked by hand over the resolved graph: a
+/// sequence's first placing child wins, a condition places its rule's block
+/// where its test holds. The reference the executor's list is held to.
+class ReferenceWalk {
+public:
+    ReferenceWalk(const RuleGraph& graph, const stratum::settings::NoiseGeometry& geometry)
+        : graph_(&graph), geometry_(&geometry),
+          a_(stratum::rng::positionalSourceFor(kSeed, "stratum:a")),
+          b_(stratum::rng::positionalSourceFor(kSeed, "stratum:b")) {}
+
+    [[nodiscard]] const stratum::settings::BlockState* rule(stratum::surface::RuleIndex index,
+                                                            const Context& at) const {
+        const stratum::surface::Rule& rule = graph_->rule(index);
+        switch (rule.type) {
+            case stratum::surface::RuleType::Block:
+                return &rule.block;
+            case stratum::surface::RuleType::Sequence:
+                for (const stratum::surface::RuleIndex child : rule.sequence) {
+                    if (const auto* placed = this->rule(child, at); placed != nullptr) {
+                        return placed;
+                    }
+                }
+                return nullptr;
+            case stratum::surface::RuleType::Condition:
+                return test(rule.condition, at) ? this->rule(rule.thenRun, at) : nullptr;
+            default:
+                throw std::logic_error("not generated");
+        }
+    }
+
+    [[nodiscard]] bool test(stratum::surface::ConditionIndex index, const Context& at) const {
+        using stratum::surface::ConditionType;
+        const stratum::surface::Condition& condition = graph_->condition(index);
+        switch (condition.type) {
+            case ConditionType::Not:
+                return !test(condition.invert, at);
+            case ConditionType::YAbove:
+                return at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0) >=
+                       condition.anchor.resolve(*geometry_);
+            case ConditionType::Steep:
+                return (at.heightWest - at.heightEast >= 4) ||
+                       (at.heightSouth - at.heightNorth >= 4);
+            case ConditionType::Water:
+                return !at.waterHeight.has_value() ||
+                       at.y + (condition.addStoneDepth ? at.stoneDepthAbove : 0) >=
+                           *at.waterHeight + condition.offset;
+            case ConditionType::StoneDepth: {
+                const std::int32_t run =
+                    condition.surfaceType == "ceiling" ? at.stoneDepthBelow : at.stoneDepthAbove;
+                return run > 0 && run - 1 <= condition.offset;
+            }
+            case ConditionType::VerticalGradient:
+                return stratum::surface::verticalGradientFires(
+                    condition.randomName == "stratum:a" ? a_ : b_, at.x, at.y, at.z,
+                    condition.trueAtAndBelow.resolve(*geometry_),
+                    condition.falseAtAndAbove.resolve(*geometry_));
+            default:
+                throw std::logic_error("not generated");
+        }
+    }
+
+private:
+    const RuleGraph* graph_;
+    const stratum::settings::NoiseGeometry* geometry_;
+    stratum::rng::PositionalSource a_;
+    stratum::rng::PositionalSource b_;
+};
+
+} // namespace
+
+TEST_CASE("the compiled rule list places what the tree's own semantics place",
+          "[surface][program]") {
+    // Executor::apply runs the tree as a straight list of tests and jumps.
+    // Over 300 random trees — sequences, conditions and `not` chains nested
+    // up to five deep — and 2 000 blocks each with every column fact varied,
+    // it places exactly the block a hand walk of the graph places.
+    const auto geometry = overworldGeometry();
+    std::size_t placed = 0;
+    std::size_t empty = 0;
+    for (std::uint64_t treeSeed = 1; treeSeed <= 300; ++treeSeed) {
+        TreeDice dice(treeSeed);
+        const RuleGraph graph = resolve(randomRule(dice, 0));
+        const Executor executor = Executor::compile(graph, kSeed, geometry);
+        const ReferenceWalk reference(graph, geometry);
+        stratum::surface::ColumnMemo memo;
+        for (std::uint32_t i = 0; i < 2000U; ++i) {
+            // Drawn one statement at a time: argument order is unspecified.
+            const auto x = static_cast<std::int32_t>(dice.below(9)) - 4;
+            const auto y = static_cast<std::int32_t>(dice.below(40)) - 20;
+            const auto z = static_cast<std::int32_t>(dice.below(9)) - 4;
+            Context here = at(x, y, z);
+            here.stoneDepthAbove = static_cast<std::int32_t>(dice.below(5));
+            here.stoneDepthBelow = static_cast<std::int32_t>(dice.below(5));
+            if (dice.below(2) == 0U) {
+                here.waterHeight = static_cast<std::int32_t>(dice.below(20)) - 10;
+            }
+            here.heightWest = static_cast<std::int32_t>(dice.below(10));
+            here.heightEast = static_cast<std::int32_t>(dice.below(10));
+            here.heightNorth = static_cast<std::int32_t>(dice.below(10));
+            here.heightSouth = static_cast<std::int32_t>(dice.below(10));
+            const auto* expected = reference.rule(graph.root(), here);
+            CAPTURE(treeSeed, i);
+            REQUIRE(executor.apply(here, memo) == expected);
+            REQUIRE(executor.apply(here) == expected);
+            (expected == nullptr ? empty : placed) += 1;
+        }
+    }
+    CHECK(placed > 100000U);
+    CHECK(empty > 100000U);
+}
+
 TEST_CASE("each vertical_gradient draws its own name's coin between its own anchors", "[surface]") {
     // compile() finds each gradient's source by name and resolves its
     // anchors once. Three gradients, two sharing a name, anchors of all
