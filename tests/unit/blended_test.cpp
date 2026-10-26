@@ -29,7 +29,10 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -341,5 +344,89 @@ TEST_CASE("legacyFromWorldSeed is the world seed straight into the LCG, and noth
         // same seed — the two differ by order one, not by a rounding.
         CHECK(bits(named.sample(13, 0, 97)) !=
               bits(BlendedNoise::modern(seed, overworldShape(8.0)).sample(13, 0, 97)));
+    }
+}
+
+TEST_CASE("a limit stack the clamped lerp does not read is not needed for the value",
+          "[noise][blended]") {
+    // sample() sums the blend stack first and samples only the limit stack(s)
+    // its clamped lerp reads. Rebuilt here from the same LCG — sixteen
+    // minimum, sixteen maximum, eight blend octaves, drawn in that order —
+    // the reference sums all three stacks interleaved, octave by octave, as
+    // sample() did before; the two are the same bit pattern on every point,
+    // across all three regimes of the lerp.
+    const BlendedNoise::Parameters parameters = overworldShape(1.0);
+    JavaRandom random(31337);
+    const BlendedNoise noise = BlendedNoise::legacy(random, parameters);
+
+    JavaRandom again(31337);
+    std::vector<PerlinNoise> minimum;
+    std::vector<PerlinNoise> maximum;
+    std::vector<PerlinNoise> blend;
+    for (std::size_t i = 0; i < BlendedNoise::kLimitOctaves; ++i) {
+        minimum.push_back(PerlinNoise::fromRandom(again));
+    }
+    for (std::size_t i = 0; i < BlendedNoise::kLimitOctaves; ++i) {
+        maximum.push_back(PerlinNoise::fromRandom(again));
+    }
+    for (std::size_t i = 0; i < BlendedNoise::kBlendOctaves; ++i) {
+        blend.push_back(PerlinNoise::fromRandom(again));
+    }
+    // The PreModern reading at a multiplier of one: the cap is y times the
+    // octave's slab.
+    const auto reference = [&](double x, double y, double z) {
+        const double xzScale = 684.412 * parameters.xzScale;
+        const double yScale = 684.412 * parameters.yScale;
+        const double xzStep = xzScale / parameters.xzFactor;
+        const double yStep = yScale / parameters.yFactor;
+        double low = 0.0;
+        double high = 0.0;
+        double mix = 0.0;
+        double persistence = 1.0;
+        double contribution = 1.0;
+        for (std::size_t i = 0; i < BlendedNoise::kLimitOctaves; ++i) {
+            const double limitX = stratum::noise::maintainPrecision(x * xzScale * persistence);
+            const double limitY = stratum::noise::maintainPrecision(y * yScale * persistence);
+            const double limitZ = stratum::noise::maintainPrecision(z * xzScale * persistence);
+            const double limitSlab = yScale * persistence;
+            low +=
+                minimum[i].sample(limitX, limitY, limitZ, limitSlab, y * limitSlab) * contribution;
+            high +=
+                maximum[i].sample(limitX, limitY, limitZ, limitSlab, y * limitSlab) * contribution;
+            if (i < BlendedNoise::kBlendOctaves) {
+                const double blendX = stratum::noise::maintainPrecision(x * xzStep * persistence);
+                const double blendY = stratum::noise::maintainPrecision(y * yStep * persistence);
+                const double blendZ = stratum::noise::maintainPrecision(z * xzStep * persistence);
+                const double blendSlab = yStep * persistence;
+                mix += blend[i].sample(blendX, blendY, blendZ, blendSlab, y * blendSlab) *
+                       contribution;
+            }
+            persistence *= 0.5;
+            contribution *= 2.0;
+        }
+        const double part = 0.5 + (0.05 * mix);
+        const double from = low / 512.0;
+        const double to = high / 512.0;
+        if (!(part > 0.0)) {
+            return std::pair{from, 0};
+        }
+        if (part >= 1.0) {
+            return std::pair{to, 2};
+        }
+        return std::pair{from + (part * (to - from)), 1};
+    };
+    std::array<std::size_t, 3> regimes{};
+    std::size_t differing = 0;
+    for (int i = 0; i < 3000; ++i) {
+        const double x = (i * 37 % 1999) - 1000;
+        const double y = (i * 11 % 384) - 64;
+        const double z = (i * 53 % 1997) - 998;
+        const auto [value, regime] = reference(x, y, z);
+        ++regimes.at(static_cast<std::size_t>(regime));
+        differing += bits(noise.sample(x, y, z)) != bits(value) ? 1U : 0U;
+    }
+    CHECK(differing == 0U);
+    for (const std::size_t count : regimes) {
+        CHECK(count > 50U);
     }
 }

@@ -160,17 +160,42 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     const double xzStep = xzScale / parameters_.xzFactor;
     const double yStep = yScale / parameters_.yFactor;
 
-    double minimum = 0.0;
-    double maximum = 0.0;
-    double blend = 0.0;
-
     // The first octave is sampled at the full scale and contributes once;
     // each one after that halves the frequency and doubles the weight, which
     // is the reverse of the usual arrangement and is what gives this noise
-    // its long wavelengths.
+    // its long wavelengths. Both factors are powers of two, so each octave's
+    // are the same doubles whichever stack's loop computes them.
+    //
+    // The blend first: it decides which of the two limits the clamped lerp
+    // below reads. Past either end of [0, 1] it reads one limit alone, and
+    // the other is not sampled — every octave of every stack is a pure
+    // function of the point, so skipping one changes nothing but the work.
+    // Each stack still sums its own octaves in their own order, so each sum
+    // is the double it always was.
+    double blend = 0.0;
     double persistence = 1.0;
     double contribution = 1.0;
+    for (std::size_t i = 0; i < kBlendOctaves; ++i) {
+        const double blendX = maintainPrecision(x * xzStep * persistence);
+        const double blendY = maintainPrecision(y * yStep * persistence);
+        const double blendZ = maintainPrecision(z * xzStep * persistence);
+        const double blendBare = yStep * persistence;
+        const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
+        const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
+        blend += blend_[i].sample(blendX, blendY, blendZ, blendSmear, blendCap) * contribution;
+        persistence *= 0.5;
+        contribution *= 2.0;
+    }
+    const double part = 0.5 + (0.05 * blend);
+    // clampedLerp reads `from` (the minimum) unless part >= 1, and `to` (the
+    // maximum) unless !(part > 0) — NaN included, which reads `from`.
+    const bool readsMinimum = !(part >= 1.0);
+    const bool readsMaximum = part > 0.0;
 
+    double minimum = 0.0;
+    double maximum = 0.0;
+    persistence = 1.0;
+    contribution = 1.0;
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
         const double limitX = maintainPrecision(x * xzScale * persistence);
         const double limitY = maintainPrecision(y * yScale * persistence);
@@ -181,17 +206,13 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
         const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
         const double limitCap = smearCap(reading_, y, limitSmear, limitBare);
 
-        minimum += minimum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
-        maximum += maximum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
-
-        if (i < kBlendOctaves) {
-            const double blendX = maintainPrecision(x * xzStep * persistence);
-            const double blendY = maintainPrecision(y * yStep * persistence);
-            const double blendZ = maintainPrecision(z * xzStep * persistence);
-            const double blendBare = yStep * persistence;
-            const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
-            const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
-            blend += blend_[i].sample(blendX, blendY, blendZ, blendSmear, blendCap) * contribution;
+        if (readsMinimum) {
+            minimum +=
+                minimum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
+        }
+        if (readsMaximum) {
+            maximum +=
+                maximum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
         }
 
         persistence *= 0.5;
@@ -203,7 +224,7 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     // space `sloped_cheese` adds its other term in. The two differ by exactly
     // 128, which is how the modern one was measured (SPEC §11).
     const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
-    return clampedLerp(0.5 + (0.05 * blend), minimum / divisor, maximum / divisor);
+    return clampedLerp(part, minimum / divisor, maximum / divisor);
 }
 
 } // namespace stratum::noise
