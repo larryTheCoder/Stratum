@@ -1777,6 +1777,14 @@ std::optional<Interpreter::BlockKernel> Interpreter::blockKernel(const NodeIndex
         return std::nullopt;
     }
     kernel.result_ = static_cast<std::uint8_t>(result);
+    // A node reached more than once reads once a point (InterpolatedShared);
+    // one reached once has nothing to share, and skips the mask.
+    for (BlockKernel::KernelOp& lowered : kernel.ops_) {
+        if (lowered.code == BlockKernel::Code::Interpolated &&
+            kernel.interpolated_[lowered.slot].shared) {
+            lowered.code = BlockKernel::Code::InterpolatedShared;
+        }
+    }
     return kernel;
 }
 
@@ -1854,6 +1862,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
                                .first = static_cast<std::uint8_t>(input),
                                .second = 0,
                                .jump = 0,
+                               .slot = 0,
                                .interpolated = 0,
                                .parameters = {op.parameters[0], op.parameters[1], 0.0, 0.0}})) {
                 return -1;
@@ -1864,6 +1873,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
                                                    .first = static_cast<std::uint8_t>(inRangeValue),
                                                    .second = 0,
                                                    .jump = 0,
+                                                   .slot = 0,
                                                    .interpolated = 0,
                                                    .parameters = {}})) {
                 return -1;
@@ -1874,6 +1884,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
                                .first = 0,
                                .second = 0,
                                .jump = 0,
+                               .slot = 0,
                                .interpolated = 0,
                                .parameters = {}})) {
                 return -1;
@@ -1886,6 +1897,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
                                .first = static_cast<std::uint8_t>(outOfRangeValue),
                                .second = 0,
                                .jump = 0,
+                               .slot = 0,
                                .interpolated = 0,
                                .parameters = {}})) {
                 return -1;
@@ -1905,6 +1917,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
         .first = 0,
         .second = 0,
         .jump = 0,
+        .slot = 0,
         .interpolated = 0,
         .parameters = {op.parameters[0], op.parameters[1], op.parameters[2], op.parameters[3]}};
     const std::size_t count =
@@ -1958,10 +1971,32 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
         case NodeType::YClampedGradient:
             lowered.code = Code::YClampedGradient;
             break;
-        case NodeType::Interpolated:
+        case NodeType::Interpolated: {
             lowered.code = Code::Interpolated;
             lowered.interpolated = op.arguments[0];
-            break;
+            // Every reach of one `interpolated` node shares its register and
+            // its bit of the point's mask: the first reach that runs at a
+            // point reads the cell, the rest find the bit set — the walk's
+            // memo, which reads the node once a point.
+            const auto known = std::ranges::find_if(
+                kernel.interpolated_,
+                [index](const BlockKernel::InterpolatedNode& node) { return node.node == index; });
+            if (known != kernel.interpolated_.end()) {
+                known->shared = true;
+                lowered.target = known->target;
+                lowered.slot = known->slot;
+                return emit(lowered) ? known->target : -1;
+            }
+            const std::int32_t target = newRegister();
+            if (target < 0) {
+                return -1;
+            }
+            lowered.target = static_cast<std::uint8_t>(target);
+            lowered.slot = static_cast<std::uint8_t>(kernel.interpolated_.size());
+            kernel.interpolated_.push_back(BlockKernel::InterpolatedNode{
+                .node = index, .target = lowered.target, .slot = lowered.slot});
+            return emit(lowered) ? target : -1;
+        }
         default:
             // lowersType admits nothing else.
             return -1;
@@ -1992,6 +2027,9 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
     CornerCache::Entry* const entries = cache.entries_.data();
     // callThrough's Call::memo, for this read: no window, Block.
     const bool memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty();
+    // Which `interpolated` nodes this point has read (BlockKernel::
+    // InterpolatedNode::slot), as the walk's memo holds them.
+    std::uint64_t interpolatedRead = 0;
     // The point's cell and fractions, found at its first `interpolated`.
     bool cellKnown = false;
     Point lower;
@@ -2050,6 +2088,13 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
                     clampedMap(static_cast<double>(at.y), op.parameters[0], op.parameters[1],
                                op.parameters[2], op.parameters[3]);
                 break;
+            case Code::InterpolatedShared:
+                if ((interpolatedRead & (std::uint64_t{1} << op.slot)) != 0U) {
+                    // Read already at this point: its register holds it.
+                    break;
+                }
+                interpolatedRead |= std::uint64_t{1} << op.slot;
+                [[fallthrough]];
             case Code::Interpolated: {
                 if (!cellKnown) {
                     // blockKernel lowers `interpolated` only where it does

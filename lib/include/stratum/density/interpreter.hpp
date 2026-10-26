@@ -635,11 +635,14 @@ public:
     /// arguments before their node, first to last; range_choice tests its
     /// input and jumps over the branch it does not take, so only the taken
     /// one is evaluated. Each op computes its node's value with
-    /// evaluateNode's own expression. A node the block part reaches twice is
-    /// lowered at each reach and so computed again where the walk read its
-    /// memo — the same value, and nothing besides: arithmetic has no effect,
-    /// and an `interpolated` evaluated again at the same point finds its cell
-    /// already in the CornerCache's entry. An `interpolated` finds its cell
+    /// evaluateNode's own expression. An arithmetic node the block part
+    /// reaches twice is lowered at each reach and so computed again where
+    /// the walk read its memo — the same value from the same registers, and
+    /// nothing besides. An `interpolated` reached twice is not: every reach
+    /// shares one register and one bit of the point's mask, so it reads its
+    /// corners once a point, as the walk's memo does — a second read could
+    /// find the entry moved to another cell by a corner read in between,
+    /// and refill it. An `interpolated` finds its cell
     /// with cellCorner at the first one evaluated at the point, where the
     /// walk first found it, and its corners in the CornerCache's entry,
     /// filled by the same code in the same order when the cell is not the
@@ -683,6 +686,9 @@ public:
             YClampedGradient,
             /// `target` is the blend of `interpolated`'s cell corners.
             Interpolated,
+            /// The same, for a node the block part reaches more than once:
+            /// read once a point, at the first reach that runs (`slot`'s bit).
+            InterpolatedShared,
             /// `target` = `first`.
             Move,
             /// Continues at `jump` unless `first` is in range_choice's range.
@@ -697,9 +703,21 @@ public:
             std::uint8_t first = 0;
             std::uint8_t second = 0;
             std::uint8_t jump = 0;
+            /// For Interpolated, its node's bit in the point's mask.
+            std::uint8_t slot = 0;
             /// For Interpolated, its argument's node.
             NodeIndex interpolated = 0;
             std::array<double, 4> parameters{};
+        };
+
+        /// One `interpolated` node of the block part: the register and the
+        /// mask bit every reach of it shares.
+        struct InterpolatedNode {
+            NodeIndex node = 0;
+            std::uint8_t target = 0;
+            std::uint8_t slot = 0;
+            /// Reached more than once: its ops are InterpolatedShared.
+            bool shared = false;
         };
 
         /// A constant's register and value: written before the list runs,
@@ -711,6 +729,7 @@ public:
 
         std::vector<KernelOp> ops_;
         std::vector<KernelConstant> constants_;
+        std::vector<InterpolatedNode> interpolated_;
         std::size_t registers_ = 0;
         std::uint8_t result_ = 0;
         NodeIndex root_ = 0;

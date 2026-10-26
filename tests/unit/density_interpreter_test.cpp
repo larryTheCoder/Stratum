@@ -2936,6 +2936,59 @@ TEST_CASE("a block kernel evaluates a corner only where the walk does, and refus
     }
 }
 
+TEST_CASE("an interpolated the block part reaches twice is read once a point, as the walk reads it",
+          "[density][interpreter][kernel]") {
+    // `reused` is reached twice at the block, around `other`, whose corners
+    // read an `interpolated` over the same argument at the neighbouring
+    // cells' corners — moving the argument's corner entry to another cell in
+    // between. The walk reads `reused` once a point (its memo). Under a
+    // last-cell cache whose entry for that argument was filled through a
+    // window that changes its corners (a barrier read, here none()), a
+    // second fill without one would give the second reach another value; so
+    // the kernel must read it once a point too.
+    const TempTree tree;
+    tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.define("field", R"({"type":"minecraft:noise","noise":"test",
+        "xz_scale":1.0,"y_scale":1.0})");
+    tree.define("column", R"({"type":"minecraft:flat_cache","argument":"field"})");
+    tree.define("argument", R"({"type":"minecraft:add","argument1":"field",
+        "argument2":"column"})");
+    tree.define("reused", R"({"type":"minecraft:interpolated","argument":"argument"})");
+    tree.define("nested", R"({"type":"minecraft:interpolated","argument":"argument"})");
+    tree.define("other", R"({"type":"minecraft:interpolated","argument":{
+        "type":"minecraft:add","argument1":"field","argument2":"nested"}})");
+    tree.define("root", R"({"type":"minecraft:add","argument1":"reused",
+        "argument2":{"type":"minecraft:add","argument1":"other","argument2":"reused"}})");
+    const Pipeline pipeline(tree.pack(), 4242, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("root");
+    const std::optional<Interpreter::BlockKernel> kernel = interpreter.blockKernel(root);
+    REQUIRE(kernel.has_value());
+    const FlatCacheWindow none = FlatCacheWindow::none();
+
+    std::size_t differing = 0;
+    std::size_t moved = 0;
+    for (std::int32_t i = 0; i < 64; ++i) {
+        const Point at{.x = (i * 5) - 100, .y = (i % 7) - 3, .z = (i * 3) + 11};
+        const auto prepared = [&] {
+            Interpreter::CornerCache cache(interpreter.cacheSize(), Sharing::LastCell);
+            static_cast<void>(
+                interpreter.evaluate(pipeline.root("reused"), at, cache, none, ReadContext::Block));
+            return cache;
+        };
+        Interpreter::CornerCache kernelCache = prepared();
+        Interpreter::CornerCache walkCache = prepared();
+        const double viaWalk = interpreter.evaluate(root, at, walkCache);
+        differing +=
+            bits(interpreter.evaluate(*kernel, at, kernelCache)) != bits(viaWalk) ? 1U : 0U;
+        // The window's corners are not the plain ones here, or this tests
+        // nothing.
+        moved += bits(viaWalk) != bits(interpreter.evaluate(root, at)) ? 1U : 0U;
+    }
+    CHECK(differing == 0U);
+    CHECK(moved > 32U);
+}
+
 TEST_CASE("only a block part the kernel lowers has a kernel", "[density][interpreter][kernel]") {
     const TempTree tree;
     defineKernelPack(tree);
