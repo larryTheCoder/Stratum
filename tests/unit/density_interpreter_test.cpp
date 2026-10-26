@@ -2824,6 +2824,34 @@ TEST_CASE("a block kernel gives the walk's bit pattern at every block of whole c
     CHECK(notFinite > 0U);
 }
 
+TEST_CASE("a block kernel's kept blends along y hold in any order of blocks",
+          "[density][interpreter][kernel]") {
+    // A cell's four blends along y are kept per corner entry for the y they
+    // were made at (CornerCache::Entry::alongY). Read the blocks of a few
+    // cells with y jumping back and forth, and cells interleaved, and every
+    // value is still a fresh evaluation's.
+    const TempTree tree;
+    defineKernelPack(tree);
+    const Pipeline pipeline(tree.pack(), 99, kOverworldCells);
+    const Interpreter& interpreter = pipeline.interpreter();
+    const NodeIndex root = pipeline.root("root");
+    const std::optional<Interpreter::BlockKernel> kernel = interpreter.blockKernel(root);
+    REQUIRE(kernel.has_value());
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    std::size_t differing = 0;
+    for (std::uint32_t i = 0; i < 4000U; ++i) {
+        // y wanders over two cells' heights, x and z over two cells' widths.
+        const Point at{.x = static_cast<std::int32_t>((i * 7U) % 8U) - 3,
+                       .y = static_cast<std::int32_t>((i * 11U) % 16U) - 8,
+                       .z = static_cast<std::int32_t>((i * 5U) % 8U) + 100};
+        differing +=
+            bits(interpreter.evaluate(*kernel, at, cache)) != bits(interpreter.evaluate(root, at))
+                ? 1U
+                : 0U;
+    }
+    CHECK(differing == 0U);
+}
+
 TEST_CASE("a block kernel leaves a corner cache as the walk would",
           "[density][interpreter][kernel]") {
     // A kernel fills a cell's corners through the same code as the walk, on

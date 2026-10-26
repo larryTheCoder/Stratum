@@ -559,6 +559,14 @@ public:
             /// tag); compared only under Sharing::Lattice.
             std::uint32_t tag = 0;
             bool filled = false;
+            /// Whether alongY holds these corners' four blends along y at
+            /// the fraction whose bits are yFraction: what a BlockKernel
+            /// blended last in this cell, kept for the next block of the
+            /// same y — the same lerps of the same doubles. Cleared whenever
+            /// the corners are refilled.
+            bool alongYKnown = false;
+            std::uint64_t yFraction = 0;
+            std::array<double, 4> alongY{};
             std::array<double, 8> corners{};
         };
 
@@ -650,7 +658,6 @@ public:
         enum class Code : std::uint8_t {
             /// Registers: `target` from `first` and `second` as the node
             /// type's own expression; parameters as the node holds them.
-            Constant,
             Add,
             Mul,
             Min,
@@ -675,7 +682,7 @@ public:
         };
 
         struct KernelOp {
-            Code code = Code::Constant;
+            Code code = Code::Move;
             std::uint8_t target = 0;
             std::uint8_t first = 0;
             std::uint8_t second = 0;
@@ -685,7 +692,15 @@ public:
             std::array<double, 4> parameters{};
         };
 
+        /// A constant's register and value: written before the list runs,
+        /// rather than by an op of it, since a constant has no order to keep.
+        struct KernelConstant {
+            std::uint8_t target = 0;
+            double value = 0.0;
+        };
+
         std::vector<KernelOp> ops_;
+        std::vector<KernelConstant> constants_;
         std::size_t registers_ = 0;
         std::uint8_t result_ = 0;
         NodeIndex root_ = 0;

@@ -161,8 +161,12 @@ template<typename T>
 /// bits. The order is the documented one and is *not* yet checked against
 /// vanilla — nothing available here samples terrain density — so SPEC §11
 /// carries it as open until the goldens can settle it.
-[[nodiscard]] double blendCell(const std::array<double, 8>& corners, const double tx,
-                               const double ty, const double tz) noexcept {
+///
+/// In two steps, so that a BlockKernel can keep the first for every block of
+/// one y in a cell: the four blends along y, (x0, z0), (x1, z0), (x0, z1) and
+/// (x1, z1), each a function of its two corners and ty alone; then x and z.
+[[nodiscard]] std::array<double, 4> blendAlongY(const std::array<double, 8>& corners,
+                                                const double ty) noexcept {
     const double v000 = corners[0];
     const double v001 = corners[1];
     const double v010 = corners[2];
@@ -176,11 +180,20 @@ template<typename T>
     const double x1z0 = lerp(ty, v100, v110);
     const double x0z1 = lerp(ty, v001, v011);
     const double x1z1 = lerp(ty, v101, v111);
+    return {x0z0, x1z0, x0z1, x1z1};
+}
 
-    const double nearZ = lerp(tx, x0z0, x1z0);
-    const double farZ = lerp(tx, x0z1, x1z1);
+[[nodiscard]] double blendAlongXz(const std::array<double, 4>& alongY, const double tx,
+                                  const double tz) noexcept {
+    const double nearZ = lerp(tx, alongY[0], alongY[1]);
+    const double farZ = lerp(tx, alongY[2], alongY[3]);
 
     return lerp(tz, nearZ, farZ);
+}
+
+[[nodiscard]] double blendCell(const std::array<double, 8>& corners, const double tx,
+                               const double ty, const double tz) noexcept {
+    return blendAlongXz(blendAlongY(corners, ty), tx, tz);
 }
 
 /// The corner of the 4x4 column a block sits in. flat_cache samples there,
@@ -1660,6 +1673,7 @@ void Interpreter::fillCell(const NodeIndex argument, const Call& call, const boo
     // touches this entry: it would have to reach this same argument from
     // inside it, and the graph is acyclic.
     entry.filled = false;
+    entry.alongYKnown = false;
     if (call.memo) {
         // The order the eight were always evaluated in, so that a corner
         // evaluated here for the first time is evaluated after the same
@@ -1799,6 +1813,26 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
     static_assert(BlockKernel::kMaxOps < 256 && BlockKernel::kMaxRegisters < 256);
 
     switch (op.type) {
+        case NodeType::Constant:
+        case NodeType::BlendAlpha:
+        case NodeType::BlendOffset: {
+            // evaluateNode: its parameter; 1.0 and 0.0 for the blend states,
+            // this engine never blending. A register written before the list
+            // runs: a constant has no effect and no order to keep.
+            const std::int32_t target = newRegister();
+            if (target < 0) {
+                return -1;
+            }
+            double value = 0.0;
+            if (op.type == NodeType::Constant) {
+                value = op.parameters[0];
+            } else if (op.type == NodeType::BlendAlpha) {
+                value = 1.0;
+            }
+            kernel.constants_.push_back(BlockKernel::KernelConstant{
+                .target = static_cast<std::uint8_t>(target), .value = value});
+            return target;
+        }
         case NodeType::BlendDensity:
         case NodeType::Cache2d:
         case NodeType::CacheOnce:
@@ -1866,7 +1900,7 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
     // Every other type: its arguments, first to last (an `interpolated`'s
     // is the corners', not the block's), then the node itself.
     KernelOp lowered{
-        .code = Code::Constant,
+        .code = Code::Move,
         .target = 0,
         .first = 0,
         .second = 0,
@@ -1885,18 +1919,6 @@ std::int32_t Interpreter::lowerBlock(BlockKernel& kernel, const NodeIndex index,
         (i == 0 ? lowered.first : lowered.second) = static_cast<std::uint8_t>(value);
     }
     switch (op.type) {
-        case NodeType::Constant:
-            lowered.code = Code::Constant;
-            break;
-        case NodeType::BlendAlpha:
-            // evaluateNode: 1.0, this engine never blending.
-            lowered.code = Code::Constant;
-            lowered.parameters = {1.0, 0.0, 0.0, 0.0};
-            break;
-        case NodeType::BlendOffset:
-            lowered.code = Code::Constant;
-            lowered.parameters = {0.0, 0.0, 0.0, 0.0};
-            break;
         case NodeType::Add:
             lowered.code = Code::Add;
             break;
@@ -1963,6 +1985,11 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
         cache.kernelValues_.resize(kernel.registers_);
     }
     double* const values = cache.kernelValues_.data();
+    for (const BlockKernel::KernelConstant& constant : kernel.constants_) {
+        values[constant.target] = constant.value;
+    }
+    const BlockKernel::KernelOp* const ops = kernel.ops_.data();
+    CornerCache::Entry* const entries = cache.entries_.data();
     // callThrough's Call::memo, for this read: no window, Block.
     const bool memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty();
     // The point's cell and fractions, found at its first `interpolated`.
@@ -1975,13 +2002,10 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
     const std::size_t count = kernel.ops_.size();
     std::size_t pc = 0;
     while (pc < count) {
-        const BlockKernel::KernelOp& op = kernel.ops_[pc];
+        const BlockKernel::KernelOp& op = ops[pc];
         // evaluateNode's cases, expression for expression (see there); the
         // arguments are already in their registers, computed in its order.
         switch (op.code) {
-            case Code::Constant:
-                values[op.target] = op.parameters[0];
-                break;
             case Code::Add:
                 values[op.target] = values[op.first] + values[op.second];
                 break;
@@ -2063,14 +2087,21 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
                 // interpolate()'s entry check. A kernel reads through no
                 // window, whose number is 0 (callThrough), so the tag is 0
                 // whatever the argument reaches.
-                CornerCache::Entry& entry =
-                    cache.entries_[static_cast<std::size_t>(op.interpolated)];
+                CornerCache::Entry& entry = entries[op.interpolated];
                 if (!entry.filled || entry.x != lower.x || entry.y != lower.y ||
                     entry.z != lower.z || (memo && entry.tag != 0U)) {
                     const Call call = callThrough(cache, nullptr, ReadContext::Block);
                     fillCell(op.interpolated, call, true, entry, lower, 0U);
                 }
-                values[op.target] = blendCell(entry.corners, tx, ty, tz);
+                // blendCell, with the blends along y kept for the cell's
+                // next block at this y (Entry::alongY).
+                const auto yBits = std::bit_cast<std::uint64_t>(ty);
+                if (!entry.alongYKnown || entry.yFraction != yBits) {
+                    entry.alongY = blendAlongY(entry.corners, ty);
+                    entry.yFraction = yBits;
+                    entry.alongYKnown = true;
+                }
+                values[op.target] = blendAlongXz(entry.alongY, tx, tz);
                 break;
             }
             case Code::Move:
