@@ -123,9 +123,6 @@ struct SurfaceNeeds {
     return needs;
 }
 
-/// Snaps down onto the biome grid: vanilla resolves one biome per 4x4x4
-/// cell and surface rules read that grid rather than resampling per block
-/// (measured in `vanilla_biomes_test.cpp` — the lower corner of the cell).
 /// The palette indices of the blocks one fill places, kept by the ADDRESS of
 /// the state placed. Every state the fill places lives in storage that
 /// outlives the fill and never changes — air() and lava(), the vein blocks,
@@ -164,6 +161,9 @@ private:
     std::size_t size_ = 0;
 };
 
+/// Snaps down onto the biome grid: vanilla resolves one biome per 4x4x4
+/// cell and surface rules read that grid rather than resampling per block
+/// (measured in `vanilla_biomes_test.cpp` — the lower corner of the cell).
 [[nodiscard]] std::int32_t quartSnap(const std::int32_t value) noexcept {
     return javamath::floorDiv(value, std::int32_t{4}) * std::int32_t{4};
 }
