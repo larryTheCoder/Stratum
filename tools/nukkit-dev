@@ -3,18 +3,24 @@
 #
 # ext-nukkit/'s plugin is compiled against, and smoke-tested inside, a real
 # Nukkit server. The one thing this script downloads is that server: ONE
-# prebuilt jar from CloudburstMC's own CI (the NukkitX/Nukkit master job), at
-# the build pinned below, checked against the SHA-256 recorded below and
-# refused on any mismatch. Nothing from the download is run but the jar
-# itself; Nukkit is never built from source here. No root, no JDK download.
+# prebuilt jar built by CloudburstMC — from its own CI (the NukkitX/Nukkit
+# master job), or from its Maven snapshot repository, which its GitHub
+# deploy job publishes to on every master push (owner, 2026-10-27, when the
+# CI answered HTTP 502 for every job) — at the build pinned below, checked
+# against the SHA-256 recorded below and refused on any mismatch. Nothing
+# from the download is run but the jar itself; Nukkit is never built from
+# source here. No root, no JDK download.
 #
 # Usage:
 #   tools/nukkit-dev                    # the pin, where everything lives, what is present
 #   tools/nukkit-dev fetch              # install the pinned jar once, verified
 #   tools/nukkit-dev --print-jar        # the verified jar's path (exit 1 if absent)
 #   tools/nukkit-dev --print-java-home  # a local JDK with javac and jni.h
-#   tools/nukkit-dev pin <build>        # owner only: download <build>'s jar into
-#                                       # quarantine and print the lines to pin it
+#   tools/nukkit-dev pin <build>        # owner only: download CI build <build>'s jar
+#                                       # into quarantine and print the lines to pin it
+#   tools/nukkit-dev pin-maven <version>
+#                                       # owner only: the same, for a Maven snapshot
+#                                       # version (1.0-<timestamp>-<n>) of cn.nukkit:nukkit
 #   tools/nukkit-dev server <dir> --plugin <jar> --pack <version root> [options]
 #                                       # write a server directory (NOT hermetic on its own)
 #   tools/nukkit-dev smoke --plugin <jar> --smoke-plugin <jar> --library <so>
@@ -33,7 +39,8 @@
 # KEEP THE VERIFIED JAR. CloudburstMC's CI keeps the artifacts of its newest
 # five builds only (Nukkit's Jenkinsfile: buildDiscarder(logRotator(
 # artifactNumToKeepStr: '5'))), so five builds after the pinned one its jar
-# is gone from the CI for good, and `fetch` can only answer 404. The copy in
+# is gone from the CI for good, and `fetch` can only answer 404. A snapshot
+# repository prunes old snapshots too. The copy in
 # $STRATUM_NUKKIT_DIR/jars (or quarantine/) is then the only one: keep it, or
 # a backup of it. `fetch` installs any file at the jar's path whose SHA-256
 # is the pin, wherever it came from; without one, the way on is a re-pin.
@@ -56,13 +63,16 @@
 set -euo pipefail
 
 # --- The pin ----------------------------------------------------------------
-# Set together, from `tools/nukkit-dev pin <build>`'s output, by the owner.
-# Empty until then, and `fetch` refuses to download anything without them.
+# Set together, from `tools/nukkit-dev pin <build>`'s or `pin-maven
+# <version>`'s output, by the owner. Empty until then, and `fetch` refuses to
+# download anything without them. NUKKIT_BUILD names the build (a CI build
+# number or a Maven snapshot version), NUKKIT_URL is where `fetch` gets it.
 readonly NUKKIT_CI_JOB="https://ci.opencollab.dev/job/NukkitX/job/Nukkit/job/master"
-readonly NUKKIT_BUILD=""
-readonly NUKKIT_COMMIT=""
-readonly NUKKIT_ARTIFACT=""
-readonly NUKKIT_SHA256=""
+readonly NUKKIT_MAVEN="https://repo.opencollab.dev/maven-snapshots/cn/nukkit/nukkit/1.0-SNAPSHOT"
+readonly NUKKIT_BUILD="1.0-20260919.123832-1250"
+readonly NUKKIT_COMMIT="b3caad67d86be34aeca3937e64e8176f6760a2d4"
+readonly NUKKIT_URL="https://repo.opencollab.dev/maven-snapshots/cn/nukkit/nukkit/1.0-SNAPSHOT/nukkit-1.0-20260919.123832-1250.jar"
+readonly NUKKIT_SHA256="b373dcdb240d0d32fccbc9e0f9e727c4591082580dad7d522f924b7b411daa49"
 # The commit this binding was read against (CloudburstMC/Nukkit master,
 # 2026-09-19, Bedrock 26.50). Prefer the CI build of exactly this commit.
 readonly NUKKIT_READ_AT="b3caad67d86be34aeca3937e64e8176f6760a2d4"
@@ -90,7 +100,7 @@ die() { printf 'nukkit-dev: %s\n' "$*" >&2; exit 1; }
 
 jar_path() { printf '%s/jars/nukkit-%s.jar' "${nukkit_dir}" "${NUKKIT_BUILD}"; }
 
-pinned() { [[ -n "${NUKKIT_BUILD}" && -n "${NUKKIT_ARTIFACT}" && -n "${NUKKIT_SHA256}" ]]; }
+pinned() { [[ -n "${NUKKIT_BUILD}" && -n "${NUKKIT_URL}" && -n "${NUKKIT_SHA256}" ]]; }
 
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
 
@@ -126,6 +136,17 @@ accepted), or re-pin a current build"
     fi
 }
 
+# The reason fetching the pinned jar did not answer 200: the CI's own
+# message for a CI pin, the URL and status for any other.
+fetch_refusal() { # http-code
+    if [[ "${NUKKIT_URL}" == "${NUKKIT_CI_JOB}/"* ]]; then
+        ci_refusal "$1" "${NUKKIT_BUILD}"
+    else
+        printf '%s' "${NUKKIT_URL} answered HTTP $1 (000: no answer at all). Put the kept copy of \
+the verified jar at $(jar_path) (any file there whose SHA-256 is the pin is accepted), or re-pin"
+    fi
+}
+
 # --- JDK ----------------------------------------------------------------------
 
 java_home_ok() { [[ -x "$1/bin/javac" && -x "$1/bin/java" && -f "$1/include/jni.h" && -f "$1/lib/ct.sym" ]]; }
@@ -156,11 +177,11 @@ find_java_home() {
 
 cmd_status() {
     if pinned; then
-        echo "pinned:   build ${NUKKIT_BUILD} of ${NUKKIT_CI_JOB} (commit ${NUKKIT_COMMIT:-unrecorded})"
-        echo "          ${NUKKIT_ARTIFACT}, sha256 ${NUKKIT_SHA256}"
-        echo "          (the CI keeps a build's jar for ${NUKKIT_CI_KEEPS} builds: keep the verified copy)"
+        echo "pinned:   build ${NUKKIT_BUILD} (commit ${NUKKIT_COMMIT:-unrecorded})"
+        echo "          ${NUKKIT_URL}, sha256 ${NUKKIT_SHA256}"
+        echo "          (neither source keeps a build for ever: keep the verified copy)"
     else
-        echo "pinned:   nothing yet (tools/nukkit-dev pin <build>; read against ${NUKKIT_READ_AT})"
+        echo "pinned:   nothing yet (tools/nukkit-dev pin <build> or pin-maven <version>; read against ${NUKKIT_READ_AT})"
     fi
     echo "dir:      ${nukkit_dir}"
     if pinned; then
@@ -201,11 +222,11 @@ remove it by hand after looking at what it is"
         log "using the copy 'pin' downloaded: ${quarantined}"
         cp "${quarantined}" "${part}"
     else
-        log "downloading build ${NUKKIT_BUILD}'s ${NUKKIT_ARTIFACT}"
+        log "downloading build ${NUKKIT_BUILD}: ${NUKKIT_URL}"
         local code
-        if ! code="$(download "${NUKKIT_CI_JOB}/${NUKKIT_BUILD}/artifact/${NUKKIT_ARTIFACT}" "${part}")"; then
+        if ! code="$(download "${NUKKIT_URL}" "${part}")"; then
             rm -f "${part}"
-            die "$(ci_refusal "${code}" "${NUKKIT_BUILD}"); nothing installed"
+            die "$(fetch_refusal "${code}"); nothing installed"
         fi
     fi
     local got
@@ -215,7 +236,7 @@ remove it by hand after looking at what it is"
         die "build ${NUKKIT_BUILD}'s jar has sha256 ${got}, not the pinned ${NUKKIT_SHA256}: refused"
     fi
     mv "${part}" "${jar}"
-    log "verified: ${jar}. Keep it: the CI deletes this build's jar ${NUKKIT_CI_KEEPS} builds later"
+    log "verified: ${jar}. Keep it: neither the CI nor the snapshot repository keeps a build for ever"
     printf '%s\n' "${jar}"
 }
 
@@ -278,7 +299,77 @@ commit this binding was read against (${NUKKIT_READ_AT})"
 # Keep ${quarantined}: the CI deletes build ${build}'s jar ${NUKKIT_CI_KEEPS} builds later.
 readonly NUKKIT_BUILD="${build}"
 readonly NUKKIT_COMMIT="${commit}"
-readonly NUKKIT_ARTIFACT="${jars[0]}"
+readonly NUKKIT_URL="${NUKKIT_CI_JOB}/${build}/artifact/${jars[0]}"
+readonly NUKKIT_SHA256="${digest}"
+EOF
+}
+
+# pin-maven <version>: what `pin` does, for a snapshot version of
+# cn.nukkit:nukkit in CloudburstMC's Maven snapshot repository, where its
+# GitHub deploy job publishes every master push (the shaded server jar is
+# the artifact with no classifier; "-dev" is the bare library). The commit
+# is the build's own git.properties; the download is checked against the
+# repository's .sha1 beside it, and refused unless it is a runnable Nukkit
+# server (Main-Class cn.nukkit.Nukkit).
+cmd_pin_maven() {
+    local version="${1:-}"
+    [[ "${version}" =~ ^1\.0-[0-9]{8}\.[0-9]{6}-[0-9]+$ ]] \
+        || die "usage: tools/nukkit-dev pin-maven <version>, a snapshot version such as 1.0-20260919.123832-1250 (${NUKKIT_MAVEN}/maven-metadata.xml lists them)"
+    local base="${NUKKIT_MAVEN}/nukkit-${version}"
+    local tmp code
+    tmp="$(mktemp -d)"
+    if ! code="$(download "${base}.properties" "${tmp}/git.properties")"; then
+        rm -rf "${tmp}"
+        die "${base}.properties answered HTTP ${code}: no such snapshot"
+    fi
+    local commit
+    commit="$(sed -n 's/^git\.commit\.id=//p' "${tmp}/git.properties" | tr -d '\r')"
+    [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || { rm -rf "${tmp}"; die "snapshot ${version} names no single commit"; }
+    if ! code="$(download "${base}.jar.sha1" "${tmp}/jar.sha1")"; then
+        rm -rf "${tmp}"
+        die "${base}.jar.sha1 answered HTTP ${code}"
+    fi
+    local want_sha1
+    want_sha1="$(tr -d ' \r\n' <"${tmp}/jar.sha1")"
+    rm -rf "${tmp}"
+    [[ "${want_sha1}" =~ ^[0-9a-f]{40}$ ]] || die "${base}.jar.sha1 is not a SHA-1"
+
+    mkdir -p "${nukkit_dir}/quarantine"
+    local quarantined="${nukkit_dir}/quarantine/nukkit-${version}.jar"
+    log "downloading snapshot ${version}'s server jar into quarantine (not installed)"
+    if ! code="$(download "${base}.jar" "${quarantined}.part")"; then
+        rm -f "${quarantined}.part"
+        die "${base}.jar answered HTTP ${code}; nothing kept"
+    fi
+    local got_sha1
+    got_sha1="$(sha1sum "${quarantined}.part" | cut -d' ' -f1)"
+    if [[ "${got_sha1}" != "${want_sha1}" ]]; then
+        rm -f "${quarantined}.part"
+        die "the download's SHA-1 is ${got_sha1}, not the repository's ${want_sha1}: refused"
+    fi
+    local main
+    main="$(python3 -I -c '
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as jar:
+    manifest = jar.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+print(next((line.split(":", 1)[1].strip() for line in manifest.splitlines()
+            if line.startswith("Main-Class:")), ""))
+' "${quarantined}.part" 2>/dev/null)" || main=""
+    if [[ "${main}" != "cn.nukkit.Nukkit" ]]; then
+        rm -f "${quarantined}.part"
+        die "snapshot ${version}'s jar is not a runnable Nukkit server (Main-Class '${main}'): refused"
+    fi
+    mv "${quarantined}.part" "${quarantined}"
+    local digest
+    digest="$(sha256_of "${quarantined}")"
+    [[ "${commit}" == "${NUKKIT_READ_AT}" ]] || log "note: snapshot ${version} built ${commit}, not the \
+commit this binding was read against (${NUKKIT_READ_AT})"
+    cat <<EOF
+# Paste into tools/nukkit-dev, replacing the empty pin, then: tools/nukkit-dev fetch
+# Keep ${quarantined}: a snapshot repository does not keep old snapshots for ever.
+readonly NUKKIT_BUILD="${version}"
+readonly NUKKIT_COMMIT="${commit}"
+readonly NUKKIT_URL="${base}.jar"
 readonly NUKKIT_SHA256="${digest}"
 EOF
 }
@@ -739,9 +830,10 @@ case "${1:-}" in
     --print-jar) cmd_print_jar ;;
     --print-java-home) find_java_home || die "no JDK with javac, include/jni.h and lib/ct.sym found; set JAVA_HOME" ;;
     pin) shift; cmd_pin "$@" ;;
+    pin-maven) shift; cmd_pin_maven "$@" ;;
     server) shift; cmd_server "$@" ;;
     smoke) shift; cmd_smoke "$@" ;;
     scan-log) shift; [[ -f "${1:-}" ]] || die "usage: tools/nukkit-dev scan-log <log> [refused world]"
         scan_log "$@" ;;
-    *) sed -n '2,27p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
+    *) sed -n '2,30p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
 esac
