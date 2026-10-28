@@ -11114,14 +11114,53 @@ Open:
   `UnknownHostException`, as the log check expects) — PASS, exit 3 on an
   all-offset biome report, exit 1 on a stray error, a leftover refused
   world or an unexplained biome mismatch, and a refusal to empty a
-  directory it did not mark. *What did not:* Nukkit. No jar is pinned —
-  CloudburstMC's CI (`ci.opencollab.dev`) answered HTTP 502 to every
-  request, polled every five minutes from 2026-10-14 20:33 to 21:44 UTC
-  (2026-10-15 local) — so the headless smoke, the startup refusal inside
-  Nukkit, the census through Nukkit's mapping (block states, and the
-  runtime biome registry), the biome readings above, the generation time
-  and thread count, and generation on Nukkit's own workers against a
-  single-threaded fill are all still to come.
+  directory it did not mark. *What did not, until 2026-10-27 (below):*
+  Nukkit. No jar was pinned — CloudburstMC's CI (`ci.opencollab.dev`)
+  answered HTTP 502 to every request, polled every five minutes from
+  2026-10-14 20:33 to 21:44 UTC (2026-10-15 local) — so the headless smoke,
+  the startup refusal inside Nukkit, the census through Nukkit's mapping
+  (block states, and the runtime biome registry), the biome readings above,
+  the generation time and thread count, and generation on Nukkit's own
+  workers against a single-threaded fill were all still to come.
+
+  *Run in Nukkit (2026-10-27).* The CI still answered HTTP 502 for every
+  job, GeyserMC's included, so by the owner's ruling of that day the jar
+  comes from CloudburstMC's Maven snapshot repository
+  (`repo.opencollab.dev`), which its GitHub deploy job publishes to on
+  every master push: `cn.nukkit:nukkit` 1.0-20260919.123832-1250, the
+  shaded server jar (the "-dev" classifier is the bare library), built from
+  b3caad67 by its own `git.properties` — the commit this binding was read
+  against, and master's head since 2026-09-19 — pinned by SHA-256
+  b373dcdb… with `tools/nukkit-dev pin-maven`, which also checks the
+  repository's SHA-1 and refuses a jar whose Main-Class is not
+  `cn.nukkit.Nukkit`. The pin now records the jar's URL whatever its
+  source. The smoke (`ctest --preset nukkit`, and `nukkit-release`, a
+  Release preset added for running a server) then ran inside Nukkit:
+  the census resolved all 35 block states the overworld can place (22 966
+  of all 29 671 Java states; Nukkit's palette is 1.21.30.7, the engine's
+  table 1.21.60.33); 50 of the 54 overworld biomes are in Nukkit's
+  registry, the four named above missing; the 81-chunk spawn area matched
+  the engine in memory, 0 blocks and 0 biomes different, generated on
+  Nukkit's 4 async workers (2205 ms Debug, 313 ms Release), with 240 liquid
+  updates scheduled as chunks populated; and read back from disk, 0 blocks
+  and 262 464 biomes different, every one of them exactly the section
+  offset read from `Data3dSerializer` above — so that defect is measured
+  now, not only read, and the smoke exits 3 on it, as designed, until the
+  owner rules. The startup refusal also ran for the first time, and hung:
+  `forceShutdown` called from `onLoad`, before the server's first tick,
+  never returns — Nukkit's scheduler starts at tick -1, so the
+  `mainThreadHeartbeat(Integer.MAX_VALUE)` it makes overflows its catch-up
+  test and counts an int up to `Integer.MAX_VALUE` inclusive (a thread dump
+  showed the main thread spinning there). The plugin now exits with status
+  1 directly, nothing having been written, and run 0 passes. *In a
+  Bedrock client (2026-10-27)*, on a Nukkit server of the same seed and the
+  same frozen pipeline as a PocketMine-MP one: the same 16 places in both,
+  screenshotted, the terrain the same in every one; the differences are the
+  predicted ones — a pale garden under a blue sky rather than its grey fog,
+  mangrove water ocean-blue rather than its dark green (Nukkit sends both
+  biomes as ocean) — and Nukkit's shorter view distance. The section offset
+  shows only where a biome changes with height and was not looked for in
+  the client.
 
 - **The legacy named-noise seeding, read straight out of the golden Nether
   regions — a second oracle, a passing control, and still no survivor.**

@@ -100,9 +100,13 @@ any world. There, `StratumPlugin.onLoad`:
    resolved through Nukkit and bound — none of it depends on the seed, so it
    compiles for seed 0 and releases);
 5. if any world is refused, logs one `REFUSED stratum: world '<name>': <why>`
-   line per world and one `STOPPING the server …` line, calls Nukkit's
-   `forceShutdown` and exits with status 1. Nothing is written for a refused
-   world.
+   line per world and one `STOPPING the server …` line and exits with
+   status 1. Nothing is written for a refused world. Not through Nukkit's
+   `forceShutdown`: called before the server's first tick, it never returns
+   (its `mainThreadHeartbeat(Integer.MAX_VALUE)` overflows the scheduler's
+   catch-up test from tick -1 and counts an int to `Integer.MAX_VALUE`
+   inclusive; observed in the first real run, 2026-10-27, as the smoke's
+   run 0 timing out).
 
 `WorldPipeline.open` makes the same checks again when Nukkit loads the
 world, for its real seed. A Stratum world a command or another plugin
@@ -265,17 +269,23 @@ check on one file.
 
 ## Open
 
-- **Run it.** No Nukkit jar has been fetched: CloudburstMC's CI answered
-  HTTP 502 to every request on 2026-10-15, so `tools/nukkit-dev` pins no
-  build. Pinning (`tools/nukkit-dev pin <build>`, preferably the build of
-  `b3caad67d`) is the owner's step. Until then the plugin, the startup
-  refusal, the frozen-blob hook, the id resolution against Nukkit, the biome
-  convention, the serializer reading and the fluid scheduling are unverified
-  in Nukkit.
+- **Run, 2026-10-27, and seen in a client.** The jar is CloudburstMC's
+  Maven snapshot of `b3caad67d` (`tools/nukkit-dev pin-maven`, on the
+  owner's ruling: the CI answered HTTP 502 for every job), and the smoke
+  ran inside Nukkit: the startup refusal, the census, the in-memory
+  comparison (0 differences) and the disk read-back (0 block differences,
+  every biome difference the section offset below) — exit 3, as designed.
+  A Bedrock client on a Nukkit server saw the same terrain as on
+  PocketMine-MP at 16 places, the differences only the biomes Nukkit sends
+  as ocean (pale garden, mangrove swamp) and its view distance; the offset
+  (`NetworkChunkSerializer`, by reading) was not looked for there. Nukkit
+  `b3caad67` accepts protocols 2192
+  and 2193 only (1.26.50 and the one before), not the 1.26.30
+  PocketMine-MP 5.44.3 speaks.
 - **Keep the verified jar.** Nukkit's Jenkinsfile keeps the artifacts of the
   newest five builds only (`logRotator(artifactNumToKeepStr: '5')`), so a
   pinned build's jar disappears from the CI five builds later; `fetch` then
-  says so (HTTP 404). The copy under `$STRATUM_NUKKIT_DIR/jars` (or
+  says so (HTTP 404). A snapshot repository prunes old snapshots too. The copy under `$STRATUM_NUKKIT_DIR/jars` (or
   `quarantine/`) is the durable one: keep it, or a backup, and `fetch`
   accepts it wherever it came from as long as its SHA-256 is the pin.
 - The biome serializer defect and the four biomes Nukkit's registry lacks
