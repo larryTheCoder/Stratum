@@ -104,6 +104,18 @@
         "STRATUM_BUILD_EXT_NUKKIT": "ON",
         "STRATUM_NUKKIT_JAR": "$env{STRATUM_NUKKIT_JAR}"
       }
+    },
+    {
+      "name": "nukkit-release",
+      "displayName": "CloudburstMC/Nukkit JNI binding, optimised",
+      "description": "Release, warnings as errors, with ext-nukkit/'s JNI shim and plugin: the libstratum_nukkit.so to run a Nukkit server on, as ext-release is PocketMine-MP's. The determinism flags are the ones every target gets from stratum_configure_target. The same environment as nukkit: JAVA_HOME=$(tools/nukkit-dev --print-java-home) STRATUM_NUKKIT_JAR=$(tools/nukkit-dev --print-jar) cmake --preset nukkit-release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "STRATUM_WERROR": "ON",
+        "STRATUM_BUILD_EXT_NUKKIT": "ON",
+        "STRATUM_NUKKIT_JAR": "$env{STRATUM_NUKKIT_JAR}"
+      }
     }
   ],
   "buildPresets": [
@@ -154,6 +166,11 @@
       "name": "nukkit",
       "configurePreset": "nukkit",
       "configuration": "Debug"
+    },
+    {
+      "name": "nukkit-release",
+      "configurePreset": "nukkit-release",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -365,6 +382,13 @@
       "execution": {
         "noTestsAction": "error"
       }
+    },
+    {
+      "name": "nukkit-release",
+      "inherits": "nukkit",
+      "configurePreset": "nukkit-release",
+      "configuration": "Release",
+      "displayName": "ext-nukkit, optimised: JNI in a bare JVM, the plugin, the headless smoke"
     }
   ]
 }
