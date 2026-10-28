@@ -138,8 +138,12 @@ public final class StratumPlugin extends PluginBase implements Listener {
     /**
      * Stops the server, exit status 1. Called from {@link #onLoad}: Nukkit
      * has opened its network interface and its player database by then, and
-     * no world; {@code forceShutdown} closes both, and nothing is left to
-     * save.
+     * no world, and nothing is written yet, so exiting loses nothing. Not
+     * through {@code forceShutdown}: before the server's first tick its
+     * scheduler's tick is -1, and the {@code mainThreadHeartbeat(Integer.MAX_VALUE)}
+     * that {@code forceShutdown} makes overflows its own catch-up test and
+     * counts an int up to {@code Integer.MAX_VALUE} inclusive, which never
+     * ends (Nukkit b3caad67, ServerScheduler; observed: the JVM spun there).
      */
     private void stopBeforeWorlds(List<String> refused) {
         getLogger().error("STOPPING the server before Nukkit loads or creates any world: "
@@ -147,7 +151,6 @@ public final class StratumPlugin extends PluginBase implements Listener {
             + ". Nukkit cannot fail one world cleanly (a refused new world would be left with a "
             + "level.dat, and an existing one would stop the server anyway), so fix or remove the "
             + "world and start again");
-        getServer().forceShutdown();
         System.exit(1);
     }
 
