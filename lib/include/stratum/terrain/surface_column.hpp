@@ -66,7 +66,18 @@ public:
     /// @p categoryAt must return the same category for an index each time:
     /// an index at or below the topmost non-air entry is asked twice.
     template<typename CategoryAt>
-    void readWith(std::size_t height, std::int32_t minY, CategoryAt&& categoryAt);
+    void readWith(std::size_t height, std::int32_t minY, CategoryAt&& categoryAt) {
+        readWith(height, minY, height, categoryAt);
+    }
+
+    /// The same, for a caller that already knows every entry from
+    /// @p airFrom up is air — the one past its topmost non-air entry, or 0
+    /// for a column of nothing but air: those entries are not asked for, and
+    /// read as the air they are. With @p airFrom at @p height it is the read
+    /// above.
+    template<typename CategoryAt>
+    void readWith(std::size_t height, std::int32_t minY, std::size_t airFrom,
+                  CategoryAt&& categoryAt);
 
     /// The run counted from the top, at @p y (`stone_depth` floor). Throws
     /// std::out_of_range for a y outside the column read.
@@ -96,7 +107,7 @@ private:
 
 template<typename CategoryAt>
 void SurfaceColumn::readWith(const std::size_t height, const std::int32_t minY,
-                             CategoryAt&& categoryAt) {
+                             const std::size_t airFrom, CategoryAt&& categoryAt) {
     minY_ = minY;
     above_.resize(height);
     below_.resize(height);
@@ -116,10 +127,16 @@ void SurfaceColumn::readWith(const std::size_t height, const std::int32_t minY,
     // what the scan's start and the water height are (surface::Context's own
     // doc: one above the first fluid block met descending, water or lava,
     // latched).
+    //
+    // From airFrom up every entry is air: the run is 0 there and neither the
+    // topmost non-air nor the topmost fluid entry can be, so the pass stops
+    // short of them.
+    const std::size_t ascent = std::min(airFrom, height);
+    std::fill(below + ascent, below + height, 0);
     std::size_t top = height;
     std::size_t fluid = height;
     std::int32_t run = 0;
-    for (std::size_t i = 0; i < height; ++i) {
+    for (std::size_t i = 0; i < ascent; ++i) {
         const Category category = categoryAt(i);
         run = category == Category::Solid ? run + 1 : 0;
         below[i] = run;

@@ -114,6 +114,7 @@ TEST_CASE("SurfaceColumn reads every column as the descending and ascending walk
     Dice dice(20261029);
     SurfaceColumn spanRead;
     SurfaceColumn lambdaRead;
+    SurfaceColumn boundedRead;
     std::size_t withWater = 0;
     std::size_t allAir = 0;
     for (std::size_t trial = 0; trial < 4000; ++trial) {
@@ -127,7 +128,16 @@ TEST_CASE("SurfaceColumn reads every column as the descending and ascending walk
         // one SurfaceColumn is.
         spanRead.read(categories, minY);
         lambdaRead.readWith(height, minY, [&](std::size_t i) { return categories[i]; });
-        for (const SurfaceColumn* reads : {&spanRead, &lambdaRead}) {
+        // Told where the air above the column starts — one past its topmost
+        // non-air entry, as the filler finds it — it never asks above that.
+        const auto airFrom = static_cast<std::size_t>(expected.top - minY + 1);
+        std::size_t askedAbove = 0;
+        boundedRead.readWith(height, minY, airFrom, [&](std::size_t i) {
+            askedAbove += i >= airFrom ? 1U : 0U;
+            return categories[i];
+        });
+        CHECK(askedAbove == 0U);
+        for (const SurfaceColumn* reads : {&spanRead, &lambdaRead, &boundedRead}) {
             REQUIRE(reads->top() == expected.top);
             REQUIRE(reads->waterHeight() == expected.waterHeight);
             for (std::size_t i = 0; i < height; ++i) {

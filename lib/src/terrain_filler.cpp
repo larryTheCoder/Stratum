@@ -964,6 +964,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // clamped inside the chunk by fillSteepNeighbours(), which is what keeps
     // this from ever touching a column outside it. Fluid counts as surface,
     // matching the heightmap `steep` was measured against, not OCEAN_FLOOR.
+    // The same height is each column's topmost non-air block, so it also
+    // bounds the column's read below (SurfaceColumn::readWith's airFrom):
+    // found for every chunk, whether or not the rules name `steep`.
     //
     // Found a layer at a time from the top, all 256 columns of a layer
     // together (a layer is contiguous in the buffer, slot z * 16 + x as
@@ -978,7 +981,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // holds no air (65536 is no uint16 index). Before the pass writes
     // anything every index the buffer holds is in the table.
     std::array<std::int32_t, static_cast<std::size_t>(kChunkWidth) * kChunkWidth> worldSurface{};
-    if (surfaceNeedsSteep_) {
+    {
         std::uint32_t airIndex = 0x10000U;
         for (std::size_t i = 0; i < categorized; ++i) {
             if (categoryTable[i] == Category::Air) {
@@ -987,14 +990,20 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             }
         }
         worldSurface.fill(minY - 1);
-        std::size_t open = worldSurface.size();
-        for (std::int32_t y = topY - 1; y >= minY && open > 0; --y) {
+        std::uint32_t open = static_cast<std::uint32_t>(worldSurface.size());
+        for (std::int32_t y = topY - 1; y >= minY && open > 0U; --y) {
             const std::uint16_t* const layer = &into.blocks_[into.linearIndex(0, y, 0)];
+            std::uint32_t landed = 0;
             for (std::size_t slot = 0; slot < worldSurface.size(); ++slot) {
-                const bool lands = worldSurface[slot] < minY && layer[slot] != airIndex;
+                // Both read whatever the other says, so neither is behind a
+                // branch and the layer runs as one straight loop.
+                const bool unfound = worldSurface[slot] < minY;
+                const bool notAir = static_cast<std::uint32_t>(layer[slot]) != airIndex;
+                const bool lands = unfound && notAir;
                 worldSurface[slot] = lands ? y : worldSurface[slot];
-                open -= lands ? 1U : 0U;
+                landed += lands ? 1U : 0U;
             }
+            open -= landed;
         }
     }
     const auto heightAt = [&](const std::int32_t worldX, const std::int32_t worldZ) {
@@ -1137,9 +1146,12 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // the golden decoder reconstructs them with.
             const std::uint16_t* const columnBlocks =
                 &into.blocks_[into.linearIndex(localX, minY, localZ)];
-            column.readWith(columnHeight, minY, [&](const std::size_t i) {
-                return categoryOfIndex(columnBlocks[i * kLayer]);
-            });
+            const std::int32_t columnTop =
+                worldSurface[(static_cast<std::size_t>(localZ) * kChunkWidth) +
+                             static_cast<std::size_t>(localX)];
+            column.readWith(
+                columnHeight, minY, static_cast<std::size_t>(columnTop - minY + 1),
+                [&](const std::size_t i) { return categoryOfIndex(columnBlocks[i * kLayer]); });
             // Constant down the column, so handed over once for all of it.
             context.waterHeight = column.waterHeight();
 
