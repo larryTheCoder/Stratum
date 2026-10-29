@@ -224,10 +224,15 @@ void fillSteepNeighbours(Context& at, HeightAt&& heightAt) {
 /// column — the y, a condition's own range or multiplier, and every
 /// refusal those can draw — is still computed per block.
 ///
-/// Keyed by its column: a call for another (x, z) forgets everything first,
-/// so one memo can be handed every block of a chunk in any order. It belongs
-/// to one caller at a time and never to the Executor, which is shared
-/// between threads (SPEC §4.1).
+/// Keyed by its column AND the executor reading it: a call for another
+/// (x, z), or from another executor, forgets everything first, so one memo
+/// can be handed every block of a chunk in any order, and handed to two
+/// executors in turn without either reading what the other kept — the
+/// surface depth, the noises and the table offsets are each executor's own.
+/// The executor is told apart by the identity each compile() gives it, which
+/// a copy keeps and answers alike (Executor::id_). It belongs to one caller
+/// at a time and never to the Executor, which is shared between threads
+/// (SPEC §4.1).
 class ColumnMemo {
 public:
     ColumnMemo() = default;
@@ -235,12 +240,14 @@ public:
 private:
     friend class Executor;
 
-    /// Binds the memo to the column (@p x, @p z), forgetting what it held if
-    /// that is another column.
-    void bind(const std::int32_t x, const std::int32_t z) noexcept {
-        if (bound_ && x == x_ && z == z_) {
+    /// Binds the memo to the column (@p x, @p z) of the executor whose
+    /// identity is @p owner, forgetting what it held if that is another
+    /// column or another executor.
+    void bind(const std::uint64_t owner, const std::int32_t x, const std::int32_t z) noexcept {
+        if (bound_ && owner == owner_ && x == x_ && z == z_) {
             return;
         }
+        owner_ = owner;
         x_ = x;
         z_ = z;
         bound_ = true;
@@ -251,6 +258,7 @@ private:
         std::fill(hasNoise_.begin(), hasNoise_.end(), char{0});
     }
 
+    std::uint64_t owner_ = 0;
     std::int32_t x_ = 0;
     std::int32_t z_ = 0;
     bool bound_ = false;
@@ -449,9 +457,10 @@ private:
     [[nodiscard]] inline bool biomeMatches(const Condition& condition, std::size_t biomeSlot,
                                            const Context& at) const;
 
-    /// This executor's identity, which its BiomeKeys carry: one per compile()
-    /// and never 0, so no key another compile issued is ever taken for one of
-    /// this one's. A copy keeps it, and answers every key alike.
+    /// This executor's identity, which its BiomeKeys carry and a ColumnMemo
+    /// is bound to: one per compile() and never 0, so no key or memo another
+    /// compile filled is ever taken for one of this one's. A copy keeps it,
+    /// and answers every key and every kept read alike.
     std::uint64_t id_ = 0;
 
     const RuleGraph* graph_;

@@ -719,7 +719,7 @@ const settings::BlockState* Executor::apply(const Context& at) const {
 }
 
 const settings::BlockState* Executor::apply(const Context& at, ColumnMemo& memo) const {
-    memo.bind(at.x, at.z);
+    memo.bind(id_, at.x, at.z);
     return program_.empty() ? runRule(graph_->root(), at, memo) : runProgram(at, memo);
 }
 
