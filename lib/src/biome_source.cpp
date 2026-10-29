@@ -131,10 +131,30 @@ const data::ResourceLocation& Source::at(const density::Interpreter& interpreter
     return parameters_->find(climateAt(interpreter, router, quartCorner, cache));
 }
 
+std::size_t Source::rowAt(const density::Interpreter& interpreter,
+                          const settings::NoiseRouter& router, const density::Point quartCorner,
+                          density::Interpreter::CornerCache& cache, const std::size_t hint) const {
+    if (type_ == Type::TheEnd) {
+        throw std::logic_error("minecraft:the_end's biome source has no parameter list rows");
+    }
+    // `at`'s climate, then findRowFrom where `at` calls find: the same two
+    // checks before the search (ParameterList::findRow), and a row the hint
+    // cannot move.
+    return parameters_->findRowFrom(climateAt(interpreter, router, quartCorner, cache), hint);
+}
+
 void Source::fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
                        const std::int32_t chunkX, const std::int32_t chunkZ,
                        const std::int32_t minQuartY, std::span<const data::ResourceLocation*> into,
                        density::Interpreter::CornerCache& cache) const {
+    // Nothing known: every quart resolved, each from the hint it always had.
+    fillChunk(interpreter, router, chunkX, chunkZ, minQuartY, into, cache, KnownRows{});
+}
+
+void Source::fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
+                       const std::int32_t chunkX, const std::int32_t chunkZ,
+                       const std::int32_t minQuartY, std::span<const data::ResourceLocation*> into,
+                       density::Interpreter::CornerCache& cache, const KnownRows known) const {
     const std::size_t layers = into.size() / kQuartsPerLayer;
     // The chunk's and the layers' block coordinates are formed in int32
     // below; outside these they are not int32s at all (SPEC §8). The layers
@@ -170,23 +190,48 @@ void Source::fillChunk(const density::Interpreter& interpreter, const settings::
     // vanilla's routers the five other climate entries do not read y, so the
     // two differ in depth alone — and, in the first layer, from the quart
     // before. Per call, so nothing is shared between threads.
+    //
+    // A quart @p known holds is taken from it instead, and is the answer
+    // below or before for the next as a resolved one is: every known row is
+    // checked to be a row first, and nothing else about it is read.
     const std::vector<Entry>& entries = parameters_->entries();
+    for (const std::uint32_t row : known.rows) {
+        if (row != kUnknownRow && row >= entries.size()) {
+            throw std::out_of_range("a known biome row " + std::to_string(row) +
+                                    " past the parameter list's " + std::to_string(entries.size()) +
+                                    " rows");
+        }
+    }
+    const std::size_t knownLayers = known.rows.size() / kQuartsPerLayer;
     std::array<std::size_t, kQuartsPerLayer> below{};
     std::size_t previous = ParameterList::kNoHint;
     std::size_t index = 0;
     for (std::size_t layer = 0; layer < layers; ++layer) {
         const std::int32_t blockY = (minQuartY + static_cast<std::int32_t>(layer)) * kQuartWidth;
+        // This layer's rows in @p known, if it holds the layer: in int64,
+        // where both quart layers are far inside (the checks above).
+        const std::int64_t knownLayer =
+            std::int64_t{minQuartY} + static_cast<std::int64_t>(layer) - known.minQuartY;
+        const std::uint32_t* const knownRows =
+            knownLayer >= 0 && knownLayer < static_cast<std::int64_t>(knownLayers)
+                ? known.rows.data() + (static_cast<std::size_t>(knownLayer) * kQuartsPerLayer)
+                : nullptr;
         for (std::int32_t qz = 0; qz < kQuartsPerChunkEdge; ++qz) {
             for (std::int32_t qx = 0; qx < kQuartsPerChunkEdge; ++qx) {
                 const std::size_t column = (static_cast<std::size_t>(qz) * kQuartsPerChunkEdge) +
                                            static_cast<std::size_t>(qx);
-                const std::size_t row = parameters_->findRowFrom(
-                    climateAt(interpreter, router,
-                              density::Point{.x = (baseQuartX + qx) * kQuartWidth,
-                                             .y = blockY,
-                                             .z = (baseQuartZ + qz) * kQuartWidth},
-                              cache),
-                    layer == 0 ? previous : below[column]);
+                const std::uint32_t knownRow =
+                    knownRows != nullptr ? knownRows[column] : kUnknownRow;
+                const std::size_t row =
+                    knownRow != kUnknownRow
+                        ? std::size_t{knownRow}
+                        : parameters_->findRowFrom(
+                              climateAt(interpreter, router,
+                                        density::Point{.x = (baseQuartX + qx) * kQuartWidth,
+                                                       .y = blockY,
+                                                       .z = (baseQuartZ + qz) * kQuartWidth},
+                                        cache),
+                              layer == 0 ? previous : below[column]);
                 below[column] = row;
                 previous = row;
                 into[index++] = &entries[row].biome;

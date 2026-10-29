@@ -31,6 +31,7 @@
 //
 //   generate-world <chunk-dir> <seed> <chunkMinX> <chunkMinZ> <chunkCountX> <chunkCountZ>
 #include <stratum/biome/parameter_list.hpp>
+#include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
@@ -45,6 +46,8 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -116,7 +119,8 @@ enum class Category { Air, Fluid, Solid };
                                               std::int32_t chunkX, std::int32_t chunkZ,
                                               density::Interpreter& biomeInterpreter,
                                               density::Interpreter::CornerCache& biomeCache,
-                                              const biome::ParameterList& biomeParameters) {
+                                              const biome::ParameterList& biomeParameters,
+                                              const biome::Source::KnownRows& known) {
     const settings::NoiseGeometry& geometry = settings.geometry;
     const std::int32_t minY = geometry.minY;
     const std::int32_t sectionCount = geometry.height / chunk::kSectionSize;
@@ -177,9 +181,22 @@ enum class Category { Air, Fluid, Solid };
         for (std::int32_t qy = 0; qy < quartsPerSection; ++qy) {
             for (std::int32_t qz = 0; qz < 4; ++qz) {
                 for (std::int32_t qx = 0; qx < 4; ++qx) {
+                    // A quart the fill's surface pass looked up is taken
+                    // from it (ChunkFiller::surfaceBiomes): the row of this
+                    // same list that the search below finds there.
+                    const std::int64_t knownLayer =
+                        std::int64_t{sectionBaseQuartY} + qy - known.minQuartY;
+                    const std::size_t knownAt =
+                        (static_cast<std::size_t>(knownLayer) * 16U) +
+                        (static_cast<std::size_t>(qz) * 4U) + static_cast<std::size_t>(qx);
+                    const std::uint32_t row =
+                        knownLayer >= 0 && knownAt < known.rows.size() ? known.rows[knownAt]
+                                                                       : biome::Source::kUnknownRow;
                     const data::ResourceLocation biomeId =
-                        biomeAt(biomeInterpreter, biomeCache, settings, biomeParameters,
-                               baseQuartX + qx, sectionBaseQuartY + qy, baseQuartZ + qz);
+                        row != biome::Source::kUnknownRow
+                            ? biomeParameters.entries()[row].biome
+                            : biomeAt(biomeInterpreter, biomeCache, settings, biomeParameters,
+                                      baseQuartX + qx, sectionBaseQuartY + qy, baseQuartZ + qz);
                     const std::string biomeKey = biomeId.toString();
                     auto found = biomePaletteIndex.find(biomeKey);
                     if (found == biomePaletteIndex.end()) {
@@ -322,8 +339,9 @@ int main(int argc, char** argv) {
             terrain::ChunkBuffer buffer(overworld.geometry);
             filler.fill(cx, cz, buffer);
             density::Interpreter::CornerCache biomeCache(biomeInterpreter.cacheSize());
-            const chunk::ChunkData data = buildChunkData(
-                buffer, overworld, cx, cz, biomeInterpreter, biomeCache, biomeParameters);
+            const chunk::ChunkData data =
+                buildChunkData(buffer, overworld, cx, cz, biomeInterpreter, biomeCache,
+                               biomeParameters, filler.surfaceBiomes(buffer, cx, cz));
             const auto bytes = nbt::write("", chunk::encode(data));
 
             const std::filesystem::path path =

@@ -97,6 +97,7 @@
 #include <stratum/density/interpreter.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 
@@ -181,6 +182,25 @@ public:
                                                    density::Point quartCorner,
                                                    density::Interpreter::CornerCache& cache) const;
 
+    /// The parameter list a multi-noise source searches; nullptr for the
+    /// End's, which has none.
+    [[nodiscard]] const ParameterList* parameters() const noexcept { return parameters_; }
+
+    /// A multi-noise source's answer at @p quartCorner as a row of
+    /// parameters(): `parameters()->entries()[row].biome` is the very
+    /// object `at` returns there. The same climate, read the same way, and
+    /// the search warm-started from @p hint (ParameterList::findRowFrom),
+    /// which returns the same row whatever the hint and refuses what `at`
+    /// refuses, in the same order, before it looks at the hint — so a run
+    /// of lookups over neighbouring quarts can hand each answer on as the
+    /// next one's hint. ParameterList::kNoHint is no hint.
+    ///
+    /// Throws std::logic_error for the End's source, which has no rows.
+    [[nodiscard]] std::size_t rowAt(const density::Interpreter& interpreter,
+                                    const settings::NoiseRouter& router, density::Point quartCorner,
+                                    density::Interpreter::CornerCache& cache,
+                                    std::size_t hint) const;
+
     /// The biome of every quart of chunk (@p chunkX, @p chunkZ), from quart
     /// layer @p minQuartY up, into `into[(qy * 4 + qz) * 4 + qx]` — vanilla's
     /// storage order, `into.size() / 16` layers. The same answers `at` gives
@@ -194,6 +214,38 @@ public:
                    std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                    std::span<const data::ResourceLocation*> into,
                    density::Interpreter::CornerCache& cache) const;
+
+    /// What KnownRows holds for a quart its caller did not resolve.
+    static constexpr std::uint32_t kUnknownRow = 0xFFFF'FFFFU;
+
+    /// Rows of a multi-noise source's list already resolved for some of a
+    /// chunk's quarts: `rows[(qy * 4 + qz) * 4 + qx]` for quart layer
+    /// `minQuartY + qy`, fillChunk's own order, kUnknownRow where the quart
+    /// was not resolved. Quarts outside its layers are unknown.
+    struct KnownRows {
+        std::int32_t minQuartY = 0;
+        std::span<const std::uint32_t> rows;
+    };
+
+    /// fillChunk, taking each quart @p known holds from it rather than
+    /// resolving it again, and resolving every other quart as fillChunk
+    /// does, in fillChunk's order — warm-started from the known rows too,
+    /// which cannot change a row (rowAt). The domain checks come first, as
+    /// fillChunk's do. The End's source reads nothing from @p known.
+    ///
+    /// PRECONDITION, which is the caller's to keep: each known row is the
+    /// row rowAt answers at that quart of this chunk, for this source,
+    /// through an interpreter of the same graph, noises and cell geometry —
+    /// as a surface pass's lookups are (terrain::ChunkFiller::surfaceBiomes).
+    /// The lookups are pure functions of the quart, so the result is then
+    /// fillChunk's, entry for entry; and a quart resolved once without a
+    /// refusal cannot refuse later, so the first refusal, if any, is
+    /// fillChunk's too, at the same quart. A known row past the list's end
+    /// is refused (std::out_of_range) before anything is resolved.
+    void fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
+                   std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
+                   std::span<const data::ResourceLocation*> into,
+                   density::Interpreter::CornerCache& cache, KnownRows known) const;
 
 private:
     Source(const Type type, const ParameterList* parameters) noexcept

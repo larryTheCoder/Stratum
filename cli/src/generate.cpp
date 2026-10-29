@@ -144,8 +144,10 @@ struct Scratch {
     const Clock::time_point start = Clock::now();
     dimension.fillBlocks(chunkX, chunkZ, scratch.blocks);
     const Clock::time_point filled = Clock::now();
+    // Handed the blocks just filled: the quarts their surface pass looked
+    // up are taken from them, the same biomes (CompiledDimension::fillBiomes).
     dimension.fillBiomes(chunkX, chunkZ, javamath::floorDiv(column.minY, kQuartWidth),
-                         scratch.biomes);
+                         scratch.biomes, scratch.blocks);
     const Clock::time_point biomed = Clock::now();
 
     const terrain::ChunkBuffer& blocks = scratch.blocks;

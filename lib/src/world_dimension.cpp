@@ -114,6 +114,21 @@ noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& setti
     }
 }
 
+/// The noise-height forms of CompiledDimension::fillBiomes: the quart layer
+/// they start from, once an output of @p entries is checked to be exactly
+/// the noise height's quarts (DimensionError otherwise).
+[[nodiscard]] std::int32_t noiseHeightMinQuartY(const settings::NoiseGeometry& geometry,
+                                                const std::size_t entries) {
+    const std::int32_t quartsHigh = javamath::floorDiv(geometry.height, kQuartWidth);
+    const auto expected = static_cast<std::size_t>(quartsHigh) * kQuartsPerChunkEdge *
+                          static_cast<std::size_t>(kQuartsPerChunkEdge);
+    if (entries != expected) {
+        throw DimensionError("a biome output of " + std::to_string(entries) +
+                             " entries for a dimension that needs " + std::to_string(expected));
+    }
+    return javamath::floorDiv(geometry.minY, kQuartWidth);
+}
+
 } // namespace
 
 BiomeSource BiomeSource::multiNoise(data::ResourceLocation parameterList) {
@@ -219,20 +234,38 @@ void CompiledDimension::fillBlocks(const std::int32_t chunkX, const std::int32_t
 
 void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
                                    std::span<const data::ResourceLocation*> into) const {
-    const settings::NoiseSettings& settings = impl_->settings;
-    const std::int32_t quartsHigh = javamath::floorDiv(settings.geometry.height, kQuartWidth);
-    const auto expected = static_cast<std::size_t>(quartsHigh) * kQuartsPerChunkEdge *
-                          static_cast<std::size_t>(kQuartsPerChunkEdge);
-    if (into.size() != expected) {
-        throw DimensionError("a biome output of " + std::to_string(into.size()) +
-                             " entries for a dimension that needs " + std::to_string(expected));
-    }
-    fillBiomes(chunkX, chunkZ, javamath::floorDiv(settings.geometry.minY, kQuartWidth), into);
+    fillBiomes(chunkX, chunkZ, noiseHeightMinQuartY(impl_->settings.geometry, into.size()), into);
 }
 
 void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
                                    const std::int32_t minQuartY,
                                    std::span<const data::ResourceLocation*> into) const {
+    fillBiomesKnowing(chunkX, chunkZ, minQuartY, into, biome::Source::KnownRows{});
+}
+
+void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                   std::span<const data::ResourceLocation*> into,
+                                   const terrain::ChunkBuffer& filled) const {
+    fillBiomes(chunkX, chunkZ, noiseHeightMinQuartY(impl_->settings.geometry, into.size()), into,
+               filled);
+}
+
+void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                   const std::int32_t minQuartY,
+                                   std::span<const data::ResourceLocation*> into,
+                                   const terrain::ChunkBuffer& filled) const {
+    // Empty unless this dimension's own filler filled @p filled with this
+    // chunk (ChunkFiller::surfaceBiomes keys the rows by both), so the
+    // biome source those rows are of is this one: the filler was compiled
+    // with it (Impl).
+    fillBiomesKnowing(chunkX, chunkZ, minQuartY, into,
+                      impl_->filler.surfaceBiomes(filled, chunkX, chunkZ));
+}
+
+void CompiledDimension::fillBiomesKnowing(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                          const std::int32_t minQuartY,
+                                          std::span<const data::ResourceLocation*> into,
+                                          const biome::Source::KnownRows known) const {
     constexpr std::size_t kQuartsPerLayer = std::size_t{kQuartsPerChunkEdge} * kQuartsPerChunkEdge;
     if (into.size() % kQuartsPerLayer != 0) {
         throw DimensionError("a biome output of " + std::to_string(into.size()) +
@@ -243,7 +276,7 @@ void CompiledDimension::fillBiomes(const std::int32_t chunkX, const std::int32_t
     // across positions changes no value, only how often corners are redone.
     density::Interpreter::CornerCache cache(impl_->biomeInterpreter.cacheSize());
     impl_->biomeSource.fillChunk(impl_->biomeInterpreter, impl_->settings.router, chunkX, chunkZ,
-                                 minQuartY, into, cache);
+                                 minQuartY, into, cache, known);
 }
 
 } // namespace stratum::world

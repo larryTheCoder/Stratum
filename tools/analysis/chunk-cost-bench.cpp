@@ -43,7 +43,10 @@
 //            from vanilla's and only the end-to-end sum compares with its
 //            biomes + noise + surface
 //   biomes   CompiledDimension::fillBiomes over PocketMine-MP's 96 quart layers
-//            (y -64..319), the range form encodeChunk calls
+//            (y -64..319), the range form encodeChunk calls, handed the filled
+//            buffer as encodeChunk hands it: the quarts the fill's surface pass
+//            looked up are taken from there, so this stage resolves only the
+//            rest
 //   encode   everything else encodeChunk does: Java state ids per palette entry,
 //            Bedrock biome ids, and the 24 sub-chunks packed into
 //            PalettedBlockArray::fromData's arguments
@@ -976,7 +979,7 @@ void printTable(const nlohmann::json& table, const std::string_view clock) {
             terrain::ChunkBuffer buffer(geometry);
             dimension->fillBlocks(chunkX, chunkZ, buffer);
             const auto fill = clock.lap();
-            dimension->fillBiomes(chunkX, chunkZ, kMinQuartY, javaBiomes);
+            dimension->fillBiomes(chunkX, chunkZ, kMinQuartY, javaBiomes, buffer);
             const auto biomes = clock.lap();
             const pmmp::EncodedChunk staged = encodeStages(geometry, buffer, javaBiomes);
             const auto encode = clock.lap();

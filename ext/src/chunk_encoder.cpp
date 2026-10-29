@@ -303,9 +303,12 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
     // biome source at every y: over the End's y 128..255 that is what the
     // server stores, and below 0 and from 256, where a Java End has no
     // column at all, it is the same rule read on — for vanilla's End, the
-    // chunk's one biome, since its erosion reads no y.
+    // chunk's one biome, since its erosion reads no y. Handed the buffer
+    // just filled, so the quarts the surface pass looked up are taken from
+    // it rather than looked up again — the same biomes, and in this order,
+    // fill first, the same refusals (CompiledDimension::fillBiomes).
     std::vector<const data::ResourceLocation*> javaBiomes(kQuartsPerLayer * kQuartLayers);
-    dimension.fillBiomes(chunkX, chunkZ, kMinQuartY, javaBiomes);
+    dimension.fillBiomes(chunkX, chunkZ, kMinQuartY, javaBiomes, buffer);
     std::vector<std::uint32_t> bedrockBiomes;
     bedrockBiomes.reserve(javaBiomes.size());
     std::unordered_map<const data::ResourceLocation*, std::uint32_t> biomeIdOf;

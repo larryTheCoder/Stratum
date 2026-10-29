@@ -216,6 +216,21 @@ private:
     std::vector<settings::BlockState> palette_;
     std::vector<std::uint16_t> blocks_;
     std::vector<FluidUpdate> fluidUpdates_;
+
+    /// The biome rows a ChunkFiller's surface pass resolved while filling
+    /// this buffer (ChunkFiller::surfaceBiomes hands them on): which filler
+    /// (its serial, 0 for none yet), which chunk, and from which quart layer,
+    /// each quart biome::Source::kUnknownRow until the pass resolves it. Not
+    /// part of what clear() resets: the key says which fill it belongs to.
+    struct SurfaceBiomeRows {
+        std::uint64_t filler = 0;
+        std::int32_t chunkX = 0;
+        std::int32_t chunkZ = 0;
+        std::int32_t minQuartY = 0;
+        std::vector<std::uint32_t> rows;
+    };
+
+    SurfaceBiomeRows surfaceBiomeRows_;
 };
 
 /// A dimension's terrain, ready to fill chunks from.
@@ -308,6 +323,25 @@ public:
     [[nodiscard]] const std::vector<std::string>& surfaceRulesBlockedBy() const noexcept {
         return surfaceRulesBlockedBy_;
     }
+
+    /// The quarts of chunk (@p chunkX, @p chunkZ) whose biome this filler's
+    /// surface pass resolved the last time it filled @p buffer with that
+    /// chunk, as rows of the multi-noise source's parameter list — for a
+    /// caller that resolves the chunk's biomes after the fill
+    /// (world::CompiledDimension::fillBiomes' buffer form), which then need
+    /// not resolve those again. Empty rows where this filler has not filled
+    /// @p buffer with that chunk, where its source is the End's, or where
+    /// its rules never read the biome.
+    ///
+    /// Each row is what biome::Source::rowAt answers at that quart (the
+    /// pass's own lookup, surfaceBiomeAt), recorded only once the lookup has
+    /// returned. So a fill that refused part way leaves only rows that are
+    /// right, and a quart it did not reach unknown; and since every lookup is
+    /// a pure function of its quart, rows kept from an earlier fill of the
+    /// same chunk by this filler are the rows a new one would find.
+    [[nodiscard]] biome::Source::KnownRows surfaceBiomes(const ChunkBuffer& buffer,
+                                                         std::int32_t chunkX,
+                                                         std::int32_t chunkZ) const noexcept;
 
     /// Whether the aquifer reads its `barrier` entry on every block past
     /// Q6.3 (aquifer::BarrierReads::Always) rather than only where the
@@ -436,6 +470,18 @@ private:
     /// @p quartCorner: biomeSource_'s answer, the one fillBiomes stores.
     [[nodiscard]] const data::ResourceLocation&
     surfaceBiomeAt(density::Point quartCorner, density::Interpreter::CornerCache& cache) const;
+
+    /// The same biome, for a multi-noise source as its row, searched from
+    /// @p hint (biome::Source::rowAt): `entries()[row].biome` is the object
+    /// the overload above returns, with the same refusals in the same order.
+    [[nodiscard]] std::size_t surfaceBiomeRowAt(density::Point quartCorner,
+                                                density::Interpreter::CornerCache& cache,
+                                                std::size_t hint) const;
+
+    /// This filler's identity in a ChunkBuffer's surface biome rows: one
+    /// per construction, never 0, kept by a copy (which fills alike).
+    [[nodiscard]] static std::uint64_t nextSerial() noexcept;
+    std::uint64_t serial_ = nextSerial();
 
     const settings::NoiseSettings* settings_;
     density::Interpreter interpreter_;

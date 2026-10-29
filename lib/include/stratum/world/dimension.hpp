@@ -172,7 +172,35 @@ public:
     void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                     std::span<const data::ResourceLocation*> into) const;
 
+    /// Either fillBiomes above, for a caller that has just filled @p filled
+    /// with this same chunk (fillBlocks): every quart whose biome the fill's
+    /// surface pass looked up is taken from @p filled
+    /// (terrain::ChunkFiller::surfaceBiomes) and every other quart resolved
+    /// as before, in the same order, so @p into holds exactly what the form
+    /// without @p filled writes. A buffer this dimension did not fill with
+    /// this chunk, or whose rules never read the biome, holds nothing to
+    /// take, and the call is then that form outright.
+    ///
+    /// EXACT IN FILL-FIRST ORDER, which is the order every caller here
+    /// uses: the lookups are pure functions of the quart, the same source
+    /// through an interpreter of the same graph, noises and cell geometry,
+    /// so a quart the fill resolved holds the biome this would resolve; and
+    /// one it resolved without a refusal cannot refuse here, so the first
+    /// refusal, if any, is the one the form without @p filled raises, at the
+    /// same quart. Throws what that form throws.
+    void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ,
+                    std::span<const data::ResourceLocation*> into,
+                    const terrain::ChunkBuffer& filled) const;
+    void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
+                    std::span<const data::ResourceLocation*> into,
+                    const terrain::ChunkBuffer& filled) const;
+
 private:
+    /// Both range forms: @p known empty for the one without a buffer.
+    void fillBiomesKnowing(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
+                           std::span<const data::ResourceLocation*> into,
+                           biome::Source::KnownRows known) const;
+
     CompiledDimension();
 
     struct Impl;

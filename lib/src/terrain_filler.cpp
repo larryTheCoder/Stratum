@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -1065,6 +1066,34 @@ ChunkFiller::surfaceBiomeAt(const density::Point quartCorner,
     return biomeSource_->at(interpreter_, settings_->router, quartCorner, cache);
 }
 
+std::size_t ChunkFiller::surfaceBiomeRowAt(const density::Point quartCorner,
+                                           density::Interpreter::CornerCache& cache,
+                                           const std::size_t hint) const {
+    // surfaceBiomeAt's check, then its lookup as a row (biome::Source::rowAt).
+    if (!biomeSource_.has_value()) {
+        throw FillError(
+            "this dimension's surface rules read the biome, and it has no biome source");
+    }
+    return biomeSource_->rowAt(interpreter_, settings_->router, quartCorner, cache, hint);
+}
+
+std::uint64_t ChunkFiller::nextSerial() noexcept {
+    // Touched once per construction, never in the hot path; relaxed, since
+    // only the values' distinctness is used.
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+biome::Source::KnownRows ChunkFiller::surfaceBiomes(const ChunkBuffer& buffer,
+                                                    const std::int32_t chunkX,
+                                                    const std::int32_t chunkZ) const noexcept {
+    const ChunkBuffer::SurfaceBiomeRows& rows = buffer.surfaceBiomeRows_;
+    if (rows.filler != serial_ || rows.chunkX != chunkX || rows.chunkZ != chunkZ) {
+        return {};
+    }
+    return {.minQuartY = rows.minQuartY, .rows = rows.rows};
+}
+
 void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_t chunkZ,
                                     ChunkBuffer& into) const {
     if (!surfaceExecutor_.has_value()) {
@@ -1275,6 +1304,56 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     std::vector<QuartBiome> quartBiomes(
         surfaceNeedsBiome_ || surfaceNeedsTemperature_ ? 16U * quartLevels : 0U);
 
+    // A multi-noise source's lookups are made as rows of its list
+    // (surfaceBiomeRowAt: the same climate, the same search, the same
+    // refusals) and each row is kept in the buffer as soon as its lookup
+    // returns, keyed by this filler and this chunk — so a caller resolving
+    // the chunk's biomes next takes these quarts from there rather than
+    // resolving them again (surfaceBiomes; CompiledDimension::fillBiomes).
+    // The same rows warm-start the pass's own searches (rowHint), which
+    // cannot change a row. Layer-major, fillChunk's order: quart
+    // (qx, level, qz) at (level * 4 + qz) * 4 + qx. A source without rows
+    // (the End's), or none at all, looks up as it always did.
+    const biome::ParameterList* const rowList =
+        (surfaceNeedsBiome_ || surfaceNeedsTemperature_) && biomeSource_.has_value() &&
+                biomeSource_->type() == biome::Source::Type::MultiNoise
+            ? biomeSource_->parameters()
+            : nullptr;
+    ChunkBuffer::SurfaceBiomeRows& biomeRows = into.surfaceBiomeRows_;
+    if (rowList != nullptr) {
+        biomeRows.filler = serial_;
+        biomeRows.chunkX = chunkX;
+        biomeRows.chunkZ = chunkZ;
+        biomeRows.minQuartY = javamath::floorDiv(quartBottom, std::int32_t{4});
+        biomeRows.rows.assign(16U * quartLevels, biome::Source::kUnknownRow);
+    }
+    // The hint for the quart (qxc, level, qzc): the known row of the quart
+    // above it — under vanilla's routers the two differ in depth alone —
+    // else of the quart before it in x, then in z, then of the quart below,
+    // else the last row found anywhere in the chunk.
+    std::size_t lastRow = biome::ParameterList::kNoHint;
+    const auto rowHint = [&](const std::size_t qxc, const std::size_t level,
+                             const std::size_t qzc) {
+        const std::uint32_t* const rows = biomeRows.rows.data();
+        const auto known = [&](const std::size_t l, const std::size_t qz, const std::size_t qx) {
+            return rows[(((l * 4U) + qz) * 4U) + qx];
+        };
+        std::uint32_t hint = biome::Source::kUnknownRow;
+        if (level + 1U < quartLevels) {
+            hint = known(level + 1U, qzc, qxc);
+        }
+        if (hint == biome::Source::kUnknownRow && qxc > 0U) {
+            hint = known(level, qzc, qxc - 1U);
+        }
+        if (hint == biome::Source::kUnknownRow && qzc > 0U) {
+            hint = known(level, qzc - 1U, qxc);
+        }
+        if (hint == biome::Source::kUnknownRow && level > 0U) {
+            hint = known(level - 1U, qzc, qxc);
+        }
+        return hint != biome::Source::kUnknownRow ? std::size_t{hint} : lastRow;
+    };
+
     // What the rules read that is constant down a column — the surface depth
     // above all, which vanilla's overworld reads on every default block it
     // walks — kept from the first block of each column that reads it
@@ -1383,8 +1462,21 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                                         static_cast<std::size_t>((quartY - quartBottom) / 4)];
                         if (cached.id == nullptr) {
                             QuartBiome resolved;
-                            resolved.id = &surfaceBiomeAt(
-                                density::Point{.x = qx, .y = quartY, .z = qz}, surfaceCache);
+                            const density::Point corner{.x = qx, .y = quartY, .z = qz};
+                            if (rowList != nullptr) {
+                                const auto qxc = static_cast<std::size_t>(localX / 4);
+                                const auto qzc = static_cast<std::size_t>(localZ / 4);
+                                const auto level =
+                                    static_cast<std::size_t>((quartY - quartBottom) / 4);
+                                const std::size_t row = surfaceBiomeRowAt(corner, surfaceCache,
+                                                                          rowHint(qxc, level, qzc));
+                                biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
+                                    static_cast<std::uint32_t>(row);
+                                lastRow = row;
+                                resolved.id = &rowList->entries()[row].biome;
+                            } else {
+                                resolved.id = &surfaceBiomeAt(corner, surfaceCache);
+                            }
                             if (surfaceNeedsTemperature_) {
                                 resolved.temperature = biomeTemperatures_->at(*resolved.id);
                             }

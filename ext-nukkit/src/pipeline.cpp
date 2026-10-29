@@ -387,8 +387,10 @@ void Pipeline::fill(const std::int32_t chunkX, const std::int32_t chunkZ, const 
         }
     }
 
+    // Handed the buffer just filled: the quarts its surface pass looked up
+    // are taken from it, the same biomes (CompiledDimension::fillBiomes).
     std::vector<const data::ResourceLocation*> javaBiomes(quartCount);
-    impl_->dimension->fillBiomes(chunkX, chunkZ, javaBiomes);
+    impl_->dimension->fillBiomes(chunkX, chunkZ, javaBiomes, buffer);
     for (std::size_t index = 0; index < javaBiomes.size(); ++index) {
         const std::optional<std::int32_t> bedrockId = mapping::bedrockBiomeId(*javaBiomes[index]);
         if (!bedrockId.has_value()) {
