@@ -153,3 +153,6 @@ target_sources(stratum_unit_tests PRIVATE aquifer_rank_test.cpp)
 
 # The block kernel against the walk over random graphs (Interpreter::BlockKernel).
 target_sources(stratum_unit_tests PRIVATE density_kernel_fuzz_test.cpp)
+
+# The ore veins' richness gate, made once a height (ore::RichnessGate).
+target_sources(stratum_unit_tests PRIVATE ore_richness_gate_test.cpp)

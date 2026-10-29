@@ -614,6 +614,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // by value, is done once per distinct state.
     StablePalette stablePalette;
     const auto intern = [&into](const settings::BlockState& block) { return into.intern(block); };
+    // The last block's state and its index (the block loop's write).
+    const settings::BlockState* lastBlock = nullptr;
+    std::uint16_t lastIndex = 0;
     // air()'s one state, looked up once rather than once a block.
     const settings::BlockState* const airBlock = &air();
 
@@ -750,6 +753,36 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                  cellBottom += cellHeight) {
                 const std::int32_t cellTop = std::min(cellBottom + cellHeight, topY);
                 for (std::int32_t y = cellBottom; y < cellTop; ++y) {
+                    // What a block's y alone decides, once a y: whether the
+                    // aquifer is asked below a non-positive density, what
+                    // stands there when it is not, and whether veins are
+                    // read on solid ground, and at what richness.
+                    //
+                    // Not asked — aquifers off, or (Q2.3) above y_skip —
+                    // the global picker stands there, the same in both:
+                    // lava under min(-54, sea_level), default_fluid under
+                    // sea_level, air above. Aquifers off still has that
+                    // global lava sea (spec Q1.2, Q2.1): measured on the
+                    // aquifer-free probe (tools/analysis/aquifer-free-
+                    // probe.sh), 1005 positions at y -58..-55 the server
+                    // filled with lava, all of which this used to write as
+                    // water — invisible to every category-only comparison,
+                    // where both are "fluid". And `sea_level` is EXCLUSIVE:
+                    // with vanilla's 63 the water stops at 62 and 63 is the
+                    // first air. That is measured, not read — an inclusive
+                    // comparison puts one extra water block on top of every
+                    // column in the world, which is 256 a chunk and exactly
+                    // what the golden comparison found.
+                    const bool consultsAquifer =
+                        aquiferCentres_.has_value() && aquifer::consultsLattice(y, ySkipLevel);
+                    const settings::BlockState* unconsulted = airBlock;
+                    if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+                        unconsulted = &lava();
+                    } else if (y < settings_->seaLevel) {
+                        unconsulted = &settings_->defaultFluid;
+                    }
+                    const bool readsVeins = oreVeins_.has_value() && ore::inAnyVeinRange(y);
+                    const ore::RichnessGate richness(y);
                     std::int32_t runZ = cellZ;
                     bool densities = false;
                     bool toggles = false;
@@ -782,9 +815,14 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 }
                             }
                         }
+                        // This row's first lane and first block in the
+                        // buffer, from which each block along x is the next.
+                        const std::size_t rowLane = static_cast<std::size_t>(localZ - runZ) *
+                                                    static_cast<std::size_t>(runWidth);
+                        const std::size_t rowIndex = into.linearIndex(cellX, y, localZ);
                         for (std::int32_t localX = cellX; localX < cellEndX; ++localX) {
-                            const auto lane = static_cast<std::size_t>(
-                                ((localZ - runZ) * runWidth) + (localX - cellX));
+                            const auto offset = static_cast<std::size_t>(localX - cellX);
+                            const std::size_t lane = rowLane + offset;
                             const double density =
                                 densities ? densityLanes.value(lane)
                                           : evaluateAtBlock(finalDensityKernel_, finalDensity_,
@@ -793,13 +831,9 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                                                            .z = baseZ + localZ},
                                                             cache);
 
-                            // `sea_level` is EXCLUSIVE: with vanilla's 63 the
-                            // water stops at 62 and 63 is the first air. That
-                            // is measured, not read — an inclusive comparison
-                            // puts one extra water block on top of every
-                            // column in the world, which is 256 a chunk and
-                            // exactly what the golden comparison found.
-                            const settings::BlockState* block = airBlock;
+                            // Non-solid ground the aquifer is not asked about
+                            // is `unconsulted`, the global picker (above).
+                            const settings::BlockState* block = unconsulted;
                             const std::int32_t blockX = baseX + localX;
                             const std::int32_t blockZ = baseZ + localZ;
                             if (density > 0.0) {
@@ -808,18 +842,8 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // replaces what would otherwise be
                                 // non-solid, or adds solid via the barrier.
                                 block = &settings_->defaultBlock;
-                            } else if (aquiferCentres_.has_value() &&
-                                       !aquifer::consultsLattice(y, ySkipLevel)) {
-                                // Q2.3: the global picker, as with aquifers
-                                // off (below) — lava under min(-54,
-                                // sea_level), default_fluid under sea_level,
-                                // air above.
-                                if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
-                                    block = &lava();
-                                } else if (y < settings_->seaLevel) {
-                                    block = &settings_->defaultFluid;
-                                }
-                            } else if (aquiferCentres_.has_value()) {
+                            } else if (consultsAquifer) {
+                                block = airBlock;
                                 const aquifer::AquiferQuery query{.x = blockX,
                                                                   .y = y,
                                                                   .z = blockZ,
@@ -845,20 +869,6 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                     case aquifer::Substance::Air:
                                         break;
                                 }
-                            } else if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
-                                // Aquifers off still has a global lava sea:
-                                // non-solid ground below min(-54, sea_level)
-                                // is lava, not default_fluid (spec Q1.2,
-                                // Q2.1). Measured on the aquifer-free probe
-                                // (tools/analysis/aquifer-free-probe.sh):
-                                // 1005 positions at y -58..-55 the server
-                                // filled with lava, all of which this branch
-                                // used to write as water — invisible to every
-                                // category-only comparison, where both are
-                                // "fluid".
-                                block = &lava();
-                            } else if (y < settings_->seaLevel) {
-                                block = &settings_->defaultFluid;
                             }
 
                             // Ore veins, last and only over solid ground.
@@ -870,8 +880,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                             // including the ones the aquifer's own barrier
                             // turned solid against a negative density, came
                             // back exact on 11455 of 11455.
-                            if (oreVeins_.has_value() && block == &settings_->defaultBlock &&
-                                ore::inAnyVeinRange(y)) {
+                            if (readsVeins && block == &settings_->defaultBlock) {
                                 // One router entry at a time, each behind the
                                 // gate the last one opened: `vein_toggle`
                                 // rejects the overwhelming majority of
@@ -886,7 +895,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                         ? toggleLanes.value(lane)
                                         : evaluateAtBlock(veinToggleKernel_, veinToggleNode, here,
                                                           cache);
-                                if (ore::clearsRichness(y, toggle)) {
+                                if (richness.clears(toggle)) {
                                     const double ridged = evaluateAtBlock(
                                         veinRidgedKernel_, veinRidgedNode, here, cache);
                                     if (ridged < 0.0) {
@@ -903,8 +912,15 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                     }
                                 }
                             }
-                            into.blocks_[into.linearIndex(localX, y, localZ)] =
-                                stablePalette.indexOf(*block, intern);
+                            // The palette is asked only when the state
+                            // changes from the last block's: it answers one
+                            // state with one index, and the first ask has
+                            // interned it.
+                            if (block != lastBlock) {
+                                lastBlock = block;
+                                lastIndex = stablePalette.indexOf(*block, intern);
+                            }
+                            into.blocks_[rowIndex + offset] = lastIndex;
                         }
                     }
                 }

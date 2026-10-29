@@ -51,22 +51,24 @@ constexpr double kOreChanceOutHi = 0.3;
 
 } // namespace
 
-bool clearsRichness(const std::int32_t y, const double toggle) noexcept {
+RichnessGate::RichnessGate(const std::int32_t y) noexcept
+    : copper_(y >= kCopperLowY && y <= kCopperHighY), iron_(y >= kIronLowY && y <= kIronHighY) {
     // The sign of `vein_toggle` picks the metal, and the metal picks the
     // range — so a position inside copper's range with a negative toggle is
-    // not an iron candidate, it is no candidate at all.
-    const bool isCopper = y >= kCopperLowY && y <= kCopperHighY && toggle > 0.0;
-    const bool isIron = y >= kIronLowY && y <= kIronHighY && toggle <= 0.0;
-    if (!isCopper && !isIron) {
-        return false;
+    // not an iron candidate, it is no candidate at all (clears). The ranges
+    // are apart, so a y is in one at most, whose threshold is the one asked.
+    if (!copper_ && !iron_) {
+        return;
     }
-    const std::int32_t lower = isCopper ? kCopperLowY : kIronLowY;
-    const std::int32_t upper = isCopper ? kCopperHighY : kIronHighY;
+    const std::int32_t lower = copper_ ? kCopperLowY : kIronLowY;
+    const std::int32_t upper = copper_ ? kCopperHighY : kIronHighY;
     const std::int32_t distFromLimit = std::min(y - lower, upper - y);
-    const double required =
-        kRichnessAtLimit - (kRichnessSpan * std::min(distFromLimit, kRichnessRampBlocks) /
-                            static_cast<double>(kRichnessRampBlocks));
-    return std::abs(toggle) >= required;
+    required_ = kRichnessAtLimit - (kRichnessSpan * std::min(distFromLimit, kRichnessRampBlocks) /
+                                    static_cast<double>(kRichnessRampBlocks));
+}
+
+bool clearsRichness(const std::int32_t y, const double toggle) noexcept {
+    return RichnessGate(y).clears(toggle);
 }
 
 namespace {

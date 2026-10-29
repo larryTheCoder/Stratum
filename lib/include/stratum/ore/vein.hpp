@@ -136,6 +136,7 @@
 #include <stratum/density/random_source.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <cmath>
 #include <cstdint>
 
 namespace stratum::ore {
@@ -185,6 +186,40 @@ inline constexpr std::int32_t kHighestVeinY = 50;
 /// that skips this and rolls anyway would place veins in the dead zone
 /// between the ranges and at richness values vanilla never accepts.
 [[nodiscard]] bool clearsRichness(std::int32_t y, double toggle) noexcept;
+
+/// clearsRichness at one `y`, what `y` alone decides worked out once — which
+/// metal's range it is in, and that metal's threshold there — for a caller
+/// asking about many toggles at one height: clears(toggle) is
+/// clearsRichness(y, toggle) for every toggle, NaN included, and
+/// clearsRichness is written through it.
+class RichnessGate {
+public:
+    explicit RichnessGate(std::int32_t y) noexcept;
+
+    [[nodiscard]] bool clears(const double toggle) const noexcept {
+        // The sign of the toggle picks the metal, and the metal the range:
+        // inside copper's range a toggle that is not positive is no
+        // candidate, and inside iron's one that is not at most 0.
+        if (copper_) {
+            if (!(toggle > 0.0)) {
+                return false;
+            }
+        } else if (iron_) {
+            if (!(toggle <= 0.0)) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        return std::abs(toggle) >= required_;
+    }
+
+private:
+    bool copper_ = false;
+    bool iron_ = false;
+    /// The richness |toggle| must reach at this y, for its metal.
+    double required_ = 0.0;
+};
 
 /// The per-world RNG behind all three draws, from the random source the
 /// dimension declares, built once per world rather than per block because
