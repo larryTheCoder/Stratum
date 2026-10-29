@@ -120,6 +120,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -515,16 +516,22 @@ encodeStages(const settings::NoiseGeometry& geometry, const terrain::ChunkBuffer
             sectionMinY >= geometry.minY && sectionMinY + kSubChunkEdge <= geometry.maxY();
         bool allAir = true;
         if (generated) {
-            for (int x = 0; x < kChunkWidth; ++x) {
+            const std::span<const std::uint16_t> section =
+                buffer.paletteIndicesOfLayers(sectionMinY, kSubChunkEdge);
+            std::uint32_t anyIndex = 0;
+            for (int y = 0; y < kSubChunkEdge; ++y) {
                 for (int z = 0; z < kChunkWidth; ++z) {
-                    for (int y = 0; y < kSubChunkEdge; ++y) {
-                        const std::uint16_t paletteIndex =
-                            buffer.paletteIndexAt(x, sectionMinY + y, z);
-                        allAir = allAir && paletteIndex == 0;
+                    const std::uint16_t* const row = &section[((static_cast<std::size_t>(y) * 16U) +
+                                                               static_cast<std::size_t>(z)) *
+                                                              16U];
+                    for (int x = 0; x < kChunkWidth; ++x) {
+                        const std::uint16_t paletteIndex = row[x];
+                        anyIndex |= paletteIndex;
                         blocks[pmmp::subChunkIndex(x, y, z)] = javaIds[paletteIndex];
                     }
                 }
             }
+            allAir = anyIndex == 0;
         }
         const auto firstLayer =
             static_cast<std::size_t>(javamath::floorDiv(sectionMinY, kQuartWidth) - kMinQuartY);

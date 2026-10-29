@@ -9,6 +9,7 @@
 #include <stratum_pmmp/chunk_encoder.hpp>
 
 #include <algorithm>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -352,18 +353,29 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
             sectionMinY >= geometry.minY && sectionMinY + kSubChunkEdge <= geometry.maxY();
         bool allAir = true;
         if (generated) {
-            for (int x = 0; x < kSubChunkEdge; ++x) {
+            // The section's palette indices, checked once for its sixteen
+            // layers (ChunkBuffer::paletteIndicesOfLayers) rather than once
+            // a block: entry (y * 16 + z) * 16 + x is paletteIndexAt(x,
+            // sectionMinY + y, z), read in that order. Every position is
+            // written once whatever the order, and palette index 0 is always
+            // air (ChunkBuffer starts there), so the section is all air
+            // exactly when no index read has a bit set.
+            const std::span<const std::uint16_t> section =
+                buffer.paletteIndicesOfLayers(sectionMinY, kSubChunkEdge);
+            std::uint32_t anyIndex = 0;
+            for (int y = 0; y < kSubChunkEdge; ++y) {
                 for (int z = 0; z < kSubChunkEdge; ++z) {
-                    for (int y = 0; y < kSubChunkEdge; ++y) {
-                        // Palette index 0 is always air: ChunkBuffer starts
-                        // there.
-                        const std::uint16_t paletteIndex =
-                            buffer.paletteIndexAt(x, sectionMinY + y, z);
-                        allAir = allAir && paletteIndex == 0;
+                    const std::uint16_t* const row = &section[((static_cast<std::size_t>(y) * 16U) +
+                                                               static_cast<std::size_t>(z)) *
+                                                              16U];
+                    for (int x = 0; x < kSubChunkEdge; ++x) {
+                        const std::uint16_t paletteIndex = row[x];
+                        anyIndex |= paletteIndex;
                         blocks[subChunkIndex(x, y, z)] = javaIds[paletteIndex];
                     }
                 }
             }
+            allAir = anyIndex == 0;
         }
 
         // The sub-chunk's 64 quarts, in encodeQuartLayer's order: its four

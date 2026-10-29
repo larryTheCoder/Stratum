@@ -89,6 +89,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -135,6 +136,24 @@ public:
     /// ...)]` is `at(...)`. Throws FillError like `at`.
     [[nodiscard]] std::uint16_t paletteIndexAt(int localX, std::int32_t y, int localZ) const {
         return blocks_[indexOf(localX, y, localZ)];
+    }
+
+    /// The palette indices of the @p layers layers from @p y up, for a caller
+    /// reading a run of whole layers — one section — at once: entry
+    /// `((y' - y) * 16 + localZ) * 16 + localX` is paletteIndexAt(localX, y',
+    /// localZ). Checked once for the whole run, by y as `at` checks it
+    /// (FillError for a run that leaves the dimension, or fewer than none),
+    /// so a caller indexes it without a check per block.
+    [[nodiscard]] std::span<const std::uint16_t> paletteIndicesOfLayers(std::int32_t y,
+                                                                        std::int32_t layers) const {
+        if (layers < 0) [[unlikely]] {
+            throw FillError("a run of " + std::to_string(layers) + " layers");
+        }
+        if (y < minY_ || std::int64_t{y} + layers > std::int64_t{minY_} + height_) [[unlikely]] {
+            refuseOutside(0, y < minY_ ? y : minY_ + height_, 0);
+        }
+        return std::span<const std::uint16_t>(blocks_).subspan(
+            linearIndex(0, y, 0), static_cast<std::size_t>(layers) * kWidth * kWidth);
     }
 
     /// A position whose fluid the server ticks once the chunk loads — what
