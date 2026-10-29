@@ -170,3 +170,6 @@ target_sources(stratum_unit_tests PRIVATE terrain_fill_depth_test.cpp)
 
 # The aquifer keyed ranking's span bound, on every size type (detail::tooLongToKey).
 target_sources(stratum_unit_tests PRIVATE aquifer_key_bound_test.cpp)
+
+# What a run of the fill's block kernel alone decides, held to each block's own reads.
+target_sources(stratum_unit_tests PRIVATE terrain_fill_runs_test.cpp)

@@ -161,6 +161,34 @@ private:
     std::size_t size_ = 0;
 };
 
+/// The lanes of the last run of @p lanes, of its first @p count, whose value
+/// is above 0.0 — `density > 0.0` exactly as the block loop asks it, NaN
+/// included (never above) — one bit a lane.
+[[nodiscard]] std::uint32_t solidLanes(const density::Interpreter::BlockKernel::Lanes& lanes,
+                                       const std::size_t count) noexcept {
+    std::uint32_t solid = 0;
+    for (std::size_t lane = 0; lane < count; ++lane) {
+        solid |= (lanes.value(lane) > 0.0 ? 1U : 0U) << lane;
+    }
+    return solid;
+}
+
+/// The lanes of @p asked, of the first @p count, whose value in @p lanes
+/// clears @p gate (ore::RichnessGate::clears, NaN and all), one bit a lane.
+/// Only an asked lane's value is read.
+[[nodiscard]] std::uint32_t clearingLanes(const ore::RichnessGate& gate,
+                                          const density::Interpreter::BlockKernel::Lanes& lanes,
+                                          const std::uint32_t asked,
+                                          const std::size_t count) noexcept {
+    std::uint32_t clearing = 0;
+    for (std::size_t lane = 0; lane < count; ++lane) {
+        if (((asked >> lane) & 1U) != 0U && gate.clears(lanes.value(lane))) {
+            clearing |= 1U << lane;
+        }
+    }
+    return clearing;
+}
+
 /// Snaps down onto the biome grid: vanilla resolves one biome per 4x4x4
 /// cell and surface rules read that grid rather than resampling per block
 /// (measured in `vanilla_biomes_test.cpp` — the lower corner of the cell).
@@ -573,6 +601,45 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     std::uint16_t lastIndex = 0;
     // air()'s one state, looked up once rather than once a block.
     const settings::BlockState* const airBlock = &air();
+    // The block loop's write of @p block at @p index. The palette is asked
+    // only when the state changes from the last block's: it answers one
+    // state with one index, and the first ask has interned it.
+    const auto place = [&](const std::size_t index, const settings::BlockState* const block) {
+        if (block != lastBlock) {
+            lastBlock = block;
+            lastIndex = stablePalette.indexOf(*block, intern);
+        }
+        into.blocks_[index] = lastIndex;
+    };
+    // A run's blocks where the run alone decides every one (the block loop
+    // says which): the default block on a lane @p solid sets, @p unconsulted
+    // on the rest, placed lane by lane in the loop's order. Where every lane
+    // holds one state, the first is placed as any block is and every other
+    // holds the index it was given, which is what placing each would write.
+    const auto writeRun =
+        [&](const std::int32_t cellX, const std::int32_t runWidth, const std::int32_t y,
+            const std::int32_t runZ, const std::int32_t runDepth, const std::uint32_t solid,
+            const std::uint32_t all, const settings::BlockState* const unconsulted) {
+            const auto width = static_cast<std::size_t>(runWidth);
+            if (solid == all || solid == 0U) {
+                place(into.linearIndex(cellX, y, runZ),
+                      solid == 0U ? unconsulted : &settings_->defaultBlock);
+                for (std::int32_t localZ = runZ; localZ < runZ + runDepth; ++localZ) {
+                    std::fill_n(into.blocks_.begin() +
+                                    static_cast<std::ptrdiff_t>(into.linearIndex(cellX, y, localZ)),
+                                width, lastIndex);
+                }
+                return;
+            }
+            std::size_t lane = 0;
+            for (std::int32_t localZ = runZ; localZ < runZ + runDepth; ++localZ) {
+                const std::size_t rowIndex = into.linearIndex(cellX, y, localZ);
+                for (std::size_t offset = 0; offset < width; ++offset, ++lane) {
+                    place(rowIndex + offset,
+                          ((solid >> lane) & 1U) != 0U ? &settings_->defaultBlock : unconsulted);
+                }
+            }
+        };
 
     // Only ever populated when settings_->aquifersEnabled; the five lambdas
     // below capture these by reference and are only ever called from inside
@@ -693,9 +760,19 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // corner memo (the only sharing it runs under) and leaves every refusal
     // to the block's own evaluation (it refuses nothing itself). Where it
     // does not run, the loop evaluates block by block, as before.
+    //
+    // Where it does, the run also says which of its blocks need nothing
+    // more read to be placed — solid ground where no vein can be (its
+    // toggle, from the run, does not clear the richness gate), and ground
+    // that is not solid where the aquifer is not asked — and those are
+    // placed from the run's lanes, a whole run at once where every lane
+    // holds one state. The rest take the block-by-block body, reading
+    // what they always read, in the order they always did.
     density::Interpreter::BlockKernel::Lanes densityLanes;
     density::Interpreter::BlockKernel::Lanes toggleLanes;
     constexpr auto kRunLanes = static_cast<std::int32_t>(density::Interpreter::BlockKernel::kLanes);
+    static_assert(density::Interpreter::BlockKernel::kLanes < 32,
+                  "a run's lanes are bits of one uint32, with its full mask below 1 << 32");
     for (std::int32_t cellZ = 0; cellZ < kChunkWidth; cellZ += cellWidth) {
         for (std::int32_t cellX = 0; cellX < kChunkWidth; cellX += cellWidth) {
             const std::int32_t cellEndX = std::min(cellX + cellWidth, std::int32_t{kChunkWidth});
@@ -737,144 +814,168 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                     }
                     const bool readsVeins = oreVeins_.has_value() && ore::inAnyVeinRange(y);
                     const ore::RichnessGate richness(y);
-                    std::int32_t runZ = cellZ;
-                    bool densities = false;
-                    bool toggles = false;
-                    for (std::int32_t localZ = cellZ; localZ < cellEndZ; ++localZ) {
-                        if (localZ == cellZ || localZ - runZ == runRows) {
-                            runZ = localZ;
-                            const density::Interpreter::BlockKernel::Blocks run{
-                                .first =
-                                    density::Point{.x = baseX + cellX, .y = y, .z = baseZ + localZ},
-                                .width = runWidth,
-                                .depth = std::min(runRows, cellEndZ - localZ),
-                                .lanes = ~0U};
-                            densities = finalDensityKernel_.has_value() &&
-                                        interpreter_.evaluate(*finalDensityKernel_, run,
-                                                              densityLanes, cache);
-                            toggles = false;
-                            if (densities && oreVeins_.has_value() &&
-                                veinToggleKernel_.has_value() && ore::inAnyVeinRange(y)) {
-                                std::uint32_t solid = 0;
-                                const std::size_t count = static_cast<std::size_t>(run.width) *
-                                                          static_cast<std::size_t>(run.depth);
-                                for (std::size_t lane = 0; lane < count; ++lane) {
-                                    solid |= (densityLanes.value(lane) > 0.0 ? 1U : 0U) << lane;
-                                }
-                                if (solid != 0U) {
-                                    density::Interpreter::BlockKernel::Blocks solidRun = run;
-                                    solidRun.lanes = solid;
-                                    toggles = interpreter_.evaluate(*veinToggleKernel_, solidRun,
-                                                                    toggleLanes, cache);
-                                }
+                    for (std::int32_t runZ = cellZ; runZ < cellEndZ; runZ += runRows) {
+                        const std::int32_t runDepth = std::min(runRows, cellEndZ - runZ);
+                        const density::Interpreter::BlockKernel::Blocks run{
+                            .first = density::Point{.x = baseX + cellX, .y = y, .z = baseZ + runZ},
+                            .width = runWidth,
+                            .depth = runDepth,
+                            .lanes = ~0U};
+                        const bool densities =
+                            finalDensityKernel_.has_value() &&
+                            interpreter_.evaluate(*finalDensityKernel_, run, densityLanes, cache);
+                        // The run's solid lanes, density > 0 as the block
+                        // below asks it, where the run stands for the
+                        // blocks' evaluations.
+                        const std::size_t count =
+                            static_cast<std::size_t>(runWidth) * static_cast<std::size_t>(runDepth);
+                        std::uint32_t solid = 0;
+                        if (densities) {
+                            solid = solidLanes(densityLanes, count);
+                        }
+                        bool toggles = false;
+                        if (densities && oreVeins_.has_value() && veinToggleKernel_.has_value() &&
+                            ore::inAnyVeinRange(y) && solid != 0U) {
+                            density::Interpreter::BlockKernel::Blocks solidRun = run;
+                            solidRun.lanes = solid;
+                            toggles = interpreter_.evaluate(*veinToggleKernel_, solidRun,
+                                                            toggleLanes, cache);
+                        }
+                        // The lanes whose block the run alone decides — the
+                        // ones the block-by-block body below would decide
+                        // reading nothing more: a solid lane is the default
+                        // block unless veins are read there and its toggle
+                        // (from the run, where it ran) clears the richness
+                        // gate; a lane that is not solid is `unconsulted`
+                        // unless the aquifer is asked about it. Every other
+                        // lane is `work`, and takes the body below.
+                        std::uint32_t work = ~0U;
+                        if (densities) {
+                            const std::uint32_t all = (std::uint32_t{1} << count) - 1U;
+                            work = consultsAquifer ? (all & ~solid) : 0U;
+                            if (readsVeins) {
+                                work |= toggles ? (solid & clearingLanes(richness, toggleLanes,
+                                                                         solid, count))
+                                                : solid;
+                            }
+                            if (work == 0U) {
+                                // The whole run, lane by lane in the body's
+                                // order, each block the one the body would
+                                // place and asked of the palette as it
+                                // would be: only where it changes.
+                                writeRun(cellX, runWidth, y, runZ, runDepth, solid, all,
+                                         unconsulted);
+                                continue;
                             }
                         }
-                        // This row's first lane and first block in the
-                        // buffer, from which each block along x is the next.
-                        const std::size_t rowLane = static_cast<std::size_t>(localZ - runZ) *
-                                                    static_cast<std::size_t>(runWidth);
-                        const std::size_t rowIndex = into.linearIndex(cellX, y, localZ);
-                        for (std::int32_t localX = cellX; localX < cellEndX; ++localX) {
-                            const auto offset = static_cast<std::size_t>(localX - cellX);
-                            const std::size_t lane = rowLane + offset;
-                            const double density =
-                                densities ? densityLanes.value(lane)
-                                          : evaluateAtBlock(finalDensityKernel_, finalDensity_,
-                                                            density::Point{.x = baseX + localX,
-                                                                           .y = y,
-                                                                           .z = baseZ + localZ},
-                                                            cache);
-
-                            // Non-solid ground the aquifer is not asked about
-                            // is `unconsulted`, the global picker (above).
-                            const settings::BlockState* block = unconsulted;
-                            const std::int32_t blockX = baseX + localX;
-                            const std::int32_t blockZ = baseZ + localZ;
-                            if (density > 0.0) {
-                                // Q2.2: unconditional, whatever the aquifer
-                                // would otherwise say — it only ever
-                                // replaces what would otherwise be
-                                // non-solid, or adds solid via the barrier.
-                                block = &settings_->defaultBlock;
-                            } else if (consultsAquifer) {
-                                block = airBlock;
-                                const aquifer::AquiferQuery query{.x = blockX,
-                                                                  .y = y,
-                                                                  .z = blockZ,
-                                                                  .density = density,
-                                                                  .seaLevel = settings_->seaLevel};
-                                const aquifer::SubstanceAt result = aquifer::computeSubstance(
-                                    *aquiferCentres_, query, aquiferStatusCache, barrierAt,
-                                    floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt,
-                                    barrierReadsAlways_ ? aquifer::BarrierReads::Always
-                                                        : aquifer::BarrierReads::WhereWeighed);
-                                switch (result.substance) {
-                                    case aquifer::Substance::Solid:
-                                        block = &settings_->defaultBlock;
-                                        break;
-                                    case aquifer::Substance::Fluid:
-                                        block = (result.fluidType == aquifer::FluidType::Lava)
-                                                    ? &lava()
-                                                    : &settings_->defaultFluid;
-                                        if (result.fluidUpdate) {
-                                            into.markFluidUpdate(localX, y, localZ);
-                                        }
-                                        break;
-                                    case aquifer::Substance::Air:
-                                        break;
+                        for (std::int32_t localZ = runZ; localZ < runZ + runDepth; ++localZ) {
+                            // This row's first lane and first block in the
+                            // buffer, from which each block along x is the next.
+                            const std::size_t rowLane = static_cast<std::size_t>(localZ - runZ) *
+                                                        static_cast<std::size_t>(runWidth);
+                            const std::size_t rowIndex = into.linearIndex(cellX, y, localZ);
+                            for (std::int32_t localX = cellX; localX < cellEndX; ++localX) {
+                                const auto offset = static_cast<std::size_t>(localX - cellX);
+                                const std::size_t lane = rowLane + offset;
+                                if (((work >> lane) & 1U) == 0U) {
+                                    // Decided by the run, as above.
+                                    place(rowIndex + offset, ((solid >> lane) & 1U) != 0U
+                                                                 ? &settings_->defaultBlock
+                                                                 : unconsulted);
+                                    continue;
                                 }
-                            }
+                                const double density =
+                                    densities ? densityLanes.value(lane)
+                                              : evaluateAtBlock(finalDensityKernel_, finalDensity_,
+                                                                density::Point{.x = baseX + localX,
+                                                                               .y = y,
+                                                                               .z = baseZ + localZ},
+                                                                cache);
 
-                            // Ore veins, last and only over solid ground.
-                            // Measured: on a probe whose density crosses zero
-                            // INSIDE both vein ranges, the server placed zero
-                            // vein blocks on 25509 positions it left as air,
-                            // though the chain would have claimed 17813 of
-                            // them — while every position it left solid,
-                            // including the ones the aquifer's own barrier
-                            // turned solid against a negative density, came
-                            // back exact on 11455 of 11455.
-                            if (readsVeins && block == &settings_->defaultBlock) {
-                                // One router entry at a time, each behind the
-                                // gate the last one opened: `vein_toggle`
-                                // rejects the overwhelming majority of
-                                // positions on its own, and every one of the
-                                // three costs a full density evaluation.
-                                // From the run where it read this block: a
-                                // solid density's, made solid before the
-                                // aquifer is asked.
-                                const density::Point here{.x = blockX, .y = y, .z = blockZ};
-                                const double toggle =
-                                    toggles && density > 0.0
-                                        ? toggleLanes.value(lane)
-                                        : evaluateAtBlock(veinToggleKernel_, veinToggleNode, here,
-                                                          cache);
-                                if (richness.clears(toggle)) {
-                                    const double ridged = evaluateAtBlock(
-                                        veinRidgedKernel_, veinRidgedNode, here, cache);
-                                    if (ridged < 0.0) {
-                                        const ore::Vein vein = oreVeins_->at(
-                                            blockX, y, blockZ,
-                                            ore::VeinInputs{.toggle = toggle,
-                                                            .ridged = ridged,
-                                                            .gap = evaluateAtBlock(veinGapKernel_,
-                                                                                   veinGapNode,
-                                                                                   here, cache)});
-                                        if (vein.placed()) {
-                                            block = &veinBlock(vein);
+                                // Non-solid ground the aquifer is not asked about
+                                // is `unconsulted`, the global picker (above).
+                                const settings::BlockState* block = unconsulted;
+                                const std::int32_t blockX = baseX + localX;
+                                const std::int32_t blockZ = baseZ + localZ;
+                                if (density > 0.0) {
+                                    // Q2.2: unconditional, whatever the aquifer
+                                    // would otherwise say — it only ever
+                                    // replaces what would otherwise be
+                                    // non-solid, or adds solid via the barrier.
+                                    block = &settings_->defaultBlock;
+                                } else if (consultsAquifer) {
+                                    block = airBlock;
+                                    const aquifer::AquiferQuery query{.x = blockX,
+                                                                      .y = y,
+                                                                      .z = blockZ,
+                                                                      .density = density,
+                                                                      .seaLevel =
+                                                                          settings_->seaLevel};
+                                    const aquifer::SubstanceAt result = aquifer::computeSubstance(
+                                        *aquiferCentres_, query, aquiferStatusCache, barrierAt,
+                                        floodednessAt, spreadAt, lavaAt, pslAt, deepDarkAt,
+                                        barrierReadsAlways_ ? aquifer::BarrierReads::Always
+                                                            : aquifer::BarrierReads::WhereWeighed);
+                                    switch (result.substance) {
+                                        case aquifer::Substance::Solid:
+                                            block = &settings_->defaultBlock;
+                                            break;
+                                        case aquifer::Substance::Fluid:
+                                            block = (result.fluidType == aquifer::FluidType::Lava)
+                                                        ? &lava()
+                                                        : &settings_->defaultFluid;
+                                            if (result.fluidUpdate) {
+                                                into.markFluidUpdate(localX, y, localZ);
+                                            }
+                                            break;
+                                        case aquifer::Substance::Air:
+                                            break;
+                                    }
+                                }
+
+                                // Ore veins, last and only over solid ground.
+                                // Measured: on a probe whose density crosses zero
+                                // INSIDE both vein ranges, the server placed zero
+                                // vein blocks on 25509 positions it left as air,
+                                // though the chain would have claimed 17813 of
+                                // them — while every position it left solid,
+                                // including the ones the aquifer's own barrier
+                                // turned solid against a negative density, came
+                                // back exact on 11455 of 11455.
+                                if (readsVeins && block == &settings_->defaultBlock) {
+                                    // One router entry at a time, each behind the
+                                    // gate the last one opened: `vein_toggle`
+                                    // rejects the overwhelming majority of
+                                    // positions on its own, and every one of the
+                                    // three costs a full density evaluation.
+                                    // From the run where it read this block: a
+                                    // solid density's, made solid before the
+                                    // aquifer is asked.
+                                    const density::Point here{.x = blockX, .y = y, .z = blockZ};
+                                    const double toggle =
+                                        toggles && density > 0.0
+                                            ? toggleLanes.value(lane)
+                                            : evaluateAtBlock(veinToggleKernel_, veinToggleNode,
+                                                              here, cache);
+                                    if (richness.clears(toggle)) {
+                                        const double ridged = evaluateAtBlock(
+                                            veinRidgedKernel_, veinRidgedNode, here, cache);
+                                        if (ridged < 0.0) {
+                                            const ore::Vein vein = oreVeins_->at(
+                                                blockX, y, blockZ,
+                                                ore::VeinInputs{
+                                                    .toggle = toggle,
+                                                    .ridged = ridged,
+                                                    .gap = evaluateAtBlock(
+                                                        veinGapKernel_, veinGapNode, here, cache)});
+                                            if (vein.placed()) {
+                                                block = &veinBlock(vein);
+                                            }
                                         }
                                     }
                                 }
+                                place(rowIndex + offset, block);
                             }
-                            // The palette is asked only when the state
-                            // changes from the last block's: it answers one
-                            // state with one index, and the first ask has
-                            // interned it.
-                            if (block != lastBlock) {
-                                lastBlock = block;
-                                lastIndex = stablePalette.indexOf(*block, intern);
-                            }
-                            into.blocks_[rowIndex + offset] = lastIndex;
                         }
                     }
                 }
