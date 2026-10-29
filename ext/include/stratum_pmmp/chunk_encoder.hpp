@@ -109,6 +109,17 @@ struct EncodedChunk {
 /// smallest width that holds it.
 [[nodiscard]] PalettedLayer encodeLayer(std::span<const std::uint32_t, kSubChunkVolume> values);
 
+/// A sub-chunk's 4 x 4 x 4 quarts of 4 x 4 x 4 positions each.
+inline constexpr std::size_t kSubChunkQuarts = 64;
+
+/// `encodeLayer` of a layer that is constant over each quart — a biome
+/// layer — from its 64 quart values, quart (qx, qy, qz) at
+/// `(qx << 4) | (qz << 2) | qy` (XZY, as subChunkIndex): exactly the layer
+/// encodeLayer returns for the 4096 positions each holding its quart's
+/// value, palette order included, without materialising them.
+[[nodiscard]] PalettedLayer
+encodeQuartLayer(std::span<const std::uint32_t, kSubChunkQuarts> quarts);
+
 /// Throws EncodeError, naming the span, unless @p geometry lies within
 /// PocketMine-MP's 24 sub-chunks (y -64 to 320) on sub-chunk boundaries.
 /// encodeChunk refuses the same; this is the same refusal for a binding to
