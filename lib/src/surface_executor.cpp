@@ -474,11 +474,160 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                                               .condition = 0,
                                               .jump = 0,
                                               .block = nullptr,
-                                              .tested = nullptr});
+                                              .tested = nullptr,
+                                              .next = 0});
+        executor.bandPrograms();
     } else {
         executor.program_.clear();
     }
     return executor;
+}
+
+void Executor::bandPrograms() {
+    using Code = ProgramOp::Code;
+    const std::int64_t minY = geometry_->minY;
+    const std::int64_t topY = minY + std::int64_t{geometry_->height};
+    // A test's answer at @p y where y alone decides it (THE Y BANDS, in the
+    // header), or nothing where it does not.
+    const auto decided = [this](const ProgramOp& op, const std::int64_t y) -> std::optional<bool> {
+        if (op.code == Code::Gradient) {
+            const CompiledCondition& compiled = compiled_[op.condition];
+            if (compiled.gradient == kNoSource) {
+                return std::nullopt;
+            }
+            // testGradient's own two comparisons, in its order.
+            if (y <= compiled.trueAtAndBelow) {
+                return true;
+            }
+            if (y >= compiled.falseAtAndAbove) {
+                return false;
+            }
+            return std::nullopt;
+        }
+        if (op.code == Code::YAbove && op.tested->surfaceDepthMultiplier == 0 &&
+            !op.tested->addStoneDepth) {
+            return y >= compiled_[op.condition].anchor;
+        }
+        return std::nullopt;
+    };
+
+    // The cuts: every y at which one of those answers can change, the
+    // dimension's own two ends included.
+    std::vector<std::int64_t> cuts{minY, topY};
+    bool anyDecided = false;
+    for (const ProgramOp& op : program_) {
+        if (op.code == Code::Gradient && compiled_[op.condition].gradient != kNoSource) {
+            cuts.push_back(std::int64_t{compiled_[op.condition].trueAtAndBelow} + 1);
+            cuts.push_back(compiled_[op.condition].falseAtAndAbove);
+            anyDecided = true;
+        } else if (op.code == Code::YAbove && op.tested->surfaceDepthMultiplier == 0 &&
+                   !op.tested->addStoneDepth) {
+            cuts.push_back(compiled_[op.condition].anchor);
+            anyDecided = true;
+        }
+    }
+    if (!anyDecided || topY <= minY) {
+        // Nothing a y decides: the list as lowered serves every block.
+        return;
+    }
+    std::erase_if(cuts, [&](const std::int64_t cut) { return cut < minY || cut > topY; });
+    std::ranges::sort(cuts);
+    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+    if (cuts.size() - 1 > kMaxBands) {
+        return;
+    }
+
+    const std::size_t lowered = program_.size();
+    std::vector<ProgramOp> banded = program_;
+    std::vector<std::uint32_t> entry(static_cast<std::size_t>(topY - minY), 0U);
+    // Each band's copy, as offsets into `banded`, to share alike copies.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> copies; // (base, size)
+    std::vector<std::size_t> settled(lowered);
+    std::vector<char> reached(lowered);
+    std::vector<std::uint32_t> renumbered(lowered);
+    for (std::size_t band = 0; band + 1 < cuts.size(); ++band) {
+        const std::int64_t low = cuts[band];
+        const std::int64_t high = cuts[band + 1];
+        // Where each op leads once the band's decided tests are followed:
+        // itself, unless y decides it, and then where its answer goes —
+        // forward jumps only, so from the end back.
+        for (std::size_t i = lowered; i-- > 0;) {
+            const ProgramOp& op = program_[i];
+            const std::optional<bool> answer = decided(op, low);
+            settled[i] = answer.has_value() ? settled[*answer != op.negate ? op.next : op.jump] : i;
+        }
+        // What the band can reach from its start, in the list's order.
+        std::ranges::fill(reached, char{0});
+        reached[settled[0]] = 1;
+        for (std::size_t i = 0; i < lowered; ++i) {
+            const ProgramOp& op = program_[i];
+            if (reached[i] == 0 || settled[i] != i || op.code == Code::Place ||
+                op.code == Code::Bandlands || op.code == Code::Nothing) {
+                continue;
+            }
+            reached[settled[op.next]] = 1;
+            reached[settled[op.jump]] = 1;
+        }
+        std::vector<ProgramOp> copy;
+        for (std::size_t i = 0; i < lowered; ++i) {
+            if (reached[i] != 0) {
+                renumbered[i] = static_cast<std::uint32_t>(copy.size());
+                copy.push_back(program_[i]);
+            }
+        }
+        for (std::size_t i = 0, kept = 0; i < lowered; ++i) {
+            if (reached[i] == 0) {
+                continue;
+            }
+            ProgramOp& op = copy[kept++];
+            if (op.code != Code::Place && op.code != Code::Bandlands && op.code != Code::Nothing) {
+                op.next = renumbered[settled[program_[i].next]];
+                op.jump = renumbered[settled[program_[i].jump]];
+            }
+        }
+        const std::uint32_t start = renumbered[settled[0]];
+        // The same copy as an earlier band's, offsets and all, is that one.
+        std::uint32_t base = 0;
+        bool shared = false;
+        for (const auto& [earlier, size] : copies) {
+            if (size == copy.size() &&
+                std::equal(copy.begin(), copy.end(), banded.begin() + earlier,
+                           [&](const ProgramOp& a, const ProgramOp& b) {
+                               ProgramOp moved = a;
+                               if (moved.code != Code::Place && moved.code != Code::Bandlands &&
+                                   moved.code != Code::Nothing) {
+                                   moved.next += earlier;
+                                   moved.jump += earlier;
+                               }
+                               return moved == b;
+                           })) {
+                base = earlier;
+                shared = true;
+                break;
+            }
+        }
+        if (!shared) {
+            if (banded.size() + copy.size() > kMaxBandedProgram) {
+                return;
+            }
+            base = static_cast<std::uint32_t>(banded.size());
+            for (ProgramOp op : copy) {
+                if (op.code != Code::Place && op.code != Code::Bandlands &&
+                    op.code != Code::Nothing) {
+                    op.next += base;
+                    op.jump += base;
+                }
+                banded.push_back(op);
+            }
+            copies.emplace_back(base, static_cast<std::uint32_t>(copy.size()));
+        }
+        for (std::int64_t y = low; y < high; ++y) {
+            entry[static_cast<std::size_t>(y - minY)] = base + start;
+        }
+    }
+    program_ = std::move(banded);
+    bandEntry_ = std::move(entry);
+    bandMinY_ = geometry_->minY;
 }
 
 bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const std::size_t depth) {
@@ -495,7 +644,8 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
                                          .condition = 0,
                                          .jump = 0,
                                          .block = &rule.block,
-                                         .tested = nullptr});
+                                         .tested = nullptr,
+                                         .next = 0});
             return true;
         case RuleType::Bandlands:
             program_.push_back(ProgramOp{.code = ProgramOp::Code::Bandlands,
@@ -503,7 +653,8 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
                                          .condition = 0,
                                          .jump = 0,
                                          .block = nullptr,
-                                         .tested = nullptr});
+                                         .tested = nullptr,
+                                         .next = 0});
             return true;
         case RuleType::Sequence:
             // Each child in order; one that places leaves the list.
@@ -561,7 +712,8 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
                                          .condition = tested,
                                          .jump = 0,
                                          .block = nullptr,
-                                         .tested = &condition});
+                                         .tested = &condition,
+                                         .next = static_cast<std::uint32_t>(test + 1)});
             if (!lowerRule(graph, rule.thenRun, depth + 1) || program_.size() >= kMaxProgram) {
                 return false;
             }
@@ -581,7 +733,15 @@ const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& 
     // Every typed op's condition is in range (lowerRule took it from the
     // graph), and compiled_ holds one entry per condition.
     const CompiledCondition* const compiled = compiled_.data();
+    // A block of the dimension starts in its band's copy (bandPrograms);
+    // any other y in the list as lowered.
     std::size_t pc = 0;
+    if (!bandEntry_.empty()) {
+        const std::int64_t offset = std::int64_t{at.y} - bandMinY_;
+        if (offset >= 0 && offset < static_cast<std::int64_t>(bandEntry_.size())) {
+            pc = bandEntry_[static_cast<std::size_t>(offset)];
+        }
+    }
     while (true) {
         const ProgramOp& op = ops[pc];
         bool passed = false;
@@ -626,7 +786,7 @@ const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& 
                 passed = freezing(at, memo);
                 break;
         }
-        pc = passed != op.negate ? pc + 1 : op.jump;
+        pc = passed != op.negate ? op.next : op.jump;
     }
 }
 

@@ -614,15 +614,46 @@ private:
         const settings::BlockState* block = nullptr;
         /// The condition a typed test tests: the graph's own, at `condition`.
         const Condition* tested = nullptr;
+        /// Where a test goes when it passes: the op after it in the list as
+        /// lowered, and wherever a band's copy (bandPrograms) put that.
+        std::uint32_t next = 0;
+
+        [[nodiscard]] bool operator==(const ProgramOp& other) const = default;
     };
 
     static constexpr std::size_t kMaxProgram = std::size_t{1} << 16;
 
-    /// Empty where the tree is walked instead (see ProgramOp).
+    /// Empty where the tree is walked instead (see ProgramOp). The list as
+    /// lowered starts at 0; any band's copy (bandPrograms) follows it.
     std::vector<ProgramOp> program_;
 
     /// Appends @p index's code to program_; false where it cannot be built.
     [[nodiscard]] bool lowerRule(const RuleGraph& graph, RuleIndex index, std::size_t depth);
+
+    /// THE Y BANDS. Two kinds of test are decided by a block's y alone: a
+    /// `vertical_gradient` at or below its `true_at_and_below` (true) or at
+    /// or above its `false_at_and_above` (false) — the two comparisons its
+    /// test makes before any draw — and a `y_above` with no multiplier and no
+    /// stone depth, which is y >= anchor with nothing to narrow. Neither reads
+    /// the memo or can refuse there, and neither changes its answer between
+    /// two of its anchors. So the dimension's height is cut at every such
+    /// anchor, and each band between two cuts gets its own copy of the list
+    /// in which those tests are already answered — their ops gone, the ops
+    /// before them jumping straight to where the answer leads, and what no
+    /// y of the band can reach dropped. A block runs its own band's copy
+    /// (bandEntry_, by y), so it makes exactly the tests the list would have
+    /// made but those, in the same order, with the same reads and refusals,
+    /// to the same block. A y outside the dimension runs the list as
+    /// lowered. Bands that come out alike share one copy; a tree with too
+    /// many bands, or copies too long, keeps the one list.
+    void bandPrograms();
+
+    /// Where a block at minY + i starts: an op of its band's copy in program_,
+    /// or empty where the list is not banded.
+    std::vector<std::uint32_t> bandEntry_;
+    std::int32_t bandMinY_ = 0;
+    static constexpr std::size_t kMaxBands = 64;
+    static constexpr std::size_t kMaxBandedProgram = std::size_t{1} << 20;
 
     [[nodiscard]] const settings::BlockState* runProgram(const Context& at, ColumnMemo& memo) const;
 

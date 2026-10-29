@@ -123,7 +123,27 @@ constexpr std::array<std::string_view, 4> kBiomes{"minecraft:plains", "minecraft
     return nlohmann::json{{"type", "minecraft:block"}, {"result_state", {{"Name", name}}}};
 }
 
-[[nodiscard]] nlohmann::json randomCondition(Dice& dice, int depth) {
+/// A condition a block's y alone can decide, anchored anywhere from below
+/// the dimension's floor to above its top: a gradient, or a y_above with no
+/// multiplier and no stone depth (Executor's y bands).
+[[nodiscard]] nlohmann::json yDecided(Dice& dice) {
+    const std::int32_t low = dice.from(-100, 460);
+    if (dice.below(2) == 0U) {
+        return nlohmann::json{{"type", "minecraft:y_above"},
+                              {"anchor", {{"absolute", low}}},
+                              {"surface_depth_multiplier", 0},
+                              {"add_stone_depth", false}};
+    }
+    return nlohmann::json{{"type", "minecraft:vertical_gradient"},
+                          {"random_name", dice.below(2) == 0U ? "stratum:a" : "stratum:b"},
+                          {"true_at_and_below", {{"absolute", low}}},
+                          {"false_at_and_above", {{"absolute", low + dice.from(-3, 40)}}}};
+}
+
+[[nodiscard]] nlohmann::json randomCondition(Dice& dice, int depth, bool wide = false) {
+    if (wide && dice.below(2) == 0U) {
+        return yDecided(dice);
+    }
     switch (dice.below(depth < 2 ? 12U : 11U)) {
         case 0:
             return nlohmann::json{{"type", "minecraft:y_above"},
@@ -177,11 +197,11 @@ constexpr std::array<std::string_view, 4> kBiomes{"minecraft:plains", "minecraft
                                   {"add_stone_depth", false}};
         default:
             return nlohmann::json{{"type", "minecraft:not"},
-                                  {"invert", randomCondition(dice, depth + 1)}};
+                                  {"invert", randomCondition(dice, depth + 1, wide)}};
     }
 }
 
-[[nodiscard]] nlohmann::json randomRule(Dice& dice, int depth) {
+[[nodiscard]] nlohmann::json randomRule(Dice& dice, int depth, bool wide = false) {
     const std::uint32_t kind = depth >= 5 ? dice.below(6) / 5U : dice.below(5);
     if (kind == 0U) {
         return block("stratum:b" + std::to_string(dice.below(6)));
@@ -193,13 +213,13 @@ constexpr std::array<std::string_view, 4> kBiomes{"minecraft:plains", "minecraft
         nlohmann::json children = nlohmann::json::array();
         const std::uint32_t count = 1U + dice.below(4);
         for (std::uint32_t i = 0; i < count; ++i) {
-            children.push_back(randomRule(dice, depth + 1));
+            children.push_back(randomRule(dice, depth + 1, wide));
         }
         return nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", children}};
     }
     return nlohmann::json{{"type", "minecraft:condition"},
-                          {"if_true", randomCondition(dice, 0)},
-                          {"then_run", randomRule(dice, depth + 1)}};
+                          {"if_true", randomCondition(dice, 0, wide)},
+                          {"then_run", randomRule(dice, depth + 1, wide)}};
 }
 
 /// The documented semantics, walked by hand over the resolved graph, every
@@ -429,4 +449,86 @@ TEST_CASE("the compiled rule list places what the executor's own walk of the tre
         });
     }
     CHECK(compared == 12U * 10U * 40U);
+}
+
+TEST_CASE("each y band's copy of the list places what the list places, at every y and beyond",
+          "[surface][program]") {
+    // Executor cuts the dimension's height at every anchor of a test a y
+    // alone decides and runs each band's own copy of the list, those tests
+    // already answered. Random trees half made of such tests, anchored from
+    // below the floor to above the top, are swept over every y of the
+    // dimension and 30 beyond each end (where the list as lowered runs), and
+    // held to the reference block for block — with the memo, and without.
+    const ProgramNoises tree;
+    const auto noises = tree.registry();
+    std::size_t compared = 0;
+    std::size_t placed = 0;
+    for (std::uint64_t treeSeed = 2001; treeSeed <= 2060; ++treeSeed) {
+        Dice dice(treeSeed);
+        const RuleGraph graph =
+            RuleGraph::resolve(randomRule(dice, 0, true), ResourceLocation::parse("stratum:test"));
+        const Executor executor = Executor::compile(graph, kSeed, geometry(), &noises, kSeaLevel);
+        const Reference reference(graph, executor, noises);
+        stratum::surface::ColumnMemo memo;
+        for (int column = 0; column < 4; ++column) {
+            Context block;
+            block.x = dice.from(-40, 81);
+            block.z = dice.from(-40, 81);
+            block.preliminarySurface = dice.from(50, 40);
+            if (dice.below(2) == 0U) {
+                block.waterHeight = dice.from(55, 20);
+            }
+            block.heightWest = dice.from(60, 10);
+            block.heightSouth = dice.from(60, 10);
+            block.biome = ResourceLocation::parse(std::string(kBiomes[dice.below(4)]));
+            for (std::int32_t y = 320 + 30; y >= -64 - 30; --y) {
+                block.y = y;
+                block.stoneDepthAbove = static_cast<std::int32_t>(dice.below(8));
+                block.stoneDepthBelow = static_cast<std::int32_t>(dice.below(8));
+                const auto* expected = reference.rule(graph.root(), block);
+                CAPTURE(treeSeed, block.x, y, block.z);
+                REQUIRE(executor.apply(block, memo) == expected);
+                REQUIRE(executor.apply(block) == expected);
+                placed += expected != nullptr ? 1U : 0U;
+                ++compared;
+            }
+        }
+    }
+    CHECK(compared == 60U * 4U * 445U);
+    CHECK(placed > compared / 4U);
+}
+
+TEST_CASE("a tree cut into more bands than the executor keeps runs its one list",
+          "[surface][program]") {
+    // 90 y_above conditions with distinct anchors in the dimension: 91 bands,
+    // past the executor's bound, so the list as lowered serves every y.
+    nlohmann::json sequence = nlohmann::json::array();
+    for (int i = 0; i < 90; ++i) {
+        const nlohmann::json above{{"type", "minecraft:y_above"},
+                                   {"anchor", {{"absolute", -60 + (4 * i)}}},
+                                   {"surface_depth_multiplier", 0},
+                                   {"add_stone_depth", false}};
+        const nlohmann::json below{{"type", "minecraft:not"}, {"invert", above}};
+        sequence.push_back(nlohmann::json{{"type", "minecraft:condition"},
+                                          {"if_true", below},
+                                          {"then_run", block("stratum:b" + std::to_string(i))}});
+    }
+    const RuleGraph graph =
+        RuleGraph::resolve(nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", sequence}},
+                           ResourceLocation::parse("stratum:test"));
+    const Executor executor = Executor::compile(graph, kSeed, geometry());
+    for (std::int32_t y = -80; y < 340; ++y) {
+        Context block;
+        block.y = y;
+        const auto* placed = executor.apply(block);
+        CAPTURE(y);
+        // The first anchor above y names the block: not (y >= -60 + 4i).
+        const std::int32_t first = y < -60 ? 0 : ((y + 60) / 4) + 1;
+        if (first >= 90) {
+            CHECK(placed == nullptr);
+        } else {
+            REQUIRE(placed != nullptr);
+            CHECK(placed->name.toString() == "stratum:b" + std::to_string(first));
+        }
+    }
 }
