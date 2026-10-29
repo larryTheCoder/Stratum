@@ -250,6 +250,20 @@ struct RankedWindow {
 /// twelve); a longer span is ranked by the insertion itself.
 inline constexpr std::size_t kMaxKeyedCandidates = std::numeric_limits<std::uint32_t>::max();
 
+/// Whether a span of @p size candidates is longer than the keys index. Only
+/// a size type wider than the keys' index can hold such a size: a 32-bit
+/// size_t cannot, and there the answer is false without a comparison that
+/// could only ever be false (which -Wtype-limits would flag). A template so
+/// that the comparison is not formed at all where it is discarded.
+template<typename Size>
+[[nodiscard]] constexpr bool tooLongToKey(const Size size) noexcept {
+    if constexpr (std::numeric_limits<Size>::max() > kMaxKeyedCandidates) {
+        return size > kMaxKeyedCandidates;
+    } else {
+        return false;
+    }
+}
+
 /// Flipping the sign bit maps int32's order onto uint32's: INT32_MIN to 0,
 /// -1 to 0x7FFFFFFF, 0 to 0x80000000, INT32_MAX to 0xFFFFFFFF.
 inline constexpr std::uint32_t kKeySignBit = 0x8000'0000U;
@@ -281,7 +295,7 @@ inline constexpr std::uint32_t kKeyLowMask = 0xFFFF'FFFFU;
 [[nodiscard]] inline RankedWindow rankWindow(const std::int32_t x, const std::int32_t y,
                                              const std::int32_t z,
                                              const std::span<const Candidate> candidates) noexcept {
-    if (candidates.size() > kMaxKeyedCandidates) [[unlikely]] {
+    if (tooLongToKey(candidates.size())) [[unlikely]] {
         return rankByInsertion(x, y, z, candidates);
     }
     // The four least keys so far, sorted: k0 < k1 < k2 < k3, each a

@@ -167,3 +167,6 @@ target_sources(stratum_unit_tests PRIVATE surface_pass_heights_test.cpp)
 
 # The fill at the depth bound: a chain of interpolated, kMaxDepth deep.
 target_sources(stratum_unit_tests PRIVATE terrain_fill_depth_test.cpp)
+
+# The aquifer keyed ranking's span bound, on every size type (detail::tooLongToKey).
+target_sources(stratum_unit_tests PRIVATE aquifer_key_bound_test.cpp)
