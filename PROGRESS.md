@@ -318,10 +318,13 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
    speed"). *Done:* the baseline of record and the first pass (2026-10-25:
    155.7 -> 23.7 ms/chunk on the overworld), then the second pass and the
    task measured through PHP (2026-10-27: 10.5 ms/chunk, below vanilla's
-   13.6), byte-identical throughout (SPEC §11). Next: the third pass —
-   M5's "What the performance work leaves", the rest of the flat program
-   (the cell corners) first. Every change shown to move no output with the
-   bench's `--dump` and `--compare`.
+   13.6), then the third pass's first stage (2026-10-30: 10.6 -> 5.94
+   ms/chunk, 0.44x of vanilla's 13.4; the task through PHP 6.33),
+   byte-identical throughout (SPEC §11). Next: its second stage — the
+   rest of the flat program (the cell corners) and the noise they sample,
+   the fill loop, the surface pass's biome reuse (M5's "What the
+   performance work leaves"). Every change shown to move no output with
+   the bench's `--dump` and `--compare`.
 3. ext-nukkit inside a real Nukkit. *Done 2026-10-27*, and its two Nukkit
    readings settled by M5's closure (2026-10-29) as Nukkit's limitations.
 4. M5's paperwork: *done* with its closure (2026-10-29). Still the
@@ -2307,6 +2310,26 @@ everything Stratum owns.
       a quiet box, a row whose checks fail is NOT A MEASUREMENT (exit 3),
       and `--from` reuses an earlier run's half. SPEC §11, "M5's
       performance bar".
+- [x] **Generation speed after the third pass's first stage (2026-10-30)
+      — under half of vanilla's own time on every preset.** SPEC §11,
+      quiet box, means, the vanilla half measured the same day and the
+      before half (5507ed1) back to back against it: overworld 10.60 ->
+      5.94 ms/chunk, amplified 10.79 -> 5.62, large_biomes 10.75 -> 6.04,
+      the End 1.44 -> 0.45, against vanilla's 13.44, 15.83, 14.06 and
+      2.78 — 0.44x, 0.36x, 0.43x and 0.16x of vanilla's time.
+      Byte-identical (12 dumps); instructions per generation 1.90x to
+      2.46x fewer (overworld 189.2M -> 99.6M). Four disjoint levers, each
+      verified adversarially at its own commit before it merged, then
+      the merged tree through every local gate: the block pass over
+      sixteen lanes per cell row with per-y hoists (-54M), the surface
+      rules as typed, banded and biome-keyed copies (-18M), the biome
+      search's warm start with the aquifer's keyed ranking and the
+      encoder's open-addressed palettes (-13M), and the Perlin sample
+      inlined into the octave sums with the End's island skips (-4.7M).
+      The task through PHP (`tools/pmmp-task-cost`, quiet, every chunk
+      identical): overworld 6.33, amplified 5.77, large_biomes 6.32, the
+      End 0.47 ms/chunk. Still open below. The second pass's record
+      follows.
 - [x] **Generation speed, against the owner's bar — met by the whole task
       through PHP, and below vanilla's own time, since 2026-10-27.** The
       second pass (SPEC §11, quiet box, means, the vanilla half measured
@@ -2324,26 +2347,41 @@ everything Stratum owns.
       large_biomes 10.72, the End 1.47 ms/chunk, the PHP and
       PocketMine-MP round the zend call 0.025 to 0.048 ms of it. Still
       open below. The first pass's record follows.
-- [ ] **What the performance work leaves (2026-10-27).** (a) Unmeasured in
-      the task: AsyncPool's queueing and notifier, pmmpthread's
-      cross-thread copy, population's neighbour shipping (up to eight
-      neighbours a populated chunk), lighting, the main thread's fluid
-      scheduling. (b) Not done: the surface pass reading fillBiomes' grid
-      (it would move an evaluation; about 5M instructions a chunk) and a
-      vein_toggle skip (about 4M after the kernel). (c) The next lever is
-      the rest of §4.1's flat program — the cell corners, still the
-      interpreter's walk (about 42M instructions of an overworld fill) —
-      then the kernel's dispatch (about 60M), the surface pass (34M), the
-      aquifer (19M). (d) The second pass's verifier nits: `ColumnMemo` is
-      keyed by column, not by executor, so one memo passed to two
-      executors would answer for the wrong one; `interpolatedRead`'s
-      64-bit mask is in range only while `kMaxRegisters` is 64 (a
-      static_assert would hold it); `StablePalette`'s stable-address
-      invariant is unchecked (a debug check on each hit); an `evaluate`
-      over a kernel checks only the root. (e) The verifier's kernel
-      fuzzer, which caught the pass's own pre-fix bug 896 times, could
-      become a unit case. (f) The bar's working reading is still the
-      owner's to confirm.
+- [ ] **What the performance work leaves (2026-10-27; updated
+      2026-10-30).** (a) Unmeasured in the task: AsyncPool's queueing and
+      notifier, pmmpthread's cross-thread copy, population's neighbour
+      shipping (up to eight neighbours a populated chunk), lighting, the
+      main thread's fluid scheduling. New (2026-10-30): the task through
+      PHP runs 5.8% to 10.0% above the bench's C++ in the same build, where
+      it was about 2%, almost all in the slow tail — why is unmeasured
+      (SPEC §11). (b) Not done: the surface pass reading fillBiomes' grid
+      (about 5M instructions a chunk; exact only in fill-first order, the
+      order encodeChunk uses). (c) The next levers, after the third pass's
+      first stage: the cell corners — the interpreter's walk and its
+      MemoTable, about a quarter of the instructions — and the noise they
+      sample (NormalNoise and BlendedNoise, about a fifth), then the
+      kernel's lane runs (9%) and the fill's own loop (8%). (d) The second
+      pass's verifier nits — *closed 2026-10-30* but one: `ColumnMemo` is
+      bound to its executor as well as its column; a static_assert holds
+      `kMaxRegisters` to the 64-bit read mask; a comment proves a kernel
+      built by `blockKernel` reaches nothing out of range; still open,
+      `StablePalette`'s stable-address invariant is unchecked (a debug
+      check on each hit). (e) The kernel fuzzer is a unit case
+      (`density_kernel_fuzz_test.cpp`) since 2026-10-30. (f) The bar's
+      working reading: *settled 2026-10-29* by M5's closure (met as read).
+      (g) The third pass's first-stage verifier nits, carried: the
+      surface executor declares its per-type tests `inline` but defines
+      them in one file only; `Executor::compile` does O(height) work for a
+      direct caller with an unvalidated height; nothing checks that a
+      surface `Context`'s biome key and biome agree; `perlin_kernel.hpp`
+      is internal but sits in the public include directory, with a macro
+      it never undefines; NormalNoise's tail loops for unequal stacks are
+      unreachable and untested; the bench's `encodeStages` no longer
+      mirrors `encodeChunk`; the memo condition the lane run depends on is
+      spelled out in three places; SPEC §8's stack figures predate
+      `fill`'s larger frame and were not measured again. (h) The merged
+      tree has not been built on ARM64 locally (the board did not answer
+      on 2026-10-30); CI's ARM64 legs are the check.
 - [ ] **Generation speed after the first pass (2026-10-25), kept for the
       record — the C++ met the best case; the task through PHP was then
       unmeasured.** The baseline of record (SPEC

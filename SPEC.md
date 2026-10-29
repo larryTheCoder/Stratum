@@ -117,9 +117,11 @@ tools/    Non-C++ helper scripts (fixture fetching, mcdoc sync, CI glue).
   per-block virtual dispatch through a node tree). Interpretation of the
   graph per block is acceptable only as a Milestone-M2 stepping stone.
   *Built in part (2026-10-27):* the fill's per-block arithmetic over a
-  root's interpolated values runs as a compiled `Interpreter::BlockKernel`;
-  the cell corners and the router reads outside the block part are still
-  the interpreter's walk (§10, M3; §11, "M5's performance bar").
+  root's interpolated values runs as a compiled `Interpreter::BlockKernel`
+  — since 2026-10-30 over up to sixteen blocks of one cell and one y at a
+  time, op by op, under the Lattice memo with no substitutions; the cell
+  corners and the router reads outside the block part are still the
+  interpreter's walk (§10, M3; §11, "M5's performance bar").
 - Sampling follows vanilla's cell model: cell dimensions derived from
   `size_horizontal` / `size_vertical` in noise settings, density evaluated at
   cell corners, trilinear interpolation within cells.
@@ -779,6 +781,10 @@ that is undefined, so some of what they stop computed defined output before
   otherwise took 320 KiB, resolving and running 128 levels of rules
   256 KiB, and a copy, a dump and an == of 128 levels of JSON 448 KiB —
   inside the 1 MiB a Windows main thread or a JVM thread gets by default.
+  Those figures predate the third performance pass (2026-10-30), which
+  grew `ChunkFiller::fill`'s own frame by 17.6 KB (to 22 488 bytes in the
+  release build, 24 240 in the `sanitize` preset's) once a fill, not per
+  level; the chain of 256 `interpolated` was not measured again then.
   Vanilla's deepest are 23, 46 and 14;
 - when surface rules compile: a vertical anchor whose y is no 32-bit
   integer (`below_top: -2147483648`), and, under a `temperature` condition,
@@ -1047,8 +1053,11 @@ mapping has two halves, split at a platform-neutral midpoint:
   flat program. The second (2026-10-27) built its first part: the
   per-block arithmetic of a root over its interpolated values runs as a
   compiled `BlockKernel`, a linear register program in the walk's own
-  order. The cell corners and every read outside the block part are still
-  the interpreter's walk, so the deliverable is partly built, not closed.
+  order. The third (2026-10-30) runs that program over up to sixteen
+  blocks of one cell and one y together, op by op — under the Lattice memo
+  with no substitutions only, and block by block otherwise. The cell
+  corners and every read outside the block part are still the
+  interpreter's walk, so the deliverable is partly built, not closed.
   It is written down here because a
   milestone marked closed with one of its named deliverables missing is a
   claim nobody re-checks.
@@ -10734,9 +10743,9 @@ Open:
   a Java server would make is unobserved.
 
 - **M5's performance bar, and the method that measures against it — with
-  the baselines of record before and after both performance passes
-  (2026-10-25, 2026-10-27), and the generation task measured through
-  PHP.** *The bar* (owner, 2026-10-15) is referenced to the Java Edition
+  the baselines of record before and after each performance pass
+  (2026-10-25, 2026-10-27, 2026-10-30), and the generation task measured
+  through PHP.** *The bar* (owner, 2026-10-15) is referenced to the Java Edition
   baseline: 35 ms/chunk (about 28 chunks/s) is the best case, about 10
   chunks/s (100 ms/chunk) the absolute minimum. *The working reading*,
   flagged to the owner for confirmation: per generation thread, end to end
@@ -10972,6 +10981,135 @@ Open:
   chunk; its largest costs are the kernel's dispatch, the cell corners
   (still the interpreter's walk: the rest of §4.1's flat program), the
   surface pass and the aquifer.
+
+  *The third pass (2026-10-30)*, after M5 closed (owner, 2026-10-29: "lets
+  work on adding more speed"), by the same method on the same box. The
+  vanilla half was measured afresh, every recording within 0.971 to 1.023
+  of its workers' CPU, and Stratum's half on main before the pass (5507ed1)
+  and after it (7b06ae1), back to back against that vanilla half, every
+  half quiet (other processes 0.24 to 0.38 cores on average, 0.43 at most
+  over any minute). Means (medians) in ms/chunk:
+
+  | dimension | Stratum e2e before (5507ed1) | Stratum e2e after the third pass | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
+  | --- | --- | --- | --- | --- | --- |
+  | overworld | 10.60 (11.14), 94.4/s | 5.94 (6.04), 168.4/s | 5.41 / 0.42 / 0.24 | 13.44 (13.93), 74.4/s | 0.79x, 0.44x (0.44x) |
+  | amplified | 10.79 (10.89), 92.7/s | 5.62 (5.61), 177.8/s | 5.07 / 0.42 / 0.24 | 15.83 (15.45), 63.2/s | 0.68x, 0.36x (0.36x) |
+  | large_biomes | 10.75 (10.43), 93.0/s | 6.04 (5.88), 165.5/s | 5.50 / 0.42 / 0.24 | 14.06 (13.87), 71.1/s | 0.76x, 0.43x (0.43x) |
+  | end | 1.44 (1.44), 693.0/s | 0.45 (0.44), 2215.4/s | 0.41 / 0.00 / 0.15 | 2.78 (2.54), 359.2/s | 0.52x, 0.16x (0.16x) |
+
+  The before column reproduces the second pass's record (10.53, 10.52,
+  10.69 and 1.44) within 0.3 ms, two days apart.
+
+  *What the third pass changed*, none of it output: every chunk
+  byte-identical to 5507ed1's (12 dumps, 555 831 785 bytes, the bench's
+  `--compare` and `cmp`). Instructions per chunk generation (seed 42):
+  overworld 189.2M to 99.6M (1.90x fewer), amplified 210.7M to 96.4M
+  (2.19x), large_biomes 196.6M to 103.6M (1.90x), the End 24.4M to 9.9M
+  (2.46x). Four disjoint levers, built apart and merged:
+
+  - *the block pass* (-54.0M on the overworld): a cell's blocks of one y
+    run through the BlockKernel together, op by op over up to sixteen
+    lanes, with the cell, its fractions, each `interpolated`'s entry check
+    and blend along y worked out once a run; each lane computes its block's
+    scalar expressions on the same doubles in the same order. A run is
+    taken only under the Lattice memo with no substitutions, where every
+    corner and column value is a pure function of its key, so evaluating a
+    run's blocks before the aquifer reads between them changes nothing;
+    otherwise, and for a run that would refuse, throw or leave one cell,
+    the fill goes block by block as before and refuses at the same block in
+    the same words. The fill also works out per y, not per block, whether
+    the aquifer is consulted, the global picker's state and the ore veins'
+    richness gate (`ore::RichnessGate`), and asks the palette only when a
+    block's state differs from the one before;
+  - *the surface pass* (-18.1M): each test of the compiled rule list names
+    its condition's type and runs inline; biome conditions answer from a
+    key the executor issues for the quart's biome rather than comparing
+    names; the list is cut into y bands at every anchor a block's y alone
+    decides, with a copy per band, and per biome key, whose y and biome
+    tests are already answered, unrolled so a test whose twin already
+    answered is followed rather than made again; each column's topmost
+    non-air block is found a layer at a time for the whole chunk; and each
+    quart's biome sits in a flat per-chunk table;
+  - *the biome search, the aquifer and the encoder* (-12.9M): the search
+    starts each quart from the row the quart below it took, with every
+    pruning comparison arranged so the scan's later-wins tie-break is kept;
+    the aquifer ranks a block's twelve candidates by 64-bit keys and reads
+    each ranked status from its home cell's window; the sub-chunk encoder
+    builds its palettes in an open-addressed table, packs a word at a time
+    and encodes a biome layer from its 64 quarts;
+  - *the noise* (-4.7M; the End -1.7M): the Perlin sample is inlined into
+    the octave sums, and on x86-64 builds without SSE4.1 (all of this
+    project's x86-64 builds, MSVC's included) its floor goes through an
+    int64 conversion that gives the same double; `maintainPrecision`
+    returns a coordinate inside ±2^23 as it is, which is what its
+    expression gives there; and the End's island field passes over cells
+    too far for any island to lift the column, asking the simplex only
+    where an island could raise the height.
+
+  New API, behaviour unchanged: `Interpreter::BlockKernel::Blocks`,
+  `BlockKernel::Lanes` and the `evaluate` that runs a kernel over them;
+  `ore::RichnessGate`; `surface::BiomeKey`, `Executor::biomeKey` and
+  `Context::biomeKey` — a key of the running executor answers in place of
+  `Context::biome`, so the two must name the same biome (the filler sets
+  both from one lookup); `SurfaceColumn::readWith`; a `surface::ColumnMemo`
+  is bound to the executor that fills it as well as to its column, so one
+  memo handed to two executors in turn never answers one with the other's
+  reads; `biome::ParameterList::findRowFrom` and `ParameterList::kNoHint`,
+  with `biome::Source::fillChunk` threading the hint through a call; and
+  `pmmp::encodeQuartLayer`. Compiling a dimension's surface rules costs
+  about 12M instructions more (2 to 3 ms, once per dimension) for the
+  band and biome-key copies, which the per-chunk saving repays within
+  about 25 chunks; the overworld presets' compiled list grows from 240 to
+  4 157 ops, and past fixed bounds (64 bands, 4 096 copies, 2^20 ops) it
+  falls back to the plain list. `ChunkFiller::fill`'s own stack frame
+  grows from 4 904 to 22 488 bytes (24 240 in the `sanitize` preset's
+  build) for the two lane sets it holds, once a fill rather than per level
+  of a graph (§8).
+
+  Verified adversarially, each lever at the commit it reported, before it
+  merged, by a verifier that rebuilt the base and the tip itself:
+  identity from its own builds; the dev, UBSan, optimised and conformance
+  suites, clang-tidy 18 and -Werror under GCC and Clang; and its own
+  differential harness against the base library on inputs the
+  implementer's tests did not cover — 223.6M kernel outcomes over 29.8M
+  blocks and 8 560 whole chunks across vanilla and altered settings,
+  refusing far chunks included, for the block pass; 690M byte comparisons
+  of the noise; 45.4M executor records and 1.12 billion blocks over 3 500
+  random custom dimensions for the surface pass; about 650M comparisons of
+  the search, the aquifer and the encoder — with no difference, and a
+  planted mutant caught by each. The pass adds, as unit cases, a
+  differential fuzzer of the kernel against the walk over random graphs
+  (`density_kernel_fuzz_test.cpp`, with a longer run behind a hidden tag:
+  the second pass's verifier ran such a fuzzer by hand) and one of the
+  noise against a verbatim copy of the previous sampler
+  (`noise_differential_test.cpp`). The merged tree passed every local
+  gate: the dev suite 684/684, `warnings.sh` and `clang.sh` from empty
+  build directories, clang-tidy 18 on 200 files, `optimised.sh`, the
+  `sanitize` preset 682/682, `ext` and `ext-release`, `ctest --preset
+  pmmp` 8/8, `pmmp-task-cost`, `nukkit` and `nukkit-release` 3/3, and
+  `ctest --preset conformance -j 12` 185/185.
+
+  *The generation task through PHP after the third pass*
+  (`tools/pmmp-task-cost`, every half quiet, every chunk checked identical
+  to the C++'s), mean (median) ms/chunk: overworld 6.33 (6.09), amplified
+  5.77 (5.68), large_biomes 6.32 (5.89), the End 0.47 (0.46). The PHP and
+  PocketMine-MP work round the zend call adds 0.040, 0.035, 0.048 and
+  0.025 ms a chunk, as before. The task now runs 5.8% to 10.0% above the
+  bench's C++ in the same build (0.32 to 0.57 ms on the overworld presets,
+  0.03 on the End), where the second pass measured about 2%: almost all
+  of it in the slow tail (overworld p90 7.92 against 6.55, p10 4.90
+  against 4.80). Why is unmeasured; a colder cache for the C++ after the
+  PHP work between chunks, which weighs more now that a chunk takes half
+  as long, is the untested guess.
+
+  *Against the bar after the third pass*: the whole generation task
+  through PHP meets the 35 ms/chunk best case on every preset, quietly
+  measured. Against the owner's goal: Stratum end to end runs in 0.36x to
+  0.44x of vanilla's time for biomes, noise and surface on the overworld
+  presets and 0.16x on the End. The fill is still about 90% of a chunk;
+  its largest costs are now the cell corners (the interpreter's walk and
+  its memo, about a quarter of the instructions: the rest of §4.1's flat
+  program) and the noise they sample (about a fifth).
 
 - **M5-Nukkit: block states resolve once per world through Nukkit, worlds
   generate from their frozen pipeline and are refused at startup — built
