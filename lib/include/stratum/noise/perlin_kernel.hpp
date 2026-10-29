@@ -18,7 +18,7 @@
 // `floor` is reached on x86-64 builds without SSE4.1, where the compiler has
 // no rounding instruction and std::floor costs a range test, a convert pair
 // and a sign copy; see latticeAxis() and floorExceptNegativeZero() for why
-// each replacement is the same double. tests/unit/perlin_kernel_test.cpp
+// each replacement is the same double. tests/unit/noise_differential_test.cpp
 // holds a verbatim copy of the previous implementation and compares the two
 // by their bytes. This file depends on -ffp-contract=off (SPEC §5.4) like
 // perlin.cpp does.

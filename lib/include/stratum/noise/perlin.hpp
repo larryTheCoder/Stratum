@@ -54,10 +54,12 @@ public:
 
     /// PRECONDITION: each of `floor(x + originX())`, `floor(y + originY())`
     /// and `floor(z + originZ())` lies in the int32 range, NaN excluded. The
-    /// lattice cell is converted to int32 before it is masked to a byte, and
-    /// outside that range the conversion is undefined behaviour — on x86-64
-    /// it yields INT32_MIN, so lattice byte 0, and on ARM64 it saturates, so
-    /// the two architectures would build different worlds (SPEC §5.7). Asserted
+    /// lattice cell is converted to an integer before it is masked to a byte,
+    /// and outside that range the result is unspecified across targets — an
+    /// x86-64 build without SSE4.1 converts through int64 and keeps the true
+    /// low byte up to 2^63, other x86-64 builds yield INT32_MIN (lattice byte
+    /// 0), ARM64 saturates — so the architectures would build different worlds
+    /// (SPEC §5.7). Asserted
     /// in debug builds; every caller that takes its coordinate from a pack or
     /// a far chunk checks it first (NormalNoise::accepts) or bounds it
     /// (BlendedNoise's wrap).

@@ -67,7 +67,8 @@ constexpr double kPrecisionPeriod = 33554432.0;
 /// Inside +/-2^23, which is every coordinate within some 49 000 blocks of
 /// the origin at vanilla's overworld scale, the expression is `value` itself
 /// and is returned as such. That is the same double, not an approximation of
-/// it: there `value / 2^25` is exact and within +/-1/4, so the quotient plus
+/// it: there `value / 2^25` lies within +/-1/4 (exact, or a subnormal
+/// rounding of a tiny value, which stays inside that bound), so the quotient plus
 /// a half rounds into [1/4, 3/4], whose floor is +0.0; +0.0 * 2^25 is +0.0;
 /// and `value - (+0.0)` is `value` to the bit for every double, -0.0
 /// included. NaN fails the comparison and takes the expression.
