@@ -156,3 +156,6 @@ target_sources(stratum_unit_tests PRIVATE density_kernel_fuzz_test.cpp)
 
 # The ore veins' richness gate, made once a height (ore::RichnessGate).
 target_sources(stratum_unit_tests PRIVATE ore_richness_gate_test.cpp)
+
+# The surface pass's own cases: the quart biome it hands its rules.
+target_sources(stratum_unit_tests PRIVATE surface_pass_biome_test.cpp)

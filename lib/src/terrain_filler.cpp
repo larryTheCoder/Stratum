@@ -1090,12 +1090,26 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // ever asked for it. A biome the table does not hold is refused there, as
     // it always was; every later lookup of one it holds returned the same
     // float, and is not repeated.
+    //
+    // One slot per quart of the chunk, where a map keyed by the quart's
+    // corner once stood: the chunk holds exactly 4 x 4 quart columns, each
+    // one slot per 4-block level from quartSnap(minY) to quartSnap(topY - 1),
+    // and (localX / 4, localZ / 4, quart level) names a quart corner exactly
+    // as (qx, quartY, qz) did — baseX and baseZ are multiples of 16, so
+    // quartSnap(baseX + localX) is baseX + 4 * (localX / 4). A slot is filled
+    // where the map entry was emplaced, once the lookups have returned, so a
+    // refusal leaves it empty exactly as it left the map. `id` is never null
+    // once resolved (surfaceBiomeAt returns a reference), which is the mark.
     struct QuartBiome {
         const data::ResourceLocation* id = nullptr;
         float temperature = 0.0F;
     };
 
-    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, QuartBiome> biomeCache;
+    const std::int32_t quartBottom = quartSnap(minY);
+    const auto quartLevels =
+        static_cast<std::size_t>(((quartSnap(topY - 1) - quartBottom) / 4) + 1);
+    std::vector<QuartBiome> quartBiomes(
+        surfaceNeedsBiome_ || surfaceNeedsTemperature_ ? 16U * quartLevels : 0U);
 
     // What the rules read that is constant down a column — the surface depth
     // above all, which vanilla's overworld reads on every default block it
@@ -1145,6 +1159,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             const bool needsBiomeIdentity = surfaceNeedsBiome_ || surfaceNeedsTemperature_;
             const std::int32_t qx = quartSnap(x);
             const std::int32_t qz = quartSnap(z);
+            const std::size_t quartColumn = ((static_cast<std::size_t>(localZ / 4) * 4U) +
+                                             static_cast<std::size_t>(localX / 4)) *
+                                            quartLevels;
             bool biomeQuartYKnown = false;
             std::int32_t biomeQuartY = 0;
             // ONLY THE DEFAULT BLOCK IS A SURFACE-RULE POSITION. A rule's
@@ -1190,22 +1207,23 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     // the blocks below it in the same quart.
                     const std::int32_t quartY = quartSnap(y);
                     if (!biomeQuartYKnown || biomeQuartY != quartY) {
-                        const auto key = std::tuple{qx, quartY, qz};
-                        auto cached = biomeCache.find(key);
-                        if (cached == biomeCache.end()) {
+                        QuartBiome& cached =
+                            quartBiomes[quartColumn +
+                                        static_cast<std::size_t>((quartY - quartBottom) / 4)];
+                        if (cached.id == nullptr) {
                             QuartBiome resolved;
                             resolved.id = &surfaceBiomeAt(
                                 density::Point{.x = qx, .y = quartY, .z = qz}, surfaceCache);
                             if (surfaceNeedsTemperature_) {
                                 resolved.temperature = biomeTemperatures_->at(*resolved.id);
                             }
-                            cached = biomeCache.emplace(key, resolved).first;
+                            cached = resolved;
                         }
                         if (surfaceNeedsBiome_) {
-                            context.biome = *cached->second.id;
+                            context.biome = *cached.id;
                         }
                         if (surfaceNeedsTemperature_) {
-                            context.biomeTemperature = cached->second.temperature;
+                            context.biomeTemperature = cached.temperature;
                         }
                         biomeQuartY = quartY;
                         biomeQuartYKnown = true;
