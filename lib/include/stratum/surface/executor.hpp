@@ -646,13 +646,29 @@ private:
     /// to the same block. A y outside the dimension runs the list as
     /// lowered. Bands that come out alike share one copy; a tree with too
     /// many bands, or copies too long, keeps the one list.
+    ///
+    /// AND THE BIOME KEYS. A `biome` test of a block carrying one of this
+    /// executor's own keys (BiomeKey) answers from the key alone, without a
+    /// read or a refusal. So where the tree tests a biome, each band also
+    /// gets a copy per key with those tests answered too, and a keyed block
+    /// runs its band's copy for its key: nothing of the tree survives in it
+    /// but the tests that key and band leave open. A block without one of
+    /// this executor's keys, or with an index it never issued, runs the
+    /// band's unkeyed copy, which tests the biome as the list always did.
+    /// Past kMaxBandCopies copies, or the list's bound, the keyed copies are
+    /// given up and the bands kept.
     void bandPrograms();
 
-    /// Where a block at minY + i starts: an op of its band's copy in program_,
-    /// or empty where the list is not banded.
+    /// Each band's entry into program_, bandStride_ per band: first the
+    /// copy for a block without one of this executor's keys, then (where
+    /// there are keyed copies) one per key. Empty where the list is not
+    /// banded. bandOf_ is the band of a block at bandMinY_ + i.
     std::vector<std::uint32_t> bandEntry_;
+    std::vector<std::uint8_t> bandOf_;
+    std::size_t bandStride_ = 1;
     std::int32_t bandMinY_ = 0;
     static constexpr std::size_t kMaxBands = 64;
+    static constexpr std::size_t kMaxBandCopies = 4096;
     static constexpr std::size_t kMaxBandedProgram = std::size_t{1} << 20;
 
     [[nodiscard]] const settings::BlockState* runProgram(const Context& at, ColumnMemo& memo) const;

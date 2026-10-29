@@ -16,6 +16,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -485,11 +487,17 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
 
 void Executor::bandPrograms() {
     using Code = ProgramOp::Code;
+    const auto terminal = [](const ProgramOp& op) {
+        return op.code == Code::Place || op.code == Code::Bandlands || op.code == Code::Nothing;
+    };
     const std::int64_t minY = geometry_->minY;
     const std::int64_t topY = minY + std::int64_t{geometry_->height};
-    // A test's answer at @p y where y alone decides it (THE Y BANDS, in the
-    // header), or nothing where it does not.
-    const auto decided = [this](const ProgramOp& op, const std::int64_t y) -> std::optional<bool> {
+    constexpr std::uint32_t kNoKey = std::numeric_limits<std::uint32_t>::max();
+    // A test's answer at @p y for a block whose biome key is @p key, where
+    // those alone decide it (THE Y BANDS, in the header), or nothing where
+    // they do not.
+    const auto decided = [this](const ProgramOp& op, const std::int64_t y,
+                                const std::uint32_t key) -> std::optional<bool> {
         if (op.code == Code::Gradient) {
             const CompiledCondition& compiled = compiled_[op.condition];
             if (compiled.gradient == kNoSource) {
@@ -508,6 +516,11 @@ void Executor::bandPrograms() {
             !op.tested->addStoneDepth) {
             return y >= compiled_[op.condition].anchor;
         }
+        if (op.code == Code::Biome && key != kNoKey) {
+            // biomeMatches' answer for one of this executor's own keys.
+            return biomeAnswers_[(static_cast<std::size_t>(key) * biomeSlots_) +
+                                 compiled_[op.condition].biomeSlot] != 0;
+        }
         return std::nullopt;
     };
 
@@ -515,6 +528,7 @@ void Executor::bandPrograms() {
     // dimension's own two ends included.
     std::vector<std::int64_t> cuts{minY, topY};
     bool anyDecided = false;
+    bool anyBiome = false;
     for (const ProgramOp& op : program_) {
         if (op.code == Code::Gradient && compiled_[op.condition].gradient != kNoSource) {
             cuts.push_back(std::int64_t{compiled_[op.condition].trueAtAndBelow} + 1);
@@ -524,45 +538,49 @@ void Executor::bandPrograms() {
                    !op.tested->addStoneDepth) {
             cuts.push_back(compiled_[op.condition].anchor);
             anyDecided = true;
+        } else if (op.code == Code::Biome) {
+            anyBiome = true;
         }
     }
-    if (!anyDecided || topY <= minY) {
-        // Nothing a y decides: the list as lowered serves every block.
+    if ((!anyDecided && !anyBiome) || topY <= minY) {
+        // Nothing a y or a key decides: the list as lowered serves every block.
         return;
     }
     std::erase_if(cuts, [&](const std::int64_t cut) { return cut < minY || cut > topY; });
     std::ranges::sort(cuts);
     cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
-    if (cuts.size() - 1 > kMaxBands) {
+    const std::size_t bands = cuts.size() - 1;
+    if (bands > kMaxBands) {
         return;
     }
 
     const std::size_t lowered = program_.size();
     std::vector<ProgramOp> banded = program_;
-    std::vector<std::uint32_t> entry(static_cast<std::size_t>(topY - minY), 0U);
-    // Each band's copy, as offsets into `banded`, to share alike copies.
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> copies; // (base, size)
     std::vector<std::size_t> settled(lowered);
     std::vector<char> reached(lowered);
     std::vector<std::uint32_t> renumbered(lowered);
-    for (std::size_t band = 0; band + 1 < cuts.size(); ++band) {
-        const std::int64_t low = cuts[band];
-        const std::int64_t high = cuts[band + 1];
-        // Where each op leads once the band's decided tests are followed:
-        // itself, unless y decides it, and then where its answer goes —
-        // forward jumps only, so from the end back.
+    // Each copy made, as (base, size) in `banded`, by a hash of its ops, so
+    // that alike copies are one.
+    std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>> copies;
+    // The list's copy for one (band, key) — the band's lowest y and the key
+    // standing for all of it — appended to `banded` unless an alike one is
+    // there: its entry, or nothing where `banded` would outgrow its bound.
+    const auto copyFor = [&](const std::int64_t low,
+                             const std::uint32_t key) -> std::optional<std::uint32_t> {
+        // Where each op leads once the decided tests are followed: itself,
+        // unless it is decided, and then where its answer goes — forward
+        // jumps only, so from the end back.
         for (std::size_t i = lowered; i-- > 0;) {
             const ProgramOp& op = program_[i];
-            const std::optional<bool> answer = decided(op, low);
+            const std::optional<bool> answer = decided(op, low, key);
             settled[i] = answer.has_value() ? settled[*answer != op.negate ? op.next : op.jump] : i;
         }
-        // What the band can reach from its start, in the list's order.
+        // What the copy can reach from its start, in the list's order.
         std::ranges::fill(reached, char{0});
         reached[settled[0]] = 1;
         for (std::size_t i = 0; i < lowered; ++i) {
             const ProgramOp& op = program_[i];
-            if (reached[i] == 0 || settled[i] != i || op.code == Code::Place ||
-                op.code == Code::Bandlands || op.code == Code::Nothing) {
+            if (reached[i] == 0 || settled[i] != i || terminal(op)) {
                 continue;
             }
             reached[settled[op.next]] = 1;
@@ -575,58 +593,100 @@ void Executor::bandPrograms() {
                 copy.push_back(program_[i]);
             }
         }
+        std::uint64_t hash = UINT64_C(14695981039346656037);
+        const auto mix = [&hash](const std::uint64_t value) {
+            hash = (hash ^ value) * UINT64_C(1099511628211);
+        };
         for (std::size_t i = 0, kept = 0; i < lowered; ++i) {
             if (reached[i] == 0) {
                 continue;
             }
             ProgramOp& op = copy[kept++];
-            if (op.code != Code::Place && op.code != Code::Bandlands && op.code != Code::Nothing) {
+            if (!terminal(op)) {
                 op.next = renumbered[settled[program_[i].next]];
                 op.jump = renumbered[settled[program_[i].jump]];
             }
+            mix(static_cast<std::uint64_t>(op.code));
+            mix(op.negate ? 1U : 0U);
+            mix(op.condition);
+            mix(op.next);
+            mix(op.jump);
+            mix(reinterpret_cast<std::uintptr_t>(op.block));
         }
         const std::uint32_t start = renumbered[settled[0]];
-        // The same copy as an earlier band's, offsets and all, is that one.
-        std::uint32_t base = 0;
-        bool shared = false;
-        for (const auto& [earlier, size] : copies) {
+        // The same copy as an earlier one, offsets and all, is that one.
+        std::vector<std::pair<std::uint32_t, std::uint32_t>>& alike = copies[hash];
+        for (const auto& [earlier, size] : alike) {
             if (size == copy.size() &&
                 std::equal(copy.begin(), copy.end(), banded.begin() + earlier,
                            [&](const ProgramOp& a, const ProgramOp& b) {
                                ProgramOp moved = a;
-                               if (moved.code != Code::Place && moved.code != Code::Bandlands &&
-                                   moved.code != Code::Nothing) {
+                               if (!terminal(moved)) {
                                    moved.next += earlier;
                                    moved.jump += earlier;
                                }
                                return moved == b;
                            })) {
-                base = earlier;
-                shared = true;
-                break;
+                return earlier + start;
             }
         }
-        if (!shared) {
-            if (banded.size() + copy.size() > kMaxBandedProgram) {
-                return;
-            }
-            base = static_cast<std::uint32_t>(banded.size());
-            for (ProgramOp op : copy) {
-                if (op.code != Code::Place && op.code != Code::Bandlands &&
-                    op.code != Code::Nothing) {
-                    op.next += base;
-                    op.jump += base;
-                }
-                banded.push_back(op);
-            }
-            copies.emplace_back(base, static_cast<std::uint32_t>(copy.size()));
+        if (banded.size() + copy.size() > kMaxBandedProgram) {
+            return std::nullopt;
         }
-        for (std::int64_t y = low; y < high; ++y) {
-            entry[static_cast<std::size_t>(y - minY)] = base + start;
+        const auto base = static_cast<std::uint32_t>(banded.size());
+        for (ProgramOp op : copy) {
+            if (!terminal(op)) {
+                op.next += base;
+                op.jump += base;
+            }
+            banded.push_back(op);
+        }
+        alike.emplace_back(base, static_cast<std::uint32_t>(copy.size()));
+        return base + start;
+    };
+
+    // First a copy per band for a block without one of this executor's
+    // keys; then, where the tree tests a biome and the count stays bounded,
+    // one per band and key. Keyed copies that would not fit are given up
+    // whole, and the bands kept.
+    std::vector<std::uint8_t> bandOf(static_cast<std::size_t>(topY - minY));
+    std::vector<std::uint32_t> unkeyed(bands);
+    for (std::size_t band = 0; band < bands; ++band) {
+        for (std::int64_t y = cuts[band]; y < cuts[band + 1]; ++y) {
+            bandOf[static_cast<std::size_t>(y - minY)] = static_cast<std::uint8_t>(band);
+        }
+        const std::optional<std::uint32_t> entry = copyFor(cuts[band], kNoKey);
+        if (!entry.has_value()) {
+            return;
+        }
+        unkeyed[band] = *entry;
+    }
+    std::size_t stride = 1;
+    std::vector<std::uint32_t> entries = unkeyed;
+    if (anyBiome && bands * (std::size_t{biomeKeys_} + 1U) <= kMaxBandCopies) {
+        const std::size_t unkeyedSize = banded.size();
+        const auto keyedStride = std::size_t{biomeKeys_} + 1U;
+        std::vector<std::uint32_t> keyed(bands * keyedStride);
+        bool fits = true;
+        for (std::size_t band = 0; band < bands && fits; ++band) {
+            keyed[band * keyedStride] = unkeyed[band];
+            for (std::uint32_t key = 0; key < biomeKeys_ && fits; ++key) {
+                const std::optional<std::uint32_t> entry = copyFor(cuts[band], key);
+                fits = entry.has_value();
+                keyed[(band * keyedStride) + 1U + key] = entry.value_or(0U);
+            }
+        }
+        if (fits) {
+            stride = keyedStride;
+            entries = std::move(keyed);
+        } else {
+            banded.resize(unkeyedSize);
         }
     }
     program_ = std::move(banded);
-    bandEntry_ = std::move(entry);
+    bandOf_ = std::move(bandOf);
+    bandEntry_ = std::move(entries);
+    bandStride_ = stride;
     bandMinY_ = geometry_->minY;
 }
 
@@ -736,10 +796,17 @@ const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& 
     // A block of the dimension starts in its band's copy (bandPrograms);
     // any other y in the list as lowered.
     std::size_t pc = 0;
-    if (!bandEntry_.empty()) {
+    if (!bandOf_.empty()) {
         const std::int64_t offset = std::int64_t{at.y} - bandMinY_;
-        if (offset >= 0 && offset < static_cast<std::int64_t>(bandEntry_.size())) {
-            pc = bandEntry_[static_cast<std::size_t>(offset)];
+        if (offset >= 0 && offset < static_cast<std::int64_t>(bandOf_.size())) {
+            // A key this executor issued picks its keyed copy, where there
+            // are keyed copies; any other block, the band's own.
+            std::size_t slot = 0;
+            if (bandStride_ > 1 && at.biomeKey.executor == id_ && at.biomeKey.index < biomeKeys_) {
+                slot = std::size_t{at.biomeKey.index} + 1U;
+            }
+            pc = bandEntry_[(std::size_t{bandOf_[static_cast<std::size_t>(offset)]} * bandStride_) +
+                            slot];
         }
     }
     while (true) {

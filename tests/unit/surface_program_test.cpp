@@ -489,6 +489,13 @@ TEST_CASE("each y band's copy of the list places what the list places, at every 
                 CAPTURE(treeSeed, block.x, y, block.z);
                 REQUIRE(executor.apply(block, memo) == expected);
                 REQUIRE(executor.apply(block) == expected);
+                // And with the biome as this executor's key — its band's
+                // keyed copy — alone and beside the name.
+                Context keyed = block;
+                keyed.biomeKey = executor.biomeKey(*block.biome);
+                REQUIRE(executor.apply(keyed, memo) == expected);
+                keyed.biome.reset();
+                REQUIRE(executor.apply(keyed) == expected);
                 placed += expected != nullptr ? 1U : 0U;
                 ++compared;
             }
