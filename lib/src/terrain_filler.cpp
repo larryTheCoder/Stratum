@@ -1068,13 +1068,13 @@ ChunkFiller::surfaceBiomeAt(const density::Point quartCorner,
 
 std::size_t ChunkFiller::surfaceBiomeRowAt(const density::Point quartCorner,
                                            density::Interpreter::CornerCache& cache,
-                                           const std::size_t hint) const {
+                                           const std::size_t hint, biome::SearchMemo& memo) const {
     // surfaceBiomeAt's check, then its lookup as a row (biome::Source::rowAt).
     if (!biomeSource_.has_value()) {
         throw FillError(
             "this dimension's surface rules read the biome, and it has no biome source");
     }
-    return biomeSource_->rowAt(interpreter_, settings_->router, quartCorner, cache, hint);
+    return biomeSource_->rowAt(interpreter_, settings_->router, quartCorner, cache, hint, memo);
 }
 
 std::uint64_t ChunkFiller::nextSerial() noexcept {
@@ -1332,6 +1332,12 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // else of the quart before it in x, then in z, then of the quart below,
     // else the last row found anywhere in the chunk.
     std::size_t lastRow = biome::ParameterList::kNoHint;
+    // And through one search memo (biome::SearchMemo): a column's lookups run
+    // down it one after another, and under vanilla's routers differ in depth
+    // alone, so the rest of every score is kept from the first. It takes
+    // its storage at its first search, so a pass that looks nothing up
+    // allocates nothing for it.
+    biome::SearchMemo searchMemo;
     const auto rowHint = [&](const std::size_t qxc, const std::size_t level,
                              const std::size_t qzc) {
         const std::uint32_t* const rows = biomeRows.rows.data();
@@ -1478,7 +1484,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                                     const auto level =
                                         static_cast<std::size_t>((quartY - quartBottom) / 4);
                                     const std::size_t row = surfaceBiomeRowAt(
-                                        corner, surfaceCache, rowHint(qxc, level, qzc));
+                                        corner, surfaceCache, rowHint(qxc, level, qzc), searchMemo);
                                     biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
                                         static_cast<std::uint32_t>(row);
                                     lastRow = row;

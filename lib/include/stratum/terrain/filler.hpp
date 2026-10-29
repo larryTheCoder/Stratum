@@ -491,11 +491,12 @@ private:
     surfaceBiomeAt(density::Point quartCorner, density::Interpreter::CornerCache& cache) const;
 
     /// The same biome, for a multi-noise source as its row, searched from
-    /// @p hint (biome::Source::rowAt): `entries()[row].biome` is the object
-    /// the overload above returns, with the same refusals in the same order.
+    /// @p hint through @p memo (biome::Source::rowAt): `entries()[row].biome`
+    /// is the object the overload above returns, with the same refusals in
+    /// the same order.
     [[nodiscard]] std::size_t surfaceBiomeRowAt(density::Point quartCorner,
                                                 density::Interpreter::CornerCache& cache,
-                                                std::size_t hint) const;
+                                                std::size_t hint, biome::SearchMemo& memo) const;
 
     /// This filler's identity in a ChunkBuffer's surface biome rows: one
     /// per construction, never 0, kept by a copy (which fills alike).

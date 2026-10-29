@@ -201,6 +201,14 @@ public:
                                     density::Interpreter::CornerCache& cache,
                                     std::size_t hint) const;
 
+    /// rowAt, its search keeping the depth-free part of its scores in
+    /// @p memo for the next lookup in the same quart column (SearchMemo,
+    /// which cannot change a row): the same row, the same refusals.
+    [[nodiscard]] std::size_t rowAt(const density::Interpreter& interpreter,
+                                    const settings::NoiseRouter& router, density::Point quartCorner,
+                                    density::Interpreter::CornerCache& cache, std::size_t hint,
+                                    SearchMemo& memo) const;
+
     /// The biome of every quart of chunk (@p chunkX, @p chunkZ), from quart
     /// layer @p minQuartY up, into `into[(qy * 4 + qz) * 4 + qx]` — vanilla's
     /// storage order, `into.size() / 16` layers. The same answers `at` gives

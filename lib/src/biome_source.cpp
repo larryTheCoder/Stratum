@@ -143,6 +143,16 @@ std::size_t Source::rowAt(const density::Interpreter& interpreter,
     return parameters_->findRowFrom(climateAt(interpreter, router, quartCorner, cache), hint);
 }
 
+std::size_t Source::rowAt(const density::Interpreter& interpreter,
+                          const settings::NoiseRouter& router, const density::Point quartCorner,
+                          density::Interpreter::CornerCache& cache, const std::size_t hint,
+                          SearchMemo& memo) const {
+    if (type_ == Type::TheEnd) {
+        throw std::logic_error("minecraft:the_end's biome source has no parameter list rows");
+    }
+    return parameters_->findRowFrom(climateAt(interpreter, router, quartCorner, cache), hint, memo);
+}
+
 void Source::fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
                        const std::int32_t chunkX, const std::int32_t chunkZ,
                        const std::int32_t minQuartY, std::span<const data::ResourceLocation*> into,
@@ -203,8 +213,22 @@ void Source::fillChunk(const density::Interpreter& interpreter, const settings::
         }
     }
     const std::size_t knownLayers = known.rows.size() / kQuartsPerLayer;
-    std::array<std::size_t, kQuartsPerLayer> below{};
-    std::size_t previous = ParameterList::kNoHint;
+
+    // TWO PASSES. The first, in the order it always had (layer by layer,
+    // z then x), takes each known quart's row and reads and checks every
+    // other quart's climate (ParameterList::checkedSample: findRowFrom's own
+    // refusals, in its order): every read or check that can refuse is made
+    // in that order, so the first refusal is the one it always was. The
+    // searches, which cannot refuse — the samples are checked, and the
+    // search itself is noexcept — follow in the second pass, column by
+    // column from the bottom, each column's through one SearchMemo: under
+    // vanilla's routers a quart column's samples differ in depth alone, so
+    // every score after the column's first search adds the depth term to a
+    // kept sum. Each search is warm-started as it was — from the quart
+    // below, and in the first layer from the quart before — which cannot
+    // change a row.
+    std::vector<std::size_t> rows(into.size(), ParameterList::kNoHint);
+    std::vector<QuantizedSample> samples(into.size());
     std::size_t index = 0;
     for (std::size_t layer = 0; layer < layers; ++layer) {
         const std::int32_t blockY = (minQuartY + static_cast<std::int32_t>(layer)) * kQuartWidth;
@@ -222,20 +246,34 @@ void Source::fillChunk(const density::Interpreter& interpreter, const settings::
                                            static_cast<std::size_t>(qx);
                 const std::uint32_t knownRow =
                     knownRows != nullptr ? knownRows[column] : kUnknownRow;
-                const std::size_t row =
-                    knownRow != kUnknownRow
-                        ? std::size_t{knownRow}
-                        : parameters_->findRowFrom(
-                              climateAt(interpreter, router,
-                                        density::Point{.x = (baseQuartX + qx) * kQuartWidth,
-                                                       .y = blockY,
-                                                       .z = (baseQuartZ + qz) * kQuartWidth},
-                                        cache),
-                              layer == 0 ? previous : below[column]);
-                below[column] = row;
-                previous = row;
-                into[index++] = &entries[row].biome;
+                if (knownRow != kUnknownRow) {
+                    rows[index] = knownRow;
+                } else {
+                    samples[index] = parameters_->checkedSample(
+                        climateAt(interpreter, router,
+                                  density::Point{.x = (baseQuartX + qx) * kQuartWidth,
+                                                 .y = blockY,
+                                                 .z = (baseQuartZ + qz) * kQuartWidth},
+                                  cache));
+                }
+                ++index;
             }
+        }
+    }
+    SearchMemo memo;
+    for (std::size_t column = 0; column < kQuartsPerLayer; ++column) {
+        for (std::size_t layer = 0; layer < layers; ++layer) {
+            const std::size_t at = (layer * kQuartsPerLayer) + column;
+            if (rows[at] == ParameterList::kNoHint) {
+                std::size_t hint = ParameterList::kNoHint;
+                if (layer > 0) {
+                    hint = rows[at - kQuartsPerLayer];
+                } else if (column > 0) {
+                    hint = rows[at - 1];
+                }
+                rows[at] = parameters_->findRowFrom(samples[at], hint, memo);
+            }
+            into[at] = &entries[rows[at]].biome;
         }
     }
 }

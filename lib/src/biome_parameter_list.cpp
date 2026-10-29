@@ -154,6 +154,27 @@ void checkNotEmpty(const std::vector<Entry>& entries) {
     return total;
 }
 
+/// score() less its depth term: the offset squared, then the other five
+/// axes' terms in axis order. Every term is non-negative and score()'s total
+/// stays inside int64, so this does too, and this plus the depth term is
+/// score() to the bit — integer addition, whatever the grouping (SearchMemo).
+[[nodiscard]] std::int64_t scoreWithoutDepth(const detail::SearchBox& box,
+                                             const std::array<std::int64_t, 6>& values) noexcept {
+    const auto term = [&](const std::size_t axis) noexcept {
+        return axisTerm(values[axis], box.min[axis], box.max[axis]);
+    };
+    std::int64_t total = std::int64_t{box.offset} * std::int64_t{box.offset};
+    total += term(0);
+    total += term(1);
+    total += term(2);
+    total += term(3);
+    total += term(5);
+    return total;
+}
+
+/// The depth axis's index in QuantizedPoint's order.
+constexpr std::size_t kDepthAxis = 4;
+
 /// Leaves hold at most this many rows. The analysts' prototype measured 8
 /// as the balance between rows scored and node bounds computed per query
 /// (levers-round1, item A): 4 scores fewer rows and more nodes, 16 the
@@ -576,10 +597,63 @@ void ParameterList::buildSearchTree() {
     searchNodes_.shrink_to_fit();
 }
 
+void SearchMemo::prepare() {
+    if (slots_.empty()) {
+        slots_.assign(kSlots, Slot{});
+    }
+}
+
+void SearchMemo::bind(const std::array<std::int64_t, 6>& values) noexcept {
+    const std::array<std::int64_t, 5> key = {values[0], values[1], values[2], values[3], values[5]};
+    if (epoch_ != 0 && key == key_) {
+        return;
+    }
+    key_ = key;
+    // A new epoch forgets every slot at once. After 2^32 of them the count
+    // wraps to 0, which no slot may be taken to share: every slot is
+    // forgotten by hand then, and counting starts again from 1.
+    ++epoch_;
+    if (epoch_ == 0) {
+        for (Slot& slot : slots_) {
+            slot.epoch = 0;
+        }
+        epoch_ = 1;
+    }
+}
+
 template<bool Counting>
 std::size_t ParameterList::searchTree(const QuantizedSample& sample, const std::size_t hint,
                                       SearchCounts* counts) const noexcept {
+    return searchTreeWith<Counting, false>(sample, hint, counts, nullptr);
+}
+
+template<bool Counting, bool Memoized>
+std::size_t ParameterList::searchTreeWith(const QuantizedSample& sample, const std::size_t hint,
+                                          SearchCounts* counts, SearchMemo* memo) const noexcept {
     const std::array<std::int64_t, 6> values = axesOf(sample);
+    // Every node's and row's score: score() itself, or through the memo the
+    // kept depth-free part plus the depth term (scoreWithoutDepth) — the
+    // same integer. A node's id is its index; a row's, the node count plus
+    // its place in searchRows_.
+    if constexpr (Memoized) {
+        memo->bind(values);
+    }
+    const auto nodeCount = static_cast<std::uint32_t>(searchNodes_.size());
+    const auto scoreOf = [&](const detail::SearchBox& box,
+                             const std::uint32_t id) noexcept -> std::int64_t {
+        if constexpr (Memoized) {
+            SearchMemo::Slot& slot = memo->slots_[id % SearchMemo::kSlots];
+            if (slot.epoch != memo->epoch_ || slot.id != id) {
+                slot.partial = scoreWithoutDepth(box, values);
+                slot.id = id;
+                slot.epoch = memo->epoch_;
+            }
+            return slot.partial +
+                   axisTerm(values[kDepthAxis], box.min[kDepthAxis], box.max[kDepthAxis]);
+        } else {
+            return score(box, values);
+        }
+    };
 
     // The best row so far and its fitness, starting from no row at all. Not
     // a large sentinel short of the maximum: a sample near
@@ -626,7 +700,7 @@ std::size_t ParameterList::searchTree(const QuantizedSample& sample, const std::
     std::size_t top = 0;
     std::uint32_t current = 0;
     {
-        const std::int64_t rootBound = score(searchNodes_[0].box, values);
+        const std::int64_t rootBound = scoreOf(searchNodes_[0].box, 0);
         if constexpr (Counting) {
             ++counts->nodes;
         }
@@ -640,8 +714,8 @@ std::size_t ParameterList::searchTree(const QuantizedSample& sample, const std::
         if (node.count == 0) {
             const std::uint32_t left = node.first;
             const std::uint32_t right = node.first + 1;
-            const std::int64_t leftBound = score(searchNodes_[left].box, values);
-            const std::int64_t rightBound = score(searchNodes_[right].box, values);
+            const std::int64_t leftBound = scoreOf(searchNodes_[left].box, left);
+            const std::int64_t rightBound = scoreOf(searchNodes_[right].box, right);
             if constexpr (Counting) {
                 counts->nodes += 2;
             }
@@ -666,7 +740,7 @@ std::size_t ParameterList::searchTree(const QuantizedSample& sample, const std::
         } else {
             for (std::uint32_t i = node.first; i < node.first + node.count; ++i) {
                 const detail::SearchBox& row = searchRows_[i];
-                const std::int64_t fitness = score(row, values);
+                const std::int64_t fitness = scoreOf(row, nodeCount + i);
                 // The scan's order: less fitness, or equal and later. A
                 // strict total order over rows, so the order rows are scored
                 // in cannot change which one is kept.
@@ -753,6 +827,33 @@ std::size_t ParameterList::findRowFrom(const QuantizedSample& sample, const std:
     checkNotEmpty(entries_);
     checkSamples(sample);
     return searchTree<true>(sample, hint, &counts);
+}
+
+std::size_t ParameterList::findRowFrom(const ClimateSample& sample, const std::size_t hint,
+                                       SearchMemo& memo) const {
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    memo.prepare();
+    return searchTreeWith<false, true>(QuantizedSample::of(sample), hint, nullptr, &memo);
+}
+
+std::size_t ParameterList::findRowFrom(const QuantizedSample& sample, const std::size_t hint,
+                                       SearchMemo& memo) const {
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    memo.prepare();
+    return searchTreeWith<false, true>(sample, hint, nullptr, &memo);
+}
+
+QuantizedSample ParameterList::checkedSample(const ClimateSample& sample) const {
+    // findRow's two refusals, in its order, then the sample it searches. A
+    // reading within ±kMaxClimateSample quantises within
+    // ±kMaxQuantizedSample (quantizeCoord is monotonic, and 1e5 is exactly
+    // representable as a float and times 10000), so the quantised forms'
+    // own check never refuses what this returns.
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    return QuantizedSample::of(sample);
 }
 
 std::size_t ParameterList::findRowLinear(const ClimateSample& sample) const {

@@ -260,6 +260,67 @@ struct SearchNode {
 
 } // namespace detail
 
+/// A caller's scratch for a run of searches whose samples agree on every axis
+/// but depth — a quart column's, under vanilla's routers, whose five other
+/// climate entries do not read y (ParameterList::findRowFrom's memo form).
+///
+/// What it keeps: for each tree node or row a search scores, the part of its
+/// score that does not read depth — the offset squared and the five other
+/// axes' terms — keyed by the five values it was computed for. A search
+/// whose five values are another's forgets everything first, so a memo may
+/// be handed any samples in any order; it only pays where they repeat.
+///
+/// EXACT. score() is a sum of seven non-negative int64 terms whose total
+/// stays inside int64 for every input the list lets through
+/// (QuantizedPoint::fitness), so every partial sum does too, and adding the
+/// kept six-term sum to the depth term is the same integer as adding the
+/// seven in score()'s order: the search makes the same comparisons and
+/// returns the same row. One per caller at a time, held per call or per
+/// task, never in the list (which is shared between threads).
+class SearchMemo {
+public:
+    /// Holds nothing, and allocates nothing until its first search.
+    SearchMemo() = default;
+
+    /// FOR TESTS. Moves the epoch forward to at least @p epoch, as though
+    /// that many other columns had been searched through the memo, never
+    /// back: the epoch wraps after 2^32 of them, and the wrap must forget the
+    /// table exactly as each new column does; this is how a test gets there.
+    void advanceEpoch(std::uint32_t epoch) noexcept {
+        if (epoch > epoch_) {
+            epoch_ = epoch;
+        }
+    }
+
+private:
+    friend class ParameterList;
+
+    /// A direct-mapped table: an id (a node's index, or the node count plus
+    /// a row's place in the tree's row array) at `id % kSlots`, valid while
+    /// its epoch is the memo's. A collision only recomputes.
+    static constexpr std::size_t kSlots = 1024;
+
+    struct Slot {
+        std::uint32_t id = 0;
+        std::uint32_t epoch = 0;
+        std::int64_t partial = 0;
+    };
+
+    /// The five values (every axis but depth, in axis order) the kept sums
+    /// are for; epoch_ 0 for none yet.
+    std::array<std::int64_t, 5> key_{};
+    std::uint32_t epoch_ = 0;
+    std::vector<Slot> slots_;
+
+    /// Takes the table's storage, once: before a search, which allocates
+    /// nothing itself.
+    void prepare();
+
+    /// Binds the memo to @p values' five non-depth axes, forgetting what it
+    /// kept for any others.
+    void bind(const std::array<std::int64_t, 6>& values) noexcept;
+};
+
 /// A dimension's table, and the search over it.
 class ParameterList {
 public:
@@ -381,6 +442,22 @@ public:
     [[nodiscard]] std::size_t findRowFrom(const QuantizedSample& sample, std::size_t hint,
                                           SearchCounts& counts) const;
 
+    /// `findRowFrom`, keeping the depth-free part of every score it makes in
+    /// @p memo for the next search over the same five other axes (SearchMemo,
+    /// which says why the row cannot change). The same refusals, made
+    /// before anything is read or kept.
+    [[nodiscard]] std::size_t findRowFrom(const ClimateSample& sample, std::size_t hint,
+                                          SearchMemo& memo) const;
+    [[nodiscard]] std::size_t findRowFrom(const QuantizedSample& sample, std::size_t hint,
+                                          SearchMemo& memo) const;
+
+    /// The sample `findRow` searches for @p sample — QuantizedSample::of —
+    /// after the refusals findRow makes, in its order: an empty list, then a
+    /// climate reading outside ±kMaxClimateSample or NaN. For a caller that
+    /// refuses in one pass and searches in another; a sample this returns is
+    /// never refused by the QuantizedSample forms.
+    [[nodiscard]] QuantizedSample checkedSample(const ClimateSample& sample) const;
+
     /// The definition `find` is held to: every row scored in list order,
     /// `<=` keeping the later of a tie. Kept as the reference the tree's
     /// answers are tested against, row index for row index; costs a scan of
@@ -411,6 +488,12 @@ private:
     template<bool Counting>
     [[nodiscard]] std::size_t searchTree(const QuantizedSample& sample, std::size_t hint,
                                          SearchCounts* counts) const noexcept;
+
+    /// The same search, every node's and row's score made through @p memo
+    /// (SearchMemo). Shares searchTree's walk, its skip rule and its order.
+    template<bool Counting, bool Memoized>
+    [[nodiscard]] std::size_t searchTreeWith(const QuantizedSample& sample, std::size_t hint,
+                                             SearchCounts* counts, SearchMemo* memo) const noexcept;
 
     [[nodiscard]] std::size_t scanLinear(const QuantizedSample& sample) const noexcept;
 
