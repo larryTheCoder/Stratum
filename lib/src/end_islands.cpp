@@ -36,6 +36,11 @@ constexpr double kIslandThreshold = -0.9;
 /// LCG steps discarded between seeding with the world seed and building the
 /// simplex. See fromWorldSeed.
 constexpr int kSeedSkip = 17292;
+/// The squared offset, in the `/8` grid, from which no island reaches above
+/// the -100 floor whatever its steepness: at a distance of sqrt(500) =
+/// 22.36 and the gentlest steepness, 9, the island's own height is
+/// 100 - 201.2, which clamps to -100. See heightAt.
+constexpr std::int32_t kOutOfReachSquared = 500;
 
 /// Java's `Mth.clamp` on floats, spelled out because the bounds are
 /// asymmetric and are part of the measured shape rather than of taste.
@@ -107,6 +112,21 @@ float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) c
 
     for (std::int32_t offsetX = -kCellRadius; offsetX <= kCellRadius; ++offsetX) {
         for (std::int32_t offsetZ = -kCellRadius; offsetZ <= kCellRadius; ++offsetZ) {
+            const std::int32_t offsetToX = withinX - (offsetX * 2);
+            const std::int32_t offsetToZ = withinZ - (offsetZ * 2);
+            // Too far for any island to lift the field, so too far to look
+            // at: this island's height is clampHeight(100 - distance *
+            // steepness) below, with steepness at least 9, and for a squared
+            // offset of 500 or more the float distance is at least 22.3606
+            // (sqrt(500) less its rounding to float, which is under 2e-6),
+            // the product at least 201.2, and the height clamped to exactly
+            // -100. The field starts at the central term, itself clamped to
+            // at least -100, and only rises, so `height < island` below
+            // fails for this cell whatever its gate says. (The offsets are
+            // at most 25, so the squares are exact in int32.)
+            if ((offsetToX * offsetToX) + (offsetToZ * offsetToZ) >= kOutOfReachSquared) {
+                continue;
+            }
             const auto islandX = static_cast<std::int64_t>(cellX) + offsetX;
             const auto islandZ = static_cast<std::int64_t>(cellZ) + offsetZ;
             if ((islandX * islandX) + (islandZ * islandZ) <= kInnerVoidRadiusSquared) {
@@ -115,8 +135,8 @@ float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) c
             // The island's own steepness, a deterministic hash of its cell.
             const auto steepness = static_cast<float>(
                 (((std::abs(islandX) * 3439) + (std::abs(islandZ) * 147)) % 13) + 9);
-            const auto localX = static_cast<float>(withinX - (offsetX * 2));
-            const auto localZ = static_cast<float>(withinZ - (offsetZ * 2));
+            const auto localX = static_cast<float>(offsetToX);
+            const auto localZ = static_cast<float>(offsetToZ);
             const auto distance = static_cast<float>(
                 std::sqrt(static_cast<double>((localX * localX) + (localZ * localZ))));
             const float island = clampHeight(100.0F - (distance * steepness));
