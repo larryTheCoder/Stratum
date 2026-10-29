@@ -112,10 +112,6 @@ float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) c
             if ((islandX * islandX) + (islandZ * islandZ) <= kInnerVoidRadiusSquared) {
                 continue;
             }
-            if (source_.sampleSimplex2D(static_cast<double>(islandX),
-                                        static_cast<double>(islandZ)) >= kIslandThreshold) {
-                continue;
-            }
             // The island's own steepness, a deterministic hash of its cell.
             const auto steepness = static_cast<float>(
                 (((std::abs(islandX) * 3439) + (std::abs(islandZ) * 147)) % 13) + 9);
@@ -123,7 +119,26 @@ float EndIslands::heightAt(const std::int32_t gridX, const std::int32_t gridZ) c
             const auto localZ = static_cast<float>(withinZ - (offsetZ * 2));
             const auto distance = static_cast<float>(
                 std::sqrt(static_cast<double>((localX * localX) + (localZ * localZ))));
-            height = std::max(height, clampHeight(100.0F - (distance * steepness)));
+            const float island = clampHeight(100.0F - (distance * steepness));
+            // The height the island would give, BEFORE asking whether there is
+            // one: the simplex gate is the costly half of a cell, and where
+            // the island could not raise the field it cannot change the
+            // answer, island or not. That is most cells — any whose island
+            // is clamped to -100, which the central term never goes below —
+            // so most cells never sample the simplex. Exact: the field is
+            // the max over the gated cells, and the max is taken with
+            // std::max's own comparison, `height < island`, so a cell that
+            // fails it leaves `height` as std::max(height, island) would; no
+            // value here is NaN or a negative zero, and skipping a sample
+            // skips no state (sampleSimplex2D is a pure function).
+            if (!(height < island)) {
+                continue;
+            }
+            if (source_.sampleSimplex2D(static_cast<double>(islandX),
+                                        static_cast<double>(islandZ)) >= kIslandThreshold) {
+                continue;
+            }
+            height = island;
         }
     }
     return height;
