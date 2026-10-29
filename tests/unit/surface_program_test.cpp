@@ -451,7 +451,7 @@ TEST_CASE("the compiled rule list places what the executor's own walk of the tre
             ++compared;
         });
     }
-    CHECK(compared == 12U * 10U * 40U);
+    CHECK(compared == std::size_t{12} * 10U * 40U);
 }
 
 TEST_CASE("each y band's copy of the list places what the list places, at every y and beyond",
@@ -504,7 +504,7 @@ TEST_CASE("each y band's copy of the list places what the list places, at every 
             }
         }
     }
-    CHECK(compared == 60U * 4U * 445U);
+    CHECK(compared == std::size_t{60} * 4U * 445U);
     CHECK(placed > compared / 4U);
 }
 

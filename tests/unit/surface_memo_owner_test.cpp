@@ -139,7 +139,7 @@ TEST_CASE("one column memo handed to two executors in turn answers each with its
             }
         }
     }
-    CHECK(compared == 96U * 2U * 21U);
+    CHECK(compared == std::size_t{96} * 2U * 21U);
     // The executors disagree on plenty of these blocks, so a memo that
     // answered one with the other's reads would have been caught.
     CHECK(parted > 200U);

@@ -130,7 +130,8 @@ TEST_CASE("SurfaceColumn reads every column as the descending and ascending walk
         lambdaRead.readWith(height, minY, [&](std::size_t i) { return categories[i]; });
         // Told where the air above the column starts — one past its topmost
         // non-air entry, as the filler finds it — it never asks above that.
-        const auto airFrom = static_cast<std::size_t>(expected.top - minY + 1);
+        const std::int32_t airAt = expected.top - minY + 1;
+        const auto airFrom = static_cast<std::size_t>(airAt);
         std::size_t askedAbove = 0;
         boundedRead.readWith(height, minY, airFrom, [&](std::size_t i) {
             askedAbove += i >= airFrom ? 1U : 0U;

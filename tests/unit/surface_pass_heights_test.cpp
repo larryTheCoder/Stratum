@@ -183,12 +183,12 @@ TEST_CASE("the surface pass reads each column's height and runs off the chunk it
                 while (y >= minY && name(x, y, z) == "minecraft:air") {
                     --y;
                 }
-                height[static_cast<std::size_t>((z * 16) + x)] = y;
+                height[(static_cast<std::size_t>(z) * 16U) + static_cast<std::size_t>(x)] = y;
             }
         }
         const auto heightAt = [&](int x, int z) {
-            return height[static_cast<std::size_t>((std::clamp(z, 0, 15) * 16) +
-                                                   std::clamp(x, 0, 15))];
+            return height[(static_cast<std::size_t>(std::clamp(z, 0, 15)) * 16U) +
+                          static_cast<std::size_t>(std::clamp(x, 0, 15))];
         };
         for (int z = 0; z < 16; ++z) {
             for (int x = 0; x < 16; ++x) {

@@ -990,7 +990,7 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             }
         }
         worldSurface.fill(minY - 1);
-        std::uint32_t open = static_cast<std::uint32_t>(worldSurface.size());
+        auto open = static_cast<std::uint32_t>(worldSurface.size());
         for (std::int32_t y = topY - 1; y >= minY && open > 0U; --y) {
             const std::uint16_t* const layer = &into.blocks_[into.linearIndex(0, y, 0)];
             std::uint32_t landed = 0;
@@ -1109,8 +1109,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     };
 
     const std::int32_t quartBottom = quartSnap(minY);
-    const auto quartLevels =
-        static_cast<std::size_t>(((quartSnap(topY - 1) - quartBottom) / 4) + 1);
+    const std::int32_t quartSpan = ((quartSnap(topY - 1) - quartBottom) / 4) + 1;
+    const auto quartLevels = static_cast<std::size_t>(quartSpan);
     std::vector<QuartBiome> quartBiomes(
         surfaceNeedsBiome_ || surfaceNeedsTemperature_ ? 16U * quartLevels : 0U);
 
@@ -1150,8 +1150,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             const std::int32_t columnTop =
                 worldSurface[(static_cast<std::size_t>(localZ) * kChunkWidth) +
                              static_cast<std::size_t>(localX)];
+            const std::int32_t airFrom = columnTop - minY + 1;
             column.readWith(
-                columnHeight, minY, static_cast<std::size_t>(columnTop - minY + 1),
+                columnHeight, minY, static_cast<std::size_t>(airFrom),
                 [&](const std::size_t i) { return categoryOfIndex(columnBlocks[i * kLayer]); });
             // Constant down the column, so handed over once for all of it.
             context.waterHeight = column.waterHeight();

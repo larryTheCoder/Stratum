@@ -227,7 +227,7 @@ TEST_CASE("the surface pass reads each quart's own biome, in every direction",
             splitLayers += layer.size() > 1U ? 1U : 0U;
         }
     }
-    CHECK(checked == 3U * 64U * 256U);
+    CHECK(checked == std::size_t{3} * 64U * 256U);
     // Every biome somewhere, and quarts of one layer disagreeing — which is
     // what makes a quart read from its neighbour's slot a different block.
     CHECK(seen.size() == 5U);
