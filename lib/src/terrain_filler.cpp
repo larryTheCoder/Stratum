@@ -188,55 +188,9 @@ Category categorize(const settings::BlockState& block, const settings::NoiseSett
 }
 
 void SurfaceColumn::read(const std::span<const Category> categories, const std::int32_t minY) {
-    const std::size_t height = categories.size();
-    minY_ = minY;
-    above_.resize(height);
-    below_.resize(height);
-    waterHeight_.reset();
-    top_ = minY - 1;
-    // Top down: the run counting from the world's top, and the water height
-    // latched at the first fluid block met descending. Air resets the run;
-    // fluid — water or lava alike — neither breaks it nor counts toward it,
-    // and lava latches the height as water does (surface::Context's own doc,
-    // measured).
-    std::int32_t run = 0;
-    for (std::size_t i = height; i-- > 0;) {
-        const Category category = categories[i];
-        const std::int32_t y = minY + static_cast<std::int32_t>(i);
-        if (category == Category::Air) {
-            run = 0;
-        } else {
-            if (top_ < minY) {
-                top_ = y;
-            }
-            if (category == Category::Solid) {
-                ++run;
-            } else if (!waterHeight_.has_value()) {
-                waterHeight_ = y + 1;
-            }
-        }
-        above_[i] = run;
-    }
-    // The run counted from the world's floor, for `surface_type: ceiling` —
-    // and NOT the mirror image of the one above: bottom up, fluid RESETS the
-    // run exactly as air does, water as much as lava. Measured
-    // (aquifer-lavarun-probe.sh, SPEC §11): stone over an enclosed pool reads
-    // depth 0 from the pool's roof up, on every column of every pool, where a
-    // run that skipped the fluid — the filler's reading until then, for water
-    // too — left it stone.
-    run = 0;
-    for (std::size_t i = 0; i < height; ++i) {
-        run = categories[i] == Category::Solid ? run + 1 : 0;
-        below_[i] = run;
-    }
-}
-
-std::int32_t SurfaceColumn::stoneDepthAbove(const std::int32_t y) const {
-    return above_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
-}
-
-std::int32_t SurfaceColumn::stoneDepthBelow(const std::int32_t y) const {
-    return below_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+    // The span's entries, through the one body both readers share
+    // (SurfaceColumn::readWith, which carries the measured rules).
+    readWith(categories.size(), minY, [categories](const std::size_t i) { return categories[i]; });
 }
 
 ChunkBuffer::ChunkBuffer(const settings::NoiseGeometry& geometry)
@@ -974,13 +928,25 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // once, after the first pass: an index this pass adds is a block it
     // placed over a default block, so if the first pass placed none this pass
     // places nothing and the default block never enters the palette.
+    //
+    // Every palette entry is categorised here, up front, and the table never
+    // changes after: the pass only READS categories at positions it has not
+    // rewritten yet — a column is read before any of its own blocks are
+    // replaced, and no other column's replacements reach it — and every
+    // index such a position holds was placed by the first pass, so is in the
+    // table. An index past it is categorised from the palette all the same,
+    // rather than trusted from a distance. categorize is a pure function of
+    // the state, so when it is worked out does not change what it says.
     std::vector<Category> categoryOf;
-    const auto categoryAt = [&](const int localX, const std::int32_t y, const int localZ) {
-        const std::uint16_t index = into.blocks_[into.linearIndex(localX, y, localZ)];
-        while (categoryOf.size() <= index) {
-            categoryOf.push_back(categorize(into.palette_[categoryOf.size()], *settings_));
-        }
-        return categoryOf[index];
+    categoryOf.reserve(into.palette_.size());
+    for (const settings::BlockState& state : into.palette_) {
+        categoryOf.push_back(categorize(state, *settings_));
+    }
+    const std::size_t categorized = categoryOf.size();
+    const Category* const categoryTable = categoryOf.data();
+    const auto categoryOfIndex = [&](const std::uint16_t index) {
+        return index < categorized ? categoryTable[index]
+                                   : categorize(into.palette_[index], *settings_);
     };
     std::int32_t defaultIndex = -1;
     for (std::size_t i = 0; i < into.palette_.size(); ++i) {
@@ -991,24 +957,43 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     }
     StablePalette stablePalette;
     const auto intern = [&into](const settings::BlockState& block) { return into.intern(block); };
+    const settings::BlockState* lastPlaced = nullptr;
+    std::uint16_t lastPlacedIndex = 0;
 
     // WORLD_SURFACE per column of this chunk, for `steep`'s neighbours —
     // clamped inside the chunk by fillSteepNeighbours(), which is what keeps
     // this from ever touching a column outside it. Fluid counts as surface,
     // matching the heightmap `steep` was measured against, not OCEAN_FLOOR.
+    //
+    // Found a layer at a time from the top, all 256 columns of a layer
+    // together (a layer is contiguous in the buffer, slot z * 16 + x as
+    // worldSurface's own), each column taking the first y at which it is not
+    // air and keeping it: the highest non-air y, or minY - 1 for a column of
+    // nothing but air, as the column-by-column scan from the top found it.
+    // The walk stops once every column has its height.
+    //
+    // Air is one palette index, compared as such: the palette holds each
+    // state once and categorize calls exactly air() Air, so a position is
+    // air exactly when it holds that index — or never, where the palette
+    // holds no air (65536 is no uint16 index). Before the pass writes
+    // anything every index the buffer holds is in the table.
     std::array<std::int32_t, static_cast<std::size_t>(kChunkWidth) * kChunkWidth> worldSurface{};
     if (surfaceNeedsSteep_) {
-        for (int localZ = 0; localZ < kChunkWidth; ++localZ) {
-            for (int localX = 0; localX < kChunkWidth; ++localX) {
-                std::int32_t height = minY - 1;
-                for (std::int32_t y = topY - 1; y >= minY; --y) {
-                    if (categoryAt(localX, y, localZ) != Category::Air) {
-                        height = y;
-                        break;
-                    }
-                }
-                worldSurface[(static_cast<std::size_t>(localZ) * kChunkWidth) +
-                             static_cast<std::size_t>(localX)] = height;
+        std::uint32_t airIndex = 0x10000U;
+        for (std::size_t i = 0; i < categorized; ++i) {
+            if (categoryTable[i] == Category::Air) {
+                airIndex = static_cast<std::uint32_t>(i);
+                break;
+            }
+        }
+        worldSurface.fill(minY - 1);
+        std::size_t open = worldSurface.size();
+        for (std::int32_t y = topY - 1; y >= minY && open > 0; --y) {
+            const std::uint16_t* const layer = &into.blocks_[into.linearIndex(0, y, 0)];
+            for (std::size_t slot = 0; slot < worldSurface.size(); ++slot) {
+                const bool lands = worldSurface[slot] < minY && layer[slot] != airIndex;
+                worldSurface[slot] = lands ? y : worldSurface[slot];
+                open -= lands ? 1U : 0U;
             }
         }
     }
@@ -1018,13 +1003,13 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
         return worldSurface[(lz * kChunkWidth) + lx];
     };
 
-    // Scratch for one column's categories and the reads drawn from them
-    // (`SurfaceColumn`: the two stone-depth runs, the water height, the
-    // topmost non-air block), sized once and overwritten whole by every
-    // column rather than reallocated 256 times a chunk. Each block is
-    // categorised ONCE here, where the three loops this replaced each did it
-    // again.
-    std::vector<Category> categories(static_cast<std::size_t>(geometry.height));
+    // Scratch for one column's reads (`SurfaceColumn`: the two stone-depth
+    // runs, the water height, the topmost non-air block), sized once and
+    // overwritten whole by every column rather than reallocated 256 times a
+    // chunk. It reads each block's category straight off the buffer, a layer
+    // (256 entries) apart from the next y of the column.
+    const auto columnHeight = static_cast<std::size_t>(geometry.height);
+    constexpr std::size_t kLayer = static_cast<std::size_t>(kChunkWidth) * kChunkWidth;
     SurfaceColumn column;
 
     // One cache for every density read this whole second pass makes —
@@ -1150,10 +1135,13 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // and the topmost non-air block — counted by `SurfaceColumn`
             // (surface_column.hpp carries the measured rules), the same code
             // the golden decoder reconstructs them with.
-            for (std::int32_t y = minY; y < topY; ++y) {
-                categories[static_cast<std::size_t>(y - minY)] = categoryAt(localX, y, localZ);
-            }
-            column.read(categories, minY);
+            const std::uint16_t* const columnBlocks =
+                &into.blocks_[into.linearIndex(localX, minY, localZ)];
+            column.readWith(columnHeight, minY, [&](const std::size_t i) {
+                return categoryOfIndex(columnBlocks[i * kLayer]);
+            });
+            // Constant down the column, so handed over once for all of it.
+            context.waterHeight = column.waterHeight();
 
             // The biome grid is quarter-resolution and constant within a
             // cell, so this is resolved once per four y levels rather than
@@ -1244,12 +1232,18 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 context.y = y;
                 context.stoneDepthAbove = column.stoneDepthAbove(y);
                 context.stoneDepthBelow = column.stoneDepthBelow(y);
-                context.waterHeight = column.waterHeight();
 
                 if (const settings::BlockState* placed = executor.apply(context, columnMemo);
                     placed != nullptr) {
-                    into.blocks_[into.linearIndex(localX, y, localZ)] =
-                        stablePalette.indexOf(*placed, intern);
+                    // The last state placed and its index, ahead of the
+                    // palette's search: StablePalette gives one address one
+                    // index for the whole fill (its own doc), so a repeat is
+                    // the index it would return, and interns nothing.
+                    if (placed != lastPlaced) {
+                        lastPlacedIndex = stablePalette.indexOf(*placed, intern);
+                        lastPlaced = placed;
+                    }
+                    into.blocks_[into.linearIndex(localX, y, localZ)] = lastPlacedIndex;
                 }
             }
         }

@@ -26,6 +26,8 @@
 
 #include <stratum/settings/noise_settings.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -56,13 +58,27 @@ public:
     /// y = @p minY + i.
     void read(std::span<const Category> categories, std::int32_t minY);
 
+    /// The same, for a column of @p height entries whose entry i
+    /// @p categoryAt(i) returns, for a caller that holds them somewhere
+    /// other than a span — terrain::ChunkFiller reads them straight off its
+    /// buffer. read() is this over the span, so the two are one body.
+    ///
+    /// @p categoryAt must return the same category for an index each time:
+    /// an index at or below the topmost non-air entry is asked twice.
+    template<typename CategoryAt>
+    void readWith(std::size_t height, std::int32_t minY, CategoryAt&& categoryAt);
+
     /// The run counted from the top, at @p y (`stone_depth` floor). Throws
     /// std::out_of_range for a y outside the column read.
-    [[nodiscard]] std::int32_t stoneDepthAbove(std::int32_t y) const;
+    [[nodiscard]] std::int32_t stoneDepthAbove(const std::int32_t y) const {
+        return above_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+    }
 
     /// The run counted from the floor, at @p y (`stone_depth` ceiling).
     /// Throws std::out_of_range for a y outside the column read.
-    [[nodiscard]] std::int32_t stoneDepthBelow(std::int32_t y) const;
+    [[nodiscard]] std::int32_t stoneDepthBelow(const std::int32_t y) const {
+        return below_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
+    }
 
     /// One above the topmost fluid block, or absent for a column with none.
     [[nodiscard]] std::optional<std::int32_t> waterHeight() const noexcept { return waterHeight_; }
@@ -77,5 +93,68 @@ private:
     std::optional<std::int32_t> waterHeight_;
     std::int32_t top_ = 0;
 };
+
+template<typename CategoryAt>
+void SurfaceColumn::readWith(const std::size_t height, const std::int32_t minY,
+                             CategoryAt&& categoryAt) {
+    minY_ = minY;
+    above_.resize(height);
+    below_.resize(height);
+    std::int32_t* const above = above_.data();
+    std::int32_t* const below = below_.data();
+
+    // Bottom up: the run counted from the world's floor, for `surface_type:
+    // ceiling` — and NOT the mirror image of the one below: bottom up, fluid
+    // RESETS the run exactly as air does, water as much as lava. Measured
+    // (aquifer-lavarun-probe.sh, SPEC §11): stone over an enclosed pool reads
+    // depth 0 from the pool's roof up, on every column of every pool, where a
+    // run that skipped the fluid — the filler's reading until then, for water
+    // too — left it stone.
+    //
+    // The same pass finds the topmost non-air entry and the topmost fluid:
+    // the last of each met ascending is the first met descending, which is
+    // what the scan's start and the water height are (surface::Context's own
+    // doc: one above the first fluid block met descending, water or lava,
+    // latched).
+    std::size_t top = height;
+    std::size_t fluid = height;
+    std::int32_t run = 0;
+    for (std::size_t i = 0; i < height; ++i) {
+        const Category category = categoryAt(i);
+        run = category == Category::Solid ? run + 1 : 0;
+        below[i] = run;
+        if (category != Category::Air) {
+            top = i;
+            if (category == Category::Fluid) {
+                fluid = i;
+            }
+        }
+    }
+
+    // Top down: the run counting from the world's top. Air resets it; fluid
+    // — water or lava alike — neither breaks it nor counts toward it (also
+    // measured). Above the topmost non-air entry everything is air, so the
+    // run is 0 there, and the walk starts below it from 0, as a walk from the
+    // world's top arrives there.
+    const std::size_t aboveTop = top == height ? 0 : top + 1;
+    std::fill(above + aboveTop, above + height, 0);
+    run = 0;
+    for (std::size_t i = aboveTop; i-- > 0;) {
+        const Category category = categoryAt(i);
+        if (category == Category::Air) {
+            run = 0;
+        } else if (category == Category::Solid) {
+            ++run;
+        }
+        above[i] = run;
+    }
+
+    top_ = top == height ? minY - 1 : minY + static_cast<std::int32_t>(top);
+    if (fluid == height) {
+        waterHeight_.reset();
+    } else {
+        waterHeight_ = minY + static_cast<std::int32_t>(fluid) + 1;
+    }
+}
 
 } // namespace stratum::terrain
