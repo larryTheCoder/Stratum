@@ -877,6 +877,8 @@ TEST_CASE("maintainPrecision is the previous implementation's, to the bit",
     }
     for (const double value : {0.0,
                                -0.0,
+                               8388608.0,
+                               -8388608.0,
                                16777216.0,
                                -16777216.0,
                                16777216.0 - 0x1p-29,

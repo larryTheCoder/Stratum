@@ -63,7 +63,18 @@ constexpr double kPrecisionPeriod = 33554432.0;
 ///
 /// floorExceptNegativeZero is std::floor here, to the bit: its argument is a
 /// sum whose right operand is +0.5, which IEEE addition never takes to -0.0.
+///
+/// Inside +/-2^23, which is every coordinate within some 49 000 blocks of
+/// the origin at vanilla's overworld scale, the expression is `value` itself
+/// and is returned as such. That is the same double, not an approximation of
+/// it: there `value / 2^25` is exact and within +/-1/4, so the quotient plus
+/// a half rounds into [1/4, 3/4], whose floor is +0.0; +0.0 * 2^25 is +0.0;
+/// and `value - (+0.0)` is `value` to the bit for every double, -0.0
+/// included. NaN fails the comparison and takes the expression.
 [[nodiscard]] STRATUM_NOISE_INLINE double wrapCoordinate(double value) noexcept {
+    if (std::fabs(value) < 8388608.0) {
+        return value;
+    }
     return value -
            (detail::floorExceptNegativeZero((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
 }
