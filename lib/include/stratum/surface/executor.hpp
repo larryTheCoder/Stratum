@@ -255,8 +255,17 @@ private:
         hasSecondary_ = false;
         hasBandOffset_ = false;
         hasFreezingField_ = false;
+        hasThreshold_ = false;
         std::fill(hasNoise_.begin(), hasNoise_.end(), char{0});
     }
+
+    /// `above_preliminary_surface`'s threshold, the y it is true from:
+    /// `preliminarySurface + surfaceDepth - 8`, checked as its test checks
+    /// it, and kept with the Context::preliminarySurface it was computed
+    /// from, so that a block handing another one computes its own.
+    bool hasThreshold_ = false;
+    std::int32_t thresholdPreliminary_ = 0;
+    std::int32_t threshold_ = 0;
 
     std::uint64_t owner_ = 0;
     std::int32_t x_ = 0;
@@ -400,6 +409,34 @@ public:
     /// for the next block of the column instead of recomputing them. The
     /// same block, and the same refusal at the same block, as apply(at).
     [[nodiscard]] const settings::BlockState* apply(const Context& at, ColumnMemo& memo) const;
+
+    /// apply(at, memo)'s answer where it is already decided, without
+    /// running the rules: where @p memo holds this column's
+    /// `above_preliminary_surface` threshold for at.preliminarySurface, the
+    /// first test the walk for @p at makes is that one, and the edge its
+    /// answer takes ends the walk with a block or with nothing. Then the
+    /// walk would make that one test — read from the memo, unable to refuse,
+    /// since computing it once already returned — and return what this
+    /// returns; nothing else is read. nullopt everywhere else, and the
+    /// caller calls apply, which then does exactly what it always did.
+    ///
+    /// For a caller walking a column down: vanilla's overworld tests the
+    /// threshold first at every y above its bedrock band, and below the
+    /// threshold goes straight to the deepslate band's answer — most of a
+    /// column's blocks.
+    ///
+    /// Defined below, in this header, so that a caller's loop over a column
+    /// inlines it: its answers are worked out at compile
+    /// (thresholdAnswers_), and this only finds the block's.
+    [[nodiscard]] std::optional<const settings::BlockState*>
+    decidedByThreshold(const Context& at, const ColumnMemo& memo) const noexcept;
+
+    /// Whether decidedByThreshold can answer any block at all: false for a
+    /// tree that never starts a walk with the threshold's test followed by a
+    /// terminal (the End's, say), where a caller need not ask it.
+    [[nodiscard]] bool decidesByThreshold() const noexcept {
+        return anyPassDecided_ || anyFailDecided_;
+    }
 
     /// @p biome's key for Context::biomeKey (BiomeKey). Every `biome`
     /// condition answers a block carrying it exactly as it answers one whose
@@ -673,6 +710,37 @@ private:
 
     [[nodiscard]] const settings::BlockState* runProgram(const Context& at, ColumnMemo& memo) const;
 
+    /// Which of runProgram's entries @p at starts at: 0 for the list as
+    /// lowered (no bands, or a y outside them), else one past its index in
+    /// bandEntry_ — its band's copy for its key.
+    [[nodiscard]] std::size_t entrySlot(const Context& at) const noexcept;
+
+    /// Where runProgram starts for @p at (entrySlot's entry).
+    [[nodiscard]] std::size_t entryFor(const Context& at) const noexcept {
+        const std::size_t slot = entrySlot(at);
+        return slot == 0 ? 0 : bandEntry_[slot - 1];
+    }
+
+    /// For each entry, by entrySlot: what the walk from it returns where its
+    /// first op is the `above_preliminary_surface` test and the edge an
+    /// answer takes leads straight to a terminal — a block, or nothing —
+    /// for each of the two answers; `decided` false where it does not.
+    /// Worked out once at compile, from the finished list
+    /// (answerThresholds); empty where the tree is walked.
+    struct ThresholdAnswer {
+        const settings::BlockState* pass = nullptr;
+        const settings::BlockState* fail = nullptr;
+        bool passDecided = false;
+        bool failDecided = false;
+    };
+
+    std::vector<ThresholdAnswer> thresholdAnswers_;
+    /// Whether any entry's pass, or any entry's fail, is decided: false for
+    /// both where thresholdAnswers_ is empty.
+    bool anyPassDecided_ = false;
+    bool anyFailDecided_ = false;
+    void answerThresholds();
+
     /// `bandlands`' own state: the table, built once (empty/default-filled
     /// until clayBandsBuilt_ says otherwise), and the noise its per-column
     /// shift reads. Built only when the tree names `bandlands` at all.
@@ -680,5 +748,51 @@ private:
     std::array<settings::BlockState, kClayBandsSize> clayBands_{};
     const noise::NormalNoise* clayBandsOffset_ = nullptr;
 };
+
+inline std::size_t Executor::entrySlot(const Context& at) const noexcept {
+    // A block of the dimension starts in its band's copy (bandPrograms);
+    // any other y in the list as lowered.
+    if (bandOf_.empty()) {
+        return 0;
+    }
+    const std::int64_t offset = std::int64_t{at.y} - bandMinY_;
+    if (offset < 0 || offset >= static_cast<std::int64_t>(bandOf_.size())) {
+        return 0;
+    }
+    // A key this executor issued picks its keyed copy, where there are keyed
+    // copies; any other block, the band's own.
+    std::size_t slot = 0;
+    if (bandStride_ > 1 && at.biomeKey.executor == id_ && at.biomeKey.index < biomeKeys_) {
+        slot = std::size_t{at.biomeKey.index} + 1U;
+    }
+    return 1U + (std::size_t{bandOf_[static_cast<std::size_t>(offset)]} * bandStride_) + slot;
+}
+
+inline std::optional<const settings::BlockState*>
+Executor::decidedByThreshold(const Context& at, const ColumnMemo& memo) const noexcept {
+    // Declining is always exact — the caller then runs the rules — so the
+    // cheapest reasons to decline come first: no threshold kept, or no entry
+    // whose walk the kept threshold's answer at this y could end. Only an
+    // answer is held to the memo being this executor's, bound to this
+    // column, with the threshold for this block's preliminary surface (a
+    // threshold is only ever kept by a bound memo).
+    if (!memo.hasThreshold_) {
+        return std::nullopt;
+    }
+    const bool passed = at.y >= memo.threshold_;
+    if (!(passed ? anyPassDecided_ : anyFailDecided_) || memo.owner_ != id_ || memo.x_ != at.x ||
+        memo.z_ != at.z || memo.thresholdPreliminary_ != at.preliminarySurface) {
+        return std::nullopt;
+    }
+    // runProgram's first op, testAbovePreliminarySurface's answer from the
+    // kept threshold, and the terminal that answer's edge reaches.
+    const ThresholdAnswer& answer = thresholdAnswers_[entrySlot(at)];
+    if (passed) {
+        return answer.passDecided ? std::optional<const settings::BlockState*>{answer.pass}
+                                  : std::nullopt;
+    }
+    return answer.failDecided ? std::optional<const settings::BlockState*>{answer.fail}
+                              : std::nullopt;
+}
 
 } // namespace stratum::surface

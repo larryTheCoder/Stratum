@@ -1360,6 +1360,9 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // (surface::ColumnMemo: exact, refusals included). It forgets on its own
     // whenever a block of another column is asked about.
     surface::ColumnMemo columnMemo;
+    // Whether the executor can answer any block from its threshold
+    // (decidedByThreshold, below): not worth asking where it cannot.
+    const bool asksThreshold = executor.decidesByThreshold();
 
     for (int localZ = 0; localZ < kChunkWidth; ++localZ) {
         for (int localX = 0; localX < kChunkWidth; ++localX) {
@@ -1446,72 +1449,98 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // (golden_end_test.cpp, 2097152 of 2097152) is safe under either.
             // A column of nothing but air leaves `scanFrom` below `minY` and
             // the loop runs zero times.
+            //
+            // The walk is made in one of two copies, with and without asking
+            // the executor's threshold first (asksThreshold, below): one loop
+            // with the question in it costs a dimension that cannot use it
+            // more than the question itself.
             const std::int32_t scanFrom = column.top();
-            for (std::int32_t y = scanFrom; y >= minY; --y) {
-                if (into.blocks_[into.linearIndex(localX, y, localZ)] != defaultIndex) {
-                    continue;
-                }
-                if (needsBiomeIdentity) {
-                    // The context's biome and temperature change only where
-                    // the quart does: assigned there, and left standing for
-                    // the blocks below it in the same quart.
-                    const std::int32_t quartY = quartSnap(y);
-                    if (!biomeQuartYKnown || biomeQuartY != quartY) {
-                        QuartBiome& cached =
-                            quartBiomes[quartColumn +
-                                        static_cast<std::size_t>((quartY - quartBottom) / 4)];
-                        if (cached.id == nullptr) {
-                            QuartBiome resolved;
-                            const density::Point corner{.x = qx, .y = quartY, .z = qz};
-                            if (rowList != nullptr) {
-                                const auto qxc = static_cast<std::size_t>(localX / 4);
-                                const auto qzc = static_cast<std::size_t>(localZ / 4);
-                                const auto level =
-                                    static_cast<std::size_t>((quartY - quartBottom) / 4);
-                                const std::size_t row = surfaceBiomeRowAt(corner, surfaceCache,
-                                                                          rowHint(qxc, level, qzc));
-                                biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
-                                    static_cast<std::uint32_t>(row);
-                                lastRow = row;
-                                resolved.id = &rowList->entries()[row].biome;
-                            } else {
-                                resolved.id = &surfaceBiomeAt(corner, surfaceCache);
-                            }
-                            if (surfaceNeedsTemperature_) {
-                                resolved.temperature = biomeTemperatures_->at(*resolved.id);
+            const auto scanColumn = [&]<bool kAsksThreshold>() {
+                for (std::int32_t y = scanFrom; y >= minY; --y) {
+                    if (into.blocks_[into.linearIndex(localX, y, localZ)] != defaultIndex) {
+                        continue;
+                    }
+                    if (needsBiomeIdentity) {
+                        // The context's biome and temperature change only where
+                        // the quart does: assigned there, and left standing for
+                        // the blocks below it in the same quart.
+                        const std::int32_t quartY = quartSnap(y);
+                        if (!biomeQuartYKnown || biomeQuartY != quartY) {
+                            QuartBiome& cached =
+                                quartBiomes[quartColumn +
+                                            static_cast<std::size_t>((quartY - quartBottom) / 4)];
+                            if (cached.id == nullptr) {
+                                QuartBiome resolved;
+                                const density::Point corner{.x = qx, .y = quartY, .z = qz};
+                                if (rowList != nullptr) {
+                                    const auto qxc = static_cast<std::size_t>(localX / 4);
+                                    const auto qzc = static_cast<std::size_t>(localZ / 4);
+                                    const auto level =
+                                        static_cast<std::size_t>((quartY - quartBottom) / 4);
+                                    const std::size_t row = surfaceBiomeRowAt(
+                                        corner, surfaceCache, rowHint(qxc, level, qzc));
+                                    biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
+                                        static_cast<std::uint32_t>(row);
+                                    lastRow = row;
+                                    resolved.id = &rowList->entries()[row].biome;
+                                } else {
+                                    resolved.id = &surfaceBiomeAt(corner, surfaceCache);
+                                }
+                                if (surfaceNeedsTemperature_) {
+                                    resolved.temperature = biomeTemperatures_->at(*resolved.id);
+                                }
+                                if (surfaceNeedsBiome_) {
+                                    resolved.key = executor.biomeKey(*resolved.id);
+                                }
+                                cached = resolved;
                             }
                             if (surfaceNeedsBiome_) {
-                                resolved.key = executor.biomeKey(*resolved.id);
+                                context.biomeKey = cached.key;
                             }
-                            cached = resolved;
+                            if (surfaceNeedsTemperature_) {
+                                context.biomeTemperature = cached.temperature;
+                            }
+                            biomeQuartY = quartY;
+                            biomeQuartYKnown = true;
                         }
-                        if (surfaceNeedsBiome_) {
-                            context.biomeKey = cached.key;
+                    }
+
+                    context.y = y;
+                    // Where the column's above_preliminary_surface threshold
+                    // alone decides the rules' answer (Executor::
+                    // decidedByThreshold: their first test, read from the memo,
+                    // and a terminal after it), that answer, apply's own; the
+                    // stone depths are read by nothing else, and cannot refuse
+                    // at a y of the column. Elsewhere the rules run as before.
+                    std::optional<const settings::BlockState*> decided;
+                    if constexpr (kAsksThreshold) {
+                        decided = executor.decidedByThreshold(context, columnMemo);
+                    }
+                    const settings::BlockState* placed = nullptr;
+                    if (decided.has_value()) {
+                        placed = *decided;
+                    } else {
+                        context.stoneDepthAbove = column.stoneDepthAbove(y);
+                        context.stoneDepthBelow = column.stoneDepthBelow(y);
+                        placed = executor.apply(context, columnMemo);
+                    }
+                    if (placed != nullptr) {
+                        // The last state placed and its index, ahead of the
+                        // palette's search: StablePalette gives one address one
+                        // index for the whole fill (its own doc), so a repeat is
+                        // the index it would return, and interns nothing.
+                        if (placed != lastPlaced) {
+                            lastPlacedIndex = stablePalette.indexOf(*placed, intern);
+                            lastPlaced = placed;
                         }
-                        if (surfaceNeedsTemperature_) {
-                            context.biomeTemperature = cached.temperature;
-                        }
-                        biomeQuartY = quartY;
-                        biomeQuartYKnown = true;
+                        into.blocks_[into.linearIndex(localX, y, localZ)] = lastPlacedIndex;
                     }
                 }
-
-                context.y = y;
-                context.stoneDepthAbove = column.stoneDepthAbove(y);
-                context.stoneDepthBelow = column.stoneDepthBelow(y);
-
-                if (const settings::BlockState* placed = executor.apply(context, columnMemo);
-                    placed != nullptr) {
-                    // The last state placed and its index, ahead of the
-                    // palette's search: StablePalette gives one address one
-                    // index for the whole fill (its own doc), so a repeat is
-                    // the index it would return, and interns nothing.
-                    if (placed != lastPlaced) {
-                        lastPlacedIndex = stablePalette.indexOf(*placed, intern);
-                        lastPlaced = placed;
-                    }
-                    into.blocks_[into.linearIndex(localX, y, localZ)] = lastPlacedIndex;
-                }
+            };
+            if (asksThreshold) {
+                scanColumn.template operator()<true>();
+            } else {
+                scanColumn.template operator()<false>();
             }
         }
     }

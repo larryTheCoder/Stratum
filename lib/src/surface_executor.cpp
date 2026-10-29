@@ -481,6 +481,7 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                                               .tested = nullptr,
                                               .next = 0});
         executor.bandPrograms();
+        executor.answerThresholds();
     } else {
         executor.program_.clear();
     }
@@ -996,27 +997,43 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
     }
 }
 
+void Executor::answerThresholds() {
+    // Every entry runProgram can start at, by entrySlot: the list as lowered,
+    // then each of bandEntry_'s.
+    using Code = ProgramOp::Code;
+    const auto answerAt = [this](const std::size_t entry) {
+        ThresholdAnswer answer;
+        const ProgramOp& op = program_[entry];
+        if (op.code != Code::AbovePreliminarySurface) {
+            return answer;
+        }
+        // runProgram's step: pc = passed != negate ? next : jump.
+        const ProgramOp& passing = program_[op.negate ? op.jump : op.next];
+        const ProgramOp& failing = program_[op.negate ? op.next : op.jump];
+        answer.passDecided = passing.code == Code::Place || passing.code == Code::Nothing;
+        answer.pass = passing.code == Code::Place ? passing.block : nullptr;
+        answer.failDecided = failing.code == Code::Place || failing.code == Code::Nothing;
+        answer.fail = failing.code == Code::Place ? failing.block : nullptr;
+        return answer;
+    };
+    thresholdAnswers_.clear();
+    thresholdAnswers_.reserve(bandEntry_.size() + 1U);
+    thresholdAnswers_.push_back(answerAt(0));
+    for (const std::uint32_t entry : bandEntry_) {
+        thresholdAnswers_.push_back(answerAt(entry));
+    }
+    anyPassDecided_ = std::ranges::any_of(
+        thresholdAnswers_, [](const ThresholdAnswer& answer) { return answer.passDecided; });
+    anyFailDecided_ = std::ranges::any_of(
+        thresholdAnswers_, [](const ThresholdAnswer& answer) { return answer.failDecided; });
+}
+
 const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& memo) const {
     const ProgramOp* const ops = program_.data();
     // Every typed op's condition is in range (lowerRule took it from the
     // graph), and compiled_ holds one entry per condition.
     const CompiledCondition* const compiled = compiled_.data();
-    // A block of the dimension starts in its band's copy (bandPrograms);
-    // any other y in the list as lowered.
-    std::size_t pc = 0;
-    if (!bandOf_.empty()) {
-        const std::int64_t offset = std::int64_t{at.y} - bandMinY_;
-        if (offset >= 0 && offset < static_cast<std::int64_t>(bandOf_.size())) {
-            // A key this executor issued picks its keyed copy, where there
-            // are keyed copies; any other block, the band's own.
-            std::size_t slot = 0;
-            if (bandStride_ > 1 && at.biomeKey.executor == id_ && at.biomeKey.index < biomeKeys_) {
-                slot = std::size_t{at.biomeKey.index} + 1U;
-            }
-            pc = bandEntry_[(std::size_t{bandOf_[static_cast<std::size_t>(offset)]} * bandStride_) +
-                            slot];
-        }
-    }
+    std::size_t pc = entryFor(at);
     while (true) {
         const ProgramOp& op = ops[pc];
         bool passed = false;
@@ -1463,12 +1480,26 @@ inline bool Executor::testAbovePreliminarySurface(const Context& at, ColumnMemo&
     // false one block under it on every column measured, so `>= C` and
     // `> C - 1` are the same predicate; what was unknown was C, and C is not
     // `preliminarySurface`.
-    return at.y >= narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
-                                                      columnSurfaceDepth(at, memo),
-                                                  "the preliminary surface plus the surface "
-                                                  "depth")} -
-                                8,
-                            "the preliminary surface plus the surface depth, less 8");
+    //
+    // The threshold is a function of the column's surface depth and the
+    // block's preliminary surface alone, so it is kept in the memo with the
+    // preliminary surface it was computed from (ColumnMemo::threshold_): a
+    // later block of the column handing the same one reads it back, and one
+    // handing another computes its own. Computed exactly as before where it
+    // is computed, refusals included; once it has returned, every block
+    // asking with the same preliminary surface would have computed the same
+    // value and returned.
+    if (!memo.hasThreshold_ || memo.thresholdPreliminary_ != at.preliminarySurface) {
+        memo.threshold_ = narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
+                                                             columnSurfaceDepth(at, memo),
+                                                         "the preliminary surface plus the surface "
+                                                         "depth")} -
+                                       8,
+                                   "the preliminary surface plus the surface depth, less 8");
+        memo.thresholdPreliminary_ = at.preliminarySurface;
+        memo.hasThreshold_ = true;
+    }
+    return at.y >= memo.threshold_;
 }
 
 bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& memo) const {
