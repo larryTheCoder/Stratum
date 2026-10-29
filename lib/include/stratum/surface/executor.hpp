@@ -446,8 +446,8 @@ private:
     /// The `biome` condition @p condition, whose answers are column
     /// @p biomeSlot of biomeAnswers_, at @p at: from at.biomeKey where it is
     /// this executor's, by name otherwise.
-    [[nodiscard]] bool biomeMatches(const Condition& condition, std::size_t biomeSlot,
-                                    const Context& at) const;
+    [[nodiscard]] inline bool biomeMatches(const Condition& condition, std::size_t biomeSlot,
+                                           const Context& at) const;
 
     /// This executor's identity, which its BiomeKeys carry: one per compile()
     /// and never 0, so no key another compile issued is ever taken for one of
@@ -531,6 +531,29 @@ private:
         return index < conditions_.size() ? *conditions_[index] : graph_->condition(index);
     }
 
+    /// One condition type's test each, of @p condition (compiled as
+    /// @p compiled) at @p at: test() is the switch over these, and the
+    /// compiled list (ProgramOp) calls the one its op names directly, so the
+    /// two run one body per type and cannot part.
+    [[nodiscard]] inline bool testGradient(const Condition& condition,
+                                           const CompiledCondition& compiled,
+                                           const Context& at) const;
+    [[nodiscard]] inline bool testYAbove(const Condition& condition,
+                                         const CompiledCondition& compiled, const Context& at,
+                                         ColumnMemo& memo) const;
+    [[nodiscard]] inline bool testWater(const Condition& condition, const Context& at,
+                                        ColumnMemo& memo) const;
+    [[nodiscard]] inline bool testStoneDepth(const Condition& condition,
+                                             const CompiledCondition& compiled, const Context& at,
+                                             ColumnMemo& memo) const;
+    [[nodiscard]] inline bool testHole(const Context& at, ColumnMemo& memo) const;
+    [[nodiscard]] static inline bool testSteep(const Context& at) noexcept;
+    [[nodiscard]] inline bool testNoise(const Condition& condition,
+                                        const CompiledCondition& compiled, const Context& at,
+                                        ColumnMemo& memo) const;
+    [[nodiscard]] inline bool testAbovePreliminarySurface(const Context& at,
+                                                          ColumnMemo& memo) const;
+
     /// The rule tree as a straight list, run by apply() instead of runRule's
     /// recursion: the same tests in the same order, the same block placed.
     ///
@@ -545,6 +568,13 @@ private:
     /// condition at its end. Built only from a tree whose every index is in
     /// range and every rule type runnable, and under kMaxProgram ops; any
     /// other tree is walked, as it always was.
+    ///
+    /// A test op names its condition's TYPE in its code, and carries the
+    /// condition itself, so the list runs that type's test (testYAbove and
+    /// the rest, the very bodies test() switches to) without going through
+    /// test() and a second switch: one dispatch per test, not three lookups
+    /// and two. A condition of any other type is tested through test(),
+    /// which refuses it exactly as it always did.
     struct ProgramOp {
         enum class Code : std::uint8_t {
             /// test(condition), negated when `negate`; on false, go to `jump`.
@@ -555,12 +585,26 @@ private:
             Bandlands,
             /// Return nothing: the root placed nothing.
             Nothing,
+            /// As Test, for a condition of exactly this type, through that
+            /// type's own test.
+            Gradient,
+            YAbove,
+            Water,
+            StoneDepth,
+            Hole,
+            Steep,
+            Noise,
+            AbovePreliminarySurface,
+            Biome,
+            Temperature,
         };
         Code code = Code::Nothing;
         bool negate = false;
         ConditionIndex condition = 0;
         std::uint32_t jump = 0;
         const settings::BlockState* block = nullptr;
+        /// The condition a typed test tests: the graph's own, at `condition`.
+        const Condition* tested = nullptr;
     };
 
     static constexpr std::size_t kMaxProgram = std::size_t{1} << 16;

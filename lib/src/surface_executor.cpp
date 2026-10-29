@@ -61,15 +61,39 @@ constexpr std::string_view kSurfaceSecondaryNoise = "minecraft:surface_secondary
     return static_cast<std::int32_t>(value);
 }
 
+[[noreturn]] void refuseTruncation(const double value, const char* what) {
+    throw ExecutionError(std::string(what) + " is " + spell(value) +
+                         ", which no 32-bit integer holds; this build refuses it rather "
+                         "than guess what the server makes of it (SPEC §8)");
+}
+
 /// A double that becomes a 32-bit int by truncation, refused where the
-/// conversion is undefined: outside (-2^31 - 1, 2^31), or NaN.
+/// conversion is undefined: outside (-2^31 - 1, 2^31), or NaN. The check
+/// inline, its refusal (refuseTruncation) out of line, as narrowed's.
 [[nodiscard]] std::int32_t truncated(const double value, const char* what) {
-    if (std::isnan(value) || value <= -2147483649.0 || value >= 2147483648.0) {
-        throw ExecutionError(std::string(what) + " is " + spell(value) +
-                             ", which no 32-bit integer holds; this build refuses it rather "
-                             "than guess what the server makes of it (SPEC §8)");
+    if (std::isnan(value) || value <= -2147483649.0 || value >= 2147483648.0) [[unlikely]] {
+        refuseTruncation(value, what);
     }
     return static_cast<std::int32_t>(value);
+}
+
+/// The surface tests' own refusals, out of line so that the tests they guard
+/// stay small enough to inline into the compiled list (Executor::runProgram).
+[[noreturn]] void refuseNoSource(const std::string& randomName) {
+    throw ExecutionError("no positional source for random_name '" + randomName + "'");
+}
+
+[[noreturn]] void refuseUnissuedBiomeKey(const std::uint32_t index) {
+    throw ExecutionError("a biome key whose index (" + std::to_string(index) +
+                         ") this executor never issued");
+}
+
+[[noreturn]] void refuseMissingBiome() {
+    throw ExecutionError("a biome condition reached the executor without a biome");
+}
+
+[[noreturn]] void refuseMissingNoise() {
+    throw ExecutionError("a noise_threshold reached the executor without a noise");
 }
 
 /// `noise.sample(x, 0, z)`, refused by name where the noise is not defined
@@ -449,7 +473,8 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                                               .negate = false,
                                               .condition = 0,
                                               .jump = 0,
-                                              .block = nullptr});
+                                              .block = nullptr,
+                                              .tested = nullptr});
     } else {
         executor.program_.clear();
     }
@@ -469,14 +494,16 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
                                          .negate = false,
                                          .condition = 0,
                                          .jump = 0,
-                                         .block = &rule.block});
+                                         .block = &rule.block,
+                                         .tested = nullptr});
             return true;
         case RuleType::Bandlands:
             program_.push_back(ProgramOp{.code = ProgramOp::Code::Bandlands,
                                          .negate = false,
                                          .condition = 0,
                                          .jump = 0,
-                                         .block = nullptr});
+                                         .block = nullptr,
+                                         .tested = nullptr});
             return true;
         case RuleType::Sequence:
             // Each child in order; one that places leaves the list.
@@ -499,12 +526,42 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
                 negate = !negate;
                 tested = condition.invert;
             }
+            // The op names the type it tests (ProgramOp), and any type it
+            // has no code for goes through test(), as every one once did.
+            const auto codeOf = [](const ConditionType type) {
+                switch (type) {
+                    case ConditionType::VerticalGradient:
+                        return ProgramOp::Code::Gradient;
+                    case ConditionType::YAbove:
+                        return ProgramOp::Code::YAbove;
+                    case ConditionType::Water:
+                        return ProgramOp::Code::Water;
+                    case ConditionType::StoneDepth:
+                        return ProgramOp::Code::StoneDepth;
+                    case ConditionType::Hole:
+                        return ProgramOp::Code::Hole;
+                    case ConditionType::Steep:
+                        return ProgramOp::Code::Steep;
+                    case ConditionType::NoiseThreshold:
+                        return ProgramOp::Code::Noise;
+                    case ConditionType::AbovePreliminarySurface:
+                        return ProgramOp::Code::AbovePreliminarySurface;
+                    case ConditionType::Biome:
+                        return ProgramOp::Code::Biome;
+                    case ConditionType::Temperature:
+                        return ProgramOp::Code::Temperature;
+                    default:
+                        return ProgramOp::Code::Test;
+                }
+            };
             const std::size_t test = program_.size();
-            program_.push_back(ProgramOp{.code = ProgramOp::Code::Test,
+            const Condition& condition = graph.condition(tested);
+            program_.push_back(ProgramOp{.code = codeOf(condition.type),
                                          .negate = negate,
                                          .condition = tested,
                                          .jump = 0,
-                                         .block = nullptr});
+                                         .block = nullptr,
+                                         .tested = &condition});
             if (!lowerRule(graph, rule.thenRun, depth + 1) || program_.size() >= kMaxProgram) {
                 return false;
             }
@@ -521,20 +578,55 @@ bool Executor::lowerRule(const RuleGraph& graph, const RuleIndex index, const st
 
 const settings::BlockState* Executor::runProgram(const Context& at, ColumnMemo& memo) const {
     const ProgramOp* const ops = program_.data();
+    // Every typed op's condition is in range (lowerRule took it from the
+    // graph), and compiled_ holds one entry per condition.
+    const CompiledCondition* const compiled = compiled_.data();
     std::size_t pc = 0;
     while (true) {
         const ProgramOp& op = ops[pc];
+        bool passed = false;
         switch (op.code) {
-            case ProgramOp::Code::Test:
-                pc = test(op.condition, at, memo) != op.negate ? pc + 1 : op.jump;
-                break;
             case ProgramOp::Code::Place:
                 return op.block;
             case ProgramOp::Code::Bandlands:
                 return &bandlandsAt(at, memo);
             case ProgramOp::Code::Nothing:
                 return nullptr;
+            case ProgramOp::Code::Test:
+                passed = test(op.condition, at, memo);
+                break;
+            case ProgramOp::Code::Gradient:
+                passed = testGradient(*op.tested, compiled[op.condition], at);
+                break;
+            case ProgramOp::Code::YAbove:
+                passed = testYAbove(*op.tested, compiled[op.condition], at, memo);
+                break;
+            case ProgramOp::Code::Water:
+                passed = testWater(*op.tested, at, memo);
+                break;
+            case ProgramOp::Code::StoneDepth:
+                passed = testStoneDepth(*op.tested, compiled[op.condition], at, memo);
+                break;
+            case ProgramOp::Code::Hole:
+                passed = testHole(at, memo);
+                break;
+            case ProgramOp::Code::Steep:
+                passed = testSteep(at);
+                break;
+            case ProgramOp::Code::Noise:
+                passed = testNoise(*op.tested, compiled[op.condition], at, memo);
+                break;
+            case ProgramOp::Code::AbovePreliminarySurface:
+                passed = testAbovePreliminarySurface(at, memo);
+                break;
+            case ProgramOp::Code::Biome:
+                passed = biomeMatches(*op.tested, compiled[op.condition].biomeSlot, at);
+                break;
+            case ProgramOp::Code::Temperature:
+                passed = freezing(at, memo);
+                break;
         }
+        pc = passed != op.negate ? pc + 1 : op.jump;
     }
 }
 
@@ -637,15 +729,14 @@ BiomeKey Executor::biomeKey(const data::ResourceLocation& biome) const {
                     .index = found != biomeIndex_.end() ? found->second : biomeKeys_ - 1U};
 }
 
-bool Executor::biomeMatches(const Condition& condition, const std::size_t biomeSlot,
-                            const Context& at) const {
+inline bool Executor::biomeMatches(const Condition& condition, const std::size_t biomeSlot,
+                                   const Context& at) const {
     if (at.biomeKey.executor == id_) {
         // One of this executor's own keys: the answer compile() worked out
         // for its biome. Only biomeKey() issues them, and only in range; a
         // key altered by hand past the table is refused rather than read.
         if (at.biomeKey.index >= biomeKeys_) [[unlikely]] {
-            throw ExecutionError("a biome key whose index (" + std::to_string(at.biomeKey.index) +
-                                 ") this executor never issued");
+            refuseUnissuedBiomeKey(at.biomeKey.index);
         }
         return biomeAnswers_[(static_cast<std::size_t>(at.biomeKey.index) * biomeSlots_) +
                              biomeSlot] != 0;
@@ -654,7 +745,7 @@ bool Executor::biomeMatches(const Condition& condition, const std::size_t biomeS
     // that names this condition when none can be, so an absent one here is a
     // programming error rather than a wrong world.
     if (!at.biome.has_value()) {
-        throw ExecutionError("a biome condition reached the executor without a biome");
+        refuseMissingBiome();
     }
     return std::ranges::find(condition.biomes, *at.biome) != condition.biomes.end();
 }
@@ -794,157 +885,182 @@ std::int32_t Executor::depthFor(const Condition& condition, const Context& at,
     return condition.surfaceDepthMultiplier == 0 ? 0 : columnSurfaceDepth(at, memo);
 }
 
-bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& memo) const {
-    const Condition& condition = conditionAt(index);
-    switch (condition.type) {
-        case ConditionType::Not:
-            return !test(condition.invert, at, memo);
+inline bool Executor::testGradient(const Condition& condition, const CompiledCondition& compiled,
+                                   const Context& at) const {
+    // The source and both anchors, found and resolved at compile.
+    if (compiled.gradient == kNoSource) [[unlikely]] {
+        refuseNoSource(condition.randomName);
+    }
+    // verticalGradientFires' own two certain bands, answered before its call
+    // by the same two comparisons in the same order: only a block strictly
+    // between the anchors pays for the call, the source's variant and the
+    // draw, and that one is answered by verticalGradientFires as before.
+    if (at.y <= compiled.trueAtAndBelow) {
+        return true;
+    }
+    if (at.y >= compiled.falseAtAndAbove) {
+        return false;
+    }
+    return std::visit(
+        [&](const auto& source) {
+            return verticalGradientFires(source, at.x, at.y, at.z, compiled.trueAtAndBelow,
+                                         compiled.falseAtAndAbove);
+        },
+        gradientSources_[compiled.gradient]);
+}
 
-        case ConditionType::VerticalGradient: {
-            // The source and both anchors, found and resolved at compile.
-            const CompiledCondition& compiled = compiled_[index];
-            if (compiled.gradient == kNoSource) {
-                throw ExecutionError("no positional source for random_name '" +
-                                     condition.randomName + "'");
-            }
-            return std::visit(
-                [&](const auto& source) {
-                    return verticalGradientFires(source, at.x, at.y, at.z, compiled.trueAtAndBelow,
-                                                 compiled.falseAtAndAbove);
-                },
-                gradientSources_[compiled.gradient]);
-        }
+inline bool Executor::testYAbove(const Condition& condition, const CompiledCondition& compiled,
+                                 const Context& at, ColumnMemo& memo) const {
+    // `add_stone_depth`, not `add_surface_depth` — the two conditions that
+    // read a stone-depth run and the one that reads a surface depth are
+    // different fields on Condition for exactly this reason, and this case
+    // was reading the wrong one: every `add_stone_depth: true` was silently
+    // treated as false. Real impact, not a hypothetical — vanilla's own
+    // overworld and Nether trees together set it on ten y_above/water
+    // conditions.
+    //
+    // Every step checked (`narrowed`): an anchor, a multiplier or a depth
+    // near the int range would otherwise overflow (SPEC §8).
+    const std::int32_t left =
+        narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
+                 "y_above's y plus the stone depth");
+    const std::int32_t scaled =
+        narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
+                 "y_above's surface_depth_multiplier times the surface depth");
+    const std::int32_t right = narrowed(std::int64_t{compiled.anchor} + scaled,
+                                        "y_above's anchor plus its scaled surface depth");
+    return left >= right;
+}
 
-        case ConditionType::YAbove: {
-            // `add_stone_depth`, not `add_surface_depth` — the two conditions
-            // that read a stone-depth run and the one that reads a surface
-            // depth are different fields on Condition for exactly this
-            // reason, and this case was reading the wrong one: every
-            // `add_stone_depth: true` was silently treated as false. Real
-            // impact, not a hypothetical — vanilla's own overworld and Nether
-            // trees together set it on ten y_above/water conditions.
-            //
-            // Every step checked (`narrowed`): an anchor, a multiplier or a
-            // depth near the int range would otherwise overflow (SPEC §8).
-            const std::int32_t left =
-                narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
-                         "y_above's y plus the stone depth");
-            const std::int32_t scaled = narrowed(
-                std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
-                "y_above's surface_depth_multiplier times the surface depth");
-            const std::int32_t right = narrowed(std::int64_t{compiled_[index].anchor} + scaled,
-                                                "y_above's anchor plus its scaled surface depth");
-            return left >= right;
-        }
+inline bool Executor::testWater(const Condition& condition, const Context& at,
+                                ColumnMemo& memo) const {
+    // No fluid in the column at all makes this unconditionally true — and
+    // `sea_level` alone does not create one, only real blocks do.
+    if (!at.waterHeight.has_value()) {
+        return true;
+    }
+    // `add_stone_depth`, not `add_surface_depth` — see testYAbove.
+    const std::int32_t left =
+        narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
+                 "water's y plus the stone depth");
+    const std::int32_t raised = narrowed(std::int64_t{*at.waterHeight} + condition.offset,
+                                         "water's water height plus its offset");
+    const std::int32_t scaled =
+        narrowed(std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
+                 "water's surface_depth_multiplier times the surface depth");
+    const std::int32_t right =
+        narrowed(std::int64_t{raised} + scaled, "water's level plus its scaled surface depth");
+    return left >= right;
+}
 
-        case ConditionType::Water: {
-            // No fluid in the column at all makes this unconditionally true —
-            // and `sea_level` alone does not create one, only real blocks do.
-            if (!at.waterHeight.has_value()) {
-                return true;
-            }
-            // `add_stone_depth`, not `add_surface_depth` — see YAbove above.
-            const std::int32_t left =
-                narrowed(std::int64_t{at.y} + (condition.addStoneDepth ? at.stoneDepthAbove : 0),
-                         "water's y plus the stone depth");
-            const std::int32_t raised = narrowed(std::int64_t{*at.waterHeight} + condition.offset,
-                                                 "water's water height plus its offset");
-            const std::int32_t scaled = narrowed(
-                std::int64_t{condition.surfaceDepthMultiplier} * depthFor(condition, at, memo),
-                "water's surface_depth_multiplier times the surface depth");
-            const std::int32_t right = narrowed(std::int64_t{raised} + scaled,
-                                                "water's level plus its scaled surface depth");
-            return left >= right;
-        }
+inline bool Executor::testStoneDepth(const Condition& condition, const CompiledCondition& compiled,
+                                     const Context& at, ColumnMemo& memo) const {
+    const std::int32_t run = compiled.ceiling ? at.stoneDepthBelow : at.stoneDepthAbove;
+    // 0 means the position is not in a solid run AT ALL — reset by air, per
+    // Context's own doc — and "N blocks deep in stone" cannot be true where
+    // there is no stone to be deep in. Without this guard the
+    // stored-counter-minus-one below reads that as depth -1, which trivially
+    // satisfies almost any non-negative offset: measured against a real
+    // probe world, this painted grass and dirt across the entire sky above
+    // the terrain and deepslate over open water, 292005 of 393216 blocks in
+    // four chunks (golden_fill_test.cpp).
+    if (run <= 0) {
+        return false;
+    }
+    // The stored counter is 1 at a run's top; the comparison is against a
+    // 0-based depth, hence the -1.
+    const std::int32_t depth = run - 1;
+    std::int32_t threshold = condition.offset;
+    if (condition.addSurfaceDepth) {
+        threshold = narrowed(std::int64_t{threshold} + columnSurfaceDepth(at, memo),
+                             "stone_depth's offset plus the surface depth");
+    }
+    if (condition.secondaryDepthRange != 0) {
+        const double secondary = columnSecondary(at, memo);
+        // From [-1, 1], truncated, no clamp — `round` and the other three
+        // mappings were all refuted. Refused where no int holds it (a
+        // datapack's amplitudes), never converted undefined.
+        const std::int32_t secondaryDepth =
+            truncated((secondary + 1.0) * 0.5 * static_cast<double>(condition.secondaryDepthRange),
+                      "stone_depth's secondary depth (minecraft:surface_secondary)");
+        threshold = narrowed(std::int64_t{threshold} + secondaryDepth,
+                             "stone_depth's threshold plus its secondary depth");
+    }
+    return depth <= threshold;
+}
 
-        case ConditionType::StoneDepth: {
-            const bool ceiling = compiled_[index].ceiling;
-            const std::int32_t run = ceiling ? at.stoneDepthBelow : at.stoneDepthAbove;
-            // 0 means the position is not in a solid run AT ALL — reset by
-            // air, per Context's own doc — and "N blocks deep in stone"
-            // cannot be true where there is no stone to be deep in. Without
-            // this guard the stored-counter-minus-one below reads that as
-            // depth -1, which trivially satisfies almost any non-negative
-            // offset: measured against a real probe world, this painted
-            // grass and dirt across the entire sky above the terrain and
-            // deepslate over open water, 292005 of 393216 blocks in four
-            // chunks (golden_fill_test.cpp).
-            if (run <= 0) {
-                return false;
-            }
-            // The stored counter is 1 at a run's top; the comparison is
-            // against a 0-based depth, hence the -1.
-            const std::int32_t depth = run - 1;
-            std::int32_t threshold = condition.offset;
-            if (condition.addSurfaceDepth) {
-                threshold = narrowed(std::int64_t{threshold} + columnSurfaceDepth(at, memo),
-                                     "stone_depth's offset plus the surface depth");
-            }
-            if (condition.secondaryDepthRange != 0) {
-                const double secondary = columnSecondary(at, memo);
-                // From [-1, 1], truncated, no clamp — `round` and the other
-                // three mappings were all refuted. Refused where no int holds
-                // it (a datapack's amplitudes), never converted undefined.
-                const std::int32_t secondaryDepth = truncated(
-                    (secondary + 1.0) * 0.5 * static_cast<double>(condition.secondaryDepthRange),
-                    "stone_depth's secondary depth (minecraft:surface_secondary)");
-                threshold = narrowed(std::int64_t{threshold} + secondaryDepth,
-                                     "stone_depth's threshold plus its secondary depth");
-            }
-            return depth <= threshold;
-        }
+inline bool Executor::testHole(const Context& at, ColumnMemo& memo) const {
+    // A pure function of the column: it never looks at the terrain.
+    return columnSurfaceDepth(at, memo) <= 0;
+}
 
-        case ConditionType::Hole:
-            // A pure function of the column: it never looks at the terrain.
-            return columnSurfaceDepth(at, memo) <= 0;
+inline bool Executor::testSteep(const Context& at) noexcept {
+    // WEST minus EAST, and SOUTH minus NORTH. The asymmetry is real and
+    // measured — `abs()` on either axis is refuted by 17375 columns that have
+    // to stay false — so do not "tidy" it.
+    return (at.heightWest - at.heightEast >= 4) || (at.heightSouth - at.heightNorth >= 4);
+}
 
-        case ConditionType::Steep:
-            // WEST minus EAST, and SOUTH minus NORTH. The asymmetry is real
-            // and measured — `abs()` on either axis is refuted by 17375
-            // columns that have to stay false — so do not "tidy" it.
-            return (at.heightWest - at.heightEast >= 4) || (at.heightSouth - at.heightNorth >= 4);
+inline bool Executor::testNoise(const Condition& condition, const CompiledCondition& compiled,
+                                const Context& at, ColumnMemo& memo) const {
+    // The resolver requires the name, so an absent one is a bug here rather
+    // than bad input — but it is still checked, because the alternative is a
+    // dereference that is only usually safe.
+    if (!condition.noise.has_value()) [[unlikely]] {
+        refuseMissingNoise();
+    }
+    // y is the literal 0.0 for every block, so this is constant down a
+    // column, and kept in the memo; x and z are absolute and unquantised.
+    // Closed interval.
+    const double value = columnNoise(*condition.noise, compiled.noiseSlot, at, memo);
+    return condition.minThreshold <= value && value <= condition.maxThreshold;
+}
 
-        case ConditionType::NoiseThreshold: {
-            // The resolver requires the name, so an absent one is a bug here
-            // rather than bad input — but it is still checked, because the
-            // alternative is a dereference that is only usually safe.
-            if (!condition.noise.has_value()) {
-                throw ExecutionError("a noise_threshold reached the executor without a noise");
-            }
-            // y is the literal 0.0 for every block, so this is constant down a
-            // column, and kept in the memo; x and z are absolute and
-            // unquantised. Closed interval.
-            const double value =
-                columnNoise(*condition.noise, compiled_[index].noiseSlot, at, memo);
-            return condition.minThreshold <= value && value <= condition.maxThreshold;
-        }
-
-        case ConditionType::AbovePreliminarySurface:
-            // MEASURED, and not what the name says. The boundary is not the
-            // preliminary surface: the condition opens `8 - surfaceDepth`
-            // blocks BELOW it — two to eight blocks on ordinary terrain —
-            // and the 8 is a literal, invariant under cell height, cell
-            // width, min_y, height and sea level (SPEC §11).
-            //
-            // The strictness this project called unmeasured for two
-            // milestones was never the open question. The boundary is true at
-            // exactly this y and false one block under it on every column
-            // measured, so `>= C` and `> C - 1` are the same predicate; what
-            // was unknown was C, and C is not `preliminarySurface`.
-            return at.y >=
-                   narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
+inline bool Executor::testAbovePreliminarySurface(const Context& at, ColumnMemo& memo) const {
+    // MEASURED, and not what the name says. The boundary is not the
+    // preliminary surface: the condition opens `8 - surfaceDepth` blocks
+    // BELOW it — two to eight blocks on ordinary terrain — and the 8 is a
+    // literal, invariant under cell height, cell width, min_y, height and sea
+    // level (SPEC §11).
+    //
+    // The strictness this project called unmeasured for two milestones was
+    // never the open question. The boundary is true at exactly this y and
+    // false one block under it on every column measured, so `>= C` and
+    // `> C - 1` are the same predicate; what was unknown was C, and C is not
+    // `preliminarySurface`.
+    return at.y >= narrowed(std::int64_t{narrowed(std::int64_t{at.preliminarySurface} +
                                                       columnSurfaceDepth(at, memo),
                                                   "the preliminary surface plus the surface "
                                                   "depth")} -
                                 8,
                             "the preliminary surface plus the surface depth, less 8");
+}
 
+bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& memo) const {
+    const Condition& condition = conditionAt(index);
+    switch (condition.type) {
+        case ConditionType::Not:
+            return !test(condition.invert, at, memo);
+        case ConditionType::VerticalGradient:
+            return testGradient(condition, compiled_[index], at);
+        case ConditionType::YAbove:
+            return testYAbove(condition, compiled_[index], at, memo);
+        case ConditionType::Water:
+            return testWater(condition, at, memo);
+        case ConditionType::StoneDepth:
+            return testStoneDepth(condition, compiled_[index], at, memo);
+        case ConditionType::Hole:
+            return testHole(at, memo);
+        case ConditionType::Steep:
+            return testSteep(at);
+        case ConditionType::NoiseThreshold:
+            return testNoise(condition, compiled_[index], at, memo);
+        case ConditionType::AbovePreliminarySurface:
+            return testAbovePreliminarySurface(at, memo);
         case ConditionType::Biome:
             return biomeMatches(condition, compiled_[index].biomeSlot, at);
-
         case ConditionType::Temperature:
             return freezing(at, memo);
-
         default:
             throw ExecutionError("reached a condition type compile() should have refused");
     }

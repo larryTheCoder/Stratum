@@ -160,3 +160,4 @@ target_sources(stratum_unit_tests PRIVATE ore_richness_gate_test.cpp)
 # The surface pass's own cases: the quart biome it hands its rules.
 target_sources(stratum_unit_tests PRIVATE surface_pass_biome_test.cpp)
 target_sources(stratum_unit_tests PRIVATE surface_biome_key_test.cpp)
+target_sources(stratum_unit_tests PRIVATE surface_program_test.cpp)
