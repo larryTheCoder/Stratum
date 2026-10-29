@@ -20,6 +20,7 @@
 
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
+#include <stratum/noise/perlin_kernel.hpp>
 #include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
@@ -50,16 +51,27 @@ constexpr double kPrecisionPeriod = 33554432.0;
     return from + (part * (to - from));
 }
 
+/// maintainPrecision's body, inline for BlendedNoise::sample's three calls
+/// per octave.
+///
+/// Half up, floor(v / 2^25 + 0.5), not std::round, which takes a half away
+/// from zero (spec Q1.6's reading; this project's own, NOTICE). The two part
+/// where v / 2^25 is a negative half-integer, at v = 2^24 - 2^-29 — the
+/// largest quotient below one half, which the added half rounds up to one —
+/// at odd quotients of magnitude 2^52 to 2^53, and in the sign of a zero at
+/// v = -0. NOTICE says so too.
+///
+/// floorExceptNegativeZero is std::floor here, to the bit: its argument is a
+/// sum whose right operand is +0.5, which IEEE addition never takes to -0.0.
+[[nodiscard]] STRATUM_NOISE_INLINE double wrapCoordinate(double value) noexcept {
+    return value -
+           (detail::floorExceptNegativeZero((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
+}
+
 } // namespace
 
 double maintainPrecision(double value) noexcept {
-    // Half up, floor(v / 2^25 + 0.5), not std::round, which takes a half away
-    // from zero (spec Q1.6's reading; this project's own, NOTICE). The two
-    // part where v / 2^25 is a negative half-integer, at v = 2^24 - 2^-29 —
-    // the largest quotient below one half, which the added half rounds up to
-    // one — at odd quotients of magnitude 2^52 to 2^53, and in the sign of a
-    // zero at v = -0. NOTICE says so too.
-    return value - (std::floor((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
+    return wrapCoordinate(value);
 }
 
 namespace {
@@ -176,13 +188,15 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     double persistence = 1.0;
     double contribution = 1.0;
     for (std::size_t i = 0; i < kBlendOctaves; ++i) {
-        const double blendX = maintainPrecision(x * xzStep * persistence);
-        const double blendY = maintainPrecision(y * yStep * persistence);
-        const double blendZ = maintainPrecision(z * xzStep * persistence);
+        const double blendX = wrapCoordinate(x * xzStep * persistence);
+        const double blendY = wrapCoordinate(y * yStep * persistence);
+        const double blendZ = wrapCoordinate(z * xzStep * persistence);
         const double blendBare = yStep * persistence;
         const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
         const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
-        blend += blend_[i].sample(blendX, blendY, blendZ, blendSmear, blendCap) * contribution;
+        blend +=
+            detail::samplePerlinFoldable(blend_[i], blendX, blendY, blendZ, blendSmear, blendCap) *
+            contribution;
         persistence *= 0.5;
         contribution *= 2.0;
     }
@@ -197,9 +211,9 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     persistence = 1.0;
     contribution = 1.0;
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
-        const double limitX = maintainPrecision(x * xzScale * persistence);
-        const double limitY = maintainPrecision(y * yScale * persistence);
-        const double limitZ = maintainPrecision(z * xzScale * persistence);
+        const double limitX = wrapCoordinate(x * xzScale * persistence);
+        const double limitY = wrapCoordinate(y * yScale * persistence);
+        const double limitZ = wrapCoordinate(z * xzScale * persistence);
         // The slab the y coordinate is folded onto, and the cap on how much
         // of the local offset folds. Which is which is Smear's business.
         const double limitBare = yScale * persistence;
@@ -207,12 +221,14 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
         const double limitCap = smearCap(reading_, y, limitSmear, limitBare);
 
         if (readsMinimum) {
-            minimum +=
-                minimum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
+            minimum += detail::samplePerlinFoldable(minimum_[i], limitX, limitY, limitZ, limitSmear,
+                                                    limitCap) *
+                       contribution;
         }
         if (readsMaximum) {
-            maximum +=
-                maximum_[i].sample(limitX, limitY, limitZ, limitSmear, limitCap) * contribution;
+            maximum += detail::samplePerlinFoldable(maximum_[i], limitX, limitY, limitZ, limitSmear,
+                                                    limitCap) *
+                       contribution;
         }
 
         persistence *= 0.5;
