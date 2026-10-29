@@ -248,6 +248,14 @@ public:
     /// once per block.
     [[nodiscard]] const std::array<Candidate, kCandidateCount>&
     candidatesOf(const CentreSource& centres, const CellIndex home) {
+        return homes_[windowOf(centres, home)].candidates;
+    }
+
+    /// The slot holding home cell @p home's window, drawn into it if it is
+    /// not held: `candidatesIn` of the result is `candidatesOf(centres,
+    /// home)`. Valid until the next call that draws a window (this or
+    /// candidatesOf) — computeSubstance's span for one block.
+    [[nodiscard]] std::size_t windowOf(const CentreSource& centres, const CellIndex home) {
         if (centres.source() != drawnSource_ || centres.base() != drawnBase_ ||
             centres.legacySeed() != drawnLegacySeed_) {
             for (HomeSlot& slot : homes_) {
@@ -257,13 +265,45 @@ public:
             drawnBase_ = centres.base();
             drawnLegacySeed_ = centres.legacySeed();
         }
-        HomeSlot& slot = homes_[slotOf(home)];
+        const std::size_t window = slotOf(home);
+        HomeSlot& slot = homes_[window];
         if (!slot.filled || slot.home != home) {
             slot.candidates = candidatesFor(centres, home);
             slot.home = home;
             slot.filled = true;
+            slot.known = 0;
         }
-        return slot.candidates;
+        return window;
+    }
+
+    [[nodiscard]] const std::array<Candidate, kCandidateCount>&
+    candidatesIn(const std::size_t window) const {
+        return homes_[window].candidates;
+    }
+
+    /// `statusOf(ranked, ...)` for the @p candidate-th cell of @p window's
+    /// candidates, which @p ranked must be (`detail::rankWindow` says which):
+    /// kept in the window as well, so a block asks the centre-keyed table
+    /// below only for a candidate its window has not yet asked about. The
+    /// window's candidates fix their centres, so this is the table's own
+    /// answer for that centre, computed at the same first use; a window
+    /// drawn again for another home forgets them.
+    template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+             typename LavaSampler, typename DeepDarkSampler>
+    [[nodiscard]] SourceStatus
+    statusIn(const std::size_t window, const std::size_t candidate, const Source& ranked,
+             const std::int32_t seaLevel, PslSampler&& psl, FloodednessSampler&& floodedness,
+             SpreadSampler&& spread, LavaSampler&& lava, DeepDarkSampler&& deepDark) {
+        HomeSlot& slot = homes_[window];
+        const auto bit = static_cast<std::uint16_t>(1U << candidate);
+        if ((slot.known & bit) != 0U) {
+            return slot.status[candidate];
+        }
+        const SourceStatus status =
+            statusOf(ranked, seaLevel, psl, floodedness, spread, lava, deepDark);
+        slot.status[candidate] = status;
+        slot.known = static_cast<std::uint16_t>(slot.known | bit);
+        return status;
     }
 
     template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
@@ -288,7 +328,12 @@ private:
         bool filled = false;
         CellIndex home{};
         std::array<Candidate, kCandidateCount> candidates{};
+        /// Bit i set: status[i] is candidates[i]'s status (statusIn).
+        std::uint16_t known = 0;
+        std::array<SourceStatus, kCandidateCount> status{};
     };
+
+    static_assert(kCandidateCount <= 16, "HomeSlot::known has a bit per candidate");
 
     /// Eight slots, one per parity of the home cell's three indices: two
     /// home cells adjacent on any axis never share one. Unsigned, so a
@@ -432,24 +477,26 @@ namespace detail {
 
 /// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier
 /// and the nearest source's own reading, for the four ranked sources in
-/// @p selection.
-template<typename StatusOf, typename BarrierSampler>
+/// @p selection. @p statusOfRank is called as `SourceStatus(std::size_t r)`
+/// for the status of `selection.ranked[r]`: for ranks 0, 1 and 2 in that
+/// order, then for rank 3 only where the fluid-update flag reaches it.
+template<typename StatusOfRank, typename BarrierSampler>
 [[nodiscard]] SubstanceAt decideRanked(const Selection& selection, const AquiferQuery& query,
-                                       StatusOf&& statusOf, BarrierSampler&& barrier,
+                                       StatusOfRank&& statusOfRank, BarrierSampler&& barrier,
                                        const BarrierReads reads) {
     // All three statuses, typed unconditionally: Π needs the type of a
     // source that reads AIR at this block as much as of one that reads fluid
     // (barrier.hpp).
     std::array<SourceStatus, 3> status{};
     for (std::size_t r = 0; r < 3; ++r) {
-        status[r] = statusOf(selection.ranked[r]);
+        status[r] = statusOfRank(r);
     }
 
     std::array<std::int64_t, kRankCount> distanceSq{};
     for (std::size_t r = 0; r < kRankCount; ++r) {
         distanceSq[r] = selection.ranked[r].distanceSq;
     }
-    const auto fourth = [&] { return statusOf(selection.ranked[3]); };
+    const auto fourth = [&] { return statusOfRank(std::size_t{3}); };
 
     // Q6.3: water resting on the global lava sea is water, and no barrier
     // is even considered — the `barrier` noise is not read.
@@ -523,7 +570,9 @@ template<typename StatusOf, typename BarrierSampler>
 computeSubstanceFrom(const Selection& selection, const AquiferQuery& query, StatusOf&& statusOf,
                      BarrierSampler&& barrier,
                      const BarrierReads reads = BarrierReads::WhereWeighed) {
-    return detail::decideRanked(selection, query, statusOf, barrier, reads);
+    return detail::decideRanked(
+        selection, query, [&](const std::size_t r) { return statusOf(selection.ranked[r]); },
+        barrier, reads);
 }
 
 /// The aquifer substance decision for one block (spec Q2.2-Q6.7, clean-room
@@ -585,12 +634,18 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
     if (globalReadsLava(query.y, query.seaLevel)) {
         return detail::globalLavaSea();
     }
-    const Selection selection = rankCandidates(
-        query.x, query.y, query.z, cache.candidatesOf(centres, cellOf(query.x, query.y, query.z)));
+    // rankCandidates over the home cell's window, keeping which candidate
+    // each rank is, so that each ranked status is read from the window's own
+    // memo (StatusCache::statusIn) — the same status the centre-keyed table
+    // holds, asked of it once per window rather than three times a block.
+    const std::size_t window = cache.windowOf(centres, cellOf(query.x, query.y, query.z));
+    const detail::RankedWindow ranked =
+        detail::rankWindow(query.x, query.y, query.z, cache.candidatesIn(window));
     return detail::decideRanked(
-        selection, query,
-        [&](const Source& ranked) {
-            return cache.statusOf(ranked, query.seaLevel, psl, floodedness, spread, lava, deepDark);
+        ranked.selection, query,
+        [&](const std::size_t r) {
+            return cache.statusIn(window, ranked.candidate[r], ranked.selection.ranked[r],
+                                  query.seaLevel, psl, floodedness, spread, lava, deepDark);
         },
         barrier, reads);
 }

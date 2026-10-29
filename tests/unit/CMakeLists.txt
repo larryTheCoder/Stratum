@@ -146,3 +146,6 @@ endif()
 
 # The biome search's warm start (ParameterList::findRowFrom), held to the scan.
 target_sources(stratum_unit_tests PRIVATE biome_search_hint_test.cpp)
+
+# The aquifer's keyed ranking and window status memo, held to what they replaced.
+target_sources(stratum_unit_tests PRIVATE aquifer_rank_test.cpp)

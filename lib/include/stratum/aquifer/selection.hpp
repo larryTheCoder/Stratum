@@ -211,8 +211,141 @@ struct Selection {
 /// Spelled to take a span rather than the window so that the ranking rule can
 /// be given known-answer vectors without a world seed anywhere in the loop.
 /// The real caller always passes twelve.
+///
+/// HOW IT IS COMPUTED, which is not how it is defined. The definition is the
+/// insertion just described: each candidate in turn takes the first rank
+/// whose distance is at least its own and pushes the rest down. That keeps
+/// the ranks sorted by distance with, among equal distances, the LATER
+/// candidate first — so the four ranks are the four least candidates under
+/// the strict total order (distance ascending, then index descending), and
+/// that is what is computed: each candidate is folded into a sorted four of
+/// 64-bit keys, the distance above (its sign bit flipped, so that the
+/// unsigned order is the signed one) and the index's complement below, and
+/// the ranks are read back out of the keys. The same Sources at the same
+/// ranks, ties included, for every span; a rank no candidate reached is
+/// `Source{}`, as before. tests/unit/aquifer_rank_test.cpp holds it to a
+/// verbatim copy of the insertion, rank for rank.
 [[nodiscard]] Selection rankCandidates(std::int32_t x, std::int32_t y, std::int32_t z,
                                        std::span<const Candidate> candidates) noexcept;
+
+namespace detail {
+
+/// rankCandidates' answer with, for each rank a candidate reached, WHICH
+/// candidate it was: `candidates[candidate[r]]` holds `selection.ranked[r]`'s
+/// cell and centre. What lets `computeSubstance` keep a ranked source's
+/// status beside its candidate window (substance.hpp's StatusCache).
+struct RankedWindow {
+    Selection selection;
+    std::array<std::size_t, kRankCount> candidate{};
+};
+
+/// The ranking's DEFINITION, run as written — the insertion rankCandidates
+/// ran before the keys below, each rank's candidate index cascading beside
+/// it. rankWindow's answer for a span too long to key (kMaxKeyedCandidates).
+[[nodiscard]] RankedWindow rankByInsertion(std::int32_t x, std::int32_t y, std::int32_t z,
+                                           std::span<const Candidate> candidates) noexcept;
+
+/// The largest span the keyed ranking indexes: a candidate's index rides in
+/// the low 32 bits of its key. No caller comes near it (the real window is
+/// twelve); a longer span is ranked by the insertion itself.
+inline constexpr std::size_t kMaxKeyedCandidates = std::numeric_limits<std::uint32_t>::max();
+
+/// Flipping the sign bit maps int32's order onto uint32's: INT32_MIN to 0,
+/// -1 to 0x7FFFFFFF, 0 to 0x80000000, INT32_MAX to 0xFFFFFFFF.
+inline constexpr std::uint32_t kKeySignBit = 0x8000'0000U;
+inline constexpr std::uint32_t kKeyLowMask = 0xFFFF'FFFFU;
+
+/// A candidate's key: smaller is a better rank. The distance in the high
+/// half, in signed order; the index's complement in the low half, so that of
+/// two equal distances the LATER candidate has the smaller key — the
+/// displacing tie of Q4.4. Distinct candidates have distinct keys.
+[[nodiscard]] constexpr std::uint64_t rankKeyOf(const std::int32_t distanceSq,
+                                                const std::size_t index) noexcept {
+    const std::uint32_t high = static_cast<std::uint32_t>(distanceSq) ^ kKeySignBit;
+    const std::uint32_t low = kKeyLowMask - static_cast<std::uint32_t>(index);
+    return (std::uint64_t{high} << 32U) | std::uint64_t{low};
+}
+
+[[nodiscard]] constexpr std::int32_t distanceOfRankKey(const std::uint64_t key) noexcept {
+    // uint32 to int32 is modular (C++20): the flip undone.
+    return static_cast<std::int32_t>(static_cast<std::uint32_t>(key >> 32U) ^ kKeySignBit);
+}
+
+[[nodiscard]] constexpr std::size_t indexOfRankKey(const std::uint64_t key) noexcept {
+    return std::size_t{kKeyLowMask - static_cast<std::uint32_t>(key & kKeyLowMask)};
+}
+
+/// rankCandidates, keeping each rank's candidate index: the same selection
+/// rankCandidates returns, for every span (rankCandidates is this). Inline,
+/// because computeSubstance runs it on every block that consults the lattice.
+[[nodiscard]] inline RankedWindow rankWindow(const std::int32_t x, const std::int32_t y,
+                                             const std::int32_t z,
+                                             const std::span<const Candidate> candidates) noexcept {
+    if (candidates.size() > kMaxKeyedCandidates) [[unlikely]] {
+        return rankByInsertion(x, y, z, candidates);
+    }
+    // The four least keys so far, sorted: k0 < k1 < k2 < k3, each a
+    // candidate's or kUnfilled. A key enters below the first slot whose key
+    // exceeds it and pushes the rest down — the definition's insertion, on
+    // keys: distinct keys and a total order, so `<` on keys is the
+    // definition's `<=` on distances with the later candidate first. Most
+    // candidates are farther than the fourth and stop at the first test.
+    constexpr std::uint64_t kUnfilled = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t k0 = kUnfilled;
+    std::uint64_t k1 = kUnfilled;
+    std::uint64_t k2 = kUnfilled;
+    std::uint64_t k3 = kUnfilled;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const std::uint64_t key = rankKeyOf(squaredDistanceTo(candidates[i].centre, x, y, z), i);
+        if (key >= k3) {
+            continue;
+        }
+        if (key >= k2) {
+            k3 = key;
+        } else if (key >= k1) {
+            k3 = k2;
+            k2 = key;
+        } else if (key >= k0) {
+            k3 = k2;
+            k2 = k1;
+            k1 = key;
+        } else {
+            k3 = k2;
+            k2 = k1;
+            k1 = k0;
+            k0 = key;
+        }
+    }
+
+    // Every candidate reaches a rank while one is unfilled: its key is at
+    // most kUnfilled. So the first min(size, 4) ranks are candidates', and
+    // the rest stay Source{} — reading only those also settles the one key
+    // that can equal kUnfilled (candidate 0 at INT32_MAX, which the test
+    // above passes over): the rank left holding kUnfilled then decodes to
+    // that candidate, where the insertion would place it.
+    const auto sourceOf = [&](const std::uint64_t key) noexcept {
+        const Candidate& candidate = candidates[indexOfRankKey(key)];
+        return Source{.cell = candidate.cell,
+                      .centre = candidate.centre,
+                      .distanceSq = distanceOfRankKey(key)};
+    };
+    if (candidates.size() >= kRankCount) {
+        // The real window's case, every rank filled: built in place.
+        return RankedWindow{.selection = Selection{.ranked = {sourceOf(k0), sourceOf(k1),
+                                                              sourceOf(k2), sourceOf(k3)}},
+                            .candidate = {indexOfRankKey(k0), indexOfRankKey(k1),
+                                          indexOfRankKey(k2), indexOfRankKey(k3)}};
+    }
+    RankedWindow out{};
+    const std::array<std::uint64_t, kRankCount> keys{k0, k1, k2, k3};
+    for (std::size_t r = 0; r < candidates.size(); ++r) {
+        out.selection.ranked[r] = sourceOf(keys[r]);
+        out.candidate[r] = indexOfRankKey(keys[r]);
+    }
+    return out;
+}
+
+} // namespace detail
 
 /// The whole selection for one block: home cell, window, metric, ranking.
 ///

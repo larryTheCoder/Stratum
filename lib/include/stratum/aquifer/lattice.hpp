@@ -198,7 +198,20 @@ inline constexpr std::int32_t kCellShiftX = -5;
 inline constexpr std::int32_t kCellShiftY = 1;
 inline constexpr std::int32_t kCellShiftZ = -5;
 
-[[nodiscard]] CellIndex cellOf(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
+///
+/// Defined here rather than in aquifer_lattice.cpp so that the per-block
+/// substance decision (substance.hpp's `computeSubstance`, which runs it on
+/// every block that consults the lattice) inlines it instead of calling out.
+[[nodiscard]] constexpr CellIndex cellOf(const std::int32_t x, const std::int32_t y,
+                                         const std::int32_t z) noexcept {
+    // The shift is part of the mapping, not a separate step, and it moves
+    // every cell boundary: the x boundary sits at x = 5 (mod 16) rather than
+    // at 0. floorDiv on the SHIFTED coordinate — shifting after a truncating
+    // division would be wrong twice over.
+    return CellIndex{.x = javamath::floorDiv(x + kCellShiftX, kCellPitchX),
+                     .y = javamath::floorDiv(y + kCellShiftY, kCellPitchY),
+                     .z = javamath::floorDiv(z + kCellShiftZ, kCellPitchZ)};
+}
 
 /// The centre jitter, drawn once per 3D cell. It is an INTEGER draw, and the
 /// bound differs by axis: ten values horizontally and nine vertically.

@@ -28,16 +28,6 @@ std::int32_t spreadOffset(const double spread) noexcept {
     return javamath::wrappingMul(3, javamath::floorDiv(scaled, 3));
 }
 
-CellIndex cellOf(const std::int32_t x, const std::int32_t y, const std::int32_t z) noexcept {
-    // The shift is part of the mapping, not a separate step, and it moves
-    // every cell boundary: the x boundary sits at x = 5 (mod 16) rather than
-    // at 0. floorDiv on the SHIFTED coordinate — shifting after a truncating
-    // division would be wrong twice over.
-    return CellIndex{.x = javamath::floorDiv(x + kCellShiftX, kCellPitchX),
-                     .y = javamath::floorDiv(y + kCellShiftY, kCellPitchY),
-                     .z = javamath::floorDiv(z + kCellShiftZ, kCellPitchZ)};
-}
-
 std::int32_t levelBand(const std::int32_t centreY) noexcept {
     // floorDiv, not `/`. A cell centred at y = -8 sits in band -1; truncation
     // puts it in band 0, which moves its ladder by forty blocks and reads the

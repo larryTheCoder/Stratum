@@ -18,10 +18,15 @@ std::array<Candidate, kCandidateCount> candidatesFor(const CentreSource& centres
     return out;
 }
 
-Selection rankCandidates(const std::int32_t x, const std::int32_t y, const std::int32_t z,
-                         const std::span<const Candidate> candidates) noexcept {
-    Selection out{};
-    for (const Candidate& candidate : candidates) {
+namespace detail {
+
+RankedWindow rankByInsertion(const std::int32_t x, const std::int32_t y, const std::int32_t z,
+                             const std::span<const Candidate> candidates) noexcept {
+    RankedWindow window{};
+    Selection& out = window.selection;
+    std::array<std::size_t, kRankCount>& from = window.candidate;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const Candidate& candidate = candidates[i];
         const Source source{.cell = candidate.cell,
                             .centre = candidate.centre,
                             .distanceSq = squaredDistanceTo(candidate.centre, x, y, z)};
@@ -35,18 +40,29 @@ Selection rankCandidates(const std::int32_t x, const std::int32_t y, const std::
             out.ranked[2] = out.ranked[1];
             out.ranked[1] = out.ranked[0];
             out.ranked[0] = source;
+            from = {i, from[0], from[1], from[2]};
         } else if (source.distanceSq <= out.ranked[1].distanceSq) {
             out.ranked[3] = out.ranked[2];
             out.ranked[2] = out.ranked[1];
             out.ranked[1] = source;
+            from = {from[0], i, from[1], from[2]};
         } else if (source.distanceSq <= out.ranked[2].distanceSq) {
             out.ranked[3] = out.ranked[2];
             out.ranked[2] = source;
+            from = {from[0], from[1], i, from[2]};
         } else if (source.distanceSq <= out.ranked[3].distanceSq) {
             out.ranked[3] = source;
+            from[3] = i;
         }
     }
-    return out;
+    return window;
+}
+
+} // namespace detail
+
+Selection rankCandidates(const std::int32_t x, const std::int32_t y, const std::int32_t z,
+                         const std::span<const Candidate> candidates) noexcept {
+    return detail::rankWindow(x, y, z, candidates).selection;
 }
 
 Selection selectSources(const CentreSource& centres, const std::int32_t x, const std::int32_t y,
