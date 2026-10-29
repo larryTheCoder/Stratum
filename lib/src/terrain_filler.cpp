@@ -995,13 +995,14 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             const std::uint16_t* const layer = &into.blocks_[into.linearIndex(0, y, 0)];
             std::uint32_t landed = 0;
             for (std::size_t slot = 0; slot < worldSurface.size(); ++slot) {
-                // Both read whatever the other says, so neither is behind a
-                // branch and the layer runs as one straight loop.
-                const bool unfound = worldSurface[slot] < minY;
-                const bool notAir = static_cast<std::uint32_t>(layer[slot]) != airIndex;
-                const bool lands = unfound && notAir;
-                worldSurface[slot] = lands ? y : worldSurface[slot];
-                landed += lands ? 1U : 0U;
+                // Both read whatever the other says, and combined without a
+                // branch, so the layer runs as one straight loop.
+                const std::int32_t current = worldSurface[slot];
+                const std::uint32_t lands =
+                    static_cast<std::uint32_t>(current < minY) &
+                    static_cast<std::uint32_t>(static_cast<std::uint32_t>(layer[slot]) != airIndex);
+                worldSurface[slot] = lands != 0U ? y : current;
+                landed += lands;
             }
             open -= landed;
         }
