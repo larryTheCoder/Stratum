@@ -39,6 +39,7 @@ add_executable(stratum_unit_tests
     noise_settings_test.cpp
     ore_vein_test.cpp
     noise_test.cpp
+    noise_differential_test.cpp
     pack_test.cpp
     pipeline_freeze_test.cpp
     png_test.cpp

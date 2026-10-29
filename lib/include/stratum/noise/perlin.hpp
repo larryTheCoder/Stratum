@@ -144,6 +144,9 @@ public:
     [[nodiscard]] double maxFrequency() const noexcept;
 
 private:
+    /// NormalNoise sums its two stacks' octaves side by side (perlin.cpp).
+    friend class NormalNoise;
+
     struct Octave {
         PerlinNoise noise;
         /// The amplitude AS WRITTEN in the noise's parameters, and the
