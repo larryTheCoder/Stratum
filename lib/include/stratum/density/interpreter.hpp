@@ -712,6 +712,16 @@ public:
             double ty_ = 0.0;
             Row tx_{};
             Row tz_{};
+            /// What tx_ and tz_ were last made for — the first block's
+            /// offsets into its cell, the rectangle and the cell's width,
+            /// of which they are a function alone — so that the next run
+            /// with the same takes them as they are. The width is 0 until
+            /// the first are made.
+            std::int64_t fractionsX_ = 0;
+            std::int64_t fractionsZ_ = 0;
+            std::int32_t fractionsWidth_ = 0;
+            std::int32_t fractionsDepth_ = 0;
+            std::int32_t fractionsCellWidth_ = 0;
         };
 
     private:
@@ -782,6 +792,11 @@ public:
         std::size_t registers_ = 0;
         std::uint8_t result_ = 0;
         NodeIndex root_ = 0;
+        /// Whether every op writes a register none of its operands is, as
+        /// lowerBlock's fresh registers always give: the lane loops write a
+        /// row while they read the others (runLanes). Checked once, at
+        /// blockKernel; a kernel without it runs block by block only.
+        bool distinctRegisters_ = false;
     };
 
     /// @p root's BlockKernel, or nothing when its block part holds a node the
@@ -1055,6 +1070,10 @@ private:
     /// interpolate() fills them (@p memo: callThrough's Call::memo).
     [[nodiscard]] const std::array<double, 4>&
     kernelAlongY(NodeIndex argument, Point lower, double ty, bool memo, CornerCache& cache) const;
+
+    /// kernelAlongY's fill, out of its way: @p argument's entry filled with
+    /// the corners of the cell from @p lower, through no window.
+    void kernelFill(NodeIndex argument, Point lower, CornerCache& cache) const;
 
     /// The ops of @p kernel from @p begin to @p end, over the lanes of
     /// @p active (evaluate(kernel, blocks, lanes, cache)); false where the

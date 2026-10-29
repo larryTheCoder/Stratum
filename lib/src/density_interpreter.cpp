@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace stratum::density {
@@ -1766,6 +1767,35 @@ namespace {
     }
 }
 
+/// A kernel run's lanes (Interpreter::BlockKernel::kLanes).
+constexpr std::size_t kRunLanes = Interpreter::BlockKernel::kLanes;
+
+/// @p out's lanes, each @p apply of the same lane of @p input: an op of a
+/// kernel run, over rows that are distinct registers (BlockKernel::
+/// distinctRegisters_), which is what the restrict says and what lets each
+/// lane be stored as it is made.
+template<typename Apply>
+void eachLane(double* __restrict out, const double* __restrict input, const Apply& apply) noexcept {
+#if defined(__GNUC__)
+#pragma GCC unroll 16
+#endif
+    for (std::size_t lane = 0; lane < kRunLanes; ++lane) {
+        out[lane] = apply(input[lane]);
+    }
+}
+
+/// The same from two rows, which may be one register: both are only read.
+template<typename Apply>
+void eachLane(double* __restrict out, const double* __restrict first,
+              const double* __restrict second, const Apply& apply) noexcept {
+#if defined(__GNUC__)
+#pragma GCC unroll 16
+#endif
+    for (std::size_t lane = 0; lane < kRunLanes; ++lane) {
+        out[lane] = apply(first[lane], second[lane]);
+    }
+}
+
 } // namespace
 
 std::optional<Interpreter::BlockKernel> Interpreter::blockKernel(const NodeIndex root) const {
@@ -1785,6 +1815,38 @@ std::optional<Interpreter::BlockKernel> Interpreter::blockKernel(const NodeIndex
             lowered.code = BlockKernel::Code::InterpolatedShared;
         }
     }
+    // Each op's target is a register newRegister took for it (or, for a
+    // Move, for its range_choice, before either branch), so none is one of
+    // its own operands; checked rather than trusted, since the lane loops
+    // depend on it (BlockKernel::distinctRegisters_).
+    kernel.distinctRegisters_ =
+        std::ranges::all_of(kernel.ops_, [](const BlockKernel::KernelOp& lowered) {
+            using Code = BlockKernel::Code;
+            switch (lowered.code) {
+                case Code::Add:
+                case Code::Mul:
+                case Code::Min:
+                case Code::Max:
+                    return lowered.target != lowered.first && lowered.target != lowered.second;
+                case Code::Abs:
+                case Code::Square:
+                case Code::Cube:
+                case Code::HalfNegative:
+                case Code::QuarterNegative:
+                case Code::Squeeze:
+                case Code::Invert:
+                case Code::Clamp:
+                case Code::Move:
+                    return lowered.target != lowered.first;
+                case Code::YClampedGradient:
+                case Code::Interpolated:
+                case Code::InterpolatedShared:
+                case Code::BranchOutOfRange:
+                case Code::Jump:
+                    return true;
+            }
+            return false;
+        });
     return kernel;
 }
 
@@ -2198,17 +2260,23 @@ void Interpreter::kernelGeometry(CornerCache& cache, const CellGeometry cells) n
     }
 }
 
-const std::array<double, 4>& Interpreter::kernelAlongY(const NodeIndex argument, const Point lower,
-                                                       const double ty, const bool memo,
-                                                       CornerCache& cache) const {
+void Interpreter::kernelFill(const NodeIndex argument, const Point lower,
+                             CornerCache& cache) const {
+    const Call call = callThrough(cache, nullptr, ReadContext::Block);
+    fillCell(argument, call, true, cache.entries_[static_cast<std::size_t>(argument)], lower, 0U);
+}
+
+inline const std::array<double, 4>& Interpreter::kernelAlongY(const NodeIndex argument,
+                                                              const Point lower, const double ty,
+                                                              const bool memo,
+                                                              CornerCache& cache) const {
     // interpolate()'s entry check. A kernel reads through no window, whose
     // number is 0 (callThrough), so the tag is 0 whatever the argument
     // reaches.
     CornerCache::Entry& entry = cache.entries_[static_cast<std::size_t>(argument)];
     if (!entry.filled || entry.x != lower.x || entry.y != lower.y || entry.z != lower.z ||
         (memo && entry.tag != 0U)) {
-        const Call call = callThrough(cache, nullptr, ReadContext::Block);
-        fillCell(argument, call, true, entry, lower, 0U);
+        kernelFill(argument, lower, cache);
     }
     // blendCell's first step, kept for the cell's next block at this y
     // (Entry::alongY).
@@ -2253,6 +2321,9 @@ bool Interpreter::evaluate(const BlockKernel& kernel, const BlockKernel::Blocks&
     if (cache.sharing_ != CornerCache::Sharing::Lattice || !substitutions_.empty()) {
         return false;
     }
+    if (!kernel.distinctRegisters_) {
+        return false;
+    }
     if (blocks.width < 1 || blocks.depth < 1 ||
         std::int64_t{blocks.width} * blocks.depth > std::int64_t{kLanes} ||
         std::int64_t{blocks.first.x} + blocks.width - 1 >
@@ -2292,24 +2363,13 @@ bool Interpreter::runLanes(const BlockKernel& kernel, const std::size_t begin,
     constexpr std::size_t kLanes = BlockKernel::kLanes;
     const KernelOp* const ops = kernel.ops_.data();
     Row* const values = lanes.values_.data();
-    // Each into a row of its own, then stored: no lane reads what another
-    // wrote.
+    // Into the op's own row, from its operands' (distinctRegisters_).
     const auto unary = [values](const KernelOp& op, const auto& apply) {
-        const Row& input = values[op.first];
-        Row out;
-        for (std::size_t lane = 0; lane < kLanes; ++lane) {
-            out[lane] = apply(input[lane]);
-        }
-        values[op.target] = out;
+        eachLane(values[op.target].data(), values[op.first].data(), apply);
     };
     const auto binary = [values](const KernelOp& op, const auto& apply) {
-        const Row& first = values[op.first];
-        const Row& second = values[op.second];
-        Row out;
-        for (std::size_t lane = 0; lane < kLanes; ++lane) {
-            out[lane] = apply(first[lane], second[lane]);
-        }
-        values[op.target] = out;
+        eachLane(values[op.target].data(), values[op.first].data(), values[op.second].data(),
+                 apply);
     };
 
     std::size_t pc = begin;
@@ -2385,13 +2445,8 @@ bool Interpreter::runLanes(const BlockKernel& kernel, const std::size_t begin,
                 // of the cell under the memo), and so is each lane's value.
                 const std::array<double, 4> alongY =
                     kernelAlongY(op.interpolated, lanes.lower_, lanes.ty_, true, cache);
-                const Row& tx = lanes.tx_;
-                const Row& tz = lanes.tz_;
-                Row out;
-                for (std::size_t lane = 0; lane < kLanes; ++lane) {
-                    out[lane] = blendAlongXz(alongY, tx[lane], tz[lane]);
-                }
-                values[op.target] = out;
+                eachLane(values[op.target].data(), lanes.tx_.data(), lanes.tz_.data(),
+                         [&alongY](double tx, double tz) { return blendAlongXz(alongY, tx, tz); });
                 break;
             }
             case Code::Move:
@@ -2419,6 +2474,9 @@ bool Interpreter::runLanes(const BlockKernel& kernel, const std::size_t begin,
                 const double minInclusive = op.parameters[0];
                 const double maxExclusive = op.parameters[1];
                 std::uint32_t within = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 16
+#endif
                 for (std::size_t lane = 0; lane < kLanes; ++lane) {
                     within |= (inRange(input[lane], minInclusive, maxExclusive) ? 1U : 0U) << lane;
                 }
@@ -2481,16 +2539,28 @@ bool Interpreter::laneCell(BlockKernel::Lanes& lanes, CornerCache& cache) const 
     lanes.ty_ = cache.kernelFractionTables_
                     ? cache.kernelHeightFractions_[static_cast<std::size_t>(dy)]
                     : static_cast<double>(dy) / static_cast<double>(cells.height);
-    lanes.tx_.fill(0.0);
-    lanes.tz_.fill(0.0);
-    for (std::int32_t row = 0; row < blocks.depth; ++row) {
-        for (std::int32_t column = 0; column < blocks.width; ++column) {
-            const std::size_t lane =
-                (static_cast<std::size_t>(row) * static_cast<std::size_t>(blocks.width)) +
-                static_cast<std::size_t>(column);
-            lanes.tx_[lane] = widthFraction(dx + column);
-            lanes.tz_[lane] = widthFraction(dz + row);
+    // tx and tz are a function of the offsets, the rectangle and the width
+    // alone (the table holds the division's own doubles), so a run like the
+    // last keeps them.
+    if (lanes.fractionsCellWidth_ != cells.width || lanes.fractionsX_ != dx ||
+        lanes.fractionsZ_ != dz || lanes.fractionsWidth_ != blocks.width ||
+        lanes.fractionsDepth_ != blocks.depth) {
+        lanes.tx_.fill(0.0);
+        lanes.tz_.fill(0.0);
+        for (std::int32_t row = 0; row < blocks.depth; ++row) {
+            for (std::int32_t column = 0; column < blocks.width; ++column) {
+                const std::size_t lane =
+                    (static_cast<std::size_t>(row) * static_cast<std::size_t>(blocks.width)) +
+                    static_cast<std::size_t>(column);
+                lanes.tx_[lane] = widthFraction(dx + column);
+                lanes.tz_[lane] = widthFraction(dz + row);
+            }
         }
+        lanes.fractionsCellWidth_ = cells.width;
+        lanes.fractionsX_ = dx;
+        lanes.fractionsZ_ = dz;
+        lanes.fractionsWidth_ = blocks.width;
+        lanes.fractionsDepth_ = blocks.depth;
     }
     lanes.lower_ = lower;
     lanes.cellKnown_ = true;
