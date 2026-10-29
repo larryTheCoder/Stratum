@@ -58,12 +58,15 @@ constexpr std::int32_t kSeaLevel = 63;
 /// The four noises every tree below may read, written on the fly.
 class ProgramNoises {
 public:
-    ProgramNoises()
+    /// @p surface is `minecraft:surface`'s own definition: vanilla's shape by
+    /// default, or amplitudes no surface depth survives, to draw refusals.
+    explicit ProgramNoises(
+        std::string_view surface = R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})")
         : path_(std::filesystem::temp_directory_path() /
                 stratum::test::tempName("stratum-surface-program-test")) {
         const std::filesystem::path noiseDir = path_ / "noise";
         std::filesystem::create_directories(noiseDir);
-        write(noiseDir, "surface", R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})");
+        write(noiseDir, "surface", surface);
         write(noiseDir, "surface_secondary",
               R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 0.0, 1.0]})");
         write(noiseDir, "clay_bands_offset", R"({"firstOctave": -8, "amplitudes": [1.0]})");
@@ -538,4 +541,142 @@ TEST_CASE("a tree cut into more bands than the executor keeps runs its one list"
             CHECK(placed->name.toString() == "stratum:b" + std::to_string(first));
         }
     }
+}
+
+namespace {
+
+/// One of a small fixed set of conditions, so that a tree drawn from it
+/// tests the same condition — the same type, the same parameters, in
+/// another of its own entries — again and again, as vanilla's trees do.
+[[nodiscard]] nlohmann::json pooledCondition(Dice& dice) {
+    const auto stoneDepth = [](int offset, const char* type, bool addSurfaceDepth, int range) {
+        return nlohmann::json{{"type", "minecraft:stone_depth"},
+                              {"offset", offset},
+                              {"surface_type", type},
+                              {"add_surface_depth", addSurfaceDepth},
+                              {"secondary_depth_range", range}};
+    };
+    const auto water = [](int offset, int multiplier, bool addStoneDepth) {
+        return nlohmann::json{{"type", "minecraft:water"},
+                              {"offset", offset},
+                              {"surface_depth_multiplier", multiplier},
+                              {"add_stone_depth", addStoneDepth}};
+    };
+    switch (dice.below(15)) {
+        case 0:
+            return stoneDepth(0, "floor", false, 0);
+        case 1:
+            return stoneDepth(0, "floor", true, 0);
+        case 2:
+            return stoneDepth(1, "ceiling", false, 6);
+        case 3:
+            return water(-1, 0, false);
+        case 4:
+            return water(-6, -1, true);
+        case 5:
+            return nlohmann::json{{"type", "minecraft:y_above"},
+                                  {"anchor", {{"absolute", 63}}},
+                                  {"surface_depth_multiplier", 1},
+                                  {"add_stone_depth", true}};
+        case 6:
+            return nlohmann::json{{"type", "minecraft:biome"},
+                                  {"biome_is", {"minecraft:plains", "minecraft:desert"}}};
+        case 7:
+            return nlohmann::json{{"type", "minecraft:biome"},
+                                  {"biome_is", {"minecraft:desert", "minecraft:plains"}}};
+        case 8:
+            return nlohmann::json{{"type", "minecraft:hole"}};
+        case 9:
+            return nlohmann::json{{"type", "minecraft:above_preliminary_surface"}};
+        case 10:
+            return nlohmann::json{{"type", "minecraft:noise_threshold"},
+                                  {"noise", "minecraft:bumps"},
+                                  {"min_threshold", -0.2},
+                                  {"max_threshold", 0.4}};
+        case 11:
+            return nlohmann::json{{"type", "minecraft:vertical_gradient"},
+                                  {"random_name", "stratum:a"},
+                                  {"true_at_and_below", {{"absolute", 60}}},
+                                  {"false_at_and_above", {{"absolute", 70}}}};
+        case 12:
+            return nlohmann::json{{"type", "minecraft:steep"}};
+        case 13:
+            return nlohmann::json{{"type", "minecraft:temperature"}};
+        default:
+            return nlohmann::json{{"type", "minecraft:not"}, {"invert", pooledCondition(dice)}};
+    }
+}
+
+[[nodiscard]] nlohmann::json pooledRule(Dice& dice, int depth) {
+    const std::uint32_t kind = depth >= 6 ? 0U : dice.below(5);
+    if (kind == 0U) {
+        return block("stratum:b" + std::to_string(dice.below(6)));
+    }
+    if (kind == 1U) {
+        nlohmann::json children = nlohmann::json::array();
+        const std::uint32_t count = 1U + dice.below(5);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            children.push_back(pooledRule(dice, depth + 1));
+        }
+        return nlohmann::json{{"type", "minecraft:sequence"}, {"sequence", children}};
+    }
+    return nlohmann::json{{"type", "minecraft:condition"},
+                          {"if_true", pooledCondition(dice)},
+                          {"then_run", pooledRule(dice, depth + 1)}};
+}
+
+/// What one apply comes to: the block's name, "nothing", or the refusal's
+/// own words.
+template<typename Apply>
+[[nodiscard]] std::string outcomeOf(Apply&& apply) {
+    try {
+        return nameOf(apply());
+    } catch (const stratum::surface::ExecutionError& error) {
+        return std::string("refused: ") + error.what();
+    }
+}
+
+} // namespace
+
+TEST_CASE("a test whose twin has answered is followed, not made again, refusals included",
+          "[surface][program]") {
+    // Trees drawn from a pool of fifteen conditions test each one many times
+    // over; the executor answers each repeat from the first (the y bands'
+    // copies, unrolled over what their walk has learnt). Under vanilla's
+    // surface noise and under one whose amplitudes no surface depth
+    // survives — so that the first of a twin to read the depth refuses —
+    // every block comes to what the reference comes to, refusal for refusal,
+    // with the memo and without, by name and by key.
+    std::size_t refused = 0;
+    std::size_t placed = 0;
+    for (const std::string_view surface :
+         {std::string_view{R"({"firstOctave": -6, "amplitudes": [1.0, 1.0, 1.0]})"},
+          std::string_view{R"({"firstOctave": -6, "amplitudes": [1e12]})"}}) {
+        const ProgramNoises tree(surface);
+        const auto noises = tree.registry();
+        for (std::uint64_t treeSeed = 3001; treeSeed <= 3060; ++treeSeed) {
+            Dice dice(treeSeed);
+            const RuleGraph graph =
+                RuleGraph::resolve(pooledRule(dice, 0), ResourceLocation::parse("stratum:test"));
+            const Executor executor =
+                Executor::compile(graph, kSeed, geometry(), &noises, kSeaLevel);
+            const Reference reference(graph, executor, noises);
+            stratum::surface::ColumnMemo memo;
+            walkColumns(dice, 6, [&](const Context& block) {
+                const std::string expected =
+                    outcomeOf([&] { return reference.rule(graph.root(), block); });
+                CAPTURE(treeSeed, block.x, block.y, block.z);
+                REQUIRE(outcomeOf([&] { return executor.apply(block, memo); }) == expected);
+                REQUIRE(outcomeOf([&] { return executor.apply(block); }) == expected);
+                Context keyed = block;
+                keyed.biomeKey = executor.biomeKey(*block.biome);
+                keyed.biome.reset();
+                REQUIRE(outcomeOf([&] { return executor.apply(keyed, memo); }) == expected);
+                refused += expected.starts_with("refused: ") ? 1U : 0U;
+                placed += expected.starts_with("stratum:") ? 1U : 0U;
+            });
+        }
+    }
+    CHECK(refused > 1000U);
+    CHECK(placed > 10000U);
 }

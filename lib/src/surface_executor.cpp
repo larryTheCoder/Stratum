@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <ranges>
 #include <set>
 #include <sstream>
@@ -555,6 +557,209 @@ void Executor::bandPrograms() {
     }
 
     const std::size_t lowered = program_.size();
+
+    // THE REPEATS. Two typed tests of one type with the same parameters —
+    // the same compiled anchors, source, slot or list — compute the same
+    // answer from the same block: every test reads only the Context and the
+    // ColumnMemo, which one apply never changes but to fill, and a fill is
+    // the value every later read of it would compute. So once one of them
+    // has answered, the other's answer is known, and it can neither refuse
+    // (the first, making exactly the same reads, did not) nor read anything
+    // the first did not. Each class tested twice or more gets a bit (up to
+    // 64; past that a class simply is not tracked), and a copy is unrolled
+    // over what its walk has learnt (followFacts below).
+    struct ClassKey {
+        Code code = Code::Test;
+        std::int64_t first = 0;
+        std::int64_t second = 0;
+        std::int64_t third = 0;
+        std::int64_t fourth = 0;
+        std::vector<data::ResourceLocation> biomes;
+
+        [[nodiscard]] auto operator<=>(const ClassKey& other) const = default;
+    };
+
+    const auto keyOf = [this](const ProgramOp& op) -> std::optional<ClassKey> {
+        const Condition& condition = *op.tested;
+        const CompiledCondition& compiled = compiled_[op.condition];
+        ClassKey key;
+        key.code = op.code;
+        switch (op.code) {
+            case Code::Gradient:
+                key.first = static_cast<std::int64_t>(compiled.gradient);
+                key.second = compiled.trueAtAndBelow;
+                key.third = compiled.falseAtAndAbove;
+                return key;
+            case Code::YAbove:
+                key.first = compiled.anchor;
+                key.second = condition.surfaceDepthMultiplier;
+                key.third = condition.addStoneDepth ? 1 : 0;
+                return key;
+            case Code::Water:
+                key.first = condition.offset;
+                key.second = condition.surfaceDepthMultiplier;
+                key.third = condition.addStoneDepth ? 1 : 0;
+                return key;
+            case Code::StoneDepth:
+                key.first = condition.offset;
+                key.second = condition.addSurfaceDepth ? 1 : 0;
+                key.third = condition.secondaryDepthRange;
+                key.fourth = compiled.ceiling ? 1 : 0;
+                return key;
+            case Code::Hole:
+            case Code::Steep:
+            case Code::AbovePreliminarySurface:
+            case Code::Temperature:
+                return key;
+            case Code::Noise:
+                if (!condition.noise.has_value()) {
+                    return std::nullopt;
+                }
+                key.first = static_cast<std::int64_t>(compiled.noiseSlot);
+                key.second = std::bit_cast<std::int64_t>(condition.minThreshold);
+                key.third = std::bit_cast<std::int64_t>(condition.maxThreshold);
+                return key;
+            case Code::Biome:
+                key.biomes = condition.biomes;
+                std::ranges::sort(key.biomes);
+                key.biomes.erase(std::unique(key.biomes.begin(), key.biomes.end()),
+                                 key.biomes.end());
+                return key;
+            default:
+                return std::nullopt;
+        }
+    };
+    constexpr std::size_t kTrackedClasses = 64;
+    constexpr std::uint32_t kUntracked = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> classOf(compiled_.size(), kUntracked);
+    {
+        std::map<ClassKey, std::vector<ConditionIndex>> members;
+        std::map<ClassKey, std::size_t> tests;
+        for (const ProgramOp& op : program_) {
+            if (terminal(op) || op.code == Code::Test) {
+                continue;
+            }
+            if (std::optional<ClassKey> key = keyOf(op); key.has_value()) {
+                members[*key].push_back(op.condition);
+                ++tests[*key];
+            }
+        }
+        std::uint32_t next = 0;
+        for (const auto& [key, conditions] : members) {
+            if (tests[key] < 2 || next >= kTrackedClasses) {
+                continue;
+            }
+            for (const ConditionIndex condition : conditions) {
+                classOf[condition] = next;
+            }
+            ++next;
+        }
+    }
+    const auto classBit = [&](const ProgramOp& op) -> std::uint64_t {
+        if (terminal(op) || op.code == Code::Test || classOf[op.condition] == kUntracked) {
+            return 0;
+        }
+        return std::uint64_t{1} << classOf[op.condition];
+    };
+    // @p copy (relative, entered at @p start) unrolled over its facts: each
+    // op of the result is an op of the copy together with which tracked
+    // classes the walk there has answered, and how; a test whose class is
+    // answered is followed rather than kept, and a fact no later op of the
+    // copy can use is forgotten, so that walks that learnt the same useful
+    // things share their ops. Bounded: past four times the copy, the copy
+    // stands as it is.
+    const auto followFacts = [&](std::vector<ProgramOp>& copy, std::uint32_t& start) {
+        const std::size_t size = copy.size();
+        // Which classes an op at i or after can still test.
+        std::vector<std::uint64_t> ahead(size + 1, 0);
+        for (std::size_t i = size; i-- > 0;) {
+            ahead[i] = ahead[i + 1] | classBit(copy[i]);
+        }
+        struct State {
+            std::uint32_t op = 0;
+            std::uint64_t known = 0;
+            std::uint64_t value = 0;
+
+            [[nodiscard]] bool operator==(const State& other) const = default;
+        };
+        struct StateHash {
+            [[nodiscard]] std::size_t operator()(const State& state) const noexcept {
+                std::uint64_t hash = UINT64_C(14695981039346656037);
+                for (const std::uint64_t part :
+                     {std::uint64_t{state.op}, state.known, state.value}) {
+                    hash = (hash ^ part) * UINT64_C(1099511628211);
+                }
+                return static_cast<std::size_t>(hash);
+            }
+        };
+        std::unordered_map<State, std::uint32_t, StateHash> emitted;
+        std::vector<State> pending;
+        std::vector<ProgramOp> unrolled;
+        const std::size_t bound = (4 * size) + 64;
+        bool overflow = false;
+        // The op a walk in @p state runs next, made if it is new.
+        const auto visit = [&](State state) -> std::uint32_t {
+            while (true) {
+                const ProgramOp& op = copy[state.op];
+                // Only what is still ahead is worth knowing.
+                state.known &= ahead[state.op];
+                state.value &= state.known;
+                const std::uint64_t bit = classBit(op);
+                if (bit == 0 || (state.known & bit) == 0) {
+                    break;
+                }
+                const bool answer = (state.value & bit) != 0;
+                state.op = answer != op.negate ? op.next : op.jump;
+            }
+            if (terminal(copy[state.op])) {
+                state.known = 0;
+                state.value = 0;
+            }
+            const auto [found, added] =
+                emitted.emplace(state, static_cast<std::uint32_t>(unrolled.size()));
+            if (added) {
+                if (unrolled.size() >= bound) {
+                    overflow = true;
+                }
+                unrolled.push_back(copy[state.op]);
+                pending.push_back(state);
+            }
+            return found->second;
+        };
+        const std::uint32_t entry = visit(State{.op = start, .known = 0, .value = 0});
+        for (std::size_t i = 0; i < pending.size() && !overflow; ++i) {
+            const State state = pending[i];
+            const ProgramOp op = copy[state.op];
+            if (terminal(op)) {
+                continue;
+            }
+            const std::uint64_t bit = classBit(op);
+            // The pass edge has answered `passed == !negate`.
+            State passing = state;
+            State failing = state;
+            passing.op = op.next;
+            failing.op = op.jump;
+            if (bit != 0) {
+                passing.known |= bit;
+                failing.known |= bit;
+                if (!op.negate) {
+                    passing.value |= bit;
+                } else {
+                    failing.value |= bit;
+                }
+            }
+            const std::uint32_t next = visit(passing);
+            const std::uint32_t jump = visit(failing);
+            unrolled[i].next = next;
+            unrolled[i].jump = jump;
+        }
+        if (overflow) {
+            return;
+        }
+        copy = std::move(unrolled);
+        start = entry;
+    };
+
     std::vector<ProgramOp> banded = program_;
     std::vector<std::size_t> settled(lowered);
     std::vector<char> reached(lowered);
@@ -593,10 +798,6 @@ void Executor::bandPrograms() {
                 copy.push_back(program_[i]);
             }
         }
-        std::uint64_t hash = UINT64_C(14695981039346656037);
-        const auto mix = [&hash](const std::uint64_t value) {
-            hash = (hash ^ value) * UINT64_C(1099511628211);
-        };
         for (std::size_t i = 0, kept = 0; i < lowered; ++i) {
             if (reached[i] == 0) {
                 continue;
@@ -606,6 +807,14 @@ void Executor::bandPrograms() {
                 op.next = renumbered[settled[program_[i].next]];
                 op.jump = renumbered[settled[program_[i].jump]];
             }
+        }
+        std::uint32_t start = renumbered[settled[0]];
+        followFacts(copy, start);
+        std::uint64_t hash = UINT64_C(14695981039346656037);
+        const auto mix = [&hash](const std::uint64_t value) {
+            hash = (hash ^ value) * UINT64_C(1099511628211);
+        };
+        for (const ProgramOp& op : copy) {
             mix(static_cast<std::uint64_t>(op.code));
             mix(op.negate ? 1U : 0U);
             mix(op.condition);
@@ -613,7 +822,6 @@ void Executor::bandPrograms() {
             mix(op.jump);
             mix(reinterpret_cast<std::uintptr_t>(op.block));
         }
-        const std::uint32_t start = renumbered[settled[0]];
         // The same copy as an earlier one, offsets and all, is that one.
         std::vector<std::pair<std::uint32_t, std::uint32_t>>& alike = copies[hash];
         for (const auto& [earlier, size] : alike) {
