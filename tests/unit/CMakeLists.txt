@@ -164,3 +164,6 @@ target_sources(stratum_unit_tests PRIVATE surface_program_test.cpp)
 target_sources(stratum_unit_tests PRIVATE surface_memo_owner_test.cpp)
 target_sources(stratum_unit_tests PRIVATE surface_column_reads_test.cpp)
 target_sources(stratum_unit_tests PRIVATE surface_pass_heights_test.cpp)
+
+# The fill at the depth bound: a chain of interpolated, kMaxDepth deep.
+target_sources(stratum_unit_tests PRIVATE terrain_fill_depth_test.cpp)
