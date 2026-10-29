@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace stratum::biome {
 
@@ -55,6 +56,26 @@ constexpr std::array<settings::RouterEntry, 1> kEndEntries = {settings::RouterEn
 [[nodiscard]] const data::ResourceLocation& smallEndIslands() {
     static const data::ResourceLocation kId{"minecraft", "small_end_islands"};
     return kId;
+}
+
+/// A multi-noise source's climate at @p quartCorner: the six router
+/// entries, read in the order ClimateSample declares them.
+[[nodiscard]] ClimateSample climateAt(const density::Interpreter& interpreter,
+                                      const settings::NoiseRouter& router,
+                                      const density::Point quartCorner,
+                                      density::Interpreter::CornerCache& cache) {
+    return ClimateSample{
+        .temperature =
+            interpreter.evaluate(router.at(settings::RouterEntry::Temperature), quartCorner, cache),
+        .humidity =
+            interpreter.evaluate(router.at(settings::RouterEntry::Vegetation), quartCorner, cache),
+        .continentalness =
+            interpreter.evaluate(router.at(settings::RouterEntry::Continents), quartCorner, cache),
+        .erosion =
+            interpreter.evaluate(router.at(settings::RouterEntry::Erosion), quartCorner, cache),
+        .depth = interpreter.evaluate(router.at(settings::RouterEntry::Depth), quartCorner, cache),
+        .weirdness =
+            interpreter.evaluate(router.at(settings::RouterEntry::Ridges), quartCorner, cache)};
 }
 
 } // namespace
@@ -107,19 +128,7 @@ const data::ResourceLocation& Source::at(const density::Interpreter& interpreter
             interpreter.evaluate(router.at(settings::RouterEntry::Erosion),
                                  EndRule::samplePoint(chunkX, quartCorner.y, chunkZ), cache));
     }
-    const ClimateSample sample{
-        .temperature =
-            interpreter.evaluate(router.at(settings::RouterEntry::Temperature), quartCorner, cache),
-        .humidity =
-            interpreter.evaluate(router.at(settings::RouterEntry::Vegetation), quartCorner, cache),
-        .continentalness =
-            interpreter.evaluate(router.at(settings::RouterEntry::Continents), quartCorner, cache),
-        .erosion =
-            interpreter.evaluate(router.at(settings::RouterEntry::Erosion), quartCorner, cache),
-        .depth = interpreter.evaluate(router.at(settings::RouterEntry::Depth), quartCorner, cache),
-        .weirdness =
-            interpreter.evaluate(router.at(settings::RouterEntry::Ridges), quartCorner, cache)};
-    return parameters_->find(sample);
+    return parameters_->find(climateAt(interpreter, router, quartCorner, cache));
 }
 
 void Source::fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
@@ -155,16 +164,32 @@ void Source::fillChunk(const density::Interpreter& interpreter, const settings::
     }
     const std::int32_t baseQuartX = chunkX * kQuartsPerChunkEdge;
     const std::int32_t baseQuartZ = chunkZ * kQuartsPerChunkEdge;
+    // `at`, quart by quart, with the search warm-started
+    // (ParameterList::findRowFrom, which returns the same row whatever the
+    // hint): from each quart column's own answer in the layer below — under
+    // vanilla's routers the five other climate entries do not read y, so the
+    // two differ in depth alone — and, in the first layer, from the quart
+    // before. Per call, so nothing is shared between threads.
+    const std::vector<Entry>& entries = parameters_->entries();
+    std::array<std::size_t, kQuartsPerLayer> below{};
+    std::size_t previous = ParameterList::kNoHint;
     std::size_t index = 0;
     for (std::size_t layer = 0; layer < layers; ++layer) {
         const std::int32_t blockY = (minQuartY + static_cast<std::int32_t>(layer)) * kQuartWidth;
         for (std::int32_t qz = 0; qz < kQuartsPerChunkEdge; ++qz) {
             for (std::int32_t qx = 0; qx < kQuartsPerChunkEdge; ++qx) {
-                into[index++] = &at(interpreter, router,
-                                    density::Point{.x = (baseQuartX + qx) * kQuartWidth,
-                                                   .y = blockY,
-                                                   .z = (baseQuartZ + qz) * kQuartWidth},
-                                    cache);
+                const std::size_t column = (static_cast<std::size_t>(qz) * kQuartsPerChunkEdge) +
+                                           static_cast<std::size_t>(qx);
+                const std::size_t row = parameters_->findRowFrom(
+                    climateAt(interpreter, router,
+                              density::Point{.x = (baseQuartX + qx) * kQuartWidth,
+                                             .y = blockY,
+                                             .z = (baseQuartZ + qz) * kQuartWidth},
+                              cache),
+                    layer == 0 ? previous : below[column]);
+                below[column] = row;
+                previous = row;
+                into[index++] = &entries[row].biome;
             }
         }
     }

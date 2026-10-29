@@ -138,10 +138,19 @@ void checkNotEmpty(const std::vector<Entry>& entries) {
 /// lets through (see QuantizedPoint::fitness), so it is exact.
 [[nodiscard]] std::int64_t score(const detail::SearchBox& box,
                                  const std::array<std::int64_t, 6>& values) noexcept {
+    // The six axes spelled out rather than looped over: the same terms,
+    // added in the same order, but the loop is not unrolled for us and its
+    // counter and its reloads of the sample cost as much as the terms.
+    const auto term = [&](const std::size_t axis) noexcept {
+        return axisTerm(values[axis], box.min[axis], box.max[axis]);
+    };
     std::int64_t total = std::int64_t{box.offset} * std::int64_t{box.offset};
-    for (std::size_t axis = 0; axis < 6; ++axis) {
-        total += axisTerm(values[axis], box.min[axis], box.max[axis]);
-    }
+    total += term(0);
+    total += term(1);
+    total += term(2);
+    total += term(3);
+    total += term(4);
+    total += term(5);
     return total;
 }
 
@@ -568,7 +577,7 @@ void ParameterList::buildSearchTree() {
 }
 
 template<bool Counting>
-std::size_t ParameterList::searchTree(const QuantizedSample& sample,
+std::size_t ParameterList::searchTree(const QuantizedSample& sample, const std::size_t hint,
                                       SearchCounts* counts) const noexcept {
     const std::array<std::int64_t, 6> values = axesOf(sample);
 
@@ -577,34 +586,84 @@ std::size_t ParameterList::searchTree(const QuantizedSample& sample,
     // ±kMaxQuantizedSample has a real fitness near 6e18, past 2^62.
     std::int64_t bestFitness = std::numeric_limits<std::int64_t>::max();
     std::int64_t bestRow = -1;
-
-    // Nodes still to visit, each with its lower bound. Depth first, the more
-    // promising child on top; at most one entry per level waits under the
-    // one being expanded, hence the bound (buildSearchTree).
-    struct Pending {
-        std::uint32_t node = 0;
-        std::int64_t bound = 0;
-    };
-
-    std::array<Pending, kMaxSearchDepth + 1> pending{};
-    std::size_t top = 0;
-    pending[top++] = Pending{.node = 0, .bound = score(searchNodes_[0].box, values)};
-    if constexpr (Counting) {
-        ++counts->nodes;
+    if (hint < quantized_.size()) {
+        // The warm start: the hinted row scored first, as though it were the
+        // first row met (findRowFrom says why that cannot change the row).
+        // QuantizedPoint::fitness is score() over the same integers — the
+        // tree's rows carry exactly these bounds (auditSearchTree) — so it is
+        // the value the row scores in its leaf too, where it then neither
+        // beats nor ties-and-wins against itself.
+        bestFitness = quantized_[hint].fitness(sample);
+        bestRow = static_cast<std::int64_t>(hint);
+        if constexpr (Counting) {
+            ++counts->rows;
+        }
     }
 
-    while (top > 0) {
-        const Pending next = pending[--top];
-        const detail::SearchNode& node = searchNodes_[next.node];
-        // Every row under the node scores at least `bound`. Above the best,
-        // none can win; equal to it, one can only tie, and a tie goes to the
-        // later row, so the node is skipped only when every row in it
-        // (`box.row` is the largest) is earlier than the best. Rechecked here
-        // rather than when pushed, because the best may have improved since.
-        if (next.bound > bestFitness || (next.bound == bestFitness && node.box.row < bestRow)) {
-            continue;
+    // Every row under a node scores at least its bound. Above the best, none
+    // can win; equal to it, one can only tie, and a tie goes to the later
+    // row, so a node is skipped only when every row in it (`box.row` is the
+    // largest) is earlier than the best. Strict on both counts: a node whose
+    // bound equals the best and that holds a row later than it is entered.
+    // Once true for a node this stays true, because the best only improves
+    // (less fitness, or equal fitness and a later row): so a node skipped
+    // when it is first scored would be skipped at any later point too.
+    const auto skipped = [&](const std::int64_t bound, const std::int32_t lastRow) noexcept {
+        return bound > bestFitness || (bound == bestFitness && lastRow < bestRow);
+    };
+
+    // Nodes still to visit, each with its lower bound. Depth first: of a
+    // node's two children the more promising is entered at once and the
+    // other waits here, so at most one entry per level waits under the node
+    // being entered, hence the bound (buildSearchTree). Only the entries
+    // below `top` are ever read, so the array is left uninitialised.
+    struct Pending {
+        std::uint32_t node;
+        std::int64_t bound;
+    };
+
+    std::array<Pending, kMaxSearchDepth + 1> pending;
+    std::size_t top = 0;
+    std::uint32_t current = 0;
+    {
+        const std::int64_t rootBound = score(searchNodes_[0].box, values);
+        if constexpr (Counting) {
+            ++counts->nodes;
         }
-        if (node.count != 0) {
+        if (skipped(rootBound, searchNodes_[0].box.row)) {
+            return static_cast<std::size_t>(bestRow);
+        }
+    }
+
+    while (true) {
+        const detail::SearchNode& node = searchNodes_[current];
+        if (node.count == 0) {
+            const std::uint32_t left = node.first;
+            const std::uint32_t right = node.first + 1;
+            const std::int64_t leftBound = score(searchNodes_[left].box, values);
+            const std::int64_t rightBound = score(searchNodes_[right].box, values);
+            if constexpr (Counting) {
+                counts->nodes += 2;
+            }
+            const std::int32_t leftRow = searchNodes_[left].box.row;
+            const std::int32_t rightRow = searchNodes_[right].box.row;
+            // Enter the lower bound first; on equal bounds, the child holding
+            // the later rows, which win the ties. Either order returns the
+            // same row.
+            const bool leftFirst =
+                leftBound < rightBound || (leftBound == rightBound && leftRow > rightRow);
+            const std::uint32_t first = leftFirst ? left : right;
+            const std::uint32_t second = leftFirst ? right : left;
+            const std::int64_t firstBound = leftFirst ? leftBound : rightBound;
+            const std::int64_t secondBound = leftFirst ? rightBound : leftBound;
+            if (!skipped(secondBound, leftFirst ? rightRow : leftRow)) {
+                pending[top++] = Pending{.node = second, .bound = secondBound};
+            }
+            if (!skipped(firstBound, leftFirst ? leftRow : rightRow)) {
+                current = first;
+                continue;
+            }
+        } else {
             for (std::uint32_t i = node.first; i < node.first + node.count; ++i) {
                 const detail::SearchBox& row = searchRows_[i];
                 const std::int64_t fitness = score(row, values);
@@ -619,26 +678,20 @@ std::size_t ParameterList::searchTree(const QuantizedSample& sample,
             if constexpr (Counting) {
                 counts->rows += node.count;
             }
-            continue;
         }
-        const std::uint32_t left = node.first;
-        const std::uint32_t right = node.first + 1;
-        const std::int64_t leftBound = score(searchNodes_[left].box, values);
-        const std::int64_t rightBound = score(searchNodes_[right].box, values);
-        if constexpr (Counting) {
-            counts->nodes += 2;
+        // The next waiting node the best has not since ruled out — rechecked
+        // here, because the best may have improved since it was pushed.
+        bool resumed = false;
+        while (top > 0) {
+            const Pending next = pending[--top];
+            if (!skipped(next.bound, searchNodes_[next.node].box.row)) {
+                current = next.node;
+                resumed = true;
+                break;
+            }
         }
-        // Visit the lower bound first; on equal bounds, the child holding the
-        // later rows, which win the ties. Either order returns the same row.
-        const bool leftFirst =
-            leftBound < rightBound ||
-            (leftBound == rightBound && searchNodes_[left].box.row > searchNodes_[right].box.row);
-        if (leftFirst) {
-            pending[top++] = Pending{.node = right, .bound = rightBound};
-            pending[top++] = Pending{.node = left, .bound = leftBound};
-        } else {
-            pending[top++] = Pending{.node = left, .bound = leftBound};
-            pending[top++] = Pending{.node = right, .bound = rightBound};
+        if (!resumed) {
+            break;
         }
     }
     return static_cast<std::size_t>(bestRow);
@@ -667,19 +720,39 @@ const data::ResourceLocation& ParameterList::find(const ClimateSample& sample) c
 std::size_t ParameterList::findRow(const ClimateSample& sample) const {
     checkNotEmpty(entries_);
     checkSamples(sample);
-    return searchTree<false>(QuantizedSample::of(sample), nullptr);
+    return searchTree<false>(QuantizedSample::of(sample), kNoHint, nullptr);
 }
 
 std::size_t ParameterList::findRow(const QuantizedSample& sample) const {
     checkNotEmpty(entries_);
     checkSamples(sample);
-    return searchTree<false>(sample, nullptr);
+    return searchTree<false>(sample, kNoHint, nullptr);
 }
 
 std::size_t ParameterList::findRow(const QuantizedSample& sample, SearchCounts& counts) const {
     checkNotEmpty(entries_);
     checkSamples(sample);
-    return searchTree<true>(sample, &counts);
+    return searchTree<true>(sample, kNoHint, &counts);
+}
+
+std::size_t ParameterList::findRowFrom(const ClimateSample& sample, const std::size_t hint) const {
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    return searchTree<false>(QuantizedSample::of(sample), hint, nullptr);
+}
+
+std::size_t ParameterList::findRowFrom(const QuantizedSample& sample,
+                                       const std::size_t hint) const {
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    return searchTree<false>(sample, hint, nullptr);
+}
+
+std::size_t ParameterList::findRowFrom(const QuantizedSample& sample, const std::size_t hint,
+                                       SearchCounts& counts) const {
+    checkNotEmpty(entries_);
+    checkSamples(sample);
+    return searchTree<true>(sample, hint, &counts);
 }
 
 std::size_t ParameterList::findRowLinear(const ClimateSample& sample) const {

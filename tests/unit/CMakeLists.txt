@@ -143,3 +143,6 @@ if(TARGET stratum_cli)
         WILL_FAIL TRUE
     )
 endif()
+
+# The biome search's warm start (ParameterList::findRowFrom), held to the scan.
+target_sources(stratum_unit_tests PRIVATE biome_search_hint_test.cpp)

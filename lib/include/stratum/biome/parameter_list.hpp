@@ -348,6 +348,39 @@ public:
     /// reset). The same search and the same row; for the tests and the bench.
     [[nodiscard]] std::size_t findRow(const QuantizedSample& sample, SearchCounts& counts) const;
 
+    /// What `findRowFrom` takes for "no warm start": any value at or past
+    /// `size()` is one, this the conventional spelling.
+    static constexpr std::size_t kNoHint = static_cast<std::size_t>(-1);
+
+    /// `findRow`, warm-started from @p hint: the same row for every hint,
+    /// only reached sooner when the hint is near it. A run of queries over
+    /// neighbouring positions — a chunk's quarts, whose climate moves little
+    /// from one to the next — passes each answer back in as the next hint.
+    /// The hint is the CALLER's state, held per call or per task, never in
+    /// the list: a list is shared read-only between threads.
+    ///
+    /// WHY THE ROW CANNOT DEPEND ON THE HINT. The search keeps the best row
+    /// under the scan's strict total order — less fitness, or equal fitness
+    /// and a later row — and a hinted row is simply scored before the tree is
+    /// entered, as if it were the first row met. A node is skipped only when
+    /// its bound is ABOVE the best fitness so far, or EQUAL to it with every
+    /// row under it EARLIER than the best row so far: each row skipped then
+    /// either scores more than the best or ties it and loses the tie. A later
+    /// row at an equal fitness is never skipped (the `<` on rows is strict),
+    /// so a hint at a tied earlier row cannot hide the later one the scan
+    /// keeps, and a hint at the tied later row is itself the scan's answer.
+    /// The best only ever improves, so every skipped row is worse than the
+    /// final best, which is therefore the order's minimum over every row: the
+    /// scan's row. A hint at or past `size()` is no hint (kNoHint).
+    ///
+    /// Refuses what `findRow` refuses, and before the hint is looked at.
+    [[nodiscard]] std::size_t findRowFrom(const ClimateSample& sample, std::size_t hint) const;
+    [[nodiscard]] std::size_t findRowFrom(const QuantizedSample& sample, std::size_t hint) const;
+    /// `findRowFrom`, counting into @p counts as `findRow` does; the hinted
+    /// row's own scoring counts as one row.
+    [[nodiscard]] std::size_t findRowFrom(const QuantizedSample& sample, std::size_t hint,
+                                          SearchCounts& counts) const;
+
     /// The definition `find` is held to: every row scored in list order,
     /// `<=` keeping the later of a tie. Kept as the reference the tree's
     /// answers are tested against, row index for row index; costs a scan of
@@ -373,8 +406,10 @@ private:
 
     void buildSearchTree();
 
+    /// The tree search, warm-started from @p hint when it names a row (see
+    /// findRowFrom; kNoHint for none).
     template<bool Counting>
-    [[nodiscard]] std::size_t searchTree(const QuantizedSample& sample,
+    [[nodiscard]] std::size_t searchTree(const QuantizedSample& sample, std::size_t hint,
                                          SearchCounts* counts) const noexcept;
 
     [[nodiscard]] std::size_t scanLinear(const QuantizedSample& sample) const noexcept;
