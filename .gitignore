@@ -50,7 +50,9 @@ console.out
 /RESEARCH-RUN-*.md
 
 # --- Build ---
-/build/
+# No trailing slash: build may be a symlink to a build disk (as .fixtures
+# may be one), which a directory-only pattern would not match.
+/build
 /out/
 cmake-build-*/
 CMakeUserPresets.json
