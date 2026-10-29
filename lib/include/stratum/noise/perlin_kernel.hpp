@@ -38,10 +38,10 @@
 /// kernel is some two hundred instructions, past GCC's -O2 limit for an
 /// inline function, and the point of this header is that the octave loops
 /// take it without a call. Changes where the code sits, never what it
-/// computes.
-#if defined(_MSC_VER) && !defined(__clang__)
-#define STRATUM_NOISE_INLINE __forceinline
-#elif defined(__GNUC__) || defined(__clang__)
+/// computes. MSVC gets plain `inline`: a __forceinline it declines is
+/// warning C4714 at /W4, which the CI's /WX makes an error, and it is free
+/// to decline one this size.
+#if defined(__GNUC__) || defined(__clang__)
 #define STRATUM_NOISE_INLINE [[gnu::always_inline]] inline
 #else
 #define STRATUM_NOISE_INLINE inline
