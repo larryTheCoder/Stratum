@@ -18,7 +18,7 @@ Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below), under both random sources and with no aquifer coupling since pipeline engine v14. Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10). Since the undefined-behaviour audit (2026-10-14) every overworld preset refuses chunks 175 770 and up and -175 771 and down, on either axis, by name, where vanilla's own `jagged` leaves int32 (SPEC §8) |
 | M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates exactly through the public compile path — its blocks, and its biomes through its own `minecraft:the_end` source (pipeline engine v15), exact on every stored quart of 45 End regions (47 185 920 quarts, eight distinct End worlds). What keeps M4 open is the legacy named-noise seeding alone |
 | MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling, run only in a headless server so far, so whether its flow is Java's is unobserved (M5) |
-| M5 — integration (Bedrock mapping, PMMP binding, perf) | Open — mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments all landed, and Stratum has run inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`, local evidence); M5 closes on that headless evidence (owner, 2026-10-15), the owner checking with a Bedrock client afterwards. Speed (baselines of record, quiet box, 2026-10-25 and -27): after two performance passes the whole generation task through PHP meets the 35 ms/chunk best case on every preset and Stratum beats vanilla's own rate — overworld 10.5 ms/chunk end to end against vanilla's 13.6 (it was 155.7), amplified 10.5 against 15.6, large_biomes 10.7 against 13.9, the End 1.44 against 2.81 — output byte-identical, PHP and PocketMine-MP adding about 0.04 ms a chunk; the bar's working reading is unconfirmed, and §4.1's flat program is built for the per-block arithmetic only. Still open: ext-nukkit, run inside Nukkit since 2026-10-27 (smoke: everything Stratum owns passes; exit 3 on Nukkit's own biome serializer offset, measured, awaiting the owner's ruling) and seen in a Bedrock client beside PocketMine-MP the same day; and the open ends SPEC §11's M5 entry lists for the headless runs (M5 below) |
+| M5 — integration (Bedrock mapping, PMMP binding, perf) | **Closed 2026-10-29** (owner: the evidence is clear; Nukkit's biome defects are limitations of Nukkit itself). Mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments landed; Stratum ran inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`) and inside Nukkit b3caad67 (`ctest --preset nukkit`), and the owner's Bedrock client saw the same terrain on both servers at sixteen places (2026-10-27). Speed (quiet box, 2026-10-27): the whole generation task through PHP runs below vanilla's own time — overworld 10.5 ms/chunk end to end against vanilla's 13.6 (it was 155.7), amplified 10.5 against 15.6, large_biomes 10.7 against 13.9, the End 1.44 against 2.81 — byte-identical. Carried past it as recorded limits, not gates: the headless runs' open ends (SPEC §11), Nukkit's biome serializer offset and missing registry entries, and §4.1's flat program built for the per-block arithmetic only (further speed is post-M5 work) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
 ¹ StrictMath: only `log` is vendored (fdlibm); `exp`/`pow`/`sin`/`cos`/`atan2` deferred until a node needs them.
@@ -287,29 +287,18 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 - Thin evidence, recorded: the ties probe's `td` arm scores 14 blocks;
   deepslate's legacy-noise construction is scored on one golden Nether
   noise (`nether_state_selector`) only.
-- The perf bar's working reading — per generation thread, end to end
-  through `stratum::pmmp::encodeChunk`, release build, beside the vanilla
-  server's comparable stages on one worldgen thread — is flagged for
-  confirmation (SPEC §11, "M5's performance bar"); and whether M5 can
-  close without the compiled flat execution program §10 moved from M3 to
-  its perf pass.
-- Whether the headless runs' open ends (SPEC §11, "M5: Stratum inside a
-  real PocketMine-MP", *Still open* (a)-(f)) gate M5: SPEC does not say,
-  and (a)'s sky, fog and light are what a client sees, which the
-  2026-10-15 ruling leaves to the owner's client check.
-- Windows and macOS: every real-server run is Linux x86-64 (the approved
-  PHP is pmmp/PHP-Binaries' PHP-8.2-Linux-x86_64-PM5 tarball, SPEC §11),
-  where SPEC §5 has CI run the unit suites on all three systems; whether
-  M5's evidence must reach the other two is the owner's call.
+- *Settled 2026-10-29 by M5's closure (SPEC §11, "M5 closed"):* the perf
+  bar's working reading (met as read), whether M5 needed the compiled flat
+  program (no: further speed is post-M5 work), whether the headless runs'
+  open ends gate M5 (no: recorded), and Windows and macOS for M5's
+  real-server evidence (Linux x86-64 suffices).
 - `ctest --preset pmmp` is local evidence, not CI, until the owner decides
   otherwise (526dcdf).
-- ext-nukkit: two Nukkit readings await rulings — its biome serializers'
-  section offset (measured on disk 2026-10-27: every one of 262 464 biome
-  mismatches; the smoke exits 3, not a pass, until then) and the four
-  overworld biomes its registry lacks (refusing them would refuse every
-  overworld) (SPEC §11, "M5-Nukkit"). The jar is pinned (2026-10-27, from
-  CloudburstMC's Maven snapshot repository on the owner's ruling, the CI
-  still answering 502).
+- ext-nukkit's two Nukkit readings — its biome serializers' section offset
+  (measured on disk 2026-10-27: every one of 262 464 biome mismatches) and
+  the four overworld biomes its registry lacks — *settled 2026-10-29:*
+  limitations of Nukkit itself, recorded, not Stratum's to fix; the smoke
+  passes on them, saying so (SPEC §11, "M5-Nukkit", "M5 closed").
 - spec Q2.3's description of the fold epsilon's literal reads as source;
   it goes to the owner under CLAUDE.md's spec rule rather than into the
   code (5f50f82; lib/src/perlin.cpp:216-221).
@@ -325,30 +314,18 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
    (`tools/check-skips`).
 1. The open items above: the verifiers' findings, the headless runs' open
    ends (M5 below), then the SPEC docs items.
-2. Performance (M5's generation-speed item). The owner's goal since
-   2026-10-25 is vanilla's own rate, about 14 ms/chunk (SPEC's provisional
-   table: 13.9 on the overworld, one worldgen thread); the bar itself is
-   unchanged. *Done:* the baseline of record and the first pass
-   (2026-10-25: 155.7 -> 23.7 ms/chunk on the overworld), then the second
-   pass and the task measured through PHP (2026-10-27: 10.5 ms/chunk, the
-   whole task meeting the best case and Stratum faster than vanilla's
-   13.6), byte-identical throughout (SPEC §11). What is left is optional
-   speed, not the bar: M5's "What the performance work leaves" — the rest
-   of the flat program (the cell corners) first. Every change shown to
-   move no output with the bench's `--dump` and `--compare`.
-3. ext-nukkit inside a real Nukkit. *Done 2026-10-27:* the jar pinned
-   (`tools/nukkit-dev pin-maven`, CloudburstMC's Maven snapshot of
-   b3caad67, on the owner's ruling: the CI answered 502 for every job),
-   the smoke run inside Nukkit — everything Stratum owns passes, exit 3 on
-   Nukkit's measured biome offset — and its startup refusal's hang fixed.
-   A Bedrock client (1.26.4x: Nukkit b3caad67 accepts protocols 2192 and
-   2193 only) saw the same terrain as on PocketMine-MP at 16 places, the
-   only differences the two biomes Nukkit sends as ocean and its view
-   distance. Left: the owner's two Nukkit rulings (flags above).
-4. M5's paperwork and the owner's open questions (flags above): the perf
-   bar's working reading, whether the compiled program gates M5, whether
-   the headless runs' open ends do, Windows and macOS, the two Nukkit
-   rulings, spec Q2.3's wording and `climate_vectors.c`'s constant.
+2. Performance, after M5 (owner, 2026-10-29: "lets work on adding more
+   speed"). *Done:* the baseline of record and the first pass (2026-10-25:
+   155.7 -> 23.7 ms/chunk on the overworld), then the second pass and the
+   task measured through PHP (2026-10-27: 10.5 ms/chunk, below vanilla's
+   13.6), byte-identical throughout (SPEC §11). Next: the third pass —
+   M5's "What the performance work leaves", the rest of the flat program
+   (the cell corners) first. Every change shown to move no output with the
+   bench's `--dump` and `--compare`.
+3. ext-nukkit inside a real Nukkit. *Done 2026-10-27*, and its two Nukkit
+   readings settled by M5's closure (2026-10-29) as Nukkit's limitations.
+4. M5's paperwork: *done* with its closure (2026-10-29). Still the
+   owner's: spec Q2.3's wording and `climate_vectors.c`'s constant.
 5. M4's last blocker, the legacy named-noise seeding (M4 below).
 
 ## MA — Aquifers
@@ -2082,7 +2059,10 @@ Open:
 
 ## M5 — Integration
 
-Open. `ext/` (the PocketMine-MP binding — the actual point of this
+**Closed 2026-10-29** by the owner: the evidence is clear, and Nukkit's
+biome defects — the serializers' section offset and the four biomes its
+registry lacks — are limitations of Nukkit itself (SPEC §11, "M5
+closed"). The rest of this section is the record. `ext/` (the PocketMine-MP binding — the actual point of this
 project) is written end to end: the chunkutils2 sub-chunk encoder, the zend
 module, and the plugin, which registers the generator, freezes the pipeline
 into a new world's folder, and translates block states through
@@ -2093,9 +2073,9 @@ headless evidence, the owner checking with a real Bedrock client
 afterwards (SPEC §11). Speed no longer keeps it open: since 2026-10-27
 the whole generation task through PHP meets the 35 ms best case on every
 preset and runs faster than vanilla (SPEC §11, "M5's performance bar").
-What keeps it open: the open ends the headless runs left (below), if
-they gate it — SPEC does not say, and that is the owner's call (handoff);
-and `ext-nukkit/`'s two Nukkit rulings.
+What kept it open until the closure: the open ends the headless runs left
+(below) — recorded, not gates, by the ruling — and `ext-nukkit/`'s two
+Nukkit rulings, settled as Nukkit's limitations.
 `ext-nukkit/` (a second, CloudburstMC/Nukkit binding) resolves block states
 through Nukkit and generates from the world's frozen pipeline; since
 2026-10-27 it has run inside a real Nukkit (b3caad67), its smoke passing
@@ -2538,7 +2518,8 @@ everything Stratum owns.
       81-chunk spawn area 0/0 different in memory on Nukkit's 4 workers
       (313 ms Release), 240 liquid updates scheduled, and on disk 0 blocks
       and 262 464 biomes different, every one the measured section offset:
-      exit 3, the owner's to rule on. SPEC §11, "M5-Nukkit".
+      then exit 3, a pass since the owner ruled it Nukkit's own limitation
+      (2026-10-29). SPEC §11, "M5-Nukkit".
 
 ## M6 (v2) — Staged features
 

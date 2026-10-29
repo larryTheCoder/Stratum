@@ -195,10 +195,12 @@ Two things read from Nukkit that the smoke run is built to measure:
   overworld) — so slot `i` gets section `i + 4`'s biomes and the top four
   get the bottom one's, on disk and on the wire. Invisible to Nukkit's own
   2D-biome generators. The smoke run counts disk mismatches explained by
-  exactly this apart from any other. If every mismatch is that offset the
-  smoke exits **3**, not 0: everything Stratum controls passed, the worlds'
-  stored and sent biomes are still wrong wherever biomes vary with height,
-  and CTest fails it until the owner rules on the defect.
+  exactly this apart from any other. Measured 2026-10-27: every mismatch
+  was that offset. By the owner's ruling of 2026-10-29 it, and the four
+  biomes the registry lacks, are limitations of Nukkit itself, recorded and
+  not Stratum's to fix: the smoke passes when the offset is all that
+  differs, and says so, though the worlds' stored and sent biomes are still
+  wrong wherever biomes vary with height. (Until that ruling it exited 3.)
 
 ## Fluid updates
 
@@ -260,8 +262,8 @@ biomes matching in memory and on disk; no log line in any run that is an
 error, a stack trace or an exception, beyond the expected ones; and
 Nukkit's LevelDB log showing no substituted block state. Nukkit's own `main`
 exits 0 even after its startup threw, so the reports and the logs are the
-evidence, not the status. Exit 3 is the biome offset above; 1 is anything
-else; 77 a skip (no fixtures). The report also carries the census (every
+evidence, not the status. Exit 1 is any failure (the biome offset above
+is not one); 77 a skip (no fixtures). The report also carries the census (every
 emittable state's Nukkit id, how many of all 29,671 Java states resolve,
 which biomes Nukkit's registry lacks), the fluid updates scheduled, and the
 generation time and threads. `tools/nukkit-dev scan-log <log>` runs the log
@@ -274,7 +276,8 @@ check on one file.
   owner's ruling: the CI answered HTTP 502 for every job), and the smoke
   ran inside Nukkit: the startup refusal, the census, the in-memory
   comparison (0 differences) and the disk read-back (0 block differences,
-  every biome difference the section offset below) — exit 3, as designed.
+  every biome difference the section offset above) — then exit 3; a pass
+  since the owner's ruling of 2026-10-29.
   A Bedrock client on a Nukkit server saw the same terrain as on
   PocketMine-MP at 16 places, the differences only the biomes Nukkit sends
   as ocean (pale garden, mangrove swamp) and its view distance; the offset

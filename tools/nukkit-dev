@@ -807,19 +807,18 @@ $( [[ -f "${jar}" ]] && sha256_of "${jar}" || echo absent)): refused"
         if [[ ${#failures[@]} -ne 0 ]]; then
             printf 'FAIL: %s\n' "${failures[@]}"
         elif [[ ${offset_defect} -eq 1 ]]; then
-            echo "NOT A PASS (exit 3): every check Stratum owns passed, but every biome Nukkit read back"
-            echo "          from disk is the one generated 64 blocks higher (the top four sections: the"
-            echo "          bottom one's) — Nukkit's Data3dSerializer passes array indices to"
+            echo "PASS, with Nukkit's own limitation: every check Stratum owns passed, and every biome"
+            echo "          Nukkit read back from disk is the one generated 64 blocks higher (the top four"
+            echo "          sections: the bottom one's) — Nukkit's Data3dSerializer passes array indices to"
             echo "          getBiomeStorage, which takes a section y; NetworkChunkSerializer sends clients"
-            echo "          the same. A Nukkit defect, awaiting the owner's ruling (SPEC §11, M5-Nukkit)."
+            echo "          the same. A limitation of Nukkit itself, recorded, not Stratum's to fix"
+            echo "          (owner, 2026-10-29; SPEC §11, M5-Nukkit)."
         else
             echo "PASS"
         fi
     } | tee "${summary}"
     if [[ ${#failures[@]} -ne 0 ]]; then
         return 1
-    elif [[ ${offset_defect} -eq 1 ]]; then
-        return 3
     fi
     return 0
 }

@@ -197,10 +197,10 @@ if(STRATUM_NUKKIT_JAR)
             LABELS "nukkit"
             PASS_REGULAR_EXPRESSION "stratum/nukkit/StratumGenerator\\.class.*plugin\\.yml|plugin\\.yml.*stratum/nukkit/StratumGenerator\\.class"
         )
-        # Exit 0 passes, 77 skips (no fixtures). 3 is every check Stratum
-        # owns passing while the biomes Nukkit read back from disk show its
-        # LevelDB serializer's section offset (ext-nukkit/README.md): not a
-        # pass until the owner rules on that defect, so CTest fails it.
+        # Exit 0 passes, 77 skips (no fixtures). A pass includes the biomes
+        # Nukkit reads back from disk showing its LevelDB serializer's section
+        # offset, and nothing else (ext-nukkit/README.md): a limitation of
+        # Nukkit itself, by the owner's ruling of 2026-10-29.
         add_test(NAME ext-nukkit.smoke
             COMMAND "${CMAKE_SOURCE_DIR}/tools/nukkit-dev" smoke
                 --jar "${STRATUM_NUKKIT_JAR}"

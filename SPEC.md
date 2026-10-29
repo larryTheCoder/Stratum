@@ -1269,7 +1269,9 @@ mapping has two halves, split at a platform-neutral midpoint:
   and `stratum generate` — region files from the library, so a generated
   world, its biomes included, can be diffed from the shell (the CLI
   pointed it at M3, which closed without it). `stratum generate` has
-  landed (§7, `cli generate`).
+  landed (§7, `cli generate`). *Closed 2026-10-29* by the owner, on
+  headless real-server evidence and the owner's own Bedrock client check
+  (§11, "M5 closed"); further speed is work after it.
 - **M6 (v2)** — Staged features/structures with declared read/write radii;
   scripting escape hatch evaluation.
 - **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
@@ -11145,8 +11147,9 @@ Open:
   updates scheduled as chunks populated; and read back from disk, 0 blocks
   and 262 464 biomes different, every one of them exactly the section
   offset read from `Data3dSerializer` above — so that defect is measured
-  now, not only read, and the smoke exits 3 on it, as designed, until the
-  owner rules. The startup refusal also ran for the first time, and hung:
+  now, not only read, and the smoke exited 3 on it, as designed, until the
+  owner ruled it Nukkit's own limitation (2026-10-29, "M5 closed"; the
+  smoke passes on it since). The startup refusal also ran for the first time, and hung:
   `forceShutdown` called from `onLoad`, before the server's first tick,
   never returns — Nukkit's scheduler starts at tick -1, so the
   `mainThreadHeartbeat(Integer.MAX_VALUE)` it makes overflows its catch-up
@@ -11878,7 +11881,33 @@ Open:
 
   *Not verified.* Anything a client sees: terrain, biomes, the End's sky,
   and whether the scheduled fluid flows as a Java server's does. That is
-  the owner's follow-up.
+  the owner's follow-up. *Done 2026-10-27* (next entry).
+
+- **M5 closed (owner, 2026-10-29).** *The ruling:* the evidence is clear,
+  and Nukkit's biome defects are limitations of the server software
+  itself. *The evidence it rests on:* Stratum inside a real headless
+  PocketMine-MP 5.44.3 on its own PHP (the entry above, `ctest --preset
+  pmmp`); the owner's Bedrock client check, 2026-10-27, on a PocketMine-MP
+  server of the owner's own (client 1.26.30, sixteen places teleported to
+  and screenshotted — every surface biome with its own Bedrock tint and
+  sky, the surface rules' blocks, a cave lava lake and an aquifer pool —
+  with no error, discarded population or slow tick in its log) and then on
+  a Nukkit server of the same seed and frozen pipeline (client 1.26.4x),
+  the same terrain at all sixteen; the generation task through PHP below
+  vanilla's own time (§11, "M5's performance bar"); and ext-nukkit's smoke
+  inside Nukkit b3caad67 (§11, "M5-Nukkit"). *What the ruling settles:*
+  the section offset in Nukkit's biome serializers (measured on disk:
+  every one of 262 464 biome differences) and the four overworld biomes
+  missing from its registry (sent to clients as ocean: a pale garden under
+  a blue sky, mangrove water ocean-blue) are recorded as Nukkit's, not
+  Stratum's to fix, and the smoke now passes when the offset is all that
+  differs, saying so (until the ruling it exited 3); the headless runs'
+  open ends (a)-(f) above stay recorded and do not gate M5; and the
+  owner's open questions that asked whether something gated M5 — the perf
+  bar's working reading, the compiled flat program §10 moved from M3 to
+  M5's perf pass, Windows and macOS evidence — are answered by the
+  closure: the bar is met as read, the flat program (built in part, §4.1)
+  is speed work after M5, and M5's real-server evidence is Linux x86-64.
 
 ---
 
