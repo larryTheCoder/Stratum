@@ -1153,7 +1153,7 @@ Interpreter::Call Interpreter::callThrough(CornerCache& cache, const FlatCacheWi
               .cache = &cache,
               .window = window,
               .context = context,
-              .memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty(),
+              .memo = memoizes(cache),
               .windowId = 0};
     if (call.memo) {
         call.windowId = cache.windowId(window);
@@ -2096,7 +2096,7 @@ double Interpreter::evaluate(const BlockKernel& kernel, const Point at, CornerCa
     // length (lowerBlock's here()).
     const BlockKernel::KernelOp* const ops = kernel.ops_.data();
     // callThrough's Call::memo, for this read: no window, Block.
-    const bool memo = cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty();
+    const bool memo = memoizes(cache);
     // Which `interpolated` nodes this point has read (BlockKernel::
     // InterpolatedNode::slot), as the walk's memo holds them: a slot is
     // below the kernel's register count (each node takes a register of its
@@ -2314,11 +2314,12 @@ bool Interpreter::evaluate(const BlockKernel& kernel, const BlockKernel::Blocks&
     if (kernel.root_ >= graph_->nodeCount()) {
         return false;
     }
-    // Under the memo (callThrough's Call::memo) every value read through the
-    // cache is a pure function of what it is kept under, so reading these
-    // blocks' cells before the caller's reads in between changes none.
-    // Without it a corner's value can depend on which read came first.
-    if (cache.sharing_ != CornerCache::Sharing::Lattice || !substitutions_.empty()) {
+    // Under the memo (memoizes, callThrough's Call::memo) every value read
+    // through the cache is a pure function of what it is kept under, so
+    // reading these blocks' cells before the caller's reads in between
+    // changes none. Without it a corner's value can depend on which read
+    // came first.
+    if (!memoizes(cache)) {
         return false;
     }
     if (!kernel.distinctRegisters_) {

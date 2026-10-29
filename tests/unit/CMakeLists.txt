@@ -187,3 +187,6 @@ target_sources(stratum_unit_tests PRIVATE aquifer_consult_test.cpp)
 
 # What the fill reads of each height (ChunkFiller::heightRuleAt), at floors and seas that differ.
 target_sources(stratum_unit_tests PRIVATE terrain_fill_heights_test.cpp)
+
+# The corner cache's memo and the one condition it and a kernel's lanes run under.
+target_sources(stratum_unit_tests PRIVATE density_memo_test.cpp)

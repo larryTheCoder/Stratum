@@ -1091,6 +1091,17 @@ private:
     /// Op::columnMemo).
     [[nodiscard]] static MemoTable::Key columnKey(NodeIndex index, const Scope& scope) noexcept;
 
+    /// Whether an evaluation through @p cache uses its memo — the corner
+    /// lattice, `flat_cache`'s relocated reads, the column memo — under
+    /// which every value read through the cache is a pure function of what
+    /// it is kept under: the cache asks for it (Sharing::Lattice) and
+    /// nothing is substituted, whose functions nothing here can prove pure.
+    /// The one definition of Call::memo, and so of where a BlockKernel's
+    /// lanes, which depend on that purity, decline to run.
+    [[nodiscard]] bool memoizes(const CornerCache& cache) const noexcept {
+        return cache.sharing_ == CornerCache::Sharing::Lattice && substitutions_.empty();
+    }
+
     /// The Call a top-level evaluation through @p cache makes.
     [[nodiscard]] Call callThrough(CornerCache& cache, const FlatCacheWindow* window,
                                    ReadContext context) const noexcept;
