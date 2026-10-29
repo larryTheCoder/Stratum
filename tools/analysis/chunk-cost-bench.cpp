@@ -466,8 +466,10 @@ struct Stopwatch {
 // --- the stages -----------------------------------------------------------------
 
 /// encodeChunk's steps after its two fills, on their output: the encode stage.
-/// A copy of ext/src/chunk_encoder.cpp's, held to it by verifyAgainst() on
-/// every chunk of the first pass.
+/// A copy of ext/src/chunk_encoder.cpp's, step for step — the same lookups,
+/// the same loops, the same encodeLayer and encodeQuartLayer calls — so that
+/// what this stage costs is what encodeChunk's encode costs, and held to it
+/// by verifyAgainst() on every chunk of the first pass.
 [[nodiscard]] pmmp::EncodedChunk
 encodeStages(const settings::NoiseGeometry& geometry, const terrain::ChunkBuffer& buffer,
              const std::vector<const data::ResourceLocation*>& javaBiomes) {
@@ -479,7 +481,15 @@ encodeStages(const settings::NoiseGeometry& geometry, const terrain::ChunkBuffer
     std::vector<std::uint32_t> bedrockBiomes;
     bedrockBiomes.reserve(javaBiomes.size());
     std::unordered_map<const data::ResourceLocation*, std::uint32_t> biomeIdOf;
+    // encodeChunk's run of one biome, looked up once.
+    const data::ResourceLocation* lastBiome = nullptr;
+    std::uint32_t lastId = 0;
+    bool haveLast = false;
     for (const data::ResourceLocation* biome : javaBiomes) {
+        if (haveLast && biome == lastBiome) {
+            bedrockBiomes.push_back(lastId);
+            continue;
+        }
         auto found = biomeIdOf.find(biome);
         if (found == biomeIdOf.end()) {
             const std::optional<std::int32_t> id = mapping::bedrockBiomeId(*biome);
@@ -488,35 +498,41 @@ encodeStages(const settings::NoiseGeometry& geometry, const terrain::ChunkBuffer
             }
             found = biomeIdOf.emplace(biome, static_cast<std::uint32_t>(*id)).first;
         }
-        bedrockBiomes.push_back(found->second);
+        lastBiome = biome;
+        lastId = found->second;
+        haveLast = true;
+        bedrockBiomes.push_back(lastId);
     }
 
     pmmp::EncodedChunk encoded;
     encoded.subChunks.reserve(
         static_cast<std::size_t>(pmmp::kMaxSubChunk + 1 - pmmp::kMinSubChunk));
     std::array<std::uint32_t, pmmp::kSubChunkVolume> blocks{};
-    std::array<std::uint32_t, pmmp::kSubChunkVolume> biomes{};
+    std::array<std::uint32_t, pmmp::kSubChunkQuarts> biomes{};
     for (std::int32_t index = pmmp::kMinSubChunk; index <= pmmp::kMaxSubChunk; ++index) {
         const std::int32_t sectionMinY = index * kSubChunkEdge;
         const bool generated =
             sectionMinY >= geometry.minY && sectionMinY + kSubChunkEdge <= geometry.maxY();
         bool allAir = true;
-        for (int x = 0; x < kChunkWidth; ++x) {
-            for (int z = 0; z < kChunkWidth; ++z) {
-                for (int y = 0; y < kSubChunkEdge; ++y) {
-                    const std::size_t at = pmmp::subChunkIndex(x, y, z);
-                    if (generated) {
+        if (generated) {
+            for (int x = 0; x < kChunkWidth; ++x) {
+                for (int z = 0; z < kChunkWidth; ++z) {
+                    for (int y = 0; y < kSubChunkEdge; ++y) {
                         const std::uint16_t paletteIndex =
                             buffer.paletteIndexAt(x, sectionMinY + y, z);
                         allAir = allAir && paletteIndex == 0;
-                        blocks[at] = javaIds[paletteIndex];
+                        blocks[pmmp::subChunkIndex(x, y, z)] = javaIds[paletteIndex];
                     }
-                    const auto quartY = static_cast<std::size_t>(
-                        javamath::floorDiv(sectionMinY + y, kQuartWidth) - kMinQuartY);
-                    const std::size_t quart =
-                        ((quartY * 4U) + static_cast<std::size_t>(z / kQuartWidth)) * 4U +
-                        static_cast<std::size_t>(x / kQuartWidth);
-                    biomes[at] = bedrockBiomes[quart];
+                }
+            }
+        }
+        const auto firstLayer =
+            static_cast<std::size_t>(javamath::floorDiv(sectionMinY, kQuartWidth) - kMinQuartY);
+        for (std::size_t qx = 0; qx < 4; ++qx) {
+            for (std::size_t qz = 0; qz < 4; ++qz) {
+                for (std::size_t qy = 0; qy < 4; ++qy) {
+                    biomes[(qx << 4U) | (qz << 2U) | qy] =
+                        bedrockBiomes[((((firstLayer + qy) * 4U) + qz) * 4U) + qx];
                 }
             }
         }
@@ -525,7 +541,7 @@ encodeStages(const settings::NoiseGeometry& geometry, const terrain::ChunkBuffer
         if (!allAir) {
             sub.blocks = pmmp::encodeLayer(blocks);
         }
-        sub.biomes = pmmp::encodeLayer(biomes);
+        sub.biomes = pmmp::encodeQuartLayer(biomes);
         encoded.subChunks.push_back(std::move(sub));
     }
     encoded.fluidUpdates = buffer.fluidUpdates();
