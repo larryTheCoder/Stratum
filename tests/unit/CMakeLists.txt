@@ -150,3 +150,6 @@ target_sources(stratum_unit_tests PRIVATE biome_search_hint_test.cpp)
 
 # The aquifer's keyed ranking and window status memo, held to what they replaced.
 target_sources(stratum_unit_tests PRIVATE aquifer_rank_test.cpp)
+
+# The block kernel against the walk over random graphs (Interpreter::BlockKernel).
+target_sources(stratum_unit_tests PRIVATE density_kernel_fuzz_test.cpp)

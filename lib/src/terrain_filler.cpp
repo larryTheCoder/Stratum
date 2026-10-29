@@ -725,22 +725,73 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // `interpolated` needs, and visiting them together is what lets the cache
     // hold. Column-major order would evict on every block and cost 87 times
     // as much, which is measured rather than guessed.
+    //
+    // And a cell's blocks of one y are a run of the kernels (density::
+    // Interpreter::evaluate(kernel, blocks, lanes, cache)): `final_density`
+    // at every one, then `vein_toggle` at those it makes solid inside the
+    // vein range — each a block the loop below reads it at, solid ground
+    // being the default block whatever the aquifer says. A run stands for
+    // those evaluations bit for bit, made before the aquifer's reads in
+    // between rather than among them, which changes no value under the
+    // corner memo (the only sharing it runs under) and leaves every refusal
+    // to the block's own evaluation (it refuses nothing itself). Where it
+    // does not run, the loop evaluates block by block, as before.
+    density::Interpreter::BlockKernel::Lanes densityLanes;
+    density::Interpreter::BlockKernel::Lanes toggleLanes;
+    constexpr auto kRunLanes = static_cast<std::int32_t>(density::Interpreter::BlockKernel::kLanes);
     for (std::int32_t cellZ = 0; cellZ < kChunkWidth; cellZ += cellWidth) {
         for (std::int32_t cellX = 0; cellX < kChunkWidth; cellX += cellWidth) {
+            const std::int32_t cellEndX = std::min(cellX + cellWidth, std::int32_t{kChunkWidth});
+            const std::int32_t cellEndZ = std::min(cellZ + cellWidth, std::int32_t{kChunkWidth});
+            // A run is as many of the cell's rows along x as its lanes hold.
+            const std::int32_t runWidth = cellEndX - cellX;
+            const std::int32_t runRows = std::max(std::int32_t{1}, kRunLanes / runWidth);
             for (std::int32_t cellBottom = geometry.minY; cellBottom < topY;
                  cellBottom += cellHeight) {
                 const std::int32_t cellTop = std::min(cellBottom + cellHeight, topY);
                 for (std::int32_t y = cellBottom; y < cellTop; ++y) {
-                    for (std::int32_t localZ = cellZ;
-                         localZ < std::min(cellZ + cellWidth, std::int32_t{kChunkWidth});
-                         ++localZ) {
-                        for (std::int32_t localX = cellX;
-                             localX < std::min(cellX + cellWidth, std::int32_t{kChunkWidth});
-                             ++localX) {
-                            const double density = evaluateAtBlock(
-                                finalDensityKernel_, finalDensity_,
-                                density::Point{.x = baseX + localX, .y = y, .z = baseZ + localZ},
-                                cache);
+                    std::int32_t runZ = cellZ;
+                    bool densities = false;
+                    bool toggles = false;
+                    for (std::int32_t localZ = cellZ; localZ < cellEndZ; ++localZ) {
+                        if (localZ == cellZ || localZ - runZ == runRows) {
+                            runZ = localZ;
+                            const density::Interpreter::BlockKernel::Blocks run{
+                                .first =
+                                    density::Point{.x = baseX + cellX, .y = y, .z = baseZ + localZ},
+                                .width = runWidth,
+                                .depth = std::min(runRows, cellEndZ - localZ),
+                                .lanes = ~0U};
+                            densities = finalDensityKernel_.has_value() &&
+                                        interpreter_.evaluate(*finalDensityKernel_, run,
+                                                              densityLanes, cache);
+                            toggles = false;
+                            if (densities && oreVeins_.has_value() &&
+                                veinToggleKernel_.has_value() && ore::inAnyVeinRange(y)) {
+                                std::uint32_t solid = 0;
+                                const std::size_t count = static_cast<std::size_t>(run.width) *
+                                                          static_cast<std::size_t>(run.depth);
+                                for (std::size_t lane = 0; lane < count; ++lane) {
+                                    solid |= (densityLanes.value(lane) > 0.0 ? 1U : 0U) << lane;
+                                }
+                                if (solid != 0U) {
+                                    density::Interpreter::BlockKernel::Blocks solidRun = run;
+                                    solidRun.lanes = solid;
+                                    toggles = interpreter_.evaluate(*veinToggleKernel_, solidRun,
+                                                                    toggleLanes, cache);
+                                }
+                            }
+                        }
+                        for (std::int32_t localX = cellX; localX < cellEndX; ++localX) {
+                            const auto lane = static_cast<std::size_t>(
+                                ((localZ - runZ) * runWidth) + (localX - cellX));
+                            const double density =
+                                densities ? densityLanes.value(lane)
+                                          : evaluateAtBlock(finalDensityKernel_, finalDensity_,
+                                                            density::Point{.x = baseX + localX,
+                                                                           .y = y,
+                                                                           .z = baseZ + localZ},
+                                                            cache);
 
                             // `sea_level` is EXCLUSIVE: with vanilla's 63 the
                             // water stops at 62 and 63 is the first air. That
@@ -826,9 +877,15 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // rejects the overwhelming majority of
                                 // positions on its own, and every one of the
                                 // three costs a full density evaluation.
+                                // From the run where it read this block: a
+                                // solid density's, made solid before the
+                                // aquifer is asked.
                                 const density::Point here{.x = blockX, .y = y, .z = blockZ};
                                 const double toggle =
-                                    evaluateAtBlock(veinToggleKernel_, veinToggleNode, here, cache);
+                                    toggles && density > 0.0
+                                        ? toggleLanes.value(lane)
+                                        : evaluateAtBlock(veinToggleKernel_, veinToggleNode, here,
+                                                          cache);
                                 if (ore::clearsRichness(y, toggle)) {
                                     const double ridged = evaluateAtBlock(
                                         veinRidgedKernel_, veinRidgedNode, here, cache);

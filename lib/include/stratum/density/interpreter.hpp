@@ -665,6 +665,55 @@ public:
         /// How many ops its list holds.
         [[nodiscard]] std::size_t size() const noexcept { return ops_.size(); }
 
+        /// The most blocks evaluate(kernel, blocks, lanes, cache) runs
+        /// together, one to a lane: a 4x4 cell's blocks at one y.
+        static constexpr std::size_t kLanes = 16;
+
+        /// Blocks of one y that a kernel runs at together: the rectangle of
+        /// `width` blocks along x by `depth` along z from `first`, its
+        /// lowest x and z, lane by lane in the filler's order — lane
+        /// (z - first.z) * width + (x - first.x) — and of those, the lanes
+        /// whose bit `lanes` sets.
+        struct Blocks {
+            Point first{};
+            std::int32_t width = 0;
+            std::int32_t depth = 0;
+            std::uint32_t lanes = 0;
+        };
+
+        /// A run of a kernel over Blocks: its registers, lane by lane, and
+        /// the run's cell. Scratch, the caller's as a CornerCache is — one
+        /// per task, and nothing in it is read before the run writes it.
+        class Lanes {
+        public:
+            /// The kernel's value at @p lane, of the last run that returned
+            /// true, for a lane it was asked for.
+            [[nodiscard]] double value(std::size_t lane) const noexcept {
+                return values_[result_][lane];
+            }
+
+        private:
+            friend class Interpreter;
+
+            using Row = std::array<double, kLanes>;
+
+            std::array<Row, kMaxRegisters> values_{};
+            std::size_t result_ = 0;
+            /// The run's blocks, and the lanes it was asked for.
+            Blocks blocks_{};
+            /// Which lanes have read each `interpolated` slot this run
+            /// (InterpolatedNode::slot): the point's mask, lane by lane.
+            std::array<std::uint32_t, kMaxRegisters> read_{};
+            /// The run's cell, found at its first `interpolated`, with the
+            /// fractions: one y, so one ty, and tx and tz lane by lane (0
+            /// past the rectangle).
+            bool cellKnown_ = false;
+            Point lower_{};
+            double ty_ = 0.0;
+            Row tx_{};
+            Row tz_{};
+        };
+
     private:
         friend class Interpreter;
 
@@ -743,6 +792,28 @@ public:
     /// evaluate(kernel.root(), at, cache), bit for bit, refusals included —
     /// through the kernel. @p kernel must be one this interpreter built.
     [[nodiscard]] double evaluate(const BlockKernel& kernel, Point at, CornerCache& cache) const;
+
+    /// evaluate(kernel, at, cache) at each block @p blocks asks for, all at
+    /// once, each op over every lane: each lane's value, in @p lanes, is
+    /// that evaluation's bit for bit. Returns false where it cannot stand
+    /// for those evaluations, and the caller then makes them one block at a
+    /// time as before:
+    ///
+    ///   * where the order of reads through @p cache can change a value —
+    ///     its Sharing::LastCell, or substitutions — since this reads the
+    ///     blocks' corners before, not between, whatever the caller reads
+    ///     in between;
+    ///   * where the blocks are not all in one cell, or not one row of
+    ///     kLanes at most;
+    ///   * where any of its evaluations refuses — it throws nothing. Under
+    ///     the memo every value read through @p cache is a pure function of
+    ///     its key, and a refusal of the evaluation it would have been, so
+    ///     the blocks' own evaluations, made after it, refuse exactly where
+    ///     and as the walk does, and whatever it filled first only spares
+    ///     work. It evaluates nothing those blocks would not: a corner only
+    ///     for a lane whose path reaches its `interpolated`.
+    [[nodiscard]] bool evaluate(const BlockKernel& kernel, const BlockKernel::Blocks& blocks,
+                                BlockKernel::Lanes& lanes, CornerCache& cache) const;
 
     /// The value of @p root at @p at.
     ///
@@ -972,6 +1043,30 @@ private:
     /// returns the register holding its value, or -1 where it does not lower.
     [[nodiscard]] std::int32_t lowerBlock(BlockKernel& kernel, NodeIndex index,
                                           std::size_t depth) const;
+
+    /// Points @p cache's kernel scratch at the lattice @p cells: unchanged
+    /// where it serves that one already, and otherwise no cell known and the
+    /// fractions tabled (CornerCache::kernelFractionTables_).
+    static void kernelGeometry(CornerCache& cache, CellGeometry cells) noexcept;
+
+    /// A kernel's `interpolated` of @p argument, blended along y at @p ty in
+    /// the cell from @p lower: the CornerCache entry's four blends, its
+    /// corners filled first where the entry holds another cell's, as
+    /// interpolate() fills them (@p memo: callThrough's Call::memo).
+    [[nodiscard]] const std::array<double, 4>&
+    kernelAlongY(NodeIndex argument, Point lower, double ty, bool memo, CornerCache& cache) const;
+
+    /// The ops of @p kernel from @p begin to @p end, over the lanes of
+    /// @p active (evaluate(kernel, blocks, lanes, cache)); false where the
+    /// run cannot go on, its blocks not being in one cell.
+    [[nodiscard]] bool runLanes(const BlockKernel& kernel, std::size_t begin, std::size_t end,
+                                std::uint32_t active, BlockKernel::Lanes& lanes,
+                                CornerCache& cache) const;
+
+    /// The cell of @p lanes' blocks and their fractions, as the first
+    /// `interpolated` of evaluate(kernel, at, cache) finds them; false
+    /// where they are not all in one cell.
+    [[nodiscard]] bool laneCell(BlockKernel::Lanes& lanes, CornerCache& cache) const;
 
     /// The memo key of node @p index's value in @p scope's column (see
     /// Op::columnMemo).
