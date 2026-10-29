@@ -1100,9 +1100,17 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     // where the map entry was emplaced, once the lookups have returned, so a
     // refusal leaves it empty exactly as it left the map. `id` is never null
     // once resolved (surfaceBiomeAt returns a reference), which is the mark.
+    //
+    // And where the rules read `biome`, the executor's key for it
+    // (surface::BiomeKey), taken with the biome — biomeKey() never throws —
+    // and handed to the rules in its place: every `biome` condition answers
+    // a key exactly as it answers the biome's name, from a table compile()
+    // filled by that same comparison, so the name is neither copied into
+    // the Context at every quart nor compared at every condition.
     struct QuartBiome {
         const data::ResourceLocation* id = nullptr;
         float temperature = 0.0F;
+        surface::BiomeKey key;
     };
 
     const std::int32_t quartBottom = quartSnap(minY);
@@ -1217,10 +1225,13 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                             if (surfaceNeedsTemperature_) {
                                 resolved.temperature = biomeTemperatures_->at(*resolved.id);
                             }
+                            if (surfaceNeedsBiome_) {
+                                resolved.key = executor.biomeKey(*resolved.id);
+                            }
                             cached = resolved;
                         }
                         if (surfaceNeedsBiome_) {
-                            context.biome = *cached.id;
+                            context.biomeKey = cached.key;
                         }
                         if (surfaceNeedsTemperature_) {
                             context.biomeTemperature = cached.temperature;

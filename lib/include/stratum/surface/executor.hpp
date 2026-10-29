@@ -55,6 +55,23 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// A biome as one compiled Executor knows it (Executor::biomeKey): which of
+/// the identifiers its tree's `biome` conditions name it is, or that it is
+/// none of them. A caller that resolves one biome for many blocks takes its
+/// key once and hands it to every one of them in Context::biomeKey, and each
+/// `biome` condition is then answered by one lookup instead of comparing the
+/// biome's name against every name the condition lists.
+///
+/// A default-constructed key is no key, and a key is only ever read by the
+/// executor that issued it (the one it was compiled as, or a copy of it,
+/// which answers alike): any other ignores it.
+struct BiomeKey {
+    /// The issuing Executor's own identity; 0 for no key.
+    std::uint64_t executor = 0;
+    /// The biome's place in that Executor's table.
+    std::uint32_t index = 0;
+};
+
 /// What the rules may ask about one block.
 ///
 /// Everything here is a fact about the terrain AS THE FILLER LEFT IT, which
@@ -82,6 +99,14 @@ struct Context {
     /// not carry one — which is only reachable for a tree that names neither,
     /// since a tree that did would have been refused.
     std::optional<data::ResourceLocation> biome;
+
+    /// The same biome as the running executor's key for it, for a caller
+    /// that has one: Executor::biomeKey(*biome), or a key it issued for the
+    /// biome this block is in. Where the key is the running executor's own,
+    /// `biome` conditions answer from it and `biome` above is not read, so a
+    /// caller with a key need not fill that in; where it is not (no key, the
+    /// default), they compare `biome` by name, as they always did.
+    BiomeKey biomeKey;
 
     /// That biome's declared temperature, for `temperature`. A float32 on
     /// purpose: vanilla holds it as one and the whole comparison is done in
@@ -368,6 +393,13 @@ public:
     /// same block, and the same refusal at the same block, as apply(at).
     [[nodiscard]] const settings::BlockState* apply(const Context& at, ColumnMemo& memo) const;
 
+    /// @p biome's key for Context::biomeKey (BiomeKey). Every `biome`
+    /// condition answers a block carrying it exactly as it answers one whose
+    /// Context::biome is @p biome: the answers are worked out at compile, by
+    /// the same comparison, for each identifier the tree names and once for
+    /// all the identifiers it does not. Never throws for any identifier.
+    [[nodiscard]] BiomeKey biomeKey(const data::ResourceLocation& biome) const;
+
     /// The block `bandlands` places at @p x, @p y, @p z: one entry of this
     /// dimension's clay-bands table, indexed by a per-column noise-derived
     /// shift (spec/bandlands-spec.md Q4). Throws ExecutionError if @p x/@p z's
@@ -411,6 +443,16 @@ private:
     [[nodiscard]] const settings::BlockState& bandAt(std::int32_t y, std::int32_t offset) const;
     [[nodiscard]] float freezingField(std::int32_t x, std::int32_t z) const noexcept;
     [[nodiscard]] bool freezing(const Context& at, ColumnMemo& memo) const noexcept;
+    /// The `biome` condition @p condition, whose answers are column
+    /// @p biomeSlot of biomeAnswers_, at @p at: from at.biomeKey where it is
+    /// this executor's, by name otherwise.
+    [[nodiscard]] bool biomeMatches(const Condition& condition, std::size_t biomeSlot,
+                                    const Context& at) const;
+
+    /// This executor's identity, which its BiomeKeys carry: one per compile()
+    /// and never 0, so no key another compile issued is ever taken for one of
+    /// this one's. A copy keeps it, and answers every key alike.
+    std::uint64_t id_ = 0;
 
     const RuleGraph* graph_;
     const settings::NoiseGeometry* geometry_;
@@ -453,12 +495,26 @@ private:
         std::size_t noiseSlot = 0;
         /// `stone_depth`'s `surface_type` is "ceiling".
         bool ceiling = false;
+        /// `biome`'s column in biomeAnswers_: one per biome condition.
+        std::size_t biomeSlot = 0;
     };
 
     static constexpr std::size_t kNoSource = static_cast<std::size_t>(-1);
 
     std::vector<CompiledCondition> compiled_;
     std::size_t noiseSlots_ = 0;
+
+    /// What biomeKey() issues and the `biome` conditions read back. Every
+    /// identifier any `biome` condition lists has its own index, in the
+    /// order of the map, and every other identifier shares the one past
+    /// them (biomeKeys_ - 1), since no condition matches any of those.
+    /// biomeAnswers_[index * biomeSlots_ + slot] is condition `slot`'s answer
+    /// for the biome at `index`, found at compile by the very comparison a
+    /// keyless block makes.
+    std::map<data::ResourceLocation, std::uint32_t> biomeIndex_;
+    std::vector<char> biomeAnswers_;
+    std::size_t biomeSlots_ = 0;
+    std::uint32_t biomeKeys_ = 0;
 
     /// The graph's rules and conditions, by index, read without the graph's
     /// range check: compile() takes every index the tree holds from the

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,10 @@
 namespace stratum::surface {
 
 namespace {
+
+/// The identity the next compiled Executor takes (Executor::id_). Touched once
+/// per compile, never while rules run; 0 is never issued.
+std::atomic<std::uint64_t> nextExecutorId{1};
 
 /// The identifiers the surface depth reads, whatever the tree names.
 constexpr std::string_view kSurfaceNoise = "minecraft:surface";
@@ -394,11 +399,42 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
             case ConditionType::StoneDepth:
                 compiled.ceiling = condition.surfaceType == "ceiling";
                 break;
+            case ConditionType::Biome:
+                compiled.biomeSlot = executor.biomeSlots_++;
+                for (const data::ResourceLocation& biome : condition.biomes) {
+                    executor.biomeIndex_.emplace(biome, 0U);
+                }
+                break;
             default:
                 break;
         }
     }
     executor.noiseSlots_ = noiseSlotOf.size();
+    // biomeKey()'s table (BiomeKey): an index per identifier the conditions
+    // list, in the map's order, and one past them for every other
+    // identifier. Each answer is the comparison a keyless block makes, made
+    // here once per (condition, identifier); for an identifier no condition
+    // lists, every condition's comparison is false, which the zero fill is.
+    std::uint32_t named = 0;
+    for (auto& [biome, index] : executor.biomeIndex_) {
+        index = named++;
+    }
+    executor.biomeKeys_ = named + 1U;
+    executor.biomeAnswers_.assign(
+        static_cast<std::size_t>(executor.biomeKeys_) * executor.biomeSlots_, char{0});
+    for (ConditionIndex index = 0; index < graph.conditionCount(); ++index) {
+        const Condition& condition = graph.condition(index);
+        if (condition.type != ConditionType::Biome) {
+            continue;
+        }
+        for (const auto& [biome, key] : executor.biomeIndex_) {
+            executor.biomeAnswers_[(static_cast<std::size_t>(key) * executor.biomeSlots_) +
+                                   executor.compiled_[index].biomeSlot] =
+                std::ranges::find(condition.biomes, biome) != condition.biomes.end() ? char{1}
+                                                                                     : char{0};
+        }
+    }
+    executor.id_ = nextExecutorId.fetch_add(1, std::memory_order_relaxed);
     executor.rules_.reserve(graph.ruleCount());
     for (RuleIndex index = 0; index < graph.ruleCount(); ++index) {
         executor.rules_.push_back(&graph.rule(index));
@@ -593,6 +629,34 @@ const settings::BlockState* Executor::apply(const Context& at) const {
 const settings::BlockState* Executor::apply(const Context& at, ColumnMemo& memo) const {
     memo.bind(at.x, at.z);
     return program_.empty() ? runRule(graph_->root(), at, memo) : runProgram(at, memo);
+}
+
+BiomeKey Executor::biomeKey(const data::ResourceLocation& biome) const {
+    const auto found = biomeIndex_.find(biome);
+    return BiomeKey{.executor = id_,
+                    .index = found != biomeIndex_.end() ? found->second : biomeKeys_ - 1U};
+}
+
+bool Executor::biomeMatches(const Condition& condition, const std::size_t biomeSlot,
+                            const Context& at) const {
+    if (at.biomeKey.executor == id_) {
+        // One of this executor's own keys: the answer compile() worked out
+        // for its biome. Only biomeKey() issues them, and only in range; a
+        // key altered by hand past the table is refused rather than read.
+        if (at.biomeKey.index >= biomeKeys_) [[unlikely]] {
+            throw ExecutionError("a biome key whose index (" + std::to_string(at.biomeKey.index) +
+                                 ") this executor never issued");
+        }
+        return biomeAnswers_[(static_cast<std::size_t>(at.biomeKey.index) * biomeSlots_) +
+                             biomeSlot] != 0;
+    }
+    // The caller supplies the biome; compile() has already refused any tree
+    // that names this condition when none can be, so an absent one here is a
+    // programming error rather than a wrong world.
+    if (!at.biome.has_value()) {
+        throw ExecutionError("a biome condition reached the executor without a biome");
+    }
+    return std::ranges::find(condition.biomes, *at.biome) != condition.biomes.end();
 }
 
 std::int32_t Executor::columnSurfaceDepth(const Context& at, ColumnMemo& memo) const {
@@ -875,15 +939,8 @@ bool Executor::test(const ConditionIndex index, const Context& at, ColumnMemo& m
                                 8,
                             "the preliminary surface plus the surface depth, less 8");
 
-        case ConditionType::Biome: {
-            // The caller supplies the biome; compile() has already refused any
-            // tree that names this condition when none can be, so an absent
-            // one here is a programming error rather than a wrong world.
-            if (!at.biome.has_value()) {
-                throw ExecutionError("a biome condition reached the executor without a biome");
-            }
-            return std::ranges::find(condition.biomes, *at.biome) != condition.biomes.end();
-        }
+        case ConditionType::Biome:
+            return biomeMatches(condition, compiled_[index].biomeSlot, at);
 
         case ConditionType::Temperature:
             return freezing(at, memo);
