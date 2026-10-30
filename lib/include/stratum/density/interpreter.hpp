@@ -713,11 +713,29 @@ public:
     ///     each `interpolated` argument used to keep only its last cell's
     ///     eight, so a chunk evaluated 28 000 corners for 5 700 distinct
     ///     ones. Each corner is now kept by its argument, its position and
-    ///     what it was read through, and filled lazily: a corner is
-    ///     evaluated the first time a cell that has it is read, in that
-    ///     cell's corner order, and never if no such cell is read. So the
-    ///     corners evaluated are the same set as before, in the same order
-    ///     of first evaluation, and the first refusal is the same one;
+    ///     what it was read through. A cell asks for its corners in its
+    ///     corner order, and one not held is evaluated then — alone, or,
+    ///     where the argument's lattice holds it and a column batch can walk
+    ///     the argument (Op::laneWalk), in one batch with the corners above
+    ///     it up its lattice column (Interpreter::batchedCorner,
+    ///     MemoTable::columnRun): as far as the highest corner a cell of
+    ///     that lattice has asked for, or a few past it while that is not
+    ///     known yet. So corners are evaluated EARLY and in batches, not in
+    ///     the order their cells read them, and some — above a dimension's
+    ///     top, in a chunk's first cell column — that no cell ever reads.
+    ///     That changes no value: under the memo every value is a pure
+    ///     function of its key, so evaluating it sooner, or again, gives
+    ///     the same double. A batch keeps its corners only once every lane
+    ///     of it has returned; anything one of its evaluations would refuse
+    ///     — a refusing node, a point a noise does not accept, an unbuilt
+    ///     noise, any throw of the walk it reads through — abandons it,
+    ///     keeping none of its corners, and the corner asked for is then
+    ///     evaluated alone, in its cell's corner order, as it always was
+    ///     (and the lattice evaluates every corner alone from then on). So
+    ///     a refusal is only ever thrown by a corner evaluated alone when its
+    ///     cell asked for it, and the first refusal is the same one, at the
+    ///     same point, in the same words; and a corner no cell reads leaves
+    ///     nothing behind but its kept value;
     ///   * `flat_cache`'s relocated reads: its argument at the column corner
     ///     (floorDiv(x, 4) * 4, 0, floorDiv(z, 4) * 4), which every block of
     ///     that 4x4 column reads, and which was evaluated afresh on every
