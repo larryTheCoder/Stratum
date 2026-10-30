@@ -226,6 +226,60 @@ TEST_CASE("a normal noise's column is its samples, bit for bit", "[noise][column
     CHECK(tally.points > 800000U);
 }
 
+TEST_CASE("a normal noise at a y of zero is what its column makes there, bit for bit",
+          "[noise][column]") {
+    // sample() at y = +0.0 or -0.0 reads each octave's lattice along y off
+    // its noise (PerlinNoise::flatYKnown) rather than making it; sampleColumn
+    // makes it from the point's y as samplePerlin always did. The two must
+    // agree at every point, whichever zero, for noises of every
+    // construction, out to their input limits.
+    Draw draw(4321);
+    std::size_t points = 0;
+    std::size_t differing = 0;
+    std::string first = "none";
+    std::array<double, 1> out{};
+    for (std::size_t n = 0; n < 400; ++n) {
+        const NormalNoise noise = normalNoise(draw);
+        const double reach = std::isfinite(noise.inputLimit()) ? noise.inputLimit() : 1.0e9;
+        for (std::size_t c = 0; c < 200; ++c) {
+            const double x = draw.coordinate(draw.below(3) == 0 ? reach : std::fmin(reach, 3.0e5));
+            const double z = draw.coordinate(draw.below(3) == 0 ? reach : std::fmin(reach, 3.0e5));
+            const double y = draw.below(2) == 0 ? 0.0 : -0.0;
+            if (!noise.accepts(x, y, z)) {
+                continue;
+            }
+            const std::array<double, 1> ys{y};
+            noise.sampleColumn(x, ys, z, out);
+            ++points;
+            if (bits(noise.sample(x, y, z)) != bits(out[0]) && differing++ == 0) {
+                first = "x " + std::to_string(x) + " y " + std::to_string(y) + " z " +
+                        std::to_string(z);
+            }
+        }
+    }
+    CAPTURE(points, first);
+    CHECK(differing == 0U);
+    CHECK(points > 50000U);
+}
+
+TEST_CASE("a Perlin octave knows its lattice along y at y = 0 only inside the lattice's range",
+          "[noise][column]") {
+    // flatYKnown is what lets sample() skip making it; an origin the lattice
+    // cannot hold (out of int32, NaN) leaves it unknown.
+    std::array<std::uint8_t, 256> identity{};
+    for (std::size_t i = 0; i < identity.size(); ++i) {
+        identity[i] = static_cast<std::uint8_t>(i);
+    }
+    using stratum::noise::PerlinNoise;
+    CHECK(PerlinNoise(0.0, 17.25, 0.0, identity).flatYKnown());
+    CHECK(PerlinNoise(0.0, 17.25, 0.0, identity).flatCellY() == 17U);
+    CHECK(bits(PerlinNoise(0.0, 17.25, 0.0, identity).flatLocalY()) == bits(0.25));
+    CHECK(PerlinNoise(0.0, -0.0, 0.0, identity).flatYKnown());
+    CHECK(bits(PerlinNoise(0.0, -0.0, 0.0, identity).flatLocalY()) == bits(0.0));
+    CHECK_FALSE(PerlinNoise(0.0, 3.0e9, 0.0, identity).flatYKnown());
+    CHECK_FALSE(PerlinNoise(0.0, std::nan(""), 0.0, identity).flatYKnown());
+}
+
 TEST_CASE("a blended noise's column is its samples, bit for bit", "[noise][column]") {
     Tally tally;
     fuzzBlended(7171, 80, 100, tally);

@@ -101,7 +101,20 @@ using detail::isZero;
 
 PerlinNoise::PerlinNoise(double originX, double originY, double originZ,
                          std::array<std::uint8_t, 256> permutation) noexcept
-    : originX_(originX), originY_(originY), originZ_(originZ), permutation_(permutation) {}
+    : originX_(originX), originY_(originY), originZ_(originZ), permutation_(permutation) {
+    // The lattice along y at y = 0 (flatYKnown): what samplePerlin makes of
+    // `y + originY` there. With y either zero that sum is originY, or a zero
+    // of either sign where originY is one — and latticeAxis gives +0.0 and
+    // -0.0 the same offset (+0.0), cell (0) and so fade. Only inside the
+    // lattice's range, as samplePerlin's own precondition; NaN fails it.
+    if (originY >= -2147483648.0 && originY < 2147483648.0) {
+        const detail::LatticeAxis axis = detail::latticeAxis(0.0 + originY);
+        flatLocalY_ = axis.local;
+        flatCellY_ = axis.cell;
+        flatFadeY_ = detail::fade(axis.local);
+        flatYKnown_ = true;
+    }
+}
 
 namespace {
 
@@ -426,10 +439,41 @@ NormalNoise::NormalNoise(OctaveNoise first, OctaveNoise second, double valueFact
     // empty ones. This constructor is private and those three are all that
     // call it.
     assert(first_.octaves_.size() == second_.octaves_.size());
+    const auto known = [](const OctaveNoise::Octave& octave) { return octave.noise.flatYKnown(); };
+    flatY_ =
+        std::ranges::all_of(first_.octaves_, known) && std::ranges::all_of(second_.octaves_, known);
 }
 
 double NormalNoise::sample(double x, double y, double z) const noexcept {
     assert(accepts(x, y, z));
+    if (flatY_ && isZero(y)) {
+        // A y of zero, either sign — a column-invariant noise's every
+        // sample — reaches each octave as a zero of either sign, y times a
+        // positive frequency (the second stack's too, y * k first), so each
+        // octave's lattice along y is the one its noise made at
+        // construction: octaveTerm with that read rather than made, the
+        // same doubles summed in the same order.
+        const double secondX = x * kSecondFrequency;
+        const double secondZ = z * kSecondFrequency;
+        const std::vector<OctaveNoise::Octave>& firstOctaves = first_.octaves_;
+        const std::vector<OctaveNoise::Octave>& secondOctaves = second_.octaves_;
+        double firstTotal = 0.0;
+        double secondTotal = 0.0;
+        for (std::size_t i = 0; i < firstOctaves.size(); ++i) {
+            const OctaveNoise::Octave& first = firstOctaves[i];
+            firstTotal +=
+                (detail::samplePerlinFlatY(first.noise, x * first.frequency, z * first.frequency) *
+                 first.amplitude) *
+                first.persistence;
+            const OctaveNoise::Octave& second = secondOctaves[i];
+            secondTotal += (detail::samplePerlinFlatY(second.noise, secondX * second.frequency,
+                                                      secondZ * second.frequency) *
+                            second.amplitude) *
+                           second.persistence;
+        }
+        const double combined = firstTotal + secondTotal;
+        return combined * valueFactor_;
+    }
     // first_.sample(x, y, z) + second_.sample(x * k, y * k, z * k), with the
     // two octave sums run side by side rather than one after the other: each
     // sum still adds its own terms in its own order from 0.0, so each is the

@@ -94,6 +94,20 @@ public:
         return permutation_;
     }
 
+    /// The lattice along y at a y of zero, either sign — where every octave
+    /// of a column-invariant noise is sampled, its y scale being zero: the
+    /// offset into the cell, the cell's low byte and the offset's fade, as
+    /// sample() makes them from `0.0 + originY()`. Made at construction,
+    /// where the origin is inside the lattice's range (flatYKnown()); read
+    /// by NormalNoise's sample in place of making them again.
+    [[nodiscard]] bool flatYKnown() const noexcept { return flatYKnown_; }
+
+    [[nodiscard]] double flatLocalY() const noexcept { return flatLocalY_; }
+
+    [[nodiscard]] std::uint32_t flatCellY() const noexcept { return flatCellY_; }
+
+    [[nodiscard]] double flatFadeY() const noexcept { return flatFadeY_; }
+
 private:
     /// Wraps into the 256-entry table. The index is signed because the
     /// lattice coordinates are: a negative one wraps exactly as the
@@ -107,6 +121,10 @@ private:
     double originY_ = 0.0;
     double originZ_ = 0.0;
     std::array<std::uint8_t, 256> permutation_{};
+    double flatLocalY_ = 0.0;
+    double flatFadeY_ = 0.0;
+    std::uint32_t flatCellY_ = 0;
+    bool flatYKnown_ = false;
 };
 
 /// A stack of Perlin octaves with per-octave amplitude and frequency. This is
@@ -233,6 +251,10 @@ private:
     OctaveNoise second_;
     double valueFactor_ = 1.0;
     double inputLimit_ = 0.0;
+    /// Whether every octave of both stacks knows its lattice along y at
+    /// y = 0 (PerlinNoise::flatYKnown), which sample() then reads at a y of
+    /// zero rather than making it.
+    bool flatY_ = false;
 };
 
 } // namespace stratum::noise

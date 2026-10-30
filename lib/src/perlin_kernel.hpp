@@ -235,6 +235,59 @@ template<bool Folds>
     return lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
 }
 
+/// samplePerlin<false>(noise, x, y, z, ...) at a y of zero, either sign:
+/// the same body with the lattice along y and its fade read from the noise
+/// (PerlinNoise::flatLocalY and the rest), which made them as this would
+/// from `y + originY`.
+///
+/// PRECONDITION: noise.flatYKnown(), and samplePerlin's along x and z.
+[[nodiscard]] STRATUM_NOISE_INLINE double samplePerlinFlatY(const PerlinNoise& noise, double x,
+                                                            double z) noexcept {
+    assert(noise.flatYKnown());
+    const std::array<std::uint8_t, 256>& permutation = noise.permutation();
+    const auto at = [&permutation](std::uint32_t index) noexcept -> std::uint32_t {
+        return permutation[index & 0xFFU];
+    };
+
+    const LatticeAxis axisX = latticeAxis(x + noise.originX());
+    const LatticeAxis axisZ = latticeAxis(z + noise.originZ());
+    const std::uint32_t cellY = noise.flatCellY();
+
+    const double localX = axisX.local;
+    const double localZ = axisZ.local;
+
+    const double fadeX = fade(localX);
+    const double fadeY = noise.flatFadeY();
+    const double fadeZ = fade(localZ);
+
+    // Unfolded, as samplePerlin<false>'s.
+    const double localY = noise.flatLocalY();
+
+    const std::uint32_t cornerA = (at(axisX.cell) + cellY) & 0xFFU;
+    const std::uint32_t cornerB = (at(axisX.cell + 1U) + cellY) & 0xFFU;
+
+    const std::uint32_t cornerAA = (at(cornerA) + axisZ.cell) & 0xFFU;
+    const std::uint32_t cornerBA = (at(cornerB) + axisZ.cell) & 0xFFU;
+    const std::uint32_t cornerAB = (at(cornerA + 1U) + axisZ.cell) & 0xFFU;
+    const std::uint32_t cornerBB = (at(cornerB + 1U) + axisZ.cell) & 0xFFU;
+
+    const double x0y0z0 = gradientDot(at(cornerAA), localX, localY, localZ);
+    const double x1y0z0 = gradientDot(at(cornerBA), localX - 1.0, localY, localZ);
+    const double x0y1z0 = gradientDot(at(cornerAB), localX, localY - 1.0, localZ);
+    const double x1y1z0 = gradientDot(at(cornerBB), localX - 1.0, localY - 1.0, localZ);
+    const double x0y0z1 = gradientDot(at(cornerAA + 1U), localX, localY, localZ - 1.0);
+    const double x1y0z1 = gradientDot(at(cornerBA + 1U), localX - 1.0, localY, localZ - 1.0);
+    const double x0y1z1 = gradientDot(at(cornerAB + 1U), localX, localY - 1.0, localZ - 1.0);
+    const double x1y1z1 = gradientDot(at(cornerBB + 1U), localX - 1.0, localY - 1.0, localZ - 1.0);
+
+    const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
+    const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
+    const double y0z1 = lerp(fadeX, x0y0z1, x1y0z1);
+    const double y1z1 = lerp(fadeX, x0y1z1, x1y1z1);
+
+    return lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
+}
+
 /// The five-argument PerlinNoise::sample: the fold only where yScale is not
 /// zero, as that form decides it. The folded body is inline; the unfolded
 /// one is the out-of-line three-argument sample, the same double, because
