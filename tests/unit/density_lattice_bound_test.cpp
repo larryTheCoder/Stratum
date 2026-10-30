@@ -11,7 +11,9 @@
 // one; at vanilla's 4x8 a few thousand. Wherever an argument's corners are
 // kept, every value is the walk's, bit for bit — the uncached walk's and a
 // last-cell cache's — and the place each argument's corners are kept is
-// fixed from its first fill until the cache is forgotten.
+// fixed from its first fill until the cache is forgotten. A forgotten cache
+// gives its lattices' room back whole: read again after a reset, it makes
+// the lattices it made the first time, and holds the same corners in them.
 
 #include "support/temp_path.hpp"
 
@@ -91,6 +93,8 @@ struct Filled {
     std::size_t lattices = 0;
     std::size_t corners = 0;
     std::size_t afterReset = 0;
+    std::size_t latticesAgain = 0;
+    std::size_t cornersAgain = 0;
 };
 
 [[nodiscard]] Filled fill(const CellGeometry cells) {
@@ -137,6 +141,8 @@ struct Filled {
     memo.reset();
     filled.afterReset = memo.memoLattices();
     readAll();
+    filled.latticesAgain = memo.memoLattices();
+    filled.cornersAgain = memo.memoLatticeCorners();
     return filled;
 }
 
@@ -153,6 +159,8 @@ TEST_CASE("the corner cache's lattices stay inside their bound, and past it the 
         CHECK(filled.corners == std::size_t{17} * 513U * 17U);
         CHECK(filled.corners <= Interpreter::CornerCache::kMemoLatticeCorners);
         CHECK(filled.afterReset == 0U);
+        CHECK(filled.latticesAgain == filled.lattices);
+        CHECK(filled.cornersAgain == filled.corners);
     }
     SECTION("4x8 cells: a lattice for every argument") {
         const Filled filled = fill(CellGeometry{.width = 4, .height = 8});
@@ -161,5 +169,7 @@ TEST_CASE("the corner cache's lattices stay inside their bound, and past it the 
         CHECK(filled.lattices == kRoots.size());
         CHECK(filled.corners == kRoots.size() * 5U * 65U * 5U);
         CHECK(filled.afterReset == 0U);
+        CHECK(filled.latticesAgain == filled.lattices);
+        CHECK(filled.cornersAgain == filled.corners);
     }
 }
