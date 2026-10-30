@@ -597,7 +597,41 @@ ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
         }
     }
 
+    // What fill()'s block loop reads of each height, once a height rather
+    // than once a cell column and height; after oreVeins_, which it reads.
+    filler.heightRules_.reserve(
+        static_cast<std::size_t>(std::max(settings.geometry.height, std::int32_t{0})));
+    for (std::int32_t y = settings.geometry.minY;
+         y < settings.geometry.minY + settings.geometry.height; ++y) {
+        filler.heightRules_.push_back(filler.heightRuleAt(y));
+    }
+
     return filler;
+}
+
+ChunkFiller::HeightRule ChunkFiller::heightRuleAt(const std::int32_t y) const {
+    // Where the density is not solid and the aquifer is not asked —
+    // aquifers off, or (Q2.3) above y_skip — the global picker stands
+    // there, the same in both: lava under min(-54, sea_level),
+    // default_fluid under sea_level, air above. Aquifers off still has that
+    // global lava sea (spec Q1.2, Q2.1): measured on the aquifer-free probe
+    // (tools/analysis/aquifer-free-probe.sh), 1005 positions at y -58..-55
+    // the server filled with lava, all of which this used to write as water
+    // — invisible to every category-only comparison, where both are
+    // "fluid". And `sea_level` is EXCLUSIVE: with vanilla's 63 the water
+    // stops at 62 and 63 is the first air. That is measured, not read — an
+    // inclusive comparison puts one extra water block on top of every
+    // column in the world, which is 256 a chunk and exactly what the golden
+    // comparison found.
+    const settings::BlockState* unconsulted = &air();
+    if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
+        unconsulted = &lava();
+    } else if (y < settings_->seaLevel) {
+        unconsulted = &settings_->defaultFluid;
+    }
+    return HeightRule{.unconsulted = unconsulted,
+                      .readsVeins = oreVeins_.has_value() && ore::inAnyVeinRange(y),
+                      .richness = ore::RichnessGate(y)};
 }
 
 void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const {
@@ -825,33 +859,16 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                     // What a block's y alone decides, once a y: whether the
                     // aquifer is asked below a non-positive density, what
                     // stands there when it is not, and whether veins are
-                    // read on solid ground, and at what richness.
-                    //
-                    // Not asked — aquifers off, or (Q2.3) above y_skip —
-                    // the global picker stands there, the same in both:
-                    // lava under min(-54, sea_level), default_fluid under
-                    // sea_level, air above. Aquifers off still has that
-                    // global lava sea (spec Q1.2, Q2.1): measured on the
-                    // aquifer-free probe (tools/analysis/aquifer-free-
-                    // probe.sh), 1005 positions at y -58..-55 the server
-                    // filled with lava, all of which this used to write as
-                    // water — invisible to every category-only comparison,
-                    // where both are "fluid". And `sea_level` is EXCLUSIVE:
-                    // with vanilla's 63 the water stops at 62 and 63 is the
-                    // first air. That is measured, not read — an inclusive
-                    // comparison puts one extra water block on top of every
-                    // column in the world, which is 256 a chunk and exactly
-                    // what the golden comparison found.
+                    // read on solid ground, and at what richness. All but
+                    // the first are the same in every chunk, worked out at
+                    // compile (heightRuleAt).
                     const bool consultsAquifer =
                         aquiferCentres_.has_value() && aquifer::consultsLattice(y, ySkipLevel);
-                    const settings::BlockState* unconsulted = airBlock;
-                    if (y < aquifer::lambdaLevel(settings_->seaLevel)) {
-                        unconsulted = &lava();
-                    } else if (y < settings_->seaLevel) {
-                        unconsulted = &settings_->defaultFluid;
-                    }
-                    const bool readsVeins = oreVeins_.has_value() && ore::inAnyVeinRange(y);
-                    const ore::RichnessGate richness(y);
+                    const HeightRule& height =
+                        heightRules_[static_cast<std::size_t>(y - geometry.minY)];
+                    const settings::BlockState* const unconsulted = height.unconsulted;
+                    const bool readsVeins = height.readsVeins;
+                    const ore::RichnessGate& richness = height.richness;
                     for (std::int32_t runZ = cellZ; runZ < cellEndZ; runZ += runRows) {
                         const std::int32_t runDepth = std::min(runRows, cellEndZ - runZ);
                         const density::Interpreter::BlockKernel::Blocks run{
@@ -872,8 +889,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                             solid = solidLanes(densityLanes, count);
                         }
                         bool toggles = false;
-                        if (densities && oreVeins_.has_value() && veinToggleKernel_.has_value() &&
-                            ore::inAnyVeinRange(y) && solid != 0U) {
+                        // readsVeins: oreVeins_ holds a source and y is in a
+                        // vein range.
+                        if (densities && readsVeins && veinToggleKernel_.has_value() &&
+                            solid != 0U) {
                             density::Interpreter::BlockKernel::Blocks solidRun = run;
                             solidRun.lanes = solid;
                             toggles = interpreter_.evaluate(*veinToggleKernel_, solidRun,
@@ -980,7 +999,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                                 // including the ones the aquifer's own barrier
                                 // turned solid against a negative density, came
                                 // back exact on 11455 of 11455.
-                                if (readsVeins && block == &settings_->defaultBlock) {
+                                // (readsVeins holds only where oreVeins_ does;
+                                // the second test says so where it is used.)
+                                if (readsVeins && block == &settings_->defaultBlock &&
+                                    oreVeins_.has_value()) {
                                     // One router entry at a time, each behind the
                                     // gate the last one opened: `vein_toggle`
                                     // rejects the overwhelming majority of

@@ -476,6 +476,24 @@ private:
                                   : interpreter_.evaluate(node, at, cache);
     }
 
+    /// What a block's y alone decides in fill()'s block loop, beyond
+    /// whether the aquifer is asked (that leans on the chunk's y_skip): the
+    /// block that stands where the density is not solid and the aquifer is
+    /// not asked (the global picker), whether veins are read on solid
+    /// ground there, and at what richness. The same for every chunk, so
+    /// worked out once per height at compile (heightRuleAt) and looked up.
+    struct HeightRule {
+        const settings::BlockState* unconsulted = nullptr;
+        bool readsVeins = false;
+        ore::RichnessGate richness{0};
+    };
+
+    [[nodiscard]] HeightRule heightRuleAt(std::int32_t y) const;
+
+    /// heightRuleAt(y) at index y - geometry.minY, for every y the
+    /// dimension holds.
+    std::vector<HeightRule> heightRules_;
+
     // Present only when settings_->aquifersEnabled — its own RNG derivation
     // is per-world (the salted positional source, SPEC §4), so it is built
     // once at compile() from the registry's own worldSeed() rather than

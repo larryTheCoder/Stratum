@@ -179,3 +179,6 @@ target_sources(stratum_unit_tests PRIVATE aquifer_status_memo_test.cpp)
 
 # The aquifer consult piece by piece: rankFour, the shifted cellOf, decideRanked, candidateStatus.
 target_sources(stratum_unit_tests PRIVATE aquifer_consult_test.cpp)
+
+# What the fill reads of each height (ChunkFiller::heightRuleAt), at floors and seas that differ.
+target_sources(stratum_unit_tests PRIVATE terrain_fill_heights_test.cpp)
