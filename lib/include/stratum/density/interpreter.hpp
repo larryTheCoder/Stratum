@@ -1351,6 +1351,14 @@ private:
 
     [[nodiscard]] double evaluateNode(Scope& scope, NodeIndex index) const;
 
+    /// evaluateNode's column memo (Op::columnMemo): whether @p index's value
+    /// in @p scope's column, read as @p scope's call reads, is kept, and if
+    /// so that value in @p value; and keeping @p value there. Parts of
+    /// evaluateNode's level kept out of its frame (STRATUM_LEVEL_PART in
+    /// density_interpreter.cpp).
+    [[nodiscard]] static bool keptColumn(const Scope& scope, NodeIndex index, double& value);
+    void keepColumn(const Scope& scope, NodeIndex index, double value) const;
+
     /// The cases of evaluateNode that hold more than a few doubles, kept out
     /// of its frame, which a graph pays once per level of its depth (SPEC
     /// §8). Each is that case exactly.
@@ -1415,6 +1423,32 @@ private:
     /// cell again (SPEC §4.1), and its lattice once per corner.
     [[nodiscard]] double interpolate(NodeIndex argument, const Scope& scope) const;
 
+    // Parts of interpolate's and fillCell's levels kept out of their frames,
+    // which a graph pays once per `interpolated` it nests (STRATUM_LEVEL_PART
+    // in density_interpreter.cpp). Each is that part exactly; @p geometry is
+    // the interpreter's cell lattice, which the caller has checked it has.
+
+    /// What @p argument's corners are kept under in @p call besides their
+    /// positions (interpolate).
+    [[nodiscard]] std::uint32_t cornerTagOf(NodeIndex argument, const Call& call) const noexcept;
+
+    /// Whether @p entry holds the corners of the cell from @p lower, read
+    /// under @p tag where @p memo.
+    [[nodiscard]] static bool holdsCell(const CornerCache::Entry& entry, Point lower, bool memo,
+                                        std::uint32_t tag) noexcept;
+
+    /// @p corners, of the cell from @p lower, blended at @p at.
+    [[nodiscard]] static double blendAt(const std::array<double, 8>& corners, Point at, Point lower,
+                                        CellGeometry geometry) noexcept;
+
+    /// interpolate()'s value with no cache: @p argument at each corner of the
+    /// cell from @p lower, evaluated afresh, blended at @p scope's point.
+    [[nodiscard]] double interpolateAlone(NodeIndex argument, const Scope& scope, Point lower,
+                                          CellGeometry geometry) const;
+
+    /// Corner @p k, in kCornerOrder, of the cell from @p lower.
+    [[nodiscard]] static Point cornerAt(Point lower, CellGeometry geometry, std::size_t k) noexcept;
+
     /// @p argument at the cell corner @p corner, from the cache's lattice
     /// under @p tag, or evaluated there (in a scope on @p call keeping cell
     /// corners as @p cells says) and kept. @p call's cache is set.
@@ -1438,6 +1472,28 @@ private:
     void fillCell(NodeIndex argument, const Call& call, bool cells, CornerCache::Entry& entry,
                   Point lower, std::uint32_t tag) const;
 
+    /// fillCell's two ways — through the cache's memo, and afresh — which
+    /// interpolate() also takes directly, so that a nested `interpolated`
+    /// pays one frame for the fill rather than two (STRATUM_LEVEL_PART in
+    /// density_interpreter.cpp). Each is that way exactly.
+    void fillLatticeCell(NodeIndex argument, const Call& call, bool cells,
+                         CornerCache::Entry& entry, Point lower, std::uint32_t tag,
+                         CellGeometry geometry) const;
+    void fillFreshCell(NodeIndex argument, const Call& call, bool cells, CornerCache::Entry& entry,
+                       Point lower, std::uint32_t tag, CellGeometry geometry) const;
+
+    /// @p entry marked empty while it fills, and then holding the cell from
+    /// @p lower read under @p tag.
+    static void openCell(CornerCache::Entry& entry) noexcept;
+    static void sealCell(CornerCache::Entry& entry, Point lower, std::uint32_t tag) noexcept;
+
+    /// @p argument's eight corners of the cell from @p lower, each evaluated
+    /// afresh in a scope on @p call keeping cell corners as @p cells says,
+    /// into @p corners once all eight have returned: fillCell's way without
+    /// the memo (fillFreshCell).
+    void fillAfresh(NodeIndex argument, const Call& call, bool cells,
+                    std::array<double, 8>& corners, Point lower, CellGeometry geometry) const;
+
     /// One column batch: the corners of a lattice column, evaluated
     /// together (see batchedCorner).
     struct ColumnBatch;
@@ -1458,6 +1514,35 @@ private:
     /// would refuse or the node is not one it takes (Op::laneWalk).
     [[nodiscard]] const double* evaluateLanes(ColumnBatch& batch, NodeIndex index,
                                               std::uint64_t need) const;
+
+    // Parts of evaluateLanes' level kept out of its frame, which a batch
+    // pays once per level of its argument's depth (STRATUM_LEVEL_PART in
+    // density_interpreter.cpp): evaluateLanes evaluates the arguments' lanes,
+    // which is the recursion, and these make a node's own lanes — @p need's,
+    // of node @p index (Op @p op), into @p row — each its case exactly.
+    // Those returning lanes return the lanes they made: every lane of the
+    // batch.
+
+    /// A column-invariant node: its one value, read through the walk.
+    [[nodiscard]] std::uint64_t invariantLanes(const ColumnBatch& batch, NodeIndex index,
+                                               double* row) const;
+
+    /// The lanes of @p need at which range_choice @p op's input, whose
+    /// lanes are @p input, is in its range: those that take its first
+    /// branch.
+    [[nodiscard]] static std::uint64_t rangeWithin(const ColumnBatch& batch, const Op& op,
+                                                   const double* input, std::uint64_t need);
+
+    static void gradientLanes(const ColumnBatch& batch, const Op& op, std::uint64_t need,
+                              double* row);
+    static void noiseLanes(ColumnBatch& batch, const Op& op, std::uint64_t need, double* row);
+    static void shiftLanes(ColumnBatch& batch, const Op& op, std::uint64_t need, double* row);
+    void blendedLanes(const ColumnBatch& batch, NodeIndex index, std::uint64_t need,
+                      double* row) const;
+    [[nodiscard]] std::uint64_t flatLanes(const ColumnBatch& batch, const Op& op,
+                                          double* row) const;
+    void splineLanes(const ColumnBatch& batch, NodeIndex index, std::uint64_t need,
+                     double* row) const;
 
     /// evaluateLanes' samples of a `noise`, `shift` or `shifted_noise` node
     /// at its lanes @p need, into @p row: at x @p x and z @p z — each a

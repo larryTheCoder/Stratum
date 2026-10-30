@@ -37,6 +37,23 @@
 #include <utility>
 #include <vector>
 
+/// For a part of a recursion's level written as a function of its own, so
+/// that its locals take no room in the recursion's frame where it matters:
+/// an unoptimised build, where a compiler gives every local and temporary a
+/// stack slot of its own and inlines nothing, and where SPEC §8's stack
+/// bounds are measured (the `sanitize` preset's build). There the part is a
+/// call, whose slots are on the stack only while it runs, not while the
+/// recursion goes deeper. Where GCC or Clang optimise (__OPTIMIZE__, -O1 and
+/// up) it is inlined, so the optimised code is what it was with the part
+/// written in place — an optimiser shares slots between locals anyway. Any
+/// other compiler gets a plain `inline`, its own to decide. Inlining or not
+/// changes no value: every operation is the same either way.
+#if defined(__OPTIMIZE__) && (defined(__GNUC__) || defined(__clang__))
+#define STRATUM_LEVEL_PART [[gnu::always_inline]] inline
+#else
+#define STRATUM_LEVEL_PART inline
+#endif
+
 namespace stratum::density {
 
 namespace {
@@ -931,6 +948,110 @@ void eachLaneOf(const std::uint64_t need, const std::uint64_t all, const std::si
     }
 }
 
+// evaluateLanes' lane loops over its arguments' lanes, parts of its level
+// (STRATUM_LEVEL_PART): each lane of @p row that @p need sets, of a batch of
+// @p count lanes whose every bit is @p all.
+
+/// @p apply of the lane of @p input.
+template<typename Apply>
+STRATUM_LEVEL_PART void mapLanes(const std::uint64_t need, const std::uint64_t all,
+                                 const std::size_t count, const double* const input,
+                                 double* const row, const Apply& apply) {
+    eachLaneOf(need, all, count,
+               [row, input, &apply](std::size_t lane) { row[lane] = apply(input[lane]); });
+}
+
+/// @p apply of the lanes of @p first and @p second.
+template<typename Apply>
+STRATUM_LEVEL_PART void pairLanes(const std::uint64_t need, const std::uint64_t all,
+                                  const std::size_t count, const double* const first,
+                                  const double* const second, double* const row,
+                                  const Apply& apply) {
+    eachLaneOf(need, all, count, [row, first, second, &apply](std::size_t lane) {
+        row[lane] = apply(first[lane], second[lane]);
+    });
+}
+
+/// An arithmetic node's lanes — `add`, `mul`, `min` or `max`, @p type — of
+/// its arguments' lanes @p first and @p second.
+STRATUM_LEVEL_PART void binaryLanes(const NodeType type, const std::uint64_t need,
+                                    const std::uint64_t all, const std::size_t count,
+                                    const double* const first, const double* const second,
+                                    double* const row) {
+    switch (type) {
+        case NodeType::Add:
+            pairLanes(need, all, count, first, second, row,
+                      [](double a, double b) { return a + b; });
+            break;
+        case NodeType::Mul:
+            pairLanes(need, all, count, first, second, row,
+                      [](double a, double b) { return a * b; });
+            break;
+        case NodeType::Min:
+            pairLanes(need, all, count, first, second, row,
+                      [](double a, double b) { return minOf(a, b); });
+            break;
+        default:
+            pairLanes(need, all, count, first, second, row,
+                      [](double a, double b) { return maxOf(a, b); });
+            break;
+    }
+}
+
+/// A node's lanes of one argument's, @p input: `abs`, `square`, `cube`,
+/// `half_negative`, `quarter_negative`, `squeeze`, `invert` or `clamp`,
+/// @p type, with its @p parameters.
+STRATUM_LEVEL_PART void unaryLanes(const NodeType type,
+                                   const std::array<double, kMaxNodeParameters>& parameters,
+                                   const std::uint64_t need, const std::uint64_t all,
+                                   const std::size_t count, const double* const input,
+                                   double* const row) {
+    switch (type) {
+        case NodeType::Abs:
+            mapLanes(need, all, count, input, row, [](double value) { return std::abs(value); });
+            break;
+        case NodeType::Square:
+            mapLanes(need, all, count, input, row, [](double value) { return value * value; });
+            break;
+        case NodeType::Cube:
+            mapLanes(need, all, count, input, row, [](double value) { return cubeOf(value); });
+            break;
+        case NodeType::HalfNegative:
+            mapLanes(need, all, count, input, row,
+                     [](double value) { return halfNegative(value); });
+            break;
+        case NodeType::QuarterNegative:
+            mapLanes(need, all, count, input, row,
+                     [](double value) { return quarterNegative(value); });
+            break;
+        case NodeType::Squeeze:
+            mapLanes(need, all, count, input, row, [](double value) { return squeezeOf(value); });
+            break;
+        case NodeType::Invert:
+            mapLanes(need, all, count, input, row, [](double value) { return 1.0 / value; });
+            break;
+        default: {
+            // `clamp`.
+            const double low = parameters[0];
+            const double high = parameters[1];
+            mapLanes(need, all, count, input, row,
+                     [low, high](double value) { return std::clamp(value, low, high); });
+            break;
+        }
+    }
+}
+
+/// range_choice's lane: @p taken's where @p within sets the lane, @p other's
+/// where it does not — each of them made at exactly the lanes that read it.
+STRATUM_LEVEL_PART void chooseLanes(const std::uint64_t need, const std::uint64_t all,
+                                    const std::size_t count, const std::uint64_t within,
+                                    const double* const taken, const double* const other,
+                                    double* const row) {
+    eachLaneOf(need, all, count, [&](std::size_t lane) {
+        row[lane] = ((within >> lane) & 1U) != 0U ? taken[lane] : other[lane];
+    });
+}
+
 } // namespace
 
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
@@ -1730,6 +1851,27 @@ double Interpreter::evaluate(NodeIndex root, Point at) const {
     return evaluateNode(scope, root);
 }
 
+STRATUM_LEVEL_PART bool Interpreter::keptColumn(const Scope& scope, const NodeIndex index,
+                                                double& value) {
+    // The key {index, x, 0, z, columnTag}: the node, its column and what it
+    // was read through; y is no part of it, which is the whole of what
+    // Op::columnMemo proves. Shared with flat_cache's relocated reads
+    // (flatCache), whose key is the argument at the column corner: for a
+    // node that is both, the two values are one.
+    const Call& call = scope.call();
+    const Point at = scope.at();
+    return call.cache->memo_.findColumn(index, at.x, at.z, columnTag(call.windowId, call.context),
+                                        value);
+}
+
+STRATUM_LEVEL_PART void Interpreter::keepColumn(const Scope& scope, const NodeIndex index,
+                                                const double value) const {
+    const Call& call = scope.call();
+    const Point at = scope.at();
+    call.cache->memo_.insertColumn(index, at.x, at.z, columnTag(call.windowId, call.context), value,
+                                   graph_->nodeCount());
+}
+
 double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     if (scope.has(index)) {
         return scope.get(index);
@@ -1749,22 +1891,16 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     // column, kept from the first point in this column that computed it.
     // After the refusal above, as before: a node that refuses is never kept.
     //
-    // Kept by the node, its column and what it was read through — the key
-    // {index, x, 0, z, columnTag}; y is no part of it, which is the whole of
-    // what Op::columnMemo proves. Shared with flat_cache's relocated reads
-    // (flatCache), whose key is the argument at the column corner: for a
-    // node that is both, the two values are one.
-    const Point at = scope.at();
+    // Kept by the node, its column and what it was read through (keptColumn).
     const bool keepsColumn = op.columnMemo && scope.call().memo;
     if (keepsColumn) {
-        const Call& call = scope.call();
         double kept = 0.0;
-        if (call.cache->memo_.findColumn(index, at.x, at.z, columnTag(call.windowId, call.context),
-                                         kept)) {
+        if (keptColumn(scope, index, kept)) {
             return scope.store(index, kept);
         }
     }
 
+    const Point at = scope.at();
     const auto x = static_cast<double>(at.x);
     const auto y = static_cast<double>(at.y);
     const auto z = static_cast<double>(at.z);
@@ -1960,9 +2096,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     }
 
     if (keepsColumn) {
-        const Call& call = scope.call();
-        call.cache->memo_.insertColumn(index, at.x, at.z, columnTag(call.windowId, call.context),
-                                       value, graph_->nodeCount());
+        keepColumn(scope, index, value);
     }
     return scope.store(index, value);
 }
@@ -2157,59 +2291,100 @@ double Interpreter::flatCache(Scope& scope, const Op& op) const {
     return value;
 }
 
+namespace {
+
+/// What `interpolated` is refused with where the interpreter has no cell
+/// lattice. unevaluableReason refuses it up front, so nothing reaches this —
+/// but a layer does not get to assume its own caller checked, and a missing
+/// lattice would otherwise be a crash. Out of line, so that the message's
+/// temporaries take no room in interpolate's and fillCell's frames.
+[[noreturn]] void refuseWithoutLattice() {
+    throw EvalError("'minecraft:interpolated' needs a cell geometry and this interpreter "
+                    "has none");
+}
+
+} // namespace
+
+// interpolate() and fillCell() are a level of every `interpolated` a graph
+// nests, each frame on the stack beneath the corners it evaluates; what they
+// work out that is not needed across those evaluations is worked out in parts
+// of their own (STRATUM_LEVEL_PART), as evaluateNode's cases are.
+
 double Interpreter::interpolate(NodeIndex argument, const Scope& scope) const {
-    const Point at = scope.at();
-    // unevaluableReason refuses `interpolated` without a lattice, so this is
-    // unreachable — but this layer does not get to assume its own caller
-    // checked, and a missing lattice here would otherwise be a crash.
     if (!cells_.has_value()) {
-        throw EvalError("'minecraft:interpolated' needs a cell geometry and this interpreter "
-                        "has none");
+        refuseWithoutLattice();
     }
-    const CellGeometry cells = *cells_;
-
+    const CellGeometry geometry = *cells_;
     // The cell a point is in, refused by name where its corners leave int32
-    // (cellCorner), so the corner arithmetic below stays inside it.
-    const Point lower = cellCorner(at, cells);
-
-    const double tx = static_cast<double>(at.x - lower.x) / static_cast<double>(cells.width);
-    const double ty = static_cast<double>(at.y - lower.y) / static_cast<double>(cells.height);
-    const double tz = static_cast<double>(at.z - lower.z) / static_cast<double>(cells.width);
+    // (cellCorner), so the corner arithmetic stays inside it.
+    const Point lower = cellCorner(scope.at(), geometry);
 
     // With a cache, the eight corners are computed once for the cell and
-    // reused; without one, every point computes its own. The two paths
-    // must produce identical values, and the arithmetic below is shared
-    // between them precisely so that they cannot drift apart.
+    // reused; without one, every point computes its own (interpolateAlone).
+    // The two paths must produce identical values, and the arithmetic is
+    // shared between them (blendAt) precisely so that they cannot drift
+    // apart.
     CornerCache* cache = scope.cache();
     if (cache == nullptr) {
-        const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
-            // The corner's own scope: with no cache it keeps no corners.
-            Scope inner(scope.call(),
-                        Point{.x = lower.x + (dx * cells.width),
-                              .y = lower.y + (dy * cells.height),
-                              .z = lower.z + (dz * cells.width)},
-                        scope.cells());
-            return evaluateNode(inner, argument);
-        };
-        const std::array<double, 8> own{corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0),
-                                        corner(0, 1, 1), corner(1, 0, 0), corner(1, 0, 1),
-                                        corner(1, 1, 0), corner(1, 1, 1)};
-        return blendCell(own, tx, ty, tz);
+        return interpolateAlone(argument, scope, lower, geometry);
     }
     const Call& call = scope.call();
+    const std::uint32_t tag = cornerTagOf(argument, call);
+    CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
+    if (!holdsCell(entry, lower, call.memo, tag)) {
+        // fillCell's two ways, taken here directly rather than through it:
+        // this frame and the one filling are a level of every `interpolated`
+        // a graph nests, and fillCell's would be a third.
+        if (call.memo) {
+            fillLatticeCell(argument, call, scope.cells(), entry, lower, tag, geometry);
+        } else {
+            fillFreshCell(argument, call, scope.cells(), entry, lower, tag, geometry);
+        }
+    }
+    return blendAt(entry.corners, scope.at(), lower, geometry);
+}
+
+STRATUM_LEVEL_PART std::uint32_t Interpreter::cornerTagOf(const NodeIndex argument,
+                                                          const Call& call) const noexcept {
     // What the corners are kept under besides their positions: the window,
     // when the argument can tell windows apart (Op::readsWindow); nothing
     // otherwise, since then every window gives the same corners. A cell
     // corner is always a Block read (a Detached read never interpolates), so
     // the context needs no place in it.
-    const std::uint32_t tag =
-        call.memo && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId : 0U;
-    CornerCache::Entry& entry = cache->entries_[static_cast<std::size_t>(argument)];
-    if (!entry.filled || entry.x != lower.x || entry.y != lower.y || entry.z != lower.z ||
-        (call.memo && entry.tag != tag)) {
-        fillCell(argument, call, scope.cells(), entry, lower, tag);
-    }
-    return blendCell(entry.corners, tx, ty, tz);
+    return call.memo && ops_[static_cast<std::size_t>(argument)].readsWindow ? call.windowId : 0U;
+}
+
+STRATUM_LEVEL_PART bool Interpreter::holdsCell(const CornerCache::Entry& entry, const Point lower,
+                                               const bool memo, const std::uint32_t tag) noexcept {
+    return entry.filled && entry.x == lower.x && entry.y == lower.y && entry.z == lower.z &&
+           (!memo || entry.tag == tag);
+}
+
+STRATUM_LEVEL_PART double Interpreter::blendAt(const std::array<double, 8>& corners, const Point at,
+                                               const Point lower,
+                                               const CellGeometry geometry) noexcept {
+    // The fractions of the way across the cell, each a whole number of
+    // blocks over a whole cell.
+    const double tx = static_cast<double>(at.x - lower.x) / static_cast<double>(geometry.width);
+    const double ty = static_cast<double>(at.y - lower.y) / static_cast<double>(geometry.height);
+    const double tz = static_cast<double>(at.z - lower.z) / static_cast<double>(geometry.width);
+    return blendCell(corners, tx, ty, tz);
+}
+
+STRATUM_LEVEL_PART double Interpreter::interpolateAlone(const NodeIndex argument,
+                                                        const Scope& scope, const Point lower,
+                                                        const CellGeometry geometry) const {
+    // fillAfresh's corners, in this frame's own lambda rather than through
+    // it: one frame less beneath each corner, as interpolate's level always
+    // was without a cache.
+    const auto corner = [&](std::size_t k) {
+        // The corner's own scope: with no cache it keeps no corners.
+        Scope inner(scope.call(), cornerAt(lower, geometry, k), scope.cells());
+        return evaluateNode(inner, argument);
+    };
+    const std::array<double, 8> own{corner(0), corner(1), corner(2), corner(3),
+                                    corner(4), corner(5), corner(6), corner(7)};
+    return blendAt(own, scope.at(), lower, geometry);
 }
 
 void Interpreter::fillCell(const NodeIndex argument, const Call& call, const bool cells,
@@ -2217,65 +2392,98 @@ void Interpreter::fillCell(const NodeIndex argument, const Call& call, const boo
                            const std::uint32_t tag) const {
     // Only interpolate() and a BlockKernel call this, each with a lattice.
     if (!cells_.has_value()) {
-        throw EvalError("'minecraft:interpolated' needs a cell geometry and this interpreter "
-                        "has none");
+        refuseWithoutLattice();
     }
     const CellGeometry geometry = *cells_;
+    if (call.memo) {
+        fillLatticeCell(argument, call, cells, entry, lower, tag, geometry);
+    } else {
+        fillFreshCell(argument, call, cells, entry, lower, tag, geometry);
+    }
+}
+
+STRATUM_LEVEL_PART void Interpreter::fillLatticeCell(const NodeIndex argument, const Call& call,
+                                                     const bool cells, CornerCache::Entry& entry,
+                                                     const Point lower, const std::uint32_t tag,
+                                                     const CellGeometry geometry) const {
+    openCell(entry);
+    // The order the eight were always evaluated in, so that a corner asked
+    // for here is asked for after the same corners it always followed. Each
+    // is kept where the memo keeps its key (MemoTable::cellSpan): the
+    // argument's lattice, or the hash.
+    MemoTable& memo = call.cache->memo_;
+    const MemoTable::CellSpan span =
+        memo.cellSpan(argument, tag, lower, geometry, graph_->nodeCount());
+    // A corner the lattice holds and does not hold yet is evaluated with the
+    // ones above it, where a column batch can evaluate the argument
+    // (batchedCorner).
+    const bool columns = ops_[static_cast<std::size_t>(argument)].laneWalk;
+    for (std::size_t k = 0; k < kCornerOrder.size(); ++k) {
+        const bool inLattice = (span.inside >> k & 1U) != 0U;
+        if (inLattice && memo.findCorner(span, k, entry.corners[k])) {
+            continue;
+        }
+        const Point corner = cornerAt(lower, geometry, k);
+        if (!inLattice) {
+            entry.corners[k] = sharedCorner(argument, call, cells, corner, tag);
+        } else if (columns) {
+            entry.corners[k] = batchedCorner(argument, call, cells, corner, span, k);
+        } else {
+            entry.corners[k] = latticeCorner(argument, call, cells, corner, span, k);
+        }
+    }
+    sealCell(entry, lower, tag);
+}
+
+STRATUM_LEVEL_PART void Interpreter::fillFreshCell(const NodeIndex argument, const Call& call,
+                                                   const bool cells, CornerCache::Entry& entry,
+                                                   const Point lower, const std::uint32_t tag,
+                                                   const CellGeometry geometry) const {
+    openCell(entry);
+    fillAfresh(argument, call, cells, entry.corners, lower, geometry);
+    sealCell(entry, lower, tag);
+}
+
+STRATUM_LEVEL_PART void Interpreter::openCell(CornerCache::Entry& entry) noexcept {
     // Marked empty while it fills, so that a corner that throws leaves no
-    // cell behind with another cell's corners in it. No evaluation below
-    // touches this entry: it would have to reach this same argument from
-    // inside it, and the graph is acyclic.
+    // cell behind with another cell's corners in it. No evaluation while it
+    // fills touches this entry: it would have to reach the same argument
+    // from inside it, and the graph is acyclic.
     entry.filled = false;
     entry.alongYKnown = false;
-    if (call.memo) {
-        // The order the eight were always evaluated in, so that a corner
-        // evaluated here for the first time is evaluated after the same
-        // corners it always followed. Each is kept where the memo keeps its
-        // key (MemoTable::cellSpan): the argument's lattice, or the hash.
-        MemoTable& memo = call.cache->memo_;
-        const MemoTable::CellSpan span =
-            memo.cellSpan(argument, tag, lower, geometry, graph_->nodeCount());
-        // A corner the lattice holds and does not hold yet is evaluated with
-        // the ones above it, where a column batch can evaluate the argument
-        // (batchedCorner).
-        const bool columns = ops_[static_cast<std::size_t>(argument)].laneWalk;
-        for (std::size_t k = 0; k < entry.corners.size(); ++k) {
-            const bool inLattice = (span.inside >> k & 1U) != 0U;
-            if (inLattice && memo.findCorner(span, k, entry.corners[k])) {
-                continue;
-            }
-            const CornerOffset offset = kCornerOrder[k];
-            const Point corner{.x = lower.x + (offset.dx * geometry.width),
-                               .y = lower.y + (offset.dy * geometry.height),
-                               .z = lower.z + (offset.dz * geometry.width)};
-            if (!inLattice) {
-                entry.corners[k] = sharedCorner(argument, call, cells, corner, tag);
-            } else if (columns) {
-                entry.corners[k] = batchedCorner(argument, call, cells, corner, span, k);
-            } else {
-                entry.corners[k] = latticeCorner(argument, call, cells, corner, span, k);
-            }
-        }
-    } else {
-        // The corner's own scope carries the same cache: a nested
-        // `interpolated` caches its own cell under its own node index, and
-        // the cell check keeps the two from being confused.
-        const auto corner = [&](std::int32_t dx, std::int32_t dy, std::int32_t dz) {
-            Scope inner(call,
-                        Point{.x = lower.x + (dx * geometry.width),
-                              .y = lower.y + (dy * geometry.height),
-                              .z = lower.z + (dz * geometry.width)},
-                        cells);
-            return evaluateNode(inner, argument);
-        };
-        entry.corners = {corner(0, 0, 0), corner(0, 0, 1), corner(0, 1, 0), corner(0, 1, 1),
-                         corner(1, 0, 0), corner(1, 0, 1), corner(1, 1, 0), corner(1, 1, 1)};
-    }
+}
+
+STRATUM_LEVEL_PART void Interpreter::sealCell(CornerCache::Entry& entry, const Point lower,
+                                              const std::uint32_t tag) noexcept {
     entry.x = lower.x;
     entry.y = lower.y;
     entry.z = lower.z;
     entry.tag = tag;
     entry.filled = true;
+}
+
+STRATUM_LEVEL_PART Point Interpreter::cornerAt(const Point lower, const CellGeometry geometry,
+                                               const std::size_t k) noexcept {
+    const CornerOffset offset = kCornerOrder[k];
+    return Point{.x = lower.x + (offset.dx * geometry.width),
+                 .y = lower.y + (offset.dy * geometry.height),
+                 .z = lower.z + (offset.dz * geometry.width)};
+}
+
+STRATUM_LEVEL_PART void Interpreter::fillAfresh(const NodeIndex argument, const Call& call,
+                                                const bool cells, std::array<double, 8>& corners,
+                                                const Point lower,
+                                                const CellGeometry geometry) const {
+    // Each corner in its own scope, which carries the call's cache: a nested
+    // `interpolated` caches its own cell under its own node index, and the
+    // cell check keeps the two from being confused. All eight before any is
+    // written, as they always were.
+    const auto corner = [&](std::size_t k) {
+        Scope inner(call, cornerAt(lower, geometry, k), cells);
+        return evaluateNode(inner, argument);
+    };
+    corners = {corner(0), corner(1), corner(2), corner(3),
+               corner(4), corner(5), corner(6), corner(7)};
 }
 
 double Interpreter::sharedCorner(const NodeIndex argument, const Call& call, const bool cells,
@@ -2440,117 +2648,68 @@ const double* Interpreter::evaluateLanes(ColumnBatch& batch, const NodeIndex ind
     CornerCache& cache = *batch.call->cache;
     const auto slot = static_cast<std::size_t>(op.laneSlot);
     double* const row = cache.laneRows_.data() + (slot * ColumnBatch::kLanes);
-    std::uint64_t done = cache.laneStamps_[slot] == cache.laneEpoch_ ? cache.laneDone_[slot] : 0U;
+    const std::uint64_t done =
+        cache.laneStamps_[slot] == cache.laneEpoch_ ? cache.laneDone_[slot] : 0U;
     const std::uint64_t missing = need & ~done;
     if (missing == 0U) {
         return row;
     }
+    // evaluateNode's cases, expression for expression, lane by lane: each
+    // argument's lanes first, in evaluateNode's order, then the node's own.
+    // This frame is a level of the argument's depth, which goes as deep as a
+    // graph may be (SPEC §8): it evaluates the arguments, which is the
+    // recursion, and every lane loop and sample is a part of its own
+    // (STRATUM_LEVEL_PART), on the stack only while it runs.
     const std::uint64_t all = batch.all;
     const std::size_t count = batch.count;
+    std::uint64_t made = missing;
     if (invariant) {
         // One value down the column: the walk's, at the first lane's point.
-        const double value = evaluateNode(*batch.scalar, index);
-        std::fill_n(row, count, value);
-        done = all;
+        made = invariantLanes(batch, index, row);
     } else {
-        const auto unary = [&](const auto& apply) {
-            const double* const input = evaluateLanes(batch, op.arguments[0], missing);
-            eachLaneOf(missing, all, count,
-                       [row, input, &apply](std::size_t lane) { row[lane] = apply(input[lane]); });
-        };
-        const auto binary = [&](const auto& apply) {
-            const double* const first = evaluateLanes(batch, op.arguments[0], missing);
-            const double* const second = evaluateLanes(batch, op.arguments[1], missing);
-            eachLaneOf(missing, all, count, [row, first, second, &apply](std::size_t lane) {
-                row[lane] = apply(first[lane], second[lane]);
-            });
-        };
-        const auto x = static_cast<double>(batch.first.x);
-        const auto z = static_cast<double>(batch.first.z);
         switch (op.type) {
-            // evaluateNode's cases, expression for expression, lane by lane.
             case NodeType::Add:
-                binary([](double first, double second) { return first + second; });
-                break;
             case NodeType::Mul:
-                binary([](double first, double second) { return first * second; });
-                break;
             case NodeType::Min:
-                binary([](double first, double second) { return minOf(first, second); });
-                break;
-            case NodeType::Max:
-                binary([](double first, double second) { return maxOf(first, second); });
-                break;
-            case NodeType::Abs:
-                unary([](double input) { return std::abs(input); });
-                break;
-            case NodeType::Square:
-                unary([](double input) { return input * input; });
-                break;
-            case NodeType::Cube:
-                unary([](double input) { return cubeOf(input); });
-                break;
-            case NodeType::HalfNegative:
-                unary([](double input) { return halfNegative(input); });
-                break;
-            case NodeType::QuarterNegative:
-                unary([](double input) { return quarterNegative(input); });
-                break;
-            case NodeType::Squeeze:
-                unary([](double input) { return squeezeOf(input); });
-                break;
-            case NodeType::Invert:
-                unary([](double input) { return 1.0 / input; });
-                break;
-            case NodeType::Clamp: {
-                const double low = op.parameters[0];
-                const double high = op.parameters[1];
-                unary([low, high](double input) { return std::clamp(input, low, high); });
+            case NodeType::Max: {
+                const double* const first = evaluateLanes(batch, op.arguments[0], missing);
+                const double* const second = evaluateLanes(batch, op.arguments[1], missing);
+                binaryLanes(op.type, missing, all, count, first, second, row);
                 break;
             }
+            case NodeType::Abs:
+            case NodeType::Square:
+            case NodeType::Cube:
+            case NodeType::HalfNegative:
+            case NodeType::QuarterNegative:
+            case NodeType::Squeeze:
+            case NodeType::Invert:
+            case NodeType::Clamp:
+                unaryLanes(op.type, op.parameters, missing, all, count,
+                           evaluateLanes(batch, op.arguments[0], missing), row);
+                break;
             case NodeType::RangeChoice: {
                 // Each branch only at the lanes that take it, as only the
                 // branch chosen is evaluated at a point.
                 const double* const input = evaluateLanes(batch, op.arguments[0], missing);
-                std::uint64_t within = 0;
-                eachLaneOf(missing, all, count, [&](std::size_t lane) {
-                    if (inRange(input[lane], op.parameters[0], op.parameters[1])) {
-                        within |= std::uint64_t{1} << lane;
-                    }
-                });
+                const std::uint64_t within = rangeWithin(batch, op, input, missing);
                 const std::uint64_t outside = missing & ~within;
                 const double* const taken =
                     within != 0U ? evaluateLanes(batch, op.arguments[1], within) : nullptr;
                 const double* const other =
                     outside != 0U ? evaluateLanes(batch, op.arguments[2], outside) : nullptr;
-                eachLaneOf(missing, all, count, [&](std::size_t lane) {
-                    row[lane] = ((within >> lane) & 1U) != 0U ? taken[lane] : other[lane];
-                });
+                chooseLanes(missing, all, count, within, taken, other, row);
                 break;
             }
             case NodeType::YClampedGradient:
-                eachLaneOf(missing, all, count, [&](std::size_t lane) {
-                    row[lane] = clampedMap(batch.y[lane], op.parameters[0], op.parameters[1],
-                                           op.parameters[2], op.parameters[3]);
-                });
+                gradientLanes(batch, op, missing, row);
                 break;
-            case NodeType::Noise: {
-                const double yScale = op.parameters[1];
-                double* const ys = cache.laneScratch_.data();
-                eachLaneOf(missing, all, count,
-                           [&](std::size_t lane) { ys[lane] = batch.y[lane] * yScale; });
-                sampleLanes(*op.noise, batch, x * op.parameters[0], ys, z * op.parameters[0],
-                            missing, row);
+            case NodeType::Noise:
+                noiseLanes(batch, op, missing, row);
                 break;
-            }
-            case NodeType::Shift: {
-                double* const ys = cache.laneScratch_.data();
-                eachLaneOf(missing, all, count,
-                           [&](std::size_t lane) { ys[lane] = batch.y[lane] * 0.25; });
-                sampleLanes(*op.noise, batch, x * 0.25, ys, z * 0.25, missing, row);
-                eachLaneOf(missing, all, count, [row](std::size_t lane) { row[lane] *= 4.0; });
+            case NodeType::Shift:
+                shiftLanes(batch, op, missing, row);
                 break;
-            }
             case NodeType::ShiftedNoise: {
                 const double* const shiftX = evaluateLanes(batch, op.arguments[0], missing);
                 const double* const shiftY = evaluateLanes(batch, op.arguments[1], missing);
@@ -2558,61 +2717,131 @@ const double* Interpreter::evaluateLanes(ColumnBatch& batch, const NodeIndex ind
                 shiftedLanes(batch, op, shiftX, shiftY, shiftZ, missing, row);
                 break;
             }
-            case NodeType::WeirdScaledSampler: {
-                const double* const input = evaluateLanes(batch, op.arguments[0], missing);
-                weirdLanes(batch, op, input, missing, row);
+            case NodeType::WeirdScaledSampler:
+                weirdLanes(batch, op, evaluateLanes(batch, op.arguments[0], missing), missing, row);
                 break;
-            }
-            case NodeType::OldBlendedNoise: {
-                // Under the memo nothing is substituted (memoizes), so this
-                // is oldBlendedNoise's built noise at each lane's point.
-                const std::optional<noise::BlendedNoise>& blended =
-                    blendedOf_[static_cast<std::size_t>(index)];
-                if (!blended.has_value() || substitutions_.blendedNoise != nullptr) {
-                    throw ColumnDeclined{};
-                }
-                double* const ys = cache.laneIn_.data();
-                double* const out = cache.laneOut_.data();
-                std::size_t gathered = 0;
-                eachLaneOf(missing, all, count,
-                           [&](std::size_t lane) { ys[gathered++] = batch.y[lane]; });
-                blended->sampleColumn(x, std::span<const double>(ys, gathered), z,
-                                      std::span<double>(out, gathered));
-                gathered = 0;
-                eachLaneOf(missing, all, count,
-                           [&](std::size_t lane) { row[lane] = out[gathered++]; });
+            case NodeType::OldBlendedNoise:
+                blendedLanes(batch, index, missing, row);
                 break;
-            }
-            case NodeType::FlatCache: {
-                // A kernel's fill reads through no window, where every read
-                // relocates; any other is declined rather than taken.
-                const FlatCacheWindow* window = batch.call->window;
-                if (window != nullptr && !window->covers(batch.first.x, batch.first.z)) {
-                    throw ColumnDeclined{};
-                }
-                // Every lane's read relocates to the one column corner,
-                // (floorDiv(x, 4) * 4, 0, floorDiv(z, 4) * 4) — or, at a lane
-                // that is that corner, reads it there: the same point, so
-                // the same double (flatCache).
-                const double value = flatCache(*batch.scalar, op);
-                std::fill_n(row, count, value);
-                done = all;
+            case NodeType::FlatCache:
+                made = flatLanes(batch, op, row);
                 break;
-            }
             case NodeType::Spline:
-                // Through the walk at each lane's own point.
-                eachLaneOf(missing, all, count, [&](std::size_t lane) {
-                    Scope point(*batch.call, batch.at(lane), batch.cells);
-                    row[lane] = evaluateNode(point, index);
-                });
+                splineLanes(batch, index, missing, row);
                 break;
             default:
                 throw ColumnDeclined{};
         }
     }
     cache.laneStamps_[slot] = cache.laneEpoch_;
-    cache.laneDone_[slot] = done | missing;
+    cache.laneDone_[slot] = done | made;
     return row;
+}
+
+// --- the parts of a lane level ----------------------------------------------
+//
+// Each is evaluateLanes' case exactly, over lanes evaluateLanes has made: what
+// a level of a batch's recursion does that is not the recursion.
+
+STRATUM_LEVEL_PART std::uint64_t Interpreter::invariantLanes(const ColumnBatch& batch,
+                                                             const NodeIndex index,
+                                                             double* const row) const {
+    const double value = evaluateNode(*batch.scalar, index);
+    std::fill_n(row, batch.count, value);
+    return batch.all;
+}
+
+STRATUM_LEVEL_PART std::uint64_t Interpreter::rangeWithin(const ColumnBatch& batch, const Op& op,
+                                                          const double* const input,
+                                                          const std::uint64_t need) {
+    std::uint64_t within = 0;
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        if (inRange(input[lane], op.parameters[0], op.parameters[1])) {
+            within |= std::uint64_t{1} << lane;
+        }
+    });
+    return within;
+}
+
+STRATUM_LEVEL_PART void Interpreter::gradientLanes(const ColumnBatch& batch, const Op& op,
+                                                   const std::uint64_t need, double* const row) {
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        row[lane] = clampedMap(batch.y[lane], op.parameters[0], op.parameters[1], op.parameters[2],
+                               op.parameters[3]);
+    });
+}
+
+STRATUM_LEVEL_PART void Interpreter::noiseLanes(ColumnBatch& batch, const Op& op,
+                                                const std::uint64_t need, double* const row) {
+    const auto x = static_cast<double>(batch.first.x);
+    const auto z = static_cast<double>(batch.first.z);
+    const double yScale = op.parameters[1];
+    double* const ys = batch.call->cache->laneScratch_.data();
+    eachLaneOf(need, batch.all, batch.count,
+               [&](std::size_t lane) { ys[lane] = batch.y[lane] * yScale; });
+    sampleLanes(*op.noise, batch, x * op.parameters[0], ys, z * op.parameters[0], need, row);
+}
+
+STRATUM_LEVEL_PART void Interpreter::shiftLanes(ColumnBatch& batch, const Op& op,
+                                                const std::uint64_t need, double* const row) {
+    const auto x = static_cast<double>(batch.first.x);
+    const auto z = static_cast<double>(batch.first.z);
+    double* const ys = batch.call->cache->laneScratch_.data();
+    eachLaneOf(need, batch.all, batch.count,
+               [&](std::size_t lane) { ys[lane] = batch.y[lane] * 0.25; });
+    sampleLanes(*op.noise, batch, x * 0.25, ys, z * 0.25, need, row);
+    eachLaneOf(need, batch.all, batch.count, [row](std::size_t lane) { row[lane] *= 4.0; });
+}
+
+STRATUM_LEVEL_PART void Interpreter::blendedLanes(const ColumnBatch& batch, const NodeIndex index,
+                                                  const std::uint64_t need,
+                                                  double* const row) const {
+    // Under the memo nothing is substituted (memoizes), so this is
+    // oldBlendedNoise's built noise at each lane's point.
+    const std::optional<noise::BlendedNoise>& blended = blendedOf_[static_cast<std::size_t>(index)];
+    if (!blended.has_value() || substitutions_.blendedNoise != nullptr) {
+        throw ColumnDeclined{};
+    }
+    const auto x = static_cast<double>(batch.first.x);
+    const auto z = static_cast<double>(batch.first.z);
+    CornerCache& cache = *batch.call->cache;
+    double* const ys = cache.laneIn_.data();
+    double* const out = cache.laneOut_.data();
+    std::size_t gathered = 0;
+    eachLaneOf(need, batch.all, batch.count,
+               [&](std::size_t lane) { ys[gathered++] = batch.y[lane]; });
+    blended->sampleColumn(x, std::span<const double>(ys, gathered), z,
+                          std::span<double>(out, gathered));
+    gathered = 0;
+    eachLaneOf(need, batch.all, batch.count,
+               [&](std::size_t lane) { row[lane] = out[gathered++]; });
+}
+
+STRATUM_LEVEL_PART std::uint64_t Interpreter::flatLanes(const ColumnBatch& batch, const Op& op,
+                                                        double* const row) const {
+    // A kernel's fill reads through no window, where every read relocates;
+    // any other is declined rather than taken.
+    const FlatCacheWindow* window = batch.call->window;
+    if (window != nullptr && !window->covers(batch.first.x, batch.first.z)) {
+        throw ColumnDeclined{};
+    }
+    // Every lane's read relocates to the one column corner,
+    // (floorDiv(x, 4) * 4, 0, floorDiv(z, 4) * 4) — or, at a lane that is
+    // that corner, reads it there: the same point, so the same double
+    // (flatCache).
+    const double value = flatCache(*batch.scalar, op);
+    std::fill_n(row, batch.count, value);
+    return batch.all;
+}
+
+STRATUM_LEVEL_PART void Interpreter::splineLanes(const ColumnBatch& batch, const NodeIndex index,
+                                                 const std::uint64_t need,
+                                                 double* const row) const {
+    // Through the walk at each lane's own point.
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        Scope point(*batch.call, batch.at(lane), batch.cells);
+        row[lane] = evaluateNode(point, index);
+    });
 }
 
 void Interpreter::sampleLanes(const noise::NormalNoise& noise, ColumnBatch& batch, const double x,

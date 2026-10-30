@@ -206,3 +206,8 @@ target_sources(stratum_unit_tests PRIVATE density_column_fuzz_test.cpp)
 
 # Block kernels whose constants differ, run one after another on one Lanes.
 target_sources(stratum_unit_tests PRIVATE density_kernel_lanes_test.cpp)
+
+# The deepest density graphs, each evaluated on a thread whose stack is 1 MiB.
+target_sources(stratum_unit_tests PRIVATE density_stack_test.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(stratum_unit_tests PRIVATE Threads::Threads)
