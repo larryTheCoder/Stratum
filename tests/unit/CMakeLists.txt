@@ -211,3 +211,6 @@ target_sources(stratum_unit_tests PRIVATE density_kernel_lanes_test.cpp)
 target_sources(stratum_unit_tests PRIVATE density_stack_test.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(stratum_unit_tests PRIVATE Threads::Threads)
+
+# The corner cache's lattices together inside their bound, the hash past it.
+target_sources(stratum_unit_tests PRIVATE density_lattice_bound_test.cpp)

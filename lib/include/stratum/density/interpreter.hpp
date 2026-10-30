@@ -332,29 +332,34 @@ class Interpreter {
     /// ONE MAP FROM KEY TO VALUE, KEPT THREE WAYS. A key is the node, three
     /// coordinates and a tag that says what kind of value it is and what it
     /// was read through (Key), and every key has exactly one place it can be
-    /// kept, decided by the key alone and fixed until forgetLayout():
+    /// kept, decided when it is first asked for and fixed until
+    /// forgetLayout():
     ///
     ///   * a cell corner of an `interpolated` argument (cornerTag) inside
     ///     that argument's lattice — a dense box of corners, anchored at the
     ///     first cell the argument fills and as wide as a chunk's corners,
-    ///     read and written by index (cellSpan, findCorner, insertCorner);
+    ///     read and written by index (cellSpan, findCorner, insertCorner),
+    ///     made for each argument that fills a cell while every lattice
+    ///     together holds at most kMaxLatticeCorners;
     ///   * a column's value (columnTag) of a node kept per column — the
     ///     column memo, and `flat_cache`'s relocated reads of a node that is
     ///     one, whose keys are the same — in that column's record, one per
     ///     (x, z, tag), at the node's slot (findColumn, insertColumn);
     ///   * any other key — a corner outside its lattice, a lattice's second
-    ///     tag, a relocated read of a node no column memo keeps, a column
-    ///     node past kColumnSlots — in an open-addressed table with the full
-    ///     key in every slot, used only when all five words match (find,
-    ///     insert).
+    ///     tag, a corner of an argument that first filled a cell past
+    ///     kMaxLatticeCorners, a relocated read of a node no column memo
+    ///     keeps, a column node past kColumnSlots — in an open-addressed
+    ///     table with the full key in every slot, used only when all five
+    ///     words match (find, insert).
     ///
     /// So a miss is only ever a recomputation and never a wrong value, as it
     /// was when the hash held every key. Bounded as the hash alone was: it
     /// holds at most kMaxValues values of all kinds together and kMaxColumns
     /// column records, and past either it is forgotten whole and refilled,
-    /// which costs recomputation and changes nothing. Forgetting is an epoch,
-    /// as in ScopeArena: a slot of any kind holds a value exactly when its
-    /// stamp is the table's epoch.
+    /// which costs recomputation and changes nothing; and its lattices'
+    /// storage by kMaxLatticeCorners, past which an argument's corners are
+    /// the hash's. Forgetting is an epoch, as in ScopeArena: a slot of any
+    /// kind holds a value exactly when its stamp is the table's epoch.
     ///
     /// Nothing is held between a lookup and an insert — an evaluation in
     /// between may grow or forget the table — so neither returns a pointer
@@ -386,6 +391,15 @@ class Interpreter {
 
         /// The most column records it keeps at once.
         static constexpr std::size_t kMaxColumns = 2048;
+
+        /// The most corners its lattices hold together, of 16 bytes each:
+        /// 4 MiB. A lattice is a chunk's corners across and 512 blocks up
+        /// (1 625 corners for vanilla's 4x8 cells, 148 257 for 1x1 cells),
+        /// made whole when its argument first fills a cell; an argument that
+        /// does so with no room left keeps its corners in the hash until
+        /// forgetLayout(). Room for 161 lattices of 4x8 cells, where
+        /// vanilla's overworld has eight `interpolated`.
+        static constexpr std::size_t kMaxLatticeCorners = std::size_t{1} << 18;
 
         /// Whether @p key is held in the hash, and if so its value in
         /// @p value.
@@ -541,6 +555,11 @@ class Interpreter {
         /// How many times the epoch has wrapped.
         [[nodiscard]] std::uint64_t wraps() const noexcept { return wraps_; }
 
+        /// How many lattices it holds, and their corners together.
+        [[nodiscard]] std::size_t lattices() const noexcept { return lattices_.size(); }
+
+        [[nodiscard]] std::size_t latticeCorners() const noexcept { return latticeCorners_; }
+
     private:
         struct Slot {
             Key key{};
@@ -592,6 +611,11 @@ class Interpreter {
         static constexpr std::int16_t kUnslotted = -1;
         static constexpr std::int16_t kHashed = -2;
 
+        /// A node's lattice before it has one, and once there was no room
+        /// for one and the hash keeps its corners.
+        static constexpr std::int32_t kNoLattice = -1;
+        static constexpr std::int32_t kHashedCorners = -2;
+
         [[nodiscard]] static std::size_t hash(const Key& key) noexcept;
 
         /// Where @p key is, or the empty slot where it would go.
@@ -599,6 +623,14 @@ class Interpreter {
 
         /// Twice the slots, every value moved across.
         void grow();
+
+        /// A lattice for node @p node, which has none yet, anchored at
+        /// @p lower for @p cells and kept under @p tag: false, and the node's
+        /// corners the hash's until forgetLayout(), where there is no room
+        /// for one (kMaxLatticeCorners) or there was none when it was first
+        /// asked for.
+        [[nodiscard]] bool madeLattice(std::size_t node, std::uint32_t tag, Point lower,
+                                       CellGeometry cells);
 
         /// Forgets every value when one more would pass kMaxValues.
         void makeRoom() noexcept;
@@ -634,8 +666,11 @@ class Interpreter {
         std::uint64_t wraps_ = 0;
 
         std::vector<Lattice> lattices_;
-        /// Each node's lattice, by node; -1 for none.
+        /// Each node's lattice, by node; kNoLattice before it has one, and
+        /// kHashedCorners once there was no room for one (kMaxLatticeCorners).
         std::vector<std::int32_t> latticeOf_;
+        /// The corners every lattice holds together.
+        std::size_t latticeCorners_ = 0;
 
         /// Each node's column slot, by node (kUnslotted, kHashed or a slot).
         std::vector<std::int16_t> slotOf_;
@@ -814,6 +849,16 @@ public:
 
         /// FOR TESTS. How many times the memo's epoch has wrapped.
         [[nodiscard]] std::uint64_t memoEpochWraps() const noexcept { return memo_.wraps(); }
+
+        /// FOR TESTS. How many corner lattices the memo holds, and their
+        /// corners together, which MemoTable::kMaxLatticeCorners bounds.
+        static constexpr std::size_t kMemoLatticeCorners = MemoTable::kMaxLatticeCorners;
+
+        [[nodiscard]] std::size_t memoLattices() const noexcept { return memo_.lattices(); }
+
+        [[nodiscard]] std::size_t memoLatticeCorners() const noexcept {
+            return memo_.latticeCorners();
+        }
 
         /// FOR TESTS. Moves the scope frames' epoch counters forward to at
         /// least @p epoch, as though that many scopes had opened at every

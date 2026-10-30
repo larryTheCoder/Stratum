@@ -450,6 +450,7 @@ void Interpreter::MemoTable::forgetLayout() noexcept {
     clear();
     lattices_.clear();
     latticeOf_.clear();
+    latticeCorners_ = 0;
     slotOf_.clear();
     slotCount_ = 0;
 }
@@ -657,6 +658,36 @@ constexpr std::int32_t kLatticeSpanY = 512;
 
 } // namespace
 
+bool Interpreter::MemoTable::madeLattice(const std::size_t node, const std::uint32_t tag,
+                                         const Point lower, const CellGeometry cells) {
+    if (latticeOf_[node] == kHashedCorners) {
+        return false;
+    }
+    Lattice made;
+    made.anchor = lower;
+    made.cells = cells;
+    made.tag = tag;
+    made.nx = latticeAcross(cells.width);
+    made.nz = made.nx;
+    made.ny = (kLatticeSpanY / cells.height) + 1;
+    const std::size_t corners = static_cast<std::size_t>(made.nx) *
+                                static_cast<std::size_t>(made.ny) *
+                                static_cast<std::size_t>(made.nz);
+    if (corners > kMaxLatticeCorners - latticeCorners_) {
+        latticeOf_[node] = kHashedCorners;
+        return false;
+    }
+    for (std::size_t k = 0; k < made.offsets.size(); ++k) {
+        const CornerOffset offset = kCornerOrder[k];
+        made.offsets[k] = (((offset.dx * made.nz) + offset.dz) * made.ny) + offset.dy;
+    }
+    made.kept.assign(corners, Kept{});
+    lattices_.push_back(std::move(made));
+    latticeOf_[node] = static_cast<std::int32_t>(lattices_.size() - 1);
+    latticeCorners_ += corners;
+    return true;
+}
+
 Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeIndex argument,
                                                                   const std::uint32_t tag,
                                                                   const Point lower,
@@ -668,25 +699,12 @@ Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeInde
     CellSpan span;
     const auto node = static_cast<std::size_t>(argument);
     if (latticeOf_.size() < nodeCount) {
-        latticeOf_.resize(nodeCount, -1);
+        latticeOf_.resize(nodeCount, kNoLattice);
     }
-    if (latticeOf_[node] < 0) {
-        Lattice made;
-        made.anchor = lower;
-        made.cells = cells;
-        made.tag = tag;
-        made.nx = latticeAcross(cells.width);
-        made.nz = made.nx;
-        made.ny = (kLatticeSpanY / cells.height) + 1;
-        for (std::size_t k = 0; k < made.offsets.size(); ++k) {
-            const CornerOffset offset = kCornerOrder[k];
-            made.offsets[k] = (((offset.dx * made.nz) + offset.dz) * made.ny) + offset.dy;
-        }
-        made.kept.assign(static_cast<std::size_t>(made.nx) * static_cast<std::size_t>(made.ny) *
-                             static_cast<std::size_t>(made.nz),
-                         Kept{});
-        lattices_.push_back(std::move(made));
-        latticeOf_[node] = static_cast<std::int32_t>(lattices_.size() - 1);
+    if (latticeOf_[node] < 0 && !madeLattice(node, tag, lower, cells)) {
+        // Past the lattices' bound when it first filled a cell: the hash
+        // keeps every corner of it until forgetLayout().
+        return span;
     }
     Lattice& lattice = lattices_[static_cast<std::size_t>(latticeOf_[node])];
     if (lattice.tag != tag || !(lattice.cells == cells)) {
