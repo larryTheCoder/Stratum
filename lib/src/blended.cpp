@@ -263,6 +263,9 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
                                 const std::span<double> out) const noexcept {
     const std::size_t count = ys.size();
     assert(count <= kColumn && out.size() == count);
+    if (count == 0) {
+        return;
+    }
     // sample()'s doubles lane by lane. Every factor below that is not a
     // lane's own — the scales and steps, each octave's persistence,
     // contribution, x and z, wrapped, and its slab — is the double sample()

@@ -217,7 +217,10 @@ public:
     ///
     /// PRECONDITION: accepts(x, ys[k], z) for every k — a caller that may
     /// meet a point it does not accept checks first, as sample()'s do.
-    /// Asserted in debug builds.
+    /// Asserted in debug builds. An empty span has no point to accept: it
+    /// samples nothing and writes nothing, at any x and z, as a loop of no
+    /// sample() calls would — the lattice along x and z is made only for a
+    /// point.
     void sampleColumn(double x, std::span<const double> ys, double z,
                       std::span<double> out) const noexcept;
 

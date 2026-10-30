@@ -198,7 +198,8 @@ public:
     /// there, bit for bit: every octave the point reads summed in the same
     /// order, and no other, with what the points of one column share (each
     /// octave's x and z, wrapped, and the x and z axes of its lattice) made
-    /// once rather than once a point. Defined everywhere, as sample() is.
+    /// once rather than once a point. Defined everywhere, as sample() is,
+    /// and an empty span samples and writes nothing.
     /// tests/unit/noise_column_test.cpp holds the two to the same bytes.
     void sampleColumn(double x, std::span<const double> ys, double z,
                       std::span<double> out) const noexcept;

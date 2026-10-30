@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
@@ -286,6 +287,39 @@ TEST_CASE("a blended noise's column is its samples, bit for bit", "[noise][colum
     CAPTURE(tally.points, tally.first);
     CHECK(tally.differing == 0U);
     CHECK(tally.points > 100000U);
+}
+
+TEST_CASE("an empty noise column samples nothing at any x and z", "[noise][column]") {
+    // A column of no points accepts none, so its x and z may be anything —
+    // past the noise's input limit, infinite, NaN — and must never be made
+    // into a lattice cell, which out there would be a float-to-int32
+    // conversion with no defined result (SPEC §5.7). The sanitize build
+    // holds that; every build holds that nothing is written.
+    Draw draw(6060);
+    const std::array<double, 8> far{3735621767.0,
+                                    -3735621767.0,
+                                    1.0e300,
+                                    -1.0e300,
+                                    std::numeric_limits<double>::infinity(),
+                                    -std::numeric_limits<double>::infinity(),
+                                    std::numeric_limits<double>::quiet_NaN(),
+                                    0.0};
+    std::array<double, 1> out{1234.5};
+    const std::span<const double> none;
+    std::size_t calls = 0;
+    for (std::size_t n = 0; n < 40; ++n) {
+        const NormalNoise normal = normalNoise(draw);
+        const BlendedNoise blended = blendedNoise(draw);
+        for (const double x : far) {
+            for (const double z : far) {
+                normal.sampleColumn(x, none, z, std::span<double>(out.data(), 0));
+                blended.sampleColumn(x, none, z, std::span<double>(out.data(), 0));
+                calls += 2;
+            }
+        }
+    }
+    CHECK(calls == std::size_t{40} * 8U * 8U * 2U);
+    CHECK(bits(out[0]) == bits(1234.5));
 }
 
 TEST_CASE("noise columns are their samples over millions of points (long)",

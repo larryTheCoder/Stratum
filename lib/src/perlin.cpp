@@ -499,6 +499,11 @@ void NormalNoise::sampleColumn(const double x, const std::span<const double> ys,
                                const std::span<double> out) const noexcept {
     const std::size_t count = ys.size();
     assert(count <= kColumn && out.size() == count);
+    if (count == 0) {
+        // No point, so nothing accepted and nothing to sample: x and z,
+        // which may be anything here, are never made into a lattice cell.
+        return;
+    }
     // sample()'s doubles lane by lane: the second stack's coordinates, then
     // each octave pair's terms added to each lane's two sums in octave
     // order, each sum from 0.0, then the sums added and scaled. x and z, and

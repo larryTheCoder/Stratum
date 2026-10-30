@@ -349,11 +349,18 @@ struct ColumnGradient {
 /// way in and add the samples into its sums on the way out, as it would
 /// around a loop of samplePerlin, without arrays in between.
 ///
+/// No points, no sample and no lattice: with @p count 0 it returns before x
+/// and z are made into anything, so an empty column is defined wherever they
+/// are (a loop of no samplePerlin calls is).
+///
 /// PRECONDITION: samplePerlin's at every point. Asserted in debug builds.
 template<bool Folds, typename YAt, typename CapAt, typename Put>
 STRATUM_NOISE_INLINE void samplePerlinColumn(const PerlinNoise& noise, double x, const YAt& yAt,
                                              double z, double yScale, const CapAt& capAt,
                                              std::size_t count, const Put& put) noexcept {
+    if (count == 0) {
+        return;
+    }
     const std::array<std::uint8_t, 256>& permutation = noise.permutation();
     const auto at = [&permutation](std::uint32_t index) noexcept -> std::uint32_t {
         return permutation[index & 0xFFU];
@@ -372,10 +379,7 @@ STRATUM_NOISE_INLINE void samplePerlinColumn(const PerlinNoise& noise, double x,
     const double originY = noise.originY();
 
     std::size_t k = 0;
-    LatticeAxis axisY{.local = 0.0, .cell = 0};
-    if (count > 0) {
-        axisY = latticeAxis(yAt(0) + originY);
-    }
+    LatticeAxis axisY = latticeAxis(yAt(0) + originY);
     while (k < count) {
         // The cell of point k: its corner hashes, as samplePerlin makes them.
         const std::uint32_t cell = axisY.cell;
