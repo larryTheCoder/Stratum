@@ -142,15 +142,16 @@ public:
     /// reading a run of whole layers — one section — at once: entry
     /// `((y' - y) * 16 + localZ) * 16 + localX` is paletteIndexAt(localX, y',
     /// localZ). Checked once for the whole run, by y as `at` checks it
-    /// (FillError for a run that leaves the dimension, or fewer than none),
-    /// so a caller indexes it without a check per block.
+    /// (FillError for a run that leaves the dimension, naming the run's
+    /// first y outside it, or for fewer than no layers), so a caller indexes
+    /// it without a check per block.
     [[nodiscard]] std::span<const std::uint16_t> paletteIndicesOfLayers(std::int32_t y,
                                                                         std::int32_t layers) const {
         if (layers < 0) [[unlikely]] {
             throw FillError("a run of " + std::to_string(layers) + " layers");
         }
         if (y < minY_ || std::int64_t{y} + layers > std::int64_t{minY_} + height_) [[unlikely]] {
-            refuseOutside(0, y < minY_ ? y : minY_ + height_, 0);
+            refuseOutside(0, y < minY_ || y >= minY_ + height_ ? y : minY_ + height_, 0);
         }
         return std::span<const std::uint16_t>(blocks_).subspan(
             linearIndex(0, y, 0), static_cast<std::size_t>(layers) * kWidth * kWidth);

@@ -125,7 +125,9 @@ constexpr std::array<const char*, 9> kBiomes = {
 
 /// A dimension y -64..63 whose ground rolls about y 0 under a 2D noise, its
 /// temperature another 2D noise (or @p temperature, where a case asks for
-/// one), its depth falling from 1.5 at the floor to -1.5 at the top, and a
+/// one) fast enough across x and z to change the biome from one quart to
+/// the next, so that a row kept at the wrong quart of a layer shows, its
+/// depth falling from 1.5 at the floor to -1.5 at the top, and a
 /// surface rule that paints four of the nine biomes, so the pass looks the
 /// biome up on every block of stone.
 class SyntheticWorld {
@@ -148,7 +150,7 @@ public:
                                      {"from_value", 1.0},
                                      {"to_value", -1.0}}},
                                    {"argument2", flatNoise(1.0)}};
-        router["temperature"] = temperature.value_or(flatNoise(0.25));
+        router["temperature"] = temperature.value_or(flatNoise(4.0));
         router["depth"] = {{"type", "minecraft:y_clamped_gradient"},
                            {"from_y", kMinY},
                            {"to_y", kMinY + kHeight},
@@ -323,6 +325,9 @@ TEST_CASE("the rows a fill leaves are the rows its biome source answers at each 
     const ParameterList& list = parts.pipeline.biomeParameters.at(listId());
     std::size_t known = 0;
     std::size_t unknown = 0;
+    // Known quarts whose row is not the row of the quart across the layer's
+    // diagonal (qz, qx): a row kept with x and z swapped would show there.
+    std::size_t asymmetric = 0;
     for (const auto& [chunkX, chunkZ] : kChunks) {
         CAPTURE(chunkX, chunkZ);
         stratum::terrain::ChunkBuffer buffer(parts.settings.geometry);
@@ -351,6 +356,13 @@ TEST_CASE("the rows a fill leaves are the rows its biome source answers at each 
                     CHECK(&list.entries()[row].biome == &parts.source.at(parts.interpreter,
                                                                          parts.settings.router,
                                                                          corner, cache));
+                    const stratum::density::Point across{.x = (chunkX * 16) + (qz * 4),
+                                                         .y = corner.y,
+                                                         .z = (chunkZ * 16) + (qx * 4)};
+                    const std::size_t transposed =
+                        parts.source.rowAt(parts.interpreter, parts.settings.router, across, cache,
+                                           ParameterList::kNoHint);
+                    asymmetric += expected != transposed ? 1U : 0U;
                 }
             }
         }
@@ -359,6 +371,9 @@ TEST_CASE("the rows a fill leaves are the rows its biome source answers at each 
     // above it, so some of each.
     CHECK(known > 0U);
     CHECK(unknown > 0U);
+    // Not vacuous across x and z: the biome differs across a layer's
+    // diagonal at known quarts, so a row kept at the transposed quart fails.
+    CHECK(asymmetric > 0U);
 }
 
 TEST_CASE("only the filler that filled a buffer, for its own chunk, hands its rows on",

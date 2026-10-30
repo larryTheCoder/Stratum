@@ -434,6 +434,11 @@ public:
     /// Defined below, in this header, so that a caller's loop over a column
     /// inlines it: its answers are worked out at compile
     /// (thresholdAnswers_), and this only finds the block's.
+    ///
+    /// It does NOT make apply's debug-build check of a key against the name
+    /// beside it: it reads no name, and refuses nothing. A caller that asks
+    /// it first has that check made only on the blocks it then hands to
+    /// apply — the in-tree surface pass hands keys alone, so it has none.
     [[nodiscard]] std::optional<const settings::BlockState*>
     decidedByThreshold(const Context& at, const ColumnMemo& memo) const noexcept;
 

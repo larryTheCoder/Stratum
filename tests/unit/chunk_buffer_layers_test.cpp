@@ -85,5 +85,13 @@ TEST_CASE("a run of layers that leaves the dimension is refused as `at` refuses 
                       ContainsSubstring("y 32 is outside this dimension"));
     CHECK_THROWS_WITH(buffer.paletteIndicesOfLayers(0, 2147483647),
                       ContainsSubstring("y 32 is outside this dimension"));
+    // A run that starts above the top is refused at its own first y, which
+    // is the first outside, as `at` refuses it.
+    CHECK_THROWS_WITH(buffer.paletteIndicesOfLayers(40, 1),
+                      ContainsSubstring("y 40 is outside this dimension"));
+    CHECK_THROWS_WITH(buffer.paletteIndicesOfLayers(33, 0),
+                      ContainsSubstring("y 33 is outside this dimension"));
+    CHECK_THROWS_WITH(buffer.paletteIndicesOfLayers(2147483647, 16),
+                      ContainsSubstring("y 2147483647 is outside this dimension"));
     CHECK_THROWS_WITH(buffer.paletteIndicesOfLayers(0, -1), ContainsSubstring("-1 layers"));
 }
