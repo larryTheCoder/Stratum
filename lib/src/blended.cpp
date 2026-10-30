@@ -274,10 +274,6 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
     const double xzStep = xzScale / parameters_.xzFactor;
     const double yStep = yScale / parameters_.yFactor;
 
-    std::array<double, kColumn> laneY;
-    std::array<double, kColumn> laneCap;
-    std::array<double, kColumn> term;
-
     // Each lane's three sums, each from 0.0 as sample()'s.
     std::array<double, kColumn> blend;
     std::array<double, kColumn> minimum;
@@ -294,15 +290,19 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
         const double blendZ = wrapCoordinate(z * xzStep * persistence);
         const double blendBare = yStep * persistence;
         const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
-        for (std::size_t k = 0; k < count; ++k) {
-            laneY[k] = wrapCoordinate(ys[k] * yStep * persistence);
-            laneCap[k] = smearCap(reading_, ys[k], blendSmear, blendBare);
-        }
-        detail::samplePerlinFoldableColumn(blend_[i], blendX, laneY.data(), blendZ, blendSmear,
-                                           laneCap.data(), count, term.data());
-        for (std::size_t k = 0; k < count; ++k) {
-            blend[k] += term[k] * contribution;
-        }
+        detail::samplePerlinFoldableColumn(
+            blend_[i], blendX,
+            [&ys, yStep, persistence](std::size_t k) noexcept {
+                return wrapCoordinate(ys[k] * yStep * persistence);
+            },
+            blendZ, blendSmear,
+            [this, &ys, blendSmear, blendBare](std::size_t k) noexcept {
+                return smearCap(reading_, ys[k], blendSmear, blendBare);
+            },
+            count,
+            [&blend, contribution](std::size_t k, double term) noexcept {
+                blend[k] += term * contribution;
+            });
         persistence *= 0.5;
         contribution *= 2.0;
     }
@@ -327,23 +327,25 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
 
     persistence = 1.0;
     contribution = 1.0;
-    // One limit's octave over the lanes that read it: their y and cap
-    // gathered, sampled together, each term added to its own lane's sum.
-    const auto limitOctave =
-        [&](const PerlinNoise& octave, const std::array<std::size_t, kColumn>& lanes,
-            const std::size_t lanesCount, std::array<double, kColumn>& sums, const double limitX,
-            const double limitZ, const double limitSmear, const double limitBare) {
-            for (std::size_t j = 0; j < lanesCount; ++j) {
-                const double y = ys[lanes[j]];
-                laneY[j] = wrapCoordinate(y * yScale * persistence);
-                laneCap[j] = smearCap(reading_, y, limitSmear, limitBare);
-            }
-            detail::samplePerlinFoldableColumn(octave, limitX, laneY.data(), limitZ, limitSmear,
-                                               laneCap.data(), lanesCount, term.data());
-            for (std::size_t j = 0; j < lanesCount; ++j) {
-                sums[lanes[j]] += term[j] * contribution;
-            }
-        };
+    // One limit's octave over the lanes that read it: each lane's y and cap,
+    // sampled together, each term added to its own lane's sum.
+    const auto limitOctave = [&](const PerlinNoise& octave,
+                                 const std::array<std::size_t, kColumn>& lanes,
+                                 const std::size_t lanesCount, std::array<double, kColumn>& sums,
+                                 const double limitX, const double limitZ, const double limitSmear,
+                                 const double limitBare) {
+        detail::samplePerlinFoldableColumn(
+            octave, limitX,
+            [&](std::size_t j) noexcept {
+                return wrapCoordinate(ys[lanes[j]] * yScale * persistence);
+            },
+            limitZ, limitSmear,
+            [&](std::size_t j) noexcept {
+                return smearCap(reading_, ys[lanes[j]], limitSmear, limitBare);
+            },
+            lanesCount,
+            [&](std::size_t j, double term) noexcept { sums[lanes[j]] += term * contribution; });
+    };
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
         const double limitX = wrapCoordinate(x * xzScale * persistence);
         const double limitZ = wrapCoordinate(z * xzScale * persistence);

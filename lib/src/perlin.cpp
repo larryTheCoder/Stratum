@@ -463,8 +463,6 @@ void NormalNoise::sampleColumn(const double x, const std::span<const double> ys,
     std::array<double, kColumn> secondY;
     std::array<double, kColumn> firstTotal;
     std::array<double, kColumn> secondTotal;
-    std::array<double, kColumn> scaled;
-    std::array<double, kColumn> term;
     for (std::size_t k = 0; k < count; ++k) {
         assert(accepts(x, ys[k], z));
         secondY[k] = ys[k] * kSecondFrequency;
@@ -475,28 +473,28 @@ void NormalNoise::sampleColumn(const double x, const std::span<const double> ys,
     const double secondZ = z * kSecondFrequency;
     const std::vector<OctaveNoise::Octave>& firstOctaves = first_.octaves_;
     const std::vector<OctaveNoise::Octave>& secondOctaves = second_.octaves_;
+    // No fold, so no cap is asked for.
+    const auto noCap = [](std::size_t) noexcept { return 0.0; };
     for (std::size_t i = 0; i < firstOctaves.size(); ++i) {
-        // octaveTerm(firstOctaves[i], x, y, z) at each lane's y.
+        // octaveTerm(firstOctaves[i], x, y, z) at each lane's y, added to
+        // its sum: (sample * amplitude) * persistence.
         const OctaveNoise::Octave& first = firstOctaves[i];
-        for (std::size_t k = 0; k < count; ++k) {
-            scaled[k] = ys[k] * first.frequency;
-        }
-        detail::samplePerlinColumn<false>(first.noise, x * first.frequency, scaled.data(),
-                                          z * first.frequency, 0.0, nullptr, count, term.data());
-        for (std::size_t k = 0; k < count; ++k) {
-            firstTotal[k] += (term[k] * first.amplitude) * first.persistence;
-        }
+        detail::samplePerlinColumn<false>(
+            first.noise, x * first.frequency,
+            [&ys, &first](std::size_t k) noexcept { return ys[k] * first.frequency; },
+            z * first.frequency, 0.0, noCap, count,
+            [&firstTotal, &first](std::size_t k, double term) noexcept {
+                firstTotal[k] += (term * first.amplitude) * first.persistence;
+            });
         // octaveTerm(secondOctaves[i], secondX, secondY, secondZ).
         const OctaveNoise::Octave& second = secondOctaves[i];
-        for (std::size_t k = 0; k < count; ++k) {
-            scaled[k] = secondY[k] * second.frequency;
-        }
-        detail::samplePerlinColumn<false>(second.noise, secondX * second.frequency, scaled.data(),
-                                          secondZ * second.frequency, 0.0, nullptr, count,
-                                          term.data());
-        for (std::size_t k = 0; k < count; ++k) {
-            secondTotal[k] += (term[k] * second.amplitude) * second.persistence;
-        }
+        detail::samplePerlinColumn<false>(
+            second.noise, secondX * second.frequency,
+            [&secondY, &second](std::size_t k) noexcept { return secondY[k] * second.frequency; },
+            secondZ * second.frequency, 0.0, noCap, count,
+            [&secondTotal, &second](std::size_t k, double term) noexcept {
+                secondTotal[k] += (term * second.amplitude) * second.persistence;
+            });
     }
     for (std::size_t k = 0; k < count; ++k) {
         const double combined = firstTotal[k] + secondTotal[k];
