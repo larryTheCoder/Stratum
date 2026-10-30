@@ -12,7 +12,9 @@
 //     random tables — boxes sharing faces, point intervals, duplicates,
 //     offsets, ties everywhere — over columns of samples that share five
 //     axes, interleaved with samples that do not, with every kind of hint,
-//     one memo for all of it; and across the epoch's wrap;
+//     one memo for all of it; across the epoch's wrap, straight from the
+//     epoch counting restarts at; and handed from one list to another, a
+//     list built where another was destroyed among them;
 //   * checkedSample refuses what findRow refuses, word for word, and what
 //     it returns the memo form never refuses;
 //   * fillChunk's first refusal is the one its old order met first —
@@ -43,8 +45,10 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <tuple>
@@ -135,9 +139,10 @@ struct Tally {
 
 /// Columns of samples sharing every axis but depth, each searched with a
 /// hint drawn from the previous answer, the answer one below, a random row
-/// or none; every few a stray sample of other axes in between. One memo.
+/// or none; where @p strays, every few a stray sample of other axes in
+/// between. One memo.
 void searchColumns(const ParameterList& list, JavaRandom& random, std::int32_t gridSteps,
-                   SearchMemo& memo, std::size_t columns, Tally& tally) {
+                   SearchMemo& memo, std::size_t columns, Tally& tally, bool strays) {
     for (std::size_t c = 0; c < columns; ++c) {
         QuantizedSample sample{.temperature = coordinate(random, gridSteps),
                                .humidity = coordinate(random, gridSteps),
@@ -168,7 +173,7 @@ void searchColumns(const ParameterList& list, JavaRandom& random, std::int32_t g
             REQUIRE(list.findRowFrom(sample, hint, memo) == expected);
             previous = expected;
             ++tally.queries;
-            if (random.nextInt(9) == 0) {
+            if (strays && random.nextInt(9) == 0) {
                 // A stray: another column's five axes, through the same memo.
                 const QuantizedSample stray{.temperature = coordinate(random, gridSteps),
                                             .humidity = coordinate(random, gridSteps),
@@ -196,23 +201,108 @@ TEST_CASE("the memo form of the biome search returns the scan's row", "[biome][s
         const ParameterList list =
             ParameterList::fromEntries(hardTable(random, rows, grid), listId());
         SearchMemo memo;
-        searchColumns(list, random, grid, memo, 60, tally);
+        searchColumns(list, random, grid, memo, 60, tally, true);
     }
     CHECK(tally.columns == 240U);
     CHECK(tally.queries > std::size_t{240} * 40U);
 }
 
 TEST_CASE("a search memo forgets everything when its epoch wraps", "[biome][search]") {
-    JavaRandom random(77);
-    const ParameterList list = ParameterList::fromEntries(hardTable(random, 2000, 8), listId());
-    SearchMemo memo;
     Tally tally;
-    // A few columns, so slots are stamped; then to the last epoch before the
-    // wrap, and on across it.
-    searchColumns(list, random, 8, memo, 5, tally);
-    memo.advanceEpoch(std::numeric_limits<std::uint32_t>::max() - 2U);
-    searchColumns(list, random, 8, memo, 20, tally);
-    CHECK(tally.columns == 25U);
+    for (const std::int64_t seed : {77, 78, 79, 80}) {
+        CAPTURE(seed);
+        JavaRandom random(seed);
+        const ParameterList list = ParameterList::fromEntries(hardTable(random, 2000, 8), listId());
+        // Straight across the wrap from the first epoch. One column and
+        // nothing else, so every slot it fills is stamped with epoch 1 — the
+        // very epoch counting restarts from after the wrap. Then to the last
+        // epoch, and straight across: the next column's searches meet
+        // epoch-1 slots by the hundred, each another column's sum, which the
+        // wrap must have forgotten.
+        SearchMemo fresh;
+        searchColumns(list, random, 8, fresh, 1, tally, false);
+        fresh.advanceEpoch(std::numeric_limits<std::uint32_t>::max());
+        searchColumns(list, random, 8, fresh, 6, tally, true);
+        // A few epochs short of the wrap, after columns and strays, and on
+        // across it.
+        SearchMemo used;
+        searchColumns(list, random, 8, used, 5, tally, true);
+        used.advanceEpoch(std::numeric_limits<std::uint32_t>::max() - 2U);
+        searchColumns(list, random, 8, used, 20, tally, true);
+    }
+    CHECK(tally.columns == std::size_t{4} * 32U);
+}
+
+namespace {
+
+/// A column's five axes, its depth to be set by the caller.
+[[nodiscard]] QuantizedSample columnOf(JavaRandom& random, std::int32_t gridSteps) {
+    return QuantizedSample{.temperature = coordinate(random, gridSteps),
+                           .humidity = coordinate(random, gridSteps),
+                           .continentalness = coordinate(random, gridSteps),
+                           .erosion = coordinate(random, gridSteps),
+                           .depth = 0,
+                           .weirdness = coordinate(random, gridSteps)};
+}
+
+/// @p depths depths of @p column, each searched through @p memo in every
+/// list of @p lists in turn and held to that list's own scan.
+void searchInTurn(std::initializer_list<const ParameterList*> lists, QuantizedSample column,
+                  JavaRandom& random, std::int32_t gridSteps, SearchMemo& memo, int depths,
+                  Tally& tally) {
+    for (int layer = 0; layer < depths; ++layer) {
+        column.depth = coordinate(random, gridSteps);
+        std::size_t which = 0;
+        for (const ParameterList* const list : lists) {
+            CAPTURE(layer, which);
+            REQUIRE(list->findRowFrom(column, ParameterList::kNoHint, memo) ==
+                    list->findRowLinear(column));
+            ++tally.queries;
+            ++which;
+        }
+    }
+    ++tally.columns;
+}
+
+} // namespace
+
+TEST_CASE("a search memo handed to another list forgets what the first list's tree kept",
+          "[biome][search]") {
+    Tally tally;
+    for (const std::int64_t seed : {11, 12, 13, 14, 15}) {
+        CAPTURE(seed);
+        JavaRandom random(seed);
+        // Two lists of one shape, whose node and row ids name different
+        // boxes: a sum kept for one is wrong for the other. One memo, every
+        // depth of a column searched in the first and then the second, the
+        // five other axes the same throughout.
+        const ParameterList first =
+            ParameterList::fromEntries(hardTable(random, 2000, 8), listId());
+        const ParameterList second =
+            ParameterList::fromEntries(hardTable(random, 2000, 8), listId());
+        SearchMemo memo;
+        for (int column = 0; column < 4; ++column) {
+            searchInTurn({&first, &second}, columnOf(random, 8), random, 8, memo, 24, tally);
+        }
+
+        // A list destroyed and another built in its very place, a column
+        // searched in each through one memo: the same address and the same
+        // five axes, another tree, which no memo keyed by address could tell.
+        std::optional<ParameterList> slot;
+        slot.emplace(ParameterList::fromEntries(hardTable(random, 2000, 8), listId()));
+        const ParameterList* const before = &*slot;
+        const QuantizedSample column = columnOf(random, 8);
+        searchInTurn({&*slot}, column, random, 8, memo, 12, tally);
+        slot.emplace(ParameterList::fromEntries(hardTable(random, 2000, 8), listId()));
+        CHECK(&*slot == before);
+        searchInTurn({&*slot}, column, random, 8, memo, 12, tally);
+
+        // A copy is the same tree, and searches alike through one memo.
+        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): the copy is the point.
+        const ParameterList copy = first;
+        searchInTurn({&first, &copy}, columnOf(random, 8), random, 8, memo, 24, tally);
+    }
+    CHECK(tally.columns == std::size_t{5} * 7U);
 }
 
 TEST_CASE("checkedSample refuses what findRow refuses, in its words", "[biome][search]") {

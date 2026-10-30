@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -595,6 +596,12 @@ void ParameterList::buildSearchTree() {
     TreeBuilder builder(quantized_, searchNodes_, searchRows_);
     searchDepth_ = builder.build();
     searchNodes_.shrink_to_fit();
+    // A new identity for the new tree (searchId_), so that no SearchMemo
+    // filled from another list's is read for this one. Taken once a build,
+    // never on a search; relaxed, since only the values' distinctness is
+    // used. 64 bits, counting from 1: it does not wrap back to a live one.
+    static std::atomic<std::uint64_t> nextSearchId{1};
+    searchId_ = nextSearchId.fetch_add(1, std::memory_order_relaxed);
 }
 
 void SearchMemo::prepare() {
@@ -603,11 +610,15 @@ void SearchMemo::prepare() {
     }
 }
 
-void SearchMemo::bind(const std::array<std::int64_t, 6>& values) noexcept {
+void SearchMemo::bind(const std::uint64_t list,
+                      const std::array<std::int64_t, 6>& values) noexcept {
     const std::array<std::int64_t, 5> key = {values[0], values[1], values[2], values[3], values[5]};
-    if (epoch_ != 0 && key == key_) {
+    if (epoch_ != 0 && list == list_ && key == key_) {
         return;
     }
+    // Another list's tree — its ids name other nodes and rows — or other
+    // values: what was kept is for neither.
+    list_ = list;
     key_ = key;
     // A new epoch forgets every slot at once. After 2^32 of them the count
     // wraps to 0, which no slot may be taken to share: every slot is
@@ -636,7 +647,7 @@ std::size_t ParameterList::searchTreeWith(const QuantizedSample& sample, const s
     // same integer. A node's id is its index; a row's, the node count plus
     // its place in searchRows_.
     if constexpr (Memoized) {
-        memo->bind(values);
+        memo->bind(searchId_, values);
     }
     const auto nodeCount = static_cast<std::uint32_t>(searchNodes_.size());
     const auto scoreOf = [&](const detail::SearchBox& box,

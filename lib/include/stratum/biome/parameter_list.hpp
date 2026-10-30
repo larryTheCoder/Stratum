@@ -266,9 +266,16 @@ struct SearchNode {
 ///
 /// What it keeps: for each tree node or row a search scores, the part of its
 /// score that does not read depth — the offset squared and the five other
-/// axes' terms — keyed by the five values it was computed for. A search
-/// whose five values are another's forgets everything first, so a memo may
-/// be handed any samples in any order; it only pays where they repeat.
+/// axes' terms — keyed by the list whose tree it was scored in and the five
+/// values it was computed for. A search through another list, or whose five
+/// values are another's, forgets everything first, so a memo may be handed
+/// any list's samples in any order; it only pays where they repeat.
+///
+/// The list is told apart by the identity its tree is built with
+/// (ParameterList::searchId_), not by its address: a list destroyed and
+/// another built in its place share an address and no node. A copy keeps
+/// the identity together with the very tree it names, so the sums kept for
+/// either answer the other alike.
 ///
 /// EXACT. score() is a sum of seven non-negative int64 terms whose total
 /// stays inside int64 for every input the list lets through
@@ -306,8 +313,9 @@ private:
         std::int64_t partial = 0;
     };
 
-    /// The five values (every axis but depth, in axis order) the kept sums
-    /// are for; epoch_ 0 for none yet.
+    /// The list (its search identity) and the five values (every axis but
+    /// depth, in axis order) the kept sums are for; epoch_ 0 for none yet.
+    std::uint64_t list_ = 0;
     std::array<std::int64_t, 5> key_{};
     std::uint32_t epoch_ = 0;
     std::vector<Slot> slots_;
@@ -316,9 +324,10 @@ private:
     /// nothing itself.
     void prepare();
 
-    /// Binds the memo to @p values' five non-depth axes, forgetting what it
-    /// kept for any others.
-    void bind(const std::array<std::int64_t, 6>& values) noexcept;
+    /// Binds the memo to the list whose search identity is @p list and to
+    /// @p values' five non-depth axes, forgetting what it kept for any other
+    /// list or values.
+    void bind(std::uint64_t list, const std::array<std::int64_t, 6>& values) noexcept;
 };
 
 /// A dimension's table, and the search over it.
@@ -507,6 +516,12 @@ private:
     std::vector<detail::SearchNode> searchNodes_;
     std::vector<detail::SearchBox> searchRows_;
     std::size_t searchDepth_ = 0;
+    /// The tree's identity, which a SearchMemo is bound to: a new one for
+    /// each buildSearchTree(), never 0 (a default list, never built, has
+    /// none, and no rows: every search refuses it before reading a memo). A
+    /// copy keeps it together with the very nodes and rows it names, so a
+    /// memo's kept sums answer the copy alike; no other tree ever has it.
+    std::uint64_t searchId_ = 0;
 };
 
 } // namespace stratum::biome
