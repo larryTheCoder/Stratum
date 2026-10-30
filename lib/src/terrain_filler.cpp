@@ -17,6 +17,7 @@
 #include <span>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace stratum::terrain {
@@ -161,16 +162,55 @@ private:
     std::size_t size_ = 0;
 };
 
+/// solidLanes over every one of a run's kLanes lanes, written out lane by
+/// lane from the last: the same comparison of each lane's value, each bit
+/// doubled up into place by the ones after it (lane i's ends at bit i)
+/// rather than shifted there by a count a loop keeps.
+template<std::size_t... Step>
+[[nodiscard]] std::uint32_t solidOfEveryLane(const density::Interpreter::BlockKernel::Lanes& lanes,
+                                             std::index_sequence<Step...> /*steps*/) noexcept {
+    constexpr std::size_t kLast = density::Interpreter::BlockKernel::kLanes - 1;
+    std::uint32_t solid = 0;
+    ((solid = (solid * 2U) + static_cast<std::uint32_t>(lanes.value(kLast - Step) > 0.0)), ...);
+    return solid;
+}
+
 /// The lanes of the last run of @p lanes, of its first @p count, whose value
 /// is above 0.0 — `density > 0.0` exactly as the block loop asks it, NaN
 /// included (never above) — one bit a lane.
 [[nodiscard]] std::uint32_t solidLanes(const density::Interpreter::BlockKernel::Lanes& lanes,
                                        const std::size_t count) noexcept {
+    constexpr std::size_t kEveryLane = density::Interpreter::BlockKernel::kLanes;
+    if (count == kEveryLane) {
+        // A whole run, which is every run of a cell 4 or 8 blocks wide.
+        return solidOfEveryLane(lanes, std::make_index_sequence<kEveryLane>{});
+    }
     std::uint32_t solid = 0;
     for (std::size_t lane = 0; lane < count; ++lane) {
         solid |= (lanes.value(lane) > 0.0 ? 1U : 0U) << lane;
     }
     return solid;
+}
+
+/// `std::fill_n` of @p count copies of @p value into @p blocks from @p first:
+/// one row of a run whose lanes hold one state. A run's rows are 4 blocks
+/// long in a cell 4 wide and 8 in a cell 8 wide (every vanilla dimension's),
+/// and those two are written at a count known here, the same stores the
+/// loop would make; any other width takes the loop.
+void fillRow(std::vector<std::uint16_t>& blocks, const std::size_t first, const std::size_t count,
+             const std::uint16_t value) noexcept {
+    const auto at = blocks.begin() + static_cast<std::ptrdiff_t>(first);
+    switch (count) {
+        case 4:
+            std::fill_n(at, 4, value);
+            return;
+        case 8:
+            std::fill_n(at, 8, value);
+            return;
+        default:
+            std::fill_n(at, count, value);
+            return;
+    }
 }
 
 /// The lanes of @p asked, of the first @p count, whose value in @p lanes
@@ -625,9 +665,7 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                 place(into.linearIndex(cellX, y, runZ),
                       solid == 0U ? unconsulted : &settings_->defaultBlock);
                 for (std::int32_t localZ = runZ; localZ < runZ + runDepth; ++localZ) {
-                    std::fill_n(into.blocks_.begin() +
-                                    static_cast<std::ptrdiff_t>(into.linearIndex(cellX, y, localZ)),
-                                width, lastIndex);
+                    fillRow(into.blocks_, into.linearIndex(cellX, y, localZ), width, lastIndex);
                 }
                 return;
             }
