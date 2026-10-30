@@ -250,4 +250,81 @@ template<bool Folds>
     return samplePerlin<true>(noise, x, y, z, yScale, yMax);
 }
 
+/// samplePerlin<Folds>(noise, x, ys[k], z, yScale, yMaxes[k]) for each k
+/// below @p count, into out[k]: the points of one column, which share x and
+/// z. Each lane is the double samplePerlin returns at its point — the same
+/// operations on the same operands — and what does not depend on y is made
+/// once for all of them rather than once a point: the x and z axes of the
+/// lattice, their fades and offsets less one, and the two permutation entries
+/// along x that every corner hash starts from. @p yMaxes is read only where
+/// @p Folds.
+///
+/// PRECONDITION: samplePerlin's at every point. Asserted in debug builds.
+template<bool Folds>
+STRATUM_NOISE_INLINE void samplePerlinColumn(const PerlinNoise& noise, double x, const double* ys,
+                                             double z, double yScale, const double* yMaxes,
+                                             std::size_t count, double* out) noexcept {
+    const std::array<std::uint8_t, 256>& permutation = noise.permutation();
+    const auto at = [&permutation](std::uint32_t index) noexcept -> std::uint32_t {
+        return permutation[index & 0xFFU];
+    };
+
+    const LatticeAxis axisX = latticeAxis(x + noise.originX());
+    const LatticeAxis axisZ = latticeAxis(z + noise.originZ());
+    const double localX = axisX.local;
+    const double localZ = axisZ.local;
+    const double fadeX = fade(localX);
+    const double fadeZ = fade(localZ);
+    const double farX = localX - 1.0;
+    const double farZ = localZ - 1.0;
+    const std::uint32_t rowA = at(axisX.cell);
+    const std::uint32_t rowB = at(axisX.cell + 1U);
+    const double originY = noise.originY();
+
+    for (std::size_t k = 0; k < count; ++k) {
+        const LatticeAxis axisY = latticeAxis(ys[k] + originY);
+        const double fadeY = fade(axisY.local);
+        const double localY = foldY<Folds>(axisY.local, yScale, Folds ? yMaxes[k] : 0.0);
+        const double farY = localY - 1.0;
+
+        const std::uint32_t cornerA = (rowA + axisY.cell) & 0xFFU;
+        const std::uint32_t cornerB = (rowB + axisY.cell) & 0xFFU;
+
+        const std::uint32_t cornerAA = (at(cornerA) + axisZ.cell) & 0xFFU;
+        const std::uint32_t cornerBA = (at(cornerB) + axisZ.cell) & 0xFFU;
+        const std::uint32_t cornerAB = (at(cornerA + 1U) + axisZ.cell) & 0xFFU;
+        const std::uint32_t cornerBB = (at(cornerB + 1U) + axisZ.cell) & 0xFFU;
+
+        const double x0y0z0 = gradientDot(at(cornerAA), localX, localY, localZ);
+        const double x1y0z0 = gradientDot(at(cornerBA), farX, localY, localZ);
+        const double x0y1z0 = gradientDot(at(cornerAB), localX, farY, localZ);
+        const double x1y1z0 = gradientDot(at(cornerBB), farX, farY, localZ);
+        const double x0y0z1 = gradientDot(at(cornerAA + 1U), localX, localY, farZ);
+        const double x1y0z1 = gradientDot(at(cornerBA + 1U), farX, localY, farZ);
+        const double x0y1z1 = gradientDot(at(cornerAB + 1U), localX, farY, farZ);
+        const double x1y1z1 = gradientDot(at(cornerBB + 1U), farX, farY, farZ);
+
+        const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
+        const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
+        const double y0z1 = lerp(fadeX, x0y0z1, x1y0z1);
+        const double y1z1 = lerp(fadeX, x0y1z1, x1y1z1);
+
+        out[k] = lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
+    }
+}
+
+/// samplePerlinFoldable over a column, as samplePerlinColumn: the fold only
+/// where @p yScale is not zero — one test for every point, since they share
+/// it.
+STRATUM_NOISE_INLINE void samplePerlinFoldableColumn(const PerlinNoise& noise, double x,
+                                                     const double* ys, double z, double yScale,
+                                                     const double* yMaxes, std::size_t count,
+                                                     double* out) noexcept {
+    if (isZero(yScale)) {
+        samplePerlinColumn<false>(noise, x, ys, z, 0.0, nullptr, count, out);
+        return;
+    }
+    samplePerlinColumn<true>(noise, x, ys, z, yScale, yMaxes, count, out);
+}
+
 } // namespace stratum::noise::detail

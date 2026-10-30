@@ -25,9 +25,12 @@
 #include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
+#include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <span>
 
 namespace stratum::noise {
 
@@ -254,6 +257,114 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     // 128, which is how the modern one was measured (SPEC §11).
     const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
     return clampedLerp(part, minimum / divisor, maximum / divisor);
+}
+
+void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys, const double z,
+                                const std::span<double> out) const noexcept {
+    const std::size_t count = ys.size();
+    assert(count <= kColumn && out.size() == count);
+    // sample()'s doubles lane by lane. Every factor below that is not a
+    // lane's own — the scales and steps, each octave's persistence,
+    // contribution, x and z, wrapped, and its slab — is the double sample()
+    // makes, made once; a lane's y, its wrap and its cap are its own. Only
+    // the first `count` entries of each array are written or read (of the
+    // gathers, the first minimumCount and maximumCount).
+    const double xzScale = kBaseFrequency * parameters_.xzScale;
+    const double yScale = kBaseFrequency * parameters_.yScale;
+    const double xzStep = xzScale / parameters_.xzFactor;
+    const double yStep = yScale / parameters_.yFactor;
+
+    std::array<double, kColumn> laneY;
+    std::array<double, kColumn> laneCap;
+    std::array<double, kColumn> term;
+
+    // Each lane's three sums, each from 0.0 as sample()'s.
+    std::array<double, kColumn> blend;
+    std::array<double, kColumn> minimum;
+    std::array<double, kColumn> maximum;
+    for (std::size_t k = 0; k < count; ++k) {
+        blend[k] = 0.0;
+        minimum[k] = 0.0;
+        maximum[k] = 0.0;
+    }
+    double persistence = 1.0;
+    double contribution = 1.0;
+    for (std::size_t i = 0; i < kBlendOctaves; ++i) {
+        const double blendX = wrapCoordinate(x * xzStep * persistence);
+        const double blendZ = wrapCoordinate(z * xzStep * persistence);
+        const double blendBare = yStep * persistence;
+        const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
+        for (std::size_t k = 0; k < count; ++k) {
+            laneY[k] = wrapCoordinate(ys[k] * yStep * persistence);
+            laneCap[k] = smearCap(reading_, ys[k], blendSmear, blendBare);
+        }
+        detail::samplePerlinFoldableColumn(blend_[i], blendX, laneY.data(), blendZ, blendSmear,
+                                           laneCap.data(), count, term.data());
+        for (std::size_t k = 0; k < count; ++k) {
+            blend[k] += term[k] * contribution;
+        }
+        persistence *= 0.5;
+        contribution *= 2.0;
+    }
+
+    // Which lanes read each limit (sample()'s readsMinimum, readsMaximum),
+    // and those lanes in order: a limit is sampled only for a lane that
+    // reads it, as sample() samples it only for a point that does.
+    std::array<double, kColumn> part;
+    std::array<std::size_t, kColumn> minimumLanes;
+    std::array<std::size_t, kColumn> maximumLanes;
+    std::size_t minimumCount = 0;
+    std::size_t maximumCount = 0;
+    for (std::size_t k = 0; k < count; ++k) {
+        part[k] = 0.5 + (0.05 * blend[k]);
+        if (!(part[k] >= 1.0)) {
+            minimumLanes[minimumCount++] = k;
+        }
+        if (part[k] > 0.0) {
+            maximumLanes[maximumCount++] = k;
+        }
+    }
+
+    persistence = 1.0;
+    contribution = 1.0;
+    // One limit's octave over the lanes that read it: their y and cap
+    // gathered, sampled together, each term added to its own lane's sum.
+    const auto limitOctave =
+        [&](const PerlinNoise& octave, const std::array<std::size_t, kColumn>& lanes,
+            const std::size_t lanesCount, std::array<double, kColumn>& sums, const double limitX,
+            const double limitZ, const double limitSmear, const double limitBare) {
+            for (std::size_t j = 0; j < lanesCount; ++j) {
+                const double y = ys[lanes[j]];
+                laneY[j] = wrapCoordinate(y * yScale * persistence);
+                laneCap[j] = smearCap(reading_, y, limitSmear, limitBare);
+            }
+            detail::samplePerlinFoldableColumn(octave, limitX, laneY.data(), limitZ, limitSmear,
+                                               laneCap.data(), lanesCount, term.data());
+            for (std::size_t j = 0; j < lanesCount; ++j) {
+                sums[lanes[j]] += term[j] * contribution;
+            }
+        };
+    for (std::size_t i = 0; i < kLimitOctaves; ++i) {
+        const double limitX = wrapCoordinate(x * xzScale * persistence);
+        const double limitZ = wrapCoordinate(z * xzScale * persistence);
+        const double limitBare = yScale * persistence;
+        const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
+        if (minimumCount > 0) {
+            limitOctave(minimum_[i], minimumLanes, minimumCount, minimum, limitX, limitZ,
+                        limitSmear, limitBare);
+        }
+        if (maximumCount > 0) {
+            limitOctave(maximum_[i], maximumLanes, maximumCount, maximum, limitX, limitZ,
+                        limitSmear, limitBare);
+        }
+        persistence *= 0.5;
+        contribution *= 2.0;
+    }
+
+    const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
+    for (std::size_t k = 0; k < count; ++k) {
+        out[k] = clampedLerp(part[k], minimum[k] / divisor, maximum[k] / divisor);
+    }
 }
 
 } // namespace stratum::noise

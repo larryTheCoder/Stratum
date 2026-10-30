@@ -28,6 +28,7 @@
 #include <iomanip>
 #include <limits>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -685,6 +686,7 @@ Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeInde
         return span;
     }
     span.kept = lattice.kept.data();
+    span.lattice = latticeOf_[node];
     if (ix >= 0 && ix + 1 < lattice.nx && iy >= 0 && iy + 1 < lattice.ny && iz >= 0 &&
         iz + 1 < lattice.nz) {
         // The whole cell, which is every cell of a chunk's fill.
@@ -693,6 +695,7 @@ Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeInde
             span.index[k] = base + lattice.offsets[k];
         }
         span.inside = 0xFFU;
+        lattice.top = std::max(lattice.top, static_cast<std::int32_t>(iy + 1));
         return span;
     }
     // Part of it, or none: corner by corner.
@@ -705,9 +708,45 @@ Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeInde
             cz < lattice.nz) {
             span.index[k] = static_cast<std::int32_t>((((cx * lattice.nz) + cz) * lattice.ny) + cy);
             span.inside |= 1U << k;
+            lattice.top = std::max(lattice.top, static_cast<std::int32_t>(cy));
         }
     }
     return span;
+}
+
+Interpreter::MemoTable::ColumnRun
+Interpreter::MemoTable::columnRun(const CellSpan& span, const std::size_t corner,
+                                  const std::int32_t grow, const std::int32_t most) const noexcept {
+    ColumnRun run;
+    if (span.lattice < 0) {
+        return run;
+    }
+    const Lattice& lattice = lattices_[static_cast<std::size_t>(span.lattice)];
+    if (lattice.columnsDeclined) {
+        return run;
+    }
+    // The lattice keeps y fastest (Lattice), so the corners above a corner
+    // in its column are the next indices, up to the column's top, ny - 1.
+    const std::int32_t first = span.index[corner];
+    const std::int32_t iy = first % lattice.ny;
+    const std::int32_t top = std::min(lattice.ny - 1, std::max(lattice.top, iy + grow - 1));
+    std::int32_t count = 1;
+    while (count < most && iy + count <= top && span.kept[first + count].stamp != epoch_ &&
+           std::int64_t{lattice.anchor.y} +
+                   ((std::int64_t{iy} + count) * std::int64_t{lattice.cells.height}) <=
+               std::numeric_limits<std::int32_t>::max()) {
+        ++count;
+    }
+    run.kept = span.kept;
+    run.first = first;
+    run.count = count;
+    return run;
+}
+
+void Interpreter::MemoTable::declineColumns(const CellSpan& span) noexcept {
+    if (span.lattice >= 0) {
+        lattices_[static_cast<std::size_t>(span.lattice)].columnsDeclined = true;
+    }
 }
 
 std::uint32_t Interpreter::CornerCache::windowId(const FlatCacheWindow* window) noexcept {
@@ -838,6 +877,61 @@ private:
     bool cells_ = false;
 };
 
+/// One column batch (batchedCorner): `count` corners of a lattice column,
+/// lane j at (first.x, first.y + j * step, first.z), evaluated together.
+struct Interpreter::ColumnBatch {
+    static constexpr std::size_t kLanes = CornerCache::kColumnLanes;
+
+    const Call* call = nullptr;
+    /// Whether the corners' scopes may keep cell corners, as fillCell's.
+    bool cells = false;
+    Point first{};
+    std::int32_t step = 0;
+    std::size_t count = 0;
+    /// Every lane's bit.
+    std::uint64_t all = 0;
+    /// A scope at the first lane's point, in which every column-invariant
+    /// node the batch reads is evaluated once, for every lane.
+    Scope* scalar = nullptr;
+    /// Each lane's y, as the double evaluateNode makes of it.
+    std::array<double, kLanes> y{};
+
+    /// Lane @p lane's point. Its y is in int32: MemoTable::columnRun ends a
+    /// run before a corner whose y is not.
+    [[nodiscard]] Point at(std::size_t lane) const noexcept {
+        return Point{
+            .x = first.x,
+            .y = static_cast<std::int32_t>(std::int64_t{first.y} +
+                                           (static_cast<std::int64_t>(lane) * std::int64_t{step})),
+            .z = first.z};
+    }
+};
+
+namespace {
+
+/// Thrown where a column batch cannot stand for its corners' evaluations, and
+/// caught by batchedCorner, which never lets one out.
+struct ColumnDeclined {};
+
+/// @p apply(lane) for each lane @p need sets, of a batch of @p count lanes
+/// whose every bit is @p all: a plain loop over them all where it is all of
+/// them, which the compiler may vectorize, and bit by bit otherwise.
+template<typename Apply>
+void eachLaneOf(const std::uint64_t need, const std::uint64_t all, const std::size_t count,
+                const Apply& apply) {
+    if (need == all) {
+        for (std::size_t lane = 0; lane < count; ++lane) {
+            apply(lane);
+        }
+        return;
+    }
+    for (std::uint64_t left = need; left != 0U; left &= left - 1U) {
+        apply(static_cast<std::size_t>(std::countr_zero(left)));
+    }
+}
+
+} // namespace
+
 std::optional<std::string_view> Interpreter::unevaluableReason(NodeType type) const noexcept {
     switch (type) {
         case NodeType::Interpolated:
@@ -885,8 +979,9 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises, CellGe
     cells_ = cells;
     // The lattice makes `interpolated` and `cache_all_in_cell` evaluable, so
     // the refusals the delegated constructor settled without one are
-    // settled again with it.
+    // settled again with it, and what a column batch takes after them.
     settleRefusals();
+    settleColumns();
 }
 
 Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : graph_(&graph) {
@@ -1134,6 +1229,7 @@ Interpreter::Interpreter(const Graph& graph, const NoiseRegistry& noises) : grap
 
     settleReach(graph);
     settleRefusals();
+    settleColumns();
 }
 
 void Interpreter::settleReach(const Graph& graph) {
@@ -1192,6 +1288,157 @@ void Interpreter::settleRefusals() noexcept {
     for (std::size_t i = 0; i < ops_.size(); ++i) {
         ops_[i].refuses = refusalOf(static_cast<NodeIndex>(i)) != Refusal::None;
     }
+}
+
+void Interpreter::settleColumns() {
+    const Graph& graph = *graph_;
+    const std::size_t count = graph.nodeCount();
+    // What reaches a node that fills a cell or scans points — `interpolated`,
+    // `cache_all_in_cell`, `find_top_surface` — through arguments and
+    // splines, in the forward order settleReach uses. A spline a batch
+    // evaluates lane by lane, through the walk, must reach none: the walk
+    // would fill a cell inside the batch, which keeps one batch's rows at a
+    // time (CornerCache::laneRows_).
+    std::vector<char> fills(count, 0);
+    std::vector<char> splineFills(graph.splineCount(), 0);
+    const auto splineReaches = [&graph, &fills, &splineFills](auto&& self,
+                                                              SplineIndex spline) -> bool {
+        char& cached = splineFills[static_cast<std::size_t>(spline)];
+        if (cached != 0) {
+            return cached == 1;
+        }
+        const SplineDefinition& definition = graph.spline(spline);
+        bool reaches = fills[static_cast<std::size_t>(definition.coordinate)] != 0;
+        for (const SplinePoint& point : definition.points) {
+            if (point.nested.has_value() && self(self, *point.nested)) {
+                reaches = true;
+            }
+        }
+        cached = reaches ? 1 : 2;
+        return reaches;
+    };
+    for (std::size_t i = 0; i < count; ++i) {
+        const Node& node = graph.node(static_cast<NodeIndex>(i));
+        bool reaches = node.type == NodeType::Interpolated ||
+                       node.type == NodeType::CacheAllInCell ||
+                       node.type == NodeType::FindTopSurface;
+        for (const NodeIndex argument : node.arguments) {
+            reaches = reaches || fills[static_cast<std::size_t>(argument)] != 0;
+        }
+        if (node.spline.has_value() && splineReaches(splineReaches, *node.spline)) {
+            reaches = true;
+        }
+        fills[i] = reaches ? 1 : 0;
+    }
+
+    // Op::laneWalk, forward: a node's arguments have smaller indices.
+    for (std::size_t i = 0; i < count; ++i) {
+        Op& op = ops_[i];
+        const auto walks = [this, &op](std::size_t arguments) {
+            for (std::size_t a = 0; a < arguments; ++a) {
+                if (!ops_[static_cast<std::size_t>(op.arguments[a])].laneWalk) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        bool walk = false;
+        if (op.refuses) {
+            walk = false;
+        } else if (columnInvariant_[i] != 0) {
+            // Read once a batch through the walk, at its first lane's point:
+            // the same double at every lane's (isColumnInvariant). Nothing
+            // column-invariant fills a cell — `interpolated` and
+            // `cache_all_in_cell` never are, and neither is what reaches
+            // them — so the walk opens no batch inside this one.
+            walk = true;
+        } else {
+            switch (op.type) {
+                case NodeType::Add:
+                case NodeType::Mul:
+                case NodeType::Min:
+                case NodeType::Max:
+                    walk = walks(2);
+                    break;
+                case NodeType::Abs:
+                case NodeType::Square:
+                case NodeType::Cube:
+                case NodeType::HalfNegative:
+                case NodeType::QuarterNegative:
+                case NodeType::Squeeze:
+                case NodeType::Invert:
+                case NodeType::Clamp:
+                case NodeType::BlendDensity:
+                case NodeType::Cache2d:
+                case NodeType::CacheOnce:
+                    walk = walks(1);
+                    break;
+                case NodeType::FlatCache:
+                    // Read once a batch through the walk (evaluateLanes),
+                    // which must fill no cell inside it, as for a spline.
+                    walk = fills[i] == 0;
+                    break;
+                case NodeType::RangeChoice:
+                    walk = walks(3);
+                    break;
+                case NodeType::YClampedGradient:
+                    walk = true;
+                    break;
+                case NodeType::Noise:
+                case NodeType::Shift:
+                    walk = op.noise != nullptr;
+                    break;
+                case NodeType::ShiftedNoise:
+                    walk = op.noise != nullptr && walks(3);
+                    break;
+                case NodeType::WeirdScaledSampler:
+                    walk = op.noise != nullptr &&
+                           (op.rarity == Rarity::Type1 || op.rarity == Rarity::Type2) && walks(1);
+                    break;
+                case NodeType::OldBlendedNoise:
+                    walk = blendedOf_[i].has_value();
+                    break;
+                case NodeType::Spline:
+                    // Lane by lane through the walk (evaluateLanes).
+                    walk = op.hasSpline && fills[i] == 0;
+                    break;
+                default:
+                    walk = false;
+                    break;
+            }
+        }
+        op.laneWalk = walk;
+        op.laneSlot = -1;
+    }
+
+    // Op::laneSlot, backward from every `interpolated` whose argument a
+    // batch can evaluate: the nodes a batch of it reaches, below which a
+    // column-invariant node, a spline and a flat_cache (each read through
+    // the walk) reach nothing more of it.
+    std::vector<char> wanted(count, 0);
+    std::int32_t slots = 0;
+    for (std::size_t i = count; i-- > 0;) {
+        Op& op = ops_[i];
+        if (op.type == NodeType::Interpolated) {
+            const auto argument = static_cast<std::size_t>(op.arguments[0]);
+            if (ops_[argument].laneWalk) {
+                wanted[argument] = 1;
+            }
+        }
+        if (wanted[i] == 0) {
+            continue;
+        }
+        op.laneSlot = slots++;
+        if (columnInvariant_[i] != 0 || op.type == NodeType::Spline ||
+            op.type == NodeType::FlatCache) {
+            continue;
+        }
+        const std::size_t arguments = graph.node(static_cast<NodeIndex>(i)).arguments.size();
+        for (std::size_t a = 0; a < arguments; ++a) {
+            wanted[static_cast<std::size_t>(op.arguments[a])] = 1;
+        }
+    }
+    laneSlots_ = static_cast<std::size_t>(slots);
 }
 
 void Interpreter::substitute(UnsettledSubstitutions substitutions) {
@@ -1987,6 +2234,10 @@ void Interpreter::fillCell(const NodeIndex argument, const Call& call, const boo
         MemoTable& memo = call.cache->memo_;
         const MemoTable::CellSpan span =
             memo.cellSpan(argument, tag, lower, geometry, graph_->nodeCount());
+        // A corner the lattice holds and does not hold yet is evaluated with
+        // the ones above it, where a column batch can evaluate the argument
+        // (batchedCorner).
+        const bool columns = ops_[static_cast<std::size_t>(argument)].laneWalk;
         for (std::size_t k = 0; k < entry.corners.size(); ++k) {
             const bool inLattice = (span.inside >> k & 1U) != 0U;
             if (inLattice && memo.findCorner(span, k, entry.corners[k])) {
@@ -1996,8 +2247,13 @@ void Interpreter::fillCell(const NodeIndex argument, const Call& call, const boo
             const Point corner{.x = lower.x + (offset.dx * geometry.width),
                                .y = lower.y + (offset.dy * geometry.height),
                                .z = lower.z + (offset.dz * geometry.width)};
-            entry.corners[k] = inLattice ? latticeCorner(argument, call, cells, corner, span, k)
-                                         : sharedCorner(argument, call, cells, corner, tag);
+            if (!inLattice) {
+                entry.corners[k] = sharedCorner(argument, call, cells, corner, tag);
+            } else if (columns) {
+                entry.corners[k] = batchedCorner(argument, call, cells, corner, span, k);
+            } else {
+                entry.corners[k] = latticeCorner(argument, call, cells, corner, span, k);
+            }
         }
     } else {
         // The corner's own scope carries the same cache: a nested
@@ -2061,7 +2317,408 @@ double Interpreter::latticeCorner(const NodeIndex argument, const Call& call, co
     return value;
 }
 
-// --- the block kernel (SPEC §4.1) ------------------------------------------
+// --- column batches ---------------------------------------------------------
+//
+// A chunk's fill reads its cells bottom to top, cell column by cell column,
+// and so asks for the corners of each lattice column up the chunk's height
+// one cell at a time, each new cell for the corners above the last. Under the
+// memo (fillCell's call.memo), where an argument's corners are kept in its
+// lattice, a corner not held yet is evaluated with those above it instead,
+// as far as the highest any cell has asked for (MemoTable::columnRun) — the
+// walk over the argument made once for all of them, each node over every
+// lane before the next, and each noise sampled at the column's points at
+// once, sharing what those points share (NormalNoise::sampleColumn,
+// BlendedNoise::sampleColumn) — and kept where the lattice keeps them, where
+// the cells above find them. A kernel's fill and the walk's `interpolated`
+// fill alike, so a cache holds the same after the same reads whichever made
+// them; through the call's window (a fill is always a Block read).
+//
+// EXACT. Every lane is the double latticeCorner makes at its corner: each
+// node's lanes are its evaluateNode expression over its arguments' lanes, in
+// the same operations; a column-invariant node is read once through the walk
+// at the first lane's point, the same double at every lane's
+// (isColumnInvariant); a spline and a flat_cache, through the walk, the
+// spline at each lane's own point and the flat_cache at the one column
+// corner every lane's read relocates to; a noise's lanes are the scalar's
+// samples, bit for bit, at the scalar's own coordinates. Under the memo a
+// value read through the cache is a pure function of its key, so evaluating
+// a corner before its cell asks changes no value anywhere, and the corners
+// are kept only once the whole batch has returned. Nothing a batch evaluates
+// fills a cell (Op::laneWalk), so no batch opens inside another.
+//
+// AND THE FIRST REFUSAL IS THE SAME ONE. A batch throws nothing out: anything
+// one of its evaluations would refuse — a refusing node, a point a noise does
+// not accept, an unbuilt noise, any throw of the walk it reads through —
+// abandons it, keeping none of its corners, and the corner asked for is then
+// evaluated alone (latticeCorner), refusing where and as it always did; the
+// lattice evaluates every corner alone from there (declineColumns). What an
+// abandoned batch left behind is what the walk keeps of evaluations that
+// returned — values its keys stand for. So a batch either stands for corners
+// that each evaluate without refusing, which their cells then read rather
+// than evaluate, or leaves everything as the walk alone would. Corners above
+// the highest any cell will ask for (MemoTable::columnRun's `grow`, while
+// a lattice's top is not yet known) are evaluated and never read: kept
+// values, nothing else.
+
+namespace {
+
+/// How far up a column a batch reaches past a lattice's top while that is
+/// still being found (MemoTable::columnRun): a chunk's first cell column.
+constexpr std::int32_t kColumnGrow = 8;
+
+} // namespace
+
+double Interpreter::batchedCorner(const NodeIndex argument, const Call& call, const bool cells,
+                                  const Point corner, const MemoTable::CellSpan& span,
+                                  const std::size_t k) const {
+    constexpr std::size_t kLanes = ColumnBatch::kLanes;
+    static_assert(kLanes <= noise::NormalNoise::kColumn && kLanes <= noise::BlendedNoise::kColumn);
+    static_assert(kLanes <= std::numeric_limits<std::uint64_t>::digits);
+    CornerCache& cache = *call.cache;
+    MemoTable& memo = cache.memo_;
+    const MemoTable::ColumnRun run =
+        memo.columnRun(span, k, kColumnGrow, static_cast<std::int32_t>(kLanes));
+    if (run.count < 2 || !cells_.has_value()) {
+        return latticeCorner(argument, call, cells, corner, span, k);
+    }
+    if (cache.laneStamps_.size() < laneSlots_) {
+        cache.laneRows_.assign(laneSlots_ * kLanes, 0.0);
+        cache.laneDone_.assign(laneSlots_, 0U);
+        cache.laneStamps_.assign(laneSlots_, 0U);
+        cache.laneEpoch_ = 0;
+    }
+    // A fresh epoch, which no row's stamp carries: nothing reads as made.
+    ++cache.laneEpoch_;
+    if (cache.laneEpoch_ == 0) {
+        std::fill(cache.laneStamps_.begin(), cache.laneStamps_.end(), 0U);
+        cache.laneEpoch_ = 1;
+    }
+    ColumnBatch batch;
+    batch.call = &call;
+    batch.cells = cells;
+    batch.first = corner;
+    batch.step = cells_->height;
+    batch.count = static_cast<std::size_t>(run.count);
+    batch.all = batch.count == kLanes ? ~std::uint64_t{0} : (std::uint64_t{1} << batch.count) - 1U;
+    for (std::size_t lane = 0; lane < batch.count; ++lane) {
+        batch.y[lane] = static_cast<double>(batch.at(lane).y);
+    }
+    const double* values = nullptr;
+    try {
+        Scope scalar(call, corner, cells);
+        batch.scalar = &scalar;
+        values = evaluateLanes(batch, argument, batch.all);
+    } catch (...) {
+        // Nothing of it kept, and the corner evaluated as it always was —
+        // which throws, if it does, what it always threw.
+        ++cache.columnDeclines_;
+        memo.declineColumns(span);
+        return latticeCorner(argument, call, cells, corner, span, k);
+    }
+    for (std::int32_t lane = 0; lane < run.count; ++lane) {
+        memo.insertRun(run, lane, values[lane]);
+    }
+    ++cache.columnBatches_;
+    cache.columnCorners_ += batch.count;
+    cache.columnWidest_ = std::max(cache.columnWidest_, batch.count);
+    return values[0];
+}
+
+const double* Interpreter::evaluateLanes(ColumnBatch& batch, const NodeIndex index,
+                                         const std::uint64_t need) const {
+    const Op& op = ops_[static_cast<std::size_t>(index)];
+    const bool invariant = columnInvariant_[static_cast<std::size_t>(index)] != 0;
+    if (!invariant && (op.type == NodeType::BlendDensity || op.type == NodeType::Cache2d ||
+                       op.type == NodeType::CacheOnce)) {
+        // evaluateNode's `value = argument(0)`: the argument's own lanes.
+        return evaluateLanes(batch, op.arguments[0], need);
+    }
+    if (op.laneSlot < 0 || !op.laneWalk) {
+        throw ColumnDeclined{};
+    }
+    CornerCache& cache = *batch.call->cache;
+    const auto slot = static_cast<std::size_t>(op.laneSlot);
+    double* const row = cache.laneRows_.data() + (slot * ColumnBatch::kLanes);
+    std::uint64_t done = cache.laneStamps_[slot] == cache.laneEpoch_ ? cache.laneDone_[slot] : 0U;
+    const std::uint64_t missing = need & ~done;
+    if (missing == 0U) {
+        return row;
+    }
+    const std::uint64_t all = batch.all;
+    const std::size_t count = batch.count;
+    if (invariant) {
+        // One value down the column: the walk's, at the first lane's point.
+        const double value = evaluateNode(*batch.scalar, index);
+        std::fill_n(row, count, value);
+        done = all;
+    } else {
+        const auto unary = [&](const auto& apply) {
+            const double* const input = evaluateLanes(batch, op.arguments[0], missing);
+            eachLaneOf(missing, all, count,
+                       [row, input, &apply](std::size_t lane) { row[lane] = apply(input[lane]); });
+        };
+        const auto binary = [&](const auto& apply) {
+            const double* const first = evaluateLanes(batch, op.arguments[0], missing);
+            const double* const second = evaluateLanes(batch, op.arguments[1], missing);
+            eachLaneOf(missing, all, count, [row, first, second, &apply](std::size_t lane) {
+                row[lane] = apply(first[lane], second[lane]);
+            });
+        };
+        const auto x = static_cast<double>(batch.first.x);
+        const auto z = static_cast<double>(batch.first.z);
+        switch (op.type) {
+            // evaluateNode's cases, expression for expression, lane by lane.
+            case NodeType::Add:
+                binary([](double first, double second) { return first + second; });
+                break;
+            case NodeType::Mul:
+                binary([](double first, double second) { return first * second; });
+                break;
+            case NodeType::Min:
+                binary([](double first, double second) { return minOf(first, second); });
+                break;
+            case NodeType::Max:
+                binary([](double first, double second) { return maxOf(first, second); });
+                break;
+            case NodeType::Abs:
+                unary([](double input) { return std::abs(input); });
+                break;
+            case NodeType::Square:
+                unary([](double input) { return input * input; });
+                break;
+            case NodeType::Cube:
+                unary([](double input) { return cubeOf(input); });
+                break;
+            case NodeType::HalfNegative:
+                unary([](double input) { return halfNegative(input); });
+                break;
+            case NodeType::QuarterNegative:
+                unary([](double input) { return quarterNegative(input); });
+                break;
+            case NodeType::Squeeze:
+                unary([](double input) { return squeezeOf(input); });
+                break;
+            case NodeType::Invert:
+                unary([](double input) { return 1.0 / input; });
+                break;
+            case NodeType::Clamp: {
+                const double low = op.parameters[0];
+                const double high = op.parameters[1];
+                unary([low, high](double input) { return std::clamp(input, low, high); });
+                break;
+            }
+            case NodeType::RangeChoice: {
+                // Each branch only at the lanes that take it, as only the
+                // branch chosen is evaluated at a point.
+                const double* const input = evaluateLanes(batch, op.arguments[0], missing);
+                std::uint64_t within = 0;
+                eachLaneOf(missing, all, count, [&](std::size_t lane) {
+                    if (inRange(input[lane], op.parameters[0], op.parameters[1])) {
+                        within |= std::uint64_t{1} << lane;
+                    }
+                });
+                const std::uint64_t outside = missing & ~within;
+                const double* const taken =
+                    within != 0U ? evaluateLanes(batch, op.arguments[1], within) : nullptr;
+                const double* const other =
+                    outside != 0U ? evaluateLanes(batch, op.arguments[2], outside) : nullptr;
+                eachLaneOf(missing, all, count, [&](std::size_t lane) {
+                    row[lane] = ((within >> lane) & 1U) != 0U ? taken[lane] : other[lane];
+                });
+                break;
+            }
+            case NodeType::YClampedGradient:
+                eachLaneOf(missing, all, count, [&](std::size_t lane) {
+                    row[lane] = clampedMap(batch.y[lane], op.parameters[0], op.parameters[1],
+                                           op.parameters[2], op.parameters[3]);
+                });
+                break;
+            case NodeType::Noise: {
+                const double yScale = op.parameters[1];
+                double* const ys = cache.laneScratch_.data();
+                eachLaneOf(missing, all, count,
+                           [&](std::size_t lane) { ys[lane] = batch.y[lane] * yScale; });
+                sampleLanes(*op.noise, batch, x * op.parameters[0], ys, z * op.parameters[0],
+                            missing, row);
+                break;
+            }
+            case NodeType::Shift: {
+                double* const ys = cache.laneScratch_.data();
+                eachLaneOf(missing, all, count,
+                           [&](std::size_t lane) { ys[lane] = batch.y[lane] * 0.25; });
+                sampleLanes(*op.noise, batch, x * 0.25, ys, z * 0.25, missing, row);
+                eachLaneOf(missing, all, count, [row](std::size_t lane) { row[lane] *= 4.0; });
+                break;
+            }
+            case NodeType::ShiftedNoise: {
+                const double* const shiftX = evaluateLanes(batch, op.arguments[0], missing);
+                const double* const shiftY = evaluateLanes(batch, op.arguments[1], missing);
+                const double* const shiftZ = evaluateLanes(batch, op.arguments[2], missing);
+                shiftedLanes(batch, op, shiftX, shiftY, shiftZ, missing, row);
+                break;
+            }
+            case NodeType::WeirdScaledSampler: {
+                const double* const input = evaluateLanes(batch, op.arguments[0], missing);
+                weirdLanes(batch, op, input, missing, row);
+                break;
+            }
+            case NodeType::OldBlendedNoise: {
+                // Under the memo nothing is substituted (memoizes), so this
+                // is oldBlendedNoise's built noise at each lane's point.
+                const std::optional<noise::BlendedNoise>& blended =
+                    blendedOf_[static_cast<std::size_t>(index)];
+                if (!blended.has_value() || substitutions_.blendedNoise != nullptr) {
+                    throw ColumnDeclined{};
+                }
+                double* const ys = cache.laneIn_.data();
+                double* const out = cache.laneOut_.data();
+                std::size_t gathered = 0;
+                eachLaneOf(missing, all, count,
+                           [&](std::size_t lane) { ys[gathered++] = batch.y[lane]; });
+                blended->sampleColumn(x, std::span<const double>(ys, gathered), z,
+                                      std::span<double>(out, gathered));
+                gathered = 0;
+                eachLaneOf(missing, all, count,
+                           [&](std::size_t lane) { row[lane] = out[gathered++]; });
+                break;
+            }
+            case NodeType::FlatCache: {
+                // A kernel's fill reads through no window, where every read
+                // relocates; any other is declined rather than taken.
+                const FlatCacheWindow* window = batch.call->window;
+                if (window != nullptr && !window->covers(batch.first.x, batch.first.z)) {
+                    throw ColumnDeclined{};
+                }
+                // Every lane's read relocates to the one column corner,
+                // (floorDiv(x, 4) * 4, 0, floorDiv(z, 4) * 4) — or, at a lane
+                // that is that corner, reads it there: the same point, so
+                // the same double (flatCache).
+                const double value = flatCache(*batch.scalar, op);
+                std::fill_n(row, count, value);
+                done = all;
+                break;
+            }
+            case NodeType::Spline:
+                // Through the walk at each lane's own point.
+                eachLaneOf(missing, all, count, [&](std::size_t lane) {
+                    Scope point(*batch.call, batch.at(lane), batch.cells);
+                    row[lane] = evaluateNode(point, index);
+                });
+                break;
+            default:
+                throw ColumnDeclined{};
+        }
+    }
+    cache.laneStamps_[slot] = cache.laneEpoch_;
+    cache.laneDone_[slot] = done | missing;
+    return row;
+}
+
+void Interpreter::sampleLanes(const noise::NormalNoise& noise, ColumnBatch& batch, const double x,
+                              const double* const ys, const double z, const std::uint64_t need,
+                              double* const row) {
+    // sampleNoise's test first, at every lane — a point it would refuse
+    // abandons the batch — then the samples, at once.
+    CornerCache& cache = *batch.call->cache;
+    double* const in = cache.laneIn_.data();
+    double* const out = cache.laneOut_.data();
+    std::size_t gathered = 0;
+    bool accepted = true;
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        accepted = accepted && noise.accepts(x, ys[lane], z);
+        in[gathered++] = ys[lane];
+    });
+    if (!accepted) {
+        throw ColumnDeclined{};
+    }
+    noise.sampleColumn(x, std::span<const double>(in, gathered), z,
+                       std::span<double>(out, gathered));
+    gathered = 0;
+    eachLaneOf(need, batch.all, batch.count,
+               [&](std::size_t lane) { row[lane] = out[gathered++]; });
+}
+
+void Interpreter::shiftedLanes(ColumnBatch& batch, const Op& op, const double* const shiftX,
+                               const double* const shiftY, const double* const shiftZ,
+                               const std::uint64_t need, double* const row) {
+    // evaluateNode's coordinates at every lane: (x * xz_scale) + shift_x,
+    // (y * y_scale) + shift_y, (z * xz_scale) + shift_z. Where every lane's x
+    // and z are one double — a column-invariant shift, as vanilla's are —
+    // the lanes are one column; otherwise each is sampled alone.
+    const double xzScale = op.parameters[0];
+    const double yScale = op.parameters[1];
+    const double scaledX = static_cast<double>(batch.first.x) * xzScale;
+    const double scaledZ = static_cast<double>(batch.first.z) * xzScale;
+    CornerCache& cache = *batch.call->cache;
+    double* const ys = cache.laneScratch_.data();
+    const auto firstLane = static_cast<std::size_t>(std::countr_zero(need));
+    const double x = scaledX + shiftX[firstLane];
+    const double z = scaledZ + shiftZ[firstLane];
+    bool column = true;
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        ys[lane] = (batch.y[lane] * yScale) + shiftY[lane];
+        column =
+            column &&
+            std::bit_cast<std::uint64_t>(scaledX + shiftX[lane]) ==
+                std::bit_cast<std::uint64_t>(x) &&
+            std::bit_cast<std::uint64_t>(scaledZ + shiftZ[lane]) == std::bit_cast<std::uint64_t>(z);
+    });
+    if (column) {
+        sampleLanes(*op.noise, batch, x, ys, z, need, row);
+        return;
+    }
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        const double laneX = scaledX + shiftX[lane];
+        const double laneZ = scaledZ + shiftZ[lane];
+        if (!op.noise->accepts(laneX, ys[lane], laneZ)) {
+            throw ColumnDeclined{};
+        }
+        row[lane] = op.noise->sample(laneX, ys[lane], laneZ);
+    });
+}
+
+void Interpreter::weirdLanes(ColumnBatch& batch, const Op& op, const double* const input,
+                             const std::uint64_t need, double* const row) const {
+    // weirdScaledSampler at every lane: abs(rarity * noise(x / rarity,
+    // y / rarity, z / rarity)), the rarity the input's. The lanes of one
+    // rarity share x / rarity and z / rarity, and are one column.
+    if (!substitutions_.empty()) {
+        throw ColumnDeclined{};
+    }
+    CornerCache& cache = *batch.call->cache;
+    double* const rarity = cache.laneScratch_.data();
+    eachLaneOf(need, batch.all, batch.count, [&](std::size_t lane) {
+        rarity[lane] =
+            op.rarity == Rarity::Type1 ? rarityType1(input[lane]) : rarityType2(input[lane]);
+    });
+    if (op.rarity != Rarity::Type1 && op.rarity != Rarity::Type2) {
+        throw ColumnDeclined{};
+    }
+    const auto x = static_cast<double>(batch.first.x);
+    const auto z = static_cast<double>(batch.first.z);
+    // The lanes' ys, over each rarity in turn, in the rows' own places; the
+    // samples land in `row` and are scaled there.
+    std::array<double, ColumnBatch::kLanes> ys{};
+    std::uint64_t left = need;
+    while (left != 0U) {
+        const double value = rarity[static_cast<std::size_t>(std::countr_zero(left))];
+        const auto bits = std::bit_cast<std::uint64_t>(value);
+        std::uint64_t group = 0;
+        for (std::uint64_t scan = left; scan != 0U; scan &= scan - 1U) {
+            const auto lane = static_cast<std::size_t>(std::countr_zero(scan));
+            if (std::bit_cast<std::uint64_t>(rarity[lane]) == bits) {
+                group |= std::uint64_t{1} << lane;
+                ys[lane] = batch.y[lane] / value;
+            }
+        }
+        sampleLanes(*op.noise, batch, x / value, ys.data(), z / value, group, row);
+        for (std::uint64_t scan = group; scan != 0U; scan &= scan - 1U) {
+            const auto lane = static_cast<std::size_t>(std::countr_zero(scan));
+            row[lane] = std::abs(value * row[lane]);
+        }
+        left &= ~group;
+    }
+}
 
 namespace {
 

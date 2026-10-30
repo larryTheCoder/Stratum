@@ -64,6 +64,7 @@
 #include <stratum/noise/end_islands.hpp>
 #include <stratum/noise/perlin.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -450,7 +451,46 @@ class Interpreter {
             Kept* kept = nullptr;
             std::array<std::int32_t, 8> index{};
             std::uint32_t inside = 0;
+            /// The lattice `kept` is, by its place in the table; -1 for none.
+            std::int32_t lattice = -1;
         };
+
+        /// Corners of one lattice column a batch evaluates together (see
+        /// Interpreter::batchedCorner): `count` of them up the column from
+        /// the one at `first`, kept at kept[first + lane] — the lattice
+        /// keeps y fastest — none of them held when the run was made.
+        struct ColumnRun {
+            Kept* kept = nullptr;
+            std::int32_t first = 0;
+            std::int32_t count = 0;
+        };
+
+        /// The run up the lattice column from corner @p corner of @p span —
+        /// one the lattice holds and does not hold a value for — of at most
+        /// @p most corners: the corner itself and those above it, while
+        /// none is held, each is inside the lattice and has its y in int32,
+        /// up to the highest corner a cell of the lattice has asked for so
+        /// far (Lattice::top) or @p grow corners, whichever is further. A
+        /// count of 0 where the lattice's runs were declined
+        /// (declineColumns).
+        [[nodiscard]] ColumnRun columnRun(const CellSpan& span, std::size_t corner,
+                                          std::int32_t grow, std::int32_t most) const noexcept;
+
+        /// Holds @p value as the corner of lane @p lane of @p run.
+        void insertRun(const ColumnRun& run, std::int32_t lane, double value) {
+            makeRoom();
+            Kept& kept = run.kept[run.first + lane];
+            if (kept.stamp != epoch_) {
+                ++size_;
+            }
+            kept.value = value;
+            kept.stamp = epoch_;
+        }
+
+        /// No more runs in @p span's lattice until forgetLayout(): a batch
+        /// there could not stand for its corners (Interpreter::
+        /// batchedCorner), and every corner it holds is evaluated alone.
+        void declineColumns(const CellSpan& span) noexcept;
 
         /// The corners of the cell from @p lower, of @p argument read under
         /// corner tag @p tag on lattice @p cells, in a graph of @p nodeCount
@@ -528,6 +568,13 @@ class Interpreter {
             /// cell's lower corner.
             std::array<std::int32_t, 8> offsets{};
             std::vector<Kept> kept;
+            /// The highest corner along y, in corners from the anchor, of
+            /// any cell asked for through it (cellSpan); -1 before the
+            /// first. Where a column run reaches to (columnRun), and never a
+            /// value or where one is.
+            std::int32_t top = -1;
+            /// Whether its column runs were declined (declineColumns).
+            bool columnsDeclined = false;
         };
 
         /// A column record's place in the directory.
@@ -763,6 +810,30 @@ public:
         /// wrapped, so that a test of the wrap can show it happened.
         [[nodiscard]] std::uint64_t scopeEpochWraps() const noexcept { return scopes_.wraps(); }
 
+        /// FOR TESTS. The most corners a column batch (Interpreter::
+        /// batchedCorner) keeps.
+        static constexpr std::size_t kColumnBatch = 64;
+
+        /// FOR TESTS. How many column batches evaluations through this cache
+        /// made and kept.
+        [[nodiscard]] std::uint64_t columnBatches() const noexcept { return columnBatches_; }
+
+        /// FOR TESTS. How many corners they kept.
+        [[nodiscard]] std::uint64_t columnCorners() const noexcept { return columnCorners_; }
+
+        /// FOR TESTS. The most corners one of them kept.
+        [[nodiscard]] std::size_t columnWidest() const noexcept { return columnWidest_; }
+
+        /// FOR TESTS. How many batches it abandoned (declined).
+        [[nodiscard]] std::uint64_t columnDeclines() const noexcept { return columnDeclines_; }
+
+        /// FOR TESTS. Moves the column batches' epoch forward to at least
+        /// @p epoch, never back, as though that many batches had run; it
+        /// wraps after 2^32, which must forget every row as each batch does.
+        void advanceColumnEpoch(std::uint32_t epoch) noexcept {
+            laneEpoch_ = std::max(laneEpoch_, epoch);
+        }
+
     private:
         friend class Interpreter;
 
@@ -834,6 +905,34 @@ public:
         bool kernelGeometryKnown_ = false;
         std::array<double, kKernelFractions> kernelWidthFractions_{};
         std::array<double, kKernelFractions> kernelHeightFractions_{};
+
+        /// The most corners one column batch evaluates together (Interpreter
+        /// ::batchedCorner): a lattice column of a 384-block dimension at a
+        /// cell height of 8 is 49, at 4 a 128-block one 33.
+        static constexpr std::size_t kColumnLanes = kColumnBatch;
+        /// A column batch's values, kColumnLanes a row, one row per node
+        /// that has one (Op::laneSlot), and which lanes of each row the
+        /// batch has made (laneDone_, read only where laneStamps_ is the
+        /// batch's epoch). Scratch, as the scope frames are: a batch reads
+        /// only what it wrote, and one batch runs at a time — nothing a
+        /// batch evaluates can fill a cell (Op::laneWalk). Sized at the
+        /// first batch.
+        std::vector<double> laneRows_;
+        std::vector<std::uint64_t> laneDone_;
+        std::vector<std::uint32_t> laneStamps_;
+        std::uint32_t laneEpoch_ = 0;
+        /// A noise's points of one batch, gathered, and its samples there;
+        /// and a row by lane before the gathering — a noise's ys, a
+        /// weird_scaled_sampler's rarities. Each written and read within one
+        /// node's sampling, which evaluates nothing in between.
+        std::array<double, kColumnLanes> laneIn_{};
+        std::array<double, kColumnLanes> laneOut_{};
+        std::array<double, kColumnLanes> laneScratch_{};
+        /// What columnBatches() and the rest count.
+        std::uint64_t columnBatches_ = 0;
+        std::uint64_t columnCorners_ = 0;
+        std::size_t columnWidest_ = 0;
+        std::uint64_t columnDeclines_ = 0;
     };
 
     /// SPEC §4.1's compiled block program, for the part of a root that is
@@ -1178,7 +1277,18 @@ private:
         /// column, the window and the read context alone; and it reaches a
         /// noise or a spline, so that keeping it saves more than it costs.
         bool columnMemo = false;
+        /// Whether a column batch can evaluate the node at a column of
+        /// points (evaluateLanes), settled with everything it depends on
+        /// (settleColumns): a column-invariant node, which the batch reads
+        /// once through the walk, or one of the types evaluateLanes takes,
+        /// over arguments it can, that refuses nothing it can tell before
+        /// a sample — and nothing beneath it can fill a cell.
+        bool laneWalk = false;
         Rarity rarity = Rarity::None;
+        /// The node's row in a column batch (CornerCache::laneRows_): every
+        /// node a batch of some `interpolated` argument can reach; -1 for
+        /// the rest.
+        std::int32_t laneSlot = -1;
         SplineIndex spline = 0;
         std::array<NodeIndex, kMaxNodeArguments> arguments{};
         std::array<double, kMaxNodeParameters> parameters{};
@@ -1203,6 +1313,11 @@ private:
     /// Sets every Op::readsWindow and Op::columnMemo, from what each node
     /// reaches and from column invariance, which must be settled first.
     void settleReach(const Graph& graph);
+
+    /// Sets every Op::laneWalk and Op::laneSlot, from column invariance and
+    /// the refusals, which must be settled first. Run after settleRefusals
+    /// by each constructor.
+    void settleColumns();
 
     /// @p root refused by name unless it names a node of the graph.
     void requireNode(NodeIndex root) const;
@@ -1290,9 +1405,50 @@ private:
     /// lattice when @p call keeps a memo, each evaluated afresh otherwise, in
     /// kCornerOrder either way. Corner scopes open on @p call, keeping cell
     /// corners as @p cells says. What interpolate() and a BlockKernel both do
-    /// when the cell is not the entry's.
+    /// when the cell is not the entry's. Under the memo, a lattice corner
+    /// not held yet is evaluated with the ones above it where a column batch
+    /// can evaluate the argument (batchedCorner).
     void fillCell(NodeIndex argument, const Call& call, bool cells, CornerCache::Entry& entry,
                   Point lower, std::uint32_t tag) const;
+
+    /// One column batch: the corners of a lattice column, evaluated
+    /// together (see batchedCorner).
+    struct ColumnBatch;
+
+    /// latticeCorner's value, with the corners above @p corner in its
+    /// lattice column (MemoTable::columnRun) evaluated in the same batch and
+    /// kept: each lane the double latticeCorner makes at its corner, by
+    /// evaluateLanes. Where the batch cannot stand for those evaluations —
+    /// anything in it throws — the lattice declines its runs, and this is
+    /// latticeCorner, which refuses where and as it always did.
+    [[nodiscard]] double batchedCorner(NodeIndex argument, const Call& call, bool cells,
+                                       Point corner, const MemoTable::CellSpan& span,
+                                       std::size_t k) const;
+
+    /// @p index at the lanes of @p batch that @p need sets, each lane the
+    /// double evaluateNode makes at its point: the node's row, valid at
+    /// those lanes. Throws, and the batch is abandoned, where any of them
+    /// would refuse or the node is not one it takes (Op::laneWalk).
+    [[nodiscard]] const double* evaluateLanes(ColumnBatch& batch, NodeIndex index,
+                                              std::uint64_t need) const;
+
+    /// evaluateLanes' samples of a `noise`, `shift` or `shifted_noise` node
+    /// at its lanes @p need, into @p row: at x @p x and z @p z — each a
+    /// lane's own, the same for every lane — and each lane's y in @p ys,
+    /// refused (thrown) where the noise does not accept a point, as
+    /// sampleNoise refuses it.
+    static void sampleLanes(const noise::NormalNoise& noise, ColumnBatch& batch, double x,
+                            const double* ys, double z, std::uint64_t need, double* row);
+
+    /// evaluateLanes' `weird_scaled_sampler` at @p need, over the input's
+    /// lanes @p input.
+    void weirdLanes(ColumnBatch& batch, const Op& op, const double* input, std::uint64_t need,
+                    double* row) const;
+
+    /// evaluateLanes' `shifted_noise` at @p need, over its three shifts.
+    static void shiftedLanes(ColumnBatch& batch, const Op& op, const double* shiftX,
+                             const double* shiftY, const double* shiftZ, std::uint64_t need,
+                             double* row);
 
     /// Lowers @p index, reached at @p depth, onto @p kernel's list, and
     /// returns the register holding its value, or -1 where it does not lower.
@@ -1362,6 +1518,8 @@ private:
     /// has to mean const (SPEC §4.1).
     std::vector<char> columnInvariant_;
     std::vector<char> splineColumnInvariant_;
+    /// How many nodes have a row in a column batch (Op::laneSlot).
+    std::size_t laneSlots_ = 0;
     UnsettledSubstitutions substitutions_;
 };
 

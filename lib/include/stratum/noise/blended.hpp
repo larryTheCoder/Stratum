@@ -56,6 +56,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace stratum::noise {
@@ -187,6 +188,20 @@ public:
     [[nodiscard]] Reading reading() const noexcept { return reading_; }
 
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
+
+    /// The most points sampleColumn() takes at once: a cell column's corners
+    /// down a dimension's height, as the density interpreter batches them.
+    static constexpr std::size_t kColumn = 64;
+
+    /// sample(@p x, ys[k], @p z) into out[k], for every k below ys.size()
+    /// — at most kColumn, and out.size() — each the double sample() returns
+    /// there, bit for bit: every octave the point reads summed in the same
+    /// order, and no other, with what the points of one column share (each
+    /// octave's x and z, wrapped, and the x and z axes of its lattice) made
+    /// once rather than once a point. Defined everywhere, as sample() is.
+    /// tests/unit/noise_column_test.cpp holds the two to the same bytes.
+    void sampleColumn(double x, std::span<const double> ys, double z,
+                      std::span<double> out) const noexcept;
 
     [[nodiscard]] const Parameters& parameters() const noexcept { return parameters_; }
 

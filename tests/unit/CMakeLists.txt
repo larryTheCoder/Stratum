@@ -197,3 +197,9 @@ target_sources(stratum_unit_tests PRIVATE noise_normal_stacks_test.cpp)
 
 # A noise past its lattice, refused in the same words by every node type that samples one.
 target_sources(stratum_unit_tests PRIVATE density_noise_refusal_test.cpp)
+
+# Noise sampled a column at once, held to the scalar sample bit for bit.
+target_sources(stratum_unit_tests PRIVATE noise_column_test.cpp)
+
+# Column batches of a lattice's corners against the walk, over random graphs.
+target_sources(stratum_unit_tests PRIVATE density_column_fuzz_test.cpp)

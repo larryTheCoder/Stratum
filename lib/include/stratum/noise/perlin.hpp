@@ -185,6 +185,24 @@ public:
     /// PRECONDITION: accepts(x, y, z). Asserted in debug builds.
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
 
+    /// The most points sampleColumn() takes at once: a cell column's corners
+    /// down a dimension's height, as the density interpreter batches them.
+    static constexpr std::size_t kColumn = 64;
+
+    /// sample(@p x, ys[k], @p z) into out[k], for every k below ys.size()
+    /// — at most kColumn, and out.size() — each the double sample() returns
+    /// there, bit for bit: the same terms summed in the same order, with what
+    /// the points of one column share (the call, the second stack's x and z,
+    /// and in every octave the x and z axes of its lattice) made once rather
+    /// than once a point. tests/unit/noise_column_test.cpp holds the two to
+    /// the same bytes.
+    ///
+    /// PRECONDITION: accepts(x, ys[k], z) for every k — a caller that may
+    /// meet a point it does not accept checks first, as sample()'s do.
+    /// Asserted in debug builds.
+    void sampleColumn(double x, std::span<const double> ys, double z,
+                      std::span<double> out) const noexcept;
+
     [[nodiscard]] double valueFactor() const noexcept { return valueFactor_; }
 
     /// The largest |coordinate|, on any axis, that sample() is defined for:
