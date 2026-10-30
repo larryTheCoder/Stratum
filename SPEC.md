@@ -429,7 +429,7 @@ whole out-of-schema range (vanilla-mcdoc, minecraft.wiki), which takes in
 the undefined values but does not stop at them: a climate bound of 3.0, an
 offset of -0.25, a `find_top_surface` `lower_bound` of -5000, an
 `old_blended_noise` `xz_scale` of 2000 or a factor of 0.0005 each computed
-defined output at c7b060f and now stop the pack, or a v15 blob carrying
+defined output at 4c2584c and now stop the pack, or a v15 blob carrying
 them, from loading — even where nothing evaluates the node, as a dangling
 reference always has. `freeze::read` reports such a blob as carrying a value
 this build refuses, not as malformed, and says what to do: a build from
@@ -704,9 +704,9 @@ The matrix is published in the README and is part of the public contract.
 A pack that half-loads silently is a bug of the highest severity class.
 
 **Inputs that would reach undefined behaviour (§5.7).** These were found
-reachable by the audit under UBSan at c7b060f — its own driver programs
-and the suites — and by the reviews that followed it (08786df, dd465d3,
-f85f8e0). The narrowing and nesting refusals below are not UBSan-visible:
+reachable by the audit under UBSan at 4c2584c — its own driver programs
+and the suites — and by the reviews that followed it (6e51160, 93643a1,
+950d4d2). The narrowing and nesting refusals below are not UBSan-visible:
 an integer narrowed modulo 2^32 or 2^64 is defined C++20, and a stack run
 out is a crash, not a report. Each is refused by name, the message naming
 the node, noise, condition or field and the value. None is a reading of
@@ -1799,7 +1799,7 @@ Defaults chosen; flip only with a written note in this section:
   Minecraft-specific parts no cited document carries) and the End's island
   field (`getEndHeightNoise`'s shape, end_islands.cpp). Both are recorded as
   adaptations, each with what is this project's own or measured instead.
-  A second review, at 08786df, held three more to that standard, and they
+  A second review, at 6e51160, held three more to that standard, and they
   are recorded too: blended.cpp's `maintainPrecision`, which restores the
   line noise.h keeps commented out in its function of that name (the
   half-up rounding, and applying the wrap at all, are this project's own);
@@ -1812,7 +1812,7 @@ Defaults chosen; flip only with a written note in this section:
   `initBlended`'s reproduction of `initSurfaceNoise`'s opening. And
   perlin.cpp's and NOTICE's statement that the modern noise was "first
   written from the documented algorithms" now says only what is on record.
-  A third review, at dd465d3, found one more and a misquotation. The biome
+  A third review, at 93643a1, found one more and a misquotation. The biome
   search's fixed-point step, `biome::quantizeCoord` — ten thousand steps a
   unit, the sample narrowed to `float` and the product truncated — is
   biomenoise.c `sampleBiomeNoise`'s `(int64_t)(10000.0F*t)` over its `float`
@@ -1828,7 +1828,7 @@ Defaults chosen; flip only with a written note in this section:
   normal-noise composition on top of it" — where this series had
   paraphrased it as naming "the standard simplex construction": it named no
   document, and none is on record for that composition.
-  A fourth review, at f85f8e0, found three more, each now recorded. The
+  A fourth review, at 950d4d2, found three more, each now recorded. The
   order blended.cpp draws its three stacks in from one generator — sixteen
   minimum, sixteen maximum, eight blend — is the opening of biomenoise.c's
   `initSurfaceNoise`, which e3afede had checked against cubiomes while
@@ -4819,7 +4819,7 @@ Open:
   AVX2 variant, which glibc picks under valgrind), against 6% of perf's
   instruction samples over a native run of the same window (the AVX-512
   variant). Callgrind's own counts also differ from one machine to
-  another: the record's tree (3e3e805), under callgrind here, gives the
+  another: the record's tree (7c6521b), under callgrind here, gives the
   aquifer 120 M of 7 389 M, not the 103 M of 7 512 M it gave on the
   4-core box. So the record's 1.4% after the cuts is callgrind's share on
   that box and the 2.5% above is perf's on this one, and perf's 104 M
@@ -4840,7 +4840,7 @@ Open:
   everything on.
 
   Set beside the record, the first pass's share reads 1.1% there and 2.5%
-  here, and no cost moved between them. The record's own tree (3e3e805),
+  here, and no cost moved between them. The record's own tree (7c6521b),
   built and counted here the same way, executes both runs of the first
   pass's pair exactly as v13 does, to within 0.01 M a chunk: 1 037.4 M
   with veins off, 1 011.6 M with aquifers off, the aquifer 25.75 M
@@ -8719,8 +8719,8 @@ Open:
   The rule stays in every table as an anonymous candidate, scored by name as
   before (`kForkedMd5Rule` in the decoder header); the attribution is gone
   from the code, the scripts and this section. One comment kept it past
-  a94adca: `NoiseRegistry::create`'s note on the legacy search, until the
-  review of bd90507 found it; it now names the candidate as
+  e022f7d: `NoiseRegistry::create`'s note on the legacy search, until the
+  review of f561821 found it; it now names the candidate as
   `legacy-seed-analyze.cpp` does, rule 290 of the widened scan and 182 of
   the 900. What the old wording implied —
   that deepslate's derivation lies in the scanned space and the server
@@ -10085,7 +10085,7 @@ Open:
   both. What the goldens do NOT measure is the step through `float`:
   truncating through `float` and through `double` score the same on both
   samples under every bounds rounding (98304/98304 and 32748/32768, rerun at
-  dd465d3), so that step rests on cubiomes, from which it is adapted, and on
+  93643a1), so that step rests on cubiomes, from which it is adapted, and on
   nothing measured here; the unit vector that tells the two apart (-0.819 to
   -8190, not -8189) was computed by this code. And two of the four deciding
   axis values argue for truncation beyond
@@ -10876,14 +10876,14 @@ Open:
   --accept-eula --require-quiet 0.5`, on the same AMD Ryzen 5 7600
   (governor performance, boost on), every half quiet: other processes used
   0.13 to 0.16 cores on average and at most 0.27 over any minute. Its
-  Stratum half was run twice: on main as pushed (cfa5d93, before) and on
+  Stratum half was run twice: on main as pushed (a62f794, before) and on
   main with the first performance pass (after). The vanilla half (JDK:
   Azul Zulu 25.0.4, since the system Java is a JRE without `jfr` or
   `jstack`) was run once and reused for both, every recording within 0.977
   to 1.010 of its workers' CPU. Wall ms/chunk, means (medians), all three
   seeds over the square and the scattered set:
 
-  | dimension | Stratum e2e at cfa5d93 | Stratum e2e after the merge | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
+  | dimension | Stratum e2e at a62f794 | Stratum e2e after the merge | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
   | --- | --- | --- | --- | --- | --- |
   | overworld | 155.7 (160.4), 6.4/s | 23.7 (24.7), 42.1/s | 22.3 / 0.63 / 0.65 | 13.5 (14.0), 73.9/s | 11.5x, 1.75x (1.76x) |
   | amplified | 159.8 (161.0), 6.3/s | 26.0 (25.9), 38.5/s | 24.6 / 0.63 / 0.66 | 15.9 (15.0), 63.1/s | 10.1x, 1.64x (1.63x) |
@@ -10922,9 +10922,9 @@ Open:
   half quiet (other processes 0.10 to 0.11 cores on average, 0.11 at most
   over any minute). The vanilla half was measured afresh, every recording
   within 0.970 to 1.012 of its workers' CPU, and Stratum's half on main
-  before the pass (57842c7) and after it, back to back:
+  before the pass (696dbb3) and after it, back to back:
 
-  | dimension | Stratum e2e before (57842c7) | Stratum e2e after the second pass | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
+  | dimension | Stratum e2e before (696dbb3) | Stratum e2e after the second pass | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
   | --- | --- | --- | --- | --- | --- |
   | overworld | 24.07 (24.83), 41.5/s | 10.53 (11.02), 95.0/s | 9.48 / 0.63 / 0.43 | 13.62 (13.91), 73.4/s | 1.77x, 0.77x (0.77x) |
   | amplified | 25.90 (25.75), 38.6/s | 10.52 (10.73), 95.1/s | 9.44 / 0.63 / 0.45 | 15.61 (15.16), 64.1/s | 1.66x, 0.67x (0.67x) |
@@ -10932,7 +10932,7 @@ Open:
   | end | 2.58 (2.49), 387.5/s | 1.44 (1.44), 694.2/s | 1.17 / 0.01 / 0.27 | 2.81 (2.55), 355.7/s | 0.92x, 0.51x (0.50x) |
 
   *What the second pass changed*, none of it output: every chunk
-  byte-identical to 57842c7's (12 dumps, 555 831 785 bytes, the bench's
+  byte-identical to 696dbb3's (12 dumps, 555 831 785 bytes, the bench's
   `--compare` and `cmp`). Instructions per chunk generation (seed 42):
   overworld 511.5M to 189.2M (2.70x fewer), amplified 645.1M to 210.7M,
   large_biomes 544.0M to 196.6M, the End 53.8M to 24.4M. The levers, all
@@ -10985,12 +10985,12 @@ Open:
   *The third pass (2026-10-30)*, after M5 closed (owner, 2026-10-29: "lets
   work on adding more speed"), by the same method on the same box. The
   vanilla half was measured afresh, every recording within 0.971 to 1.023
-  of its workers' CPU, and Stratum's half on main before the pass (5507ed1)
-  and after it (7b06ae1), back to back against that vanilla half, every
+  of its workers' CPU, and Stratum's half on main before the pass (3967355)
+  and after it (5c17c2b), back to back against that vanilla half, every
   half quiet (other processes 0.24 to 0.38 cores on average, 0.43 at most
   over any minute). Means (medians) in ms/chunk:
 
-  | dimension | Stratum e2e before (5507ed1) | Stratum e2e after the third pass | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
+  | dimension | Stratum e2e before (3967355) | Stratum e2e after the third pass | fill / biomes / encode after | vanilla biomes+noise+surface | Stratum / vanilla, means: before, after (CPU) |
   | --- | --- | --- | --- | --- | --- |
   | overworld | 10.60 (11.14), 94.4/s | 5.94 (6.04), 168.4/s | 5.41 / 0.42 / 0.24 | 13.44 (13.93), 74.4/s | 0.79x, 0.44x (0.44x) |
   | amplified | 10.79 (10.89), 92.7/s | 5.62 (5.61), 177.8/s | 5.07 / 0.42 / 0.24 | 15.83 (15.45), 63.2/s | 0.68x, 0.36x (0.36x) |
@@ -11001,7 +11001,7 @@ Open:
   10.69 and 1.44) within 0.3 ms, two days apart.
 
   *What the third pass changed*, none of it output: every chunk
-  byte-identical to 5507ed1's (12 dumps, 555 831 785 bytes, the bench's
+  byte-identical to 3967355's (12 dumps, 555 831 785 bytes, the bench's
   `--compare` and `cmp`). Instructions per chunk generation (seed 42):
   overworld 189.2M to 99.6M (1.90x fewer), amplified 210.7M to 96.4M
   (2.19x), large_biomes 196.6M to 103.6M (1.90x), the End 24.4M to 9.9M
@@ -11660,7 +11660,7 @@ Open:
   cannot: each is scored on its own decoded columns, so six independent
   refutations is what this is, not one refutation of a joint rule.
 
-- **Undefined behaviour, audited (2026-10-14).** An audit at c7b060f built the
+- **Undefined behaviour, audited (2026-10-14).** An audit at 4c2584c built the
   tree under UBSan (`float-cast-overflow` included) and ran all 718 ctest
   cases and a set of driver programs against it. The suites reached one
   report in the library (a corrupted, resealed blob's NaN climate bound) and

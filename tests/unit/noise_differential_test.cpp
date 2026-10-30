@@ -6,7 +6,7 @@
 // cubiomes vectors in noise_test.cpp and blended_test.cpp pin a few hundred
 // points; this file pins millions, by running a VERBATIM COPY of the
 // implementation that stood before the rewrite (namespace `base` below, from
-// lib/src/perlin.cpp, blended.cpp and end_islands.cpp at 5507ed1) beside the
+// lib/src/perlin.cpp, blended.cpp and end_islands.cpp at 3967355) beside the
 // library's current one, on the same inputs, and comparing the results'
 // bytes. A copy rather than a capture, so that the inputs can be random and
 // many, and so that the reference cannot drift with the code it checks.

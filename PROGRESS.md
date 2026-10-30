@@ -6,7 +6,7 @@ the measured narrative behind each) — this file exists to be scanned in a
 few seconds, not to duplicate SPEC.md's prose. Update it whenever a
 milestone or a named blocker moves.
 
-Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-14 and -15 over c7b060f — the undefined-behaviour audit, every input that would reach undefined behaviour refused by name, the `sanitize` preset, and every cubiomes adaptation recorded in NOTICE; M5: Stratum inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`), the plugin hardened on the way, `stratum generate`, the owner's perf bar with its instruments and provisional figures — the three overworld presets below its minimum — and ext-nukkit resolving block states through Nukkit and generating from frozen pipelines, never run inside Nukkit. Where the next session starts: "Handoff" below). Before it, 2026-10-14 (M4, pipeline engine v15: the End's `minecraft:the_end` biome source, from cubiomes and the server — the router's erosion at each chunk's centre, the_end inside chunkX²+chunkZ² <= 4096 — exact on all 47 185 920 stored quarts of 45 End regions, through a new `world::BiomeSource` every caller names; new End probe corpora at four seeds and a router probe; `stratum diff` compares stored biomes; the plugin's options take settings and biomes together. Main's CI on the PR #2 merge, run 38338492708, read and green). Before it, 2026-10-13 (MA/M3, no engine change: `aquifers_enabled: false` reaching the server is pinned by a CI corpus and a case — `aquifer-flag-probe.sh`, `vanilla_aquifer_flag_test.cpp` — and veins with aquifers off are measured over caves and a raised sea; `aquifer-cost-bench`'s split re-measured under v14; clang-tidy 18 reaches `tests/` and `ext/tests` and is clean over all 176 files; the four standalone probe scripts read `STRATUM_FIXTURES_DIR`; the ore-vein dead zone corrected to y -7..-1 in SPEC. Main's CI on the v14 merge, run 38273558475, read and green). Before it, 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dimension's declared random source — measured under `legacy_random_source` with `legacy-orevein-probe.sh` and lifted from refusal; a first draw of exactly 0.7F is a member; veins are placed whatever `aquifers_enabled` says, the M3 coupling retracted as a seed confound; a non-stone `default_block` takes the same veins. M4: a legacy `vertical_gradient` draws the measured legacy coin and is no longer refused. The audit's docs sweep closed; the psl-lattice and weird-scaled cases read their spec through `probe_spec.hpp`; five probe scripts write `min_format`/`max_format`, `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, seven probes say why they stop; the barrier-at-lambda case classifies flow with the shared rule. CI run 37954735377 on the previous batch read, its budgets closed. Where the next session starts: "Handoff" below). Before it, 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) off the ocean branch, then the surface scan read sample by sample as the clean-room Q5.3 is written; the near-surface, ties, fluid-ceiling and far-cell probes are CI corpora with cases; the tie-break's reach counted on the goldens; Q8's fluid updates written into `PostProcessing` in the server's order and scheduled by the PocketMine-MP plugin; the aquifer's per-block cost measured — `tools/analysis/aquifer-cost-bench.cpp` — and cut by about four fifths with every block and fluid-update mark byte-identical. What is left, and where the next session starts: "Handoff" below). Earlier the same day (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; green on both legs in run 37890579708). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
+Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-14 and -15 over 4c2584c — the undefined-behaviour audit, every input that would reach undefined behaviour refused by name, the `sanitize` preset, and every cubiomes adaptation recorded in NOTICE; M5: Stratum inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`), the plugin hardened on the way, `stratum generate`, the owner's perf bar with its instruments and provisional figures — the three overworld presets below its minimum — and ext-nukkit resolving block states through Nukkit and generating from frozen pipelines, never run inside Nukkit. Where the next session starts: "Handoff" below). Before it, 2026-10-14 (M4, pipeline engine v15: the End's `minecraft:the_end` biome source, from cubiomes and the server — the router's erosion at each chunk's centre, the_end inside chunkX²+chunkZ² <= 4096 — exact on all 47 185 920 stored quarts of 45 End regions, through a new `world::BiomeSource` every caller names; new End probe corpora at four seeds and a router probe; `stratum diff` compares stored biomes; the plugin's options take settings and biomes together. Main's CI on the PR #2 merge, run 38338492708, read and green). Before it, 2026-10-13 (MA/M3, no engine change: `aquifers_enabled: false` reaching the server is pinned by a CI corpus and a case — `aquifer-flag-probe.sh`, `vanilla_aquifer_flag_test.cpp` — and veins with aquifers off are measured over caves and a raised sea; `aquifer-cost-bench`'s split re-measured under v14; clang-tidy 18 reaches `tests/` and `ext/tests` and is clean over all 176 files; the four standalone probe scripts read `STRATUM_FIXTURES_DIR`; the ore-vein dead zone corrected to y -7..-1 in SPEC. Main's CI on the v14 merge, run 38273558475, read and green). Before it, 2026-10-12 (M3/M4, pipeline engine v14: ore veins draw from the dimension's declared random source — measured under `legacy_random_source` with `legacy-orevein-probe.sh` and lifted from refusal; a first draw of exactly 0.7F is a member; veins are placed whatever `aquifers_enabled` says, the M3 coupling retracted as a seed confound; a non-stone `default_block` takes the same veins. M4: a legacy `vertical_gradient` draws the measured legacy coin and is no longer refused. The audit's docs sweep closed; the psl-lattice and weird-scaled cases read their spec through `probe_spec.hpp`; five probe scripts write `min_format`/`max_format`, `density-probe.sh` reads `STRATUM_FIXTURES_DIR`, seven probes say why they stop; the barrier-at-lambda case classifies flow with the shared rule. CI run 37954735377 on the previous batch read, its budgets closed. Where the next session starts: "Handoff" below). Before it, 2026-10-09, end of day (MA, pipeline engines v12 and v13: Q5.3(a) off the ocean branch, then the surface scan read sample by sample as the clean-room Q5.3 is written; the near-surface, ties, fluid-ceiling and far-cell probes are CI corpora with cases; the tie-break's reach counted on the goldens; Q8's fluid updates written into `PostProcessing` in the server's order and scheduled by the PocketMine-MP plugin; the aquifer's per-block cost measured — `tools/analysis/aquifer-cost-bench.cpp` — and cut by about four fifths with every block and fluid-update mark byte-identical. What is left, and where the next session starts: "Handoff" below). Earlier the same day (MA, pipeline engines v10 and v11: cache markers in a datapack's aquifer entries measured and the flat_cache window settled; an aborted scan's status is A_lava; the aquifer barrier is the preset's default_block, measured off stone. CI: its probe-world jobs green on both legs for the first time, run 37870578800; the region goldens join CI's probe-world table, in two shards; a second golden set generated with CI's own commands agrees with the first on all but 2 of 1.88 billion blocks (two shoreline water blocks whose level traded places, so SPEC §7's "frozen runs agree exactly" is corrected), and every golden case passes on it unchanged; the flow-dependent golden pins are bounds with shapes now; `fetch-vanilla --with-structures` no longer puts structures in the goldens; `golden_heightmaps_test.cpp` no longer takes probe regions for goldens, which failed it beside them; green on both legs in run 37890579708). Before it, 2026-10-08 (MA/CI: CI is set up to generate every probe world a committed generator makes for a conformance case, and to fail on an unlisted skip; it has not run yet). Before that, the same day (MA, pipeline engine v3: Q5.9's deep-dark override, read through the generating chunk's flat_cache window — the only reading of three that leaves the goldens no disagreement; the y_skip cutoff, invisible on the goldens and pinned as such; every remaining raw disagreement on all eight golden regions, and the 192-block "fluid extent" residual, attributed to fluid that flowed after generation). Earlier the same day (MA/M4, pipeline engine v2: the shipped overworld run against its goldens for the first time — the surface pass was erasing every aquifer lava block and painting open water; fixed to the measured default-block-only predicate; the psl lattice wired into the engine; the aquifers-off lava sea added). Before that, 2026-10-06 (M4: the legacy Nether's climate derived from cubiomes' setNetherSeed and measured at 32765/32768 golden cells, every miss an exact tie — the legacy NAMED-noise refusal now covers surface-rule noises only; record corrected: M5's `ext/` state and block state translation, MA's at-a-glance row, and M3's missing compiled program recorded as a deferral; SPEC §11's false claim about cubiomes and legacy seeding retracted). Previous sweep 2026-09-19 (M4: the legacy refusal narrowed to what is actually unsolved; the Nether's terrain measured; the Nether goldens' own biomes scanned for the legacy climate seeding — no survivor, with its control; the legacy surface noises read out of the golden Nether regions and the candidate space refuted there too; the synthetic scan widened along the four axes it said it did not cover — still no survivor).
 
 ## At a glance
 
@@ -27,22 +27,22 @@ Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-
 ## Handoff — where the next session starts (2026-10-25)
 
 Written 2026-10-25 from the tree, SPEC.md and `git log`; the gates were
-re-run on 97d6732 the same day (State of main, below). The 2026-10-12 handoff it continues is closed item by item below;
+re-run on 20e2f92 the same day (State of main, below). The 2026-10-12 handoff it continues is closed item by item below;
 what is still open is listed at the end, carried or new. That handoff's own
 record of the v14 batch — its local checks, the stale fixtures and their
 regeneration, CI run 38192289975, the docs sweep and the test and lint
 hygiene of 2026-10-12 and -13 — is MA's "The v14 batch, checked and read"
 now, and its other closed items are in their sections and SPEC §11.
 
-**State of main.** 101 commits over c7b060f (PR #3): five branches merged
+**State of main.** 101 commits over 4c2584c (PR #3): five branches merged
 on 2026-10-15, in this order, then one fix. Each range is git's `A..B`, so
 `git rev-list --count` reproduces its figure. None of the 101 had reached a
-remote when this was written (`origin/main` is c7b060f), so no CI run has
+remote when this was written (`origin/main` is 4c2584c), so no CI run has
 executed any of them — the new `linux-x86_64 (clang, UBSan)` job
 (.github/workflows/ci.yml:252-287) included, whose figures in SPEC §5.7 are
 a dev box's (Next work, step 0).
 
-*Local gates on 97d6732, re-run 2026-10-25* (toolchain unchanged: GCC
+*Local gates on 20e2f92, re-run 2026-10-25* (toolchain unchanged: GCC
 15.2.0, clang 21.1.8, CMake 4.2.3): `tools/probe-worlds verify` (126
 outputs of 79 units present, every density probe frozen), format (261
 files) and determinism clean; the dev build 0 warnings and 614/614;
@@ -52,36 +52,36 @@ files) and determinism clean; the dev build 0 warnings and 614/614;
 with `ext-nukkit.jni` passing and the plugin and smoke cases skipping (no
 jar pinned); `ctest --preset conformance -j 12` 179/179.
 
-- `prov-ub-r4-2` (c7b060f..57e224b, 27 commits): the undefined-behaviour
+- `prov-ub-r4-2` (4c2584c..6c5e2a3, 27 commits): the undefined-behaviour
   audit — every input that would reach undefined behaviour refused by
   name, the `sanitize` preset, and every cubiomes adaptation recorded in
   NOTICE and in its file's header (SPEC §5.7, §8; §11, "Undefined
   behaviour, audited (2026-10-14)" and the licence entry). No engine
   version: a refusal produces no chunk (SPEC §6);
-- `m5-hard-int-7` (57e224b..7c9068b, 48): Stratum inside a real headless
+- `m5-hard-int-7` (6c5e2a3..1adf7df, 48): Stratum inside a real headless
   PocketMine-MP 5.44.3, on PocketMine-MP's own PHP — `tools/pmmp-dev`, the
   `ext-release` and `pmmp` presets — and the plugin and module hardened on
   the way (SPEC §4.3; §11, "M5: Stratum inside a real PocketMine-MP");
-- `m5-generate-r2` (7c9068b..3008fb9, 5): `stratum generate` and
+- `m5-generate-r2` (1adf7df..8070188, 5): `stratum generate` and
   `golden_generate_test.cpp` (SPEC §7, `cli generate`);
-- `m5-perf-baseline-r2` (3008fb9..034ef3e, 9): the chunk-cost bench, the
+- `m5-perf-baseline-r2` (8070188..efc9f0a, 9): the chunk-cost bench, the
   vanilla server's JFR baseline, `tools/perf-baseline`, and provisional
   figures against the owner's bar (SPEC §11, "M5's performance bar");
-- `m5-nukkit-r2` (034ef3e..9e78590, 11): ext-nukkit's Java-side block
+- `m5-nukkit-r2` (efc9f0a..4d8dc61, 11): ext-nukkit's Java-side block
   resolver, worlds generated from their frozen pipeline and refused at
   startup, `tools/nukkit-dev`; never run inside Nukkit (SPEC §11,
   "M5-Nukkit");
-- then 97d6732: `worlds_test` damages a blob's last byte through `at()`,
+- then 20e2f92: `worlds_test` damages a blob's last byte through `at()`,
   which GCC 15's optimiser can see is bounded.
 
 **Closed since 2026-10-12.**
 
 - [x] "`stratum generate` is still unimplemented": landed 2026-10-15
-      (00d1c9d, dfdda63; SPEC §7, `cli generate`; M5 below).
+      (1b642b8, 17be022; SPEC §7, `cli generate`; M5 below).
 - [x] "The plugin's End path has never run in a real PocketMine-MP server,
       `WorldFactory::create` makes overworld worlds only": it makes
       `OVERWORLD`, `LARGE_BIOMES`, `AMPLIFIED` and `THE_END`, the End
-      spawning at (0, 128, 0), over the main island (c317da1; SPEC §4.3),
+      spawning at (0, 128, 0), over the main island (683dc64; SPEC §4.3),
       and `pmmp.smoke.end` generates the End's spawn area in the real
       server with no difference on disk (M5 below). Its third clause is
       read now rather than unverified: PocketMine-MP 5.44.3 presents an End
@@ -95,7 +95,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       server's is the owner's check with a client, which is not an M5 exit
       item (owner, 2026-10-15; SPEC §11).
 
-**Carried from 2026-10-12, each still true at 97d6732.**
+**Carried from 2026-10-12, each still true at 20e2f92.**
 
 *Engine follow-ups (each its own change).*
 
@@ -109,7 +109,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       coin rather than enumerated.
 - [ ] `CornerCache` keys `interpolated` corners by cell, not by the
       `flat_cache` window they were read through — *narrowed 2026-10-25
-      (ab5dc44, 2af0134):* the default `CornerCache::Sharing::Lattice`
+      (4766796, 5a82801):* the default `CornerCache::Sharing::Lattice`
       keys each corner by argument, position and, where the argument
       reaches a `flat_cache`, the window. The old window-blind behaviour
       (`Sharing::LastCell`) is kept bit for bit only where it could be
@@ -118,7 +118,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       builds. Whether the server keys that case by window is unmeasured.
 - [x] M5's biggest speed lever, measured during the cost work: the
       interpreter zeroes a whole-graph scope on every router read — 41%
-      of all instructions in a first pass. *Closed 2026-10-25 (49db532):*
+      of all instructions in a first pass. *Closed 2026-10-25 (0eeafda):*
       scopes are frames the caller's `CornerCache` reuses, told apart by
       an epoch, with nothing zeroed per read; the compiled program is
       still not built (SPEC §10, M3).
@@ -132,7 +132,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       `aquifer-free-probe.sh` turns veins off; an aquifers-off, veins-on
       twin of the real overworld would close it.
 - [ ] `tools/lint/tidy.sh` is one clang-tidy process over every file it
-      lists — 176 when measured, 2026-10-13, 186 at 97d6732 — about
+      lists — 176 when measured, 2026-10-13, 186 at 20e2f92 — about
       26 minutes locally (CI's lint job has no timeout and nothing waits on
       it). Running files in parallel (`run-clang-tidy-18 -j`, or `xargs
       -P`) would cut it about 3x and end the one-process header cache that
@@ -140,8 +140,8 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 - [ ] Never analysed by clang-tidy: `tools/analysis/*.hpp` (the root
       header filter excludes `tools/`; `legacy-goldens-surface-decoder.hpp`
       alone carries 10 findings seen from test units) and `ext-nukkit/`,
-      whose three C++ files were run clean by hand (068343a) but which
-      CI's clang-tidy list still leaves out (ecf749e).
+      whose three C++ files were run clean by hand (1669f69) but which
+      CI's clang-tidy list still leaves out (102d9fb).
 - [ ] The x86-64 conformance leg is CI's long pole: 100 of its 150
       minutes on two consecutive runs (38192289975, 38273558475), against
       69 the run before. Every case over a minute slowed by a similar
@@ -181,7 +181,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 - [x] `Interpreter::isColumnInvariant`'s default branch calls a node
       invariant if every argument is, so a future node that reads y would
       be miscalled; `fillEndChunk` trusts it. List the pure node types
-      explicitly. *Closed 2026-10-25 (2af0134):* the rule names every node
+      explicitly. *Closed 2026-10-25 (5a82801):* the rule names every node
       type with no default, so a type added to the schema is a compile
       error there (-Wswitch); a unit case checks it type by type and a
       conformance case holds every node of vanilla's routers it calls
@@ -207,7 +207,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       runs, and ext-nukkit inside Nukkit (M5 below).
 
 **New, from the 2026-10-15 verifiers, each checked in the tree at
-97d6732.**
+20e2f92.**
 
 - [ ] `blended.hpp` says `maintainPrecision` folds 2^24 - 2^-29 to "just
       below -2^24" (lib/include/stratum/noise/blended.hpp:66-67); it is
@@ -262,9 +262,9 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       no M5 policy work.
 - [ ] §11's End biome entry still says `WorldFactory::create` writes only
       the overworld's options and that neither has run inside a server
-      (SPEC.md:8543-8545); c317da1 and `pmmp.smoke.end` answer both.
+      (SPEC.md:8543-8545); 683dc64 and `pmmp.smoke.end` answer both.
 - [ ] §11 says `maintainPrecision` folds into ±2^25 (SPEC.md:7457), where
-      its licence entry (SPEC.md:1820) and NOTICE say ±2^24 since 0274f13.
+      its licence entry (SPEC.md:1820) and NOTICE say ±2^24 since fba3bd6.
 - [x] §10's M3 entry still gives the compiled program "a measured
       237 ms/chunk" as its target (SPEC.md:1035-1036), which §11's perf
       entry calls not comparable to its instrument. *Closed 2026-10-26:*
@@ -293,7 +293,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
   open ends gate M5 (no: recorded), and Windows and macOS for M5's
   real-server evidence (Linux x86-64 suffices).
 - `ctest --preset pmmp` is local evidence, not CI, until the owner decides
-  otherwise (526dcdf).
+  otherwise (ee01d0f).
 - ext-nukkit's two Nukkit readings — its biome serializers' section offset
   (measured on disk 2026-10-27: every one of 262 464 biome mismatches) and
   the four overworld biomes its registry lacks — *settled 2026-10-29:*
@@ -301,10 +301,10 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
   passes on them, saying so (SPEC §11, "M5-Nukkit", "M5 closed").
 - spec Q2.3's description of the fold epsilon's literal reads as source;
   it goes to the owner under CLAUDE.md's spec rule rather than into the
-  code (5f50f82; lib/src/perlin.cpp:216-221).
+  code (6c4a27f; lib/src/perlin.cpp:216-221).
 - `tools/vectors/climate_vectors.c`'s output carries one value from
   vanilla's own data, `offset`'s -0.5037500262260437; whether it may stay
-  is the owner's question (0274f13; SPEC §11's licence entry).
+  is the owner's question (fba3bd6; SPEC §11's licence entry).
 
 **Next work, in order.**
 
@@ -548,7 +548,7 @@ Open:
       disagreement must still be flow-shaped. A corpus of another seed is
       refused too, and no longer silently overwritten. SPEC §7, §11.
 - [x] **CI generates the probe worlds — green on both legs.** Dispatch run
-      37870578800 (dd899b6, 2026-10-09) is the first wholly green run with
+      37870578800 (eccf0b3, 2026-10-09) is the first wholly green run with
       CI-generated probe worlds: every shard generated or restored, both
       conformance legs scored them (x86-64 about 50 minutes of ctest, ARM64
       about 30, the ARM64 leg restoring the x86-64 shards' caches), and the
@@ -575,7 +575,7 @@ Open:
       contributors" to "Require approval for all external contributors",
       and tick this once it is confirmed. SPEC §12.
 - [x] **Region goldens in CI — green on both legs.** Dispatch run
-      37890579708 (64e052a, 2026-10-09) generated them cold (goldens-nether
+      37890579708 (e482f71, 2026-10-09) generated them cold (goldens-nether
       9 minutes, goldens-overworld 14) and every golden case passed on
       x86-64 and ARM64; the skip gate read "141 ran, 9 did not; expected: 9
       no-generator". Three `fetch-vanilla` units in two shards of
@@ -2313,7 +2313,7 @@ everything Stratum owns.
 - [x] **Generation speed after the third pass's first stage (2026-10-30)
       — under half of vanilla's own time on every preset.** SPEC §11,
       quiet box, means, the vanilla half measured the same day and the
-      before half (5507ed1) back to back against it: overworld 10.60 ->
+      before half (3967355) back to back against it: overworld 10.60 ->
       5.94 ms/chunk, amplified 10.79 -> 5.62, large_biomes 10.75 -> 6.04,
       the End 1.44 -> 0.45, against vanilla's 13.44, 15.83, 14.06 and
       2.78 — 0.44x, 0.36x, 0.43x and 0.16x of vanilla's time.
@@ -2385,7 +2385,7 @@ everything Stratum owns.
 - [ ] **Generation speed after the first pass (2026-10-25), kept for the
       record — the C++ met the best case; the task through PHP was then
       unmeasured.** The baseline of record (SPEC
-      §11, quiet box, means): before the first performance pass (cfa5d93)
+      §11, quiet box, means): before the first performance pass (a62f794)
       overworld 155.7, amplified 159.8, large_biomes 160.4 and the End 13.0
       ms/chunk; after it 23.7, 26.0, 24.6 and 2.56, against vanilla's 13.5,
       15.9, 15.2 and 2.80 — 1.75x, 1.64x, 1.62x and 0.91x. Output
@@ -2502,7 +2502,7 @@ everything Stratum owns.
       always builds now, so `ctest --preset dev` runs `pipeline_test.cpp`
       on every platform; `-DSTRATUM_BUILD_EXT_NUKKIT=ON`, the `nukkit`
       preset, gates only the JNI shim, the Java classes and the plugin:
-      068343a.)*
+      1669f69.)*
 - [x] **`ext-nukkit`'s block state mapping — landed (2026-10-15), resolved
       once per world through Nukkit's `BlockStateMapping` — built, unit- and
       JNI-tested, never run against Nukkit itself (no jar; next item).**
