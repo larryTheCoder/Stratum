@@ -190,3 +190,4 @@ target_sources(stratum_unit_tests PRIVATE terrain_fill_heights_test.cpp)
 
 # The corner cache's memo and the one condition it and a kernel's lanes run under.
 target_sources(stratum_unit_tests PRIVATE density_memo_test.cpp)
+target_sources(stratum_unit_tests PRIVATE density_memo_fuzz_test.cpp)

@@ -328,39 +328,169 @@ class Interpreter {
     /// again at another point, keyed by everything each value depends on
     /// (see CornerCache).
     ///
-    /// An open-addressed table with a full key in every slot, so a miss is
-    /// only ever a recomputation and never a wrong value: a slot is used only
-    /// when all five words of its key match. Bounded: it grows to
-    /// kMaxCapacity slots and is then forgotten whole and refilled, which
-    /// costs recomputation and changes nothing. Forgetting is an epoch, as in
-    /// ScopeArena: a slot holds a value exactly when its stamp is the table's
-    /// epoch.
+    /// ONE MAP FROM KEY TO VALUE, KEPT THREE WAYS. A key is the node, three
+    /// coordinates and a tag that says what kind of value it is and what it
+    /// was read through (Key), and every key has exactly one place it can be
+    /// kept, decided by the key alone and fixed until forgetLayout():
+    ///
+    ///   * a cell corner of an `interpolated` argument (cornerTag) inside
+    ///     that argument's lattice — a dense box of corners, anchored at the
+    ///     first cell the argument fills and as wide as a chunk's corners,
+    ///     read and written by index (cellSpan, findCorner, insertCorner);
+    ///   * a column's value (columnTag) of a node kept per column — the
+    ///     column memo, and `flat_cache`'s relocated reads of a node that is
+    ///     one, whose keys are the same — in that column's record, one per
+    ///     (x, z, tag), at the node's slot (findColumn, insertColumn);
+    ///   * any other key — a corner outside its lattice, a lattice's second
+    ///     tag, a relocated read of a node no column memo keeps, a column
+    ///     node past kColumnSlots — in an open-addressed table with the full
+    ///     key in every slot, used only when all five words match (find,
+    ///     insert).
+    ///
+    /// So a miss is only ever a recomputation and never a wrong value, as it
+    /// was when the hash held every key. Bounded as the hash alone was: it
+    /// holds at most kMaxValues values of all kinds together and kMaxColumns
+    /// column records, and past either it is forgotten whole and refilled,
+    /// which costs recomputation and changes nothing. Forgetting is an epoch,
+    /// as in ScopeArena: a slot of any kind holds a value exactly when its
+    /// stamp is the table's epoch.
     ///
     /// Nothing is held between a lookup and an insert — an evaluation in
     /// between may grow or forget the table — so neither returns a pointer
-    /// into it.
+    /// into it; a CellSpan names a lattice by index and stays good until
+    /// forgetLayout(), which no evaluation reaches (CornerCache::forget).
     class MemoTable {
+        /// One value of a lattice or a column record (below).
+        struct Kept;
+
     public:
         /// The node, three coordinates (as their int32 bits) and a tag that
         /// says what kind of value it is and what it was read through.
         using Key = std::array<std::uint32_t, 5>;
 
-        /// The table's largest size, in slots of 32 bytes: 2 MiB, of which
-        /// it fills at most half. A vanilla chunk's fill keeps 15 000 to
-        /// 20 000 values (measured over the bench's overworld, amplified and
-        /// End chunks), inside that.
+        /// The hash's largest size, in slots of 32 bytes: 2 MiB, of which it
+        /// fills at most half. A vanilla chunk's fill keeps 15 000 to 20 000
+        /// values (measured over the bench's overworld, amplified and End
+        /// chunks), inside that.
         static constexpr std::size_t kMaxCapacity = std::size_t{1} << 16;
 
-        /// Whether @p key is held, and if so its value in @p value.
+        /// The most values it holds, of every kind together: what the hash
+        /// held at its largest when it held them all.
+        static constexpr std::size_t kMaxValues = kMaxCapacity / 2;
+
+        /// The column memo's nodes a column record has a slot for, given out
+        /// in the order they are first kept; a node after them is kept in
+        /// the hash. A vanilla chunk's fill keeps 52.
+        static constexpr std::size_t kColumnSlots = 64;
+
+        /// The most column records it keeps at once.
+        static constexpr std::size_t kMaxColumns = 2048;
+
+        /// Whether @p key is held in the hash, and if so its value in
+        /// @p value.
         [[nodiscard]] bool find(const Key& key, double& value) const noexcept;
 
-        /// Holds @p value under @p key, replacing what the key held.
+        /// Holds @p value under @p key in the hash, replacing what the key
+        /// held.
         void insert(const Key& key, double value);
 
-        /// Forgets every value.
+        /// Whether node @p node's value in column (@p x, @p z) under @p tag
+        /// (columnTag) is held — the key {node, x, 0, z, tag} — and if so
+        /// its value in @p value. Inline for the column the last lookup
+        /// found, which is the one asked for next, mostly: one point's
+        /// evaluation asks its own column for every node it keeps.
+        [[nodiscard]] bool findColumn(NodeIndex node, std::int32_t x, std::int32_t z,
+                                      std::uint32_t tag, double& value) noexcept {
+            const auto at = static_cast<std::size_t>(node);
+            if (at >= slotOf_.size()) {
+                // Never kept, so none of its keys is held anywhere.
+                return false;
+            }
+            const std::int16_t slot = slotOf_[at];
+            if (slot >= 0 && lastValid_ && lastX_ == x && lastZ_ == z && lastTag_ == tag) {
+                const Kept& kept = records_[(std::size_t{lastRecord_} * kColumnSlots) +
+                                            static_cast<std::size_t>(slot)];
+                if (kept.stamp != epoch_) {
+                    return false;
+                }
+                value = kept.value;
+                return true;
+            }
+            return findColumnElsewhere(node, slot, x, z, tag, value);
+        }
+
+        /// Holds @p value as findColumn finds it, for a graph of
+        /// @p nodeCount nodes. Inline where findColumn's is.
+        void insertColumn(NodeIndex node, std::int32_t x, std::int32_t z, std::uint32_t tag,
+                          double value, std::size_t nodeCount) {
+            const auto at = static_cast<std::size_t>(node);
+            if (at < slotOf_.size() && slotOf_[at] >= 0 && size_ < kMaxValues && lastValid_ &&
+                lastX_ == x && lastZ_ == z && lastTag_ == tag) {
+                Kept& kept = records_[(std::size_t{lastRecord_} * kColumnSlots) +
+                                      static_cast<std::size_t>(slotOf_[at])];
+                if (kept.stamp != epoch_) {
+                    ++size_;
+                }
+                kept.value = value;
+                kept.stamp = epoch_;
+                return;
+            }
+            insertColumnElsewhere(node, x, z, tag, value, nodeCount);
+        }
+
+        /// Where an `interpolated` argument's corners of one cell are kept:
+        /// which of them, in kCornerOrder, its lattice holds (bit k for
+        /// corner k) and where — @p kept[index[k]] — the hash keeping the
+        /// rest. `kept` is the lattice's own storage, made once with the
+        /// lattice and never resized, and a lattice outlives every
+        /// evaluation (forgetLayout), so a span stays good across the
+        /// evaluations its corners make. No bit set: the hash keeps all
+        /// eight.
+        struct CellSpan {
+            Kept* kept = nullptr;
+            std::array<std::int32_t, 8> index{};
+            std::uint32_t inside = 0;
+        };
+
+        /// The corners of the cell from @p lower, of @p argument read under
+        /// corner tag @p tag on lattice @p cells, in a graph of @p nodeCount
+        /// nodes: in @p argument's lattice where it holds them, the lattice
+        /// made here, anchored at @p lower, when the argument has none.
+        [[nodiscard]] CellSpan cellSpan(NodeIndex argument, std::uint32_t tag, Point lower,
+                                        CellGeometry cells, std::size_t nodeCount);
+
+        /// Whether corner @p corner of @p span, one the lattice holds, is
+        /// held, and if so its value in @p value.
+        [[nodiscard]] bool findCorner(const CellSpan& span, std::size_t corner,
+                                      double& value) const noexcept {
+            const Kept& kept = span.kept[span.index[corner]];
+            if (kept.stamp != epoch_) {
+                return false;
+            }
+            value = kept.value;
+            return true;
+        }
+
+        /// Holds @p value as findCorner finds it.
+        void insertCorner(const CellSpan& span, std::size_t corner, double value) {
+            makeRoom();
+            Kept& kept = span.kept[span.index[corner]];
+            if (kept.stamp != epoch_) {
+                ++size_;
+            }
+            kept.value = value;
+            kept.stamp = epoch_;
+        }
+
+        /// Forgets every value; where each key is kept stays as it was.
         void clear() noexcept;
 
-        /// How many values it holds.
+        /// Forgets every value and where each key is kept: the lattices,
+        /// the column slots. For a top-level call only, never inside an
+        /// evaluation, whose CellSpans it would leave naming nothing.
+        void forgetLayout() noexcept;
+
+        /// How many values it holds, of every kind.
         [[nodiscard]] std::size_t size() const noexcept { return size_; }
 
         /// Moves the epoch forward to at least @p epoch, never back, which
@@ -379,6 +509,42 @@ class Interpreter {
             double value = 0.0;
         };
 
+        struct Kept {
+            double value = 0.0;
+            /// The table's epoch when it was written; 0 for never.
+            std::uint32_t stamp = 0;
+        };
+
+        /// One argument's corners, over a box of nx x ny x nz corners from
+        /// its anchor, y fastest, then z, then x.
+        struct Lattice {
+            Point anchor{};
+            CellGeometry cells{};
+            std::uint32_t tag = 0;
+            std::int32_t nx = 0;
+            std::int32_t ny = 0;
+            std::int32_t nz = 0;
+            /// Each corner of a cell, in kCornerOrder, as an index from the
+            /// cell's lower corner.
+            std::array<std::int32_t, 8> offsets{};
+            std::vector<Kept> kept;
+        };
+
+        /// A column record's place in the directory.
+        struct Column {
+            std::int32_t x = 0;
+            std::int32_t z = 0;
+            std::uint32_t tag = 0;
+            /// The table's epoch when it was written; 0 for never.
+            std::uint32_t stamp = 0;
+            std::uint32_t record = 0;
+        };
+
+        /// A node's column slot before it has one, and once there were none
+        /// left and the hash keeps it.
+        static constexpr std::int16_t kUnslotted = -1;
+        static constexpr std::int16_t kHashed = -2;
+
         [[nodiscard]] static std::size_t hash(const Key& key) noexcept;
 
         /// Where @p key is, or the empty slot where it would go.
@@ -387,10 +553,57 @@ class Interpreter {
         /// Twice the slots, every value moved across.
         void grow();
 
+        /// Forgets every value when one more would pass kMaxValues.
+        void makeRoom() noexcept;
+
+        /// findColumn past its inline case, for a node whose slot is
+        /// @p slot.
+        [[nodiscard]] bool findColumnElsewhere(NodeIndex node, std::int16_t slot, std::int32_t x,
+                                               std::int32_t z, std::uint32_t tag,
+                                               double& value) noexcept;
+
+        /// insertColumn past its inline case.
+        void insertColumnElsewhere(NodeIndex node, std::int32_t x, std::int32_t z,
+                                   std::uint32_t tag, double value, std::size_t nodeCount);
+
+        /// Column (@p x, @p z, @p tag)'s record, or -1 for none.
+        [[nodiscard]] std::int32_t recordOf(std::int32_t x, std::int32_t z,
+                                            std::uint32_t tag) noexcept;
+
+        /// A record for column (@p x, @p z, @p tag), which has none; past
+        /// kMaxColumns, after forgetting every value.
+        [[nodiscard]] std::uint32_t newRecord(std::int32_t x, std::int32_t z, std::uint32_t tag);
+
+        /// Where the directory keeps (@p x, @p z, @p tag), or the empty slot
+        /// where it would go.
+        [[nodiscard]] std::size_t probeColumn(std::int32_t x, std::int32_t z,
+                                              std::uint32_t tag) const noexcept;
+
         std::vector<Slot> slots_;
         std::uint32_t epoch_ = 1;
+        /// Values of every kind, and of them the hash's.
         std::size_t size_ = 0;
+        std::size_t hashSize_ = 0;
         std::uint64_t wraps_ = 0;
+
+        std::vector<Lattice> lattices_;
+        /// Each node's lattice, by node; -1 for none.
+        std::vector<std::int32_t> latticeOf_;
+
+        /// Each node's column slot, by node (kUnslotted, kHashed or a slot).
+        std::vector<std::int16_t> slotOf_;
+        std::int16_t slotCount_ = 0;
+        /// The column records, kColumnSlots values each, of which the first
+        /// recordCount_ belong to the epoch; and the directory of them.
+        std::vector<Kept> records_;
+        std::uint32_t recordCount_ = 0;
+        std::vector<Column> columns_;
+        /// The column the last lookup found, while lastValid_.
+        bool lastValid_ = false;
+        std::int32_t lastX_ = 0;
+        std::int32_t lastZ_ = 0;
+        std::uint32_t lastTag_ = 0;
+        std::uint32_t lastRecord_ = 0;
     };
 
 public:
@@ -513,9 +726,16 @@ public:
 
         [[nodiscard]] Sharing sharing() const noexcept { return sharing_; }
 
-        /// The most slots the memo grows to; it holds at most half as many
-        /// values, and is forgotten whole and refilled past that.
+        /// The most slots the memo's hash grows to; the memo holds at most
+        /// half as many values of every kind together, and is forgotten
+        /// whole and refilled past that.
         static constexpr std::size_t kMemoCapacity = MemoTable::kMaxCapacity;
+
+        /// FOR TESTS. The column memo's nodes a column record keeps, and the
+        /// most columns the memo keeps records for before it is forgotten
+        /// whole (MemoTable).
+        static constexpr std::size_t kMemoColumnSlots = MemoTable::kColumnSlots;
+        static constexpr std::size_t kMemoColumns = MemoTable::kMaxColumns;
 
         /// FOR TESTS. How many values the memo holds.
         [[nodiscard]] std::size_t memoSize() const noexcept { return memo_.size(); }
@@ -575,12 +795,16 @@ public:
         /// the cache is forgotten. A ninth distinct window forgets it first.
         [[nodiscard]] std::uint32_t windowId(const FlatCacheWindow* window) noexcept;
 
-        /// Every corner, memo value and window number dropped.
+        /// Every corner, memo value and window number dropped, and where the
+        /// memo kept each kind of value (MemoTable::forgetLayout). Reached
+        /// only from a top-level call — reset(), or windowId() in
+        /// callThrough before the call opens a scope — never from inside an
+        /// evaluation.
         void forget() noexcept {
             for (Entry& entry : entries_) {
                 entry.filled = false;
             }
-            memo_.clear();
+            memo_.forgetLayout();
             windowCount_ = 0;
         }
 
@@ -1045,6 +1269,12 @@ private:
     [[nodiscard]] double sharedCorner(NodeIndex argument, const Call& call, bool cells,
                                       Point corner, std::uint32_t tag) const;
 
+    /// The same for a corner the argument's lattice keeps and does not hold
+    /// yet: corner @p k of @p span, which is @p corner, evaluated and kept.
+    [[nodiscard]] double latticeCorner(NodeIndex argument, const Call& call, bool cells,
+                                       Point corner, const MemoTable::CellSpan& span,
+                                       std::size_t k) const;
+
     /// Fills @p entry with @p argument's eight corners for the cell whose
     /// lower corner is @p lower, kept under @p tag: through the cache's
     /// lattice when @p call keeps a memo, each evaluated afresh otherwise, in
@@ -1086,10 +1316,6 @@ private:
     /// `interpolated` of evaluate(kernel, at, cache) finds them; false
     /// where they are not all in one cell.
     [[nodiscard]] bool laneCell(BlockKernel::Lanes& lanes, CornerCache& cache) const;
-
-    /// The memo key of node @p index's value in @p scope's column (see
-    /// Op::columnMemo).
-    [[nodiscard]] static MemoTable::Key columnKey(NodeIndex index, const Scope& scope) noexcept;
 
     /// Whether an evaluation through @p cache uses its memo — the corner
     /// lattice, `flat_cache`'s relocated reads, the column memo — under

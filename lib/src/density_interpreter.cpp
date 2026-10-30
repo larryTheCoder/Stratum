@@ -373,18 +373,25 @@ bool Interpreter::MemoTable::find(const Key& key, double& value) const noexcept 
     return true;
 }
 
+void Interpreter::MemoTable::makeRoom() noexcept {
+    if (size_ + 1 > kMaxValues) {
+        // Full: forgotten whole, and refilled from here — the point at which
+        // the hash forgot itself when it held every kind of value.
+        clear();
+    }
+}
+
 void Interpreter::MemoTable::insert(const Key& key, const double value) {
-    if ((size_ + 1) * 2 > slots_.size()) {
-        if (slots_.size() < kMaxCapacity) {
-            grow();
-        } else {
-            // Full at its largest: forgotten whole, and refilled from here.
-            clear();
-        }
+    makeRoom();
+    // Never past kMaxCapacity: here hashSize_ <= size_ < kMaxValues, half
+    // of it, so at that size the test below is false.
+    if ((hashSize_ + 1) * 2 > slots_.size()) {
+        grow();
     }
     Slot& slot = slots_[probe(key)];
     if (slot.stamp != epoch_) {
         ++size_;
+        ++hashSize_;
     }
     slot.key = key;
     slot.stamp = epoch_;
@@ -393,16 +400,39 @@ void Interpreter::MemoTable::insert(const Key& key, const double value) {
 
 void Interpreter::MemoTable::clear() noexcept {
     size_ = 0;
+    hashSize_ = 0;
+    recordCount_ = 0;
+    lastValid_ = false;
     ++epoch_;
     if (epoch_ == 0) {
         // Wrapped: every stamp is some earlier epoch that is about to be
-        // handed out again, so they are cleared first, as ScopeArena does.
+        // handed out again, so they are cleared first, as ScopeArena does —
+        // every kind's.
         for (Slot& slot : slots_) {
             slot.stamp = 0;
+        }
+        for (Lattice& lattice : lattices_) {
+            for (Kept& kept : lattice.kept) {
+                kept.stamp = 0;
+            }
+        }
+        for (Kept& kept : records_) {
+            kept.stamp = 0;
+        }
+        for (Column& column : columns_) {
+            column.stamp = 0;
         }
         epoch_ = 1;
         ++wraps_;
     }
+}
+
+void Interpreter::MemoTable::forgetLayout() noexcept {
+    clear();
+    lattices_.clear();
+    latticeOf_.clear();
+    slotOf_.clear();
+    slotCount_ = 0;
 }
 
 void Interpreter::MemoTable::advanceEpoch(const std::uint32_t epoch) noexcept {
@@ -411,11 +441,15 @@ void Interpreter::MemoTable::advanceEpoch(const std::uint32_t epoch) noexcept {
         // forgotten, as by clear().
         epoch_ = epoch;
         size_ = 0;
+        hashSize_ = 0;
+        recordCount_ = 0;
+        lastValid_ = false;
     }
 }
 
 void Interpreter::MemoTable::grow() {
     constexpr std::size_t kInitialCapacity = 256;
+    assert(slots_.size() < kMaxCapacity);
     const std::vector<Slot> old = std::move(slots_);
     // Every stamp 0, which no epoch is: the new table starts empty.
     slots_.assign(old.empty() ? kInitialCapacity : old.size() * 2, Slot{});
@@ -424,6 +458,256 @@ void Interpreter::MemoTable::grow() {
             slots_[probe(slot.key)] = slot;
         }
     }
+}
+
+// --- the column memo's records ----------------------------------------------
+//
+// A key {node, x, 0, z, tag} of a node a column memo keeps is held in column
+// (x, z, tag)'s record, at the node's slot. Slots are given out once a node
+// is first kept and records once a column first holds a value, and neither
+// moves until forgetLayout(), so every such key has one place. A node past
+// kColumnSlots has its keys in the hash, under the same words.
+
+std::size_t Interpreter::MemoTable::probeColumn(const std::int32_t x, const std::int32_t z,
+                                                const std::uint32_t tag) const noexcept {
+    // Any mixing does, as for hash(): a directory slot is used only when
+    // all three words match. Unsigned throughout.
+    std::uint64_t h = (static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(x)) << 32U) |
+                      std::bit_cast<std::uint32_t>(z);
+    h *= UINT64_C(0x9E3779B97F4A7C15);
+    h ^= tag;
+    h *= UINT64_C(0xBF58476D1CE4E5B9);
+    h ^= h >> 29U;
+    const std::size_t mask = columns_.size() - 1;
+    std::size_t at = static_cast<std::size_t>(h) & mask;
+    // At most half full (newRecord), so an empty slot ends every probe.
+    while (columns_[at].stamp == epoch_ &&
+           (columns_[at].x != x || columns_[at].z != z || columns_[at].tag != tag)) {
+        at = (at + 1) & mask;
+    }
+    return at;
+}
+
+std::int32_t Interpreter::MemoTable::recordOf(const std::int32_t x, const std::int32_t z,
+                                              const std::uint32_t tag) noexcept {
+    // One point's evaluation asks its own column for every node it keeps,
+    // so the last column asked for is the one asked for next, mostly.
+    if (lastValid_ && lastX_ == x && lastZ_ == z && lastTag_ == tag) {
+        return static_cast<std::int32_t>(lastRecord_);
+    }
+    if (columns_.empty()) {
+        return -1;
+    }
+    const Column& column = columns_[probeColumn(x, z, tag)];
+    if (column.stamp != epoch_) {
+        return -1;
+    }
+    lastValid_ = true;
+    lastX_ = x;
+    lastZ_ = z;
+    lastTag_ = tag;
+    lastRecord_ = column.record;
+    return static_cast<std::int32_t>(column.record);
+}
+
+std::uint32_t Interpreter::MemoTable::newRecord(const std::int32_t x, const std::int32_t z,
+                                                const std::uint32_t tag) {
+    if (recordCount_ == kMaxColumns) {
+        // As many columns as it keeps: forgotten whole, as at kMaxValues.
+        clear();
+    }
+    if ((static_cast<std::size_t>(recordCount_) + 1) * 2 > columns_.size()) {
+        constexpr std::size_t kInitialColumns = 64;
+        const std::vector<Column> old = std::move(columns_);
+        // Every stamp 0, which no epoch is.
+        columns_.assign(old.empty() ? kInitialColumns : old.size() * 2, Column{});
+        for (const Column& column : old) {
+            if (column.stamp == epoch_) {
+                columns_[probeColumn(column.x, column.z, column.tag)] = column;
+            }
+        }
+    }
+    const std::uint32_t record = recordCount_;
+    const std::size_t end = (static_cast<std::size_t>(record) + 1) * kColumnSlots;
+    if (records_.size() < end) {
+        // Stamped 0, which no epoch is; a record reused after a forgetting
+        // carries earlier epochs' stamps, which are not this one either.
+        records_.resize(end);
+    }
+    columns_[probeColumn(x, z, tag)] =
+        Column{.x = x, .z = z, .tag = tag, .stamp = epoch_, .record = record};
+    ++recordCount_;
+    lastValid_ = true;
+    lastX_ = x;
+    lastZ_ = z;
+    lastTag_ = tag;
+    lastRecord_ = record;
+    return record;
+}
+
+bool Interpreter::MemoTable::findColumnElsewhere(const NodeIndex node, const std::int16_t slot,
+                                                 const std::int32_t x, const std::int32_t z,
+                                                 const std::uint32_t tag, double& value) noexcept {
+    if (slot == kUnslotted) {
+        // Never kept, so none of its keys is held anywhere.
+        return false;
+    }
+    if (slot == kHashed) {
+        return find(
+            Key{node, std::bit_cast<std::uint32_t>(x), 0U, std::bit_cast<std::uint32_t>(z), tag},
+            value);
+    }
+    const std::int32_t record = recordOf(x, z, tag);
+    if (record < 0) {
+        return false;
+    }
+    const Kept& kept = records_[(static_cast<std::size_t>(record) * kColumnSlots) +
+                                static_cast<std::size_t>(slot)];
+    if (kept.stamp != epoch_) {
+        return false;
+    }
+    value = kept.value;
+    return true;
+}
+
+void Interpreter::MemoTable::insertColumnElsewhere(const NodeIndex node, const std::int32_t x,
+                                                   const std::int32_t z, const std::uint32_t tag,
+                                                   const double value,
+                                                   const std::size_t nodeCount) {
+    makeRoom();
+    const auto at = static_cast<std::size_t>(node);
+    if (slotOf_.size() < nodeCount) {
+        slotOf_.resize(nodeCount, kUnslotted);
+    }
+    if (slotOf_[at] == kUnslotted) {
+        slotOf_[at] = slotCount_ < static_cast<std::int16_t>(kColumnSlots) ? slotCount_++ : kHashed;
+    }
+    const std::int16_t slot = slotOf_[at];
+    if (slot == kHashed) {
+        insert(Key{node, std::bit_cast<std::uint32_t>(x), 0U, std::bit_cast<std::uint32_t>(z), tag},
+               value);
+        return;
+    }
+    std::int32_t record = recordOf(x, z, tag);
+    if (record < 0) {
+        record = static_cast<std::int32_t>(newRecord(x, z, tag));
+    }
+    Kept& kept = records_[(static_cast<std::size_t>(record) * kColumnSlots) +
+                          static_cast<std::size_t>(slot)];
+    if (kept.stamp != epoch_) {
+        ++size_;
+    }
+    kept.value = value;
+    kept.stamp = epoch_;
+}
+
+// --- the corner lattices ----------------------------------------------------
+//
+// An argument's corner keys {argument, x, y, z, cornerTag(tag)} are held in
+// its lattice when the lattice's tag is the key's, its cells are the
+// interpreter's, and the corner is one of the box's: a whole number of cells
+// from the anchor on every axis, inside nx x ny x nz. That is a function of
+// the key and of the lattice, which is made once (at the argument's first
+// cell) and stays until forgetLayout(); every other corner key is the
+// hash's.
+
+namespace {
+
+/// How far up a lattice reaches from its anchor, in blocks: a dimension's
+/// whole height in vanilla's presets (384), and more.
+constexpr std::int32_t kLatticeSpanY = 512;
+
+/// The corners along x or z a lattice holds for cells @p width wide: every
+/// corner of a chunk's cells from the lowest, however the width divides 16 —
+/// the lowest cell starts at most width - 1 blocks before the chunk, the
+/// highest ends at most width - 1 after it, so 15 + width blocks of cells
+/// and one more corner.
+[[nodiscard]] constexpr std::int32_t latticeAcross(const std::int32_t width) noexcept {
+    return ((15 + width) / width) + 1;
+}
+
+/// @p offset over @p size in whole cells, in @p cells, where it is a whole
+/// number of them; false where it is not. Exact either way: a quotient that
+/// multiplies back to the dividend is the division's, whichever way the
+/// division rounds.
+[[nodiscard]] bool wholeCells(const std::int64_t offset, const std::int64_t size,
+                              std::int64_t& cells) noexcept {
+    cells = offset / size;
+    return cells * size == offset;
+}
+
+} // namespace
+
+Interpreter::MemoTable::CellSpan Interpreter::MemoTable::cellSpan(const NodeIndex argument,
+                                                                  const std::uint32_t tag,
+                                                                  const Point lower,
+                                                                  const CellGeometry cells,
+                                                                  const std::size_t nodeCount) {
+    // A span holds a lattice's storage across evaluations that may add
+    // lattices: growing the vector of them must move each, buffer and all.
+    static_assert(std::is_nothrow_move_constructible_v<Lattice>);
+    CellSpan span;
+    const auto node = static_cast<std::size_t>(argument);
+    if (latticeOf_.size() < nodeCount) {
+        latticeOf_.resize(nodeCount, -1);
+    }
+    if (latticeOf_[node] < 0) {
+        Lattice made;
+        made.anchor = lower;
+        made.cells = cells;
+        made.tag = tag;
+        made.nx = latticeAcross(cells.width);
+        made.nz = made.nx;
+        made.ny = (kLatticeSpanY / cells.height) + 1;
+        for (std::size_t k = 0; k < made.offsets.size(); ++k) {
+            const CornerOffset offset = kCornerOrder[k];
+            made.offsets[k] = (((offset.dx * made.nz) + offset.dz) * made.ny) + offset.dy;
+        }
+        made.kept.assign(static_cast<std::size_t>(made.nx) * static_cast<std::size_t>(made.ny) *
+                             static_cast<std::size_t>(made.nz),
+                         Kept{});
+        lattices_.push_back(std::move(made));
+        latticeOf_[node] = static_cast<std::int32_t>(lattices_.size() - 1);
+    }
+    Lattice& lattice = lattices_[static_cast<std::size_t>(latticeOf_[node])];
+    if (lattice.tag != tag || !(lattice.cells == cells)) {
+        return span;
+    }
+    // The cell's lower corner, in whole cells from the anchor. A corner a
+    // cellCorner made is a multiple of the cell's size, as the anchor is, so
+    // this is exact; any other point is left to the hash.
+    std::int64_t ix = 0;
+    std::int64_t iy = 0;
+    std::int64_t iz = 0;
+    if (!wholeCells(std::int64_t{lower.x} - lattice.anchor.x, cells.width, ix) ||
+        !wholeCells(std::int64_t{lower.y} - lattice.anchor.y, cells.height, iy) ||
+        !wholeCells(std::int64_t{lower.z} - lattice.anchor.z, cells.width, iz)) {
+        return span;
+    }
+    span.kept = lattice.kept.data();
+    if (ix >= 0 && ix + 1 < lattice.nx && iy >= 0 && iy + 1 < lattice.ny && iz >= 0 &&
+        iz + 1 < lattice.nz) {
+        // The whole cell, which is every cell of a chunk's fill.
+        const auto base = static_cast<std::int32_t>((((ix * lattice.nz) + iz) * lattice.ny) + iy);
+        for (std::size_t k = 0; k < span.index.size(); ++k) {
+            span.index[k] = base + lattice.offsets[k];
+        }
+        span.inside = 0xFFU;
+        return span;
+    }
+    // Part of it, or none: corner by corner.
+    for (std::size_t k = 0; k < kCornerOrder.size(); ++k) {
+        const CornerOffset offset = kCornerOrder[k];
+        const std::int64_t cx = ix + offset.dx;
+        const std::int64_t cy = iy + offset.dy;
+        const std::int64_t cz = iz + offset.dz;
+        if (cx >= 0 && cx < lattice.nx && cy >= 0 && cy < lattice.ny && cz >= 0 &&
+            cz < lattice.nz) {
+            span.index[k] = static_cast<std::int32_t>((((cx * lattice.nz) + cz) * lattice.ny) + cy);
+            span.inside |= 1U << k;
+        }
+    }
+    return span;
 }
 
 std::uint32_t Interpreter::CornerCache::windowId(const FlatCacheWindow* window) noexcept {
@@ -1208,15 +1492,23 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     // The column memo (Op::columnMemo): a node with one value down its
     // column, kept from the first point in this column that computed it.
     // After the refusal above, as before: a node that refuses is never kept.
+    //
+    // Kept by the node, its column and what it was read through — the key
+    // {index, x, 0, z, columnTag}; y is no part of it, which is the whole of
+    // what Op::columnMemo proves. Shared with flat_cache's relocated reads
+    // (flatCache), whose key is the argument at the column corner: for a
+    // node that is both, the two values are one.
+    const Point at = scope.at();
     const bool keepsColumn = op.columnMemo && scope.call().memo;
     if (keepsColumn) {
+        const Call& call = scope.call();
         double kept = 0.0;
-        if (scope.call().cache->memo_.find(columnKey(index, scope), kept)) {
+        if (call.cache->memo_.findColumn(index, at.x, at.z, columnTag(call.windowId, call.context),
+                                         kept)) {
             return scope.store(index, kept);
         }
     }
 
-    const Point at = scope.at();
     const auto x = static_cast<double>(at.x);
     const auto y = static_cast<double>(at.y);
     const auto z = static_cast<double>(at.z);
@@ -1412,22 +1704,11 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
     }
 
     if (keepsColumn) {
-        scope.call().cache->memo_.insert(columnKey(index, scope), value);
+        const Call& call = scope.call();
+        call.cache->memo_.insertColumn(index, at.x, at.z, columnTag(call.windowId, call.context),
+                                       value, graph_->nodeCount());
     }
     return scope.store(index, value);
-}
-
-Interpreter::MemoTable::Key Interpreter::columnKey(const NodeIndex index,
-                                                   const Scope& scope) noexcept {
-    // The node, its column and what it was read through; y is no part of
-    // it, which is the whole of what Op::columnMemo proves. Shared with
-    // flat_cache's relocated reads (flatCache), whose key is the argument at
-    // the column corner: for a node that is both, the two values are one.
-    const Point at = scope.at();
-    const Call& call = scope.call();
-    return MemoTable::Key{index, std::bit_cast<std::uint32_t>(at.x), 0U,
-                          std::bit_cast<std::uint32_t>(at.z),
-                          columnTag(call.windowId, call.context)};
 }
 
 // --- the cases evaluateNode hands off ------------------------------------
@@ -1590,11 +1871,25 @@ double Interpreter::flatCache(Scope& scope, const Op& op) const {
         Scope cornerScope(call, corner, false);
         return evaluateNode(cornerScope, argument);
     }
-    const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x), 0U,
-                             std::bit_cast<std::uint32_t>(corner.z),
-                             columnTag(call.windowId, call.context)};
+    const std::uint32_t tag = columnTag(call.windowId, call.context);
+    MemoTable& memo = call.cache->memo_;
     double value = 0.0;
-    if (call.cache->memo_.find(key, value)) {
+    if (ops_[static_cast<std::size_t>(argument)].columnMemo) {
+        // The key, {argument, corner.x, 0, corner.z, tag}, is the argument's
+        // own column memo's at the corner, which keeps it (MemoTable).
+        if (memo.findColumn(argument, corner.x, corner.z, tag, value)) {
+            return value;
+        }
+        {
+            Scope cornerScope(call, corner, false);
+            value = evaluateNode(cornerScope, argument);
+        }
+        memo.insertColumn(argument, corner.x, corner.z, tag, value, graph_->nodeCount());
+        return value;
+    }
+    const MemoTable::Key key{argument, std::bit_cast<std::uint32_t>(corner.x), 0U,
+                             std::bit_cast<std::uint32_t>(corner.z), tag};
+    if (memo.find(key, value)) {
         return value;
     }
     {
@@ -1678,14 +1973,22 @@ void Interpreter::fillCell(const NodeIndex argument, const Call& call, const boo
     if (call.memo) {
         // The order the eight were always evaluated in, so that a corner
         // evaluated here for the first time is evaluated after the same
-        // corners it always followed.
+        // corners it always followed. Each is kept where the memo keeps its
+        // key (MemoTable::cellSpan): the argument's lattice, or the hash.
+        MemoTable& memo = call.cache->memo_;
+        const MemoTable::CellSpan span =
+            memo.cellSpan(argument, tag, lower, geometry, graph_->nodeCount());
         for (std::size_t k = 0; k < entry.corners.size(); ++k) {
+            const bool inLattice = (span.inside >> k & 1U) != 0U;
+            if (inLattice && memo.findCorner(span, k, entry.corners[k])) {
+                continue;
+            }
             const CornerOffset offset = kCornerOrder[k];
-            entry.corners[k] = sharedCorner(argument, call, cells,
-                                            Point{.x = lower.x + (offset.dx * geometry.width),
-                                                  .y = lower.y + (offset.dy * geometry.height),
-                                                  .z = lower.z + (offset.dz * geometry.width)},
-                                            tag);
+            const Point corner{.x = lower.x + (offset.dx * geometry.width),
+                               .y = lower.y + (offset.dy * geometry.height),
+                               .z = lower.z + (offset.dz * geometry.width)};
+            entry.corners[k] = inLattice ? latticeCorner(argument, call, cells, corner, span, k)
+                                         : sharedCorner(argument, call, cells, corner, tag);
         }
     } else {
         // The corner's own scope carries the same cache: a nested
@@ -1729,6 +2032,23 @@ double Interpreter::sharedCorner(const NodeIndex argument, const Call& call, con
         value = evaluateNode(inner, argument);
     }
     cache.memo_.insert(key, value);
+    return value;
+}
+
+double Interpreter::latticeCorner(const NodeIndex argument, const Call& call, const bool cells,
+                                  const Point corner, const MemoTable::CellSpan& span,
+                                  const std::size_t k) const {
+    // sharedCorner's evaluation where the corner is not held (fillCell asks
+    // findCorner first), kept by index rather than by hash: the same key, in
+    // the place the memo keeps it. The span stays good across the
+    // evaluation, which may add lattices and forget values but not move one
+    // (MemoTable::forgetLayout).
+    double value = 0.0;
+    {
+        Scope inner(call, corner, cells);
+        value = evaluateNode(inner, argument);
+    }
+    call.cache->memo_.insertCorner(span, k, value);
     return value;
 }
 
