@@ -25,7 +25,11 @@
 // itself; one starts at the wrap of the batches' epoch.
 //
 // Deterministic (a fixed seed through the project's own Xoroshiro) and a few
-// seconds long; "[.column-fuzz-long]" runs many times as many packs.
+// seconds long; "[.column-fuzz-long]" runs many times as many packs. Beside
+// it, cases written out whole for what the draws seldom reach: an argument
+// as deep as a graph may be, a column-invariant node a cell could be filled
+// beneath, and NaN and zeros of both signs at a `min` or `max` whose lanes
+// differ.
 
 #include "support/temp_path.hpp"
 
@@ -41,6 +45,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -830,4 +835,166 @@ TEST_CASE("a batch reads no column-invariant node beneath which a cell could be 
     CHECK(read("flat", flatBatches) == 0U);
     CHECK(scanning == 0U);
     CHECK(flatBatches > 0U);
+}
+
+TEST_CASE("a batch's min and max lanes keep the walk's NaN and signed zeros in either argument",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // evaluateNode's `min` and `max` are `first < second ? first : second`
+    // and `first > second ? first : second` (minOf, maxOf), and a batch's
+    // lanes of them (binaryLanes) must be the same: where an argument is NaN,
+    // or the two are zeros of opposite signs, the result is the second
+    // argument, which std::min and std::max (or the arguments swapped) do
+    // not give. The random graphs above seldom bring either case to a `min`
+    // or `max` whose lanes differ, since a constant argument is
+    // column-invariant and read once through the walk; these bring both, as
+    // the first argument and as the second, against a constant and against
+    // lanes that differ down the column:
+    //  - NaN at some corners and +0 at the rest: a noise clamped to [0, 1],
+    //    taken past the largest double and times zero;
+    //  - zeros of both signs, a noise times 0.0 and times -0.0, made visible
+    //    as -1 and 1 through `invert` and `clamp`, against each other and
+    //    against a constant zero.
+    // Each is the argument of an `interpolated` read through a memo cache —
+    // block by block and in a kernel's runs — whose batches take it whole
+    // and never decline, and every value is the uncached walk's, bit for bit.
+    const FuzzTree tree;
+    tree.defineNoise("minmax_a", R"({"firstOctave":-4,"amplitudes":[1.0]})");
+    tree.defineNoise("minmax_b", R"({"firstOctave":-3,"amplitudes":[1.0,0.5]})");
+    const auto pair = [](std::string_view type, const std::string& first,
+                         const std::string& second) {
+        return R"({"type":"minecraft:)" + std::string(type) + R"(","argument1":)" + first +
+               R"(,"argument2":)" + second + "}";
+    };
+    const std::string noise =
+        R"({"type":"minecraft:noise","noise":"minecraft:minmax_a","xz_scale":1.0,"y_scale":1.0})";
+    const std::string other =
+        R"({"type":"minecraft:noise","noise":"minecraft:minmax_b","xz_scale":0.5,"y_scale":2.0})";
+    // NaN where the noise is above zero (infinity times zero), +0 elsewhere.
+    const std::string nan =
+        pair("mul",
+             pair("mul",
+                  pair("mul",
+                       R"({"type":"minecraft:clamp","input":)" + noise + R"(,"min":0.0,"max":1.0})",
+                       "1e308"),
+                  "1e308"),
+             "0.0");
+    // A zero of the noise's sign, one of the other sign, and one of the
+    // other noise's other sign.
+    const std::string plus = pair("mul", noise, "0.0");
+    const std::string minus = pair("mul", noise, "-0.0");
+    const std::string otherMinus = pair("mul", other, "-0.0");
+    const auto visible = [](const std::string& zero) {
+        return R"({"type":"minecraft:clamp","input":{"type":"minecraft:invert","argument":)" +
+               zero + R"(},"min":-1.0,"max":1.0})";
+    };
+    const std::array<std::pair<std::string_view, std::string>, 17> arguments{{
+        {"nan", nan},
+        {"min_nan_constant", pair("min", nan, "0.5")},
+        {"min_constant_nan", pair("min", "0.5", nan)},
+        {"max_nan_constant", pair("max", nan, "-0.5")},
+        {"max_constant_nan", pair("max", "-0.5", nan)},
+        {"min_nan_noise", pair("min", nan, other)},
+        {"min_noise_nan", pair("min", other, nan)},
+        {"max_nan_noise", pair("max", nan, other)},
+        {"max_noise_nan", pair("max", other, nan)},
+        {"min_zeros", visible(pair("min", plus, minus))},
+        {"min_zeros_swapped", visible(pair("min", minus, plus))},
+        {"max_zeros", visible(pair("max", plus, minus))},
+        {"max_zeros_swapped", visible(pair("max", minus, plus))},
+        {"min_zeros_noise", visible(pair("min", plus, otherMinus))},
+        {"max_zeros_noise", visible(pair("max", otherMinus, plus))},
+        {"min_zero_constant", visible(pair("min", plus, "-0.0"))},
+        {"max_zero_constant", visible(pair("max", "0.0", minus))},
+    }};
+    for (const auto& [name, argument] : arguments) {
+        tree.define("minmax/" + std::string(name),
+                    R"({"type":"minecraft:interpolated","argument":)" + argument + "}");
+    }
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 31,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const CellGeometry cells{.width = 4, .height = 8};
+    const Interpreter interpreter(graph, noises, cells);
+    constexpr std::int32_t kBaseX = -16;
+    constexpr std::int32_t kBaseZ = 32;
+    constexpr std::int32_t kMinY = -24;
+    constexpr std::int32_t kTopY = 40;
+    for (const auto& [name, argument] : arguments) {
+        CAPTURE(name);
+        const NodeIndex root =
+            graph.rootOf(ResourceLocation::parse("minecraft:minmax/" + std::string(name)));
+        const std::optional<BlockKernel> kernel = interpreter.blockKernel(root);
+        REQUIRE(kernel.has_value());
+        std::size_t values = 0;
+        std::size_t differing = 0;
+        std::size_t nans = 0;
+        std::size_t negatives = 0;
+        std::size_t positives = 0;
+        const auto hold = [&](const double got, const Point at) {
+            const double want = interpreter.evaluate(root, at);
+            ++values;
+            differing +=
+                std::bit_cast<std::uint64_t>(got) != std::bit_cast<std::uint64_t>(want) ? 1U : 0U;
+            nans += std::isnan(want) ? 1U : 0U;
+            negatives += want < 0.0 ? 1U : 0U;
+            positives += want > 0.0 ? 1U : 0U;
+        };
+        // Block by block, a few columns of every cell of a chunk.
+        Interpreter::CornerCache memo(interpreter.cacheSize(), Sharing::Lattice);
+        for (std::int32_t z = 0; z < 16; z += 5) {
+            for (std::int32_t x = 0; x < 16; x += 3) {
+                for (std::int32_t y = kMinY; y < kTopY; ++y) {
+                    const Point at{.x = kBaseX + x, .y = y, .z = kBaseZ + z};
+                    hold(interpreter.evaluate(root, at, memo), at);
+                }
+            }
+        }
+        // A kernel's runs, a cell's row of blocks at a time, over four cells
+        // of the chunk, as ChunkFiller::fill reads them.
+        Interpreter::CornerCache runs(interpreter.cacheSize(), Sharing::Lattice);
+        BlockKernel::Lanes lanes;
+        for (std::int32_t cellZ = 0; cellZ < 8; cellZ += cells.width) {
+            for (std::int32_t cellX = 0; cellX < 8; cellX += cells.width) {
+                for (std::int32_t y = kMinY; y < kTopY; ++y) {
+                    const BlockKernel::Blocks blocks{
+                        .first = Point{.x = kBaseX + cellX, .y = y, .z = kBaseZ + cellZ},
+                        .width = cells.width,
+                        .depth = cells.width,
+                        .lanes = ~0U};
+                    REQUIRE(interpreter.evaluate(*kernel, blocks, lanes, runs));
+                    for (std::int32_t row = 0; row < blocks.depth; ++row) {
+                        for (std::int32_t column = 0; column < blocks.width; ++column) {
+                            const auto lane = (static_cast<std::size_t>(row) *
+                                               static_cast<std::size_t>(blocks.width)) +
+                                              static_cast<std::size_t>(column);
+                            hold(lanes.value(lane), Point{.x = blocks.first.x + column,
+                                                          .y = y,
+                                                          .z = blocks.first.z + row});
+                        }
+                    }
+                }
+            }
+        }
+        CAPTURE(values, nans, negatives, positives, memo.columnBatches(), runs.columnBatches());
+        CHECK(differing == 0U);
+        CHECK(memo.columnBatches() > 0U);
+        CHECK(memo.columnDeclines() == 0U);
+        CHECK(runs.columnBatches() > 0U);
+        CHECK(runs.columnDeclines() == 0U);
+        if (name == "nan") {
+            // NaN reaches some cells' corners and not others'.
+            CHECK(nans > 0U);
+            CHECK(nans < values);
+        } else if (name == "min_zero_constant") {
+            // Zeros tie, so `min` gives its second argument, the constant's
+            // -0.0, at every corner: every value -1.
+            CHECK(negatives == values);
+        } else if (name.find("zero") != std::string_view::npos) {
+            // Zeros of both signs reach the `min` or `max`, and its second
+            // argument's sign shows through.
+            CHECK(negatives > 0U);
+            CHECK(positives > 0U);
+        }
+    }
 }
