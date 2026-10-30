@@ -176,3 +176,6 @@ target_sources(stratum_unit_tests PRIVATE terrain_fill_runs_test.cpp)
 
 # The aquifer window status memo: one read per candidate, nothing kept from a refused one.
 target_sources(stratum_unit_tests PRIVATE aquifer_status_memo_test.cpp)
+
+# The aquifer consult piece by piece: rankFour, the shifted cellOf, decideRanked, candidateStatus.
+target_sources(stratum_unit_tests PRIVATE aquifer_consult_test.cpp)

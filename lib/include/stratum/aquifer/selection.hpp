@@ -359,6 +359,104 @@ inline constexpr std::uint32_t kKeyLowMask = 0xFFFF'FFFFU;
     return out;
 }
 
+/// The part of each candidate's squared distance from a block that the
+/// block's x does not touch: `(dy * dy) + (dz * dz)`, the last two terms of
+/// squaredDistanceTo, for the block's @p y and @p z. Shared by every block
+/// of one (y, z) row of a home cell (StatusCache::rankIn keeps it).
+[[nodiscard]] inline std::array<std::int32_t, kCandidateCount>
+distanceTermsYZ(const std::int32_t y, const std::int32_t z,
+                const std::array<Candidate, kCandidateCount>& candidates) noexcept {
+    std::array<std::int32_t, kCandidateCount> terms{};
+#if defined(__GNUC__)
+#pragma GCC unroll 12
+#endif
+    for (std::size_t i = 0; i < kCandidateCount; ++i) {
+        const std::int32_t dy = y - candidates[i].centre.y;
+        const std::int32_t dz = z - candidates[i].centre.z;
+        terms[i] = (dy * dy) + (dz * dz);
+    }
+    return terms;
+}
+
+/// A whole window's four ranks: each rank's squared distance and which
+/// candidate holds it — rankWindow's `selection.ranked[r].distanceSq` and
+/// `candidate[r]`, without the cells and centres, which the window holds.
+struct RankedFour {
+    std::array<std::int32_t, kRankCount> distanceSq{kNoSource, kNoSource, kNoSource, kNoSource};
+    std::array<std::size_t, kRankCount> candidate{};
+};
+
+/// rankWindow over a home cell's whole window, the kCandidateCount
+/// candidates computeSubstance ranks on every block that consults the
+/// lattice, from the window's distance terms for the block's y and z
+/// (@p termsYZ, distanceTermsYZ's): each candidate's squared distance is
+/// `(dx * dx) + termsYZ[i]`.
+///
+/// It is the DEFINITION itself, rankByInsertion's: candidate by candidate
+/// in iteration order, each takes the first rank whose distance is at
+/// least its own (`<=`, the displacing tie of Q4.4) and pushes the rest
+/// down. The ranks stay sorted, so a candidate farther than the fourth
+/// (`>` it) takes none, and the first rank it does take is found from the
+/// fourth down. Every rank starts at kNoSource, so the first four take one
+/// each, and twelve fill all four.
+///
+/// The distance is the same integer: squaredDistanceTo's three terms are
+/// squares, none negative, so where their sum is an int32 every partial sum
+/// is one too, and adding the x term to the other two summed gives the sum
+/// squaredDistanceTo forms (in the real window, at most 1284:
+/// squaredDistanceTo's own bound). tests/unit/aquifer_rank_four_test.cpp
+/// holds it to rankByInsertion rank for rank.
+[[nodiscard]] inline RankedFour
+rankFour(const std::int32_t x, const std::array<Candidate, kCandidateCount>& candidates,
+         const std::array<std::int32_t, kCandidateCount>& termsYZ) noexcept {
+    // Rank r's distance and candidate, each its own variable while the
+    // candidates are folded in.
+    std::int32_t d0 = kNoSource;
+    std::int32_t d1 = kNoSource;
+    std::int32_t d2 = kNoSource;
+    std::int32_t d3 = kNoSource;
+    std::size_t from0 = 0;
+    std::size_t from1 = 0;
+    std::size_t from2 = 0;
+    std::size_t from3 = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 12
+#endif
+    for (std::size_t i = 0; i < kCandidateCount; ++i) {
+        const std::int32_t dx = x - candidates[i].centre.x;
+        const std::int32_t distance = (dx * dx) + termsYZ[i];
+        if (distance > d3) {
+            continue;
+        }
+        if (distance > d2) {
+            d3 = distance;
+            from3 = i;
+        } else if (distance > d1) {
+            d3 = d2;
+            from3 = from2;
+            d2 = distance;
+            from2 = i;
+        } else if (distance > d0) {
+            d3 = d2;
+            from3 = from2;
+            d2 = d1;
+            from2 = from1;
+            d1 = distance;
+            from1 = i;
+        } else {
+            d3 = d2;
+            from3 = from2;
+            d2 = d1;
+            from2 = from1;
+            d1 = d0;
+            from1 = from0;
+            d0 = distance;
+            from0 = i;
+        }
+    }
+    return RankedFour{.distanceSq = {d0, d1, d2, d3}, .candidate = {from0, from1, from2, from3}};
+}
+
 } // namespace detail
 
 /// The whole selection for one block: home cell, window, metric, ranking.

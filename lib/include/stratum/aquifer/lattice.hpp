@@ -50,6 +50,10 @@ inline constexpr std::int32_t kCellPitchX = 16;
 inline constexpr std::int32_t kCellPitchY = 12;
 inline constexpr std::int32_t kCellPitchZ = 16;
 
+/// log2 of the horizontal pitch: `cellOf` divides by it with a shift.
+inline constexpr int kCellPitchXLog2 = 4;
+inline constexpr int kCellPitchZLog2 = 4;
+
 /// The vertical lattice is anchored in ABSOLUTE space: the identical probe at
 /// `min_y` -64, -80 and -48 gives the same `y mod 12` histogram, shape
 /// included, while `(y - min_y) mod 12` moves with the floor.
@@ -208,9 +212,17 @@ inline constexpr std::int32_t kCellShiftZ = -5;
     // every cell boundary: the x boundary sits at x = 5 (mod 16) rather than
     // at 0. floorDiv on the SHIFTED coordinate — shifting after a truncating
     // division would be wrong twice over.
-    return CellIndex{.x = javamath::floorDiv(x + kCellShiftX, kCellPitchX),
+    //
+    // The horizontal pitch is a power of two, and floorDiv by 2^k is the
+    // arithmetic shift right by k (Java's `>>`, javamath::shr) for every
+    // int32, negative ones included: both round toward negative infinity.
+    // So x and z are shifted, the same quotient without a division and its
+    // remainder test; y's pitch of 12 keeps floorDiv.
+    static_assert(kCellPitchX == (1 << kCellPitchXLog2) && kCellPitchZ == (1 << kCellPitchZLog2),
+                  "the horizontal pitch is the power of two its shift divides by");
+    return CellIndex{.x = javamath::shr(x + kCellShiftX, kCellPitchXLog2),
                      .y = javamath::floorDiv(y + kCellShiftY, kCellPitchY),
-                     .z = javamath::floorDiv(z + kCellShiftZ, kCellPitchZ)};
+                     .z = javamath::shr(z + kCellShiftZ, kCellPitchZLog2)};
 }
 
 /// The centre jitter, drawn once per 3D cell. It is an INTEGER draw, and the

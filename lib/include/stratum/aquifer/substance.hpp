@@ -282,8 +282,26 @@ public:
             slot.home = home;
             slot.filled = true;
             slot.known = 0;
+            slot.termsKnown = false;
         }
         return window;
+    }
+
+    /// `detail::rankWindow(x, y, z, candidatesIn(window))`'s four distances
+    /// and candidate indices, as detail::rankFour ranks them: the window's
+    /// distance terms for (@p y, @p z) are worked out once a row and kept
+    /// beside its candidates (a block's neighbours along x share them), and
+    /// only each candidate's x term is the block's own.
+    [[nodiscard]] detail::RankedFour rankIn(const std::size_t window, const std::int32_t x,
+                                            const std::int32_t y, const std::int32_t z) noexcept {
+        HomeSlot& slot = homes_[window];
+        if (!slot.termsKnown || slot.termsY != y || slot.termsZ != z) {
+            slot.termsYZ = detail::distanceTermsYZ(y, z, slot.candidates);
+            slot.termsY = y;
+            slot.termsZ = z;
+            slot.termsKnown = true;
+        }
+        return detail::rankFour(x, slot.candidates, slot.termsYZ);
     }
 
     [[nodiscard]] const std::array<Candidate, kCandidateCount>&
@@ -314,6 +332,29 @@ public:
         // other block makes is a test and a load where it is inlined.
         return learnStatusIn(window, candidate, ranked, seaLevel, psl, floodedness, spread, lava,
                              deepDark);
+    }
+
+    /// statusIn for the @p candidate-th of @p window's candidates at
+    /// @p distanceSq, the ranked source being that candidate's cell and
+    /// centre at that distance (rankIn's ranks): the Source statusIn takes
+    /// is made only where the memo has to ask the table for it.
+    template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+             typename LavaSampler, typename DeepDarkSampler>
+    [[nodiscard]] SourceStatus
+    candidateStatus(const std::size_t window, const std::size_t candidate,
+                    const std::int32_t distanceSq, const std::int32_t seaLevel, PslSampler&& psl,
+                    FloodednessSampler&& floodedness, SpreadSampler&& spread, LavaSampler&& lava,
+                    DeepDarkSampler&& deepDark) {
+        const HomeSlot& slot = homes_[window];
+        const auto bit = static_cast<std::uint16_t>(1U << candidate);
+        if ((slot.known & bit) != 0U) {
+            return slot.status[candidate];
+        }
+        const Candidate& held = slot.candidates[candidate];
+        return learnStatusIn(
+            window, candidate,
+            Source{.cell = held.cell, .centre = held.centre, .distanceSq = distanceSq}, seaLevel,
+            psl, floodedness, spread, lava, deepDark);
     }
 
     template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
@@ -358,6 +399,12 @@ private:
         /// Bit i set: status[i] is candidates[i]'s status (statusIn).
         std::uint16_t known = 0;
         std::array<SourceStatus, kCandidateCount> status{};
+        /// rankIn's distance terms, for the row (termsY, termsZ) while
+        /// termsKnown; a window drawn again forgets them.
+        bool termsKnown = false;
+        std::int32_t termsY = 0;
+        std::int32_t termsZ = 0;
+        std::array<std::int32_t, kCandidateCount> termsYZ{};
     };
 
     static_assert(kCandidateCount <= 16, "HomeSlot::known has a bit per candidate");
@@ -503,14 +550,16 @@ namespace detail {
 }
 
 /// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier
-/// and the nearest source's own reading, for the four ranked sources in
-/// @p selection. @p statusOfRank is called as `SourceStatus(std::size_t r)`
-/// for the status of `selection.ranked[r]`: for ranks 0, 1 and 2 in that
-/// order, then for rank 3 only where the fluid-update flag reaches it.
+/// and the nearest source's own reading, for four ranked sources whose
+/// squared distances are @p rankDistanceSq, nearest first (a Selection's
+/// `ranked[r].distanceSq`: the one thing of a source the decision reads
+/// beyond its status). @p statusOfRank is called as `SourceStatus(std::size_t
+/// r)` for the status of rank r: for ranks 0, 1 and 2 in that order, then
+/// for rank 3 only where the fluid-update flag reaches it.
 template<typename StatusOfRank, typename BarrierSampler>
-[[nodiscard]] SubstanceAt decideRanked(const Selection& selection, const AquiferQuery& query,
-                                       StatusOfRank&& statusOfRank, BarrierSampler&& barrier,
-                                       const BarrierReads reads) {
+[[nodiscard]] SubstanceAt decideRanked(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
+                                       const AquiferQuery& query, StatusOfRank&& statusOfRank,
+                                       BarrierSampler&& barrier, const BarrierReads reads) {
     // All three statuses, typed unconditionally: Π needs the type of a
     // source that reads AIR at this block as much as of one that reads fluid
     // (barrier.hpp).
@@ -521,7 +570,7 @@ template<typename StatusOfRank, typename BarrierSampler>
 
     std::array<std::int64_t, kRankCount> distanceSq{};
     for (std::size_t r = 0; r < kRankCount; ++r) {
-        distanceSq[r] = selection.ranked[r].distanceSq;
+        distanceSq[r] = rankDistanceSq[r];
     }
     const auto fourth = [&] { return statusOfRank(std::size_t{3}); };
 
@@ -536,16 +585,17 @@ template<typename StatusOfRank, typename BarrierSampler>
     }
 
     const auto asBarrierSource = [&](const std::size_t r) {
-        return BarrierSource{.level = status[r].level,
-                             .distanceSq = selection.ranked[r].distanceSq,
-                             .type = status[r].type};
+        return BarrierSource{
+            .level = status[r].level, .distanceSq = distanceSq[r], .type = status[r].type};
     };
-    BarrierAt at{
-        .y = query.y,
-        .density = query.density,
-        .nearest = asBarrierSource(0),
-        .second = asBarrierSource(1),
-        .third = asBarrierSource(2),
+    const auto barrierAt = [&] {
+        return BarrierAt{
+            .y = query.y,
+            .density = query.density,
+            .nearest = asBarrierSource(0),
+            .second = asBarrierSource(1),
+            .third = asBarrierSource(2),
+        };
     };
     // The `barrier` value, read where `reads` says (`BarrierReads`): on
     // first use inside the predicate — which on most blocks is never — or
@@ -553,9 +603,15 @@ template<typename StatusOfRank, typename BarrierSampler>
     const auto readBarrier = [&] { return barrier(query.x, query.y, query.z); };
     bool placed = false;
     if (reads == BarrierReads::Always) {
+        BarrierAt at = barrierAt();
         at.barrier = readBarrier();
         placed = placesBarrier(at);
-    } else {
+    } else if (nearestPairCompetes(distanceSq[0], distanceSq[1])) {
+        // Where the nearest pair does not compete (Q6.2), placesBarrier's
+        // first test is this one, and it answers false there before it
+        // reads anything, the `barrier` value included: so it is asked only
+        // where the pair competes, and elsewhere nothing is placed.
+        const BarrierAt at = barrierAt();
         BarrierNoise noise(readBarrier);
         placed = placesBarrier(at, noise);
     }
@@ -597,8 +653,11 @@ template<typename StatusOf, typename BarrierSampler>
 computeSubstanceFrom(const Selection& selection, const AquiferQuery& query, StatusOf&& statusOf,
                      BarrierSampler&& barrier,
                      const BarrierReads reads = BarrierReads::WhereWeighed) {
+    const std::array<std::int32_t, kRankCount> distanceSq{
+        selection.ranked[0].distanceSq, selection.ranked[1].distanceSq,
+        selection.ranked[2].distanceSq, selection.ranked[3].distanceSq};
     return detail::decideRanked(
-        selection, query, [&](const std::size_t r) { return statusOf(selection.ranked[r]); },
+        distanceSq, query, [&](const std::size_t r) { return statusOf(selection.ranked[r]); },
         barrier, reads);
 }
 
@@ -663,16 +722,18 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
     }
     // rankCandidates over the home cell's window, keeping which candidate
     // each rank is, so that each ranked status is read from the window's own
-    // memo (StatusCache::statusIn) — the same status the centre-keyed table
-    // holds, asked of it once per window rather than three times a block.
+    // memo (StatusCache::candidateStatus) — the same status the centre-keyed
+    // table holds, asked of it once per window rather than three times a
+    // block. The ranks are rankWindow's, ranked from the window's distance
+    // terms for this block's row (StatusCache::rankIn); the decision reads
+    // their distances, and a rank's cell and centre only to ask the table.
     const std::size_t window = cache.windowOf(centres, cellOf(query.x, query.y, query.z));
-    const detail::RankedWindow ranked =
-        detail::rankWindow(query.x, query.y, query.z, cache.candidatesIn(window));
+    const detail::RankedFour ranked = cache.rankIn(window, query.x, query.y, query.z);
     return detail::decideRanked(
-        ranked.selection, query,
+        ranked.distanceSq, query,
         [&](const std::size_t r) {
-            return cache.statusIn(window, ranked.candidate[r], ranked.selection.ranked[r],
-                                  query.seaLevel, psl, floodedness, spread, lava, deepDark);
+            return cache.candidateStatus(window, ranked.candidate[r], ranked.distanceSq[r],
+                                         query.seaLevel, psl, floodedness, spread, lava, deepDark);
         },
         barrier, reads);
 }
