@@ -1232,8 +1232,18 @@ private:
     /// coordinate that carries some octave's lattice out of int32, or a NaN.
     /// Vanilla's own `jagged` gets there inside the world border (SPEC §8,
     /// "Inputs that would reach undefined behaviour").
-    [[nodiscard]] double sampleNoise(NodeIndex index, const Point& at, double x, double y,
-                                     double z) const;
+    ///
+    /// @p op is the node's Op, whose resolved noise is read first: noiseFor
+    /// is asked only where it is null, to refuse as it always did, and the
+    /// message is built out of the way (refuseNoiseInput), so that what is
+    /// left inlines into evaluateNode.
+    [[nodiscard]] double sampleNoise(NodeIndex index, const Op& op, const Point& at, double x,
+                                     double y, double z) const;
+
+    /// sampleNoise's refusal of (@p x, @p y, @p z), which @p noise does not
+    /// accept.
+    [[noreturn]] void refuseNoiseInput(NodeIndex index, const noise::NormalNoise& noise,
+                                       const Point& at, double x, double y, double z) const;
 
     /// The blended noise built for @p index. Throws rather than returning a
     /// wrong value if none was built, which can only happen if the graph

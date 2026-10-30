@@ -194,3 +194,6 @@ target_sources(stratum_unit_tests PRIVATE density_memo_fuzz_test.cpp)
 
 # A normal noise's two stacks: one length, and the sum two octave noises give.
 target_sources(stratum_unit_tests PRIVATE noise_normal_stacks_test.cpp)
+
+# A noise past its lattice, refused in the same words by every node type that samples one.
+target_sources(stratum_unit_tests PRIVATE density_noise_refusal_test.cpp)

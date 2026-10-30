@@ -1224,20 +1224,28 @@ const noise::NormalNoise& Interpreter::noiseFor(NodeIndex index) const {
     return *noise;
 }
 
-double Interpreter::sampleNoise(const NodeIndex index, const Point& at, const double x,
-                                const double y, const double z) const {
-    const noise::NormalNoise& noise = noiseFor(index);
+void Interpreter::refuseNoiseInput(const NodeIndex index, const noise::NormalNoise& noise,
+                                   const Point& at, const double x, const double y,
+                                   const double z) const {
+    const Node& node = graph_->node(index);
+    std::ostringstream message;
+    message << std::setprecision(17) << "'" << nodeTypeName(node.type) << "' samples noise '"
+            << (node.noise.has_value() ? node.noise->toString() : std::string("(inline)"))
+            << "' at (" << x << ", " << y << ", " << z << ") for block (" << at.x << ", " << at.y
+            << ", " << at.z << "), past " << noise.inputLimit()
+            << " on an axis or not a number: there its highest-frequency octave's lattice "
+               "cell leaves the 32-bit range, where this build's arithmetic is undefined, "
+               "so it refuses rather than guess what the server builds there (SPEC §8)";
+    throw EvalError(message.str());
+}
+
+inline double Interpreter::sampleNoise(const NodeIndex index, const Op& op, const Point& at,
+                                       const double x, const double y, const double z) const {
+    // noiseFor's noise, read off the Op it would read; noiseFor itself only
+    // where there is none, which it refuses.
+    const noise::NormalNoise& noise = op.noise != nullptr ? *op.noise : noiseFor(index);
     if (!noise.accepts(x, y, z)) {
-        const Node& node = graph_->node(index);
-        std::ostringstream message;
-        message << std::setprecision(17) << "'" << nodeTypeName(node.type) << "' samples noise '"
-                << (node.noise.has_value() ? node.noise->toString() : std::string("(inline)"))
-                << "' at (" << x << ", " << y << ", " << z << ") for block (" << at.x << ", "
-                << at.y << ", " << at.z << "), past " << noise.inputLimit()
-                << " on an axis or not a number: there its highest-frequency octave's lattice "
-                   "cell leaves the 32-bit range, where this build's arithmetic is undefined, "
-                   "so it refuses rather than guess what the server builds there (SPEC §8)";
-        throw EvalError(message.str());
+        refuseNoiseInput(index, noise, at, x, y, z);
     }
     return noise.sample(x, y, z);
 }
@@ -1602,7 +1610,7 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
         case NodeType::Noise: {
             const double xzScale = op.parameters[0];
             const double yScale = op.parameters[1];
-            value = sampleNoise(index, at, x * xzScale, y * yScale, z * xzScale);
+            value = sampleNoise(index, op, at, x * xzScale, y * yScale, z * xzScale);
             break;
         }
         case NodeType::ShiftedNoise: {
@@ -1611,20 +1619,20 @@ double Interpreter::evaluateNode(Scope& scope, NodeIndex index) const {
             const double shiftX = argument(0);
             const double shiftY = argument(1);
             const double shiftZ = argument(2);
-            value = sampleNoise(index, at, (x * xzScale) + shiftX, (y * yScale) + shiftY,
+            value = sampleNoise(index, op, at, (x * xzScale) + shiftX, (y * yScale) + shiftY,
                                 (z * xzScale) + shiftZ);
             break;
         }
         case NodeType::Shift:
-            value = sampleNoise(index, at, x * 0.25, y * 0.25, z * 0.25) * 4.0;
+            value = sampleNoise(index, op, at, x * 0.25, y * 0.25, z * 0.25) * 4.0;
             break;
         case NodeType::ShiftA:
-            value = sampleNoise(index, at, x * 0.25, 0.0, z * 0.25) * 4.0;
+            value = sampleNoise(index, op, at, x * 0.25, 0.0, z * 0.25) * 4.0;
             break;
         case NodeType::ShiftB:
             // The axes are rotated, which is what makes shift_z independent
             // of shift_x while sharing one noise.
-            value = sampleNoise(index, at, z * 0.25, x * 0.25, 0.0) * 4.0;
+            value = sampleNoise(index, op, at, z * 0.25, x * 0.25, 0.0) * 4.0;
             break;
 
         // --- splines -------------------------------------------------------
@@ -1843,7 +1851,8 @@ double Interpreter::weirdScaledSampler(Scope& scope, const NodeIndex index, cons
             rarity = rarityValueMapper(graph_->node(index).selector, input);
             break;
     }
-    return std::abs(rarity * sampleNoise(index, at, at.x / rarity, at.y / rarity, at.z / rarity));
+    return std::abs(rarity *
+                    sampleNoise(index, op, at, at.x / rarity, at.y / rarity, at.z / rarity));
 }
 
 double Interpreter::flatCache(Scope& scope, const Op& op) const {
