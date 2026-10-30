@@ -1469,11 +1469,14 @@ void Interpreter::settleColumns() {
             walk = false;
         } else if (columnInvariant_[i] != 0) {
             // Read once a batch through the walk, at its first lane's point:
-            // the same double at every lane's (isColumnInvariant). Nothing
-            // column-invariant fills a cell — `interpolated` and
-            // `cache_all_in_cell` never are, and neither is what reaches
-            // them — so the walk opens no batch inside this one.
-            walk = true;
+            // the same double at every lane's (isColumnInvariant) — where
+            // nothing beneath it can fill a cell, so that the walk opens no
+            // batch inside this one, as for a spline. Nothing
+            // column-invariant does today (`interpolated` and
+            // `cache_all_in_cell` never are, being settled before the
+            // lattice, and neither is what reaches them), but that is a fact
+            // about how invariance is settled, and this does not lean on it.
+            walk = fills[i] == 0;
         } else {
             switch (op.type) {
                 case NodeType::Add:

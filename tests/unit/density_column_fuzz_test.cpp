@@ -769,3 +769,65 @@ TEST_CASE("a column batch walks an argument as deep as a graph may be",
     CHECK(cache.columnBatches() > 0U);
     CHECK(cache.columnDeclines() == 0U);
 }
+
+TEST_CASE("a batch reads no column-invariant node beneath which a cell could be filled",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // A batch reads a column-invariant node once, through the walk, at its
+    // first lane's point (Interpreter::evaluateLanes); a node of which
+    // something beneath fills a cell or scans points — `interpolated`,
+    // `cache_all_in_cell`, `find_top_surface` — is not one it takes
+    // (Op::laneWalk), invariant or not, so the walk never opens a batch inside
+    // one. A `find_top_surface` over a density and bounds that are all
+    // column-invariant is itself invariant; an argument reaching it is
+    // evaluated a corner at a time, and an argument reaching only an
+    // invariant noise in its place is batched. Both give the walk's bits.
+    const FuzzTree tree;
+    tree.defineNoise("invariant_a", R"({"firstOctave":-5,"amplitudes":[1.0,1.0]})");
+    const std::string varying =
+        R"({"type":"minecraft:noise","noise":"minecraft:invariant_a","xz_scale":1.0,)"
+        R"("y_scale":1.0})";
+    const std::string flat =
+        R"({"type":"minecraft:noise","noise":"minecraft:invariant_a","xz_scale":0.5,)"
+        R"("y_scale":0.0})";
+    tree.define("column/scan", R"({"type":"minecraft:find_top_surface","density":)" + flat +
+                                   R"(,"upper_bound":64.0,"lower_bound":-64,"cell_height":8})");
+    tree.define("column/scans",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:add",)"
+                R"("argument1":)" +
+                    varying + R"(,"argument2":"minecraft:column/scan"}})");
+    tree.define("column/flat",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:add",)"
+                R"("argument1":)" +
+                    varying + R"(,"argument2":)" + flat + "}}");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 9,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 8});
+    const auto read = [&](std::string_view name, std::size_t& batches) {
+        const NodeIndex root =
+            graph.rootOf(ResourceLocation::parse("minecraft:column/" + std::string(name)));
+        Interpreter::CornerCache cache(interpreter.cacheSize(), Sharing::Lattice);
+        std::size_t differing = 0;
+        for (std::int32_t y = -32; y < 32; y += 3) {
+            for (std::int32_t x = 0; x < 8; x += 3) {
+                const Point at{.x = x, .y = y, .z = -6};
+                differing += std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at, cache)) !=
+                                     std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at))
+                                 ? 1U
+                                 : 0U;
+            }
+        }
+        batches = cache.columnBatches();
+        return differing;
+    };
+    // The scan is column-invariant, and a batch would otherwise read it once.
+    REQUIRE(interpreter.isColumnInvariant(
+        graph.rootOf(ResourceLocation::parse("minecraft:column/scan"))));
+    std::size_t scanning = 0;
+    std::size_t flatBatches = 0;
+    CHECK(read("scans", scanning) == 0U);
+    CHECK(read("flat", flatBatches) == 0U);
+    CHECK(scanning == 0U);
+    CHECK(flatBatches > 0U);
+}
