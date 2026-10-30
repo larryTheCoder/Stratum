@@ -250,14 +250,47 @@ template<bool Folds>
     return samplePerlin<true>(noise, x, y, z, yScale, yMax);
 }
 
+/// One corner's gradient in a column of points (samplePerlinColumn): the
+/// three terms of gradientDot, `(gx * x) + (gy * y) + (gz * z)`, with the x
+/// and z products made — the corner's x and z offsets are every point's —
+/// and y's factor kept for the point's own offset.
+struct ColumnGradient {
+    double alongX;
+    double factorY;
+    double alongZ;
+
+    /// gradientDot at the point whose offset along y is @p y: the same
+    /// products, added in the same order.
+    [[nodiscard]] STRATUM_NOISE_INLINE double dot(double y) const noexcept {
+        return (alongX + (factorY * y)) + alongZ;
+    }
+};
+
+/// The gradient of the corner whose hash is @p hash, at offsets @p x and
+/// @p z: gradientDot's table entries and products, in its order.
+[[nodiscard]] STRATUM_NOISE_INLINE ColumnGradient columnGradient(std::uint32_t hash, double x,
+                                                                 double z) noexcept {
+    const std::size_t slot = hash & 0x0FU;
+    return {.alongX = kGradientX[slot] * x,
+            .factorY = kGradientY[slot],
+            .alongZ = kGradientZ[slot] * z};
+}
+
 /// samplePerlin<Folds>(noise, x, ys[k], z, yScale, yMaxes[k]) for each k
 /// below @p count, into out[k]: the points of one column, which share x and
 /// z. Each lane is the double samplePerlin returns at its point — the same
-/// operations on the same operands — and what does not depend on y is made
-/// once for all of them rather than once a point: the x and z axes of the
-/// lattice, their fades and offsets less one, and the two permutation entries
-/// along x that every corner hash starts from. @p yMaxes is read only where
-/// @p Folds.
+/// operations on the same operands — and what does not depend on the point's
+/// own y is made once for all of them rather than once a point: the x and z
+/// axes of the lattice, their fades and offsets less one, and the two
+/// permutation entries along x that every corner hash starts from; and, for
+/// each run of consecutive points in one lattice cell along y, the eight
+/// corner hashes, which a cell decides with x and z, and each corner's
+/// gradient products along x and z (ColumnGradient). Every gradient's dot is
+/// still `(gx * x) + (gy * y) + (gz * z)` of the same doubles, added in that
+/// order, so a product made once for a run is the double each point made of
+/// it. A point alone in its cell — the next one is in another — takes
+/// samplePerlin's body as it is, which keeps nothing it would not use.
+/// @p yMaxes is read only where @p Folds.
 ///
 /// PRECONDITION: samplePerlin's at every point. Asserted in debug builds.
 template<bool Folds>
@@ -281,35 +314,95 @@ STRATUM_NOISE_INLINE void samplePerlinColumn(const PerlinNoise& noise, double x,
     const std::uint32_t rowB = at(axisX.cell + 1U);
     const double originY = noise.originY();
 
-    for (std::size_t k = 0; k < count; ++k) {
-        const LatticeAxis axisY = latticeAxis(ys[k] + originY);
-        const double fadeY = fade(axisY.local);
-        const double localY = foldY<Folds>(axisY.local, yScale, Folds ? yMaxes[k] : 0.0);
-        const double farY = localY - 1.0;
-
-        const std::uint32_t cornerA = (rowA + axisY.cell) & 0xFFU;
-        const std::uint32_t cornerB = (rowB + axisY.cell) & 0xFFU;
+    std::size_t k = 0;
+    LatticeAxis axisY{.local = 0.0, .cell = 0};
+    if (count > 0) {
+        axisY = latticeAxis(ys[0] + originY);
+    }
+    while (k < count) {
+        // The cell of point k: its corner hashes, as samplePerlin makes them.
+        const std::uint32_t cell = axisY.cell;
+        const std::uint32_t cornerA = (rowA + cell) & 0xFFU;
+        const std::uint32_t cornerB = (rowB + cell) & 0xFFU;
 
         const std::uint32_t cornerAA = (at(cornerA) + axisZ.cell) & 0xFFU;
         const std::uint32_t cornerBA = (at(cornerB) + axisZ.cell) & 0xFFU;
         const std::uint32_t cornerAB = (at(cornerA + 1U) + axisZ.cell) & 0xFFU;
         const std::uint32_t cornerBB = (at(cornerB + 1U) + axisZ.cell) & 0xFFU;
 
-        const double x0y0z0 = gradientDot(at(cornerAA), localX, localY, localZ);
-        const double x1y0z0 = gradientDot(at(cornerBA), farX, localY, localZ);
-        const double x0y1z0 = gradientDot(at(cornerAB), localX, farY, localZ);
-        const double x1y1z0 = gradientDot(at(cornerBB), farX, farY, localZ);
-        const double x0y0z1 = gradientDot(at(cornerAA + 1U), localX, localY, farZ);
-        const double x1y0z1 = gradientDot(at(cornerBA + 1U), farX, localY, farZ);
-        const double x0y1z1 = gradientDot(at(cornerAB + 1U), localX, farY, farZ);
-        const double x1y1z1 = gradientDot(at(cornerBB + 1U), farX, farY, farZ);
+        // The next point's axis, which says whether a run starts here.
+        LatticeAxis next{.local = 0.0, .cell = 0};
+        const bool alone =
+            k + 1 == count || (next = latticeAxis(ys[k + 1] + originY), next.cell != cell);
+        if (alone) {
+            // A point alone in its cell: samplePerlin's body, as it is.
+            const double fadeY = fade(axisY.local);
+            const double localY = foldY<Folds>(axisY.local, yScale, Folds ? yMaxes[k] : 0.0);
+            const double farY = localY - 1.0;
 
-        const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
-        const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
-        const double y0z1 = lerp(fadeX, x0y0z1, x1y0z1);
-        const double y1z1 = lerp(fadeX, x0y1z1, x1y1z1);
+            const double x0y0z0 = gradientDot(at(cornerAA), localX, localY, localZ);
+            const double x1y0z0 = gradientDot(at(cornerBA), farX, localY, localZ);
+            const double x0y1z0 = gradientDot(at(cornerAB), localX, farY, localZ);
+            const double x1y1z0 = gradientDot(at(cornerBB), farX, farY, localZ);
+            const double x0y0z1 = gradientDot(at(cornerAA + 1U), localX, localY, farZ);
+            const double x1y0z1 = gradientDot(at(cornerBA + 1U), farX, localY, farZ);
+            const double x0y1z1 = gradientDot(at(cornerAB + 1U), localX, farY, farZ);
+            const double x1y1z1 = gradientDot(at(cornerBB + 1U), farX, farY, farZ);
 
-        out[k] = lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
+            const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
+            const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
+            const double y0z1 = lerp(fadeX, x0y0z1, x1y0z1);
+            const double y1z1 = lerp(fadeX, x0y1z1, x1y1z1);
+
+            out[k] = lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
+            ++k;
+            axisY = next;
+            continue;
+        }
+
+        // A run of points in one cell: samplePerlin's eight gradientDot
+        // calls, corner by corner, their products along x and z made once.
+        const ColumnGradient g000 = columnGradient(at(cornerAA), localX, localZ);
+        const ColumnGradient g100 = columnGradient(at(cornerBA), farX, localZ);
+        const ColumnGradient g010 = columnGradient(at(cornerAB), localX, localZ);
+        const ColumnGradient g110 = columnGradient(at(cornerBB), farX, localZ);
+        const ColumnGradient g001 = columnGradient(at(cornerAA + 1U), localX, farZ);
+        const ColumnGradient g101 = columnGradient(at(cornerBA + 1U), farX, farZ);
+        const ColumnGradient g011 = columnGradient(at(cornerAB + 1U), localX, farZ);
+        const ColumnGradient g111 = columnGradient(at(cornerBB + 1U), farX, farZ);
+
+        // Every point of the run, each at its own offset along y; the
+        // second's axis is `next`, made above.
+        const std::size_t first = k;
+        while (true) {
+            const double fadeY = fade(axisY.local);
+            const double localY = foldY<Folds>(axisY.local, yScale, Folds ? yMaxes[k] : 0.0);
+            const double farY = localY - 1.0;
+
+            const double x0y0z0 = g000.dot(localY);
+            const double x1y0z0 = g100.dot(localY);
+            const double x0y1z0 = g010.dot(farY);
+            const double x1y1z0 = g110.dot(farY);
+            const double x0y0z1 = g001.dot(localY);
+            const double x1y0z1 = g101.dot(localY);
+            const double x0y1z1 = g011.dot(farY);
+            const double x1y1z1 = g111.dot(farY);
+
+            const double y0z0 = lerp(fadeX, x0y0z0, x1y0z0);
+            const double y1z0 = lerp(fadeX, x0y1z0, x1y1z0);
+            const double y0z1 = lerp(fadeX, x0y0z1, x1y0z1);
+            const double y1z1 = lerp(fadeX, x0y1z1, x1y1z1);
+
+            out[k] = lerp(fadeZ, lerp(fadeY, y0z0, y1z0), lerp(fadeY, y0z1, y1z1));
+            ++k;
+            if (k == count) {
+                break;
+            }
+            axisY = k == first + 1 ? next : latticeAxis(ys[k] + originY);
+            if (axisY.cell != cell) {
+                break;
+            }
+        }
     }
 }
 
