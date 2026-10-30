@@ -351,7 +351,10 @@ struct ColumnGradient {
 ///
 /// No points, no sample and no lattice: with @p count 0 it returns before x
 /// and z are made into anything, so an empty column is defined wherever they
-/// are (a loop of no samplePerlin calls is).
+/// are (a loop of no samplePerlin calls is). No caller reaches that today —
+/// NormalNoise::sampleColumn and BlendedNoise::sampleColumn return on an
+/// empty span first, and the blended noise's limit octaves run only with
+/// points — so the test is this template's own guard, not one they lean on.
 ///
 /// PRECONDITION: samplePerlin's at every point. Asserted in debug builds.
 template<bool Folds, typename YAt, typename CapAt, typename Put>

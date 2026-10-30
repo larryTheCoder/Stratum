@@ -830,6 +830,12 @@ namespace {
 /// The last word of a memo key: what kind of value it is (bit 0: a cell
 /// corner, or a column's — a column-invariant node's or a relocated read's,
 /// the same thing for a node that is both) and what it was read through.
+/// For the column memo the read's context is more than it needs: a node
+/// with one value down its column (Op::columnMemo) has no `interpolated`
+/// beneath it, and only an `interpolated` reads a Block point and a
+/// Detached one differently, so its two keys always hold the same value.
+/// Keeping them apart costs a second evaluation at most, and never changes
+/// what a read returns.
 [[nodiscard]] constexpr std::uint32_t cornerTag(const std::uint32_t windowId) noexcept {
     return windowId << 1U;
 }
@@ -3867,3 +3873,7 @@ float Interpreter::evaluateSpline(Scope& scope, SplineIndex index) const {
 }
 
 } // namespace stratum::density
+
+// This file's own: nothing after it, a unity build's next file included,
+// sees it.
+#undef STRATUM_LEVEL_PART
