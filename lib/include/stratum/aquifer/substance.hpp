@@ -549,30 +549,20 @@ namespace detail {
     return SubstanceAt{.substance = Substance::Fluid, .fluidType = FluidType::Lava};
 }
 
-/// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier
+/// decideRanked once the three nearest statuses are read: Q6.3, the barrier
 /// and the nearest source's own reading, for four ranked sources whose
-/// squared distances are @p rankDistanceSq, nearest first (a Selection's
-/// `ranked[r].distanceSq`: the one thing of a source the decision reads
-/// beyond its status). @p statusOfRank is called as `SourceStatus(std::size_t
-/// r)` for the status of rank r: for ranks 0, 1 and 2 in that order, then
-/// for rank 3 only where the fluid-update flag reaches it.
-template<typename StatusOfRank, typename BarrierSampler>
-[[nodiscard]] SubstanceAt decideRanked(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
-                                       const AquiferQuery& query, StatusOfRank&& statusOfRank,
-                                       BarrierSampler&& barrier, const BarrierReads reads) {
-    // All three statuses, typed unconditionally: Π needs the type of a
-    // source that reads AIR at this block as much as of one that reads fluid
-    // (barrier.hpp).
-    std::array<SourceStatus, 3> status{};
-    for (std::size_t r = 0; r < 3; ++r) {
-        status[r] = statusOfRank(r);
-    }
-
+/// squared distances are @p rankDistanceSq and the nearest three's statuses
+/// @p status. @p fourth is called as `SourceStatus()` for rank 3's status,
+/// only where the fluid-update flag reaches it.
+template<typename FourthStatus, typename BarrierSampler>
+[[nodiscard]] SubstanceAt
+decideWithStatuses(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
+                   const std::array<SourceStatus, 3>& status, const AquiferQuery& query,
+                   FourthStatus&& fourth, BarrierSampler&& barrier, const BarrierReads reads) {
     std::array<std::int64_t, kRankCount> distanceSq{};
     for (std::size_t r = 0; r < kRankCount; ++r) {
         distanceSq[r] = rankDistanceSq[r];
     }
-    const auto fourth = [&] { return statusOfRank(std::size_t{3}); };
 
     // Q6.3: water resting on the global lava sea is water, and no barrier
     // is even considered — the `barrier` noise is not read.
@@ -628,6 +618,29 @@ template<typename StatusOfRank, typename BarrierSampler>
         .substance = Substance::Fluid,
         .fluidType = status[0].type,
         .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
+}
+
+/// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier
+/// and the nearest source's own reading, for four ranked sources whose
+/// squared distances are @p rankDistanceSq, nearest first (a Selection's
+/// `ranked[r].distanceSq`: the one thing of a source the decision reads
+/// beyond its status). @p statusOfRank is called as `SourceStatus(std::size_t
+/// r)` for the status of rank r: for ranks 0, 1 and 2 in that order, then
+/// for rank 3 only where the fluid-update flag reaches it.
+template<typename StatusOfRank, typename BarrierSampler>
+[[nodiscard]] SubstanceAt decideRanked(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
+                                       const AquiferQuery& query, StatusOfRank&& statusOfRank,
+                                       BarrierSampler&& barrier, const BarrierReads reads) {
+    // All three statuses, typed unconditionally: Π needs the type of a
+    // source that reads AIR at this block as much as of one that reads fluid
+    // (barrier.hpp).
+    std::array<SourceStatus, 3> status{};
+    for (std::size_t r = 0; r < 3; ++r) {
+        status[r] = statusOfRank(r);
+    }
+    return decideWithStatuses(
+        rankDistanceSq, status, query, [&] { return statusOfRank(std::size_t{3}); }, barrier,
+        reads);
 }
 
 } // namespace detail
@@ -729,13 +742,17 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
     // their distances, and a rank's cell and centre only to ask the table.
     const std::size_t window = cache.windowOf(centres, cellOf(query.x, query.y, query.z));
     const detail::RankedFour ranked = cache.rankIn(window, query.x, query.y, query.z);
-    return detail::decideRanked(
-        ranked.distanceSq, query,
-        [&](const std::size_t r) {
-            return cache.candidateStatus(window, ranked.candidate[r], ranked.distanceSq[r],
-                                         query.seaLevel, psl, floodedness, spread, lava, deepDark);
-        },
-        barrier, reads);
+    const auto statusOfRank = [&](const std::size_t r) {
+        return cache.candidateStatus(window, ranked.candidate[r], ranked.distanceSq[r],
+                                     query.seaLevel, psl, floodedness, spread, lava, deepDark);
+    };
+    // decideRanked's own first step, here where the window's memo is in
+    // reach: ranks 0, 1 and 2 in that order (a braced list is evaluated left
+    // to right), then the decision, which asks rank 3 only where it must.
+    const std::array<SourceStatus, 3> status{statusOfRank(0), statusOfRank(1), statusOfRank(2)};
+    return detail::decideWithStatuses(
+        ranked.distanceSq, status, query, [&] { return statusOfRank(std::size_t{3}); }, barrier,
+        reads);
 }
 
 } // namespace stratum::aquifer
