@@ -203,3 +203,6 @@ target_sources(stratum_unit_tests PRIVATE noise_column_test.cpp)
 
 # Column batches of a lattice's corners against the walk, over random graphs.
 target_sources(stratum_unit_tests PRIVATE density_column_fuzz_test.cpp)
+
+# Block kernels whose constants differ, run one after another on one Lanes.
+target_sources(stratum_unit_tests PRIVATE density_kernel_lanes_test.cpp)

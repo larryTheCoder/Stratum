@@ -1045,6 +1045,11 @@ public:
             std::int32_t fractionsWidth_ = 0;
             std::int32_t fractionsDepth_ = 0;
             std::int32_t fractionsCellWidth_ = 0;
+            /// The kernel (BlockKernel::id_) whose constants the rows hold,
+            /// 0 for none: a constant's register is written before a run and
+            /// by no op of it, so the next run of the same kernel finds it
+            /// as the last one left it.
+            std::uint64_t constantsOf_ = 0;
         };
 
     private:
@@ -1120,6 +1125,10 @@ public:
         /// row while they read the others (runLanes). Checked once, at
         /// blockKernel; a kernel without it runs block by block only.
         bool distinctRegisters_ = false;
+        /// A number no other kernel blockKernel made has, never 0: what a
+        /// Lanes holding this kernel's constants knows it by (Lanes::
+        /// constantsOf_). A copy is the same kernel, and has the same.
+        std::uint64_t id_ = 0;
     };
 
     /// @p root's BlockKernel, or nothing when its block part holds a node the

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cassert>
 #include <cmath>
@@ -2788,6 +2789,10 @@ std::optional<Interpreter::BlockKernel> Interpreter::blockKernel(const NodeIndex
     requireNode(root);
     BlockKernel kernel;
     kernel.root_ = root;
+    // A number of its own (BlockKernel::id_), from a counter every thread's
+    // kernels share; only ever compared, so its value changes nothing else.
+    static std::atomic<std::uint64_t> nextKernel{1};
+    kernel.id_ = nextKernel.fetch_add(1, std::memory_order_relaxed);
     const std::int32_t result = lowerBlock(kernel, root, 0);
     if (result < 0) {
         return std::nullopt;
@@ -3329,8 +3334,15 @@ bool Interpreter::evaluate(const BlockKernel& kernel, const BlockKernel::Blocks&
         return true;
     }
     std::fill_n(lanes.read_.begin(), kernel.interpolated_.size(), 0U);
-    for (const BlockKernel::KernelConstant& constant : kernel.constants_) {
-        lanes.values_[constant.target].fill(constant.value);
+    // The constants' rows, unless this kernel's last run left them: no op
+    // writes a constant's register (each op's target is a register of its
+    // own, newRegister's), so they hold the same doubles until another
+    // kernel's run fills them with its own.
+    if (lanes.constantsOf_ != kernel.id_) {
+        for (const BlockKernel::KernelConstant& constant : kernel.constants_) {
+            lanes.values_[constant.target].fill(constant.value);
+        }
+        lanes.constantsOf_ = kernel.id_;
     }
     try {
         return runLanes(kernel, 0, kernel.ops_.size(), lanes.blocks_.lanes, lanes, cache);
