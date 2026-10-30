@@ -403,6 +403,12 @@ public:
 
     /// The block the rules place at @p at, or nullptr where they place none —
     /// which is the ordinary case, and means the filler's block stands.
+    ///
+    /// In a build without NDEBUG, Context's precondition is checked too: a
+    /// block handing both one of this executor's keys and a biome by name
+    /// must hand the name's own key (biomeKey), or it is refused
+    /// (ExecutionError) — the key decides, and a key for another biome would
+    /// answer for that one. Without NDEBUG only: it costs a lookup a block.
     [[nodiscard]] const settings::BlockState* apply(const Context& at) const;
 
     /// The same, keeping the column's constant reads in @p memo (ColumnMemo)
@@ -437,6 +443,9 @@ public:
     [[nodiscard]] bool decidesByThreshold() const noexcept {
         return anyPassDecided_ || anyFailDecided_;
     }
+
+    /// FOR TESTS. Whether compile cut the list into y bands (bandPrograms).
+    [[nodiscard]] bool banded() const noexcept { return !bandOf_.empty(); }
 
     /// @p biome's key for Context::biomeKey (BiomeKey). Every `biome`
     /// condition answers a block carrying it exactly as it answers one whose
@@ -488,11 +497,6 @@ private:
     [[nodiscard]] const settings::BlockState& bandAt(std::int32_t y, std::int32_t offset) const;
     [[nodiscard]] float freezingField(std::int32_t x, std::int32_t z) const noexcept;
     [[nodiscard]] bool freezing(const Context& at, ColumnMemo& memo) const noexcept;
-    /// The `biome` condition @p condition, whose answers are column
-    /// @p biomeSlot of biomeAnswers_, at @p at: from at.biomeKey where it is
-    /// this executor's, by name otherwise.
-    [[nodiscard]] inline bool biomeMatches(const Condition& condition, std::size_t biomeSlot,
-                                           const Context& at) const;
 
     /// This executor's identity, which its BiomeKeys carry and a ColumnMemo
     /// is bound to: one per compile() and never 0, so no key or memo another
@@ -577,28 +581,16 @@ private:
         return index < conditions_.size() ? *conditions_[index] : graph_->condition(index);
     }
 
-    /// One condition type's test each, of @p condition (compiled as
-    /// @p compiled) at @p at: test() is the switch over these, and the
-    /// compiled list (ProgramOp) calls the one its op names directly, so the
-    /// two run one body per type and cannot part.
-    [[nodiscard]] inline bool testGradient(const Condition& condition,
-                                           const CompiledCondition& compiled,
-                                           const Context& at) const;
-    [[nodiscard]] inline bool testYAbove(const Condition& condition,
-                                         const CompiledCondition& compiled, const Context& at,
-                                         ColumnMemo& memo) const;
-    [[nodiscard]] inline bool testWater(const Condition& condition, const Context& at,
-                                        ColumnMemo& memo) const;
-    [[nodiscard]] inline bool testStoneDepth(const Condition& condition,
-                                             const CompiledCondition& compiled, const Context& at,
-                                             ColumnMemo& memo) const;
-    [[nodiscard]] inline bool testHole(const Context& at, ColumnMemo& memo) const;
-    [[nodiscard]] static inline bool testSteep(const Context& at) noexcept;
-    [[nodiscard]] inline bool testNoise(const Condition& condition,
-                                        const CompiledCondition& compiled, const Context& at,
-                                        ColumnMemo& memo) const;
-    [[nodiscard]] inline bool testAbovePreliminarySurface(const Context& at,
-                                                          ColumnMemo& memo) const;
+    /// One condition type's test each — `biome`'s, from a key or by name,
+    /// among them — as static functions of this executor: test() is the
+    /// switch over these, and the compiled list (ProgramOp) calls the one its
+    /// op names directly, so the two run one body per type and cannot part.
+    /// Declared here and defined, inline, in surface_executor.cpp alone,
+    /// where every call is: a member declared `inline` in this header would
+    /// have to be defined in every file that calls it, and one left
+    /// out-of-line is no longer inlined into the list's loop (measured: the
+    /// overworld 0.27M and amplified 1.05M instructions a chunk dearer).
+    struct Tests;
 
     /// The rule tree as a straight list, run by apply() instead of runRule's
     /// recursion: the same tests in the same order, the same block placed.
@@ -616,8 +608,8 @@ private:
     /// other tree is walked, as it always was.
     ///
     /// A test op names its condition's TYPE in its code, and carries the
-    /// condition itself, so the list runs that type's test (testYAbove and
-    /// the rest, the very bodies test() switches to) without going through
+    /// condition itself, so the list runs that type's test (Tests: the very
+    /// bodies test() switches to) without going through
     /// test() and a second switch: one dispatch per test, not three lookups
     /// and two. A condition of any other type is tested through test(),
     /// which refuses it exactly as it always did.
@@ -705,6 +697,13 @@ private:
     std::size_t bandStride_ = 1;
     std::int32_t bandMinY_ = 0;
     static constexpr std::size_t kMaxBands = 64;
+    /// Banding keeps one byte per y of the dimension (bandOf_), so it is made
+    /// only up to this height — the schema's own bound on `height`, which
+    /// every loaded geometry is held to — and a direct caller's taller
+    /// geometry, which nothing validated, runs the list as lowered at every
+    /// y: compile stays proportional to the tree. The bands only ever answer
+    /// what the list answers, so this moves no block.
+    static constexpr std::int64_t kMaxBandedHeight = 4096;
     static constexpr std::size_t kMaxBandCopies = 4096;
     static constexpr std::size_t kMaxBandedProgram = std::size_t{1} << 20;
 
@@ -784,7 +783,7 @@ Executor::decidedByThreshold(const Context& at, const ColumnMemo& memo) const no
         memo.z_ != at.z || memo.thresholdPreliminary_ != at.preliminarySurface) {
         return std::nullopt;
     }
-    // runProgram's first op, testAbovePreliminarySurface's answer from the
+    // runProgram's first op, Tests::abovePreliminarySurface's answer from the
     // kept threshold, and the terminal that answer's edge reaches.
     const ThresholdAnswer& answer = thresholdAnswers_[entrySlot(at)];
     if (passed) {
