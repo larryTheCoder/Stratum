@@ -58,9 +58,10 @@
 // does the code below — which means positive octave indices are correct here
 // but cannot be covered by cubiomes vectors.
 
+#include "perlin_kernel.hpp"
+
 #include <stratum/hash/md5.hpp>
 #include <stratum/noise/perlin.hpp>
-#include <stratum/noise/perlin_kernel.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <algorithm>
@@ -418,7 +419,14 @@ constexpr double kLatticeReach = 2147483648.0 - 512.0;
 NormalNoise::NormalNoise(OctaveNoise first, OctaveNoise second, double valueFactor)
     : first_(std::move(first)), second_(std::move(second)), valueFactor_(valueFactor),
       inputLimit_(std::min(limitFor(first_.maxFrequency()),
-                           limitFor(second_.maxFrequency() * kSecondFrequency))) {}
+                           limitFor(second_.maxFrequency() * kSecondFrequency))) {
+    // The two stacks are one length, which sample() sums them side by side
+    // on: create() draws both from one amplitude list, whose zero entries
+    // each skips alike; createLegacy() both of one octave count; zero() two
+    // empty ones. This constructor is private and those three are all that
+    // call it.
+    assert(first_.octaves_.size() == second_.octaves_.size());
+}
 
 double NormalNoise::sample(double x, double y, double z) const noexcept {
     assert(accepts(x, y, z));
@@ -426,25 +434,17 @@ double NormalNoise::sample(double x, double y, double z) const noexcept {
     // two octave sums run side by side rather than one after the other: each
     // sum still adds its own terms in its own order from 0.0, so each is the
     // double OctaveNoise::sample returns, and the two are added the same way.
-    // The stacks are built from one amplitude list and so are the same
-    // length; the tails are for a pair that is not.
+    // The stacks are one length, which the constructor asserts.
     const double secondX = x * kSecondFrequency;
     const double secondY = y * kSecondFrequency;
     const double secondZ = z * kSecondFrequency;
     const std::vector<OctaveNoise::Octave>& firstOctaves = first_.octaves_;
     const std::vector<OctaveNoise::Octave>& secondOctaves = second_.octaves_;
-    const std::size_t shared = std::min(firstOctaves.size(), secondOctaves.size());
 
     double firstTotal = 0.0;
     double secondTotal = 0.0;
-    for (std::size_t i = 0; i < shared; ++i) {
+    for (std::size_t i = 0; i < firstOctaves.size(); ++i) {
         firstTotal += octaveTerm(firstOctaves[i], x, y, z);
-        secondTotal += octaveTerm(secondOctaves[i], secondX, secondY, secondZ);
-    }
-    for (std::size_t i = shared; i < firstOctaves.size(); ++i) {
-        firstTotal += octaveTerm(firstOctaves[i], x, y, z);
-    }
-    for (std::size_t i = shared; i < secondOctaves.size(); ++i) {
         secondTotal += octaveTerm(secondOctaves[i], secondX, secondY, secondZ);
     }
     const double combined = firstTotal + secondTotal;

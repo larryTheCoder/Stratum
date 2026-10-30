@@ -18,9 +18,10 @@
 // (`legacyFromWorldSeed`) later confirmed the order across the stacks; they
 // are not its source. Recorded in NOTICE.
 
+#include "perlin_kernel.hpp"
+
 #include <stratum/noise/blended.hpp>
 #include <stratum/noise/perlin.hpp>
-#include <stratum/noise/perlin_kernel.hpp>
 #include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 

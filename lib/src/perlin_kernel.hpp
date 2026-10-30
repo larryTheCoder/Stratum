@@ -9,8 +9,11 @@
 // many octaves (OctaveNoise, NormalNoise, BlendedNoise) can inline it rather
 // than call it once per octave.
 //
-// INTERNAL. Included by perlin.cpp and blended.cpp; nothing outside
-// lib/src/ should need it, and the public way in stays PerlinNoise::sample.
+// PRIVATE TO lib/src/, and kept here rather than among the public headers so
+// that it stays so: perlin.cpp and blended.cpp include it, and nothing else
+// can — the public way in stays PerlinNoise::sample. STRATUM_NOISE_INLINE,
+// which those two files use for their own loops too, is therefore defined
+// for them alone.
 //
 // EVERY DOUBLE HERE IS THE ONE PerlinNoise::sample ALWAYS COMPUTED: the same
 // operations on the same operands in the same order, with the gradient dot,
