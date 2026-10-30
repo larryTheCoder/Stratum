@@ -6,8 +6,9 @@
 // window's first ask of that candidate. aquifer_rank_test.cpp holds the
 // whole decision to the path without the memo, read for read. This holds
 // the memo itself: the first ask reads the samplers and answers what
-// statusOf answers, every later ask reads nothing and answers the same, and
-// an ask whose read refuses keeps nothing, so the next ask reads again.
+// statusOf answers, every later ask reads nothing and answers the same —
+// from the window, not the centre table — and an ask whose read refuses
+// keeps nothing, so the next ask reads again.
 
 #include <stratum/aquifer/lattice.hpp>
 #include <stratum/aquifer/selection.hpp>
@@ -86,6 +87,26 @@ TEST_CASE("a window asks its samplers once per candidate, and a refused ask keep
             CHECK(reads == 0U);
             CHECK(again.level == first.level);
             CHECK(again.type == first.type);
+
+            // From the window's own memo, not the centre table: asked of
+            // the window and the candidate alone, it answers the
+            // candidate's status reading nothing even when handed a Source
+            // whose centre no ask has named — which a caller never does
+            // (the source must be the candidate's), so only a probe: a
+            // window that kept nothing would take that centre to the table,
+            // which has never seen it, and read.
+            reads = 0;
+            const stratum::aquifer::Source unseen{
+                .cell = ranked.cell,
+                .centre = stratum::aquifer::CellIndex{.x = ranked.centre.x + 100003,
+                                                      .y = ranked.centre.y,
+                                                      .z = ranked.centre.z - 100019},
+                .distanceSq = 0};
+            const SourceStatus held =
+                cache.statusIn(window, c, unseen, kSea, psl, flood, spread, lava, deepDark);
+            CHECK(reads == 0U);
+            CHECK(held.level == first.level);
+            CHECK(held.type == first.type);
         }
     }
 }

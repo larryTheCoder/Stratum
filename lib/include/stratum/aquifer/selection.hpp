@@ -404,7 +404,7 @@ struct RankedFour {
 /// squares, none negative, so where their sum is an int32 every partial sum
 /// is one too, and adding the x term to the other two summed gives the sum
 /// squaredDistanceTo forms (in the real window, at most 1284:
-/// squaredDistanceTo's own bound). tests/unit/aquifer_rank_four_test.cpp
+/// squaredDistanceTo's own bound). tests/unit/aquifer_consult_test.cpp
 /// holds it to rankByInsertion rank for rank.
 [[nodiscard]] inline RankedFour
 rankFour(const std::int32_t x, const std::array<Candidate, kCandidateCount>& candidates,

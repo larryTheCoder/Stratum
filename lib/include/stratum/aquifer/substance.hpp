@@ -70,7 +70,7 @@
 /// Kept out of line where the compiler would otherwise inline it: for a
 /// rare path inside a hot one, so the hot one stays small. Changes where the
 /// code sits, never what it computes. Other compilers decide for
-/// themselves.
+/// themselves. Undefined again at the end of this header.
 #if defined(__GNUC__) || defined(__clang__)
 #define STRATUM_AQUIFER_OUT_OF_LINE [[gnu::noinline]]
 #else
@@ -756,3 +756,7 @@ computeSubstance(const CentreSource& centres, const AquiferQuery& query, StatusC
 }
 
 } // namespace stratum::aquifer
+
+// This header's own, for its own declarations: not left defined in every
+// file that includes it.
+#undef STRATUM_AQUIFER_OUT_OF_LINE

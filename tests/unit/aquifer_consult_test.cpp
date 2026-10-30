@@ -42,6 +42,7 @@
 #include <limits>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -268,24 +269,31 @@ TEST_CASE("rankIn gives the insertion's ranks over a real lattice, row terms and
           "[aquifer][rank]") {
     // The shipped use: StatusCache's windows, walked in the filler's order
     // (y, then z, then x) across home-cell seams on every axis, so a window's
-    // row terms are kept along x, made again at each new row, and forgotten
-    // when its slot is drawn for another home. Every rank is held to the
-    // definition over the window rankIn was handed.
+    // row terms are kept along x and forgotten when its slot is drawn for
+    // another home — which the wide sweep's rows, 80 blocks across five home
+    // cells along x, do to every window before its next row. The narrow
+    // sweep's rows lie in two home cells along x, held in two slots, so each
+    // window is held while z and y change under it, and its row terms are
+    // made again at each new row: none kept from a row of another z or y.
+    // Every rank is held to the definition over the window rankIn was
+    // handed.
     RankTally tally;
     for (const aq::CentreSource& centres :
          {aq::CentreSource{42, stratum::density::RandomSource::Xoroshiro},
           aq::CentreSource{-4172144997902289642, stratum::density::RandomSource::Legacy}}) {
-        aq::StatusCache cache;
-        for (std::int32_t y = -70; y < 90; y += 3) {
-            for (std::int32_t z = -24; z < 24; ++z) {
-                for (std::int32_t x = -40; x < 40; ++x) {
-                    const std::size_t window = cache.windowOf(centres, aq::cellOf(x, y, z));
-                    const aq::detail::RankedFour got = cache.rankIn(window, x, y, z);
-                    compareRank(x, y, z, cache.candidatesIn(window), got, tally);
-                    // And the window is the one selectSources ranks.
-                    if (cache.candidatesIn(window) !=
-                        aq::candidatesFor(centres, aq::cellOf(x, y, z))) {
-                        ++tally.wrong;
+        for (const auto& [fromX, toX] : {std::pair{-40, 40}, std::pair{-16, 16}}) {
+            aq::StatusCache cache;
+            for (std::int32_t y = -70; y < 90; y += 3) {
+                for (std::int32_t z = -24; z < 24; ++z) {
+                    for (std::int32_t x = fromX; x < toX; ++x) {
+                        const std::size_t window = cache.windowOf(centres, aq::cellOf(x, y, z));
+                        const aq::detail::RankedFour got = cache.rankIn(window, x, y, z);
+                        compareRank(x, y, z, cache.candidatesIn(window), got, tally);
+                        // And the window is the one selectSources ranks.
+                        if (cache.candidatesIn(window) !=
+                            aq::candidatesFor(centres, aq::cellOf(x, y, z))) {
+                            ++tally.wrong;
+                        }
                     }
                 }
             }
