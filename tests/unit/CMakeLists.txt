@@ -173,3 +173,6 @@ target_sources(stratum_unit_tests PRIVATE aquifer_key_bound_test.cpp)
 
 # What a run of the fill's block kernel alone decides, held to each block's own reads.
 target_sources(stratum_unit_tests PRIVATE terrain_fill_runs_test.cpp)
+
+# The aquifer window status memo: one read per candidate, nothing kept from a refused one.
+target_sources(stratum_unit_tests PRIVATE aquifer_status_memo_test.cpp)

@@ -67,6 +67,16 @@
 #include <map>
 #include <tuple>
 
+/// Kept out of line where the compiler would otherwise inline it: for a
+/// rare path inside a hot one, so the hot one stays small. Changes where the
+/// code sits, never what it computes. Other compilers decide for
+/// themselves.
+#if defined(__GNUC__) || defined(__clang__)
+#define STRATUM_AQUIFER_OUT_OF_LINE [[gnu::noinline]]
+#else
+#define STRATUM_AQUIFER_OUT_OF_LINE
+#endif
+
 namespace stratum::aquifer {
 
 /// What the aquifer decided a position holds. The caller substitutes real
@@ -294,16 +304,16 @@ public:
     statusIn(const std::size_t window, const std::size_t candidate, const Source& ranked,
              const std::int32_t seaLevel, PslSampler&& psl, FloodednessSampler&& floodedness,
              SpreadSampler&& spread, LavaSampler&& lava, DeepDarkSampler&& deepDark) {
-        HomeSlot& slot = homes_[window];
+        const HomeSlot& slot = homes_[window];
         const auto bit = static_cast<std::uint16_t>(1U << candidate);
         if ((slot.known & bit) != 0U) {
             return slot.status[candidate];
         }
-        const SourceStatus status =
-            statusOf(ranked, seaLevel, psl, floodedness, spread, lava, deepDark);
-        slot.status[candidate] = status;
-        slot.known = static_cast<std::uint16_t>(slot.known | bit);
-        return status;
+        // A window's first ask of this candidate: rare (about once per
+        // candidate a home cell), and out of line, so that the ask every
+        // other block makes is a test and a load where it is inlined.
+        return learnStatusIn(window, candidate, ranked, seaLevel, psl, floodedness, spread, lava,
+                             deepDark);
     }
 
     template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
@@ -324,6 +334,23 @@ public:
     }
 
 private:
+    /// statusIn where the window has not asked about @p candidate yet: the
+    /// centre-keyed table's answer (statusOf), kept in the window.
+    template<typename PslSampler, typename FloodednessSampler, typename SpreadSampler,
+             typename LavaSampler, typename DeepDarkSampler>
+    [[nodiscard]] STRATUM_AQUIFER_OUT_OF_LINE SourceStatus
+    learnStatusIn(const std::size_t window, const std::size_t candidate, const Source& ranked,
+                  const std::int32_t seaLevel, PslSampler&& psl, FloodednessSampler&& floodedness,
+                  SpreadSampler&& spread, LavaSampler&& lava, DeepDarkSampler&& deepDark) {
+        HomeSlot& slot = homes_[window];
+        const auto bit = static_cast<std::uint16_t>(1U << candidate);
+        const SourceStatus status =
+            statusOf(ranked, seaLevel, psl, floodedness, spread, lava, deepDark);
+        slot.status[candidate] = status;
+        slot.known = static_cast<std::uint16_t>(slot.known | bit);
+        return status;
+    }
+
     struct HomeSlot {
         bool filled = false;
         CellIndex home{};
