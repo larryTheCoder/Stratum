@@ -210,9 +210,10 @@ void fillRow(std::vector<std::uint16_t>& blocks, const std::size_t first, const 
             return;
         default:
             // Only a cell 12 or 16 wide comes here, and its runs are one row
-            // each (16 lanes), so the first store writes again the block
-            // writeRun has just placed: the same index, harmlessly. A run of
-            // more rows at another width would still be written right.
+            // each (of 12 lanes or of 16), so the first store writes again
+            // the block writeRun has just placed: the same index, harmlessly.
+            // A run of more rows at another width would still be written
+            // right.
             std::fill_n(at, count, value);
             return;
     }
