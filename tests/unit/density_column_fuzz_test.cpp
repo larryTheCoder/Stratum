@@ -542,7 +542,10 @@ void fillChunk(Draw& draw, const Interpreter& interpreter, const CellGeometry ce
         tally.declines += memo.columnDeclines();
         tally.memoForgets += forgot ? 1U : 0U;
         // From the epoch's last value but one, the second epoch taken after
-        // it is the wrap's.
+        // it is the wrap's. That is read from the counters, which is sound
+        // while a cache's rows are sized once, at its first batch, which the
+        // advance waits for; what the wrap must do there is held exactly by
+        // density_column_runs_test's case of a row stamped before it.
         if (advanced && epochs() >= epochsAtAdvance + 2U) {
             ++tally.epochWraps;
         }
