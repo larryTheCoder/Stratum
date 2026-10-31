@@ -6,7 +6,11 @@
 // and may need again — the corner lattice, `flat_cache`'s relocated reads,
 // the column memo — and a BlockKernel's lanes run only where it does, since
 // they read a cell's corners before the caller's reads in between. This file
-// holds both to that one condition.
+// holds both to that one condition, and the memo's epoch to its wrap: a memo
+// forgets by moving to the next epoch, and at the wrap, where earlier epochs
+// are about to be handed out again, it clears the stamps of every kind of
+// place it keeps a value in — of which a wrap on a memo that has kept nothing
+// yet tests none.
 
 #include "support/temp_path.hpp"
 
@@ -23,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -155,5 +160,103 @@ TEST_CASE("the memo and a kernel's lanes are used under one condition: a lattice
         CHECK_FALSE(substituted.evaluate(*own, blocks, lanes, cache));
         CHECK(bits(substituted.evaluate(*own, at, cache)) == bits(expected));
         CHECK(cache.memoSize() == 0U);
+    }
+}
+
+TEST_CASE("a memo whose epoch wraps after it has kept values forgets each kind it kept",
+          "[density][interpreter][memo]") {
+    const MemoTree tree;
+    tree.defineNoise("memo_a", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
+    // Two noises the column memo keeps (column-invariant, y_scale 0) and
+    // their sum, which it keeps too: three slots of every column record.
+    tree.define(
+        "wrap/sum",
+        R"({"type":"minecraft:add","argument1":{"type":"minecraft:noise","noise":"memo_a","xz_scale":1.0,"y_scale":0.0},"argument2":{"type":"minecraft:noise","noise":"memo_a","xz_scale":0.5,"y_scale":0.0}})");
+    tree.define("wrap/column",
+                R"({"type":"minecraft:noise","noise":"memo_a","xz_scale":1.0,"y_scale":0.0})");
+    tree.define(
+        "wrap/terrain",
+        R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:noise","noise":"memo_a","xz_scale":1.0,"y_scale":1.0}})");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 99,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, kOverworldCells);
+    const auto rootOf = [&graph](std::string_view name) {
+        return graph.rootOf(ResourceLocation::parse("minecraft:wrap/" + std::string(name)));
+    };
+    Interpreter::CornerCache cache(interpreter.cacheSize());
+    std::size_t differing = 0;
+    const auto read = [&](const NodeIndex root, const Point at) {
+        differing +=
+            bits(interpreter.evaluate(root, at, cache)) != bits(interpreter.evaluate(root, at))
+                ? 1U
+                : 0U;
+    };
+
+    SECTION("column records and the directory naming them") {
+        // A record is handed to each new column in turn from 0, and the
+        // directory names it by (x, z); the wrap brings back epoch 1, the
+        // epoch the first records and their directory entries were stamped
+        // in, so both must be cleared there.
+        const NodeIndex sum = rootOf("sum");
+        const auto column = [](std::int32_t x) { return Point{.x = x, .y = 3, .z = 0}; };
+        // Records 0 and 1, epoch 1: (0, 0) and (64, 0), three values each.
+        read(sum, column(0));
+        read(sum, column(64));
+        REQUIRE(cache.memoSize() == 6U);
+        // Record 0 again, at the epoch's last value: (128, 0).
+        cache.advanceMemoEpoch(std::numeric_limits<std::uint32_t>::max());
+        read(sum, column(128));
+        REQUIRE(cache.memoSize() == 3U);
+        // The wrap, back to epoch 1.
+        cache.reset();
+        REQUIRE(cache.memoEpochWraps() == 1U);
+        // Records 0 and 1 again: (256, 0), then (512, 0) in the record (64, 0)
+        // had, whose slots it stamped 1. Then (64, 0), whose directory entry
+        // was stamped 1 and named record 1, (512, 0)'s now.
+        read(sum, column(256));
+        read(sum, column(512));
+        CHECK(cache.memoSize() == 6U);
+        read(sum, column(64));
+        CHECK(cache.memoSize() == 9U);
+        // The two columns that share record 1 are told apart by value.
+        CHECK(bits(interpreter.evaluate(sum, column(64))) !=
+              bits(interpreter.evaluate(sum, column(512))));
+        CHECK(differing == 0U);
+    }
+
+    SECTION("lattices") {
+        // A lattice keeps its corners, and its stamps, until the memo forgets
+        // where it keeps things (reset); a memo forgotten whole at
+        // kMemoColumns records keeps its lattices, and a wrap there must
+        // clear their stamps too, so that a corner stamped 1 before is not
+        // held at epoch 1 after. Not a value — a lattice's corner is a pure
+        // function of where it is kept — but the work: such a corner would
+        // be read rather than made again.
+        const NodeIndex terrain = rootOf("terrain");
+        const NodeIndex flat = rootOf("column");
+        // Cell iy 0: four batches of 8, lattice columns (0, 0), (0, 4),
+        // (4, 0) and (4, 4), stamped 1.
+        read(terrain, Point{.x = 1, .y = 1, .z = 1});
+        REQUIRE(cache.columnBatches() == 4U);
+        // The epoch at its last value, then a record for each of
+        // kMemoColumns + 1 columns: the last forgets the memo whole, which
+        // wraps it, and keeps the lattice.
+        cache.advanceMemoEpoch(std::numeric_limits<std::uint32_t>::max());
+        for (std::int32_t c = 0;
+             c <= static_cast<std::int32_t>(Interpreter::CornerCache::kMemoColumns); ++c) {
+            read(flat, Point{.x = 1000 + c, .y = 0, .z = -7});
+        }
+        REQUIRE(cache.memoEpochWraps() == 1U);
+        REQUIRE(cache.memoLattices() == 1U);
+        REQUIRE(cache.memoSize() == 1U);
+        // Cell (4, 0, 0): columns (4, 0) and (4, 4), stamped 1 before the
+        // wrap, and (8, 0) and (8, 4), never stamped. None is held, so four
+        // batches of 8 — two fewer would mean the first two read as held.
+        read(terrain, Point{.x = 5, .y = 1, .z = 1});
+        CHECK(cache.columnBatches() == 8U);
+        CHECK(cache.columnCorners() == 64U);
+        CHECK(differing == 0U);
     }
 }

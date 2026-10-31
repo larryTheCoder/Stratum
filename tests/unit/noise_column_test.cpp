@@ -266,7 +266,11 @@ TEST_CASE("a normal noise at a y of zero is what its column makes there, bit for
 TEST_CASE("a Perlin octave knows its lattice along y at y = 0 only inside the lattice's range",
           "[noise][column]") {
     // flatYKnown is what lets sample() skip making it; an origin the lattice
-    // cannot hold (out of int32, NaN) leaves it unknown.
+    // cannot hold (out of int32, NaN) leaves it unknown. The range is
+    // [-2^31, 2^31): its lower end is a lattice cell, whose low byte is 0,
+    // and the double below 2^31 is in cell 2^31 - 1, low byte 255, at the
+    // last fraction short of 1; 2^31 itself is out, where a floor converted
+    // to int32 would have no defined value.
     std::array<std::uint8_t, 256> identity{};
     for (std::size_t i = 0; i < identity.size(); ++i) {
         identity[i] = static_cast<std::uint8_t>(i);
@@ -279,6 +283,18 @@ TEST_CASE("a Perlin octave knows its lattice along y at y = 0 only inside the la
     CHECK(bits(PerlinNoise(0.0, -0.0, 0.0, identity).flatLocalY()) == bits(0.0));
     CHECK_FALSE(PerlinNoise(0.0, 3.0e9, 0.0, identity).flatYKnown());
     CHECK_FALSE(PerlinNoise(0.0, std::nan(""), 0.0, identity).flatYKnown());
+    const PerlinNoise lowest(0.0, -2147483648.0, 0.0, identity);
+    CHECK(lowest.flatYKnown());
+    CHECK(lowest.flatCellY() == 0U);
+    CHECK(bits(lowest.flatLocalY()) == bits(0.0));
+    const double belowTop = std::nextafter(2147483648.0, 0.0);
+    const PerlinNoise highest(0.0, belowTop, 0.0, identity);
+    CHECK(highest.flatYKnown());
+    CHECK(highest.flatCellY() == 255U);
+    CHECK(bits(highest.flatLocalY()) == bits(belowTop - 2147483647.0));
+    CHECK_FALSE(PerlinNoise(0.0, 2147483648.0, 0.0, identity).flatYKnown());
+    CHECK_FALSE(
+        PerlinNoise(0.0, std::nextafter(-2147483648.0, -3.0e9), 0.0, identity).flatYKnown());
 }
 
 TEST_CASE("a blended noise's column is its samples, bit for bit", "[noise][column]") {
