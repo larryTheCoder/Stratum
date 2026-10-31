@@ -177,6 +177,11 @@ TEST_CASE("a memo whose epoch wraps after it has kept values forgets each kind i
     tree.define(
         "wrap/terrain",
         R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:noise","noise":"memo_a","xz_scale":1.0,"y_scale":1.0}})");
+    // The same noise at other scales: a node of its own, so a lattice of its
+    // own.
+    tree.define(
+        "wrap/other",
+        R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:noise","noise":"memo_a","xz_scale":0.5,"y_scale":2.0}})");
     const Pack pack = tree.pack();
     const Graph graph = Graph::resolveAll(pack);
     const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 99,
@@ -226,37 +231,80 @@ TEST_CASE("a memo whose epoch wraps after it has kept values forgets each kind i
         CHECK(differing == 0U);
     }
 
-    SECTION("lattices") {
-        // A lattice keeps its corners, and its stamps, until the memo forgets
-        // where it keeps things (reset); a memo forgotten whole at
-        // kMemoColumns records keeps its lattices, and a wrap there must
-        // clear their stamps too, so that a corner stamped 1 before is not
-        // held at epoch 1 after. Not a value — a lattice's corner is a pure
-        // function of where it is kept — but the work: such a corner would
-        // be read rather than made again.
-        const NodeIndex terrain = rootOf("terrain");
+    // The epoch at its last value, then a record for each of kMemoColumns + 1
+    // columns: the last forgets the memo whole, which wraps it, and keeps the
+    // lattices. One value is kept after: the last column's.
+    const auto wrap = [&] {
         const NodeIndex flat = rootOf("column");
-        // Cell iy 0: four batches of 8, lattice columns (0, 0), (0, 4),
-        // (4, 0) and (4, 4), stamped 1.
-        read(terrain, Point{.x = 1, .y = 1, .z = 1});
-        REQUIRE(cache.columnBatches() == 4U);
-        // The epoch at its last value, then a record for each of
-        // kMemoColumns + 1 columns: the last forgets the memo whole, which
-        // wraps it, and keeps the lattice.
         cache.advanceMemoEpoch(std::numeric_limits<std::uint32_t>::max());
         for (std::int32_t c = 0;
              c <= static_cast<std::int32_t>(Interpreter::CornerCache::kMemoColumns); ++c) {
             read(flat, Point{.x = 1000 + c, .y = 0, .z = -7});
         }
-        REQUIRE(cache.memoEpochWraps() == 1U);
+    };
+
+    SECTION("lattices") {
+        // A lattice keeps its corners, and its stamps, until the memo forgets
+        // where it keeps things (reset); a memo forgotten whole at
+        // kMemoColumns records keeps its lattices, and a wrap there must
+        // clear their stamps too — every lattice's — so that a corner stamped
+        // 1 before is not held at epoch 1 after. Not a value — a lattice's
+        // corner is a pure function of where it is kept — but the work: such
+        // a corner would be read rather than made again.
+        const NodeIndex terrain = rootOf("terrain");
+        const NodeIndex other = rootOf("other");
+        // Cell iy 0 of each: four batches of 8 in each one's lattice, its
+        // columns (0, 0), (0, 4), (4, 0) and (4, 4), stamped 1. `terrain`'s
+        // lattice is the memo's first, `other`'s its second.
+        read(terrain, Point{.x = 1, .y = 1, .z = 1});
         REQUIRE(cache.memoLattices() == 1U);
+        read(other, Point{.x = 1, .y = 1, .z = 1});
+        REQUIRE(cache.memoLattices() == 2U);
+        REQUIRE(cache.columnBatches() == 8U);
+        wrap();
+        REQUIRE(cache.memoEpochWraps() == 1U);
+        REQUIRE(cache.memoLattices() == 2U);
         REQUIRE(cache.memoSize() == 1U);
-        // Cell (4, 0, 0): columns (4, 0) and (4, 4), stamped 1 before the
-        // wrap, and (8, 0) and (8, 4), never stamped. None is held, so four
-        // batches of 8 — two fewer would mean the first two read as held.
+        // Cell (4, 0, 0) of each in turn: columns (4, 0) and (4, 4), stamped
+        // 1 before the wrap, and (8, 0) and (8, 4), never stamped. None is
+        // held, so four batches of 8 for each — two fewer for a lattice would
+        // mean its first two read as held.
         read(terrain, Point{.x = 5, .y = 1, .z = 1});
-        CHECK(cache.columnBatches() == 8U);
-        CHECK(cache.columnCorners() == 64U);
+        CHECK(cache.columnBatches() == 12U);
+        read(other, Point{.x = 5, .y = 1, .z = 1});
+        CHECK(cache.columnBatches() == 16U);
+        CHECK(cache.columnCorners() == 128U);
+        CHECK(cache.memoSize() == 1U + 64U);
+        CHECK(differing == 0U);
+    }
+
+    SECTION("the hash") {
+        // A corner no lattice holds is the hash's, stamped with the epoch it
+        // was kept in; the wrap must clear those stamps too, so that a corner
+        // kept at epoch 1 before it is not held at epoch 1 after.
+        const NodeIndex terrain = rootOf("terrain");
+        // Cell iy 0, anchoring `terrain`'s lattice at (0, 0, 0), 65 corners
+        // up (y 0..512): four batches, 32 corners.
+        read(terrain, Point{.x = 1, .y = 1, .z = 1});
+        REQUIRE(cache.columnBatches() == 4U);
+        REQUIRE(cache.memoSize() == 32U);
+        // Cell iy 75 (y 600), past the lattice: its eight corners are kept at
+        // epoch 1, by no batch — the hash's.
+        read(terrain, Point{.x = 1, .y = 601, .z = 1});
+        REQUIRE(cache.columnBatches() == 4U);
+        REQUIRE(cache.memoSize() == 40U);
+        wrap();
+        REQUIRE(cache.memoEpochWraps() == 1U);
+        REQUIRE(cache.memoSize() == 1U);
+        // Cell iy 76 (y 608): its four lower corners, at y 608, are the four
+        // the hash kept at epoch 1 as the upper ones of the cell below; its
+        // four upper ones, at y 616, it never kept. None is held, so eight
+        // are made and kept — four, were the first four read as held. (A
+        // cell other than the last one read: the cache's own last cell would
+        // answer that without asking the memo.)
+        read(terrain, Point{.x = 1, .y = 609, .z = 1});
+        CHECK(cache.memoSize() == 9U);
+        CHECK(cache.columnBatches() == 4U);
         CHECK(differing == 0U);
     }
 }
