@@ -14,6 +14,12 @@
 // fixed from its first fill until the cache is forgotten. A forgotten cache
 // gives its lattices' room back whole: read again after a reset, it makes
 // the lattices it made the first time, and holds the same corners in them.
+//
+// A lattice's columns lie end to end in its storage, y fastest, so the corner
+// above a column's top layer is the next column's bottom one. A cell at the
+// top layer, and a column run up to it, must stay in their own column; a
+// dimension may be 4064 blocks high, so a fill reaches that layer, 512 blocks
+// above the anchor, and passes it.
 
 #include "support/temp_path.hpp"
 
@@ -172,4 +178,59 @@ TEST_CASE("the corner cache's lattices stay inside their bound, and past it the 
         CHECK(filled.latticesAgain == filled.lattices);
         CHECK(filled.cornersAgain == filled.corners);
     }
+}
+
+TEST_CASE("a lattice's top layer holds its own column's corners, and a run up a column ends there",
+          "[density][interpreter][memo]") {
+    // One `interpolated` over a 3D noise at 4x8 cells: a lattice of 5 x 65 x
+    // 5 corners, iy 0 to 64 up each column, anchored at (0, 0, 0) by the
+    // first read. Every read is held to the uncached walk and to a last-cell
+    // cache.
+    const BoundTree tree;
+    tree.define("noise", "bound", R"({"firstOctave":-3,"amplitudes":[1.0,0.5]})");
+    tree.define("density_function", "top",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:noise",)"
+                R"("noise":"minecraft:bound","xz_scale":1.0,"y_scale":1.0}})");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 64,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 8});
+    const NodeIndex root = graph.rootOf(ResourceLocation::parse("top"));
+    Interpreter::CornerCache memo(interpreter.cacheSize(), Sharing::Lattice);
+    Interpreter::CornerCache last(interpreter.cacheSize(), Sharing::LastCell);
+    std::size_t differing = 0;
+    const auto read = [&](const Point at) {
+        const double value = interpreter.evaluate(root, at, memo);
+        if (bits(value) != bits(interpreter.evaluate(root, at)) ||
+            bits(value) != bits(interpreter.evaluate(root, at, last))) {
+            ++differing;
+        }
+    };
+    // Cell iy 0, anchoring the lattice: four batches of 8 (iy 0..7).
+    read(Point{.x = 1, .y = 1, .z = 1});
+    REQUIRE(memo.memoLattices() == 1U);
+    REQUIRE(memo.columnBatches() == 4U);
+    // Cell (8, 480, 8), iy 60, whole: each of its four columns runs from iy
+    // 60 to the top layer, iy 64, and no further — 5 corners, where a 6th
+    // would be the next column's iy 0. 32 + 20 corners in all.
+    read(Point{.x = 9, .y = 484, .z = 9});
+    CHECK(memo.columnBatches() == 8U);
+    CHECK(memo.columnCorners() == 52U);
+    // Cell (0, 512, 0), iy 64: its lower corners are the top layer of the
+    // first cell's columns, and its upper ones (y 520) are past the lattice,
+    // so the hash's. Each top-layer corner is a run of one, evaluated alone:
+    // still eight batches.
+    read(Point{.x = 1, .y = 513, .z = 1});
+    read(Point{.x = 2, .y = 519, .z = 3});
+    CHECK(memo.columnBatches() == 8U);
+    CHECK(memo.columnCorners() == 52U);
+    // The bottom of every column, whose corner a corner above a top layer
+    // would have been kept in place of.
+    for (std::int32_t cx = 0; cx < 16; cx += 4) {
+        for (std::int32_t cz = 0; cz < 16; cz += 4) {
+            read(Point{.x = cx + 1, .y = 1, .z = cz + 2});
+        }
+    }
+    CHECK(differing == 0U);
 }
