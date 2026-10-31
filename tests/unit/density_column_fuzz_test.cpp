@@ -32,7 +32,10 @@
 // `clamp` whose lanes differ. The draws do not hold those last ones: they
 // seldom put an `abs` over lanes that are negative at all, so even an `abs`
 // lane that gave its input back would pass them, and a NaN or a zero of
-// either sign seldom reaches any of the four where its lanes differ.
+// either sign seldom reaches any of the four where its lanes differ. Nor a
+// shifted noise whose lanes part on one axis alone: the draws' parting
+// shifts part them on x (and seldom keep z), so a batch that compared only
+// one axis before sampling the lanes as one column would pass them too.
 
 #include "support/temp_path.hpp"
 
@@ -1065,5 +1068,192 @@ TEST_CASE("a batch's min, max, abs and clamp lanes keep the walk's NaN and signe
                 CHECK(positives == values);
                 break;
         }
+    }
+}
+
+TEST_CASE("a batch samples a shifted noise as one column only where every lane's x and z are "
+          "the first's",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // shiftedLanes samples a batch's lanes down one column where every lane's
+    // shifted x and shifted z are the first lane's, bit for bit, and each lane
+    // alone otherwise. Vanilla's shifts are column-invariant, and the random
+    // graphs above part the lanes on x, so neither comparison is held alone
+    // there; these part them on z alone, on x alone, on both, on neither (the
+    // y shift alone varying, so the one column), and at some lanes only: a
+    // shift that is zero at most corners and not at the rest. Each shift
+    // varies down a lattice column (checked at the corners a batch takes), so
+    // a batch that compared one axis less would sample a parted lane at the
+    // first lane's x or z. Each is the argument of an `interpolated` read
+    // through a memo cache, block by block and in a kernel's runs, and every
+    // value is the uncached walk's, bit for bit.
+    const FuzzTree tree;
+    tree.defineNoise("shifted_sampled", R"({"firstOctave":-4,"amplitudes":[1.0,0.5]})");
+    tree.defineNoise("shifted_by_a", R"({"firstOctave":-3,"amplitudes":[1.0]})");
+    tree.defineNoise("shifted_by_b", R"({"firstOctave":-5,"amplitudes":[1.0,1.0]})");
+    const std::string byA =
+        R"({"type":"minecraft:mul","argument1":{"type":"minecraft:noise","noise":"minecraft:shifted_by_a","xz_scale":1.0,"y_scale":1.0},"argument2":8.0})";
+    const std::string byB =
+        R"({"type":"minecraft:mul","argument1":{"type":"minecraft:noise","noise":"minecraft:shifted_by_b","xz_scale":0.5,"y_scale":2.0},"argument2":8.0})";
+    // Zero where the noise is below 0.3, and the noise's own shift above it.
+    const std::string someLanes =
+        R"({"type":"minecraft:max","argument1":0.0,"argument2":{"type":"minecraft:add","argument1":)" +
+        byA + R"(,"argument2":-2.4}})";
+    const auto shifted = [](const std::string& shiftX, const std::string& shiftY,
+                            const std::string& shiftZ) {
+        return R"({"type":"minecraft:shifted_noise","noise":"minecraft:shifted_sampled","xz_scale":1.0,"y_scale":0.5,"shift_x":)" +
+               shiftX + R"(,"shift_y":)" + shiftY + R"(,"shift_z":)" + shiftZ + "}";
+    };
+
+    struct Argument {
+        std::string_view name;
+        std::string shiftX;
+        std::string shiftY;
+        std::string shiftZ;
+        // The shifts that must vary down a lattice column (x, then z).
+        bool xParts;
+        bool zParts;
+    };
+
+    const std::array<Argument, 6> arguments{{
+        {.name = "z_only",
+         .shiftX = "0.0",
+         .shiftY = "0.0",
+         .shiftZ = byA,
+         .xParts = false,
+         .zParts = true},
+        {.name = "x_only",
+         .shiftX = byA,
+         .shiftY = "0.0",
+         .shiftZ = "0.0",
+         .xParts = true,
+         .zParts = false},
+        {.name = "both",
+         .shiftX = byA,
+         .shiftY = "0.0",
+         .shiftZ = byB,
+         .xParts = true,
+         .zParts = true},
+        {.name = "neither",
+         .shiftX = "0.0",
+         .shiftY = byB,
+         .shiftZ = "0.0",
+         .xParts = false,
+         .zParts = false},
+        {.name = "z_some_lanes",
+         .shiftX = "0.0",
+         .shiftY = "0.0",
+         .shiftZ = someLanes,
+         .xParts = false,
+         .zParts = true},
+        {.name = "x_some_lanes",
+         .shiftX = someLanes,
+         .shiftY = "0.0",
+         .shiftZ = "0.0",
+         .xParts = true,
+         .zParts = false},
+    }};
+    for (const Argument& argument : arguments) {
+        tree.define("lanes/" + std::string(argument.name),
+                    R"({"type":"minecraft:interpolated","argument":)" +
+                        shifted(argument.shiftX, argument.shiftY, argument.shiftZ) + "}");
+        tree.define("shifts/" + std::string(argument.name) + "_x", argument.shiftX);
+        tree.define("shifts/" + std::string(argument.name) + "_z", argument.shiftZ);
+    }
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 31,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const CellGeometry cells{.width = 4, .height = 8};
+    const Interpreter interpreter(graph, noises, cells);
+    constexpr std::int32_t kBaseX = -16;
+    constexpr std::int32_t kBaseZ = 32;
+    constexpr std::int32_t kMinY = -24;
+    constexpr std::int32_t kTopY = 40;
+    const auto rootOf = [&graph](const std::string& name) {
+        return graph.rootOf(ResourceLocation::parse("minecraft:" + name));
+    };
+    for (const Argument& argument : arguments) {
+        CAPTURE(argument.name);
+        // Whether a shift parts the lanes of some lattice column the reads
+        // below batch: its value at the column's corners, (x, cell-height
+        // multiples of y, z), not one double.
+        const auto parts = [&](const NodeIndex shift) {
+            std::size_t parted = 0;
+            for (std::int32_t z = 0; z <= 16; z += cells.width) {
+                for (std::int32_t x = 0; x <= 16; x += cells.width) {
+                    const Point bottom{.x = kBaseX + x, .y = kMinY, .z = kBaseZ + z};
+                    const double first = interpreter.evaluate(shift, bottom);
+                    for (std::int32_t y = kMinY + cells.height; y <= kTopY; y += cells.height) {
+                        const double at = interpreter.evaluate(
+                            shift, Point{.x = bottom.x, .y = y, .z = bottom.z});
+                        if (std::bit_cast<std::uint64_t>(at) !=
+                            std::bit_cast<std::uint64_t>(first)) {
+                            ++parted;
+                            break;
+                        }
+                    }
+                }
+            }
+            return parted;
+        };
+        const std::size_t xParted = parts(rootOf("shifts/" + std::string(argument.name) + "_x"));
+        const std::size_t zParted = parts(rootOf("shifts/" + std::string(argument.name) + "_z"));
+        CAPTURE(xParted, zParted);
+        CHECK((xParted > 0U) == argument.xParts);
+        CHECK((zParted > 0U) == argument.zParts);
+
+        const NodeIndex root = rootOf("lanes/" + std::string(argument.name));
+        const std::optional<BlockKernel> kernel = interpreter.blockKernel(root);
+        REQUIRE(kernel.has_value());
+        std::size_t values = 0;
+        std::size_t differing = 0;
+        const auto hold = [&](const double got, const Point at) {
+            const double want = interpreter.evaluate(root, at);
+            ++values;
+            differing +=
+                std::bit_cast<std::uint64_t>(got) != std::bit_cast<std::uint64_t>(want) ? 1U : 0U;
+        };
+        // Block by block, a few columns of every cell of a chunk.
+        Interpreter::CornerCache memo(interpreter.cacheSize(), Sharing::Lattice);
+        for (std::int32_t z = 0; z < 16; z += 5) {
+            for (std::int32_t x = 0; x < 16; x += 3) {
+                for (std::int32_t y = kMinY; y < kTopY; ++y) {
+                    const Point at{.x = kBaseX + x, .y = y, .z = kBaseZ + z};
+                    hold(interpreter.evaluate(root, at, memo), at);
+                }
+            }
+        }
+        // A kernel's runs, a cell's row of blocks at a time, over four cells
+        // of the chunk, as ChunkFiller::fill reads them.
+        Interpreter::CornerCache runs(interpreter.cacheSize(), Sharing::Lattice);
+        BlockKernel::Lanes lanes;
+        for (std::int32_t cellZ = 0; cellZ < 8; cellZ += cells.width) {
+            for (std::int32_t cellX = 0; cellX < 8; cellX += cells.width) {
+                for (std::int32_t y = kMinY; y < kTopY; ++y) {
+                    const BlockKernel::Blocks blocks{
+                        .first = Point{.x = kBaseX + cellX, .y = y, .z = kBaseZ + cellZ},
+                        .width = cells.width,
+                        .depth = cells.width,
+                        .lanes = ~0U};
+                    REQUIRE(interpreter.evaluate(*kernel, blocks, lanes, runs));
+                    for (std::int32_t row = 0; row < blocks.depth; ++row) {
+                        for (std::int32_t column = 0; column < blocks.width; ++column) {
+                            const auto lane = (static_cast<std::size_t>(row) *
+                                               static_cast<std::size_t>(blocks.width)) +
+                                              static_cast<std::size_t>(column);
+                            hold(lanes.value(lane), Point{.x = blocks.first.x + column,
+                                                          .y = y,
+                                                          .z = blocks.first.z + row});
+                        }
+                    }
+                }
+            }
+        }
+        CAPTURE(values, memo.columnBatches(), runs.columnBatches());
+        CHECK(differing == 0U);
+        CHECK(memo.columnBatches() > 0U);
+        CHECK(memo.columnDeclines() == 0U);
+        CHECK(runs.columnBatches() > 0U);
+        CHECK(runs.columnDeclines() == 0U);
     }
 }
