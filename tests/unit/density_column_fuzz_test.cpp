@@ -28,8 +28,11 @@
 // seconds long; "[.column-fuzz-long]" runs many times as many packs. Beside
 // it, cases written out whole for what the draws seldom reach: an argument
 // as deep as a graph may be, a column-invariant node a cell could be filled
-// beneath, and NaN and zeros of both signs at a `min` or `max` whose lanes
-// differ.
+// beneath, and NaN and zeros of both signs at a `min`, `max`, `abs` or
+// `clamp` whose lanes differ. The draws do not hold those last ones: they
+// seldom put an `abs` over lanes that are negative at all, so even an `abs`
+// lane that gave its input back would pass them, and a NaN or a zero of
+// either sign seldom reaches any of the four where its lanes differ.
 
 #include "support/temp_path.hpp"
 
@@ -837,23 +840,33 @@ TEST_CASE("a batch reads no column-invariant node beneath which a cell could be 
     CHECK(flatBatches > 0U);
 }
 
-TEST_CASE("a batch's min and max lanes keep the walk's NaN and signed zeros in either argument",
+TEST_CASE("a batch's min, max, abs and clamp lanes keep the walk's NaN and signed zeros",
           "[density][interpreter][kernel][column-fuzz]") {
     // evaluateNode's `min` and `max` are `first < second ? first : second`
     // and `first > second ? first : second` (minOf, maxOf), and a batch's
     // lanes of them (binaryLanes) must be the same: where an argument is NaN,
     // or the two are zeros of opposite signs, the result is the second
     // argument, which std::min and std::max (or the arguments swapped) do
-    // not give. The random graphs above seldom bring either case to a `min`
-    // or `max` whose lanes differ, since a constant argument is
-    // column-invariant and read once through the walk; these bring both, as
+    // not give. Its `abs` and `clamp` are std::abs and std::clamp, and a
+    // batch's lanes of them (unaryLanes) must be those too: std::abs clears
+    // a negative zero's sign, which `value < 0.0 ? -value : value` does not,
+    // and std::clamp gives a NaN back and keeps a zero's sign at a zero
+    // bound, where max(low, min(value, high)) gives `low` for the NaN and
+    // the bound for the zero. The random graphs above seldom bring any of
+    // these to a node whose lanes differ, since a constant argument is
+    // column-invariant and read once through the walk, and their `abs`
+    // seldom sees a negative varying lane at all; these bring every one, as
     // the first argument and as the second, against a constant and against
     // lanes that differ down the column:
     //  - NaN at some corners and +0 at the rest: a noise clamped to [0, 1],
-    //    taken past the largest double and times zero;
+    //    taken past the largest double and times zero — at a `min` or `max`,
+    //    under `abs`, and under `clamp` with bounds on both sides of zero and
+    //    with both above it;
     //  - zeros of both signs, a noise times 0.0 and times -0.0, made visible
-    //    as -1 and 1 through `invert` and `clamp`, against each other and
-    //    against a constant zero.
+    //    as -1 and 1 through `invert` and `clamp`: at a `min` or `max`
+    //    against each other and against a constant zero, under `abs` (every
+    //    value then 1), and under `clamp` at a lower bound of zero and at an
+    //    upper one.
     // Each is the argument of an `interpolated` read through a memo cache —
     // block by block and in a kernel's runs — whose batches take it whole
     // and never decline, and every value is the uncached walk's, bit for bit.
@@ -865,50 +878,102 @@ TEST_CASE("a batch's min and max lanes keep the walk's NaN and signed zeros in e
         return R"({"type":"minecraft:)" + std::string(type) + R"(","argument1":)" + first +
                R"(,"argument2":)" + second + "}";
     };
+    const auto single = [](std::string_view type, const std::string& argument) {
+        return R"({"type":"minecraft:)" + std::string(type) + R"(","argument":)" + argument + "}";
+    };
+    const auto clamp = [](const std::string& input, std::string_view low, std::string_view high) {
+        return R"({"type":"minecraft:clamp","input":)" + input + R"(,"min":)" + std::string(low) +
+               R"(,"max":)" + std::string(high) + "}";
+    };
     const std::string noise =
         R"({"type":"minecraft:noise","noise":"minecraft:minmax_a","xz_scale":1.0,"y_scale":1.0})";
     const std::string other =
         R"({"type":"minecraft:noise","noise":"minecraft:minmax_b","xz_scale":0.5,"y_scale":2.0})";
     // NaN where the noise is above zero (infinity times zero), +0 elsewhere.
     const std::string nan =
-        pair("mul",
-             pair("mul",
-                  pair("mul",
-                       R"({"type":"minecraft:clamp","input":)" + noise + R"(,"min":0.0,"max":1.0})",
-                       "1e308"),
-                  "1e308"),
-             "0.0");
+        pair("mul", pair("mul", pair("mul", clamp(noise, "0.0", "1.0"), "1e308"), "1e308"), "0.0");
     // A zero of the noise's sign, one of the other sign, and one of the
     // other noise's other sign.
     const std::string plus = pair("mul", noise, "0.0");
     const std::string minus = pair("mul", noise, "-0.0");
     const std::string otherMinus = pair("mul", other, "-0.0");
-    const auto visible = [](const std::string& zero) {
-        return R"({"type":"minecraft:clamp","input":{"type":"minecraft:invert","argument":)" +
-               zero + R"(},"min":-1.0,"max":1.0})";
+    const auto visible = [&](const std::string& zero) {
+        return clamp(single("invert", zero), "-1.0", "1.0");
     };
-    const std::array<std::pair<std::string_view, std::string>, 17> arguments{{
-        {"nan", nan},
-        {"min_nan_constant", pair("min", nan, "0.5")},
-        {"min_constant_nan", pair("min", "0.5", nan)},
-        {"max_nan_constant", pair("max", nan, "-0.5")},
-        {"max_constant_nan", pair("max", "-0.5", nan)},
-        {"min_nan_noise", pair("min", nan, other)},
-        {"min_noise_nan", pair("min", other, nan)},
-        {"max_nan_noise", pair("max", nan, other)},
-        {"max_noise_nan", pair("max", other, nan)},
-        {"min_zeros", visible(pair("min", plus, minus))},
-        {"min_zeros_swapped", visible(pair("min", minus, plus))},
-        {"max_zeros", visible(pair("max", plus, minus))},
-        {"max_zeros_swapped", visible(pair("max", minus, plus))},
-        {"min_zeros_noise", visible(pair("min", plus, otherMinus))},
-        {"max_zeros_noise", visible(pair("max", otherMinus, plus))},
-        {"min_zero_constant", visible(pair("min", plus, "-0.0"))},
-        {"max_zero_constant", visible(pair("max", "0.0", minus))},
+    // What the walk's values must show at an argument, so that each is
+    // known to bring the case it is written for.
+    enum class Shows : std::uint8_t {
+        Bits,        // the walk's bits, and nothing more asked
+        SomeNaN,     // NaN at some blocks and not at others
+        BothSigns,   // values of both signs
+        AllNegative, // every value below zero (-1, its corners all -1)
+        AllPositive, // every value above zero (1, its corners all 1)
+    };
+
+    struct Argument {
+        std::string_view name;
+        std::string json;
+        Shows shows;
+    };
+
+    const std::array<Argument, 24> arguments{{
+        // NaN reaches some cells' corners and not others'.
+        {.name = "nan", .json = nan, .shows = Shows::SomeNaN},
+        {.name = "min_nan_constant", .json = pair("min", nan, "0.5"), .shows = Shows::Bits},
+        {.name = "min_constant_nan", .json = pair("min", "0.5", nan), .shows = Shows::Bits},
+        {.name = "max_nan_constant", .json = pair("max", nan, "-0.5"), .shows = Shows::Bits},
+        {.name = "max_constant_nan", .json = pair("max", "-0.5", nan), .shows = Shows::Bits},
+        {.name = "min_nan_noise", .json = pair("min", nan, other), .shows = Shows::Bits},
+        {.name = "min_noise_nan", .json = pair("min", other, nan), .shows = Shows::Bits},
+        {.name = "max_nan_noise", .json = pair("max", nan, other), .shows = Shows::Bits},
+        {.name = "max_noise_nan", .json = pair("max", other, nan), .shows = Shows::Bits},
+        // Zeros of both signs reach the `min` or `max`, and its second
+        // argument's sign shows through.
+        {.name = "min_zeros", .json = visible(pair("min", plus, minus)), .shows = Shows::BothSigns},
+        {.name = "min_zeros_swapped",
+         .json = visible(pair("min", minus, plus)),
+         .shows = Shows::BothSigns},
+        {.name = "max_zeros", .json = visible(pair("max", plus, minus)), .shows = Shows::BothSigns},
+        {.name = "max_zeros_swapped",
+         .json = visible(pair("max", minus, plus)),
+         .shows = Shows::BothSigns},
+        {.name = "min_zeros_noise",
+         .json = visible(pair("min", plus, otherMinus)),
+         .shows = Shows::BothSigns},
+        {.name = "max_zeros_noise",
+         .json = visible(pair("max", otherMinus, plus)),
+         .shows = Shows::BothSigns},
+        // Zeros tie, so `min` gives its second argument, the constant's
+        // -0.0, at every corner: every value -1.
+        {.name = "min_zero_constant",
+         .json = visible(pair("min", plus, "-0.0")),
+         .shows = Shows::AllNegative},
+        {.name = "max_zero_constant",
+         .json = visible(pair("max", "0.0", minus)),
+         .shows = Shows::BothSigns},
+        // `abs` keeps the NaN a NaN (and clears its sign: inf * 0's NaN is
+        // negative on x86-64), and makes every zero +0, so that every
+        // visible value is 1.
+        {.name = "abs_nan", .json = single("abs", nan), .shows = Shows::SomeNaN},
+        {.name = "abs_zeros", .json = visible(single("abs", plus)), .shows = Shows::AllPositive},
+        {.name = "abs_zeros_minus",
+         .json = visible(single("abs", minus)),
+         .shows = Shows::AllPositive},
+        // `clamp` gives the NaN back between bounds on both sides of zero and
+        // between bounds above it, and keeps both zeros' signs at a bound of
+        // zero, low or high.
+        {.name = "clamp_nan", .json = clamp(nan, "-1.0", "1.0"), .shows = Shows::SomeNaN},
+        {.name = "clamp_nan_above", .json = clamp(nan, "0.25", "0.75"), .shows = Shows::SomeNaN},
+        {.name = "clamp_zeros_low",
+         .json = visible(clamp(minus, "0.0", "1.0")),
+         .shows = Shows::BothSigns},
+        {.name = "clamp_zeros_high",
+         .json = visible(clamp(plus, "-1.0", "0.0")),
+         .shows = Shows::BothSigns},
     }};
-    for (const auto& [name, argument] : arguments) {
-        tree.define("minmax/" + std::string(name),
-                    R"({"type":"minecraft:interpolated","argument":)" + argument + "}");
+    for (const Argument& argument : arguments) {
+        tree.define("lanes/" + std::string(argument.name),
+                    R"({"type":"minecraft:interpolated","argument":)" + argument.json + "}");
     }
     const Pack pack = tree.pack();
     const Graph graph = Graph::resolveAll(pack);
@@ -920,10 +985,10 @@ TEST_CASE("a batch's min and max lanes keep the walk's NaN and signed zeros in e
     constexpr std::int32_t kBaseZ = 32;
     constexpr std::int32_t kMinY = -24;
     constexpr std::int32_t kTopY = 40;
-    for (const auto& [name, argument] : arguments) {
-        CAPTURE(name);
+    for (const Argument& argument : arguments) {
+        CAPTURE(argument.name);
         const NodeIndex root =
-            graph.rootOf(ResourceLocation::parse("minecraft:minmax/" + std::string(name)));
+            graph.rootOf(ResourceLocation::parse("minecraft:lanes/" + std::string(argument.name)));
         const std::optional<BlockKernel> kernel = interpreter.blockKernel(root);
         REQUIRE(kernel.has_value());
         std::size_t values = 0;
@@ -982,19 +1047,23 @@ TEST_CASE("a batch's min and max lanes keep the walk's NaN and signed zeros in e
         CHECK(memo.columnDeclines() == 0U);
         CHECK(runs.columnBatches() > 0U);
         CHECK(runs.columnDeclines() == 0U);
-        if (name == "nan") {
-            // NaN reaches some cells' corners and not others'.
-            CHECK(nans > 0U);
-            CHECK(nans < values);
-        } else if (name == "min_zero_constant") {
-            // Zeros tie, so `min` gives its second argument, the constant's
-            // -0.0, at every corner: every value -1.
-            CHECK(negatives == values);
-        } else if (name.find("zero") != std::string_view::npos) {
-            // Zeros of both signs reach the `min` or `max`, and its second
-            // argument's sign shows through.
-            CHECK(negatives > 0U);
-            CHECK(positives > 0U);
+        switch (argument.shows) {
+            case Shows::Bits:
+                break;
+            case Shows::SomeNaN:
+                CHECK(nans > 0U);
+                CHECK(nans < values);
+                break;
+            case Shows::BothSigns:
+                CHECK(negatives > 0U);
+                CHECK(positives > 0U);
+                break;
+            case Shows::AllNegative:
+                CHECK(negatives == values);
+                break;
+            case Shows::AllPositive:
+                CHECK(positives == values);
+                break;
         }
     }
 }
