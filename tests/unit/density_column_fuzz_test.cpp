@@ -22,7 +22,9 @@
 // blocks through the walk, which keeps those cells' corners without a batch,
 // so that a run up a column stops at a corner already held; one chunk is
 // taller than a batch holds; one fills a cache whose memo is about to forget
-// itself; one starts at the wrap of the batches' epoch.
+// itself; one moves the batches' epoch to its wrap once its first batch has
+// run, so that the batches after it cross the wrap with rows stamped before
+// it.
 //
 // Deterministic (a fixed seed through the project's own Xoroshiro) and a few
 // seconds long; "[.column-fuzz-long]" runs many times as many packs. Beside
@@ -35,7 +37,12 @@
 // either sign seldom reaches any of the four where its lanes differ. Nor a
 // shifted noise whose lanes part on one axis alone: the draws' parting
 // shifts part them on x (and seldom keep z), so a batch that compared only
-// one axis before sampling the lanes as one column would pass them too.
+// one axis before sampling the lanes as one column would pass them too. Nor
+// a flat_cache or a spline a cell could be filled beneath over a node the
+// batch reads beside it — the draws' shared corners are never under both —
+// nor old_blended_noise at a batch's upper lanes alone, nor a batch of 64
+// corners whose last lane takes a range_choice's second branch: each has a
+// case of its own below.
 
 #include "support/temp_path.hpp"
 
@@ -456,6 +463,9 @@ struct Tally {
     /// Batches of more corners than a lattice column of 33 holds.
     std::size_t tallChunks = 0;
     std::size_t memoForgets = 0;
+    /// Chunks whose batches crossed their epoch's wrap after a batch had run
+    /// (Fill::atWrap).
+    std::size_t epochWraps = 0;
     std::size_t differing = 0;
     std::string first = "none";
 };
@@ -470,7 +480,9 @@ struct Fill {
     std::int32_t preReads = 0;
     /// Columns read through the walk to bring the memo near kMaxValues.
     bool nearlyFull = false;
-    /// The batches' epoch moved to its wrap first.
+    /// The batches' epoch moved to the edge of its wrap once the first batch
+    /// has run: an advance before any batch is undone by the rows' sizing at
+    /// the first, which starts the epoch again from 0.
     bool atWrap = false;
 };
 
@@ -489,9 +501,6 @@ void fillChunk(Draw& draw, const Interpreter& interpreter, const CellGeometry ce
     };
     const std::int32_t baseX = fill.chunkX * 16;
     const std::int32_t baseZ = fill.chunkZ * 16;
-    if (fill.atWrap) {
-        memo.advanceColumnEpoch(std::numeric_limits<std::uint32_t>::max() - 2U);
-    }
     if (fill.nearlyFull) {
         // A flat_cache's relocated reads, each at a 4x4 column of its own
         // (kept in the memo's hash, which no column count bounds), to some
@@ -522,11 +531,21 @@ void fillChunk(Draw& draw, const Interpreter& interpreter, const CellGeometry ce
     }
     const std::size_t memoBefore = memo.memoSize();
     bool forgot = false;
+    // Every batch, kept or declined, takes the next epoch, so these two
+    // counters together are the epochs taken.
+    const auto epochs = [&memo] { return memo.columnBatches() + memo.columnDeclines(); };
+    bool advanced = false;
+    std::uint64_t epochsAtAdvance = 0;
     const auto finish = [&] {
         tally.batches += memo.columnBatches();
         tally.corners += memo.columnCorners();
         tally.declines += memo.columnDeclines();
         tally.memoForgets += forgot ? 1U : 0U;
+        // From the epoch's last value but one, the second epoch taken after
+        // it is the wrap's.
+        if (advanced && epochs() >= epochsAtAdvance + 2U) {
+            ++tally.epochWraps;
+        }
         if (memo.columnWidest() == Interpreter::CornerCache::kColumnBatch) {
             ++tally.tallChunks;
         }
@@ -544,6 +563,11 @@ void fillChunk(Draw& draw, const Interpreter& interpreter, const CellGeometry ce
             for (std::int32_t bottom = fill.minY; bottom < fill.topY; bottom += cells.height) {
                 for (std::int32_t y = bottom; y < std::min(bottom + cells.height, fill.topY); ++y) {
                     for (std::int32_t z = cellZ; z < endZ; z += rows) {
+                        if (fill.atWrap && !advanced && epochs() > 0U) {
+                            memo.advanceColumnEpoch(std::numeric_limits<std::uint32_t>::max() - 1U);
+                            advanced = true;
+                            epochsAtAdvance = epochs();
+                        }
                         const BlockKernel::Blocks blocks{
                             .first = Point{.x = baseX + cellX, .y = y, .z = baseZ + z},
                             .width = width,
@@ -659,8 +683,8 @@ void fuzzPack(Draw& draw, const CellGeometry cells, const std::int32_t roots, co
         }
         // A near chunk, one past every far noise's reach, one read first
         // through the walk, one whose memo is nearly full or whose batches
-        // start at their epoch's wrap; and, in a tall pack, one taller than
-        // a batch holds.
+        // cross their epoch's wrap after the first; and, in a tall pack, one
+        // taller than a batch holds.
         std::vector<Fill> fills{
             Fill{.chunkX = draw.below(5) - 2, .chunkZ = draw.below(5) - 2, .minY = -16, .topY = 40},
             Fill{.chunkX = 400, .chunkZ = -3, .minY = -8, .topY = 24},
@@ -702,11 +726,11 @@ void fuzz(std::int64_t seed, std::int32_t packs, Tally& tally) {
 void report(const Tally& tally) {
     CAPTURE(tally.roots, tally.withoutKernel, tally.chunks, tally.blocks, tally.walked,
             tally.refusedChunks, tally.refusedAfterDecline, tally.batches, tally.corners,
-            tally.declines, tally.tallChunks, tally.memoForgets, tally.first);
+            tally.declines, tally.tallChunks, tally.memoForgets, tally.epochWraps, tally.first);
     CHECK(tally.differing == 0U);
     // Batches ran, of many corners each, and some were abandoned: the
     // chunks' first refusals among them, at blocks after the batch that
-    // declined.
+    // declined. Batches crossed their epoch's wrap.
     CHECK(tally.batches > 100U);
     CHECK(tally.corners > tally.batches * 4U);
     CHECK(tally.declines > 0U);
@@ -714,6 +738,7 @@ void report(const Tally& tally) {
     CHECK(tally.refusedAfterDecline > 0U);
     CHECK(tally.tallChunks > 0U);
     CHECK(tally.memoForgets > 0U);
+    CHECK(tally.epochWraps > 0U);
     CHECK(tally.roots - tally.withoutKernel > tally.roots / 2U);
 }
 
@@ -841,6 +866,198 @@ TEST_CASE("a batch reads no column-invariant node beneath which a cell could be 
     CHECK(read("flat", flatBatches) == 0U);
     CHECK(scanning == 0U);
     CHECK(flatBatches > 0U);
+}
+
+TEST_CASE("a batch reads no flat_cache or spline beneath which a cell could be filled",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // A batch reads a flat_cache once, through the walk, at its column's
+    // corner, and a spline lane by lane through the walk (evaluateLanes): so
+    // neither may be one of its nodes where something beneath fills a cell
+    // (Op::laneWalk), as for a column-invariant node above. Here the cell is
+    // filled by an `interpolated` over `n`, a 3D noise — one node, named —
+    // and the argument reads `n` beside it: were the argument batched, the
+    // walk would fill that cell inside the batch, and its batch of `n` would
+    // overwrite `n`'s row while the outer batch held it. So the argument's
+    // corners are evaluated one at a time, each filling cells of `n`'s
+    // lattice in batches of their own, and every value is the walk's.
+    const FuzzTree tree;
+    tree.defineNoise("beneath_a", R"({"firstOctave":-4,"amplitudes":[1.0,0.5]})");
+    tree.define("column/n",
+                R"({"type":"minecraft:noise","noise":"minecraft:beneath_a","xz_scale":1.0,)"
+                R"("y_scale":1.0})");
+    const std::string inner =
+        R"({"type":"minecraft:interpolated","argument":"minecraft:column/n"})";
+    tree.define("column/flat_fills",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:add",)"
+                R"("argument1":"minecraft:column/n","argument2":{"type":"minecraft:flat_cache",)"
+                R"("argument":)" +
+                    inner + "}}}");
+    tree.define("column/spline_fills",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:add",)"
+                R"("argument1":"minecraft:column/n","argument2":{"type":"minecraft:spline",)"
+                R"("spline":{"coordinate":)" +
+                    inner +
+                    R"(,"points":[{"location":-0.5,"value":-1.0,"derivative":2.0},)"
+                    R"({"location":0.5,"value":1.0,"derivative":0.5}]}}}})");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 13,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 8});
+    const NodeIndex n = graph.rootOf(ResourceLocation::parse("minecraft:column/n"));
+    using stratum::density::NodeType;
+    for (const std::string_view name : {"flat_fills", "spline_fills"}) {
+        CAPTURE(name);
+        const NodeIndex root =
+            graph.rootOf(ResourceLocation::parse("minecraft:column/" + std::string(name)));
+        // The shape: the argument adds `n` to a flat_cache or spline over an
+        // `interpolated` of the same `n`.
+        REQUIRE(graph.node(root).type == NodeType::Interpolated);
+        const NodeIndex sum = graph.node(root).arguments[0];
+        REQUIRE(graph.node(sum).arguments[0] == n);
+        const stratum::density::Node& reader = graph.node(graph.node(sum).arguments[1]);
+        const NodeIndex filling = reader.type == NodeType::FlatCache
+                                      ? reader.arguments[0]
+                                      : graph.spline(reader.spline.value()).coordinate;
+        REQUIRE(graph.node(filling).type == NodeType::Interpolated);
+        REQUIRE(graph.node(filling).arguments[0] == n);
+
+        Interpreter::CornerCache cache(interpreter.cacheSize(), Sharing::Lattice);
+        std::size_t differing = 0;
+        const auto read = [&](const Point at) {
+            differing += std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at, cache)) !=
+                                 std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at))
+                             ? 1U
+                             : 0U;
+        };
+        // Cell (0, 0, 0). Its corners, each alone, fill `n`'s cells from
+        // (0, 0, 0), (0, 0, 4), (4, 0, 0) and (4, 0, 4) in turn — the
+        // flat_cache's reads at its column corners, and the spline's at the
+        // corners themselves, whose upper four are cells of columns already
+        // held. In `n`'s lattice those cells make 4, 2, 2 and 1 batches of 8:
+        // nine, and none of the argument's own lattice, the second.
+        read(Point{.x = 1, .y = 1, .z = 1});
+        CHECK(cache.memoLattices() == 2U);
+        CHECK(cache.columnBatches() == 9U);
+        CHECK(cache.columnCorners() == 72U);
+        for (std::int32_t x = 1; x < 16; x += 4) {
+            for (std::int32_t y = 1; y < 60; y += 7) {
+                read(Point{.x = x, .y = y, .z = 1});
+                read(Point{.x = x + 2, .y = y + 3, .z = 6});
+            }
+        }
+        CHECK(differing == 0U);
+        CHECK(cache.columnDeclines() == 0U);
+    }
+}
+
+TEST_CASE("a batch samples old_blended_noise at its upper lanes alone, each in its own place",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // A batch samples a noise only at the lanes that need it, gathered to
+    // the front of a column and put back lane by lane (blendedLanes). The
+    // draws' blended noises are almost always needed at every lane; here a
+    // range_choice takes it only at a batch's upper lanes, where `upper` is
+    // at least 0.5 (y 32 and above), and a 3D noise below.
+    const FuzzTree tree;
+    tree.defineNoise("upper_a", R"({"firstOctave":-4,"amplitudes":[1.0,0.5]})");
+    tree.define("column/upper", R"({"type":"minecraft:y_clamped_gradient","from_y":0,"to_y":64,)"
+                                R"("from_value":0.0,"to_value":1.0})");
+    tree.define(
+        "column/upper_blended",
+        R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:range_choice",)"
+        R"("input":"minecraft:column/upper","min_inclusive":0.5,"max_exclusive":1e300,)"
+        R"("when_in_range":{"type":"minecraft:old_blended_noise","xz_scale":0.25,"y_scale":0.125,)"
+        R"("xz_factor":80.0,"y_factor":160.0,"smear_scale_multiplier":8.0},)"
+        R"("when_out_of_range":{"type":"minecraft:noise","noise":"minecraft:upper_a",)"
+        R"("xz_scale":1.0,"y_scale":1.0}}})");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 17,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 8});
+    const NodeIndex upper = graph.rootOf(ResourceLocation::parse("minecraft:column/upper"));
+    const NodeIndex root = graph.rootOf(ResourceLocation::parse("minecraft:column/upper_blended"));
+    // The shape: a batch from y 0 has lanes at y 0, 8, ..., 56, of which the
+    // blended noise takes the upper four alone.
+    for (std::int32_t y = 0; y < 64; y += 8) {
+        CAPTURE(y);
+        CHECK((interpreter.evaluate(upper, Point{.x = 0, .y = y, .z = 0}) >= 0.5) == (y >= 32));
+    }
+    Interpreter::CornerCache cache(interpreter.cacheSize(), Sharing::Lattice);
+    std::size_t differing = 0;
+    const auto read = [&](const Point at) {
+        differing += std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at, cache)) !=
+                             std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at))
+                         ? 1U
+                         : 0U;
+    };
+    // Cell iy 0: four batches of 8, lanes 0..7 at y 0..56.
+    read(Point{.x = 1, .y = 1, .z = 1});
+    CHECK(cache.columnBatches() == 4U);
+    CHECK(cache.columnCorners() == 32U);
+    for (std::int32_t y = 1; y < 64; y += 4) {
+        read(Point{.x = 1, .y = y, .z = 1});
+        read(Point{.x = 7, .y = y + 2, .z = 2});
+    }
+    CHECK(differing == 0U);
+    CHECK(cache.columnDeclines() == 0U);
+}
+
+TEST_CASE("a batch of 64 corners makes its last lane's range_choice branch",
+          "[density][interpreter][kernel][column-fuzz]") {
+    // A batch's lanes are its bits, 64 of them at most (kColumnBatch), and a
+    // node made at some lanes only (a range_choice's branch) is made at those
+    // bits. At cells 2 high a lattice column is 257 corners, so a run there
+    // reaches 64: here the 64th corner, at y 126, takes the range_choice's
+    // second branch, as every lane above y 64 does.
+    const FuzzTree tree;
+    tree.defineNoise("falling_a", R"({"firstOctave":-4,"amplitudes":[1.0,0.5]})");
+    tree.define("column/falling", R"({"type":"minecraft:y_clamped_gradient","from_y":0,)"
+                                  R"("to_y":128,"from_value":1.0,"to_value":0.0})");
+    tree.define("column/falling_branches",
+                R"({"type":"minecraft:interpolated","argument":{"type":"minecraft:range_choice",)"
+                R"("input":"minecraft:column/falling","min_inclusive":0.5,"max_exclusive":1e300,)"
+                R"("when_in_range":{"type":"minecraft:noise","noise":"minecraft:falling_a",)"
+                R"("xz_scale":0.5,"y_scale":2.0},)"
+                R"("when_out_of_range":{"type":"minecraft:noise","noise":"minecraft:falling_a",)"
+                R"("xz_scale":1.0,"y_scale":1.0}}})");
+    const Pack pack = tree.pack();
+    const Graph graph = Graph::resolveAll(pack);
+    const NoiseRegistry noises = NoiseRegistry::create(pack, graph.referencedNoises(), 19,
+                                                       stratum::density::RandomSource::Xoroshiro);
+    const Interpreter interpreter(graph, noises, CellGeometry{.width = 4, .height = 2});
+    const NodeIndex falling = graph.rootOf(ResourceLocation::parse("minecraft:column/falling"));
+    const NodeIndex root =
+        graph.rootOf(ResourceLocation::parse("minecraft:column/falling_branches"));
+    CHECK(interpreter.evaluate(falling, Point{.x = 0, .y = 64, .z = 0}) >= 0.5);
+    CHECK(interpreter.evaluate(falling, Point{.x = 0, .y = 66, .z = 0}) < 0.5);
+    CHECK(interpreter.evaluate(falling, Point{.x = 0, .y = 126, .z = 0}) < 0.5);
+    Interpreter::CornerCache cache(interpreter.cacheSize(), Sharing::Lattice);
+    std::size_t differing = 0;
+    const auto read = [&](const Point at) {
+        differing += std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at, cache)) !=
+                             std::bit_cast<std::uint64_t>(interpreter.evaluate(root, at))
+                         ? 1U
+                         : 0U;
+    };
+    // Cell iy 0, anchoring the lattice at (0, 0, 0): four batches of 8. Cell
+    // iy 65 (y 130): the lattice's top is 66 now; four batches of 8 more.
+    read(Point{.x = 1, .y = 1, .z = 1});
+    read(Point{.x = 1, .y = 131, .z = 1});
+    REQUIRE(cache.columnBatches() == 8U);
+    // Cell (8, 0, 8), in four columns that hold nothing: each runs from iy 0
+    // towards the top, 66, and stops at 64 corners, iy 0..63 (y 0..126).
+    read(Point{.x = 9, .y = 1, .z = 9});
+    CHECK(cache.columnBatches() == 12U);
+    CHECK(cache.columnCorners() == 64U + (4U * 64U));
+    CHECK(cache.columnWidest() == 64U);
+    // Cell iy 62 (y 124) of those columns, whose corners at iy 63 the 64th
+    // lanes made: held, so no batch.
+    read(Point{.x = 9, .y = 125, .z = 9});
+    read(Point{.x = 11, .y = 125, .z = 10});
+    CHECK(cache.columnBatches() == 12U);
+    CHECK(differing == 0U);
+    CHECK(cache.columnDeclines() == 0U);
 }
 
 TEST_CASE("a batch's min, max, abs and clamp lanes keep the walk's NaN and signed zeros",
