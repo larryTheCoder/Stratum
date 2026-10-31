@@ -568,4 +568,18 @@ TEST_CASE("a row stamped before the batches' epoch wraps is not made after it",
     CHECK(runs.walks(plain, Point{.x = 18, .y = 30, .z = 19}, memo));
     CHECK(memo.columnBatches() == 9U);
     CHECK(memo.columnCorners() == 72U);
+    // The same with the two swapped, on a cache of its own: the row carried
+    // over the wrap is `other`'s noise's, in a slot of its own, not `plain`'s.
+    // The wrap clears every row's stamp, whichever slot it is in.
+    Interpreter::CornerCache swapped = runs.cache();
+    CHECK(runs.walks(other, Point{.x = 1, .y = 1, .z = 1}, swapped));
+    REQUIRE(swapped.columnBatches() == 4U);
+    REQUIRE(swapped.columnDeclines() == 0U);
+    swapped.advanceColumnEpoch(std::numeric_limits<std::uint32_t>::max() - 1U);
+    CHECK(runs.walks(plain, Point{.x = 1, .y = 1, .z = 1}, swapped));
+    REQUIRE(swapped.columnBatches() + swapped.columnDeclines() == 8U);
+    CHECK(runs.walks(other, Point{.x = 17, .y = 1, .z = 17}, swapped));
+    CHECK(runs.walks(other, Point{.x = 18, .y = 30, .z = 19}, swapped));
+    CHECK(swapped.columnBatches() == 9U);
+    CHECK(swapped.columnCorners() == 72U);
 }
