@@ -217,7 +217,7 @@ public:
     ///
     /// Throws std::out_of_range for a chunk outside
     /// density::kMaxChunkCoordinate, or layers whose block y is not an int32
-    /// (SPEC §8).
+    /// (SPEC §8). What @p into holds after a throw is unspecified.
     void fillChunk(const density::Interpreter& interpreter, const settings::NoiseRouter& router,
                    std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                    std::span<const data::ResourceLocation*> into,
