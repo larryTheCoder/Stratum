@@ -313,7 +313,12 @@ struct ColumnGradient {
     double alongZ;
 
     /// gradientDot at the point whose offset along y is @p y: the same
-    /// products, added in the same order.
+    /// products, added in the same order. The order happens not to matter
+    /// here — every gradient in kGradientX/Y/Z has exactly one zero
+    /// component, so one term is an exact zero (of either sign) and any
+    /// grouping gives the other two's sum, rounded once, signed zeros
+    /// included — but it is kept rather than leant on, so that this stays
+    /// gradientDot's double by construction and not by that table's shape.
     [[nodiscard]] STRATUM_NOISE_INLINE double dot(double y) const noexcept {
         return (alongX + (factorY * y)) + alongZ;
     }
