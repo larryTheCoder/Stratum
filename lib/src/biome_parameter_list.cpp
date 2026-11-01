@@ -650,8 +650,9 @@ std::size_t ParameterList::searchTreeWith(const QuantizedSample& sample, const s
         memo->bind(searchId_, values);
     }
     const auto nodeCount = static_cast<std::uint32_t>(searchNodes_.size());
+    // `id` is read only by the memoized instantiation.
     const auto scoreOf = [&](const detail::SearchBox& box,
-                             const std::uint32_t id) noexcept -> std::int64_t {
+                             [[maybe_unused]] const std::uint32_t id) noexcept -> std::int64_t {
         if constexpr (Memoized) {
             SearchMemo::Slot& slot = memo->slots_[id % SearchMemo::kSlots];
             if (slot.epoch != memo->epoch_ || slot.id != id) {

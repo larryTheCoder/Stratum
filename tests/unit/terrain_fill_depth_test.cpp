@@ -210,7 +210,8 @@ TEST_CASE("a chain of interpolated nodes fills as the one interpolated around it
     const stratum::density::NodeIndex singleRoot = single.router.at(RouterEntry::FinalDensity);
 
     // A chunk on either side of the origin, so negative cells are crossed.
-    for (const std::pair<std::int32_t, std::int32_t> chunk : {std::pair{0, 0}, std::pair{-1, -1}}) {
+    for (const std::pair<std::int32_t, std::int32_t>& chunk :
+         {std::pair{0, 0}, std::pair{-1, -1}}) {
         const std::int32_t chunkX = chunk.first;
         const std::int32_t chunkZ = chunk.second;
         CAPTURE(chunkX, chunkZ);
