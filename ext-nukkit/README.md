@@ -7,16 +7,33 @@ Function & Memory API, and Nukkit already ships a native library
 CloudburstMC/Nukkit `master` at `b3caad67d` (2026-09-19, Bedrock 26.50), a
 permitted M5 reference (CLAUDE.md).
 
-**Status.** The C++ pipeline and the JNI surface are built and tested, the
-JNI surface through real JNI in a JVM. The plugin has been type-checked only
-against hand-written stubs of the Nukkit API it calls (scratch, never
-committed), and **has never run inside Nukkit**: no Nukkit server jar exists
-on this machine. The one approved download is a jar from CloudburstMC's own
-CI, and that CI (`ci.opencollab.dev`) answered every request with HTTP 502
-throughout 2026-10-15, so `tools/nukkit-dev` still pins no build. The
-headless smoke test that runs the plugin in a real server is written, has
-been exercised against a stand-in server, and skips until a build is pinned.
-What that run is expected to settle is listed under "Open".
+**Status.** Done with M5, which the owner closed on 2026-10-29. The C++
+pipeline and the JNI surface are built and tested, the JNI surface through
+real JNI in a JVM. The plugin has run inside a real Nukkit since 2026-10-27:
+`tools/nukkit-dev` pins CloudburstMC's Maven snapshot of `b3caad67d` by
+SHA-256, on the owner's ruling, because its CI (`ci.opencollab.dev`) answered
+HTTP 502 for every job. The headless smoke passes (`ctest --preset nukkit`,
+last run on 5118d5a), and a Bedrock client has seen the same terrain here as
+on PocketMine-MP. This evidence is from Linux x86-64. "What the real run
+showed" has the figures, and "Open" lists what is left.
+
+## What the real run showed (2026-10-27)
+
+- **The smoke.** The startup refusal, the census, the in-memory comparison
+  and the disk read-back all ran. The census resolved all 35 block states the
+  overworld can place, and 22 966 of all 29 671 Java states. Nukkit's registry
+  holds 50 of the 54 overworld biomes. The 81-chunk spawn area matched the
+  engine in memory, 0 blocks and 0 biomes different, on Nukkit's 4 async
+  workers (2205 ms Debug, 313 ms Release). Read back from disk, 0 blocks and
+  262 464 biomes differed, every one of them the section offset under
+  "Biomes". It exited 3 on that, as designed, until the owner's ruling of
+  2026-10-29, and passes since.
+- **A client.** A Bedrock client on a Nukkit server saw the same terrain as on
+  PocketMine-MP at 16 places, the differences only the biomes Nukkit sends as
+  ocean (pale garden, mangrove swamp) and its view distance; the offset
+  (`NetworkChunkSerializer`, by reading) was not looked for there. Nukkit
+  `b3caad67` accepts protocols 2192 and 2193 only (1.26.50 and the one before),
+  not the 1.26.30 PocketMine-MP 5.44.3 speaks.
 
 ## Layout
 
@@ -177,10 +194,10 @@ Nukkit stores a biome per block (`LevelDBChunk.setBiomeId(x, y, z, id)`:
 `getBiomeStorage(y >> 4)`, then block-local x, `y & 15`, z — a section y,
 not a block y or an array index, and block-local, not quart-local). The
 engine gives one per 4×4×4 quart; the generator writes each quart's id to
-its 64 blocks. Read from source, not yet observed: the smoke run checks it
-in memory.
+its 64 blocks. The smoke checks this in memory, and the real run found no
+difference.
 
-Two things read from Nukkit that the smoke run is built to measure:
+Two limits of Nukkit's own, read from its source and measured by the smoke:
 
 - **Nukkit's biome registry lacks four overworld biomes.** Its
   `biome_id_map.json` at `b3caad67d` knows 50 of the 54 the overworld can
@@ -188,7 +205,8 @@ Two things read from Nukkit that the smoke run is built to measure:
   and `pale_garden` (193) are missing, and its network serializer sends
   those to clients as ocean (`Biome.getBiomeIdOrCorrect`). The world stores
   the true ids; the plugin logs the four by name when the world opens.
-  Refusing instead would refuse every overworld — an owner decision, flagged.
+  Refusing instead would refuse every overworld, so by the owner's ruling of
+  2026-10-29 the world generates and this stays recorded as Nukkit's.
 - **Nukkit's biome serializers look off by four sections.**
   `Data3dSerializer.serialize` and `NetworkChunkSerializer` pass the array
   index `i` to `getBiomeStorage`, which adds the section offset (4 for the
@@ -208,9 +226,10 @@ Nukkit schedules block updates with `Level.scheduleUpdate(block, delay)`, on
 the server thread. The generator keeps each chunk's fluid updates (packed by
 `fill`); the plugin schedules each liquid among them after its own tick rate
 when Nukkit fires `ChunkPopulateEvent` for that chunk (all eight neighbours
-generated), as `ext/`'s PocketMine-MP plugin does, and counts them (the
-smoke report's `fluid_updates_scheduled`). Written, never run. Not carried:
-a chunk generated in one server run and populated in another.
+generated), and counts them (the smoke report's `fluid_updates_scheduled`):
+240 over the spawn area in the real run. `ext/`'s PocketMine-MP plugin waits
+longer, until the chunk has settled. Not carried: a chunk generated in one
+server run and populated in another.
 
 ## Loading the native library
 
@@ -258,7 +277,7 @@ the place to move it to.
 
 Exit 0 (PASS) needs: run 0 refused as above; `level.dat` naming `stratum`;
 every chunk on disk and filled by Stratum; blocks matching everywhere;
-biomes matching in memory and on disk; no log line in any run that is an
+biomes matching in memory, and on disk apart from Nukkit's section offset; no log line in any run that is an
 error, a stack trace or an exception, beyond the expected ones; and
 Nukkit's LevelDB log showing no substituted block state. Nukkit's own `main`
 exits 0 even after its startup threw, so the reports and the logs are the
@@ -271,28 +290,12 @@ check on one file.
 
 ## Open
 
-- **Run, 2026-10-27, and seen in a client.** The jar is CloudburstMC's
-  Maven snapshot of `b3caad67d` (`tools/nukkit-dev pin-maven`, on the
-  owner's ruling: the CI answered HTTP 502 for every job), and the smoke
-  ran inside Nukkit: the startup refusal, the census, the in-memory
-  comparison (0 differences) and the disk read-back (0 block differences,
-  every biome difference the section offset above) — then exit 3; a pass
-  since the owner's ruling of 2026-10-29.
-  A Bedrock client on a Nukkit server saw the same terrain as on
-  PocketMine-MP at 16 places, the differences only the biomes Nukkit sends
-  as ocean (pale garden, mangrove swamp) and its view distance; the offset
-  (`NetworkChunkSerializer`, by reading) was not looked for there. Nukkit
-  `b3caad67` accepts protocols 2192
-  and 2193 only (1.26.50 and the one before), not the 1.26.30
-  PocketMine-MP 5.44.3 speaks.
-- **Keep the verified jar.** Nukkit's Jenkinsfile keeps the artifacts of the
-  newest five builds only (`logRotator(artifactNumToKeepStr: '5')`), so a
-  pinned build's jar disappears from the CI five builds later; `fetch` then
-  says so (HTTP 404). A snapshot repository prunes old snapshots too. The copy under `$STRATUM_NUKKIT_DIR/jars` (or
+- **Keep the verified jar.** The pin is a snapshot in CloudburstMC's Maven
+  repository, and a snapshot repository prunes old snapshots, as Nukkit's
+  Jenkinsfile does its builds' artifacts (`logRotator(artifactNumToKeepStr:
+  '5')`); `fetch` then says so (HTTP 404). The copy under `$STRATUM_NUKKIT_DIR/jars` (or
   `quarantine/`) is the durable one: keep it, or a backup, and `fetch`
   accepts it wherever it came from as long as its SHA-256 is the pin.
-- The biome serializer defect and the four biomes Nukkit's registry lacks
-  both await the owner's ruling.
 - The Nether and the End (Nukkit's 0..127 and 0..255), and Anvil worlds.
 - Vanilla's spawn search (`getSpawn` is a fixed point) and features
   (`populateChunk` is a no-op until M6).

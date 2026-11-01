@@ -1,345 +1,282 @@
 # Stratum
 
-A C++20 world generation engine for [PocketMine-MP](https://pmmp.io) that
-executes **vanilla Java Edition's data-driven worldgen JSON** — density
-functions, noise settings, multi-noise and End biome sources and surface
-rules — so that Java-ecosystem datapacks and authoring tools (Misode's
-generators, Snowcapped, Spyglass) work as content for a Bedrock server.
+Stratum is a world generator for Bedrock servers, written in C++20. It gives a
+Bedrock server Java Edition's terrain and biomes by running the same worldgen
+JSON files Java runs. Given the same JSON and seed, it aims to place the same
+blocks and biomes as a Java server, bit for bit.
 
-- **Schema pin:** Java Edition **1.21.11**, data pack format **94.1**
-- **Parity goal:** bit-exact terrain, biome and surface output versus vanilla
-  Java for the same JSON and seed (Tier A, see below)
-- **Status:** the shipped overworld generates end to end — terrain, ore
-  veins, biomes, aquifers and surface rules — and matches the vanilla server
-  block for block on 99.9957% of the golden positions scored, and the End
-  generates exactly — its blocks over its noise height (y 0..127), its
-  biomes over the whole column the server stores them for (y 0..255).
-  **M4** stays open for the legacy
-  dimensions' surface rules;
-  **M5** (PocketMine integration) runs inside a real, headless
-  PocketMine-MP 5.44.3; no client has connected to it yet. See
-  [What generates today](#what-generates-today) for the honest breakdown.
-  Subcommands that are not implemented fail loudly with the milestone that
-  owns them.
+- **Pinned to:** Java Edition 1.21.11, data pack format 94.1
+- **Runs in:** PocketMine-MP and Nukkit ([setup](#on-a-server)), or alone
+  through the `stratum` command ([usage](#use-the-command-line))
+- **Speed:** about 3.4 ms per overworld chunk, a quarter of what vanilla takes
+  for the same stages
+- **Generates:** terrain, biomes, aquifers, noise caves, large ore veins and
+  surface blocks
+- **Not yet:** worlds have no trees, plants, ordinary ores, carved caves or
+  structures. Those are planned for v2, and need not land where Java puts them.
+  The Nether does not generate.
 
-`SPEC.md` is the single source of truth for scope and architecture;
-`CLAUDE.md` defines how changes are made. Read both before contributing.
+[`SPEC.md`](SPEC.md) is the source of truth for scope and design.
+[`PROGRESS.md`](PROGRESS.md) tracks the milestones. [`CLAUDE.md`](CLAUDE.md)
+says how changes are made.
+
+## What generates today
+
+Status on 2026-11-01. Every figure is measured against the vanilla 1.21.11
+server.
+
+| World | State |
+|---|---|
+| Overworld | Generates, with no trees or other features. 99.9965% of sampled blocks match. |
+| Amplified, large biomes | Generate. On test worlds forced to one biome, terrain, aquifers, ore veins and surface rules match the server, apart from fluid it moved. Not yet measured: where either preset places its biomes, and its surface blocks on its real biomes. |
+| The End | Generates, with no towers, chorus plants or End cities. Blocks on y 0 to 127, the only heights its terrain uses, match exactly on every sampled chunk. Every biome stored on y 0 to 255 also matches, in 45 regions. |
+| The Nether | Refused by name: it stops with an error naming what it cannot run. |
+| `caves`, `floating_islands` noise settings | Cannot generate, for the same reason as the Nether. `generate` does not offer them. |
+
+**The overworld sample** is 128 chunks from eight seeds. Of its 12 582 912
+blocks, 12 582 474 match. Of the other 438, 415 are surface blocks near biome
+borders and 23 are fluids the server moved after generating them.
+
+A whole region scores a little lower. `stratum diff` on seed 42's region
+`r.0.0` finds 6 686 of 100 663 296 blocks differ (99.9934% match), and 189 of
+1 572 864 biome cells. In the one other region scored in full, every biome
+difference (614 cells) was a tie the server broke the other way.
+
+Every server world behind these figures was generated with features and
+carvers turned off, so it holds no trees to compare.
+
+**The Nether's** surface rules read noises seeded by vanilla's older random
+source, and we have not worked out that seeding. The parts that do run are
+close: 32 765 of 32 768 sampled biome cells match, and so do 99.99591% of
+sampled positions, counting only solid, lava or air.
+
+**Milestones.** That seeding is the last named blocker for M4 (biomes and
+surface). M4 also carries the 415 surface blocks, ties in the biome search and
+the presets not yet measured. The server integration (M5) closed on 2026-10-29.
+
+The large noise caves and ore veins do generate. Features (trees, plants,
+ordinary ores), carvers (carved caves, ravines) and structures do not. A pack's
+copies of those are recorded and not run until v2 (M6).
+
+## Speed
+
+Mean ms per chunk on an AMD Ryzen 5 7600, with one worldgen thread, on an
+otherwise idle machine (2026-11-01). The vanilla column counts only its biome,
+noise and surface stages, the same terrain work Stratum does. Two things favour
+vanilla here: Stratum's figure also includes encoding the chunk, and vanilla's
+JVM gets help from JIT and GC threads on other cores.
+
+| Dimension | Stratum | Vanilla | Share of vanilla's time |
+|---|---|---|---|
+| Overworld | 3.39 | 13.38 | 0.25x |
+| Amplified | 3.27 | 16.59 | 0.20x |
+| Large biomes | 3.45 | 15.24 | 0.23x |
+| The End | 0.33 | 2.79 | 0.12x |
+
+The overworld took 155.7 ms before the first performance pass. Each pass kept
+the output byte-identical.
+
+Inside PocketMine-MP's generation task the same four take 3.41, 3.29, 3.49 and
+0.37 ms. The PHP around the engine adds under 0.05 ms of that. These figures
+cover generating a chunk only. Queueing, the copy between threads, a
+population's neighbour chunks, lighting, fluid scheduling and sending the chunk
+to players have not been measured.
+
+To measure it yourself, use `tools/perf-baseline` and `tools/pmmp-task-cost`.
+
+## On a server
+
+Stratum has run inside a real headless PocketMine-MP 5.44.3 and Nukkit b3caad67.
+On 2026-10-27 a Bedrock client visited sixteen places on each, and saw the same
+terrain on both. This evidence is from Linux x86-64. To repeat the headless
+runs, use `ctest --preset pmmp` or `ctest --preset nukkit` after the setup in
+the READMEs below.
+
+- **PocketMine-MP:** see [`ext/README.md`](ext/README.md) to build the
+  extension and [`ext/plugin/README.md`](ext/plugin/README.md) to install the
+  plugin.
+- **Nukkit:** see [`ext-nukkit/README.md`](ext-nukkit/README.md). Nukkit's own
+  biome code has two known limits. A section offset in its biome serializers
+  makes stored and sent biomes wrong wherever biomes change with height. Its
+  registry lacks four overworld biomes, which clients see as ocean.
+
+Both servers generate the overworld, amplified and large biomes presets.
+PocketMine-MP also generates the End, and shows it to clients as the overworld.
+Nukkit refuses the End by name. Neither generates the Nether. Running your own
+datapack on a server is not a v1 goal, and a biome with no Bedrock id is refused
+by name.
 
 ## Build and test
 
-```bash
-cmake --preset dev            # configure (Debug; no generator is pinned)
-cmake --build --preset dev    # build lib/, cli/ and the test suites
-ctest --preset dev            # unit + repo-policy lint suites
-```
-
-Conformance runs separately, because it needs fixtures that are generated
-locally and never committed:
+You need CMake 3.24 or newer and a C++20 compiler (GCC 13+, Clang 16+ or
+MSVC 2022). Catch2, nlohmann/json and zlib are fetched on first configure if you do not
+have them.
 
 ```bash
-tools/fetch-vanilla --dry-run             # show the plan without touching the network
-tools/fetch-vanilla --with-structures     # fetch + verify + extract vanilla data
-ctest --preset conformance                # skips loudly while fixtures are absent
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
 ```
 
-`fetch-vanilla` resolves the pinned version through Mojang's piston-meta
-manifest and verifies every hop of the chain (manifest → version metadata
-SHA-1 → published jar SHA-1 → nested server jar SHA-256) before extracting
-anything. Pass `--jar <path>` to use a jar you already downloaded. It needs
-`curl`, `jq`, `unzip` and — for generation — a JRE; its own tests also need
-`zip`.
+### Use the command line
 
-Golden region files come from running the vanilla server headlessly:
+The binary is `build/dev/cli/stratum`. Generating needs vanilla's worldgen data
+on your machine, which `tools/fetch-vanilla` downloads, verifies and extracts.
+That script needs `curl`, `jq`, `unzip` and Java 21 or newer. Without Java it
+still exits 0 but skips the biome data, and `generate` then refuses.
 
 ```bash
-tools/fetch-vanilla --generate-regions --accept-eula
+tools/fetch-vanilla
+export PATH="$PWD/build/dev/cli:$PATH"
+stratum generate .fixtures/1.21.11 --dimension overworld --seed 42 \
+    --region 0,0 --out build/out/
+stratum render build/out/r.0.0.mca --out build/map.png --mode biome
+stratum diff build/out/r.0.0.mca \
+    .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca   # the server's region, from Run conformance
+stratum validate .fixtures/1.21.11
 ```
 
-That runs the server, so it requires accepting
-[Mojang's EULA](https://aka.ms/MinecraftEULA) yourself — the script refuses
-without `--accept-eula` and will not accept it on your behalf. The defaults
-generate SPEC §7's fixed seed set across all three dimensions; `--seeds`,
-`--dimensions` and `--regions` narrow it. The world is frozen before
-generation and carvers, features and structures are left out, so the
-goldens isolate Tier A and two runs of the same seed agree on all but a
-few fluid blocks — see SPEC §7 for why both matter, and for the flow
-remnant the cases still allow for.
-`--with-structures` only extracts structure NBT; it never puts structures
-in a generated world.
+Keep region files you generate under `build/`. The lint fails on one loose in
+the source tree; `build/` and `.fixtures/`, where the fetch scripts put theirs,
+are exempt.
 
-Probe worlds — the purpose-built worlds many conformance cases read — come
-from the generators under `tools/analysis`, which `tools/probe-worlds` names
-in one table, with the seeds the cases expect; the same table carries the
-region goldens, as `fetch-vanilla --generate-regions` units:
+- `generate` writes Anvil region files in the form the server stores them, which
+  `diff` and `render` read. Its dimensions are `overworld`, `amplified`,
+  `large_biomes` and `end`. `nether` is accepted, then refused (exit 4).
+- `render` also draws one density function's field, blue below zero and orange
+  above:
+  `stratum render --pack .fixtures/1.21.11 --function minecraft:overworld/continents --seed 42 --out build/field.png`.
+- `diff` compares every block and stored biome, and exits 0 only if both match.
+  A chunk it cannot compare is reported, never skipped.
+- `validate` opens a pack, resolves every reference and builds every noise,
+  without generating. Some refusals come only when a dimension compiles, so a
+  clean report does not promise a world will generate. It exits 0 when clean, 1
+  on warnings and 4 on errors. `--strict` makes warnings exit 4, so vanilla's
+  own data always fails it.
+
+Where a command takes a pack, that is a data pack (`pack.mcmeta` beside `data/`)
+or a fetched tree like `.fixtures/1.21.11`.
+
+### Run conformance
+
+Conformance compares our output with a real vanilla server. Its fixtures are
+generated locally and never committed. Generating them runs the server, so
+you must accept [Mojang's EULA](https://aka.ms/MinecraftEULA) yourself. The
+scripts refuse without `--accept-eula`.
 
 ```bash
-tools/probe-worlds generate --accept-eula   # every corpus and golden, one server at a time; hours
-tools/probe-worlds verify                   # what is there, checked without a server
+tools/fetch-vanilla --with-structures       # the jar, its data and its structure files
+tools/probe-worlds generate --accept-eula   # every world, one server at a time; hours
+tools/probe-worlds verify                   # check what is there, without a server
+ctest --preset conformance                  # skips loudly while fixtures are absent
 ```
 
-This repository's own CI passes `--accept-eula` to generate probe worlds and
-region goldens, on the owner's recorded acceptance (SPEC §12); a fork's CI
-does not.
+CI builds and tests on Linux, macOS and Windows, on x86-64 and ARM64. It also
+generates these worlds on Linux x86-64, and runs conformance over them on Linux
+x86-64 and ARM64. On 2026-11-01, 176 of the 185 cases ran on each, and the other
+9 have no committed generator.
+
+### Presets
 
 | Preset | Purpose |
-|--------|---------|
-| `dev` | Debug, warnings visible but not fatal |
-| `release` | RelWithDebInfo; identical determinism flags to `dev` |
-| `ci-debug` / `ci-release` | As above with `-Werror` / `/WX` |
-| `ci-conformance` | Build and test presets on `dev`'s tree: the conformance suite four cases at a time, an hour per case, as CI runs it |
-| `sanitize` | Clang, Debug, every first-party target the default configuration builds under UBSan (float-cast-overflow included, the first report fatal), ext/'s chunk encoder among them; not ext/'s zend module or ext-nukkit/, which it leaves off: `ctest --preset sanitize` runs the unit suite, as CI does, and `sanitize-conformance` the conformance suite (SPEC §5.7) |
+|---|---|
+| `dev` | Debug. Warnings show but are not fatal. |
+| `release` | RelWithDebInfo, with the same determinism flags as `dev`. No test preset. |
+| `ci-debug`, `ci-release` | As above, with warnings as errors. |
+| `conformance` | Test preset: the conformance suite on `dev`'s build. |
+| `ci-conformance` | Build and test presets: the same suite four cases at a time, as CI runs it. |
+| `sanitize` | Clang UBSan. The first report is fatal. |
+| `sanitize-conformance` | Test preset: conformance on `sanitize`'s build. |
+| `ext`, `ext-release` | The PocketMine-MP extension. Needs `STRATUM_PHP_CONFIG`; see `ext/README.md`. |
+| `pmmp`, `pmmp-task-cost` | Test presets on `ext-release`'s build: its local server tests. |
+| `nukkit`, `nukkit-release` | The Nukkit binding. Needs `JAVA_HOME`; see `ext-nukkit/README.md`. |
 
-Requirements: CMake ≥ 3.24, a C++20 compiler (GCC 13+, Clang 16+, MSVC 2022),
-zlib, and network access on first configure so Catch2 v3 can be fetched (or
-install Catch2 ≥ 3 yourself and it will be used instead). zlib is taken from
-the system when present and fetched and built otherwise, so no manual setup
-is needed on platforms that ship without it.
-
-Read what vanilla produced:
-
-```bash
-stratum diff <left.mca> <right.mca> [--max <n>]   # 0 identical, 1 differing
-stratum render <region.mca> --out map.png --mode heightmap|biome|blocks
-```
-
-`diff` compares in Java space, before any Bedrock mapping (SPEC §7): every
-block, and every stored biome by name, cell by 4x4x4 cell. It reports the
-first differences of each, apart, with their coordinates, and says
-"identical" (exit 0) only when the blocks and the biomes both agree.
-Anything it cannot compare — a chunk present on one side, one that fails to
-decode, one whose stored coordinates disagree — is reported as a finding
-rather than skipped. Slice rendering is still to come.
-
-Look at a density function before there is any terrain to look at:
+### Lint the way CI does
 
 ```bash
-stratum render --pack <dir> --function minecraft:overworld/continents \
-    --seed 42 --out continents.png \
-    [--origin X,Z] [--y N] [--step N] [--size WxH] [--ramp signed|grey]
-```
-
-`<dir>` is either a data pack (`pack.mcmeta` beside `data/`) or an extracted
-worldgen tree, told apart by what is on disk. The default ramp draws values
-below zero blue and above zero orange, which is the distinction most of
-vanilla's 2D functions are shaped around — continentalness below zero is
-ocean. The value range is printed alongside, because a shade cannot be read
-back into a number.
-
-This is **not** terrain height — it is one function's field. A function this
-build cannot evaluate is refused by name rather than drawn as a guess.
-
-Terrain comes from the shell through `generate`, which writes region files a
-vanilla server, `stratum diff` and `stratum render` all read:
-
-```bash
-stratum generate .fixtures/1.21.11 --dimension overworld --seed 42 \
-    --region 0,0 --out out/                  # or --chunks X,Z:X,Z; --threads N
-stratum diff out/r.0.0.mca .fixtures/1.21.11/regions/seed-42/overworld/r.0.0.mca
-```
-
-The input is a `tools/fetch-vanilla` version root or a frozen pipeline;
-`--dimension` is `overworld`, `amplified`, `large_biomes`, `nether` or `end`,
-and one this build cannot compile (the Nether, today) is refused by name.
-
-Check a pack before generating from it:
-
-```bash
-stratum validate <pack-dir> [--seed N] [--strict]   # 0 clean, 1 warnings, 4 errors
-```
-
-It does everything world load does short of sampling a point: opens the
-pack, resolves every reference, builds every noise, and walks each density
-function for node types this build cannot execute. It keeps two kinds of
-"no" apart — a registry v1 does not execute (your pack is fine; this engine
-will not run that part of it) and a function this *build* cannot yet
-evaluate (your pack is fine; the code is not there yet) — and reports the
-registries that load but which nothing interprets yet, so that a clean
-report is not read as more approval than it is.
-
-`--strict` makes warnings fatal. It is where SPEC §8's open question is
-handed to you rather than answered: whether an unexecutable registry should
-stop a load depends on whose pack it is, and vanilla's own data could not
-load if this build decided it.
-
-Lint locally the way CI does. `ctest --preset dev` covers the first two; the
-other two exist because CI builds configurations this machine does not, and
-each of them has caught a break that every other check passed:
-
-```bash
-tools/lint/check-determinism.sh   # also runs as the ctest `lint.determinism` case
+tools/lint/check-determinism.sh   # also runs inside ctest --preset dev
 tools/lint/format.sh --fix        # clang-format 18.1.8, pinned
-tools/lint/warnings.sh            # the project warning set as errors, which only CI sets
+tools/lint/warnings.sh            # the project's warnings as errors
+tools/lint/clang.sh               # the same under clang++
 tools/lint/tidy.sh                # clang-tidy 18
-tools/lint/optimised.sh           # the unit suite built optimised, where UB stops being forgiven
+tools/lint/optimised.sh           # unit tests built optimised
 ```
 
 ## Repository layout
 
 ```
-lib/       core static library — pure C++, never includes PHP/zend headers
-  mapping/ Java -> Bedrock block-state and biome mapping (M5, own tests)
-cli/       render / generate / diff / validate, built on lib/
-ext/       zend binding for PocketMine-MP (M5; marshaling only)
-tools/     lint, fixture fetching, schema sync, CI glue
-tests/     Catch2 v3 unit suites; conformance driven via `cli diff` + CTest
+lib/         core static library: pure C++, never includes PHP headers
+  mapping/   Java to Bedrock block-state and biome mapping
+cli/         the stratum command: render, generate, diff, validate
+ext/         PocketMine-MP binding and plugin
+ext-nukkit/  Nukkit binding and plugin
+spec/        clean-room specifications
+tools/       lint, fixture fetching, schema sync, measurement, CI scripts
+tests/       Catch2 unit suites and conformance cases
 ```
-
-## What generates today
-
-This section is the honest counterpart to the capability matrix below: the
-matrix states the v1 contract, this states how much of it is finished. Every
-number here is against output from the vanilla 1.21.11 server, not against a
-reimplementation. `PROGRESS.md` is the at-a-glance tracker, and SPEC §10-§11
-carry the measurements.
-
-**The shipped overworld — generated end to end, and 99.9957% block-exact.**
-`CompiledDimension` runs the whole of vanilla's overworld: density, ore veins,
-the multi-noise biome source, aquifers, and the full surface-rule tree. On a
-4 x 4 grid of chunks in each of the eight golden overworld regions (12.6
-million positions), it places the exact block the server did at all but 540.
-Those are mostly surface materials near biome borders, which is M4's.
-
-**Terrain shape — done, and checked.** The density pipeline evaluates all 34
-node types, the full noise router (all 45 of the overworld's entries), cell
-sampling with trilinear interpolation and every cache node type. Over four
-chunks and 393216 blocks of an aquifer-free world, **every block is in the
-right category**: solid, fluid or air.
-
-**Biomes — done, and exact.** The multi-noise biome source matches vanilla on
-every one of 98304 sampled cells across four seeds. Getting there needed two
-things together: climate values quantised to fixed point, and ties broken
-toward the later entry.
-
-**Aquifers — wired, and exact wherever the server's fluid did not move.**
-`ChunkFiller` calls the whole aquifer: the 16 x 12 x 16 cell lattice and its
-jittered centres, the fluid level rule (ladder, ocean branch, depth gate),
-four-way source selection, the three-source barrier, the fluid type, the
-deep-dark override and the `y_skip` cutoff. On all eight golden regions, every
-raw block disagrees with the server only where the server's own fluid moved
-after generating: flowing water and lava, rebuilt sources, and obsidian where
-water met lava. A test credits each such block by its shape, never by a count.
-The `amplified` and `large_biomes` presets match the server the same way, on
-probe windows chosen for what the goldens lack: aquifer fluid above the sea,
-cells under a preliminary surface above 141, and the deep-dark override on
-large_biomes' own erosion and depth.
-Vanilla also marks some fluid positions to tick once a chunk loads. That flag
-is computed too, and it is exact against the server's own lists
-(255457 of 255457 marks on one probe set). A datapack that wraps an aquifer
-entry in a cache marker gets the reading the server takes, measured marker by
-marker (SPEC §11). The marks reach PocketMine-MP: its plugin schedules a block
-update at each once the chunk is populated and settled, and the liquids then
-flow by PocketMine-MP's own rules.
-
-**Surface rules — run.** The overworld's whole tree executes (287 rules over
-141 conditions), and the shipped overworld figure above includes it. The
-legacy dimensions are the exception. Where a dimension uses
-`legacy_random_source`, its surface rules and the noises they name are refused
-by name rather than derived wrongly. That covers the Nether, `caves` and
-`floating_islands`.
-The legacy Nether's climate and terrain are measured (32765 of 32768 golden
-biome cells, every miss an exact tie). The End generates exactly: its terrain
-block for block over its noise height (y 0..127), and its biomes through its
-own `the_end` biome source, which reads the noise router's erosion at each
-chunk's centre — exact on every quart the server stores, y 0..255, in 45 End
-regions, datapack variants of its router included (SPEC §11). The upper half
-of that column, above the noise height, comes from `fillBiomes`' range form,
-which is also what fills PocketMine-MP's sub-chunks above and below the End's
-terrain. A dimension names its biome source when it is compiled, since a
-frozen pipeline does not record one. How PocketMine-MP then presents an End
-world to Bedrock clients — its dimension, sky and fog — is not verified.
-
-**PocketMine integration — run headless inside a real server, not yet seen by
-a client.** The Java-to-Bedrock mapping tables, the sub-chunk encoder, the
-zend module and the plugin are all in place. The plugin registers the
-generator, freezes the pipeline into a new world's folder, refuses on the main
-thread a world that cannot generate, and translates block states through
-PocketMine-MP's own upgrader. Inside PocketMine-MP 5.44.3, on its own PHP
-(`ctest --preset pmmp`, local evidence), the overworld's and the End's spawn
-areas generate on its worker threads, and every chunk on disk is the engine's,
-block by block and biome by biome, but for what PocketMine-MP's own liquid
-rules do once the aquifer fluid is set flowing (SPEC §11). Whether a Bedrock
-client sees what a Java client would is the owner's check to make.
-Performance is untouched at about 237 ms per chunk, on a per-point
-interpreter.
 
 ## Capability matrix (v1)
 
-This matrix is part of the public contract (SPEC §8). A pack that
-half-loads silently is a bug of the highest severity class: anything outside
-the supported column is a **hard error at load, naming the registry or node
-that was rejected** — except where a row below says a file loads and is not
-yet interpreted (a pack's `dimension` and `world_preset` files, and the
-`biome_source` they declare, which nothing reads yet).
+This table is part of the public contract (SPEC §8). A pack that half-loads
+silently is a top-severity bug.
+
+A JSON file the build cannot place in a registry is a **hard error at load,
+naming the file**. The loader does not look at other file types. A **Rejected**
+registry does not stop a load by default, because vanilla's own data holds
+hundreds of such entries. The loader records each one by name and never runs it.
+`stratum validate` warns about them, `--strict` makes that fatal, and SPEC §8
+keeps open what the default should be for a user's pack.
 
 | Registry / feature | v1 | Notes |
 |---|---|---|
-| `worldgen/density_function` | Supported | Including all cache node types |
-| `worldgen/noise` | Supported | Either as its own entry or written inline in a density function; an inline one loads but cannot yet be seeded (SPEC §11) |
-| `worldgen/noise_settings` | Supported | Noise router, surface rules, spawn targets |
-| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Tier A, under either random source (the `legacy_random_source` lattice is measured on a constructed probe; a legacy aquifer reading a named noise other than the three legacy climate noises is refused for that noise's seeding); refused by name with a `default_fluid` other than water, which no vanilla dimension that enables aquifers uses |
+| `worldgen/density_function` | Supported | All cache node types included |
+| `worldgen/noise` | Supported | Its own entry or written inline. An inline one loads but cannot yet be seeded. |
+| `worldgen/noise_settings` | Supported | Noise router and surface rules. Spawn targets load and are kept, not interpreted. |
+| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Under either random source. Refused by name when `default_fluid` is not water, or under the legacy source when reading a named noise other than the three legacy climate noises. |
 | Multi-noise biome source | Supported | Named by its parameter list |
-| `the_end` biome source | Supported | Reads the router's `erosion`, as the server does (SPEC §11) |
-| `fixed`, `checkerboard` biome sources | **Rejected** | Refused by name when a caller names them to `world::BiomeSource::parse` (as `Stratum\Dimension::open` and the PocketMine-MP plugin's options do). Nothing reads a pack's own `biome_source` yet, so one a pack declares in its `dimension` or `world_preset` is neither refused nor reported (SPEC §11) |
-| `worldgen/biome` | Supported | Loaded for biome identity and surface rules; features and carvers within a biome are not executed |
-| `dimension`, `dimension_type`, `world_preset` | Partial | Loaded and addressable, not interpreted: the caller names a dimension's noise settings and its biome source, and nothing reads them from these files yet |
-| Tags and namespaced references | Supported | Within the registries above |
-| `configured_feature`, `placed_feature` | **Rejected** | v2 (SPEC §10, M6) |
+| `the_end` biome source | Supported | Reads the router's `erosion`, as the server does |
+| `fixed`, `checkerboard` biome sources | **Refused** | Refused by name when a caller names them. One a pack declares in `dimension` or `world_preset` is not read or reported yet. |
+| `worldgen/biome` | Supported | For biome identity and surface rules. A biome's features and carvers do not run. |
+| `dimension`, `dimension_type`, `world_preset` | Partial | Load but are not interpreted. The caller names the noise settings and biome source. |
+| Namespaced references | Supported | Within the registries above |
+| Tags | **Refused** | A pack with a JSON file under `tags/` is refused by name at load. |
+| `configured_feature`, `placed_feature` | **Rejected** | v2 (M6) |
 | `configured_carver` | **Rejected** | v2 |
 | `structure`, `structure_set` | **Rejected** | v2 |
 | `template_pool`, `processor_list` | **Rejected** | v2 |
 | `flat_level_generator_preset` | **Rejected** | Not planned for v1 |
 
-Rejected entries are never silently dropped: the loader records each one by
-identifier and registry, so a caller can report exactly what it will not
-execute. See the open question in SPEC §8 about when their presence should be
-fatal.
+These are also refused by name rather than guessed at:
 
-This matrix states the v1 contract, not what is finished — see
-[What generates today](#what-generates-today) for that. The build in progress
-refuses one density function type outright, `slide`, and two more only when
-it is asked to evaluate them without a cell lattice, which noise settings now
-supply — by name and with a reason, rather than approximating them. It refuses a noise written inline
-for a narrower reason: a noise is seeded from the MD5 of its identifier, and
-one written in place has none. SPEC §11 lists why each is where it is.
+- **`slide`**, the one density type not implemented. Vanilla does not use it
+  at 1.21.11.
+- **`interpolated` and `cache_all_in_cell` without a cell lattice.** A cell
+  lattice is the grid of cells noise settings divide a chunk into. These two
+  types depend on it, so a function evaluated on its own refuses them.
+- **Input that would reach undefined behaviour:** values outside their schema
+  range, integers their field cannot hold, and nesting too deep for the stack.
+  The depth limits are 128 for JSON, 256 for a density function graph and 128
+  for surface rules.
+- **Far chunks on the overworld presets:** past about 2.8 million blocks from
+  the centre on either axis (chunk coordinates 175 770 and up, and -175 771 and
+  down). The coordinates of vanilla's `jagged` noise stop fitting in 32 bits
+  there, well inside the world border. The server's behaviour past that point
+  has not been measured.
 
-It also refuses, by name, every input that would carry its arithmetic into
-undefined behaviour, rather than generating whatever that produces (SPEC §8,
-"Inputs that would reach undefined behaviour"): a value outside the range
-the schema or minecraft.wiki gives its field, an integer its field's type
-cannot hold (which the JSON reader used to narrow without a word), an int
-near 2^31 whose arithmetic would overflow, a function whose value no 32-bit
-integer holds where one is needed, a frozen node of any shape but its
-type's, a noise sampled past where its lattice fits 32 bits, and an
-`interpolated` cell whose corners leave 32 bits (which a pack reaches on y
-through `find_top_surface`). And every input nested deeper than its
-recursions' stack allows: a file of JSON more than 128 arrays and objects
-deep, a density function graph more than 256 nodes and splines deep,
-surface rules more than 128 deep (vanilla's deepest are 23, 46 and 14).
-The graph's bound also counts the resolver's own descent, references
-included, so a pack whose graph is shallower than 256 can be refused,
-depending on which file resolves first (SPEC §8). One of these refusals,
-the noise lattice's, is reached by vanilla's own data: in all three
-overworld presets, `jagged` at its `xz_scale` of 1500 leaves 32 bits
-2 812 333 blocks from the origin on either horizontal axis, so chunk
-coordinates 175 770 and up, and -175 771 and down, are refused there,
-inside the world border, until the server's reading past that point is
-measured. The aquifer is the
-one named exception: it reads `preliminary_surface_level`,
-`fluid_level_spread` and `sea_level` with Java's own int semantics
-(saturating, NaN to 0, wrapping), which is defined and portable but not yet
-measured against the server.
+The aquifer is the one exception to these refusals. It reads
+`preliminary_surface_level`, `fluid_level_spread` and `sea_level` as Java's
+`int` would. That is defined and portable, but not yet measured against the
+server. SPEC §8 has the full list.
 
-### Density function types
+<details>
+<summary><strong>Density function types</strong>: all 34, and what each is checked against</summary>
 
-All 34 types vanilla defines at 1.21.11. The last column is the one that
-matters for a parity project: what a type has actually been *checked*
-against, rather than whether it has code.
-
-`golden terrain` means the type is reached by the overworld's `final_density`
-and is therefore exercised by the end-to-end comparison against the
-heightmaps vanilla itself recorded (`golden_terrain_test`). That comparison
-is close but not yet exact, so it is coverage rather than a clean bill of
-health — it would catch a type being badly wrong, not subtly.
+`golden terrain` means the overworld's `final_density` uses the type, so
+comparing with heightmaps recorded from vanilla exercises it. That would catch a
+type being badly wrong, not subtly wrong. `cubiomes` means known answers
+generated from cubiomes. A `datapack probe` is a small test world the vanilla
+server generated from a datapack written for that check. `unit vectors` are
+known-answer tests.
 
 | Node type | Status | Vanilla uses | Checked against |
 |---|---|---|---|
@@ -351,17 +288,17 @@ health — it would catch a type being badly wrong, not subtly.
 | `cache_2d` | Supported | 24 | golden terrain, cubiomes |
 | `cache_all_in_cell` | Needs a cell lattice | 0 | unit vectors; the vanilla server, via datapack aquifer probe — unused at 1.21.11 |
 | `cache_once` | Supported | 12 | golden terrain |
-| `clamp` | Supported | 14 | golden terrain, cubiomes |
+| `clamp` | Supported | 14 | golden terrain |
 | `constant` | Supported | — | golden terrain; written as a bare number, so pervasive |
-| `cube` | Supported | 2 | golden terrain, cubiomes |
+| `cube` | Supported | 2 | golden terrain |
 | `end_islands` | Supported | 2 | golden End regions plus two far probes: every block exact (SPEC §11) |
 | `find_top_surface` | Supported | 3 | the vanilla server, via datapack probe: 1024/1024 columns |
 | `flat_cache` | Supported | 16 | golden terrain, cubiomes; its chunk window, via datapack aquifer probe |
 | `half_negative` | Supported | 3 | golden terrain |
 | `interpolated` | Needs a cell lattice | 20 | golden terrain (the lattice comes from noise settings); the vanilla server's aquifer reads, via datapack probe |
 | `invert` | Supported | 3 | golden `preliminary_surface_level`, since `find_top_surface` landed |
-| `max` | Supported | 9 | golden terrain, cubiomes |
-| `min` | Supported | 13 | golden terrain, cubiomes |
+| `max` | Supported | 9 | golden terrain |
+| `min` | Supported | 13 | golden terrain |
 | `mul` | Supported | 88 | golden terrain, cubiomes |
 | `noise` | Supported | 49 | golden terrain, cubiomes |
 | `old_blended_noise` | Supported | 3 | the vanilla server, via datapack probe: 16384/16384 columns |
@@ -373,20 +310,15 @@ health — it would catch a type being badly wrong, not subtly.
 | `shifted_noise` | Supported | 17 | golden terrain, cubiomes |
 | `slide` | **Not implemented** | 0 | — unused at 1.21.11, so no parity cost yet |
 | `spline` | Supported | 9 | golden terrain, cubiomes |
-| `square` | Supported | 3 | golden terrain, cubiomes |
+| `square` | Supported | 3 | golden terrain |
 | `squeeze` | Supported | 7 | golden terrain — sits in `final_density` directly |
 | `weird_scaled_sampler` | Supported | 3 | the vanilla server, via datapack probe: both rarity ladders |
-| `y_clamped_gradient` | Supported | 29 | golden terrain, cubiomes |
+| `y_clamped_gradient` | Supported | 29 | golden terrain |
 
-`squeeze` and `invert` are the two types implemented from documentation
-alone, and both are now reached by a comparison against vanilla: `squeeze`
-sits directly in the overworld's `final_density`, and `invert` became
-checkable when `find_top_surface` landed and made `preliminary_surface_level`
-evaluable. Until then `invert` was the only type vanilla uses that nothing
-here had ever compared against anything.
+`slide`, `shift` and `cache_all_in_cell` are unused at 1.21.11. That is why
+they cost nothing today, not a promise about other versions.
 
-`slide`, `shift` and `cache_all_in_cell` are unused at 1.21.11. That is not
-a promise about other versions — it is why they cost nothing today.
+</details>
 
 ### Parity tiers
 
@@ -394,42 +326,45 @@ a promise about other versions — it is why they cost nothing today.
 |---|---|---|
 | A | Density functions, noise, terrain shape, aquifer fill decision, multi-noise biome assignment, surface rules | Bit-exact vs vanilla Java, block-for-block, in Java block space |
 | B (v2) | Carvers, features, structures | Statistical parity; exact placement may differ |
-| U | Everything outside the matrix | Hard error at pack load, never a silent skip |
+| U | Everything outside the matrix | Never executed. A JSON file in a directory this build cannot name is a hard error at pack load. An entry in a **Rejected** registry is recorded by name, and a hard error only under `--strict`. |
 
 ## Determinism
 
-Same (pipeline, seed, chunk) must produce identical bytes on every supported
-platform, architecture and compiler (SPEC §5). In practice that means: all
-seed arithmetic in `uint64_t` with explicit wrapping, Java-semantics
-`floorDiv`/`floorMod`/`>>>` helpers instead of raw `%` and `>>`, only the
-project's Java LCG and Xoroshiro128++ seeded per `(worldSeed, position,
-salt)`, `-ffp-contract=off` / `/fp:precise`, and never `-ffast-math`.
+The same pipeline, seed and chunk must produce identical bytes on every
+supported platform, architecture and compiler (SPEC §5). In practice:
 
-Transcendentals are a special case: Java uses `StrictMath` (fdlibm), and a
-host libm is within an ulp of it rather than equal to it. Parity-critical
-code therefore calls `stratum::fdlibm::` — never `<cmath>` — for `log` and
-friends. `std::sqrt` is exempt, being IEEE-754 correctly rounded.
+- Seed arithmetic is `uint64_t` with explicit wrapping.
+- Java-semantics `floorDiv`, `floorMod` and `>>>` helpers replace raw `%` and
+  `>>`.
+- The only RNGs are the project's Java LCG and Xoroshiro128++, seeded per
+  world seed, position and salt.
+- `-ffp-contract=off` or `/fp:precise` is always on, and `-ffast-math` never is.
+- Parity-critical code calls `stratum::fdlibm::`, not `<cmath>`, because Java's
+  `StrictMath` differs from a host libm. `std::sqrt` is exempt, being correctly
+  rounded.
 
-CI enforces this on x86-64 **and** ARM64 across Linux, Windows and macOS; a
-cross-architecture divergence is a build failure, not noise.
-`tools/lint/check-determinism.sh` catches the parts a compiler cannot see,
-including that vendored licence notices are still intact.
+CI treats a difference between architectures as a build failure.
+`tools/lint/check-determinism.sh` catches what a compiler cannot see.
 
 ## Provenance
 
-This repository ships **no Mojang data and no Mojang source code**, in any
-form (SPEC §12). Vanilla worldgen definitions and conformance fixtures are
-produced on your machine, or on this repository's CI runners, by
-`tools/fetch-vanilla` and the probe generators, from an official jar
-downloaded from Mojang; they are gitignored and never redistributed here:
-not committed, and not published as CI artifacts.
-Behaviour is implemented from minecraft.wiki / datapack.wiki documentation,
-mcdoc schemas, licensed references (cubiomes, MIT; Cuberite, Apache-2.0) and
-the observed input/output of the vanilla server.
+This repository ships **no Mojang source code, and no vanilla worldgen JSON,
+extracted assets or fixtures** (SPEC §12). The exception is `lib/mapping`'s
+tables of block and biome identifiers, committed with the owner's approval.
+
+Vanilla worldgen data and conformance fixtures are produced on your machine, or
+on this repository's CI runners, from an official jar downloaded from Mojang.
+They are gitignored, never committed, and never published as CI artifacts.
+
+Behaviour comes from minecraft.wiki and datapack.wiki documentation, mcdoc
+schemas, licensed references (cubiomes, MIT; Cuberite, Apache-2.0), the
+clean-room specifications under `spec/`, and the observed input and output of
+the vanilla server and of deepslate, run as a black box. The Bedrock tables come
+from GeyserMC's mappings (MIT).
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 "Minecraft" is a trademark of Mojang AB. This project is not affiliated with,
 endorsed by, or associated with Mojang AB or Microsoft.

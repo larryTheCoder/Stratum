@@ -1,7 +1,7 @@
 # `lib/mapping/` — Java → Bedrock mapping data
 
-Milestone **M5** (SPEC §9). Biome and block state tables are both landed;
-the biome fallback is not.
+Milestone **M5** (SPEC §9). Biome and block state tables are both landed. A
+biome fallback is a v1 non-goal (SPEC §1, §9).
 
 This component is deliberately **downstream of the conformance boundary**:
 Tier-A parity is diffed in *Java block space* (SPEC §7) before anything is
@@ -29,11 +29,11 @@ selection; see SPEC.md's M5 entry for the full evidence), because biome id
 drift happens at Minecraft-version granularity, which regenerating this
 table on a version bump already covers.
 
-**Not yet landed:** the "nearest vanilla Bedrock biome" fallback SPEC §9
-wants for custom/datapack biomes. `bedrockBiomeId()` returns nothing for a
-biome outside the table rather than guessing at a default — see the
-function's own header for why a placeholder default was rejected in favor
-of an honest gap.
+**Not in v1:** a "nearest vanilla Bedrock biome" fallback for custom/datapack
+biomes, by the owner's ruling (SPEC §1, §9). `bedrockBiomeId()` returns nothing
+for a biome outside the table rather than guessing at a default, and each
+binding refuses such a biome by name; see the function's own header for why a
+placeholder default was rejected.
 
 ## Landed: block state mapping
 

@@ -16,8 +16,8 @@ Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-
 | M1 — core primitives + conformance harness | Closed¹ |
 | M2 — 2D pipeline | Closed (its goal folded into M3) |
 | M3 — 3D density | Closed for the overworld²; ore veins closed too (below), under both random sources and with no aquifer coupling since pipeline engine v14. Its compiled flat execution program was never built — deferred to M5's perf pass (SPEC §10). Since the undefined-behaviour audit (2026-10-14) every overworld preset refuses chunks 175 770 and up and -175 771 and down, on either axis, by name, where vanilla's own `jagged` leaves int32 (SPEC §8) |
-| M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates exactly through the public compile path — its blocks, and its biomes through its own `minecraft:the_end` source (pipeline engine v15), exact on every stored quart of 45 End regions (47 185 920 quarts, eight distinct End worlds). What keeps M4 open is the legacy named-noise seeding alone |
-| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling, run only in a headless server so far, so whether its flow is Java's is unobserved (M5) |
+| M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates exactly through the public compile path — its blocks, and its biomes through its own `minecraft:the_end` source (pipeline engine v15), exact on every stored quart of 45 End regions (47 185 920 quarts, eight distinct End worlds). The last named blocker is the legacy named-noise seeding; M4 also carries the overworld's 415 surface misses, ties in the biome search and the full-biome goldens for amplified and large_biomes (below) |
+| MA — Aquifers (parallel track, does not gate M4-M6) | Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling, whose flow nobody has compared with Java's (M5) |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | **Closed 2026-10-29** (owner: the evidence is clear; Nukkit's biome defects are limitations of Nukkit itself). Mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments landed; Stratum ran inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`) and inside Nukkit b3caad67 (`ctest --preset nukkit`), and the owner's Bedrock client saw the same terrain on both servers at sixteen places (2026-10-27). Speed (quiet box, 2026-10-27): the whole generation task through PHP runs below vanilla's own time — overworld 10.5 ms/chunk end to end against vanilla's 13.6 (it was 155.7), amplified 10.5 against 15.6, large_biomes 10.7 against 13.9, the End 1.44 against 2.81 — byte-identical. Carried past it as recorded limits, not gates: the headless runs' open ends (SPEC §11), Nukkit's biome serializer offset and missing registry entries, and §4.1's flat program built for the per-block arithmetic only (further speed is post-M5 work) |
 | M6 (v2) — staged features/structures, scripting escape hatch | Out of scope for v1 |
 
@@ -212,7 +212,7 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 - [ ] `blended.hpp` says `maintainPrecision` folds 2^24 - 2^-29 to "just
       below -2^24" (lib/include/stratum/noise/blended.hpp:66-67); it is
       exactly -2^24.
-- [ ] SPEC §8 (SPEC.md:806-807), README (README.md:313-314) and
+- [ ] SPEC §8 (SPEC.md:806-807) and
       `interpreter.hpp` (lib/include/stratum/density/interpreter.hpp:317-319)
       say only y reaches the `interpolated` refusal inside the chunk
       domain; a verifier found x does too.
@@ -250,19 +250,18 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       its cell at every level (lib/src/density_interpreter.cpp:1044-1075),
       so a chain costs 8^depth time, up to the 256-deep graph bound (SPEC
       §8): a hostile pack can hang a worker. No undefined behaviour.
-- [ ] SPEC docs gap: the owner's datapack ruling is in §11 only (the perf
-      bar and M5-Nukkit entries); "Non-goals (v1)" (SPEC.md:30-46) and §9's
-      "falling back to the nearest vanilla Bedrock biome (configurable)"
-      (SPEC.md:894-898) still read as before it.
+- [x] SPEC docs gap: the owner's datapack ruling was in §11 only (the perf
+      bar and M5-Nukkit entries). *Closed 2026-11-01:* "Non-goals (v1)" and
+      §9 now carry it.
 
 **New, from this sweep: SPEC docs items.**
 
 - [ ] SPEC carries no record of the owner's 2026-10-15 ruling that the
       far-chunk refusal (chunks 175 770 and -175 771 outward, above) needs
       no M5 policy work.
-- [ ] §11's End biome entry still says `WorldFactory::create` writes only
-      the overworld's options and that neither has run inside a server
-      (SPEC.md:8543-8545); 683dc64 and `pmmp.smoke.end` answer both.
+- [x] §11's End biome entry said `WorldFactory::create` writes only the
+      overworld's options and that neither has run inside a server; 683dc64
+      and `pmmp.smoke.end` answer both. *Closed 2026-11-01.*
 - [ ] §11 says `maintainPrecision` folds into ±2^25 (SPEC.md:7457), where
       its licence entry (SPEC.md:1820) and NOTICE say ±2^24 since fba3bd6.
 - [x] §10's M3 entry still gives the compiled program "a measured
@@ -2053,8 +2052,9 @@ Open:
       `deep_lukewarm_ocean`, and (460, 200) — a seventh in part, five pairs
       of cells and three cave cells.)*
 - [ ] **Full-biome goldens for amplified and large_biomes.** Their probe
-      fixes the biome, so large_biomes' biome assignment (`temperature_large`,
-      `vegetation_large` through the search) and either preset's surface over
+      fixes the biome, so either preset's biome assignment (large_biomes'
+      `temperature_large` and `vegetation_large`, and each preset's own
+      `depth`, through the search) and either preset's surface over
       its real biomes are checked against the pack path only
       (`vanilla_compiled_dimension_test.cpp`). Needs a `tools/fetch-vanilla
       --world-preset` that sets server.properties' `level-type`; the aquifer
@@ -2098,8 +2098,8 @@ everything Stratum owns.
       id stays a by-name refusal: `Stratum\checkDimension` refuses a
       multi-noise list naming one, on the main thread as the world loads
       (SPEC §4.3), and the Nukkit binding refuses it too (SPEC §11,
-      "M5-Nukkit"). SPEC records the ruling in §11 only, not yet in its
-      "Non-goals (v1)" or §9 (handoff). Had it stayed: `bedrockBiomeId()`
+      "M5-Nukkit"). SPEC records the ruling in §11, and since 2026-11-01 in
+      "Non-goals (v1)" and §9. Had it stayed: `bedrockBiomeId()`
       returns nothing rather than a placeholder default (see the function's
       own header for why a fixed fallback was rejected), and a fallback
       needs a similarity search over biome climate parameters this library

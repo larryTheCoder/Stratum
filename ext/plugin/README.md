@@ -60,7 +60,8 @@ PocketMine-MP itself can call.
   `result_state`) that the mapping table cannot place are all refused at
   load, with the engine's reason. `GeneratorOptions`' doc lists exactly what is accepted.
   A pairing vanilla does not make, such as the End's settings with the
-  overworld's list, is taken as asked: a datapack may make it.
+  overworld's list, is taken as asked. No datapack route reaches a server in
+  v1 (SPEC §1).
 - `StratumWorlds` pins each Stratum world's engine state — its compiled
   dimension and its held fluid updates — on the main thread from
   `WorldLoadEvent` to `WorldUnloadEvent` (`Stratum\pinWorld`). Unpinned,
@@ -247,13 +248,13 @@ published, and every server directory it writes ignores itself.
 
 ## What is not verified
 
-**It has run in a real, headless PocketMine-MP 5.44.3, never with a
-client.** Every check above passes. What that leaves:
+**It has run in a real, headless PocketMine-MP 5.44.3, and the owner's Bedrock
+client has visited a server of the owner's own (2026-10-27).** Every check above
+passes. What that leaves:
 
-- Nothing has connected to it. Whether a Bedrock client renders the
-  terrain, the biomes and the flowing fluids as a Java client would is the
-  owner's check to make (SPEC §11, "M5: Stratum inside a real
-  PocketMine-MP").
+- The client saw sixteen overworld places, by hand, with no error, discarded
+  population or slow tick in the log (SPEC §11, "M5 closed"). Whether the
+  flowing fluids behave as on a Java server is unobserved.
 - CI still checks only that every file parses and runs the PHPT suites in
   `tests/`, each with the real extension loaded against stand-ins for the
   PocketMine-MP classes the code calls: `001_generator_options.phpt`
