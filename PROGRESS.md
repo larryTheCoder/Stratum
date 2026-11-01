@@ -319,12 +319,12 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
    155.7 -> 23.7 ms/chunk on the overworld), then the second pass and the
    task measured through PHP (2026-10-27: 10.5 ms/chunk, below vanilla's
    13.6), then the third pass's first stage (2026-10-30: 10.6 -> 5.94
-   ms/chunk, 0.44x of vanilla's 13.4; the task through PHP 6.33),
-   byte-identical throughout (SPEC §11). Next: its second stage — the
-   rest of the flat program (the cell corners) and the noise they sample,
-   the fill loop, the surface pass's biome reuse (M5's "What the
-   performance work leaves"). Every change shown to move no output with
-   the bench's `--dump` and `--compare`.
+   ms/chunk, 0.44x of vanilla's 13.4; the task through PHP 6.33) and its
+   second (2026-10-31: 3.39 ms/chunk on the overworld, 0.25x of vanilla's 13.4; the task
+   through PHP 3.41), byte-identical throughout (SPEC §11).
+   Next, if more is wanted: the levers M5's "What the performance work
+   leaves" lists after the second stage. Every change shown to move no
+   output with the bench's `--dump` and `--compare`.
 3. ext-nukkit inside a real Nukkit. *Done 2026-10-27*, and its two Nukkit
    readings settled by M5's closure (2026-10-29) as Nukkit's limitations.
 4. M5's paperwork: *done* with its closure (2026-10-29). Still the
@@ -2310,6 +2310,35 @@ everything Stratum owns.
       a quiet box, a row whose checks fail is NOT A MEASUREMENT (exit 3),
       and `--from` reuses an earlier run's half. SPEC §11, "M5's
       performance bar".
+- [x] **Generation speed after the third pass's second stage (2026-10-31)
+      — about a quarter of vanilla's own time or less on every preset.** SPEC
+      §11, quiet box, means, the vanilla half measured the same day and the
+      before half (86d09ee) back to back against it: overworld 5.91 ->
+      3.39 ms/chunk, amplified 5.59 -> 3.27, large_biomes 6.00 -> 3.45,
+      the End 0.44 -> 0.33, against vanilla's 13.38, 16.59, 15.24 and
+      2.79 — 0.25x, 0.20x, 0.23x and 0.12x of vanilla's time (1.71x to
+      1.74x faster on the overworld presets; 10.60 -> 3.39 on the
+      overworld over the whole third pass).
+      Byte-identical (12 dumps); instructions per generation 1.45x to
+      1.73x fewer than after the first stage (overworld 99.6M -> 58.1M;
+      3.26x fewer than before the pass). Three disjoint levers, each
+      verified adversarially at its own commit by an exactness verifier
+      and a gates verifier and fixed until both held (the corners' last
+      gap, found by their fourth exactness round, closed at integration by
+      a test shown to fail on that round's two mutants), then the merged
+      tree as a whole — every stage-2 differential harness relinked base against
+      merged (138 pairs identical), 258 024 whole chunks of its own, a
+      mutation sweep of 49 mutants whose 21 non-equivalent survivors,
+      and the 30 planted after them, each fail a committed unit case,
+      and every local gate: the cell corners batched a lattice column at
+      a time under a memo kept by index, each noise sampled down the
+      column (-28.2M), the biome fill taking the surface pass's lookups
+      with a search memo and the threshold shortcut (-9.2M, 1.1M of it
+      the bench's own encode), and the fill writing whole runs from their
+      lanes with a cheaper aquifer consult (-4.6M). The task through PHP
+      (`tools/pmmp-task-cost`, quiet, every chunk identical): overworld
+      3.41, amplified 3.29, large_biomes 3.49, the End 0.37 ms/chunk. Still open
+      below. The first stage's record follows.
 - [x] **Generation speed after the third pass's first stage (2026-10-30)
       — under half of vanilla's own time on every preset.** SPEC §11,
       quiet box, means, the vanilla half measured the same day and the
@@ -2348,40 +2377,56 @@ everything Stratum owns.
       PocketMine-MP round the zend call 0.025 to 0.048 ms of it. Still
       open below. The first pass's record follows.
 - [ ] **What the performance work leaves (2026-10-27; updated
-      2026-10-30).** (a) Unmeasured in the task: AsyncPool's queueing and
+      2026-10-31).** (a) Unmeasured in the task: AsyncPool's queueing and
       notifier, pmmpthread's cross-thread copy, population's neighbour
       shipping (up to eight neighbours a populated chunk), lighting, the
-      main thread's fluid scheduling. New (2026-10-30): the task through
-      PHP runs 5.8% to 10.0% above the bench's C++ in the same build, where
-      it was about 2%, almost all in the slow tail — why is unmeasured
-      (SPEC §11). (b) Not done: the surface pass reading fillBiomes' grid
-      (about 5M instructions a chunk; exact only in fill-first order, the
-      order encodeChunk uses). (c) The next levers, after the third pass's
-      first stage: the cell corners — the interpreter's walk and its
-      MemoTable, about a quarter of the instructions — and the noise they
-      sample (NormalNoise and BlendedNoise, about a fifth), then the
-      kernel's lane runs (9%) and the fill's own loop (8%). (d) The second
-      pass's verifier nits — *closed 2026-10-30* but one: `ColumnMemo` is
-      bound to its executor as well as its column; a static_assert holds
-      `kMaxRegisters` to the 64-bit read mask; a comment proves a kernel
-      built by `blockKernel` reaches nothing out of range; still open,
-      `StablePalette`'s stable-address invariant is unchecked (a debug
-      check on each hit). (e) The kernel fuzzer is a unit case
-      (`density_kernel_fuzz_test.cpp`) since 2026-10-30. (f) The bar's
-      working reading: *settled 2026-10-29* by M5's closure (met as read).
-      (g) The third pass's first-stage verifier nits, carried: the
-      surface executor declares its per-type tests `inline` but defines
-      them in one file only; `Executor::compile` does O(height) work for a
-      direct caller with an unvalidated height; nothing checks that a
-      surface `Context`'s biome key and biome agree; `perlin_kernel.hpp`
-      is internal but sits in the public include directory, with a macro
-      it never undefines; NormalNoise's tail loops for unequal stacks are
-      unreachable and untested; the bench's `encodeStages` no longer
-      mirrors `encodeChunk`; the memo condition the lane run depends on is
-      spelled out in three places; SPEC §8's stack figures predate
-      `fill`'s larger frame and were not measured again. (h) The merged
-      tree has not been built on ARM64 locally (the board did not answer
-      on 2026-10-30); CI's ARM64 legs are the check.
+      main thread's fluid scheduling. The task through PHP ran 5.8% to
+      10.0% above the bench's C++ in the same build after the first stage,
+      where it was about 2%, almost all in the slow tail; after the second stage it is 1.7% to 3.0%
+      on the overworld presets and 13.9% (0.045 ms) on the End, neither
+      explained (SPEC
+      §11). (b) *Done 2026-10-31* the other way round: fillBiomes takes the
+      quarts the surface pass looked up, not the reverse. (c) The next
+      levers, after the second stage, none built: the block kernel over a
+      whole cell (128 blocks) a call rather than a row of 16 (estimated 2M
+      to 3M instructions a chunk); the aquifer's preliminary_surface_level
+      reads, detached find_top_surface scans that cost about 4.9M a chunk
+      on the overworld and only a faster scan can cut; the kernel handing
+      the fill each run's solid mask (about 0.5M); telling the corner
+      cache a dimension's height once a chunk so a first column batches at
+      once (about 0.3M); the biome source's climate reads down a quart
+      column; fillChunk's per-call allocations (about 114 KB: rows,
+      samples, the search memo) into per-task scratch. Not profiled again
+      since the second stage. (d) The second pass's verifier nits: closed
+      but `StablePalette`'s stable-address invariant, still unchecked (a
+      debug check on each hit). (e) The kernel fuzzer is a unit case
+      (`density_kernel_fuzz_test.cpp`) since 2026-10-30, the column-batch
+      fuzzer (`density_column_fuzz_test.cpp`) since 2026-10-31. (f) The
+      bar's working reading: *settled 2026-10-29* by M5's closure (met as
+      read). (g) The first stage's verifier nits: *all closed 2026-10-31*
+      — the surface tests are defined where they are called, compile
+      bounds its banding at the schema's 4 096, a debug build refuses a
+      Context whose biome key is not its biome's, `perlin_kernel.hpp` is
+      private to lib/src with its macro its own, NormalNoise asserts its
+      stacks one length, the bench's `encodeStages` is `encodeChunk`'s
+      steps again, the memo condition is one helper
+      (`Interpreter::memoizes`), and SPEC §8's stack figures were measured
+      again. (h) ARM64: CI's ARM64 legs built and tested the first stage
+      (run 41039398940: linux-arm64 release 684/684, conformance on
+      linux-arm64 176 cases run); the second stage has not yet been on CI.
+      (i) The second stage's verifier notes, carried: computeSubstance's
+      three status asks rely on a braced list's left-to-right order (the
+      sequenced forms cost 0.14M to 0.25M instructions a chunk;
+      aquifer_rank_test's read-order case guards it on every leg); no test
+      can tell the fillBiomes forms that take a filled buffer use its rows
+      at all (only the instruction count shows it); a column batch
+      evaluates up to seven corners above a dimension's top in a chunk's
+      first cell column, never read (exact, work only); a batch declines
+      on any exception, `bad_alloc` included, and re-evaluates its corner
+      alone; the Windows debug legs' stack under MSVC /Od is unmeasured
+      here (CI runs both stack tests there); the fill's last aquifer
+      commit saves only 0.09M on the overworld and large_biomes (and costs
+      0.02M on amplified) and was kept.
 - [ ] **Generation speed after the first pass (2026-10-25), kept for the
       record — the C++ met the best case; the task through PHP was then
       unmeasured.** The baseline of record (SPEC

@@ -70,11 +70,13 @@ public:
 /// resolving and then evaluating a graph ran in 320 KiB of stack in the
 /// sanitize preset's build (Clang, unoptimised, UBSan, where every local and
 /// temporary has a slot of its own) and in 224 KiB in GCC's unoptimised
-/// build; a chain of 256 `interpolated`, the deepest frame per level, in 640
-/// and 320 KiB. That is inside the 1 MiB a Windows main thread or a JVM
-/// thread gets by default; before the frames were thinned a level took about
-/// 6 KiB there, and 512 levels did not fit in 2 MiB. Vanilla's deepest at
-/// 1.21.11 is 46, the `final_density` of the overworld, amplified and
+/// build (both measured 2026-10-14); a chain of 254 `interpolated` around a
+/// leaf (256 levels), the deepest frame per level, filled through
+/// ChunkFiller::fill, in 749 and 284 KiB when last measured (2026-10-31,
+/// SPEC §8). That is inside the 1 MiB a Windows main thread or
+/// a JVM thread gets by default; before the frames were thinned a level took
+/// about 6 KiB there, and 512 levels did not fit in 2 MiB. Vanilla's deepest
+/// at 1.21.11 is 46, the `final_density` of the overworld, amplified and
 /// large_biomes settings, so this is five and a half times that. What the
 /// server does with a graph past it is unmeasured.
 ///
