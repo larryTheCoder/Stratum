@@ -290,7 +290,10 @@ These are hard requirements; violations are release blockers.
    and macOS, and the conformance suite on Linux x86-64 and ARM64, both legs
    scored against one set of server-generated probe worlds and region
    goldens made on x86-64 (§7). Cross-architecture divergence is a build
-   failure.
+   failure. Conformance runs on each architecture twice: on a Debug build and
+   on the Release code generation the bindings ship (the `ci-shipped` preset,
+   whose unit suite runs too), and the extension's PHPT suite runs on both
+   its Debug and Release modules.
 6. Engine updates must reproduce stored pipelines byte-identically (§6). Any
    intentional output change bumps the pipeline engine version and is called
    out in release notes.

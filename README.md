@@ -183,6 +183,8 @@ x86-64 and ARM64. On 2026-11-01, 176 of the 185 cases ran on each, and the other
 | `dev` | Debug. Warnings show but are not fatal. |
 | `release` | RelWithDebInfo, with the same determinism flags as `dev`. No test preset. |
 | `ci-debug`, `ci-release` | As above, with warnings as errors. |
+| `ci-shipped` | Release, warnings as errors: the code generation the bindings ship. |
+| `ci-shipped-conformance` | Test preset: the conformance suite on `ci-shipped`'s build. |
 | `conformance` | Test preset: the conformance suite on `dev`'s build. |
 | `ci-conformance` | Build and test presets: the same suite four cases at a time, as CI runs it. |
 | `sanitize` | Clang UBSan. The first report is fatal. |

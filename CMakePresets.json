@@ -82,6 +82,16 @@
       }
     },
     {
+      "name": "ci-shipped",
+      "displayName": "The shipped code generation, without a binding",
+      "description": "Release, warnings as errors, with the CLI and the tests: the same library flags as ext-release and nukkit-release, so CI scores what ships. release and ci-release are RelWithDebInfo, which is -O2 where the bindings ship -O3.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "STRATUM_WERROR": "ON"
+      }
+    },
+    {
       "name": "ext-release",
       "displayName": "PocketMine-MP zend module, optimised",
       "description": "Release, warnings as errors, with ext/'s zend module: the stratum.so to load into PocketMine-MP's own PHP (tools/pmmp-dev). The determinism flags are the ones every target gets from stratum_configure_target, so no fast-math and no FMA contraction here either. Needs STRATUM_PHP_CONFIG in the environment, as ext does.",
@@ -128,6 +138,12 @@
       "name": "ci-conformance",
       "configurePreset": "dev",
       "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "ci-shipped",
+      "configurePreset": "ci-shipped",
+      "configuration": "Release",
       "jobs": 4
     },
     {
@@ -211,6 +227,21 @@
         "noTestsAction": "error",
         "timeout": 3600
       }
+    },
+    {
+      "name": "ci-shipped",
+      "configurePreset": "ci-shipped",
+      "displayName": "unit + lint suites, at the shipped code generation",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "unit|lint" } },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "ci-shipped-conformance",
+      "inherits": "ci-conformance",
+      "configurePreset": "ci-shipped",
+      "displayName": "conformance, at the shipped code generation",
+      "description": "ci-conformance's suite on ci-shipped's build."
     },
     {
       "name": "ci-conformance",

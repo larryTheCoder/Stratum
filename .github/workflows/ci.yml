@@ -4,7 +4,9 @@
 # unit suites run on x86-64 AND ARM64 across Linux, Windows and macOS, the
 # conformance suite on Linux x86-64 and ARM64 against the same probe worlds
 # and region goldens, and a cross-architecture divergence is a build
-# failure, never "noise".
+# failure, never "noise". Conformance runs twice on each architecture: Debug,
+# and the Release code generation the bindings ship (the `ci-shipped` preset),
+# since RelWithDebInfo's release legs stop at -O2 and at the unit suites.
 #
 # No generator is pinned; each platform uses its native default (Make on
 # Linux, Make on macOS, MSBuild on Windows), so CI needs no extra toolchain
@@ -466,8 +468,26 @@ jobs:
         include:
           - name: linux-x86_64
             os: ubuntu-24.04
+            configure: dev
+            build: ci-conformance
+            test: ci-conformance
           - name: linux-arm64
             os: ubuntu-24.04-arm
+            configure: dev
+            build: ci-conformance
+            test: ci-conformance
+          - name: linux-x86_64, shipped -O3
+            os: ubuntu-24.04
+            configure: ci-shipped
+            build: ci-shipped
+            test: ci-shipped-conformance
+            unit: ci-shipped
+          - name: linux-arm64, shipped -O3
+            os: ubuntu-24.04-arm
+            configure: ci-shipped
+            build: ci-shipped
+            test: ci-shipped-conformance
+            unit: ci-shipped
     steps:
       - uses: actions/checkout@v4
 
@@ -483,12 +503,12 @@ jobs:
           java-version: '25'
 
       - name: Configure
-        run: cmake --preset dev
+        run: cmake --preset ${{ matrix.configure }}
 
       - name: Build
-        # dev's tree, four jobs wide; the dev build preset stays unpinned
-        # for local machines.
-        run: cmake --build --preset ci-conformance
+        # Four jobs wide; the dev build preset stays unpinned for local
+        # machines.
+        run: cmake --build --preset ${{ matrix.build }}
 
       # The jar is content-addressed and its SHA-1 is verified on every run,
       # so caching it is safe and saves pulling 56 MB from Mojang each time.
@@ -652,13 +672,19 @@ jobs:
           grep -m1 'model name' /proc/cpuinfo || true
           echo "cores: $(nproc)"
 
+      - name: Unit suite at the shipped code generation
+        # The build legs stop at RelWithDebInfo. A step of this job rather than
+        # a build leg of its own, since this tree is already built.
+        if: matrix.unit
+        run: ctest --preset ${{ matrix.unit }} --parallel 4
+
       - name: Conformance suite
         # Four wide, an hour per case: the probe-backed psl sweep alone takes
         # about 1240 s in Debug, near include(CTest)'s 1500 s default, and
         # the golden "real overworlds" case about 1170 s. The 25 golden cases
         # add about an hour of Debug time in all, spread over the four jobs.
         id: ctest
-        run: ctest --preset ci-conformance --output-junit "${RUNNER_TEMP}/conformance-junit.xml"
+        run: ctest --preset ${{ matrix.test }} --output-junit "${RUNNER_TEMP}/conformance-junit.xml"
 
       - name: No case skipped that was not expected to
         # ctest counts a skip as a pass. Here, where the probe worlds are
@@ -765,3 +791,14 @@ jobs:
 
       - name: PHPT suite
         run: ctest --preset ext
+
+      # The stratum.so tools/pmmp-dev loads: Release, where the build above is
+      # Debug.
+      - name: Configure the shipped module
+        run: STRATUM_PHP_CONFIG="$(tools/php-dev --print-config)" cmake --preset ext-release
+
+      - name: Build the shipped module
+        run: cmake --build --preset ext-release --target stratum_php
+
+      - name: PHPT suite, shipped module
+        run: ctest --preset ext-release
