@@ -228,7 +228,11 @@ jobs:
             os: macos-15-intel
             preset: ci-debug
           - name: macos-arm64 (debug)
-            os: macos-14
+            # macos-14 is retired too, differently: the job is cancelled
+            # within seconds with "The configuration
+            # 'macos-14-arm64-us-default' is not supported", and every job
+            # that needs the build matrix (conformance, ext-pmmp) is skipped.
+            os: macos-15
             preset: ci-debug
           - name: windows-x86_64 (debug)
             os: windows-2022
