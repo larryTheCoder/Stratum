@@ -15,10 +15,10 @@
 // would not have been obvious from the error. The schema knows; memory does
 // not.
 //
-// WHAT IS LOADED BUT NOT INTERPRETED. `surface_rule` and `spawn_target` are
-// M4. They are kept as parsed JSON rather than dropped, so that a caller can
-// see they exist and a stored pipeline (SPEC §6) can round-trip them; no
-// part of this build reads them, and validate says so out loud.
+// WHAT IS KEPT AS JSON. `surface_rule` and `spawn_target` are kept as parsed
+// JSON, so that a stored pipeline (SPEC §6) can round-trip them. This parser
+// reads neither: surface::RuleGraph resolves `surface_rule` from the JSON, and
+// no part of this build reads `spawn_target`, which validate says out loud.
 
 #pragma once
 
@@ -126,7 +126,7 @@ struct NoiseSettings {
     NoiseGeometry geometry;
     NoiseRouter router;
 
-    /// Loaded, kept, not interpreted (M4). See the file comment.
+    /// Kept as JSON. See the file comment.
     nlohmann::json surfaceRule;
     nlohmann::json spawnTarget;
 

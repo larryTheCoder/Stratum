@@ -11,13 +11,13 @@
 // see tools/mapping-sync for how, and for why that commit (the one
 // GeyserMC/Geyser itself shipped for this build's pinned Java version).
 //
-// WHAT IS NOT HERE YET. SPEC section 9 also wants a fallback for biomes this
-// table has no entry for — "custom/datapack biomes fall back to the nearest
-// vanilla Bedrock biome" — which needs a similarity search over biome
-// climate parameters this library does not implement. Shipping a fixed
-// placeholder default in its place would look like that feature from the
-// outside while being a different, much weaker one; `bedrockBiomeId` returns
-// nothing instead; a real fallback is PROGRESS.md's next `lib/mapping/` slice.
+// WHAT IS NOT HERE. A fallback for biomes this table has no entry for is a v1
+// non-goal, by the owner's ruling (SPEC sections 1 and 9): a "nearest vanilla
+// Bedrock biome" would need a similarity search over biome climate parameters
+// this library does not implement. Shipping a fixed placeholder default in its
+// place would look like that feature from the outside while being a different,
+// much weaker one; `bedrockBiomeId` returns nothing instead, and each binding
+// refuses such a biome by name.
 #pragma once
 
 #include <stratum/data/resource_location.hpp>

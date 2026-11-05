@@ -134,8 +134,7 @@ TEST_CASE("a settings file with nothing wrong with it loads whole", "[settings]"
     CHECK(settings.geometry.maxY() == 320);
     CHECK(settings.geometry.cellCountY() == 48);
 
-    // Kept, not interpreted (M4), and kept verbatim so a stored pipeline can
-    // round-trip them.
+    // Kept verbatim, by this parser, so a stored pipeline can round-trip them.
     CHECK(settings.surfaceRule.at("type") == "minecraft:bandlands");
     CHECK(settings.spawnTarget.is_array());
 }

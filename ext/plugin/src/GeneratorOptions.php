@@ -85,9 +85,9 @@ use const JSON_THROW_ON_ERROR;
  * pack names — the settings' default block or fluid, a surface rule's
  * result — that the mapping table cannot place.
  *
- * NOT REFUSED: a pairing vanilla does not make. A datapack may pair noise
- * settings with any biome source, so the options take the pair they are
- * given; vanilla's End is {"settings":"minecraft:end",
+ * NOT REFUSED: a pairing vanilla does not make. The format lets a dimension
+ * pair noise settings with any biome source, so the options take the pair
+ * they are given; vanilla's End is {"settings":"minecraft:end",
  * "biomes":"minecraft:the_end"}, and {"settings":"minecraft:end",
  * "biomes":"minecraft:overworld"} generates the End's terrain with the
  * overworld's biomes, as asked.

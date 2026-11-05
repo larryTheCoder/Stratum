@@ -146,8 +146,9 @@ expect_failure "a missing jar path is rejected" \
 eula_status=0
 eula_output="$("${fetch}" --jar "${jar_file}" --skip-verify --output "${work_dir}/eula" \
     --generate-regions 2>&1)" || eula_status=$?
-if [[ ${eula_status} -ne 0 ]] && grep -q "EULA" <<<"${eula_output}"; then
-    echo "  ok: --generate-regions refuses without --accept-eula, naming the EULA"
+if [[ ${eula_status} -ne 0 ]] && grep -q "EULA" <<<"${eula_output}" \
+        && [[ ! -e "${work_dir}/eula" ]]; then
+    echo "  ok: --generate-regions refuses without --accept-eula, naming the EULA, before writing anything"
 else
     echo "  FAILED: --generate-regions did not refuse with an EULA message" >&2
     echo "${eula_output}" >&2

@@ -30,7 +30,7 @@ namespace {
 /// clean report quietly overclaim.
 [[nodiscard]] bool isInterpretedYet(data::Registry registry) noexcept {
     return registry == data::Registry::DensityFunction || registry == data::Registry::Noise ||
-           registry == data::Registry::NoiseSettings;
+           registry == data::Registry::NoiseSettings || registry == data::Registry::Biome;
 }
 
 void add(Report& report, Severity severity, std::string subject, std::string message) {
@@ -90,6 +90,14 @@ void reportRegistries(const data::Pack& pack, Report& report) {
                 std::to_string(entry.entries) +
                     " entries load and are addressable, but nothing in this build interprets "
                     "them yet (SPEC §10)");
+        }
+        if (entry.registry == data::Registry::Biome) {
+            // Generation refuses a biome with no numeric temperature; this
+            // report does not look, so a clean one says nothing about them.
+            add(report, Severity::Note, std::string(data::registryDirectory(entry.registry)),
+                std::to_string(entry.entries) +
+                    " entries load; generation reads only each one's temperature, and this "
+                    "report does not check them");
         }
     }
 }
@@ -174,10 +182,11 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
     if (!loaded->settings.empty()) {
         // Read and kept, never interpreted. Saying so is the difference
         // between a clean report and a clean report that means something.
+        // Surface rules are not in this: each dimension's is resolved below.
         add(report, Severity::Note,
             std::string(data::registryDirectory(data::Registry::NoiseSettings)),
-            "surface rules and spawn targets inside these entries are kept verbatim and are "
-            "not interpreted by this build (SPEC §10, M4)");
+            "spawn targets inside these entries are kept verbatim and are not interpreted by "
+            "this build");
     }
 
     const std::vector<data::ResourceLocation> referenced = graph->referencedNoises();

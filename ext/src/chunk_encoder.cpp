@@ -331,7 +331,7 @@ EncodedChunk encodeChunk(const world::CompiledDimension& dimension, const std::i
             if (!id.has_value()) {
                 throw EncodeError("biome '" + biome->toString() +
                                   "' has no Bedrock id in this build's table (a custom or "
-                                  "datapack biome; the nearest-biome fallback is not built yet)");
+                                  "datapack biome; v1 has no nearest-biome fallback)");
             }
             found = biomeIdOf.emplace(biome, static_cast<std::uint32_t>(*id)).first;
         }

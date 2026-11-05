@@ -6,13 +6,14 @@
 // reported by name rather than quietly ignored. "A pack that half-loads
 // silently is a bug of the highest severity class."
 //
-// AMBIGUITY, flagged rather than guessed (CLAUDE.md): §8 says unsupported
-// registries are "a hard error at load". Read literally that makes vanilla's
-// own data unloadable, since it ships 258 placed_features and 224
-// configured_features that v1 never executes — and the Tier-A goldens are
-// generated with features stripped precisely because they are out of scope.
-// This layer therefore classifies and reports; whether a given rejected
-// entry is fatal is the caller's policy, so no reading is baked in here.
+// AMBIGUITY, flagged rather than guessed (CLAUDE.md): §8 keeps open whether an
+// entry in an unsupported registry should stop a user's pack. Making it fatal
+// by default would make vanilla's own data unloadable, since it ships 258
+// placed_features and 224 configured_features that v1 never executes — and the
+// Tier-A goldens are generated with features stripped precisely because they
+// are out of scope. This layer therefore classifies and reports; whether a
+// given rejected entry is fatal is the caller's policy, so no reading is baked
+// in here.
 // See PackLoadOptions::rejectUnsupported.
 
 #pragma once

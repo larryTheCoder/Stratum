@@ -347,7 +347,7 @@ compileForPocketMine(const std::span<const std::byte> blob, const std::string& n
         throw EncodeError("biome parameter list '" + list + "' names " + names +
                           (unmapped.size() == 1 ? ", which has" : ", which have") +
                           " no Bedrock id in this build's table (a custom or datapack biome; "
-                          "the nearest-biome fallback is not built yet)");
+                          "v1 has no nearest-biome fallback)");
     }
     if (!unmappedStates.empty()) {
         std::string states;

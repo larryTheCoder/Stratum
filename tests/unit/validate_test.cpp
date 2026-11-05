@@ -209,19 +209,46 @@ TEST_CASE("a function this build cannot evaluate is named with its reason", "[va
 TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
+    tree.defineIn("world_preset", "normal", "{}");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    // This is the honest half of a clean report. World presets load and
+    // nothing reads them, so a pack whose presets are nonsense passes today —
+    // and silence about that would read as approval.
+    const Finding* finding = findingAbout(report, "worldgen/world_preset");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Note);
+    CHECK_THAT(finding->message, ContainsSubstring("nothing in this build interprets"));
+
+    // A note is not a problem: the pack is still clean.
+    CHECK(report.clean());
+
+    const auto presets =
+        std::ranges::find_if(report.registries, [](const stratum::validate::RegistryCount& count) {
+            return count.registry == Registry::WorldPreset;
+        });
+    REQUIRE(presets != report.registries.end());
+    CHECK(presets->supported);
+    CHECK_FALSE(presets->interpreted);
+}
+
+TEST_CASE("biomes are read for their temperature, and the report says it did not check them",
+          "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
     tree.defineIn("biome", "plains", "{}");
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
-    // This is the honest half of a clean report. Biomes load and nothing
-    // reads them, so a pack whose biomes are nonsense passes today — and
-    // silence about that would read as approval.
+    // {} has no temperature, which generation refuses and this report does
+    // not look at: a note, not a finding about the biome, and it must not
+    // claim that nothing reads them.
     const Finding* finding = findingAbout(report, "worldgen/biome");
     REQUIRE(finding != nullptr);
     CHECK(finding->severity == Severity::Note);
-    CHECK_THAT(finding->message, ContainsSubstring("not"));
-
-    // A note is not a problem: the pack is still clean.
+    CHECK_THAT(finding->message, ContainsSubstring("temperature"));
+    CHECK_THAT(finding->message, ContainsSubstring("does not check"));
     CHECK(report.clean());
 
     const auto biomes =
@@ -229,8 +256,21 @@ TEST_CASE("a registry that loads but is not interpreted yet says so", "[validate
             return count.registry == Registry::Biome;
         });
     REQUIRE(biomes != report.registries.end());
-    CHECK(biomes->supported);
-    CHECK_FALSE(biomes->interpreted);
+    CHECK(biomes->interpreted);
+}
+
+TEST_CASE("the noise settings note names spawn targets and not surface rules", "[validate]") {
+    const TempTree tree;
+    defineWorkingPack(tree);
+    defineSettings(tree, "overworld", "field");
+
+    const Report report = stratum::validate::validatePack(tree.pack());
+
+    const Finding* finding = findingAbout(report, "worldgen/noise_settings");
+    REQUIRE(finding != nullptr);
+    CHECK(finding->severity == Severity::Note);
+    CHECK_THAT(finding->message, ContainsSubstring("spawn targets"));
+    CHECK_THAT(finding->message, !ContainsSubstring("surface rules"));
 }
 
 TEST_CASE("a graph that will not resolve is an error, and says it stopped early", "[validate]") {

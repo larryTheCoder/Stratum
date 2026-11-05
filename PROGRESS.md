@@ -2376,8 +2376,18 @@ everything Stratum owns.
       large_biomes 10.72, the End 1.47 ms/chunk, the PHP and
       PocketMine-MP round the zend call 0.025 to 0.048 ms of it. Still
       open below. The first pass's record follows.
+- [x] **Terrain speed is settled at 3.4 ms per overworld chunk (owner,
+      2026-11-01).** 0.25x vanilla's same stages, measured at 7c7431d. No
+      further engine round unless the owner asks. A survey at the same
+      commit (measure only, nothing shipped) found a view fill at view 16
+      takes 10.75 s with real terrain against 10.70 s with terrain costing
+      nothing: PocketMine-MP's `chunk-sending.per-tick: 4` fixes delivery at
+      80 chunks/s. Still the owner's: trying per-tick 8 and 16 on a real
+      client (none has been measured), and filtering Stratum's fluid marks
+      (main thread 10.35M to 6.37M instructions a delivered chunk).
+      Unmeasured: ARM64, a real weak host, a real client.
 - [ ] **What the performance work leaves (2026-10-27; updated
-      2026-10-31).** (a) Unmeasured in the task: AsyncPool's queueing and
+      2026-11-06).** (a) Unmeasured in the task: AsyncPool's queueing and
       notifier, pmmpthread's cross-thread copy, population's neighbour
       shipping (up to eight neighbours a populated chunk), lighting, the
       main thread's fluid scheduling. The task through PHP ran 5.8% to
@@ -2387,17 +2397,19 @@ everything Stratum owns.
       explained (SPEC
       §11). (b) *Done 2026-10-31* the other way round: fillBiomes takes the
       quarts the surface pass looked up, not the reverse. (c) The next
-      levers, after the second stage, none built: the block kernel over a
-      whole cell (128 blocks) a call rather than a row of 16 (estimated 2M
-      to 3M instructions a chunk); the aquifer's preliminary_surface_level
-      reads, detached find_top_surface scans that cost about 4.9M a chunk
-      on the overworld and only a faster scan can cut; the kernel handing
-      the fill each run's solid mask (about 0.5M); telling the corner
-      cache a dimension's height once a chunk so a first column batches at
-      once (about 0.3M); the biome source's climate reads down a quart
-      column; fillChunk's per-call allocations (about 114 KB: rows,
-      samples, the search memo) into per-task scratch. Not profiled again
-      since the second stage. (d) The second pass's verifier nits: closed
+      levers, after the second stage, none built and none wanted under the
+      ruling above; the 2026-11-01 survey corrected this list. The block
+      kernel over a whole cell (128 blocks) a call rather than a row of 16
+      saves about 2.8M instructions a chunk alone and 0.17M once the cell
+      bound is in. The aquifer's preliminary_surface_level reads cost about
+      4.9M a chunk on the overworld, but a faster scan is not the lever:
+      871,233 of 871,254 reads stop at step one, and the cost is the
+      climate. The kernel handing the fill each run's solid mask costs about
+      0.5M, not saves it. Telling the corner cache a dimension's height once
+      a chunk so a first column batches at once (about 0.3M); the biome
+      source's climate reads down a quart column. fillChunk's per-call
+      allocations are about 114 KB, of 2.147 MB and 209 allocations across
+      generation, yet a near-free allocator saves only 0.05M. (d) The second pass's verifier nits: closed
       but `StablePalette`'s stable-address invariant, still unchecked (a
       debug check on each hit). (e) The kernel fuzzer is a unit case
       (`density_kernel_fuzz_test.cpp`) since 2026-10-30, the column-batch

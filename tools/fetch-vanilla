@@ -167,6 +167,15 @@ if [[ "${version}" != "${PINNED_VERSION}" ]]; then
     warn "pin is moved deliberately: schema diff, regenerated goldens, matrix re-check."
 fi
 
+# Before anything is downloaded, extracted or written: a refusal should not
+# cost a 56 MB jar first.
+if [[ ${generate_regions} -eq 1 && ${accept_eula} -eq 0 ]]; then
+    die "--generate-regions runs the vanilla server, which requires accepting
+       Mojang's EULA (https://aka.ms/MinecraftEULA). Re-run with --accept-eula
+       once you have read and accepted it. This script will not accept it on
+       your behalf."
+fi
+
 # Structures are Tier B, like the features and carvers the terrain-only
 # datapack strips, so a terrain-only golden must not hold one. They used to
 # follow --with-structures, which means only "extract the NBT", and so went
@@ -722,13 +731,6 @@ PROPERTIES
 }
 
 if [[ ${generate_regions} -eq 1 ]]; then
-    if [[ ${accept_eula} -eq 0 ]]; then
-        die "--generate-regions runs the vanilla server, which requires accepting
-       Mojang's EULA (https://aka.ms/MinecraftEULA). Re-run with --accept-eula
-       once you have read and accepted it. This script will not accept it on
-       your behalf."
-    fi
-
     require_tools java
     [[ -n "${jar_path}" ]] && jar_to_read_absolute="$(cd "$(dirname "${jar_path}")" && pwd)/$(basename "${jar_path}")" \
         || jar_to_read_absolute="${jar_file}"

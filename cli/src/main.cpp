@@ -111,7 +111,7 @@ void printUsage(std::ostream& out) {
         << "      [--seed N] [--origin X,Z] [--y N] [--step N] [--size WxH]\n"
         << "      [--ramp signed|grey]\n"
         << "      Shades one density function across an area. This is not terrain\n"
-        << "      height: terrain needs the cell sampler (M3).\n"
+        << "      height: stratum generate writes terrain.\n"
         << "  stratum validate <pack-dir> [--seed N] [--strict]\n"
         << "      Exits 0 when clean, 1 when there are warnings, 4 on errors.\n"
         << "      --strict makes warnings fatal too.\n";

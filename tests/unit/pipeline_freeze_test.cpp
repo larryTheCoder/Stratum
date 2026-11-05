@@ -230,8 +230,8 @@ void expectSame(const Pipeline& before, const Pipeline& after) {
         CHECK(other.legacyRandomSource == one.legacyRandomSource);
         CHECK(other.geometry == one.geometry);
         CHECK(other.router.entries == one.router.entries);
-        // Kept as text and not interpreted, so what matters is that it comes
-        // back meaning the same thing.
+        // Stored as text, so what matters is that it comes back meaning the
+        // same thing.
         CHECK(other.surfaceRule == one.surfaceRule);
         CHECK(other.spawnTarget == one.spawnTarget);
     }

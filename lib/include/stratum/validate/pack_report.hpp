@@ -26,12 +26,14 @@
 // a warning until it was measured, which is the difference between "we have
 // not implemented that" and "that does not work".
 //
-// WHAT A CLEAN REPORT DOES NOT MEAN. Five of the eight registries v1 executes
-// are loaded and addressable but not yet interpreted — biomes, dimensions and
-// the rest are parsed as JSON and nothing more — and the surface rules inside
-// a noise settings entry are read but not understood. A pack whose surface
-// rules are nonsense will validate clean today. The report says so itself
-// rather than leaving the silence to be read as approval.
+// WHAT A CLEAN REPORT DOES NOT MEAN. Four of the eight registries v1 executes
+// are loaded and addressable but not interpreted — parameter list entries,
+// dimensions, dimension types and world presets are parsed as JSON and nothing
+// more. Biomes are read at generation for their temperature alone, and this
+// report does not check them; the spawn targets inside a noise settings entry
+// are kept and never read. A pack whose biomes are nonsense will validate clean
+// today. The report says so itself rather than leaving the silence to be read
+// as approval.
 
 #pragma once
 
