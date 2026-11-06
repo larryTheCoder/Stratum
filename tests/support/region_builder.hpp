@@ -13,9 +13,9 @@
 #define ZLIB_CONST
 #include <zlib.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -67,12 +67,17 @@ public:
         const std::size_t sectorOffset = bytes_.size() / region::kSectorBytes;
         const auto declared = static_cast<std::uint32_t>(payload.size() + 1U);
 
-        std::vector<std::byte> framed(5U + payload.size());
-        writeBigEndian32(framed, 0, declared);
-        framed[4] = static_cast<std::byte>(scheme);
-        if (!payload.empty()) {
-            std::memcpy(framed.data() + 5, payload.data(), payload.size());
-        }
+        // The 5-byte header is a fixed array rather than indexed writes into
+        // a vector sized 5 + payload.size(): GCC 13 at -O3 cannot rule out
+        // that sum wrapping to an empty, null-data vector, and its
+        // -Wnull-dereference then fails the shipped-build CI legs.
+        const std::array<std::byte, 5> header{static_cast<std::byte>((declared >> 24U) & 0xFFU),
+                                              static_cast<std::byte>((declared >> 16U) & 0xFFU),
+                                              static_cast<std::byte>((declared >> 8U) & 0xFFU),
+                                              static_cast<std::byte>(declared & 0xFFU),
+                                              static_cast<std::byte>(scheme)};
+        std::vector<std::byte> framed(header.begin(), header.end());
+        framed.insert(framed.end(), payload.begin(), payload.end());
 
         const std::size_t sectors =
             ((framed.size() + region::kSectorBytes) - 1U) / region::kSectorBytes;
