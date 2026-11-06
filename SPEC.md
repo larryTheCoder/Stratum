@@ -1329,7 +1329,9 @@ mapping has two halves, split at a platform-neutral midpoint:
   headless real-server evidence and the owner's own Bedrock client check
   (§11, "M5 closed"); further speed is work after it.
 - **M6 (v2)** — Staged features/structures with declared read/write radii;
-  scripting escape hatch evaluation.
+  scripting escape hatch evaluation. Carvers' research is closed, with the
+  chunk stream and fill rule exact and the walk a fitted Tier B model (§11,
+  "Carvers, measured and modelled"); nothing of it is implemented.
 - **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
   M4, M5 or M6: it is a parallel track, and the numeric milestones proceed past
   it. It gates only the capability matrix's aquifer row (§8) and any golden
@@ -12237,6 +12239,203 @@ Open:
   M5's perf pass, Windows and macOS evidence — are answered by the
   closure: the bar is met as read, the flat program (built in part, §4.1)
   is speed work after M5, and M5's real-server evidence is Linux x86-64.
+
+- **Carvers, measured and modelled: the research is closed, nothing is
+  implemented yet (M6, 2026-11-06).** *The ruling:* the owner chose Tier B
+  (§7) for the tunnel walk. The chunk-level stream and everything a carved
+  cell becomes are exact. The walk inside a tunnel is Stratum's own design,
+  fitted to measured vanilla distributions. Every number here comes from the
+  1.21.11 server run as a black box on crafted packs, and nothing comes from
+  reading or recalling game code. The lab is solid stone: final density 1,
+  aquifers and veins off, an empty surface rule, features emptied, every
+  biome carrying only the carvers under test, `replaceable: [stone]`, frozen,
+  region r.0.0. The fill rule was measured on real terrain at seed 42 against
+  this library's own aquifer.
+  `horizon-rust/horizon` was looked at by its README only and is not a
+  reference. It describes itself as a method-by-method port of vanilla 26.3,
+  so reading it is reading Mojang code in another language (§12, CLAUDE.md).
+
+  *Exact: the chunk stream* (zero cell errors on rooms, which are what an
+  isolated stream shows. 370 rooms over seeds 42, 7, 8 and 9; carver list
+  index 0 and 1; y 150 and 90; yScale 1 and 0.5. Every sampled provider was
+  located on seeds 7 and 8.)
+  1. **Seed.** Each configured carver at position `i` in a biome's `carvers`
+     list seeds a Java LCG with cubiomes' `chunkGenerateRnd(worldSeed + i,
+     cx, cz)`: `setSeed(s); a = nextLong; b = nextLong; seed = (a*cx) ^
+     (b*cz) ^ s`.
+  2. **Probability.** The carver starts in that chunk if `nextFloat() <=
+     probability`.
+  3. **`minecraft:cave`.**
+     - The tunnel count is `nextInt(nextInt(nextInt(15)+1)+1)`.
+     - Then, per tunnel, in order:
+       - `x = cx*16 + nextInt(16)`.
+       - `y`: a sampled height provider draws here, as `nextInt(hi-lo+1)`
+         for `uniform`; a constant draws nothing.
+       - `z = cz*16 + nextInt(16)`.
+       - One float each, if sampled: `horizontal_radius_multiplier`,
+         `vertical_radius_multiplier`, then `floor_level`. Floor is third;
+         the order of the first two is the JSON's order and is **not
+         measured**, since swapping them changes no distribution.
+       - `nextInt(4) == 0` means a room. Its `yScale` float is drawn then, if
+         sampled, then `f = nextFloat()`, and the tunnel gets `1 +
+         nextInt(4)` branches; otherwise it gets 1.
+     - Each branch takes exactly 8 draws: 4 floats, then `nextInt(10)`, which
+       on 0 is followed by 2 more floats (the thick case), then 3 more (taken
+       as `nextLong` and one float).
+     - The first branch float is the yaw: `2*pi*f`, with `x += cos`, `z +=
+       sin`.
+     - A tunnel runs **one way** from its start: 81% of nearby carving lies
+       ahead of the start, 12% behind.
+  4. **Room.** An ellipsoid centred on `(x+1, y+1, z)`, horizontal radius
+     `2.5 + 6f`, vertical radius that times `yScale`.
+     - Cells are tested at their centres, strictly inside (`< 1`), and kept
+       only where `dy > floor_level` with `dy` the normalised centre offset.
+     - Neither radius multiplier scales a room.
+     - `yScale` reaches **rooms only**: tunnels at yScale 0.3 and 1.0 are cell
+       for cell identical on 16 seeds.
+  5. **`minecraft:nether_cave`** differs in exactly two places: the count is
+     `nextInt(nextInt(nextInt(10)+1)+1)`, and each branch takes 7 draws (4 +
+     3) with no `nextInt(10)` thick case.
+  6. **`minecraft:canyon`.** One per chunk: probability float, `x`, `y` as an
+     int provider draw (10..67 for vanilla's), `z`, then the yaw float `2*pi*f`.
+     It is one way: 94% of nearby carving lies ahead. Starts were verified
+     on 21 of 21 canyons by the carving at their start.
+  7. **`floor_level` cuts tunnels too.** At -0.4, a sparse world loses 18.0%
+     of its cells against -1.0 on the same 16 seeds, and the -0.4 world is a
+     strict subset.
+
+  *Exact: what a carved cell becomes* (1 070 145 debug-marked cells, zero
+  mismatches; seed 42, real terrain, vanilla carvers).
+  - At `y <= lava_level`, the cell is lava (-56 for `above_bottom: 8`,
+    inclusive).
+  - Otherwise the cell is this library's `aquifer::computeSubstance` at that
+    cell, with **density 0.0**:
+    - Air becomes `minecraft:air` (never `cave_air`).
+    - Fluid becomes water, or lava by its type.
+    - Solid is the aquifer's barrier: the block is left as it was.
+  - The other densities tested are wrong. -1 misses 5 019 barriers; the
+    router's real density misses 162 503.
+  - The fluid-update flag of that same query marks carved water for a tick:
+    17 284 of 17 284.
+  - Only replaceable blocks change. Air, water, lava and bedrock never do, so
+    `replaceable`'s block tags are read for real.
+  - The only change to an uncarved neighbour: dirt directly below an
+    air-carved run becomes `grass_block` when that run carved a grass block.
+    That is 159 of 159, with 10 negatives correct. 4 misses come from
+    overlapping carvers, which points to per-carver-instance state.
+  - Whether a raised `lava_level` beats an aquifer that answers water or
+    barrier is **not measured**: below -54 the aquifer always answers lava,
+    so this world cannot tell.
+
+  *Reach.* Carving lies within 5 chunks (Chebyshev) of a cave's start chunk
+  (1 918 carved chunks on 24 sparse worlds) and within 7 of a canyon's (16
+  worlds). The engine therefore scans start chunks within **8** of the chunk
+  it generates and carves only that chunk's cells.
+
+  *Modelled: the walk (Tier B; Stratum's design).*
+  - **RNG.** The walk never draws on the chunk stream past the branch's own
+    draws. It runs a splitmix64 generator:
+    - Seeded by `(hi32 << 32 | lo32) ^ (cx*341873128712 + cz*132897987541 +
+      tunnel*31 + branch)` for a cave branch, where `hi32` and `lo32` are the
+      branch's two `next(32)` draws.
+    - Seeded by `nextLong() ^ 0x5CA1AB1E` for a canyon.
+    - `f` is the top 24 bits over 2^24; `n` is `(f+f+f+f-2)*sqrt(3)`.
+  - **Cave branch.** From the room centre, or the start without a room:
+    - `pitch = (f1 - 0.5)*pk/2`.
+    - Thickness `T = t0 + t1*f2 + t2*f2*f3`, times `1 + xe*fe0` in the thick
+      case.
+    - `n = int(L0 + L1*f_last)` unit steps.
+  - **At each step `i`, with `u = (i+0.5)/n`:**
+    - `prof = max(pmin, sin(pi*u)^pexp * (1 + asym*(0.5-u)))`.
+    - `r = rb + T*prof`.
+    - Unless a skip draw `< ps` fires, carve the ellipsoid of horizontal
+      radius `r*hmult` and vertical radius `r*vs*vmult`, with the floor cut.
+    - Then update yaw and pitch: `wy = ry*wy + sy*n; yaw += wy`; `wp = rp*wp
+      + sp*n; pitch = clamp(0.9*pitch + wp, ±pmax)`.
+    - Then step: `x += cos(yaw)cos(pitch)`, `z += sin(yaw)cos(pitch)`, `y +=
+      sin(pitch)`.
+    - The skips are what break thin stretches into separate pieces, as
+      vanilla's do: 13% of vanilla's volume lies in pieces about 2 blocks
+      from other carving.
+  - **Fitted cave constants:**
+
+    | constant | value |
+    |---|---|
+    | `rb` | 1.234 |
+    | `L0`, `L1` | 87.73, 65.31 |
+    | `t0`, `t1`, `t2` | 0.584, 1.385, 0.756 |
+    | `xe` | 1.504 |
+    | `pmin`, `pexp`, `asym` | 0.1785, 1.0, 0.709 |
+    | `vs` | 1.0 |
+    | `sy`, `ry` | 0.05, 0.910 |
+    | `sp`, `rp` | 0.0331, 0.8 |
+    | `pk`, `pmax` | 0.781, 0.903 |
+    | `ps` | 0.197 |
+
+  - **`nether_cave`.** The same walk with radii times 1.55 and vertical times
+    2.8 on top. That gives total volume -2% on 8 lab worlds. Vanilla's
+    nether tunnels are about 20 cells tall and 5 wide.
+  - **Canyon.**
+    - Draws, in order: `pitch = vertical_rotation draw * 3.704`; then
+      `distance_factor`; then `T = trapezoid(thickness) * 0.95`, where
+      `trapezoid(lo, hi, plateau)` is `lo + a*f + (a+plateau)*f` with `a =
+      (hi-lo-plateau)/2`; then `horizontal_radius_factor`.
+    - Next, a per-layer width factor `1 + 0.397*(2f-1)`, averaged over the
+      last `width_smoothness` layers.
+    - `n = int((105.0 + 50.87f) * distance_factor)` steps.
+    - At each step: `r = 0.887 + T*sin(pi*u)^0.629`. Horizontal radius is
+      `r * hrf * 1.12 * layer factor`; vertical is `r * yScale *
+      vertical_radius_default_factor * 1.15`.
+    - The walk is the cave walk's with `sy` 0.0385, `ry` 0.658, `sp` 0.0296,
+      `rp` 0.449 and the pitch clamp ±0.6.
+    - `vertical_radius_center_factor` is 0 in vanilla and is **not
+      measured**: a non-zero value is refused until it is.
+  - **Trig and arithmetic.** All of this is double precision. `sin` and
+    `cos` must give the same bits on every target (§5), which `std::sin`
+    does not promise, so they need a vendored fdlibm `sin`/`cos` beside
+    `fdlibm_log.cpp`, as PROGRESS footnote 1 already anticipates.
+
+  *Acceptance.*
+  - **The bar.** Vanilla's held-out seeds are split in halves. A statistic
+    passes when the model is within twice the half-vs-half distance, or
+    within 10%.
+  - **The statistics:**
+    - total volume;
+    - the share of empty chunks;
+    - six quantiles of per-chunk volume;
+    - mean, median, p90 and p99 of runs along x, y and z;
+    - the component count;
+    - the 16-block y profile.
+  - **`cave`:** 17 of 19 pass on 10 held-out seeds of vanilla's own JSON,
+    which the fit never saw. Total is -0.6% and the y profile L1 is 0.031.
+    The misses: components -17%, and the vertical-run p90 +11%.
+  - **`cave_extra_underground`:** 18 of 19 pass (total -1.8%). The miss is
+    components -18%.
+  - **`canyon`:** 17 of 19 pass on 16 seeds (total +4.8%). The misses are
+    components -21%, and the per-chunk p90 (89 against 42 cells: the model
+    touches more chunks lightly).
+  - **The tunnel shape statistics the fit used,** measured by one centreline
+    tracker run on both worlds: length quantiles, width and height profiles
+    along the tunnel, turning per 8 steps, straightness, vertical drift and
+    pitch quantiles.
+  - **Recorded and accepted:** the remaining component deficit, and the
+    model's cave carving reaching 6-7 chunks for 0.6% of carved chunks.
+
+  *What implementing it needs,* none of which exists yet:
+  - `tools/fetch-vanilla` must extract block tags, and the loader, which
+    refuses `tags/` today, must read them.
+  - A `configured_carver` registry. It is unsupported today (§8).
+  - A carve stage after the noise fill, with its aquifer queries and the
+    grass fix-up.
+  - fdlibm `sin`/`cos`.
+  - Goldens that keep carvers. Today's strip them (§7), and Tier B makes
+    their comparison the statistics above, not block equality. The chunk
+    stream, the fill rule and rooms can be exact cases.
+  - A conformance case for each ambiguity flagged above.
+  - **Least evidence:** `nether_cave` (8 lab worlds, never in real Nether
+    terrain), and the fill rule in a dimension with aquifers off. The rule
+    reads as "density 0 through whatever the filler's aquifer is", but that
+    is unmeasured.
 
 ---
 
