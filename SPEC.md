@@ -3636,10 +3636,14 @@ Open:
   *Written where the server keeps it, in the server's order.* `chunk::encode`
   writes `ChunkData::postProcessing` as the server writes its own lists: one
   per section, list i for section `yPos + i`, entries packed as above, an
-  empty list typed End and a non-empty one Short, no position twice; and
-  `Chunk::decode` reads them back (`Chunk::postProcessing()`). A mark it
-  cannot place — outside the chunk or its sections, repeated, or with
-  sections that do not run up from `yPos` — is refused by name. The order
+  empty list typed End and a non-empty one Short; and `Chunk::decode` reads
+  them back (`Chunk::postProcessing()`). A position may be listed twice:
+  the noise fill never does, but a carver marking a cell the fill marked
+  appends it again, and the server's carving-stage lists hold exactly those
+  repeats, in the same places (§11, "Carvers, adopted"; 282 and 75 at the
+  two golden seeds). A mark it cannot place — outside the chunk or its
+  sections, or with sections that do not run up from `yPos` — is refused by
+  name. (Until engine v18 a repeat was refused too.) The order
   within a list is the server's too, and it is not the filler's: the
   server's lists hold a section's marks in its own fill order — cell column
   by cell column with x the outer index, each column from the top down, x
@@ -12651,7 +12655,14 @@ Open:
     is exact: 12 582 912 per seed in the overworld (128 chunks) and
     3 932 160 in the Nether (120), both signs of coordinate. Every mark this
     build makes is the server's, and the server makes none this build does
-    not in the overworld (9 192 and 9 477). `vanilla_carver_config_test.cpp`
+    not in the overworld (9 192 and 9 477). Section by section the lists are
+    the server's in order and multiplicity too: a carver marking a cell the
+    noise fill marked appends it again, 282 and 75 repeats at the two seeds
+    on both sides, so `chunk::encode` writes a repeat where it once refused
+    one (the Q8 entry).
+  - *Cost.* On this machine (release, one thread, 256 chunks at seed 42),
+    carving adds 0.6 ms a chunk to the overworld's fill (3.4 to 4.0 ms) and
+    0.4 ms to the Nether's (1.3 to 1.7 ms); the End's carves nothing. `vanilla_carver_config_test.cpp`
     parses vanilla's four configured carvers and the biomes that name one
     bare, and resolves their tags to the spec's `resolved_replaceables`.
   - *Disagreement, reported and not reconciled* (IMPLEMENTER-RULING-01):

@@ -255,7 +255,11 @@ TEST_CASE("encode refuses a post-processing mark it cannot place", "[chunk][writ
     refuses({{.localX = 0, .y = -16, .localZ = 0}}, "outside the 3 section(s)");
     refuses({{.localX = 16, .y = -60, .localZ = 0}}, "outside the chunk's 16x16 columns");
     refuses({{.localX = 0, .y = -60, .localZ = -1}}, "outside the chunk's 16x16 columns");
-    refuses({{.localX = 2, .y = -60, .localZ = 3}, {.localX = 2, .y = -60, .localZ = 3}}, "twice");
+    // A repeat is not refused: the server's carving-stage lists hold them
+    // (SPEC §11's Q8 entry). It is written, and read back, twice.
+    const std::vector<PostProcessingMark> twice{{.localX = 2, .y = -60, .localZ = 3},
+                                                {.localX = 2, .y = -60, .localZ = 3}};
+    CHECK(Chunk::decode(encode(markedChunk(twice))).postProcessing() == twice);
 
     // Lists are indexed from yPos, so sections that do not run from it
     // would put every mark in another section's list.

@@ -232,9 +232,10 @@ template<typename PaletteEntry, typename EncodeEntry>
         }
     }
 
-    // One bit per position the sections cover, to refuse a repeat: the
-    // server's own lists never hold one (SPEC §11's Q8 entry).
-    std::vector<bool> seen(sectionCount * kBlocksPerSection, false);
+    // A repeat is written as a repeat: a carver marking a cell the noise
+    // fill already marked appends it again, and the server's own lists hold
+    // those repeats where this build makes them (SPEC §11's Q8 entry,
+    // vanilla_carver_golden_test.cpp).
     for (const PostProcessingMark& mark : chunk.postProcessing) {
         if (mark.localX < 0 || mark.localX >= kSectionSize || mark.localZ < 0 ||
             mark.localZ >= kSectionSize) {
@@ -255,12 +256,6 @@ template<typename PaletteEntry, typename EncodeEntry>
             (static_cast<unsigned>(javamath::floorMod(mark.y, kSectionSize)) << 4U) |
             (static_cast<unsigned>(mark.localZ) << 8U));
         const auto section = static_cast<std::size_t>(index);
-        const std::size_t bit = (section * kBlocksPerSection) + packed;
-        if (seen[bit]) {
-            throw FormatError(describe(chunk.x, chunk.z) + " marks the " + describeMark(mark) +
-                              " twice");
-        }
-        seen[bit] = true;
         lists[section].elementType = nbt::TagType::Short;
         lists[section].elements.emplace_back(static_cast<std::int16_t>(packed));
     }

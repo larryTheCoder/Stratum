@@ -16,6 +16,7 @@
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/freeze/pipeline.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
 #include <stratum/terrain/filler.hpp>
@@ -66,6 +67,11 @@ struct Tally {
     long long marksServer = 0;
     long long marksOurs = 0;
     long long marksShared = 0;
+    /// Marks listed more than once, ours and the server's.
+    long long duplicatesOurs = 0;
+    long long duplicatesServer = 0;
+    /// Chunks whose mark lists differ in order or multiplicity.
+    long long listsDiffering = 0;
 };
 
 } // namespace
@@ -136,6 +142,29 @@ TEST_CASE("the carvers carve what vanilla's carving stage stored", "[conformance
                     for (const auto& mark : ourMarks) {
                         tally.marksShared += serverMarks.contains(mark) ? 1 : 0;
                     }
+                    // And as lists, in order: each section's marks as the
+                    // chunk writer lists them (stratum::chunk::encode keeps
+                    // the buffer's order within a section), against the
+                    // server's stored lists, read section by section.
+                    std::map<std::int32_t, std::vector<std::tuple<std::int32_t, int, int>>>
+                        ourLists;
+                    for (const auto& update : buffer.fluidUpdates()) {
+                        ourLists[stratum::javamath::floorDiv(update.y, 16)].emplace_back(
+                            update.y, update.localX, update.localZ);
+                    }
+                    std::map<std::int32_t, std::vector<std::tuple<std::int32_t, int, int>>>
+                        serverLists;
+                    for (const auto& mark : golden.postProcessing()) {
+                        serverLists[stratum::javamath::floorDiv(mark.y, 16)].emplace_back(
+                            mark.y, mark.localX, mark.localZ);
+                    }
+                    tally.listsDiffering += ourLists == serverLists ? 0 : 1;
+                    // A position listed twice: the sets above fold it.
+                    tally.duplicatesOurs += static_cast<long long>(buffer.fluidUpdates().size()) -
+                                            static_cast<long long>(ourMarks.size());
+                    tally.duplicatesServer +=
+                        static_cast<long long>(golden.postProcessing().size()) -
+                        static_cast<long long>(serverMarks.size());
                     for (int z = 0; z < 16; ++z) {
                         for (int x = 0; x < 16; ++x) {
                             for (std::int32_t y = geometry.minY; y < geometry.maxY(); ++y) {
@@ -162,11 +191,18 @@ TEST_CASE("the carvers carve what vanilla's carving stage stored", "[conformance
             WARN("seed " << seed << " " << dimension.folder << ": " << tally.chunks
                          << " carving-stage chunks, " << tally.exact << " of " << tally.blocks
                          << " blocks exact; marks: server " << tally.marksServer << ", ours "
-                         << tally.marksOurs << ", shared " << tally.marksShared << listed);
+                         << tally.marksOurs << ", shared " << tally.marksShared
+                         << "; listed twice: server " << tally.duplicatesServer << ", ours "
+                         << tally.duplicatesOurs << "; chunks whose lists differ "
+                         << tally.listsDiffering << listed);
             CHECK(tally.chunks > 0);
             CHECK(tally.exact == tally.blocks);
-            // Every mark this build makes is the server's.
+            // Every mark this build makes is the server's, listed as often
+            // and in the order the server lists it: a carver marking a cell
+            // the noise fill marked appends it again (282 and 75 repeats in
+            // the overworld at the two seeds, both sides).
             CHECK(tally.marksShared == tally.marksOurs);
+            CHECK(tally.duplicatesOurs == tally.duplicatesServer);
             // And the server makes none this build does not — except, in the
             // Nether, marks on lava-sea cells no carver touched: 233 at seed
             // 31337, in four chunks, none at seed 42. A run that marked every
@@ -178,6 +214,8 @@ TEST_CASE("the carvers carve what vanilla's carving stage stored", "[conformance
             const long long unexplained =
                 (seed == 31337 && std::string(dimension.folder) == "nether") ? 233 : 0;
             CHECK(tally.marksServer - tally.marksShared == unexplained);
+            // Their four chunks are the only ones whose lists differ.
+            CHECK(tally.listsDiffering == (unexplained > 0 ? 4 : 0));
         }
     }
     CHECK(corpora == kSeeds.size());
