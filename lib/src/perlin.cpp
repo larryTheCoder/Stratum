@@ -61,7 +61,9 @@
 #include "perlin_kernel.hpp"
 
 #include <stratum/hash/md5.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/noise/perlin.hpp>
+#include <stratum/rng/java_random.hpp>
 #include <stratum/rng/xoroshiro128.hpp>
 
 #include <algorithm>
@@ -76,6 +78,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -267,6 +270,38 @@ OctaveNoise OctaveNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
     return octaveNoise;
 }
 
+OctaveNoise OctaveNoise::createNamedLegacy(const std::int64_t stackSeed, const int firstOctave,
+                                           const std::span<const double> amplitudes) {
+    // spec/legacy-named-noise-spec.md Q1.6-Q1.7 and Q2.4: create()'s
+    // schedule, with each layer's generator a java.util.Random of its own.
+    OctaveNoise octaveNoise;
+    double frequency = std::ldexp(1.0, firstOctave);
+    const auto count = static_cast<int>(amplitudes.size());
+    double persistence =
+        count == 0 ? 0.0 : std::ldexp(1.0, count - 1) / (std::ldexp(1.0, count) - 1.0);
+
+    for (std::size_t i = 0; i < amplitudes.size(); ++i) {
+        if (!isZero(amplitudes[i])) {
+            // The ABSOLUTE octave number, a 32-bit wrapping sum (Q1.6's width
+            // amendment), salted through its sign-extended String.hashCode.
+            const std::int32_t octave =
+                javamath::wrappingAdd(std::int32_t{firstOctave}, static_cast<std::int32_t>(i));
+            const std::string name = "octave_" + std::to_string(octave);
+            rng::JavaRandom octaveRandom{static_cast<std::int64_t>(rng::javaStringHashCode(name)) ^
+                                         stackSeed};
+            octaveNoise.octaves_.push_back(Octave{.noise = PerlinNoise::fromRandom(octaveRandom),
+                                                  .amplitude = amplitudes[i],
+                                                  .persistence = persistence,
+                                                  .frequency = frequency});
+        }
+        // A zero amplitude has no layer and draws nothing (Q1.6), but still
+        // advances the schedule, as in create().
+        frequency *= 2.0;
+        persistence *= 0.5;
+    }
+    return octaveNoise;
+}
+
 OctaveNoise OctaveNoise::createLegacy(rng::JavaRandom& random, int firstOctave, int octaveCount) {
     // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
     // Cubitect), noise.c `octaveInit`, at e61f905.
@@ -334,8 +369,11 @@ template<typename Octave>
     // biome-source parameter: 308 of 2304 columns differ by one ulp, and a
     // probe putting the two candidate values in as exact thresholds had the
     // server paint all 40 of one and none of the other (SPEC §11).
-    return (detail::samplePerlin<false>(octave.noise, x * octave.frequency, y * octave.frequency,
-                                        z * octave.frequency, 0.0, 0.0) *
+    // Each scaled coordinate is wrapped into +/-2^24 first
+    // (spec/legacy-named-noise-spec.md Q2.5; the identity inside +/-2^23).
+    return (detail::samplePerlin<false>(octave.noise, detail::wrapCoordinate(x * octave.frequency),
+                                        detail::wrapCoordinate(y * octave.frequency),
+                                        detail::wrapCoordinate(z * octave.frequency), 0.0, 0.0) *
             octave.amplitude) *
            octave.persistence;
 }
@@ -350,6 +388,13 @@ double OctaveNoise::sample(double x, double y, double z) const noexcept {
     return total;
 }
 
+namespace {
+
+/// NormalNoise's value factor for @p amplitudes (defined below create()).
+double valueFactorFor(std::span<const double> amplitudes);
+
+} // namespace
+
 NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOctave,
                                 std::span<const double> amplitudes) {
     // Sequenced through named locals, not passed as two constructor
@@ -360,8 +405,29 @@ NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
     // world on Windows while every other platform agreed.
     OctaveNoise firstStack = OctaveNoise::create(random, firstOctave, amplitudes);
     OctaveNoise secondStack = OctaveNoise::create(random, firstOctave, amplitudes);
-    NormalNoise noise{std::move(firstStack), std::move(secondStack), 1.0};
+    return NormalNoise{std::move(firstStack), std::move(secondStack), valueFactorFor(amplitudes)};
+}
 
+NormalNoise NormalNoise::createNamedLegacy(const std::int64_t factorySeed,
+                                           const std::string_view id, const int firstOctave,
+                                           const std::span<const double> amplitudes) {
+    // spec/legacy-named-noise-spec.md Q1.3: the full `namespace:path` text is
+    // the salt, its 32-bit hash SIGN-EXTENDED before the XOR (Q1.8b), and
+    // Q1.5: the noise's own generator yields exactly two longs, one per stack,
+    // drawn in that order. Sequenced through named locals for the reason
+    // create() gives.
+    rng::JavaRandom named{static_cast<std::int64_t>(rng::javaStringHashCode(id)) ^ factorySeed};
+    const std::int64_t firstSeed = named.nextLong();
+    const std::int64_t secondSeed = named.nextLong();
+    OctaveNoise firstStack = OctaveNoise::createNamedLegacy(firstSeed, firstOctave, amplitudes);
+    OctaveNoise secondStack = OctaveNoise::createNamedLegacy(secondSeed, firstOctave, amplitudes);
+    // Q2.2-Q2.3: composition and scaling are create()'s, term for term.
+    return NormalNoise{std::move(firstStack), std::move(secondStack), valueFactorFor(amplitudes)};
+}
+
+namespace {
+
+double valueFactorFor(const std::span<const double> amplitudes) {
     // Leading and trailing zero amplitudes do not count toward the scaling:
     // they are padding that positions the rest, not octaves in their own
     // right.
@@ -375,21 +441,22 @@ NormalNoise NormalNoise::create(rng::Xoroshiro128PlusPlus& random, int firstOcta
     }
 
     const auto effective = static_cast<double>(last - first);
-    // (5/3) * n / (n + 1), as a single division so it rounds the same way
-    // the reference's literals do.
-    noise.valueFactor_ = // 1 / (6 * expectedDeviation), with expectedDeviation = 0.1 * (1 + 1/n).
-                         //
-                         // The SPELLING is load-bearing, not a style choice. The algebraically
-                         // equal (5n) / (3(n+1)) that stood here is one ulp out at effective
-                         // counts 1, 2, 6, 9, 15, 16, 17 and 22 — which is 39 of vanilla's own
-                         // noises, among them `continentalness` and `jagged`. Nor is
-                         // 1/(6*(0.1*(1+1/n))) the same double; it diverges at fifteen further
-                         // counts. Probes put both candidate values in as EXACT noise_threshold
-                         // bounds on three noises of spans 1, 9 and 16 across two seeds, and the
-                         // server painted all 120 of this form and none of the other (SPEC §11).
-        (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / effective)));
-    return noise;
+    // 1 / (6 * expectedDeviation), with expectedDeviation = 0.1 * (1 + 1/n).
+    //
+    // The SPELLING is load-bearing, not a style choice. The algebraically
+    // equal (5n) / (3(n+1)) that stood here is one ulp out at effective
+    // counts 1, 2, 6, 9, 15, 16, 17 and 22 — which is 39 of vanilla's own
+    // noises, among them `continentalness` and `jagged`. Nor is
+    // 1/(6*(0.1*(1+1/n))) the same double; it diverges at fifteen further
+    // counts. Probes put both candidate values in as EXACT noise_threshold
+    // bounds on three noises of spans 1, 9 and 16 across two seeds, and the
+    // server painted all 120 of this form and none of the other (SPEC §11).
+    // The legacy named noises use the same spelling
+    // (spec/legacy-named-noise-spec.md Q2.3).
+    return (1.0 / 6.0) / (0.1 * (1.0 + (1.0 / effective)));
 }
+
+} // namespace
 
 NormalNoise NormalNoise::createLegacy(rng::JavaRandom& random, int firstOctave, int octaveCount) {
     // Adapted from cubiomes (https://github.com/Cubitect/cubiomes, MIT,
@@ -462,12 +529,14 @@ double NormalNoise::sample(double x, double y, double z) const noexcept {
         for (std::size_t i = 0; i < firstOctaves.size(); ++i) {
             const OctaveNoise::Octave& first = firstOctaves[i];
             firstTotal +=
-                (detail::samplePerlinFlatY(first.noise, x * first.frequency, z * first.frequency) *
+                (detail::samplePerlinFlatY(first.noise, detail::wrapCoordinate(x * first.frequency),
+                                           detail::wrapCoordinate(z * first.frequency)) *
                  first.amplitude) *
                 first.persistence;
             const OctaveNoise::Octave& second = secondOctaves[i];
-            secondTotal += (detail::samplePerlinFlatY(second.noise, secondX * second.frequency,
-                                                      secondZ * second.frequency) *
+            secondTotal += (detail::samplePerlinFlatY(
+                                second.noise, detail::wrapCoordinate(secondX * second.frequency),
+                                detail::wrapCoordinate(secondZ * second.frequency)) *
                             second.amplitude) *
                            second.persistence;
         }
@@ -529,18 +598,22 @@ void NormalNoise::sampleColumn(const double x, const std::span<const double> ys,
         // its sum: (sample * amplitude) * persistence.
         const OctaveNoise::Octave& first = firstOctaves[i];
         detail::samplePerlinColumn<false>(
-            first.noise, x * first.frequency,
-            [&ys, &first](std::size_t k) noexcept { return ys[k] * first.frequency; },
-            z * first.frequency, 0.0, noCap, count,
+            first.noise, detail::wrapCoordinate(x * first.frequency),
+            [&ys, &first](std::size_t k) noexcept {
+                return detail::wrapCoordinate(ys[k] * first.frequency);
+            },
+            detail::wrapCoordinate(z * first.frequency), 0.0, noCap, count,
             [&firstTotal, &first](std::size_t k, double term) noexcept {
                 firstTotal[k] += (term * first.amplitude) * first.persistence;
             });
         // octaveTerm(secondOctaves[i], secondX, secondY, secondZ).
         const OctaveNoise::Octave& second = secondOctaves[i];
         detail::samplePerlinColumn<false>(
-            second.noise, secondX * second.frequency,
-            [&secondY, &second](std::size_t k) noexcept { return secondY[k] * second.frequency; },
-            secondZ * second.frequency, 0.0, noCap, count,
+            second.noise, detail::wrapCoordinate(secondX * second.frequency),
+            [&secondY, &second](std::size_t k) noexcept {
+                return detail::wrapCoordinate(secondY[k] * second.frequency);
+            },
+            detail::wrapCoordinate(secondZ * second.frequency), 0.0, noCap, count,
             [&secondTotal, &second](std::size_t k, double term) noexcept {
                 secondTotal[k] += (term * second.amplitude) * second.persistence;
             });

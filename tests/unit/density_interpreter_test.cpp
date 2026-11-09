@@ -969,7 +969,7 @@ TEST_CASE("without a lattice the cell types are still refused, and say why", "[d
     CHECK(pipeline.interpreter().cells() == std::nullopt);
 }
 
-TEST_CASE("a legacy random source is refused rather than approximated", "[density][noise]") {
+TEST_CASE("a legacy random source builds its named noises its own way", "[density][noise]") {
     const TempTree tree;
     tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
     tree.define("field", R"({"type":"minecraft:noise","noise":"test",
@@ -979,24 +979,31 @@ TEST_CASE("a legacy random source is refused rather than approximated", "[densit
     const Graph graph = Graph::resolveAll(pack);
     const auto wanted = graph.referencedNoises();
 
-    // The modern derivation is not a near-enough stand-in for the legacy
-    // one: it would seed every noise differently and produce a Nether that
-    // generates and is not vanilla's, with nothing to say so.
-    CHECK_THROWS_WITH(
-        NoiseRegistry::create(pack, wanted, 0, stratum::density::RandomSource::Legacy),
-        ContainsSubstring("legacy_random_source") && ContainsSubstring("will not substitute"));
-
+    // spec/legacy-named-noise-spec.md: the same pack parameters, a different
+    // generator family, so a different noise — never the modern one.
+    const NoiseRegistry legacy =
+        NoiseRegistry::create(pack, wanted, 0, stratum::density::RandomSource::Legacy);
     const NoiseRegistry modern =
         NoiseRegistry::create(pack, wanted, 0, stratum::density::RandomSource::Xoroshiro);
+    CHECK(legacy.source() == stratum::density::RandomSource::Legacy);
     CHECK(modern.source() == stratum::density::RandomSource::Xoroshiro);
+    CHECK(legacy.size() == 1U);
     CHECK(modern.size() == 1U);
+    const ResourceLocation& id = wanted.front();
+    bool differ = false;
+    for (const double at : {0.0, 13.5, -700.25}) {
+        differ = differ || std::bit_cast<std::uint64_t>(legacy.get(id).sample(at, 0.0, at)) !=
+                               std::bit_cast<std::uint64_t>(modern.get(id).sample(at, 0.0, at));
+    }
+    CHECK(differ);
 
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Xoroshiro) ==
           "xoroshiro");
     CHECK(stratum::density::randomSourceName(stratum::density::RandomSource::Legacy) == "legacy");
 }
 
-TEST_CASE("a legacy source with nothing to seed is not refused", "[density][noise][legacy]") {
+TEST_CASE("a legacy source with nothing to seed builds an empty registry",
+          "[density][noise][legacy]") {
     const TempTree tree;
     tree.defineNoise("test", R"({"firstOctave":-4,"amplitudes":[1.0,1.0]})");
     tree.define("field", R"({"type":"minecraft:noise","noise":"test",
@@ -1006,11 +1013,8 @@ TEST_CASE("a legacy source with nothing to seed is not refused", "[density][nois
     const Pack pack = tree.pack();
     const Graph graph = Graph::resolveAll(pack);
 
-    // The refusal is about turning an IDENTIFIER into a Java LCG seed. With
-    // no identifier asked for there is nothing to derive and nothing to
-    // approximate, so this is not a softening of the rule — it is the rule
-    // applied to what it is actually about. Every legacy dimension's
-    // `final_density` is this case (SPEC §11).
+    // Every legacy dimension's `final_density` names no noise (SPEC §11):
+    // with nothing asked for, the registry is empty and keeps its source.
     const std::vector<ResourceLocation> nothing;
     const NoiseRegistry empty =
         NoiseRegistry::create(pack, nothing, 7, stratum::density::RandomSource::Legacy);
@@ -1018,10 +1022,10 @@ TEST_CASE("a legacy source with nothing to seed is not refused", "[density][nois
     CHECK(empty.source() == stratum::density::RandomSource::Legacy);
     CHECK(empty.worldSeed() == 7);
 
-    // Asking for even one name brings the refusal straight back.
-    CHECK_THROWS_WITH(NoiseRegistry::create(pack, graph.referencedNoises(), 7,
-                                            stratum::density::RandomSource::Legacy),
-                      ContainsSubstring("legacy_random_source"));
+    // And asking for a name builds it, from the pack's parameters.
+    const NoiseRegistry named = NoiseRegistry::create(pack, graph.referencedNoises(), 7,
+                                                      stratum::density::RandomSource::Legacy);
+    CHECK(named.size() == 1U);
 }
 
 TEST_CASE("an unbuilt named noise is refused at the node that samples it, not at construction",

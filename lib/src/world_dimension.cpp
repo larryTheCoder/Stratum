@@ -84,6 +84,9 @@ noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& setti
         roots.push_back(entry);
     }
     std::vector<data::ResourceLocation> ids = pipeline.graph.noisesReachableFrom(roots);
+    density::NoiseRegistry::requireLegacyRouterSettled(ids, settings.legacyRandomSource
+                                                                ? density::RandomSource::Legacy
+                                                                : density::RandomSource::Xoroshiro);
     for (const data::ResourceLocation& id : surface::requiredNoises(surfaceRules)) {
         if (std::ranges::find(ids, id) == ids.end()) {
             ids.push_back(id);

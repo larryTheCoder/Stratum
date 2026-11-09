@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -154,6 +155,17 @@ public:
     [[nodiscard]] static OctaveNoise createLegacy(rng::JavaRandom& random, int firstOctave,
                                                   int octaveCount);
 
+    /// A NAMED noise's stack in a `legacy_random_source` dimension
+    /// (spec/legacy-named-noise-spec.md Q1.6, Q1.7, Q2.4). create()'s
+    /// structure with the Java LCG in place of Xoroshiro128++: each octave
+    /// with a non-zero amplitude gets its own `java.util.Random`, seeded with
+    /// @p stackSeed XOR the sign-extended String.hashCode of
+    /// `octave_<firstOctave + i>` (a 32-bit wrapping sum), and nothing is
+    /// drawn across octaves. Not createLegacy()'s sequential construction,
+    /// which only the climate uses (Q1.9).
+    [[nodiscard]] static OctaveNoise createNamedLegacy(std::int64_t stackSeed, int firstOctave,
+                                                       std::span<const double> amplitudes);
+
     /// PRECONDITION: every octave's lattice cell stays in int32 — see
     /// PerlinNoise::sample. NormalNoise::accepts is the checked form.
     [[nodiscard]] double sample(double x, double y, double z) const noexcept;
@@ -194,6 +206,18 @@ public:
     /// is kept because it is the documented one and the vectors pin it.
     [[nodiscard]] static NormalNoise createLegacy(rng::JavaRandom& random, int firstOctave,
                                                   int octaveCount);
+
+    /// The named noise @p id in a `legacy_random_source` dimension, from the
+    /// pack's own @p firstOctave and @p amplitudes
+    /// (spec/legacy-named-noise-spec.md Q1.3-Q1.7, Q2.1-Q2.4). @p factorySeed
+    /// is the dimension's F(W), the first nextLong of
+    /// `java.util.Random(worldSeed)`. The noise's generator is
+    /// `java.util.Random(sx(hashCode(id)) ^ factorySeed)`, with @p id the full
+    /// `namespace:path` text; its first two nextLongs seed the two stacks
+    /// (createNamedLegacy above). Composition and value factor are create()'s.
+    [[nodiscard]] static NormalNoise createNamedLegacy(std::int64_t factorySeed,
+                                                       std::string_view id, int firstOctave,
+                                                       std::span<const double> amplitudes);
 
     /// Zero everywhere: two empty stacks. What `minecraft:offset` is in a
     /// legacy dimension, where vanilla's Nether climate takes no shift

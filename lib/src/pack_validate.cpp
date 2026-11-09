@@ -280,6 +280,7 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
             graph->noisesReachableFrom(dimension.router.entries);
         std::optional<density::NoiseRegistry> dimensionNoises;
         try {
+            density::NoiseRegistry::requireLegacyRouterSettled(wanted, source);
             dimensionNoises.emplace(
                 density::NoiseRegistry::create(pack, wanted, options.seed, source));
         } catch (const density::NoiseError& error) {

@@ -175,26 +175,14 @@ TEST_CASE("a dimension this build cannot generate is refused by name", "[conform
         SKIP("no worldgen or biome_parameters fixtures under " << STRATUM_FIXTURES_DIR);
     }
     const auto overworld = ResourceLocation::parse("minecraft:overworld");
-    // The Nether seeds its NAMED noises from the Java LCG. Its three climate
-    // noises are derived now (SPEC §11, read from cubiomes), so what it is
-    // refused for is its SURFACE RULE's eight — and only those are named. The
-    // count is the assertion that matters: the message also says which three
-    // ARE built, so checking for the climate names' presence or absence would
-    // pass whichever way the refusal went. Vanilla's End declares the same
-    // flag and is NOT refused: it names none (vanilla_legacy_named_noises_test).
-    std::string netherRefusal;
-    try {
-        static_cast<void>(CompiledDimension::compile(thawedVanilla(),
-                                                     ResourceLocation::parse("minecraft:nether"),
-                                                     BiomeSource::parse("minecraft:nether"), 1));
-    } catch (const std::exception& error) {
-        netherRefusal = error.what();
-    }
-    CAPTURE(netherRefusal);
-    CHECK_THAT(netherRefusal, ContainsSubstring("legacy_random_source") &&
-                                  ContainsSubstring("names 8 noise(s) — ") &&
-                                  ContainsSubstring("minecraft:surface, ") &&
-                                  ContainsSubstring("minecraft:nether_state_selector"));
+    // The Nether, and the other two legacy dimensions that name surface
+    // noises, compile now: their named noises are built by
+    // spec/legacy-named-noise-spec.md (vanilla_legacy_nether_surface_test.cpp
+    // scores the Nether's against the goldens). They were refused by name
+    // until that spec landed.
+    CHECK_NOTHROW(CompiledDimension::compile(thawedVanilla(),
+                                             ResourceLocation::parse("minecraft:nether"),
+                                             BiomeSource::parse("minecraft:nether"), 1));
     // THE END compiles with its own biome source, `minecraft:the_end`
     // (biome/source.hpp; vanilla_end_biome_source_test.cpp scores it against
     // every End quart on disk). It is not refused for being legacy — it names

@@ -14,7 +14,8 @@ blocks and biomes as a Java server, bit for bit.
   surface blocks
 - **Not yet:** worlds have no trees, plants, ordinary ores, carved caves or
   structures. Those are planned for v2, and need not land where Java puts them.
-  The Nether does not generate.
+  The Nether generates through the library and `stratum generate`; neither
+  server plugin offers it as a world yet.
 
 [`SPEC.md`](SPEC.md) is the source of truth for scope and design.
 [`PROGRESS.md`](PROGRESS.md) tracks the milestones. [`CLAUDE.md`](CLAUDE.md)
@@ -22,16 +23,16 @@ says how changes are made.
 
 ## What generates today
 
-Status on 2026-11-01. Every figure is measured against the vanilla 1.21.11
+Status on 2026-11-09. Every figure is measured against the vanilla 1.21.11
 server.
 
 | World | State |
 |---|---|
-| Overworld | Generates, with no trees or other features. 99.9965% of sampled blocks match. |
+| Overworld | Generates, with no trees or other features. 99.9980% of sampled blocks match. |
 | Amplified, large biomes | Generate. On test worlds forced to one biome, terrain, aquifers, ore veins and surface rules match the server, apart from fluid it moved. Not yet measured: where either preset places its biomes, and its surface blocks on its real biomes. |
 | The End | Generates, with no towers, chorus plants or End cities. Blocks on y 0 to 127, the only heights its terrain uses, match exactly on every sampled chunk. Every biome stored on y 0 to 255 also matches, in 45 regions. |
-| The Nether | Refused by name: it stops with an error naming what it cannot run. |
-| `caves`, `floating_islands` noise settings | Cannot generate, for the same reason as the Nether. `generate` does not offer them. |
+| The Nether | Generates, with no features or carved caves. Every block of eight golden regions (8×8 chunks each) matches. |
+| `caves`, `floating_islands` noise settings | Compile through the same legacy named-noise construction as the Nether. Not measured against the server. `generate` does not offer them. |
 
 **The overworld sample** is 128 chunks from eight seeds. Of its 12 582 912
 blocks, 12 582 474 match. Of the other 438, 415 are surface blocks near biome
@@ -46,13 +47,13 @@ Every server world behind these figures was generated with features and
 carvers turned off, so it holds no trees to compare.
 
 **The Nether's** surface rules read noises seeded by vanilla's older random
-source, and we have not worked out that seeding. The parts that do run are
-close: 32 765 of 32 768 sampled biome cells match, and so do 99.99591% of
-sampled positions, counting only solid, lava or air.
+source. A clean-room specification settled that seeding on 2026-11-09, and
+with the surface rules reading the block-level ("zoomed") biome, every block
+of the eight golden Nether regions matches.
 
-**Milestones.** That seeding is the last named blocker for M4 (biomes and
-surface). M4 also carries the 415 surface blocks, ties in the biome search and
-the presets not yet measured. The server integration (M5) closed on 2026-10-29.
+**Milestones.** M4 (biomes and surface) carries the 232 overworld surface
+blocks still unexplained, ties in the biome search and the presets not yet
+measured. The server integration (M5) closed on 2026-10-29.
 
 The large noise caves and ore veins do generate. Features (trees, plants,
 ordinary ores), carvers (carved caves, ravines) and structures do not. A pack's
@@ -102,7 +103,7 @@ the READMEs below.
 
 Both servers generate the overworld, amplified and large biomes presets.
 PocketMine-MP also generates the End, and shows it to clients as the overworld.
-Nukkit refuses the End by name. Neither generates the Nether. Running your own
+Nukkit refuses the End by name. Neither offers the Nether as a world yet. Running your own
 datapack on a server is not a v1 goal, and a biome with no Bedrock id is refused
 by name.
 
@@ -142,7 +143,7 @@ are exempt.
 
 - `generate` writes Anvil region files in the form the server stores them, which
   `diff` and `render` read. Its dimensions are `overworld`, `amplified`,
-  `large_biomes` and `end`. `nether` is accepted, then refused (exit 4).
+  `large_biomes`, `nether` and `end`.
 - `render` also draws one density function's field, blue below zero and orange
   above:
   `stratum render --pack .fixtures/1.21.11 --function minecraft:overworld/continents --seed 42 --out build/field.png`.
@@ -234,7 +235,7 @@ keeps open what the default should be for a user's pack.
 | `worldgen/density_function` | Supported | All cache node types included |
 | `worldgen/noise` | Supported | Its own entry or written inline. An inline one loads but cannot yet be seeded. |
 | `worldgen/noise_settings` | Supported | Noise router and surface rules. Spawn targets load and are kept, not interpreted. |
-| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Under either random source. Refused by name when `default_fluid` is not water, or under the legacy source when reading a named noise other than the three legacy climate noises. |
+| Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Under either random source. Refused by name when `default_fluid` is not water, or under the legacy source when the noise router reads a named noise other than the three legacy climate noises. |
 | Multi-noise biome source | Supported | Named by its parameter list |
 | `the_end` biome source | Supported | Reads the router's `erosion`, as the server does |
 | `fixed`, `checkerboard` biome sources | **Refused** | Refused by name when a caller names them. One a pack declares in `dimension` or `world_preset` is not read or reported yet. |

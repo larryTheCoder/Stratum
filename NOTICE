@@ -274,6 +274,23 @@ server answers differently — it reads the dimension's own router where
 cubiomes evaluates a fixed copy of the island field — follows the server
 (SPEC.md section 11, "The End's biome source").
 
+lib/src/biome_voronoi.cpp and lib/include/stratum/biome/voronoi.hpp adapt
+cubiomes' layers.c `getVoronoiSHA`, `getVoronoiCell` and `voronoiAccess3D`,
+with rng.h `mcStepSeed`: the zoom's key, a single-block SHA-256 of the
+seed's eight little-endian bytes read back as the digest's first eight bytes
+little-endian (its round constants and initial state are the standard
+FIPS 180-4 values); each lattice point's jitter, six salted steps of the
+64-bit LCG and two more salted with the key, each component bits 24..33 of
+the state less 512, times 36; and the choice among the eight lattice points
+around (block - 2), first strictly nearest in cubiomes' order. This
+project's own: floorDiv and floorMod for cubiomes' shift and mask of a
+signed coordinate, the int64 distances, and VoronoiWindow, which caches the
+jitters and the horizontal distance terms and answers exactly as the zoom
+does (tests/unit/voronoi_test.cpp holds both to vectors generated from
+cubiomes by tools/vectors/generate-voronoi-vectors.sh). That vanilla's
+surface rules read this zoomed biome is measured, not adapted: SPEC.md
+section 11, "The surface rules read the zoomed biome".
+
 cubiomes is MIT-licensed:
 
     Copyright (c) 2020 Cubitect

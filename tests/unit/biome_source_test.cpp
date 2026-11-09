@@ -36,12 +36,14 @@
 #include "support/temp_path.hpp"
 
 #include <stratum/biome/source.hpp>
+#include <stratum/biome/voronoi.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_parameters.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/freeze/pipeline.hpp>
+#include <stratum/javamath.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/terrain/filler.hpp>
 #include <stratum/world/dimension.hpp>
@@ -395,27 +397,44 @@ TEST_CASE("ChunkFiller's surface pass reads the End's biome where fillBiomes doe
     // The tree paints end_midlands obsidian. At seed 31337, chunk (-64, 1) is
     // end_midlands and (-64, 0) — one chunk over, on the ring — is the_end:
     // the surface pass must agree with fillBiomes across that edge, with
-    // floorDiv from block to chunk at x = -1024..-1009.
+    // floorDiv from block to chunk at x = -1024..-1009. A block reads the
+    // quart the zoom picks for it (biome/voronoi.hpp), which near the edge
+    // may lie in the next chunk; the blocks whose zoomed quart stays in their
+    // own chunk are the ones whose biome this pins, and they are most.
     const SyntheticEnd tree;
     const auto dimension = CompiledDimension::compile(
         tree.pipeline(), ResourceLocation::parse("minecraft:end"), BiomeSource::theEnd(), 31337);
-    const auto count = [&dimension](std::int32_t chunkX, std::int32_t chunkZ) {
+    const stratum::biome::VoronoiZoom zoom{31337};
+    const auto score = [&](std::int32_t chunkX, std::int32_t chunkZ) {
         stratum::terrain::ChunkBuffer blocks(dimension->geometry());
         dimension->fillBlocks(chunkX, chunkZ, blocks);
+        std::size_t inChunk = 0;
         std::size_t obsidian = 0;
         for (int z = 0; z < 16; ++z) {
             for (int x = 0; x < 16; ++x) {
                 for (std::int32_t y = 0; y < 128; y += 9) {
+                    const stratum::biome::QuartPos q =
+                        zoom.zoom((chunkX * 16) + x, y, (chunkZ * 16) + z);
+                    if (stratum::javamath::floorDiv(q.x, std::int32_t{4}) != chunkX ||
+                        stratum::javamath::floorDiv(q.z, std::int32_t{4}) != chunkZ) {
+                        continue;
+                    }
+                    ++inChunk;
                     obsidian +=
                         blocks.at(x, y, z).name.toString() == "minecraft:obsidian" ? 1U : 0U;
                 }
             }
         }
-        return obsidian;
+        return std::pair{inChunk, obsidian};
     };
-    // 15 sampled layers (0, 9, .., 126) of 256 columns.
-    CHECK(count(-64, 1) == std::size_t{15} * 256U);
-    CHECK(count(-64, 0) == 0U);
+    // 15 sampled layers (0, 9, .., 126) of 256 columns, less the blocks that
+    // zoom into a neighbour chunk.
+    const auto [midlands, midlandsObsidian] = score(-64, 1);
+    CHECK(midlands > std::size_t{15} * 256U / 2U);
+    CHECK(midlandsObsidian == midlands);
+    const auto [ring, ringObsidian] = score(-64, 0);
+    CHECK(ring > std::size_t{15} * 256U / 2U);
+    CHECK(ringObsidian == 0U);
 }
 
 TEST_CASE("a biome source is named by type, and the types this build lacks are refused by name",

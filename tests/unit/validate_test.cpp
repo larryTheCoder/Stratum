@@ -513,7 +513,12 @@ TEST_CASE("an inline noise is a warning where it sits and an error where a dimen
     }
 }
 
-TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecked", "[validate]") {
+TEST_CASE("a legacy router naming a noise beyond the climate is a warning, and is left unchecked",
+          "[validate]") {
+    // A legacy dimension's SURFACE noises are built (spec/legacy-named-noise-
+    // spec.md, confirmed on the golden Nether), but its ROUTER naming a noise
+    // other than the three climate keys is the spec's Q5.1c, read and not yet
+    // confirmed against the server, so that router is not seeded.
     const TempTree tree;
     defineWorkingPack(tree);
     defineSettings(tree, "overworld", "field", /*legacyRandomSource=*/false);
@@ -521,37 +526,26 @@ TEST_CASE("a dimension this build cannot seed is a warning, and is left unchecke
 
     const Report report = stratum::validate::validatePack(tree.pack());
 
-    // Not an error: the pack is fine, this build cannot seed that dimension.
+    // Not an error: the pack is fine, this build will not seed that router.
     CHECK(report.count(Severity::Error) == 0U);
     CHECK(report.noiseSettings == 2U);
 
-    // Left out of the counts entirely rather than counted as failures.
-    // Reporting fifteen unevaluable entries would say we looked and they did
-    // not work, and we did not look.
+    // Left out of the counts rather than counted as failures.
     CHECK(report.dimensionsChecked == 1U);
     CHECK(report.routerEntries == stratum::settings::kRouterEntryCount);
     CHECK(report.routerEntriesEvaluable == stratum::settings::kRouterEntryCount);
 
-    const Finding* finding = findingAbout(report, "minecraft:nether");
-    REQUIRE(finding != nullptr);
-    CHECK(finding->severity == Severity::Warning);
-    CHECK_THAT(finding->message, ContainsSubstring("legacy_random_source"));
-
-    // Of what the dimension needs besides its router, neither the vein
-    // source nor the aquifer lattice is warned about: both legacy
-    // derivations are measured (SPEC §11). The vein source was the last to
-    // be, and was warned about by name until it was.
-    int veins = 0;
-    int aquifers = 0;
+    bool routerWarned = false;
     for (const Finding& each : report.findings) {
-        if (each.subject != "minecraft:nether") {
-            continue;
+        if (each.subject == "minecraft:nether") {
+            CHECK(each.severity == Severity::Warning);
+            routerWarned = routerWarned ||
+                           (each.message.find("noise router names 1 noise(s) — minecraft:test") !=
+                                std::string::npos &&
+                            each.message.find("Q5.1c") != std::string::npos);
         }
-        veins += static_cast<int>(each.message.find("'ore_veins_enabled'") != std::string::npos);
-        aquifers += static_cast<int>(each.message.find("aquifers_enabled") != std::string::npos);
     }
-    CHECK(veins == 0);
-    CHECK(aquifers == 0);
+    CHECK(routerWarned);
 
     // And nothing was said about the dimension that is fine.
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);

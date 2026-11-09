@@ -238,6 +238,14 @@ void fillRow(std::vector<std::uint16_t>& blocks, const std::size_t first, const 
 /// Snaps down onto the biome grid: vanilla resolves one biome per 4x4x4
 /// cell and surface rules read that grid rather than resampling per block
 /// (measured in `vanilla_biomes_test.cpp` — the lower corner of the cell).
+/// Whether a zoomed quart above or below the dimension's own is clamped into
+/// it before its biome is read. NOT clamped, as cubiomes' voronoiAccess3D
+/// does not: the goldens cannot decide it, since vanilla's rules settle the
+/// bands where the zoom can leave the dimension (the bedrock gradients)
+/// before reading a biome, and both readings score every golden Nether
+/// region exactly (SPEC §11, "The surface rules read the zoomed biome").
+constexpr bool kZoomClampsQuartY = false;
+
 [[nodiscard]] std::int32_t quartSnap(const std::int32_t value) noexcept {
     return javamath::floorDiv(value, std::int32_t{4}) * std::int32_t{4};
 }
@@ -586,6 +594,9 @@ ChunkFiller ChunkFiller::compileWith(const density::Graph& graph,
             filler.surfaceNeedsSteep_ = needs.steep;
             filler.biomeSource_ = biomeSource;
             filler.biomeTemperatures_ = biomeTemperatures;
+            if (needs.biome || needs.temperature) {
+                filler.biomeZoom_.emplace(noises.worldSeed());
+            }
             if (needs.preliminarySurface) {
                 filler.interpreter_.requireEvaluable(
                     settings.router.at(settings::RouterEntry::PreliminarySurfaceLevel));
@@ -1306,8 +1317,27 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
     const std::int32_t quartBottom = quartSnap(minY);
     const std::int32_t quartSpan = ((quartSnap(topY - 1) - quartBottom) / 4) + 1;
     const auto quartLevels = static_cast<std::size_t>(quartSpan);
-    std::vector<QuartBiome> quartBiomes(
-        surfaceNeedsBiome_ || surfaceNeedsTemperature_ ? 16U * quartLevels : 0U);
+
+    // THE ZOOM. A block's biome is read from the quart biome::VoronoiZoom
+    // picks for it, which is its own or a neighbour's, up to one quart away
+    // on each axis (SPEC §11, "The surface rules read the zoomed biome"). So
+    // the cache spans the chunk's 4 x 4 quart columns plus one on each side,
+    // and one quart level below and above the dimension's.
+    const std::int32_t baseQuartX = javamath::floorDiv(baseX, std::int32_t{4});
+    const std::int32_t baseQuartZ = javamath::floorDiv(baseZ, std::int32_t{4});
+    const std::int32_t minQuartY = javamath::floorDiv(quartBottom, std::int32_t{4});
+    const std::int32_t maxQuartY = minQuartY + quartSpan - 1;
+    constexpr std::int32_t kZoomColumns = 6;
+    const auto zoomLevels = quartLevels + 2U;
+    std::optional<biome::VoronoiWindow> zoomWindow;
+    if (biomeZoom_.has_value()) {
+        zoomWindow.emplace(*biomeZoom_, baseX, minY, baseZ, baseX + kChunkWidth - 1, topY - 1,
+                           baseZ + kChunkWidth - 1);
+    }
+    std::vector<QuartBiome> quartBiomes(surfaceNeedsBiome_ || surfaceNeedsTemperature_
+                                            ? static_cast<std::size_t>(kZoomColumns) *
+                                                  kZoomColumns * zoomLevels
+                                            : 0U);
 
     // A multi-noise source's lookups are made as rows of its list
     // (surfaceBiomeRowAt: the same climate, the same search, the same
@@ -1421,13 +1451,8 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             // the guard too indirect for bugprone-unchecked-optional-access
             // to see.
             const bool needsBiomeIdentity = surfaceNeedsBiome_ || surfaceNeedsTemperature_;
-            const std::int32_t qx = quartSnap(x);
-            const std::int32_t qz = quartSnap(z);
-            const std::size_t quartColumn = ((static_cast<std::size_t>(localZ / 4) * 4U) +
-                                             static_cast<std::size_t>(localX / 4)) *
-                                            quartLevels;
-            bool biomeQuartYKnown = false;
-            std::int32_t biomeQuartY = 0;
+            bool biomeQuartKnown = false;
+            biome::QuartPos biomeQuart;
             // ONLY THE DEFAULT BLOCK IS A SURFACE-RULE POSITION. A rule's
             // block replaces `default_block` and nothing else: not fluid, not
             // air, not lava the aquifer placed, not a vein block. Measured on
@@ -1471,51 +1496,6 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     if (into.blocks_[into.linearIndex(localX, y, localZ)] != defaultIndex) {
                         continue;
                     }
-                    if (needsBiomeIdentity) {
-                        // The context's biome and temperature change only where
-                        // the quart does: assigned there, and left standing for
-                        // the blocks below it in the same quart.
-                        const std::int32_t quartY = quartSnap(y);
-                        if (!biomeQuartYKnown || biomeQuartY != quartY) {
-                            QuartBiome& cached =
-                                quartBiomes[quartColumn +
-                                            static_cast<std::size_t>((quartY - quartBottom) / 4)];
-                            if (cached.id == nullptr) {
-                                QuartBiome resolved;
-                                const density::Point corner{.x = qx, .y = quartY, .z = qz};
-                                if (rowList != nullptr) {
-                                    const auto qxc = static_cast<std::size_t>(localX / 4);
-                                    const auto qzc = static_cast<std::size_t>(localZ / 4);
-                                    const auto level =
-                                        static_cast<std::size_t>((quartY - quartBottom) / 4);
-                                    const std::size_t row = surfaceBiomeRowAt(
-                                        corner, surfaceCache, rowHint(qxc, level, qzc), searchMemo);
-                                    biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
-                                        static_cast<std::uint32_t>(row);
-                                    lastRow = row;
-                                    resolved.id = &rowList->entries()[row].biome;
-                                } else {
-                                    resolved.id = &surfaceBiomeAt(corner, surfaceCache);
-                                }
-                                if (surfaceNeedsTemperature_) {
-                                    resolved.temperature = biomeTemperatures_->at(*resolved.id);
-                                }
-                                if (surfaceNeedsBiome_) {
-                                    resolved.key = executor.biomeKey(*resolved.id);
-                                }
-                                cached = resolved;
-                            }
-                            if (surfaceNeedsBiome_) {
-                                context.biomeKey = cached.key;
-                            }
-                            if (surfaceNeedsTemperature_) {
-                                context.biomeTemperature = cached.temperature;
-                            }
-                            biomeQuartY = quartY;
-                            biomeQuartYKnown = true;
-                        }
-                    }
-
                     context.y = y;
                     // Where the column's above_preliminary_surface threshold
                     // alone decides the rules' answer (Executor::
@@ -1531,6 +1511,84 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                     if (decided.has_value()) {
                         placed = *decided;
                     } else {
+                        // The biome only where the rules run: a block the
+                        // threshold decides reads none (decidedByThreshold),
+                        // and resolving it there was most of the zoom's cost
+                        // in the overworld, whose deep stone is decided so.
+                        if (needsBiomeIdentity) {
+                            // The context's biome and temperature change only where
+                            // the zoomed quart does: assigned there, and left
+                            // standing for the blocks below that read the same one.
+                            const biome::QuartPos zoomed = zoomWindow->zoom(x, y, z);
+                            const biome::QuartPos quart =
+                                kZoomClampsQuartY
+                                    ? biome::QuartPos{.x = zoomed.x,
+                                                      .y = std::clamp(zoomed.y, minQuartY,
+                                                                      maxQuartY),
+                                                      .z = zoomed.z}
+                                    : zoomed;
+                            if (!biomeQuartKnown || biomeQuart != quart) {
+                                // Offsets into the cache, each in [0, 5] or
+                                // [0, zoomLevels), made in int32 and widened
+                                // whole.
+                                const std::int32_t columnX = quart.x - baseQuartX + 1;
+                                const std::int32_t columnZ = quart.z - baseQuartZ + 1;
+                                const std::int32_t zoomLevel = quart.y - minQuartY + 1;
+                                const std::size_t zoomColumn =
+                                    (static_cast<std::size_t>(columnZ) * kZoomColumns) +
+                                    static_cast<std::size_t>(columnX);
+                                const auto slot = static_cast<std::size_t>(zoomLevel);
+                                QuartBiome& cached = quartBiomes[(zoomColumn * zoomLevels) + slot];
+                                if (cached.id == nullptr) {
+                                    QuartBiome resolved;
+                                    const density::Point corner{
+                                        .x = quart.x * 4, .y = quart.y * 4, .z = quart.z * 4};
+                                    const bool inChunk =
+                                        quart.x >= baseQuartX && quart.x < baseQuartX + 4 &&
+                                        quart.z >= baseQuartZ && quart.z < baseQuartZ + 4 &&
+                                        quart.y >= minQuartY && quart.y <= maxQuartY;
+                                    if (rowList != nullptr && inChunk) {
+                                        const auto qxc =
+                                            static_cast<std::size_t>(quart.x - baseQuartX);
+                                        const auto qzc =
+                                            static_cast<std::size_t>(quart.z - baseQuartZ);
+                                        const auto level =
+                                            static_cast<std::size_t>(quart.y - minQuartY);
+                                        const std::size_t row =
+                                            surfaceBiomeRowAt(corner, surfaceCache,
+                                                              rowHint(qxc, level, qzc), searchMemo);
+                                        biomeRows.rows[(((level * 4U) + qzc) * 4U) + qxc] =
+                                            static_cast<std::uint32_t>(row);
+                                        lastRow = row;
+                                        resolved.id = &rowList->entries()[row].biome;
+                                    } else if (rowList != nullptr) {
+                                        // A neighbour chunk's quart, or one past the
+                                        // dimension's: the same lookup, not kept as
+                                        // this chunk's row.
+                                        const std::size_t row = surfaceBiomeRowAt(
+                                            corner, surfaceCache, lastRow, searchMemo);
+                                        resolved.id = &rowList->entries()[row].biome;
+                                    } else {
+                                        resolved.id = &surfaceBiomeAt(corner, surfaceCache);
+                                    }
+                                    if (surfaceNeedsTemperature_) {
+                                        resolved.temperature = biomeTemperatures_->at(*resolved.id);
+                                    }
+                                    if (surfaceNeedsBiome_) {
+                                        resolved.key = executor.biomeKey(*resolved.id);
+                                    }
+                                    cached = resolved;
+                                }
+                                if (surfaceNeedsBiome_) {
+                                    context.biomeKey = cached.key;
+                                }
+                                if (surfaceNeedsTemperature_) {
+                                    context.biomeTemperature = cached.temperature;
+                                }
+                                biomeQuart = quart;
+                                biomeQuartKnown = true;
+                            }
+                        }
                         context.stoneDepthAbove = column.stoneDepthAbove(y);
                         context.stoneDepthBelow = column.stoneDepthBelow(y);
                         placed = executor.apply(context, columnMemo);

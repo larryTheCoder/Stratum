@@ -31,6 +31,8 @@ add_executable(stratum_unit_tests
     java_random_test.cpp
     javamath_test.cpp
     legacy_climate_test.cpp
+    legacy_named_noise_test.cpp
+    voronoi_test.cpp
     mapping_biome_test.cpp
     mapping_block_state_test.cpp
     md5_test.cpp
@@ -67,6 +69,12 @@ target_include_directories(stratum_unit_tests PRIVATE
     # reconstruction without fixtures; it includes the analyzer's own header,
     # as the conformance case does, rather than a copy.
     "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/analysis"
+)
+
+# legacy_named_noise_test.cpp reads the clean-room spec's committed vectors
+# where they live, rather than a copy of them.
+target_compile_definitions(stratum_unit_tests PRIVATE
+    "STRATUM_SPEC_DIR=\"${CMAKE_SOURCE_DIR}/spec\""
 )
 
 target_link_libraries(stratum_unit_tests PRIVATE

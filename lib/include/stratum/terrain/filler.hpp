@@ -80,6 +80,7 @@
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
+#include <stratum/biome/voronoi.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/ore/vein.hpp>
@@ -509,6 +510,9 @@ private:
     density::NodeIndex finalDensity_{};
 
     std::optional<biome::Source> biomeSource_;
+    /// The block-level biome zoom the surface rules read through
+    /// (biome/voronoi.hpp), set where they read a biome or a temperature.
+    std::optional<biome::VoronoiZoom> biomeZoom_;
     const biome::TemperatureTable* biomeTemperatures_ = nullptr;
     bool surfaceNeedsBiome_ = false;
     bool surfaceNeedsTemperature_ = false;

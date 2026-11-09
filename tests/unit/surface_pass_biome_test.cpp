@@ -12,6 +12,7 @@
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/source.hpp>
+#include <stratum/biome/voronoi.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/interpreter.hpp>
@@ -159,7 +160,7 @@ private:
 
 } // namespace
 
-TEST_CASE("the surface pass reads each quart's own biome, in every direction",
+TEST_CASE("the surface pass reads the zoomed quart's biome, in every direction",
           "[terrain][filler][surface]") {
     const BiomeTree tree;
     tree.write("noise_settings/test.json", settingsJson().dump());
@@ -195,9 +196,8 @@ TEST_CASE("the surface pass reads each quart's own biome, in every direction",
     const stratum::density::Interpreter reference(loaded.graph, noises);
     stratum::density::Interpreter::CornerCache cache(reference.cacheSize());
     const stratum::biome::Source source = stratum::biome::Source::multiNoise(biomes);
-    const auto quart = [](std::int32_t value) {
-        return stratum::javamath::floorDiv(value, std::int32_t{4}) * 4;
-    };
+    // The registry above is seeded 0, so the filler's zoom is too.
+    const stratum::biome::VoronoiZoom zoom{0};
 
     stratum::terrain::ChunkBuffer buffer(settings.geometry);
     std::set<std::string> seen;
@@ -212,10 +212,15 @@ TEST_CASE("the surface pass reads each quart's own biome, in every direction",
                 for (int localX = 0; localX < 16; ++localX) {
                     const std::int32_t x = (chunkX * 16) + localX;
                     const std::int32_t z = (chunkZ * 16) + localZ;
-                    const ResourceLocation& biome = source.at(
-                        reference, settings.router,
-                        stratum::density::Point{.x = quart(x), .y = quart(y), .z = quart(z)},
-                        cache);
+                    // The block reads the quart the zoom picks for it, its
+                    // own or a neighbour's (biome/voronoi.hpp; SPEC §11, "The
+                    // surface rules read the zoomed biome").
+                    const stratum::biome::QuartPos zoomed = zoom.zoom(x, y, z);
+                    const ResourceLocation& biome =
+                        source.at(reference, settings.router,
+                                  stratum::density::Point{
+                                      .x = zoomed.x * 4, .y = zoomed.y * 4, .z = zoomed.z * 4},
+                                  cache);
                     CAPTURE(chunkX, chunkZ, localX, y, localZ, biome.toString());
                     REQUIRE(buffer.at(localX, y, localZ).name.toString() ==
                             placedFor.at(biome.toString()));

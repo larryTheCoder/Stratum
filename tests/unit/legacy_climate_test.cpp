@@ -103,24 +103,18 @@ TEST_CASE("the legacy climate ignores the pack's parameters for its three noises
     }
 }
 
-TEST_CASE("any other legacy noise is still refused, and named alone", "[noise][legacy][climate]") {
+TEST_CASE("any other legacy noise needs the pack's parameters, and says which",
+          "[noise][legacy][climate]") {
+    // The three climate keys need none (they ignore the pack). Every other
+    // name is built from the pack's own parameters
+    // (spec/legacy-named-noise-spec.md Q2.1), so without them it is refused,
+    // naming the key.
     auto names = climateNames();
     names.push_back(ResourceLocation::parse("minecraft:surface"));
-    names.push_back(ResourceLocation::parse("minecraft:surface"));
     const std::map<ResourceLocation, NoiseParameters> none;
-
-    // The refusal names what is still unsolved, once, and none of the three
-    // it can build: listing those would send a reader after a solved problem.
-    try {
-        static_cast<void>(NoiseRegistry::create(none, names, 0, RandomSource::Legacy));
-        FAIL("a legacy registry naming minecraft:surface was built");
-    } catch (const stratum::density::NoiseError& error) {
-        const std::string message = error.what();
-        CHECK_THAT(message, ContainsSubstring("legacy_random_source") &&
-                                ContainsSubstring("names 1 noise(s) — minecraft:surface —") &&
-                                ContainsSubstring("will not substitute"));
-        CHECK_THAT(message, !ContainsSubstring("names 3") && !ContainsSubstring("names 4"));
-    }
+    CHECK_THROWS_WITH(NoiseRegistry::create(none, names, 0, RandomSource::Legacy),
+                      ContainsSubstring("minecraft:surface"));
+    CHECK_NOTHROW(NoiseRegistry::create(none, climateNames(), 0, RandomSource::Legacy));
 
     // And the modern source is untouched by any of this: it still reads the
     // pack's parameters, so it still needs them.

@@ -356,19 +356,39 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                              "a noise registry");
     }
 
+    const bool legacySource =
+        noises != nullptr && noises->source() == density::RandomSource::Legacy;
+    if (legacySource && wantsBandlands) {
+        // spec/bandlands-spec.md derives the table from the Xoroshiro
+        // factory; how a legacy source salts it is not specified.
+        throw ExecutionError(
+            "these surface rules use minecraft:bandlands in a legacy_random_source "
+            "dimension, and how the band table is seeded under the legacy source is not "
+            "specified (spec/bandlands-spec.md covers the Xoroshiro source only); this build "
+            "refuses the tree rather than seed it the modern way (SPEC §8)");
+    }
+
     // Seeded from the constant 1234 rather than the world seed, so the field
     // is identical in every world.
     rng::JavaRandom temperatureRandom{1234};
     Executor executor{graph,     geometry, noises,
                       worldSeed, seaLevel, noise::PerlinNoise::fromRandom(temperatureRandom)};
     if (wantsDepth) {
-        executor.surface_ = &noises->get(data::ResourceLocation::parse(std::string(kSurfaceNoise)));
+        executor.surface_ =
+            &noises->getNamed(data::ResourceLocation::parse(std::string(kSurfaceNoise)));
         executor.surfaceSecondary_ =
-            &noises->get(data::ResourceLocation::parse(std::string(kSurfaceSecondaryNoise)));
+            &noises->getNamed(data::ResourceLocation::parse(std::string(kSurfaceSecondaryNoise)));
+        if (legacySource) {
+            // F(W): the first nextLong of java.util.Random(worldSeed), the
+            // same factory seed the named noises are salted with
+            // (spec/legacy-named-noise-spec.md Q1.2, Q4.5).
+            rng::JavaRandom world{worldSeed};
+            executor.legacyJitter_.emplace(world.nextLong());
+        }
     }
     if (wantsBandlands) {
         executor.clayBandsOffset_ =
-            &noises->get(data::ResourceLocation::parse(std::string(kClayBandsOffsetNoise)));
+            &noises->getNamed(data::ResourceLocation::parse(std::string(kClayBandsOffsetNoise)));
         // One fork of the world seed, salted with this name's MD5 — built
         // once here and never touched again after the table is filled
         // (spec/bandlands-spec.md Q3.2).
@@ -385,7 +405,7 @@ Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
     // golden Nether's bedrock floor and roof, where the Xoroshiro coin agrees
     // at chance (SPEC §11; vanilla_legacy_gradient_gap_test.cpp). This build
     // refused a legacy gradient by name until the executor ran that coin.
-    const bool legacy = noises != nullptr && noises->source() == density::RandomSource::Legacy;
+    const bool legacy = legacySource;
     std::map<std::string, std::size_t> gradientOf;
     // Each noise_threshold's slot in a ColumnMemo: one per distinct name, in
     // the order the conditions first name it.
@@ -1292,9 +1312,17 @@ double Executor::surfaceDepthRaw(const std::int32_t x, const std::int32_t z) con
     }
     const double field = sampleColumn(*surface_, kSurfaceNoise, x, z);
     // One draw from the UNSALTED positional source, at y = 0 rather than the
-    // block's own y.
-    rng::Xoroshiro128PlusPlus draw = jitter_.at(x, 0, z);
-    return (2.75 * field) + 3.0 + (0.25 * draw.nextDouble());
+    // block's own y: the dimension's factory seed under the legacy source
+    // (spec/legacy-named-noise-spec.md Q4.5), the Xoroshiro base otherwise.
+    double jitter = 0.0;
+    if (legacyJitter_.has_value()) {
+        rng::JavaRandom draw = legacyJitter_->at(x, 0, z);
+        jitter = draw.nextDouble();
+    } else {
+        rng::Xoroshiro128PlusPlus draw = jitter_.at(x, 0, z);
+        jitter = draw.nextDouble();
+    }
+    return (2.75 * field) + 3.0 + (0.25 * jitter);
 }
 
 std::int32_t Executor::surfaceDepth(const std::int32_t x, const std::int32_t z) const {
@@ -1424,7 +1452,7 @@ double Executor::columnNoise(const data::ResourceLocation& name, const std::size
         // The same lookup and the same refusals, in the same order, as the
         // uncached read always made: the condition's noise found in the
         // registry by name, then sampled at the column.
-        const noise::NormalNoise* sampled = noises_->find(name);
+        const noise::NormalNoise* sampled = noises_->findNamed(name);
         if (sampled == nullptr) {
             throw ExecutionError("no noise '" + name.toString() + "' for a noise_threshold");
         }

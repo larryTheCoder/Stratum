@@ -836,7 +836,17 @@ TEST_CASE("a thawed pipeline builds the same noises its pack would", "[freeze]")
                           thawed.noises, std::vector{ResourceLocation::parse("minecraft:absent")},
                           1, stratum::density::RandomSource::Xoroshiro),
                       ContainsSubstring("minecraft:absent"));
-    CHECK_THROWS_WITH(stratum::density::NoiseRegistry::create(
-                          thawed.noises, wanted, 1, stratum::density::RandomSource::Legacy),
-                      ContainsSubstring("legacy_random_source"));
+    // The legacy source builds from stored parameters exactly as from the
+    // pack (spec/legacy-named-noise-spec.md reads the pack's parameters).
+    const auto legacyFromPack = stratum::density::NoiseRegistry::create(
+        pack, wanted, 1234567, stratum::density::RandomSource::Legacy);
+    const auto legacyFromBlob = stratum::density::NoiseRegistry::create(
+        thawed.noises, wanted, 1234567, stratum::density::RandomSource::Legacy);
+    for (const ResourceLocation& id : wanted) {
+        CAPTURE(id.toString());
+        for (const double at : {-1000.25, 0.0, 17.5, 30000.125}) {
+            CHECK(bits(legacyFromPack.get(id).sample(at, at * 0.5, -at)) ==
+                  bits(legacyFromBlob.get(id).sample(at, at * 0.5, -at)));
+        }
+    }
 }

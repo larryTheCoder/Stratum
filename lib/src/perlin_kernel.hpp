@@ -125,6 +125,40 @@ inline constexpr bool kFloorByConversion = false;
     }
 }
 
+/// The wrap's period, 2^25.
+inline constexpr double kPrecisionPeriod = 33554432.0;
+
+/// maintainPrecision's body: the coordinate wrap into +/-2^24 that every
+/// octave applies to its scaled coordinates — BlendedNoise's three per octave
+/// (spec/blended-noise-spec.md Q1.6) and every OctaveNoise layer of a
+/// NormalNoise (spec/legacy-named-noise-spec.md Q2.5, which states the read
+/// path is shared with non-legacy dimensions, Q4.1).
+///
+/// Half up, floor(v / 2^25 + 0.5), not std::round, which takes a half away
+/// from zero (spec Q1.6's reading; this project's own, NOTICE). The two part
+/// where v / 2^25 is a negative half-integer, at v = 2^24 - 2^-29 — the
+/// largest quotient below one half, which the added half rounds up to one —
+/// at odd quotients of magnitude 2^52 to 2^53, and in the sign of a zero at
+/// v = -0. NOTICE says so too.
+///
+/// floorExceptNegativeZero is std::floor here, to the bit: its argument is a
+/// sum whose right operand is +0.5, which IEEE addition never takes to -0.0.
+///
+/// Inside +/-2^23, which is every coordinate within some 49 000 blocks of
+/// the origin at vanilla's overworld scale, the expression is `value` itself
+/// and is returned as such. That is the same double, not an approximation of
+/// it: there `value / 2^25` lies within +/-1/4 (exact, or a subnormal
+/// rounding of a tiny value, which stays inside that bound), so the quotient plus
+/// a half rounds into [1/4, 3/4], whose floor is +0.0; +0.0 * 2^25 is +0.0;
+/// and `value - (+0.0)` is `value` to the bit for every double, -0.0
+/// included. NaN fails the comparison and takes the expression.
+[[nodiscard]] STRATUM_NOISE_INLINE double wrapCoordinate(double value) noexcept {
+    if (std::fabs(value) < 8388608.0) {
+        return value;
+    }
+    return value - (floorExceptNegativeZero((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
+}
+
 /// One axis of the lattice: the offset into the cell, `shifted -
 /// floor(shifted)`, and the cell's low byte, `(uint8)(int32)floor(shifted)`
 /// — the two numbers PerlinNoise::sample derives from the floor.

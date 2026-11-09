@@ -122,7 +122,7 @@ ksort($sources);
 foreach($sources as $source => [$biomes, $where]){
 	sort($biomes);
 	echo "  ", $source, ", named by ", implode(", ", array_unique($where)), ": ", count($biomes), " Java biomes",
-		$source === "minecraft:nether" ? " (the Nether does not ship yet: its surface rules' named noises are refused; checked all the same)" : "", "\n";
+		$source === "minecraft:nether" ? " (the Nether generates, but no plugin offers it as a world yet; checked all the same)" : "", "\n";
 	foreach($biomes as $java){
 		if(!isset($table[$java])){
 			$failures[] = $java . " (" . $source . ") is not in Stratum's biome table";

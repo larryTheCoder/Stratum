@@ -432,6 +432,7 @@ to bump the version and be called out; this is that call-out.
 | 13 | **The surface scan, read sample by sample: the clean-room Q5.3 as written** (§11, "The surface scan, sample by sample"). Q5.3(a) compares a source's centre with the ANCHOR's surface (v12: the scan's `cap`); otherwise the first sample in scan order that is submerged and that the centre clears by less than four decides, the sea for a clean sample and A_lava for an aborting one, whether or not a later sample aborts (v12: an aborted scan took the sea only at or above lambda and more than twenty above `cap`, else A_lava); a scan where no sample fires takes the level rule on `cap` even when it aborted. `aquifer-ties-probe.sh` builds surfaces that part each v12 choice from the spec's: on both seeds the build is exact on every scored block and fluid-update mark, and v12's reading is wrong wherever it parts (106 393, 64 913, 24 761 + 6 472 marks, 1 628, 1 780 and 14 blocks by kind). Changes blocks only over varying surfaces with an aborting or submerged scan window; no golden block changes. v12 had reached only this development branch; bumped rather than amended because a v12 blob could exist. |
 | 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7 (equivalently `f <= 0.7F`; no draw separates the two readings); v13 compared `f < 0.7F` in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on one comparison that changed the seed along with the flag (its stone world, at seed 42, has no position in its window that the vein gate admits, so the library predicts it stone with aquifers on too). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
+| 16 | **The surface rules read the zoomed biome** (§11, "The surface rules read the zoomed biome"). A block's biome is the quart `biome::VoronoiZoom` picks for it — its own or a neighbour's, by a jittered lattice keyed by a SHA-256 of all 64 bits of the world seed — not its own quart. Changes surface blocks near biome borders in every dimension whose rules read the biome: on the golden overworld grid 183 of the 415 surface-material misses become exact and none get worse; the pinned overworld hash holds (its window has no border). **Every octave wraps its scaled coordinates into ±2^24** (spec/legacy-named-noise-spec.md Q2.5), as blended noise already did: no change inside ±2^23 of the origin after scaling, so no golden block moves. **Legacy dimensions' named surface noises are built** (§11, "Legacy named noises, adopted"): the Nether, `caves` and `floating_islands` compile and generate their surface rules, where every one was refused before, so no block a v15 blob could produce changes for that. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -689,9 +690,12 @@ and a constructed probe measured where the cell centres go there (§11, "The
 aquifer under the legacy source"). That covers the lattice and nothing else:
 a legacy dimension whose aquifer inputs name a `worldgen/noise` — vanilla's
 `aquifer_barrier`, `aquifer_fluid_level_floodedness`, `_spread`, `_lava` —
-is still refused, by the noise registry, for that noise's seeding (§11), so
-what generates under the legacy source is an aquifer whose inputs are
-constants, derived functions, or the three legacy climate noises. Any other
+is still refused, as is any legacy router naming a noise beyond the three
+climate keys: the clean-room spec reads how the router builds those
+(spec/legacy-named-noise-spec.md Q5.1c), but no golden confirms it yet
+(`NoiseRegistry::requireLegacyRouterSettled`; §11, "Legacy named noises,
+adopted"). So what generates under the legacy source is an aquifer whose
+inputs are constants, derived functions, or the three legacy climate noises. Any other
 default fluid is refused by name, because no vanilla dimension that enables
 aquifers has one, so nothing can say what it should be: the water-over-lava
 exception (Q6.3) and the lava-against-water pressure (Q6.4) part from "the
@@ -716,6 +720,19 @@ noises, and each preset's own `depth`, through the biome search) and either
 preset's surface over its real biomes. For
 those, `vanilla_compiled_dimension_test.cpp` shows only that the frozen blob
 fills and assigns what the pack does.
+
+Under `legacy_random_source`, surface rules are supported at Tier A: every
+named noise a surface rule or the surface system reads is built by
+spec/legacy-named-noise-spec.md from the pack's own parameters, and the
+three router climate keys a surface rule may also name get that named
+construction while the router keeps its built-in climate (Q5.2; the two are
+held apart). All eight golden Nether regions are exact block for block
+(§11, "Legacy named noises, adopted"); `caves` and `floating_islands` share
+the construction (spec Q3.1) and have no goldens of their own. A legacy
+surface rule using `minecraft:bandlands` is refused by name: the band
+table's legacy seeding is not specified. In every dimension the surface
+rules read the block-level zoomed biome (§11, "The surface rules read the
+zoomed biome").
 
 Unsupported in v1, and never executed:
 `configured_feature`, `placed_feature`, `configured_carver`, `structure`,
@@ -12438,6 +12455,88 @@ Open:
     is unmeasured.
 
 ---
+
+- **Legacy named noises, adopted (M4, 2026-11-09; pipeline engine v16).**
+  *Source:* spec/legacy-named-noise-spec.md (researcher run 04, committed
+  byte for byte in f055965 under IMPLEMENTER-RULING-01). *Adopted, with the
+  golden that confirms them* (the ruling's §2):
+  - Q1.1-Q1.8 (the 48-bit generator; the factory seed F(W), the first
+    nextLong of `java.util.Random(W)`; each noise salted by the
+    sign-extended String.hashCode of its full `namespace:path` XOR F; two
+    stack seeds; one generator per octave, salted `octave_<k>` with k a
+    32-bit wrapping sum) and Q2.1-Q2.6 (the pack's parameters, the modern
+    composition and value factor, the octave sum and fade, the coordinate
+    wrap): `NormalNoise::createNamedLegacy`, built by
+    `NoiseRegistry::create` under the legacy source.
+  - Q4.2-Q4.5 (`noise_threshold` reads N(x, 0, z), unscaled and inclusive;
+    the surface depth's jitter is the first nextDouble of
+    `java.util.Random(F ^ positionSeed(x, 0, z))`): `surface::Executor`.
+  - Q5.2 (one key, two noises): the router keeps the built-in climate for
+    `temperature`, `vegetation` and `offset`, and a surface rule naming one
+    of them gets the named construction (`NoiseRegistry::getNamed`), never
+    one noise per key across the two paths, as the ruling requires.
+
+  *Evidence.* The spec's own vectors (its constants' `golden` table, 312
+  noise values and 24 depths over six seeds): bit for bit,
+  `tests/unit/legacy_named_noise_test.cpp`. The golden Nether: all eight
+  regions, 8x8 chunks each, 2 097 152 of 2 097 152 block names exact in
+  every one (`vanilla_legacy_nether_surface_test.cpp`) — once the surface
+  rules read the zoomed biome (the next entry). Before the zoom, three
+  worlds were exact and five missed 118 to 1 430 blocks, every miss a
+  biome-specific block in a quart whose stored biome agreed with the
+  server's, which is how the zoom was found; no noise-decided block (gravel,
+  soul sand against soul soil) was ever wrong. Why the black-box search
+  (this section, "The legacy named-noise seeding, read straight out of the
+  golden Nether regions") found no survivor: its candidates drew a noise's
+  octaves from one stream, where each octave has a generator of its own.
+
+  *Not adopted, and refused by name until a golden confirms them:* a legacy
+  ROUTER naming a noise beyond the three climate keys (Q5.1c, read-directly;
+  vanilla's legacy routers name none — `requireLegacyRouterSettled`); and a
+  legacy surface rule using `minecraft:bandlands`, whose table's legacy
+  seeding no spec covers. `caves` and `floating_islands` use the same
+  construction (Q3.1, verified by the spec's harness) and have no goldens.
+
+  *A correction this exposed.* Q2.5's coordinate wrap applies to every
+  octave of every NormalNoise, modern dimensions included (the spec states
+  the read path is shared, Q4.1), and this build applied it to blended noise
+  only. It is the identity inside ±2^23 after scaling, which every golden
+  and probe lies within, so no measured block moves; the spec's vectors at
+  ±3·10^7 failed without it and pass with it. `NormalNoise::inputLimit`'s
+  refusal (§8, the `jagged` case) is now more conservative than it needs to
+  be — with the wrap the lattice cell cannot leave int32 — and is kept, as a
+  refusal, until the far case is measured.
+
+- **The surface rules read the zoomed biome (M4, 2026-11-09; pipeline
+  engine v16).** A block's biome, wherever a surface rule reads one, is
+  the biome of the quart `biome::VoronoiZoom` picks for it: of the eight
+  quart-grid lattice points around (block - 2), each jittered by a hash
+  keyed by a SHA-256 of all 64 bits of the world seed, the nearest
+  (cubiomes' `getVoronoiSHA` and `voronoiAccess3D`, adapted, NOTICE). It
+  replaces "the lower corner of the block's own quart" (this section's M4
+  entries, measured on the overworld at points no border crossed).
+  - *Evidence.* The golden Nether, all eight regions exact (above), and the
+    golden overworld grid: of the 415 surface-material misses near biome
+    borders recorded in `golden_overworld_test.cpp`, 183 become exact and
+    none get worse (232 left, unexplained). The goldens of seeds 0 and
+    `Long.MIN_VALUE`, which share every java.util.Random-seeded value,
+    differ exactly where the zoom does; this section once called that
+    difference a feature-sized residue (the golden Nether entry above),
+    and the goldens are terrain-only, so it was the zoom.
+  - *Ambiguity, flagged rather than guessed.* Whether a zoomed quart above
+    or below the dimension is clamped into it before its biome is read:
+    both readings score every golden region exactly, because the rules
+    decide those bands (the bedrock gradients) before reading a biome. This
+    build follows cubiomes, which does not clamp (`kZoomClampsQuartY`). A
+    datapack surface rule that reads the biome in the bottom or top two
+    blocks would separate them.
+  - *Cost.* The zoom is resolved only for blocks the rules actually run on
+    (a block `decidedByThreshold` answers reads no biome), through a
+    per-chunk `biome::VoronoiWindow` that caches the jitters. Shipped
+    overworld fill, seeds 0 and 42, 137 chunks, interleaved runs on the
+    same machine: 3.20 ms/chunk median before, 3.47 after (+0.28 ms, 8.5%),
+    most of it the biome searches for neighbour-chunk quarts the zoom
+    reaches. Above the owner's settled 3.4 ms (2026-11-01).
 
 ## 12. Content, provenance & distribution policy
 

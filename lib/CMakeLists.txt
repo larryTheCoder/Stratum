@@ -14,6 +14,7 @@ configure_file(
 add_library(stratum_core STATIC
     src/biome_parameter_list.cpp
     src/biome_source.cpp
+    src/biome_voronoi.cpp
     src/biome_temperature_table.cpp
     src/world_dimension.cpp
     src/aquifer_barrier.cpp

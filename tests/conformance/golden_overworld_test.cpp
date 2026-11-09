@@ -331,14 +331,16 @@ TEST_CASE("the shipped overworld against the golden regions: the aquifer survive
     CHECK(total.rawLava - total.rawLavaRight <= total.rawFlow);
     CHECK(total.goldenLava - total.rawLavaRight <= total.rawFlow);
 
-    // The shipped residual over solid ground, 415 blocks, is surface
-    // MATERIAL near biome borders (sand/dirt, sandstone/stone) — M4, not the
-    // aquifer — and flow cannot reach it. It was 517 while the bottom-up
+    // The shipped residual over solid ground, 232 blocks, is surface
+    // MATERIAL — M4, not the aquifer — and flow cannot reach it. It was 415
+    // until the surface rules read the zoomed biome (biome/voronoi.hpp;
+    // SPEC §11, "The surface rules read the zoomed biome"), which settled 183
+    // blocks near biome borders; what is left is unexplained. It was 517 while the bottom-up
     // stone-depth run skipped water: 102 blocks directly over water — 60
     // stone the filler made gravel, 42 sandstone it made sand — are the
     // `stone_depth` ceiling rules firing once water resets the run, as
     // aquifer-lavarun-probe.sh measured; none got worse (SPEC §11).
-    CHECK(total.shippedMissOverSolid == 415U);
+    CHECK(total.shippedMissOverSolid == 232U);
     // Everywhere else the shipped output keeps the first pass's air and
     // fluid, so it misses exactly the flow positions: the shape, exactly,
     // with the count bounded above. 12582474 exact on the first set.

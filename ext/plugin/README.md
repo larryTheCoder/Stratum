@@ -53,8 +53,8 @@ PocketMine-MP itself can call.
   identifier at all), with its reason; and then the world is opened in full
   (`Stratum\checkDimension`) and nothing kept, so a blob that cannot be
   read, one frozen by another pipeline engine version or failing its
-  content hash, settings or a parameter list the pipeline lacks, the legacy
-  Nether, a dimension outside PocketMine-MP's 24 sub-chunks, a list naming
+  content hash, settings or a parameter list the pipeline lacks, a
+  dimension outside PocketMine-MP's 24 sub-chunks, a list naming
   a biome with no Bedrock id, and a block state the pack names (the
   settings' `default_block` or `default_fluid`, a surface rule's
   `result_state`) that the mapping table cannot place are all refused at

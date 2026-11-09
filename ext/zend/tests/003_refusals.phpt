@@ -27,6 +27,8 @@ file_put_contents($blob, "not a pipeline at all");
 attempt(fn() => Stratum\Dimension::open($blob, "minecraft:overworld", "minecraft:overworld", 1));
 
 Stratum\freezePipeline(getenv("STRATUM_FIXTURES_DIR") . "/1.21.11", $blob);
+// The legacy Nether opens since its named noises are built (SPEC §11,
+// "Legacy named noises, adopted"); it was refused by name before.
 attempt(function() use ($blob){
 	Stratum\Dimension::open($blob, "minecraft:nether", "minecraft:nether", 1);
 });
@@ -41,7 +43,7 @@ unlink($blob);
 --EXPECTF--
 cannot read the frozen pipeline at /nonexistent/stratum.blob
 not a frozen pipeline: %s
-%slegacy_random_source%s
+no exception
 the frozen pipeline has no biome parameter list 'minecraft:no_such_list'
 the frozen pipeline has no biome parameter list 'minecraft:end'
 biome source 'minecraft:fixed' is not implemented by this build%s

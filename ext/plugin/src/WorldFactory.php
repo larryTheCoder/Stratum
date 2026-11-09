@@ -59,8 +59,9 @@ final class WorldFactory{
 	/**
 	 * Each dimension create() makes => [noise settings, biome source], as
 	 * vanilla's world presets pair them (worldgen/world_preset/*.json). The
-	 * Nether is not here: its settings use the legacy random source, which
-	 * this build refuses (SPEC section 8).
+	 * Nether is not here yet: it generates since its named noises are built
+	 * (SPEC section 11, "Legacy named noises, adopted"), but this plugin does
+	 * not offer it as a world.
 	 */
 	private const DIMENSIONS = [
 		self::OVERWORLD => ["minecraft:overworld", "minecraft:overworld"],

@@ -21,8 +21,9 @@ final class Sample{
 
 	/**
 	 * Every dimension this build ships: [noise settings, biome source]. The
-	 * Nether is not here — its surface rules' named noises are still refused
-	 * by name (SPEC section 10, M4).
+	 * Nether is not here: it generates since its named noises are built
+	 * (SPEC section 11, "Legacy named noises, adopted"), and is not sampled
+	 * here yet.
 	 */
 	public const DIMENSIONS = [
 		"overworld" => ["minecraft:overworld", "minecraft:overworld"],

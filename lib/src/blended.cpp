@@ -41,7 +41,6 @@ namespace {
 constexpr double kBaseFrequency = 684.412;
 
 /// 2^25. Coordinates are folded back into ±half of this.
-constexpr double kPrecisionPeriod = 33554432.0;
 
 /// Clamped at both ends rather than extrapolating: past either end the blend
 /// is the limit itself, which is what stops the two limit noises crossing.
@@ -55,39 +54,10 @@ constexpr double kPrecisionPeriod = 33554432.0;
     return from + (part * (to - from));
 }
 
-/// maintainPrecision's body, inline for BlendedNoise::sample's three calls
-/// per octave.
-///
-/// Half up, floor(v / 2^25 + 0.5), not std::round, which takes a half away
-/// from zero (spec Q1.6's reading; this project's own, NOTICE). The two part
-/// where v / 2^25 is a negative half-integer, at v = 2^24 - 2^-29 — the
-/// largest quotient below one half, which the added half rounds up to one —
-/// at odd quotients of magnitude 2^52 to 2^53, and in the sign of a zero at
-/// v = -0. NOTICE says so too.
-///
-/// floorExceptNegativeZero is std::floor here, to the bit: its argument is a
-/// sum whose right operand is +0.5, which IEEE addition never takes to -0.0.
-///
-/// Inside +/-2^23, which is every coordinate within some 49 000 blocks of
-/// the origin at vanilla's overworld scale, the expression is `value` itself
-/// and is returned as such. That is the same double, not an approximation of
-/// it: there `value / 2^25` lies within +/-1/4 (exact, or a subnormal
-/// rounding of a tiny value, which stays inside that bound), so the quotient plus
-/// a half rounds into [1/4, 3/4], whose floor is +0.0; +0.0 * 2^25 is +0.0;
-/// and `value - (+0.0)` is `value` to the bit for every double, -0.0
-/// included. NaN fails the comparison and takes the expression.
-[[nodiscard]] STRATUM_NOISE_INLINE double wrapCoordinate(double value) noexcept {
-    if (std::fabs(value) < 8388608.0) {
-        return value;
-    }
-    return value -
-           (detail::floorExceptNegativeZero((value / kPrecisionPeriod) + 0.5) * kPrecisionPeriod);
-}
-
 } // namespace
 
 double maintainPrecision(double value) noexcept {
-    return wrapCoordinate(value);
+    return detail::wrapCoordinate(value);
 }
 
 namespace {
@@ -204,9 +174,9 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     double persistence = 1.0;
     double contribution = 1.0;
     for (std::size_t i = 0; i < kBlendOctaves; ++i) {
-        const double blendX = wrapCoordinate(x * xzStep * persistence);
-        const double blendY = wrapCoordinate(y * yStep * persistence);
-        const double blendZ = wrapCoordinate(z * xzStep * persistence);
+        const double blendX = detail::wrapCoordinate(x * xzStep * persistence);
+        const double blendY = detail::wrapCoordinate(y * yStep * persistence);
+        const double blendZ = detail::wrapCoordinate(z * xzStep * persistence);
         const double blendBare = yStep * persistence;
         const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
         const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
@@ -227,9 +197,9 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
     persistence = 1.0;
     contribution = 1.0;
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
-        const double limitX = wrapCoordinate(x * xzScale * persistence);
-        const double limitY = wrapCoordinate(y * yScale * persistence);
-        const double limitZ = wrapCoordinate(z * xzScale * persistence);
+        const double limitX = detail::wrapCoordinate(x * xzScale * persistence);
+        const double limitY = detail::wrapCoordinate(y * yScale * persistence);
+        const double limitZ = detail::wrapCoordinate(z * xzScale * persistence);
         // The slab the y coordinate is folded onto, and the cap on how much
         // of the local offset folds. Which is which is Smear's business.
         const double limitBare = yScale * persistence;
@@ -289,14 +259,14 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
     double persistence = 1.0;
     double contribution = 1.0;
     for (std::size_t i = 0; i < kBlendOctaves; ++i) {
-        const double blendX = wrapCoordinate(x * xzStep * persistence);
-        const double blendZ = wrapCoordinate(z * xzStep * persistence);
+        const double blendX = detail::wrapCoordinate(x * xzStep * persistence);
+        const double blendZ = detail::wrapCoordinate(z * xzStep * persistence);
         const double blendBare = yStep * persistence;
         const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
         detail::samplePerlinFoldableColumn(
             blend_[i], blendX,
             [&ys, yStep, persistence](std::size_t k) noexcept {
-                return wrapCoordinate(ys[k] * yStep * persistence);
+                return detail::wrapCoordinate(ys[k] * yStep * persistence);
             },
             blendZ, blendSmear,
             [this, &ys, blendSmear, blendBare](std::size_t k) noexcept {
@@ -340,7 +310,7 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
         detail::samplePerlinFoldableColumn(
             octave, limitX,
             [&](std::size_t j) noexcept {
-                return wrapCoordinate(ys[lanes[j]] * yScale * persistence);
+                return detail::wrapCoordinate(ys[lanes[j]] * yScale * persistence);
             },
             limitZ, limitSmear,
             [&](std::size_t j) noexcept {
@@ -350,8 +320,8 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
             [&](std::size_t j, double term) noexcept { sums[lanes[j]] += term * contribution; });
     };
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
-        const double limitX = wrapCoordinate(x * xzScale * persistence);
-        const double limitZ = wrapCoordinate(z * xzScale * persistence);
+        const double limitX = detail::wrapCoordinate(x * xzScale * persistence);
+        const double limitZ = detail::wrapCoordinate(z * xzScale * persistence);
         const double limitBare = yScale * persistence;
         const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
         if (minimumCount > 0) {

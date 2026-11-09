@@ -515,12 +515,14 @@ private:
     std::int32_t seaLevel_ = 0;
     /// Seeded from the constant 1234, so it is built once and never varies.
     noise::PerlinNoise temperature_;
-    /// The unsalted positional source the surface depth's jitter comes from.
-    /// Xoroshiro whatever the dimension declares, and unreachable under
-    /// `legacy_random_source`: a depth needs `minecraft:surface`, which a
-    /// legacy registry refuses to build (NoiseRegistry::create), so a legacy
-    /// tree that reads one never compiles.
+    /// The unsalted positional source the surface depth's jitter comes from,
+    /// under the Xoroshiro source.
     rng::PositionalSource jitter_;
+    /// The same jitter under `legacy_random_source`, set by compile() when
+    /// the tree reads a depth: java.util.Random seeded with the dimension's
+    /// factory seed F(W) XOR the position mix at (x, 0, z), its first
+    /// nextDouble (spec/legacy-named-noise-spec.md Q4.5).
+    std::optional<rng::LegacyPositionalSource> legacyJitter_;
     /// Resolved once at compile, so no lookup happens per block.
     const noise::NormalNoise* surface_ = nullptr;
     const noise::NormalNoise* surfaceSecondary_ = nullptr;

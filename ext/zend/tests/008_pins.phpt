@@ -83,7 +83,7 @@ unlink($blob);
 checkDimension:
 ok
 ok
-%slegacy_random_source%s
+ok
 the frozen pipeline has no biome parameter list 'minecraft:no_such_list'
 the frozen pipeline has no noise settings 'minecraft:no_such_settings'
 biome source 'minecraft:fixed' is not implemented by this build%s

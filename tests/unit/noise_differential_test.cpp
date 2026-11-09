@@ -259,11 +259,22 @@ using Octaves = std::vector<Octave>;
     return octaves;
 }
 
+/// The one deliberate change since the copy was taken: every octave's scaled
+/// coordinate is wrapped into +/-2^24, as maintainPrecision below does
+/// (spec/legacy-named-noise-spec.md Q2.5, golden-confirmed by
+/// vanilla_legacy_nether_surface_test.cpp). It is the identity inside
+/// +/-2^23, so the copy is otherwise untouched.
+[[nodiscard]] double wrapOctaveCoordinate(double value) noexcept {
+    constexpr double kPeriod = 33554432.0;
+    return value - (std::floor((value / kPeriod) + 0.5) * kPeriod);
+}
+
 [[nodiscard]] double sampleOctaves(const Octaves& octaves, double x, double y, double z) noexcept {
     double total = 0.0;
     for (const Octave& octave : octaves) {
-        total += (sample(octave.noise, x * octave.frequency, y * octave.frequency,
-                         z * octave.frequency) *
+        total += (sample(octave.noise, wrapOctaveCoordinate(x * octave.frequency),
+                         wrapOctaveCoordinate(y * octave.frequency),
+                         wrapOctaveCoordinate(z * octave.frequency)) *
                   octave.amplitude) *
                  octave.persistence;
     }

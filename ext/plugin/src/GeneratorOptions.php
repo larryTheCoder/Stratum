@@ -78,9 +78,8 @@ use const JSON_THROW_ON_ERROR;
  * that cannot be read or is no frozen pipeline; one frozen by another
  * pipeline engine version, container format or Minecraft pin, or that fails
  * its own content hash (SPEC section 6); "settings" that are no identifier,
- * settings or a parameter list the pipeline does not carry, a
- * legacy-random-source dimension (vanilla's Nether), a dimension this build
- * cannot compile; a dimension outside PocketMine-MP's 24 sub-chunks, a
+ * settings or a parameter list the pipeline does not carry, a dimension
+ * this build cannot compile; a dimension outside PocketMine-MP's 24 sub-chunks, a
  * parameter list naming a biome with no Bedrock id, or a block state the
  * pack names — the settings' default block or fluid, a surface rule's
  * result — that the mapping table cannot place.

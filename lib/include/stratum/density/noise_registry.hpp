@@ -60,28 +60,25 @@ public:
     /// `java.util.Random(worldSeed)` and `(worldSeed + 1)` as two-octave
     /// noises at first octave -7, and `minecraft:offset` is zero — the pack's
     /// parameters for those three are not read (SPEC §11, measured against
-    /// the golden Nether). Throws NoiseError if @p wanted names ANY OTHER
-    /// noise under Legacy: this build cannot derive how a NAME becomes an
-    /// LCG seed, and it will not quietly substitute the modern derivation,
-    /// which would produce a world that generates and is wrong. Those names,
-    /// and only those, go in the message, because which noises a dimension
-    /// still cannot have is the actionable part of the refusal (SPEC §8).
+    /// the golden Nether). Every OTHER name under Legacy is built by
+    /// spec/legacy-named-noise-spec.md from the pack's own parameters:
+    /// `java.util.Random` salted with the identifier's sign-extended
+    /// String.hashCode XOR the dimension's factory seed (the first nextLong of
+    /// `java.util.Random(worldSeed)`), then one generator per octave salted
+    /// with `octave_<n>` (noise::NormalNoise::createNamedLegacy). Under either
+    /// source, a name the parameters do not define throws NoiseError naming
+    /// it.
     ///
-    /// An EMPTY @p wanted under Legacy is not refused, and that is not a
-    /// loosening of the rule but the rule stated exactly: with no identifier
-    /// to hash there is nothing to derive and nothing to approximate. It is
-    /// the case that matters, because thirteen of a legacy dimension's
-    /// fifteen router entries — `final_density` among them — name no noise
-    /// at all, so a legacy dimension's TERRAIN builds from an empty registry
-    /// — and, by the climate rule above, its climate builds too — while its
-    /// surface rules stay refused. The refusal used to
-    /// fire before @p wanted was looked at, which made the gap look four
-    /// dimensions wide when it is two climate router entries and one surface
-    /// rule wide in three of them, and zero wide in the fourth — the End,
-    /// which names none in its router or in its surface rule and so never
-    /// needed the answer. See
-    /// tests/conformance/vanilla_legacy_named_noises_test.cpp, which pins
-    /// exactly which legacy dimension names what, per entry, and SPEC §11.
+    /// The three climate keys are special only as the ROUTER reads them
+    /// (Q5.1c). A surface rule or the surface system asking for one of them
+    /// under Legacy gets the named construction instead (Q5.2), a different
+    /// noise under the same key, so the two are held apart and never shared
+    /// (IMPLEMENTER-RULING-01): get() and find() answer for the router, and
+    /// getNamed() and findNamed() for the named path. Where the pack
+    /// defines parameters for one of the three, its named construction is
+    /// built beside the router's; findNamed() returns null, and getNamed()
+    /// throws naming the key, where it does not. Under Xoroshiro, and for
+    /// every other key, the two paths are the same noise.
     ///
     /// A NAMED NOISE IS NOT THE ONLY THING A LEGACY SOURCE SEEDS. A
     /// dimension also draws on its declared random source for
@@ -110,14 +107,41 @@ public:
     /// The noise with this identifier. Throws NoiseError naming it if absent.
     [[nodiscard]] const noise::NormalNoise& get(const data::ResourceLocation& id) const;
 
+    /// The noise a NAMED-path consumer — a surface rule's noise_threshold,
+    /// or the surface system's own keys — gets under this identifier. The
+    /// same as find()/get() except for the three router climate keys under
+    /// Legacy (see create()).
+    [[nodiscard]] const noise::NormalNoise*
+    findNamed(const data::ResourceLocation& id) const noexcept;
+    [[nodiscard]] const noise::NormalNoise& getNamed(const data::ResourceLocation& id) const;
+
     [[nodiscard]] std::size_t size() const noexcept { return noises_.size(); }
 
     [[nodiscard]] std::int64_t worldSeed() const noexcept { return worldSeed_; }
 
     [[nodiscard]] RandomSource source() const noexcept { return source_; }
 
+    /// `minecraft:temperature`, `minecraft:vegetation` and `minecraft:offset`:
+    /// under Legacy, the keys whose noise is the router's built-in climate
+    /// rather than the named construction (spec/legacy-named-noise-spec.md
+    /// Q5.1c).
+    [[nodiscard]] static bool isLegacyRouterClimateKey(const data::ResourceLocation& id);
+
+    /// Throws NoiseError, naming them, if @p routerNoises — the noises a
+    /// dimension's noise ROUTER reaches — holds any key other than the three
+    /// climate keys under Legacy. spec/legacy-named-noise-spec.md says the
+    /// router builds those by the named construction too (Q5.1c), but only
+    /// as read, and no golden confirms it: vanilla's legacy routers name the
+    /// climate keys alone. Until one does, that path stays refused
+    /// (IMPLEMENTER-RULING-01 §2). Nothing under Xoroshiro.
+    static void requireLegacyRouterSettled(std::span<const data::ResourceLocation> routerNoises,
+                                           RandomSource source);
+
 private:
     std::map<data::ResourceLocation, noise::NormalNoise> noises_;
+    /// Under Legacy only: the named-path construction of the three router
+    /// climate keys, where the pack defines their parameters.
+    std::map<data::ResourceLocation, noise::NormalNoise> namedClimate_;
     std::int64_t worldSeed_ = 0;
     RandomSource source_ = RandomSource::Xoroshiro;
 };
