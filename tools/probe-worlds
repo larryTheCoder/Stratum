@@ -311,6 +311,10 @@ UNITS = [
     # aquifer P1): seven constant dimensions, one server start.
     unit('aqthreshold_s42', 'end', ['aquifer-threshold-probe.sh', '42'],
          density(('aqthreshold_s42', 42))),
+    # Q5.7's quantization at 32-bit width (IMPLEMENTER-RULING-01, aquifer
+    # P2): a datapack spread past the int range, three constant dimensions.
+    unit('aqspread_s42', 'end', ['aquifer-spreadwidth-probe.sh', '42'],
+         density(('aqspread_s42', 42))),
     # The carvers at the carving stage (IMPLEMENTER-RULING-01, carvers P1):
     # vanilla's own world, features stripped, its carvers ring read by status.
     unit('carvers_s42', 'end', ['carver-golden-probe.sh', '42'],

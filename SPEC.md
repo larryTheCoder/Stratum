@@ -449,6 +449,7 @@ to bump the version and be called out; this is that call-out.
 | 16 | **The surface rules read the zoomed biome** (§11, "The surface rules read the zoomed biome"). A block's biome is the quart `biome::VoronoiZoom` picks for it — its own or a neighbour's, by a jittered lattice keyed by a SHA-256 of all 64 bits of the world seed — not its own quart. Changes surface blocks near biome borders in every dimension whose rules read the biome: on the golden overworld grid 183 of the 415 surface-material misses become exact and none get worse; the pinned overworld hash holds (its window has no border). **Every octave wraps its scaled coordinates into ±2^24** (spec/legacy-named-noise-spec.md Q2.5), as blended noise already did: no change inside ±2^23 of the origin after scaling, so no golden block moves. **Legacy dimensions' named surface noises are built** (§11, "Legacy named noises, adopted"): the Nether, `caves` and `floating_islands` compile and generate their surface rules, where every one was refused before, so no block a v15 blob could produce changes for that. |
 | 17 | **The aquifer's level rule and deep-dark override in the engine's floating-point form** (§11, "Aquifer Q3.4, Q5.6 and Q5.9, adopted"). Q5.6's thresholds are evaluated as the engine evaluates them — the ramp phi from `d`, then `-0.3 + ((phi - 1)/(0 - 1)) * (0.8 - (-0.3))` and its lower twin, compared as `n - theta > 0` — where v16 added a depth bonus to floodedness and compared it with 0.8 or 0.4; the two forms part in the last bits at 51 and 54 of the 82 reachable `d`, and off the ramp the lower threshold is 0.40000000000000013. Q5.9's thresholds are the single-precision literals widened, -0.22499999403953552 and 0.8999999761581421. Changes blocks only where a floodedness, erosion or depth lands within those last bits of a threshold, which `aquifer-threshold-probe.sh` puts there and the server confirms; no golden block changes, and the pinned overworld hash holds. v16 had reached only this development branch; bumped rather than amended because a v16 blob could exist. |
 | 18 | **The carvers run** (§11, "Carvers, adopted"). `minecraft:cave`, `minecraft:nether_cave` and `minecraft:canyon` carve every chunk of a pipeline that carries them (format 4), exactly as spec/carvers-a-spec.md and spec/carvers-b-spec.md write them, block for block and mark for mark against the server's carving-stage chunks. Changes every carved block of every world. **The surface pass's water height is cleared by air** (§11, "The water height is the fluid under the last air"): scanning a column down, the first fluid under air sets the water height to its y + 1 and the next air clears it, where v17 latched the first fluid for the whole column. Changes surface blocks under a cave or overhang that sits below water higher up the column: 232 golden overworld blocks, all now exact; the pinned overworld hash holds. **The aquifer's fluid-update flag is computed for an air outcome too** (A-Q12.4); no uncarved output reads it. |
+| 19 | **The aquifer's spread quantization at 32-bit width** (§11, "The aquifer's widths, as amended"). Q5.7's quantized term is `3·F`, F the 32-bit floor of the double `(10·s)/3`, the product wrapping, as the width amendment writes it, where v18 floored `10·s` to an int first. The same integer for every spread `10·s` fits in an int, so no vanilla world changes; a datapack spread past about 2.1e8 now takes the server's level where v18 saturated (and refused a barrier the saturation made). |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -951,12 +952,14 @@ vanilla router comes near it: vanilla's spread stays within a few units and
 its surface inside the dimension. So, for now: a `preliminary_surface_level`
 that floors past int32 generates where only the aquifer reads it, and is
 refused by name where the surface rules read it too (the lattice-corner
-refusal above); a `fluid_level_spread` past about 2.1e8 saturates; and a
-pair of levels that saturation puts more than INT32_MAX apart is refused at
-the barrier. Measuring it would take an aquifer probe in the house style —
-`tools/analysis/aquifer-level-probe.sh`'s constant surfaces, at a surface of
-±3e9, and a constant spread of ±3e8 — and its result would either define
-these readings or turn them into refusals.
+refusal above); a `fluid_level_spread` past about 2.1e8 is no longer a
+reading but measured, where `(10·s)/3` fits an int: the quantized term
+wraps as the server's does (§11, "The aquifer's widths, as amended";
+`aqspread_s42`); and a pair of levels more than INT32_MAX apart is still
+refused at the barrier. Measuring the rest would take an aquifer probe in
+the house style — `tools/analysis/aquifer-level-probe.sh`'s constant
+surfaces, at a surface of ±3e9 — and its result would either define those
+readings or turn them into refusals.
 
 **Open question, raised by the loader (M2).** "Hard error at load", which §7
 and this section used to say of every unsupported registry, has two
@@ -12612,6 +12615,40 @@ Open:
     control flood. Every other conformance case passes unchanged, the
     pinned overworld hash included; no golden holds a value within those
     last bits. Pinned in unit cases too (`aquifer_lattice_test.cpp`).
+
+- **The aquifer's widths, as amended (MA, 2026-11-10; pipeline engine
+  v19).** IMPLEMENTER-RULING-01's aquifer P2 item "the width amendments
+  throughout Q1-Q8": every REVIEW-14 width amendment of
+  spec/aquifer-spec.md checked against the implementation, for floor
+  against truncation and exact halving against integer division.
+  - *Already as amended* (no change): Q2.5's `y_skip` (floorDiv,
+    lattice.hpp `ySkip`); Q3.2's cell index (an arithmetic shift for the
+    horizontal pitch, floorDiv for y); Q3.5's lattice extent; Q5.2's psl
+    read, floored, at a floorDiv-snapped anchor; Q5.7's indices (`cell.x`,
+    `cell.z`, which equal `floorDiv(centre, 16)` for every cell, and
+    `floorDiv(centreY, 40)`); Q5.8's lava indices; Q6.1's similarity, a
+    double division by 25; Q6.4's midpoint `(L_A + L_B)/2.0` and half
+    difference `Δ/2.0`, both exact double halvings, and `h = (y + 0.5) -
+    m` in that order; Q4.2's squared distance, formed in 64 bits, which
+    equals the 32-bit value on every reachable input.
+  - *Changed:* Q5.7's quantized term. The amendment writes `3·F`, F the
+    32-bit floor of `(10.0·s)/3.0`; this build floored `10·s` to an int
+    and took `3·floorDiv(·, 3)`. For any real x, floor(x/3) =
+    floor(floor(x)/3), and the double division cannot carry a quotient
+    across an integer, so the two agree wherever `10·s` fits an int — a
+    unit case sweeps 480 006 spreads at and around every threshold ±0.3k
+    for |s| up to 12 000 and finds them equal. They part where a datapack
+    pushes `10·s` past the int range: the old form saturated, the
+    amendment's wraps `3·F`.
+  - *Evidence.* `tools/analysis/aquifer-spreadwidth-probe.sh` (unit
+    `aqspread_s42`) builds three constant dimensions on the threshold
+    probe's world: spread 0, and ±(1e6 × 429.49672995) through `mul`, where
+    `3·F` wraps to 2 and -5. `vanilla_aquifer_spreadwidth_test.cpp`
+    replays each through the filler: all three agree with the server block
+    for block (flow remnant only), the scaled arms hold fluid, and their
+    fluid counts differ from the control's. Under v18 the `+` arm refused
+    a barrier between levels 96 and -2147483630, a pair the server never
+    forms. Q3.3's 12-bit y wrap, a separate P2 item, is not part of this.
 
 - **Carvers, adopted (M6, 2026-11-10; pipeline engine v18).**
   IMPLEMENTER-RULING-01's carver P1 items, against spec/carvers-a-spec.md

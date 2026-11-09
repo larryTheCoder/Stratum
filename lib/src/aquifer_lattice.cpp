@@ -13,19 +13,22 @@
 namespace stratum::aquifer {
 
 std::int32_t spreadOffset(const double spread) noexcept {
-    // Two floors, both toward negative infinity: std::floor for the scaling,
-    // then floorDiv for the grouping into threes. Writing the second as `/ 3`
-    // would truncate toward zero and put every negative spread one step high.
+    // spec/aquifer-spec.md Q5.7, as its width amendment writes it: F is the
+    // 32-bit floor of the DOUBLE `(10.0 * s) / 3.0`, and `3 * F` wraps as
+    // Java's int does. Floor toward negative infinity, never truncation.
     //
-    // Java's `(int) Math.floor` and Java's wrapping `*`: a datapack's spread
-    // can be NaN (-> 0) or far outside the int range (-> saturated), where a
-    // bare cast is undefined, and `3 * floorDiv(INT_MIN, 3)` overflows by one.
-    // No vanilla router comes near either; the point is that no input is UB.
-    // Java's semantics here are a reading, not a measurement: SPEC §8 names
-    // the aquifer's int reads as the one exception to §5.7's rule that an
-    // unmeasured saturation or wrap is refused rather than substituted.
-    const std::int32_t scaled = javamath::floorToInt(spread * 10.0);
-    return javamath::wrappingMul(3, javamath::floorDiv(scaled, 3));
+    // This used to floor `10 * s` to an int first and group the result into
+    // threes with floorDiv. For any real x, floor(x / 3) = floor(floor(x) /
+    // 3), and the double division cannot carry a quotient across an integer,
+    // so the two agree wherever `10 * s` fits an int — every spread vanilla's
+    // routers make. They part where a datapack pushes `10 * s` past the int
+    // range and `(10 * s) / 3` stays inside it: the old form saturated, the
+    // server's wraps (aqspread_s42, vanilla_aquifer_spreadwidth_test.cpp;
+    // IMPLEMENTER-RULING-01, aquifer P2).
+    //
+    // Java's `(int) Math.floor` for the conversion: NaN -> 0, out of range
+    // saturates, where a bare cast is undefined.
+    return javamath::wrappingMul(3, javamath::floorToInt((10.0 * spread) / 3.0));
 }
 
 std::int32_t levelBand(const std::int32_t centreY) noexcept {
@@ -53,9 +56,9 @@ std::int32_t ladderLevel(const std::int32_t centreY, const std::int32_t cap,
     // The result can now sit arbitrarily far below `lambda`, which is the
     // point. Against `kNeverLevel` the difference between two levels tops out
     // around 32 900 for any spread vanilla's routers produce; a datapack's
-    // spread in the hundreds of millions saturates spreadOffset and can put
-    // two levels more than 2^31 apart, which `levelPressure` forms in 64 bits
-    // and refuses by name rather than wrap (SPEC §8).
+    // spread in the hundreds of millions wraps spreadOffset's product and can
+    // put two levels more than 2^31 apart, which `levelPressure` forms in 64
+    // bits and refuses by name rather than wrap (SPEC §8).
     //
     // The `seaLevel` parameter went with the clamp: nothing else in Q5.7
     // reads it, and leaving it would suggest the sea still enters a ladder

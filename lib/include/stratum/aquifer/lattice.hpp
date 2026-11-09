@@ -160,6 +160,12 @@ inline constexpr double kFloodedSeaThreshold = 0.8;
 /// toward zero and disagree with vanilla for every cell below the base, which
 /// is the failure §5's `floorDiv` rule exists to prevent — hence the helper
 /// rather than the operator.
+///
+/// Computed as spec/aquifer-spec.md Q5.7's width amendment writes it,
+/// `3 * floor((10.0 * spread) / 3.0)`, the floor 32-bit and the product
+/// wrapping. That is the same integer as the form above wherever `10 *
+/// spread` fits an int, and the server's where a datapack's spread pushes it
+/// past (SPEC §11, "The aquifer's widths, as amended").
 [[nodiscard]] std::int32_t spreadOffset(double spread) noexcept;
 
 /// Which lattice cell a block belongs to.

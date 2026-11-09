@@ -87,6 +87,44 @@ TEST_CASE("the grouping rounds toward negative infinity, not toward zero", "[aqu
     CHECK(spreadOffset(-0.31) != -3);
 }
 
+TEST_CASE("the quantized spread is 3 * floor((10s) / 3) at 32-bit width (Q5.7)", "[aquifer]") {
+    // spec/aquifer-spec.md Q5.7's width amendment: F is the 32-bit floor of
+    // the double `(10.0 * s) / 3.0`, and `3 * F` wraps. Confirmed on the
+    // server by aqspread_s42 (vanilla_aquifer_spreadwidth_test.cpp).
+    //
+    // Where `10 * s` leaves the int range and `(10 * s) / 3` does not, the
+    // older `3 * floorDiv(floor(10 * s), 3)` saturates instead: 2147483646
+    // and 2147483647 for these two, where the amendment wraps to 2 and -5.
+    const double spread = 1000000.0 * 429.49672995; // the probe's `sp` arm
+    REQUIRE(10.0 * spread > 2147483647.0);
+    CHECK(spreadOffset(spread) == 2);   // F = 1431655766, 3F = 4294967298 -> 2
+    CHECK(spreadOffset(-spread) == -5); // F = -1431655767, 3F -> -5
+
+    // Inside the int range the two forms are the same integer: floor(x / 3)
+    // and floor(floor(x) / 3) agree for any real x, and the double division
+    // cannot round a quotient across an integer (a multiple of three divides
+    // exactly; anything below one is at least two thirds of an ulp of the
+    // quotient below it). Swept at every threshold +-0.3k and its neighbours,
+    // over the spread range any vanilla router reaches and well past it.
+    const auto older = [](const double s) {
+        return 3 * stratum::javamath::floorDiv(stratum::javamath::floorToInt(s * 10.0), 3);
+    };
+    long long compared = 0;
+    for (int k = -40000; k <= 40000; ++k) {
+        const double edge = 0.3 * k;
+        for (const double s : {edge, std::nextafter(edge, -1e9), std::nextafter(edge, 1e9),
+                               edge + 0.05, edge + 0.15, edge - 0.05}) {
+            INFO("spread " << s);
+            REQUIRE(spreadOffset(s) == older(s));
+            ++compared;
+        }
+    }
+    CHECK(compared == 480006);
+
+    // Not-a-number floors to 0, as Java's int conversion does.
+    CHECK(spreadOffset(std::numeric_limits<double>::quiet_NaN()) == 0);
+}
+
 TEST_CASE("the measured cell pitch is recorded as measured", "[aquifer]") {
     CHECK(stratum::aquifer::kCellPitchX == 16);
     CHECK(stratum::aquifer::kCellPitchY == 12);
@@ -1127,9 +1165,11 @@ TEST_CASE("a datapack's NaN or out-of-range router value is defined, as Java's i
     constexpr std::int32_t kMax = std::numeric_limits<std::int32_t>::max();
     constexpr std::int32_t kMin = std::numeric_limits<std::int32_t>::min();
     CHECK(spreadOffset(std::numeric_limits<double>::quiet_NaN()) == 0);
-    CHECK(spreadOffset(1e300) == 3 * (kMax / 3)); // 2147483646
-    // floorDiv(INT_MIN, 3) * 3 is one below INT_MIN, and wraps to INT_MAX.
-    CHECK(spreadOffset(-1e300) == kMax);
+    // Q5.7's width amendment: F = (int) floor((10s)/3) saturates, and 3F
+    // wraps. Where F itself saturates this is still Java's reading, not a
+    // measurement (aqspread_s42 measures only where F fits; SPEC §8).
+    CHECK(spreadOffset(1e300) == kMax - 2); // 3 * INT_MAX wraps to 2147483645
+    CHECK(spreadOffset(-1e300) == kMin);    // 3 * INT_MIN wraps to INT_MIN
 
     // The scan's three readings saturate, and a NaN field reads 0.
     const CellIndex centre{.x = 10, .y = 0, .z = 10};
