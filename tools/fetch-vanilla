@@ -23,6 +23,7 @@ readonly PACK_FORMAT_MINOR=1
 readonly MANIFEST_URL="https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 readonly WORLDGEN_PREFIX="data/minecraft/worldgen"
 readonly STRUCTURE_PREFIX="data/minecraft/structure"
+readonly BLOCK_TAG_PREFIX="data/minecraft/tags/block"
 
 # The fixed seed set (SPEC §7). Deliberately includes 0, the negatives, and
 # the extremes of the 64-bit range, because seed derivation is where sign
@@ -153,9 +154,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 : "${output_dir:="${repo_root}/.fixtures/${version}"}"
+# Absolute from here on: the data generator runs from a staging directory,
+# so a relative --output pointed its log and reports at the wrong place and
+# the dump failed.
+case "${output_dir}" in
+    /*) ;;
+    *) output_dir="${PWD}/${output_dir}" ;;
+esac
 readonly jar_file="${output_dir}/server-${version}.jar"
 readonly worldgen_dir="${output_dir}/worldgen"
 readonly structure_dir="${output_dir}/structure"
+readonly block_tag_dir="${output_dir}/tags/block"
 readonly biome_parameters_dir="${output_dir}/biome_parameters"
 readonly block_report_file="${output_dir}/reports/blocks.json"
 readonly regions_dir="${output_dir}/regions"
@@ -333,6 +342,25 @@ json_count="$(find "${worldgen_dir}" -name '*.json' -type f | wc -l | tr -d ' ')
 [[ "${json_count}" -gt 0 ]] || die "extracted no worldgen JSON from ${data_jar}"
 log "extracted ${json_count} worldgen JSON files"
 
+# Block tags: a configured carver's `replaceable` names one
+# (`#minecraft:overworld_carver_replaceables`), and tags reference tags, so
+# the whole block-tag tree is extracted (spec/carvers-a-spec.md Q12.2).
+# Mojang data like the rest of this directory: never committed.
+log "extracting ${BLOCK_TAG_PREFIX}/** into ${block_tag_dir}"
+rm -rf "${block_tag_dir}"
+tag_staging="${output_dir}/.extract-tags"
+rm -rf "${tag_staging}"
+mkdir -p "${tag_staging}"
+unzip -qo "${data_jar}" "${BLOCK_TAG_PREFIX}/*" -d "${tag_staging}" >/dev/null 2>&1 || true
+[[ -d "${tag_staging}/${BLOCK_TAG_PREFIX}" ]] \
+    || die "${data_jar} contains no ${BLOCK_TAG_PREFIX}/ entries"
+mkdir -p "$(dirname "${block_tag_dir}")"
+mv "${tag_staging}/${BLOCK_TAG_PREFIX}" "${block_tag_dir}"
+rm -rf "${tag_staging}"
+block_tag_count="$(find "${block_tag_dir}" -name '*.json' -type f | wc -l | tr -d ' ')"
+[[ "${block_tag_count}" -gt 0 ]] || die "extracted no block tags from ${data_jar}"
+log "extracted ${block_tag_count} block tag files"
+
 # Structure NBT is not worldgen input; it is the only real, vanilla-written
 # NBT available without running a server, so the NBT reader's conformance
 # test parses it. Same rule as everything else here: never committed.
@@ -412,6 +440,7 @@ jq -n \
     --argjson structure_files "${structure_count:-0}" \
     --argjson biome_parameter_files "${biome_parameter_count:-0}" \
     --argjson block_states "${block_state_count:-0}" \
+    --argjson block_tag_files "${block_tag_count:-0}" \
     '{
         version: $version,
         pinned_version: $pinned,
@@ -424,6 +453,7 @@ jq -n \
         structure_files: $structure_files,
         biome_parameter_files: $biome_parameter_files,
         block_states: $block_states,
+        block_tag_files: $block_tag_files,
         note: "Mojang-derived. Never commit anything in this directory (SPEC 12)."
     }' > "${provenance_file}"
 log "wrote ${provenance_file}"

@@ -83,8 +83,9 @@ struct ChunkRange {
 };
 
 struct GenerateRequest {
-    /// A `tools/fetch-vanilla` version root (holding `worldgen/` and
-    /// `biome_parameters/`), or a frozen pipeline blob (SPEC §6).
+    /// A `tools/fetch-vanilla` version root (holding `worldgen/`,
+    /// `biome_parameters/` and `tags/block/`), or a frozen pipeline blob
+    /// (SPEC §6).
     std::filesystem::path source;
     const DimensionPreset* dimension = nullptr;
     std::int64_t seed = 0;
@@ -95,6 +96,9 @@ struct GenerateRequest {
     unsigned threads = 1;
     /// Replace region files that already exist, rather than refusing.
     bool force = false;
+    /// Run the carvers the pipeline carries. Off, the chunks are terrain at
+    /// the stage before carving, which is what the terrain goldens hold.
+    bool carve = true;
 };
 
 /// Time spent in each stage, summed over every thread — so per chunk it is

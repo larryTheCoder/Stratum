@@ -30,7 +30,8 @@ namespace {
 /// clean report quietly overclaim.
 [[nodiscard]] bool isInterpretedYet(data::Registry registry) noexcept {
     return registry == data::Registry::DensityFunction || registry == data::Registry::Noise ||
-           registry == data::Registry::NoiseSettings || registry == data::Registry::Biome;
+           registry == data::Registry::NoiseSettings || registry == data::Registry::Biome ||
+           registry == data::Registry::ConfiguredCarver;
 }
 
 void add(Report& report, Severity severity, std::string subject, std::string message) {

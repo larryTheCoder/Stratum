@@ -116,8 +116,8 @@ private:
     std::filesystem::path path_;
 };
 
-/// A version root as tools/fetch-vanilla lays one out — `worldgen/` and
-/// `biome_parameters/` — small enough to generate from in a Debug build, so
+/// A version root as tools/fetch-vanilla lays one out — `worldgen/`,
+/// `biome_parameters/` and `tags/block/` — small enough to generate from in a Debug build, so
 /// `stratum generate` runs end to end without the vanilla fixtures. Every
 /// dimension in it is shaped so that its output can be predicted block for
 /// block:
@@ -144,12 +144,14 @@ public:
             std::filesystem::create_directories(root_ / "worldgen" / registry);
         }
         std::filesystem::create_directories(root_ / "biome_parameters" / "minecraft");
+        // No tags: plains carves nothing, so no carver names one.
+        std::filesystem::create_directories(root_ / "tags" / "block");
 
         // The surface system's own noises, in case the tree is taken to read
         // a depth.
         write("noise", "surface", R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
         write("noise", "surface_secondary", R"({"firstOctave":-6,"amplitudes":[1.0]})");
-        write("biome", "plains", R"({"temperature":0.8})");
+        write("biome", "plains", R"({"temperature":0.8,"carvers":[]})");
 
         const nlohmann::json grassOnTop = {
             {"type", "minecraft:condition"},

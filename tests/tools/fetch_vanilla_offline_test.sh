@@ -55,10 +55,14 @@ expect_failure() {
 jar_src="${work_dir}/jar-src"
 mkdir -p "${jar_src}/data/minecraft/worldgen/noise_settings" \
          "${jar_src}/data/minecraft/worldgen/density_function/overworld" \
+         "${jar_src}/data/minecraft/tags/block" \
          "${jar_src}/net/minecraft"
 echo '{"sea_level": 63}' > "${jar_src}/data/minecraft/worldgen/noise_settings/overworld.json"
 echo '{"type": "minecraft:constant"}' \
     > "${jar_src}/data/minecraft/worldgen/density_function/overworld/base_3d_noise.json"
+echo '{"values": ["minecraft:stone", "#minecraft:dirt"]}' \
+    > "${jar_src}/data/minecraft/tags/block/overworld_carver_replaceables.json"
+echo '{"values": ["minecraft:dirt"]}' > "${jar_src}/data/minecraft/tags/block/dirt.json"
 echo 'not worldgen' > "${jar_src}/net/minecraft/Main.class"
 jar_file="${work_dir}/fake-server.jar"
 (cd "${jar_src}" && zip -qr "${jar_file}" .)
@@ -77,6 +81,9 @@ check "noise_settings landed at the id-shaped path" \
     test -f "${out}/worldgen/noise_settings/overworld.json"
 check "nested density_function path survived" \
     test -f "${out}/worldgen/density_function/overworld/base_3d_noise.json"
+check "block tags landed under tags/block, nested references and all" \
+    test -f "${out}/tags/block/overworld_carver_replaceables.json"
+check "the tag staging directory was cleaned up" test ! -e "${out}/.extract-tags"
 check "non-worldgen jar content was not extracted" \
     test ! -e "${out}/worldgen/net"
 check "the staging directory was cleaned up" test ! -e "${out}/.extract"

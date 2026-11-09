@@ -3,6 +3,9 @@
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
+#include <stratum/carver/carve.hpp>
+#include <stratum/carver/config.hpp>
+#include <stratum/data/block_tags.hpp>
 #include <stratum/data/json_depth.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/registry.hpp>
@@ -25,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -618,6 +622,79 @@ void readBiomes(Reader& in, Pipeline& pipeline) {
     pipeline.biomeTemperatures = biome::TemperatureTable::fromMap(std::move(temperatures));
 }
 
+void writeCarvers(Writer& out, const carver::CarverSources& carvers) {
+    // As JSON text, as the surface rules are: nlohmann's objects are ordered
+    // maps and it prints a double so that it reads back the same double, so
+    // the dump is stable.
+    out.u32(static_cast<std::uint32_t>(carvers.configured.size()));
+    for (const auto& [id, json] : carvers.configured) {
+        out.id(id);
+        out.str(json.dump());
+    }
+    out.u32(static_cast<std::uint32_t>(carvers.biomeCarvers.size()));
+    for (const auto& [id, json] : carvers.biomeCarvers) {
+        out.id(id);
+        out.str(json.dump());
+    }
+    out.u32(static_cast<std::uint32_t>(carvers.tags.size()));
+    for (const auto& [tag, blocks] : carvers.tags) {
+        out.id(tag);
+        out.u32(static_cast<std::uint32_t>(blocks.size()));
+        for (const data::ResourceLocation& block : blocks) {
+            out.id(block);
+        }
+    }
+}
+
+void readCarvers(Reader& in, Pipeline& pipeline) {
+    carver::CarverSources& carvers = pipeline.carvers;
+    const auto readJsonText = [&in](const std::string& what) {
+        const std::string text = in.str();
+        nlohmann::json json;
+        try {
+            json = nlohmann::json::parse(text);
+        } catch (const nlohmann::json::exception& error) {
+            in.fail("a stored " + what + " is not JSON: " + error.what());
+        }
+        // The bound a pack's loader holds every file to (SPEC §8), held of
+        // the text a blob stores, as the surface rules' is.
+        if (const std::size_t depth = data::jsonDepth(json); depth > data::kMaxJsonDepth) {
+            in.refuse("a stored " + what + " nests arrays and objects " + std::to_string(depth) +
+                      " deep, past the " + std::to_string(data::kMaxJsonDepth) +
+                      " this build reads");
+        }
+        return json;
+    };
+    const std::uint32_t configured = in.count("the configured carvers");
+    for (std::uint32_t i = 0; i < configured; ++i) {
+        const data::ResourceLocation id = in.id();
+        carvers.configured.emplace(id, readJsonText("configured carver '" + id.toString() + "'"));
+    }
+    const std::uint32_t biomes = in.count("the biomes' carver lists");
+    for (std::uint32_t i = 0; i < biomes; ++i) {
+        const data::ResourceLocation id = in.id();
+        carvers.biomeCarvers.emplace(id,
+                                     readJsonText("carver list of biome '" + id.toString() + "'"));
+    }
+    const std::uint32_t tags = in.count("the carvers' block tags");
+    for (std::uint32_t i = 0; i < tags; ++i) {
+        const data::ResourceLocation tag = in.id();
+        const std::uint32_t size = in.count("a block tag's blocks");
+        std::set<data::ResourceLocation> blocks;
+        for (std::uint32_t k = 0; k < size; ++k) {
+            blocks.insert(in.id());
+        }
+        carvers.tags.emplace(tag, std::move(blocks));
+    }
+    // What a pack's carvers are held to, held of a blob's: a refusal, not a
+    // malformed blob, since a later build may read what this one refuses.
+    try {
+        static_cast<void>(carver::buildCarverSet(carvers));
+    } catch (const carver::CarverError& error) {
+        in.refuse(std::string("the stored carvers are not valid: ") + error.what());
+    }
+}
+
 /// The payload, without the header. Split out because the hash is over
 /// exactly this and nothing else.
 [[nodiscard]] std::vector<std::byte> writePayload(const Pipeline& pipeline) {
@@ -626,6 +703,7 @@ void readBiomes(Reader& in, Pipeline& pipeline) {
     writeGraph(out, pipeline.graph);
     writeSettings(out, pipeline.settings);
     writeBiomes(out, pipeline);
+    writeCarvers(out, pipeline.carvers);
     return out.take();
 }
 
@@ -745,8 +823,9 @@ Pipeline read(std::span<const std::byte> blob) {
     pipeline.graph = readGraph(payloadReader);
     pipeline.settings = readSettings(payloadReader);
     readBiomes(payloadReader, pipeline);
+    readCarvers(payloadReader, pipeline);
     if (!payloadReader.exhausted()) {
-        throw FreezeError("this world's pipeline has trailing bytes after the biome tables, so "
+        throw FreezeError("this world's pipeline has trailing bytes after the carvers, so "
                           "it is not the shape this build writes");
     }
     return pipeline;
@@ -800,6 +879,18 @@ Pipeline resolve(const data::Pack& pack, const std::filesystem::path& biomeParam
         throw FreezeError("no biome parameter lists under " + biomeParametersDir.string());
     }
     pipeline.biomeTemperatures = biome::TemperatureTable::fromPack(pack);
+    return pipeline;
+}
+
+Pipeline resolve(const data::Pack& pack, const std::filesystem::path& biomeParametersDir,
+                 const std::filesystem::path& blockTagsDir) {
+    if (!std::filesystem::is_directory(blockTagsDir)) {
+        throw FreezeError("no block tags under " + blockTagsDir.string() +
+                          "; the carvers' replaceable sets are tags, and tools/fetch-vanilla "
+                          "extracts them to <version>/tags/block");
+    }
+    Pipeline pipeline = resolve(pack, biomeParametersDir);
+    pipeline.carvers = carver::gatherCarverSources(pack, data::BlockTags::load(blockTagsDir));
     return pipeline;
 }
 

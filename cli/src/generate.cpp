@@ -275,14 +275,18 @@ struct Scratch {
     return bytes;
 }
 
-[[nodiscard]] freeze::Pipeline loadPipeline(const std::filesystem::path& source) {
+[[nodiscard]] freeze::Pipeline loadPipeline(const std::filesystem::path& source, const bool carve) {
     if (std::filesystem::is_directory(source)) {
         if (!std::filesystem::is_directory(source / "worldgen")) {
             throw GenerateError(source.string() +
                                 " is not a tools/fetch-vanilla version root: it has no "
                                 "worldgen/ directory (or pass a frozen pipeline blob)");
         }
-        return freeze::resolve(data::Pack::open(source / "worldgen"), source / "biome_parameters");
+        const data::Pack pack = data::Pack::open(source / "worldgen");
+        if (!carve) {
+            return freeze::resolve(pack, source / "biome_parameters");
+        }
+        return freeze::resolve(pack, source / "biome_parameters", source / "tags" / "block");
     }
     std::ifstream in(source, std::ios::binary);
     if (!in) {
@@ -297,7 +301,11 @@ struct Scratch {
     if (!in) {
         throw GenerateError("cannot read the pipeline blob " + source.string());
     }
-    return freeze::read(blob);
+    freeze::Pipeline pipeline = freeze::read(blob);
+    if (!carve) {
+        pipeline.carvers = {};
+    }
+    return pipeline;
 }
 
 [[nodiscard]] std::string describe(const DimensionPreset& preset) {
@@ -497,7 +505,7 @@ GenerateReport generate(const GenerateRequest& request, const RegionWritten& onR
     }
 
     const std::unique_ptr<world::CompiledDimension> dimension =
-        compile(loadPipeline(request.source), preset, request.seed);
+        compile(loadPipeline(request.source, request.carve), preset, request.seed);
     std::filesystem::create_directories(request.out);
 
     GenerateReport report;

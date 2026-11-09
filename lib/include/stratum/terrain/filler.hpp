@@ -81,6 +81,7 @@
 #include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
 #include <stratum/biome/voronoi.hpp>
+#include <stratum/carver/carve.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/ore/vein.hpp>
@@ -88,7 +89,9 @@
 #include <stratum/surface/executor.hpp>
 #include <stratum/surface/rule_graph.hpp>
 
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -314,7 +317,7 @@ public:
     ///
     /// When `runsSurfaceRules()` is true, a second pass then walks every
     /// column top to bottom and bottom to top — for the stone-depth runs and
-    /// the latched water height `surface::Context` needs — and asks the
+    /// the water height `surface::Context` needs — and asks the
     /// compiled `surface::Executor` what replaces what it just placed.
     ///
     /// Throws FillError for a chunk outside density::kMaxChunkCoordinate, or
@@ -322,6 +325,18 @@ public:
     /// the interpreter, the executor and the aquifer refuse on the way
     /// propagates as they raise it (SPEC §8).
     void fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const;
+
+    /// This filler with the carving stage after the surface pass
+    /// (carver/carve.hpp; spec/carvers-a-spec.md, spec/carvers-b-spec.md):
+    /// @p carvers, each start chunk's list read from @p biomeSource at its
+    /// quart (4 Sx, 0, 4 Sz), seeded from @p worldSeed. The cells it carves
+    /// take the aquifer's answer at density 0.0 through this filler's own
+    /// aquifer, and its marks join the chunk's fluid updates.
+    [[nodiscard]] ChunkFiller withCarvers(std::shared_ptr<const carver::CarverSet> carvers,
+                                          const biome::Source& biomeSource,
+                                          std::int64_t worldSeed) const;
+
+    [[nodiscard]] bool carves() const noexcept { return carvers_ != nullptr; }
 
     [[nodiscard]] const settings::NoiseSettings& settings() const noexcept { return *settings_; }
 
@@ -485,7 +500,16 @@ private:
                                                  const std::optional<biome::Source>& biomeSource,
                                                  const biome::TemperatureTable* biomeTemperatures);
 
-    void applySurfaceRules(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into) const;
+    /// What the carving stage's top-material rewrite reads of the surface
+    /// pass's column state (spec/carvers-a-spec.md Q12.3): the column
+    /// heights the steepness test reads, and the preliminary-surface corners.
+    struct SurfaceSnapshot {
+        std::array<std::int32_t, 256> worldSurface{};
+        std::array<double, 4> pslCorners{};
+    };
+
+    void applySurfaceRules(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& into,
+                           SurfaceSnapshot* snapshot = nullptr) const;
 
     /// The biome the surface pass sees at the quart whose lowest block is
     /// @p quartCorner: biomeSource_'s answer, the one fillBiomes stores.
@@ -510,6 +534,11 @@ private:
     density::NodeIndex finalDensity_{};
 
     std::optional<biome::Source> biomeSource_;
+    /// The carving stage (withCarvers): its carvers, the biome source their
+    /// lists are read from, and the world seed they are seeded from.
+    std::shared_ptr<const carver::CarverSet> carvers_;
+    std::optional<biome::Source> carverBiomeSource_;
+    std::int64_t carverWorldSeed_ = 0;
     /// The block-level biome zoom the surface rules read through
     /// (biome/voronoi.hpp), set where they read a biome or a temperature.
     std::optional<biome::VoronoiZoom> biomeZoom_;

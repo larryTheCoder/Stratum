@@ -155,21 +155,22 @@ echo "== 6. vendored license notices preserved =="
 # it (SPEC §2, NOTICE). Losing the notice during a refactor would be a
 # licence violation, so it is a build failure.
 vendored_notice_ok=1
-if [[ -f lib/src/fdlibm_log.cpp ]]; then
+for vendored in lib/src/fdlibm_log.cpp lib/src/fdlibm_sin.cpp; do
+    [[ -f "${vendored}" ]] || continue
     for required in \
         'Copyright (C) 1993 by Sun Microsystems' \
         'is freely granted, provided that this notice' \
         'netlib.org/fdlibm'; do
-        if ! grep -qF -- "${required}" lib/src/fdlibm_log.cpp; then
-            fail "lib/src/fdlibm_log.cpp no longer carries its upstream notice: '${required}'"
+        if ! grep -qF -- "${required}" "${vendored}"; then
+            fail "${vendored} no longer carries its upstream notice: '${required}'"
             vendored_notice_ok=0
         fi
     done
-    if ! grep -qF -- 'fdlibm' NOTICE; then
-        fail "NOTICE no longer records the vendored fdlibm code."
+    if ! grep -qF -- "${vendored}" NOTICE; then
+        fail "NOTICE no longer records the vendored fdlibm code in ${vendored}."
         vendored_notice_ok=0
     fi
-fi
+done
 [[ ${vendored_notice_ok} -eq 1 ]] && echo "  ok"
 
 echo "== 7. test names are ASCII =="

@@ -70,8 +70,9 @@ void freezePack(const std::filesystem::path& versionRoot, const std::filesystem:
                           "' is not a version root: it has no worldgen/ directory (point "
                           "\"pack\" at what tools/fetch-vanilla leaves, e.g. .fixtures/1.21.11)");
     }
-    const std::vector<std::byte> blob = freeze::write(freeze::resolve(
-        data::Pack::open(versionRoot / "worldgen"), versionRoot / "biome_parameters"));
+    const std::vector<std::byte> blob = freeze::write(
+        freeze::resolve(data::Pack::open(versionRoot / "worldgen"),
+                        versionRoot / "biome_parameters", versionRoot / "tags" / "block"));
 
     if (blobPath.has_parent_path()) {
         std::filesystem::create_directories(blobPath.parent_path());
@@ -141,6 +142,12 @@ std::vector<settings::BlockState> emittableBlockStates(const settings::NoiseSett
     // the aquifer and the aquifer-free fill both place literally at level
     // 0 whatever the default fluid is; the default block and fluid.
     appendUnique(states, named("minecraft:air"));
+    // carver::carveChunk, when the pipeline carries carvers: cave_air where a
+    // cave_air-writing carver cuts above the lava level, and otherwise only
+    // states listed here already (air, lava, the default fluid, and the
+    // surface rules' top material). Listed whether or not this pipeline
+    // carves, which costs one id resolved and nothing else.
+    appendUnique(states, named("minecraft:cave_air"));
     appendUnique(states,
                  settings::BlockState{.name = data::ResourceLocation::parse("minecraft:lava"),
                                       .properties = {{"level", "0"}}});

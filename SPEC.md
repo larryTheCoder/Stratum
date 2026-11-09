@@ -412,6 +412,20 @@ two sample bit-identically. The pipeline engine version does not change:
 nothing about the terrain a given pipeline generates moved, only what the
 blob carries.
 
+The container format is **4** since M6's carvers (§11, "Carvers,
+adopted"). Format 4 appends a pipeline's carvers after the biome tables:
+every `configured_carver` and every biome's `carvers` field as JSON text,
+and every block tag a carver's `replaceable` names, resolved to its blocks
+(`carver::CarverSources`). A thawed blob compiles them through the same
+parse a pack's go through, refusals included, so a blob a later build
+froze with a carver this one cannot read is refused by name. A pipeline is
+resolved with carvers by `freeze::resolve(pack, biomeParametersDir,
+blockTagsDir)`, which every binding and `stratum generate` use; the form
+without block tags freezes none, and a world from it is terrain at the
+stage before carving, which is what the terrain goldens hold. A format-3
+blob is refused: it carries no carvers, and opening it would generate a
+world uncarved where this build carves.
+
 **Pipeline engine versions.** §5.6 requires every intentional output change
 to bump the version and be called out; this is that call-out.
 
@@ -434,6 +448,7 @@ to bump the version and be called out; this is that call-out.
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
 | 16 | **The surface rules read the zoomed biome** (§11, "The surface rules read the zoomed biome"). A block's biome is the quart `biome::VoronoiZoom` picks for it — its own or a neighbour's, by a jittered lattice keyed by a SHA-256 of all 64 bits of the world seed — not its own quart. Changes surface blocks near biome borders in every dimension whose rules read the biome: on the golden overworld grid 183 of the 415 surface-material misses become exact and none get worse; the pinned overworld hash holds (its window has no border). **Every octave wraps its scaled coordinates into ±2^24** (spec/legacy-named-noise-spec.md Q2.5), as blended noise already did: no change inside ±2^23 of the origin after scaling, so no golden block moves. **Legacy dimensions' named surface noises are built** (§11, "Legacy named noises, adopted"): the Nether, `caves` and `floating_islands` compile and generate their surface rules, where every one was refused before, so no block a v15 blob could produce changes for that. |
 | 17 | **The aquifer's level rule and deep-dark override in the engine's floating-point form** (§11, "Aquifer Q3.4, Q5.6 and Q5.9, adopted"). Q5.6's thresholds are evaluated as the engine evaluates them — the ramp phi from `d`, then `-0.3 + ((phi - 1)/(0 - 1)) * (0.8 - (-0.3))` and its lower twin, compared as `n - theta > 0` — where v16 added a depth bonus to floodedness and compared it with 0.8 or 0.4; the two forms part in the last bits at 51 and 54 of the 82 reachable `d`, and off the ramp the lower threshold is 0.40000000000000013. Q5.9's thresholds are the single-precision literals widened, -0.22499999403953552 and 0.8999999761581421. Changes blocks only where a floodedness, erosion or depth lands within those last bits of a threshold, which `aquifer-threshold-probe.sh` puts there and the server confirms; no golden block changes, and the pinned overworld hash holds. v16 had reached only this development branch; bumped rather than amended because a v16 blob could exist. |
+| 18 | **The carvers run** (§11, "Carvers, adopted"). `minecraft:cave`, `minecraft:nether_cave` and `minecraft:canyon` carve every chunk of a pipeline that carries them (format 4), exactly as spec/carvers-a-spec.md and spec/carvers-b-spec.md write them, block for block and mark for mark against the server's carving-stage chunks. Changes every carved block of every world. **The surface pass's water height is cleared by air** (§11, "The water height is the fluid under the last air"): scanning a column down, the first fluid under air sets the water height to its y + 1 and the next air clears it, where v17 latched the first fluid for the whole column. Changes surface blocks under a cave or overhang that sits below water higher up the column: 232 golden overworld blocks, all now exact; the pinned overworld hash holds. **The aquifer's fluid-update flag is computed for an air outcome too** (A-Q12.4); no uncarved output reads it. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -735,8 +750,18 @@ table's legacy seeding is not specified. In every dimension the surface
 rules read the block-level zoomed biome (§11, "The surface rules read the
 zoomed biome").
 
+`configured_carver` is supported since M6 (§11, "Carvers, adopted"):
+`minecraft:cave`, `minecraft:nether_cave` and `minecraft:canyon`, with the
+float providers `constant`, `uniform` and `trapezoid` and the height
+providers `uniform` and `constant`; a biome's `carvers` written as one id,
+a list, or definitions inline (B-Q11.1). Anything else a carver names is
+refused by name at freeze time, and so is `debug_mode: true`
+(IMPLEMENTER-RULING-01, carvers P2). A carver's `replaceable` tag is read
+from the version root's `tags/block` (tools/fetch-vanilla extracts it), not
+from a pack: a pack's own `tags/` is still refused at load.
+
 Unsupported in v1, and never executed:
-`configured_feature`, `placed_feature`, `configured_carver`, `structure`,
+`configured_feature`, `placed_feature`, `structure`,
 `structure_set`, `template_pool`, `processor_list`,
 `flat_level_generator_preset`. Each entry is recorded by name. By default it
 does not stop a load, because vanilla's own data holds hundreds of them;
@@ -2282,7 +2307,7 @@ Open:
   | surface depth | `(int)(2.75 * surface(x,0,z) + 3.0 + 0.25 * u)`, truncating, no clamp at 0 (`max(0, depth)` refuted; a clamp below -1 is unseparated) |
   | `hole` | `surfaceDepth(x, z) <= 0` — it never looks at the terrain |
   | `y_above` | `y + (add_stone_depth ? stoneDepthAbove : 0) >= anchor + multiplier * surfaceDepth` |
-  | `water` | the same with the column's LATCHED water height plus `offset` in the anchor's place; unconditionally TRUE where the column holds no fluid |
+  | `water` | the same with the water height plus `offset` in the anchor's place, the water height being the y + 1 of the first fluid under the last air above the block, scanning down (any air clears it; §11, "The water height is the fluid under the last air"); unconditionally TRUE where no such fluid exists |
   | `stone_depth` | `depth <= offset + (add_surface_depth ? surfaceDepth : 0) + (int)((secondary + 1) * 0.5 * range)`, on a 0-based depth |
   | `steep` | `(hW - hE >= 4) || (hS - hN >= 4)`, neighbours clamped inside the block's own chunk |
   | `noise_threshold` | `min <= noise.sample(x, 0.0, z) <= max`, closed, sampled at a literal y of zero |
@@ -2945,7 +2970,7 @@ Open:
   derive on its own, each read back from the FIRST pass's own blocks rather
   than recomputed: `stoneDepthAbove`/`stoneDepthBelow` from a run counted top
   down and bottom up over the category (solid, fluid or air) the filler
-  already decided, the latched water height from the same top-down scan, and
+  already decided, the water height from the same top-down scan, and
   `steep`'s four neighbour heights from a WORLD_SURFACE scan of the whole
   chunk, clamped to it by `fillSteepNeighbours` exactly as a per-column caller
   would have to. `biome` and `preliminary_surface_level` are resolved through
@@ -12583,6 +12608,79 @@ Open:
     control flood. Every other conformance case passes unchanged, the
     pinned overworld hash included; no golden holds a value within those
     last bits. Pinned in unit cases too (`aquifer_lattice_test.cpp`).
+
+- **Carvers, adopted (M6, 2026-11-10; pipeline engine v18).**
+  IMPLEMENTER-RULING-01's carver P1 items, against spec/carvers-a-spec.md
+  (cave, nether_cave, the shared machinery) and spec/carvers-b-spec.md
+  (canyon) as committed in f055965, amendments implemented rather than the
+  amended text. It supersedes the Tier B ruling of "Carvers, measured and
+  modelled" below: the specs write the walk itself, so the walk is no longer
+  a fit, and the fitted model in carver-lab was not used.
+  - *What is implemented* (`lib/src/carver_*.cpp`; each formula names its
+    claim): the per-start seeding and the 17x17 start window, `Sx` outer
+    (A-Q2.2, A-Q8.1, A-Q11.1); each start's carvers in its biome's list
+    order, the biome read at quart (4 Sx, 0, 4 Sz) (A-Q11.2, A-Q11.3);
+    the start test, systems, rooms and tunnels with their own generators,
+    forks and steep flags, every step in the single-precision form the
+    claims give (A-Q1, A-Q3, A-Q4); the canyon's trapezoid thickness, its
+    length, width table and vertical factor (B-Q3, B-Q4, B-Q10); the reach
+    test and ellipsoid early-out, x and z ascending and y descending, one
+    mask per target chunk (A-Q4.1-A-Q4.5); the fill — replaceable set, lava
+    at or below `lava_level`, otherwise the aquifer's answer at density
+    0.0, a barrier verdict leaving the cell as it was (A-Q12.1, A-Q12.2);
+    the grass and mycelium flag per column per ellipsoid, rewriting the dirt
+    below to the surface rules' top material (A-Q12.3); the post-processing
+    marks from the aquifer's flag history (A-Q12.4); the Nether's lava at or
+    below `min_y + 31` and cave air above, no marks (A-Q12.6). No uniform
+    float is clamped below its max (the A-Q1.5 amendment). The table sine is
+    65 536 floats, entry j the float of fdlibm `sin(j / 10430.378350470453)`
+    (`lib/src/fdlibm_sin.cpp`, netlib fdlibm 5.3, NOTICE), indexed by the
+    truncated product masked to 16 bits, cosine a quarter turn on; its
+    SHA-256 is the spec's (`carver_trig_test.cpp`).
+  - *Evidence.* `tools/analysis/carver-golden-probe.sh` runs the server on a
+    datapack that empties every biome's features and keeps its carvers
+    (neighbours' features otherwise spill into the ring), freezes ticks,
+    and forceloads two 8x8 blocks per dimension, one at chunk (8, 8) and one
+    at (-24, -24) where every coordinate is negative; the chunks the server
+    stores at status `minecraft:carvers` are the carving stage itself
+    (carvers P1: compare at the carving stage, on stored block arrays).
+    `vanilla_carver_golden_test.cpp` resolves the pack with its block tags,
+    freezes and thaws it, and fills each such chunk through
+    `CompiledDimension`, the path every world takes. At seeds 42 and 31337
+    (tools/probe-worlds units `carvers_s42`, `carvers_s31337`) every block
+    is exact: 12 582 912 per seed in the overworld (128 chunks) and
+    3 932 160 in the Nether (120), both signs of coordinate. Every mark this
+    build makes is the server's, and the server makes none this build does
+    not in the overworld (9 192 and 9 477). `vanilla_carver_config_test.cpp`
+    parses vanilla's four configured carvers and the biomes that name one
+    bare, and resolves their tags to the spec's `resolved_replaceables`.
+  - *Disagreement, reported and not reconciled* (IMPLEMENTER-RULING-01):
+    at seed 31337 the server's Nether chunks hold 233 post-processing marks,
+    in four chunks, on lava-sea cells no carver touched. None at seed 42. A
+    run that marked every lava cell the Nether carver writes shared none of
+    them, so they are not carver output and A-Q12.6 holds; no spec says
+    what makes them. The test pins the count so a change shows.
+  - *Integration.* A pipeline carries its carvers (format 4, §6) when it is
+    resolved with block tags, and `CompiledDimension` carves when it does.
+    `stratum generate` carves by default and stops before carving with
+    `--no-carvers`, which `golden_generate_test.cpp` passes because its
+    goldens are terrain-stage. ext and ext-nukkit carve, so a version root
+    they freeze from needs `tags/block`: one fetched before this change is
+    refused by name until tools/fetch-vanilla runs again. Nukkit's emittable
+    states gain `minecraft:cave_air`.
+  - *Not done:* `debug_mode` (refused at load until implemented, carvers
+    P2) and upgraded chunks (A-Q13.6, out of scope by ruling).
+
+- **The water height is the fluid under the last air (M4, 2026-11-10;
+  pipeline engine v18).** Found while confirming the carvers: the 232
+  overworld golden blocks the surface pass got wrong under water
+  (`golden_overworld_test.cpp`'s `shippedMissOverSolid`) were one cause.
+  Scanning a column down, the surface pass's water height was latched by
+  the first fluid and held for the rest of the column; the server's is set
+  to y + 1 by the first fluid below an air block and cleared by the next
+  air. A cave or overhang under a lake therefore reads no water height, and
+  the `water` condition there is TRUE. With the change all 232 are exact and
+  no golden block gets worse; the pin is now 0.
 
 ## 12. Content, provenance & distribution policy
 

@@ -44,20 +44,22 @@ A whole region scores a little lower. `stratum diff` on seed 42's region
 difference (614 cells) was a tie the server broke the other way.
 
 Every server world behind these figures was generated with features and
-carvers turned off, so it holds no trees to compare.
+carvers turned off, so it holds no trees to compare. The carvers are scored
+on their own, against the chunks the server stores at its carving stage:
+every block matches at two seeds in the overworld and the Nether.
 
 **The Nether's** surface rules read noises seeded by vanilla's older random
 source. A clean-room specification settled that seeding on 2026-11-09, and
 with the surface rules reading the block-level ("zoomed") biome, every block
 of the eight golden Nether regions matches.
 
-**Milestones.** M4 (biomes and surface) carries the 232 overworld surface
-blocks still unexplained, ties in the biome search and the presets not yet
-measured. The server integration (M5) closed on 2026-10-29.
+**Milestones.** M4 (biomes and surface) carries ties in the biome search
+and the presets not yet measured; the 232 overworld surface blocks once
+unexplained were the water height, and are exact. The server integration (M5) closed on 2026-10-29.
 
-The large noise caves and ore veins do generate. Features (trees, plants,
-ordinary ores), carvers (carved caves, ravines) and structures do not. A pack's
-copies of those are recorded and not run until v2 (M6).
+The large noise caves, ore veins and carvers (carved caves, ravines) do
+generate. Features (trees, plants, ordinary ores) and structures do not. A
+pack's copies of those are recorded and not run until v2 (M6).
 
 ## Speed
 
@@ -239,12 +241,12 @@ keeps open what the default should be for a user's pack.
 | Multi-noise biome source | Supported | Named by its parameter list |
 | `the_end` biome source | Supported | Reads the router's `erosion`, as the server does |
 | `fixed`, `checkerboard` biome sources | **Refused** | Refused by name when a caller names them. One a pack declares in `dimension` or `world_preset` is not read or reported yet. |
-| `worldgen/biome` | Supported | For biome identity and surface rules. A biome's features and carvers do not run. |
+| `worldgen/biome` | Supported | For biome identity, surface rules and carvers. A biome's features do not run. |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Load but are not interpreted. The caller names the noise settings and biome source. |
 | Namespaced references | Supported | Within the registries above |
-| Tags | **Refused** | A pack with a JSON file under `tags/` is refused by name at load. |
+| `worldgen/configured_carver` | Supported | `cave`, `nether_cave` and `canyon`, block for block against the server's carving stage. `debug_mode: true` is refused. |
+| Tags | **Refused** | A pack with a JSON file under `tags/` is refused by name at load. Carvers read vanilla's block tags from the version root's `tags/block`. |
 | `configured_feature`, `placed_feature` | **Rejected** | v2 (M6) |
-| `configured_carver` | **Rejected** | v2 |
 | `structure`, `structure_set` | **Rejected** | v2 |
 | `template_pool`, `processor_list` | **Rejected** | v2 |
 | `flat_level_generator_preset` | **Rejected** | Not planned for v1 |
@@ -327,8 +329,8 @@ they cost nothing today, not a promise about other versions.
 
 | Tier | Scope | Bar |
 |---|---|---|
-| A | Density functions, noise, terrain shape, aquifer fill decision, multi-noise biome assignment, surface rules | Bit-exact vs vanilla Java, block-for-block, in Java block space |
-| B (v2) | Carvers, features, structures | Statistical parity; exact placement may differ |
+| A | Density functions, noise, terrain shape, aquifer fill decision, multi-noise biome assignment, surface rules, carvers | Bit-exact vs vanilla Java, block-for-block, in Java block space |
+| B (v2) | Features, structures | Statistical parity; exact placement may differ |
 | U | Everything outside the matrix | Never executed. A JSON file in a directory this build cannot name is a hard error at pack load. An entry in a **Rejected** registry is recorded by name, and a hard error only under `--strict`. |
 
 ## Determinism

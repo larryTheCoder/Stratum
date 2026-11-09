@@ -96,6 +96,14 @@ struct SubstanceAt {
     /// marks for post-processing, so that the fluid there ticks — and flows —
     /// once the chunk loads. Never set on air or solid.
     bool fluidUpdate = false;
+    /// The flag itself, unnarrowed: `fluidUpdate` for a fluid result, and
+    /// spec Q8.2's value for an air one too (in the s12 <= 0 case it is
+    /// `s12 >= theta_flow and A1 != A2`, whatever the substance); false for
+    /// solid. The fill never reads it. The carvers do: a lava-level cell
+    /// takes the flag of the aquifer's most recent decision, air ones
+    /// included (spec/carvers-a-spec.md Q12.4), which vanilla's
+    /// carving-stage marks confirm (vanilla_carver_golden_test.cpp).
+    bool flag = false;
 };
 
 /// Everything this decision needs beyond the position and the router reads
@@ -568,10 +576,11 @@ decideWithStatuses(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
     // is even considered — the `barrier` noise is not read.
     const bool nearestReadsFluid = query.y < status[0].level;
     if (waterOverLava(query.y, query.seaLevel, status[0].level, status[0].type)) {
-        return SubstanceAt{
-            .substance = Substance::Fluid,
-            .fluidType = status[0].type,
-            .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::WaterOverLava, fourth)};
+        const bool flag = fluidUpdateFlag(distanceSq, status, FluidExit::WaterOverLava, fourth);
+        return SubstanceAt{.substance = Substance::Fluid,
+                           .fluidType = status[0].type,
+                           .fluidUpdate = flag,
+                           .flag = flag};
     }
 
     const auto asBarrierSource = [&](const std::size_t r) {
@@ -610,14 +619,17 @@ decideWithStatuses(const std::array<std::int32_t, kRankCount>& rankDistanceSq,
     }
 
     // The barrier has fallen through: the substance is the nearest source's
-    // own reading outright (selection.hpp's own conformance case).
+    // own reading outright (selection.hpp's own conformance case). The flag
+    // is computed for an air reading too, as `flag` only (SubstanceAt says
+    // why): an air cell is never marked.
+    const bool flag = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth);
     if (!nearestReadsFluid) {
-        return SubstanceAt{.substance = Substance::Air};
+        return SubstanceAt{.substance = Substance::Air, .flag = flag};
     }
-    return SubstanceAt{
-        .substance = Substance::Fluid,
-        .fluidType = status[0].type,
-        .fluidUpdate = fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
+    return SubstanceAt{.substance = Substance::Fluid,
+                       .fluidType = status[0].type,
+                       .fluidUpdate = flag,
+                       .flag = flag};
 }
 
 /// Everything after Q2.4 and the selection: the statuses, Q6.3, the barrier

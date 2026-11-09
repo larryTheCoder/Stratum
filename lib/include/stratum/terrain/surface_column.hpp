@@ -5,7 +5,7 @@
 // the first pass's blocks imply about their column, and only through each
 // block's CATEGORY: the stone-depth run counted down from the world's top
 // (`stone_depth` floor), the one counted up from its floor (`stone_depth`
-// ceiling), the latched water height (`water`), and the topmost non-air
+// ceiling), the topmost fluid (`water`), and the topmost non-air
 // block, where the scan starts. This header is that category and that
 // counting, out of terrain::ChunkFiller's own source so that a second reader
 // can call the same code instead of restating it.
@@ -20,8 +20,14 @@
 // MEASURED, every rule here (SPEC §11): fluid is `default_fluid` and the
 // aquifer's literal lava alike, whichever dimension; top down, air resets the
 // run, solid counts, fluid neither counts nor breaks it; bottom up, ANY
-// non-solid block resets it, water as much as air; the water height is one
-// above the first fluid block met descending, latched.
+// non-solid block resets it, water as much as air. The water height at a
+// block is one above the first fluid met descending below the last air above
+// it, any air clearing it (pipeline engine v18, SPEC §11 "The water height is
+// the fluid under the last air"): terrain::ChunkFiller tracks that per block
+// in its own scan. waterHeight() here is the topmost fluid's, which is the
+// water height only down to the first air below it; the legacy-goldens
+// decoder still reads it for the whole column, and parts from the filler
+// beneath an air pocket under fluid.
 #pragma once
 
 #include <stratum/settings/noise_settings.hpp>
@@ -91,7 +97,9 @@ public:
         return below_.at(static_cast<std::size_t>(static_cast<std::int64_t>(y) - minY_));
     }
 
-    /// One above the topmost fluid block, or absent for a column with none.
+    /// One above the topmost fluid block, or absent for a column with none:
+    /// the water height down to the first air below that fluid, and no
+    /// further (this header's comment).
     [[nodiscard]] std::optional<std::int32_t> waterHeight() const noexcept { return waterHeight_; }
 
     /// The topmost non-air y, or minY - 1 for a column of nothing but air.
@@ -124,9 +132,8 @@ void SurfaceColumn::readWith(const std::size_t height, const std::int32_t minY,
     //
     // The same pass finds the topmost non-air entry and the topmost fluid:
     // the last of each met ascending is the first met descending, which is
-    // what the scan's start and the water height are (surface::Context's own
-    // doc: one above the first fluid block met descending, water or lava,
-    // latched).
+    // what the scan's start and the topmost fluid are (the water height
+    // down to the first air below it; see this header's own comment).
     //
     // From airFrom up every entry is air: the run is 0 there and neither the
     // topmost non-air nor the topmost fluid entry can be, so the pass stops

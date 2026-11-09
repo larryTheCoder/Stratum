@@ -15,6 +15,10 @@ add_library(stratum_core STATIC
     src/biome_parameter_list.cpp
     src/biome_source.cpp
     src/biome_voronoi.cpp
+    src/block_tags.cpp
+    src/carver_config.cpp
+    src/carver_carve.cpp
+    src/carver_trig.cpp
     src/biome_temperature_table.cpp
     src/world_dimension.cpp
     src/aquifer_barrier.cpp
@@ -31,6 +35,7 @@ add_library(stratum_core STATIC
     src/density_render.cpp
     src/end_islands.cpp
     src/fdlibm_log.cpp
+    src/fdlibm_sin.cpp
     src/md5.cpp
     src/pack.cpp
     src/pack_validate.cpp

@@ -74,6 +74,7 @@ TEST_CASE("vanilla's worldgen data loads whole", "[conformance][data][pack]") {
     CHECK(pack.entriesOf(Registry::Biome).size() == 65U);
     CHECK(pack.entriesOf(Registry::MultiNoiseBiomeSourceParameterList).size() == 2U);
     CHECK(pack.entriesOf(Registry::WorldPreset).size() == 6U);
+    CHECK(pack.entriesOf(Registry::ConfiguredCarver).size() == 4U);
 
     // And the ones it does not, which must have been reported rather than
     // silently ignored.
@@ -85,7 +86,6 @@ TEST_CASE("vanilla's worldgen data loads whole", "[conformance][data][pack]") {
     CHECK(rejectedByRegistry[Registry::PlacedFeature] == 258U);
     CHECK(rejectedByRegistry[Registry::ConfiguredFeature] == 224U);
     CHECK(rejectedByRegistry[Registry::TemplatePool] == 188U);
-    CHECK(rejectedByRegistry[Registry::ConfiguredCarver] == 4U);
 
     for (const auto& entry : pack.entries()) {
         CAPTURE(entry.id.toString());

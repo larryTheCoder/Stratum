@@ -31,6 +31,7 @@
 
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/temperature_table.hpp>
+#include <stratum/carver/carve.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -73,6 +74,9 @@ struct Pipeline {
     std::map<data::ResourceLocation, biome::ParameterList> biomeParameters;
     /// Every biome's declared temperature, which surface rules read.
     biome::TemperatureTable biomeTemperatures;
+    /// The carvers (carver::CarverSources): empty for a pipeline resolved
+    /// without block tags, which generates terrain uncarved.
+    carver::CarverSources carvers;
 };
 
 /// Everything a world generates from, resolved out of @p pack (a `worldgen/`
@@ -82,6 +86,17 @@ struct Pipeline {
 /// things. Throws whatever the loaders throw, naming the entry.
 [[nodiscard]] Pipeline resolve(const data::Pack& pack,
                                const std::filesystem::path& biomeParametersDir);
+
+/// The same, with the pack's carvers: every `replaceable` tag a carver names
+/// is resolved through the block tags under @p blockTagsDir (the data pack's
+/// `tags/block`, which tools/fetch-vanilla extracts to `<version>/tags/block`).
+/// A world generated from what this resolves is carved; one from the form
+/// above is not, which is what the terrain-stage goldens compare. Throws
+/// carver::CarverError or data::BlockTagError naming what it cannot read, and
+/// FreezeError when @p blockTagsDir is not a directory.
+[[nodiscard]] Pipeline resolve(const data::Pack& pack,
+                               const std::filesystem::path& biomeParametersDir,
+                               const std::filesystem::path& blockTagsDir);
 
 /// What a blob says about itself, readable without decoding the rest of it.
 struct Provenance {
@@ -109,7 +124,11 @@ struct Provenance {
 /// generation has needed since M4, appended after the settings. A format-2
 /// blob has neither, so generating from one would mean reading them from a
 /// live pack — exactly what SPEC §6 forbids — and it is refused instead.
-inline constexpr std::uint32_t kBlobFormat = 3;
+///
+/// 4 since the blob carries the carvers (carver::CarverSources), appended
+/// after the biome tables; a format-3 blob has none, and opening it would
+/// generate a world uncarved where this build carves.
+inline constexpr std::uint32_t kBlobFormat = 4;
 
 /// Serialises @p pipeline. Deterministic: the same pipeline gives the same
 /// bytes, here and on any other platform.

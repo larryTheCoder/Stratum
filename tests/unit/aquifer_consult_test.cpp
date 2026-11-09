@@ -177,9 +177,14 @@ template<typename StatusOfRank, typename BarrierSampler>
     }
 
     // The barrier has fallen through: the substance is the nearest source's
-    // own reading outright (selection.hpp's own conformance case).
+    // own reading outright (selection.hpp's own conformance case). The one
+    // deliberate change since this copy was taken: an air reading computes
+    // the flag too, as `flag` (spec/aquifer-spec.md Q8.2; the carvers read
+    // it, spec/carvers-a-spec.md Q12.4), which may ask the fourth source.
     if (!nearestReadsFluid) {
-        return SubstanceAt{.substance = Substance::Air};
+        return SubstanceAt{
+            .substance = Substance::Air,
+            .flag = aq::fluidUpdateFlag(distanceSq, status, FluidExit::BarrierFellThrough, fourth)};
     }
     return SubstanceAt{.substance = Substance::Fluid,
                        .fluidType = status[0].type,

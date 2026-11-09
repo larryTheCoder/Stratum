@@ -107,15 +107,15 @@ TEST_CASE("the capability matrix matches SPEC section 8", "[data][registry]") {
     // the README table and to what users may rely on.
     for (const Registry supported :
          {Registry::DensityFunction, Registry::Noise, Registry::NoiseSettings, Registry::Biome,
-          Registry::MultiNoiseBiomeSourceParameterList, Registry::WorldPreset,
-          Registry::Dimension}) {
+          Registry::MultiNoiseBiomeSourceParameterList, Registry::WorldPreset, Registry::Dimension,
+          Registry::ConfiguredCarver}) {
         CAPTURE(stratum::data::registryDirectory(supported));
         CHECK(stratum::data::isSupported(supported));
     }
     for (const Registry rejected :
-         {Registry::ConfiguredFeature, Registry::PlacedFeature, Registry::ConfiguredCarver,
-          Registry::Structure, Registry::StructureSet, Registry::TemplatePool,
-          Registry::ProcessorList, Registry::FlatLevelGeneratorPreset}) {
+         {Registry::ConfiguredFeature, Registry::PlacedFeature, Registry::Structure,
+          Registry::StructureSet, Registry::TemplatePool, Registry::ProcessorList,
+          Registry::FlatLevelGeneratorPreset}) {
         CAPTURE(stratum::data::registryDirectory(rejected));
         CHECK_FALSE(stratum::data::isSupported(rejected));
     }

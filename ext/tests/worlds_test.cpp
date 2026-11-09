@@ -70,6 +70,8 @@ public:
             std::filesystem::create_directories(root_ / "worldgen" / registry);
         }
         std::filesystem::create_directories(root_ / "biome_parameters" / "minecraft");
+        // No tags: neither biome carves, so no carver names one.
+        std::filesystem::create_directories(root_ / "tags" / "block");
         std::filesystem::create_directories(root_ / "blobs");
 
         // Two settings: one inside PocketMine-MP's y -64..320, one that
@@ -102,9 +104,9 @@ public:
         everything["default_fluid"] = {{"Name", "minecraft:water"},
                                        {"Properties", {{"level", "16"}}}};
         write("noise_settings", "all_wrong", everything.dump());
-        write("biome", "plains", R"({"temperature":0.8})");
+        write("biome", "plains", R"({"temperature":0.8,"carvers":[]})");
         // Not a vanilla biome, so not in the Bedrock table: a datapack's.
-        write("biome", "moon", R"({"temperature":0.1})");
+        write("biome", "moon", R"({"temperature":0.1,"carvers":[]})");
         writeList("overworld", R"({"biomes":[
             {"biome":"minecraft:plains","parameters":{"temperature":[-1.0,1.0],
              "humidity":[-1.0,1.0],"continentalness":[-1.0,1.0],"erosion":[-1.0,1.0],

@@ -157,7 +157,7 @@ constexpr std::array<Heightmap, 4> kHeightmaps = {Heightmap::WorldSurface, Heigh
     const stratum::test::CliResult result = stratum::test::runCli(
         std::string(kCli), "generate \"" + versionDir().string() + "\" --dimension " + dimension +
                                " --seed " + std::to_string(kSeed) + " " + range + " --out \"" +
-                               out.string() + "\" --threads " + kThreads);
+                               out.string() + "\" --threads " + kThreads + " --no-carvers");
     INFO(result.output);
     REQUIRE(result.exitCode == 0);
     // The timing line, for whoever reads the log: not a measurement of
@@ -431,12 +431,13 @@ TEST_CASE("stratum generate writes the overworld the server wrote, but for fluid
     // Every block is exact, flow, or surface material; nothing else.
     CHECK(score.unexplained == 0U);
     CHECK(score.exact + score.level + score.flowed + score.material == score.blocks);
-    // The material residual is the model's alone, so it is pinned: 863
-    // blocks of surface material near biome borders, where the server
-    // has dirt or grass_block — 417 stone for dirt, 283 sand for grass_block,
-    // 159 sand for dirt, 4 sandstone for grass_block. It is the M4 residual
-    // golden_overworld_test.cpp pins at 415 on its own grid.
-    CHECK(score.material == 863U);
+    // The material residual is the model's alone, so it is pinned. It was
+    // 863 blocks of surface material under water higher up the column,
+    // where the server has dirt or grass_block; the water height is cleared
+    // by air (pipeline engine v18, SPEC §11 "The water height is the fluid
+    // under the last air"), and none are left, as on
+    // golden_overworld_test.cpp's own grid.
+    CHECK(score.material == 0U);
     // Flow is the server's and run-dependent: bounded, as the other golden
     // cases bound it, under 1 in 100 000. 65 blocks on the first set.
     CHECK((score.flowed + score.level) * 100000U < score.blocks);

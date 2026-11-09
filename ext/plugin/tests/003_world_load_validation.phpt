@@ -77,10 +77,11 @@ namespace {
 			is_dir("$from/$name") ? $copy("$from/$name", "$to/$name") : copy("$from/$name", "$to/$name");
 		}
 	};
-	foreach(["density_function", "noise", "noise_settings", "biome"] as $registry){
+	foreach(["density_function", "noise", "noise_settings", "biome", "configured_carver"] as $registry){
 		$copy("$root/worldgen/$registry", "$scratch/worldgen/$registry");
 	}
 	$copy("$root/biome_parameters", "$scratch/biome_parameters");
+	$copy("$root/tags/block", "$scratch/tags/block");
 	$overworld = json_decode(file_get_contents("$root/worldgen/noise_settings/overworld.json"), true);
 	$settings = "$scratch/worldgen/noise_settings";
 	file_put_contents("$settings/snowy_stone.json", json_encode(["default_block" => ["Name" => "minecraft:stone", "Properties" => ["snowy" => "true"]]] + $overworld));

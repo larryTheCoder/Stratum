@@ -129,10 +129,11 @@ struct Context {
     /// water resetting too.
     std::int32_t stoneDepthBelow = 1;
 
-    /// The column's water height: one above the FIRST fluid block met
-    /// descending — water or lava, measured alike (SPEC §11) — latched and
-    /// never updated again. Absent where the column holds no fluid at all,
-    /// which makes `water` unconditionally true.
+    /// The water height at this block: one above the first fluid block met
+    /// descending — water or lava, measured alike (SPEC §11) — below the
+    /// last air above this block; any air met clears it (SPEC §11, "The
+    /// water height is the fluid under the last air"). Absent where no such
+    /// fluid exists, which makes `water` unconditionally true.
     ///
     /// `sea_level` alone does not create one — only real fluid blocks do.
     std::optional<std::int32_t> waterHeight;

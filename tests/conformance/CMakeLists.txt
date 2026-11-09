@@ -82,6 +82,8 @@ add_executable(stratum_conformance_tests
     vanilla_legacy_nether_terrain_test.cpp
     vanilla_legacy_nether_surface_test.cpp
     vanilla_aquifer_threshold_test.cpp
+    vanilla_carver_config_test.cpp
+    vanilla_carver_golden_test.cpp
     vanilla_legacy_nether_climate_gap_test.cpp
     vanilla_legacy_goldens_biome_test.cpp
     vanilla_legacy_gradient_gap_test.cpp
@@ -109,6 +111,9 @@ target_link_libraries(stratum_conformance_tests PRIVATE
 
 target_compile_definitions(stratum_conformance_tests PRIVATE
     "STRATUM_FIXTURES_DIR=\"${STRATUM_FIXTURES_DIR}\""
+    # vanilla_carver_config_test.cpp reads the clean-room spec's committed
+    # constants where they live.
+    "STRATUM_SPEC_DIR=\"${CMAKE_SOURCE_DIR}/spec\""
 )
 
 if(TARGET stratum_cli)

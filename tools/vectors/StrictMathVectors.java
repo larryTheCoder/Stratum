@@ -89,6 +89,43 @@ public final class StrictMathVectors {
         return inputs;
     }
 
+    /// Sine inputs over what stratum::fdlibm::sin carries: |x| <= 2^19 * pi/2.
+    /// The carvers' table (spec/carvers-a-spec.md Q9) reads [0, 2 pi).
+    private static List<Double> sinInputs() {
+        List<Double> inputs = new ArrayList<>();
+        inputs.add(0.0);
+        inputs.add(-0.0);
+        inputs.add(Double.MIN_VALUE);
+        inputs.add(1e-9);
+        inputs.add(Double.NaN);
+        inputs.add(Double.POSITIVE_INFINITY);
+        inputs.add(Double.NEGATIVE_INFINITY);
+        // The branch boundaries of s_sin.c and e_rem_pio2.c, both sides.
+        for (double edge : new double[] {
+                Math.PI / 4, 3 * Math.PI / 4, Math.PI / 2, Math.PI, 3 * Math.PI / 2,
+                2 * Math.PI, 0.3, 0.78125, 32 * Math.PI / 2, 823549.0}) {
+            for (double v : new double[] {edge, Math.nextUp(edge), Math.nextDown(edge)}) {
+                inputs.add(v);
+                inputs.add(-v);
+            }
+        }
+        // Multiples of pi/2, where the reduction's extra iterations run.
+        for (int n = 1; n <= 40; n++) {
+            inputs.add(n * (Math.PI / 2));
+            inputs.add(Math.nextUp(n * (Math.PI / 2)));
+        }
+        // The table's own arguments, every 61st.
+        for (int j = 0; j < 65536; j += 61) {
+            inputs.add(j / 10430.378350470453);
+        }
+        // A sweep over the carried range.
+        Random random = new Random(20261110L);
+        for (int i = 0; i < 400; i++) {
+            inputs.add((random.nextDouble() * 2.0 - 1.0) * 823549.0);
+        }
+        return inputs;
+    }
+
     /// Every NaN is emitted as the canonical quiet NaN.
     ///
     /// IEEE 754 does not specify the sign of the NaN that 0.0/0.0 produces,
@@ -128,6 +165,18 @@ public final class StrictMathVectors {
         for (double input : logInputs()) {
             System.out.printf("    {UINT64_C(0x%016X), UINT64_C(0x%016X)},%n",
                 Double.doubleToRawLongBits(input), resultBits(StrictMath.log(input)));
+        }
+        System.out.println("});");
+        System.out.println();
+        System.out.println("struct SinVector {");
+        System.out.println("    std::uint64_t inputBits;");
+        System.out.println("    std::uint64_t resultBits;");
+        System.out.println("};");
+        System.out.println();
+        System.out.println("constexpr auto kSinVectors = std::to_array<SinVector>({");
+        for (double input : sinInputs()) {
+            System.out.printf("    {UINT64_C(0x%016X), UINT64_C(0x%016X)},%n",
+                resultBits(input), resultBits(StrictMath.sin(input)));
         }
         System.out.println("});");
         System.out.println();

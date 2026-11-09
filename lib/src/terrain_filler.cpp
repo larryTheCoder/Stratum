@@ -40,6 +40,12 @@ constexpr int kChunkWidth = 16;
 /// own choice for the OTHER fluid type, and Q6.7's own "the barrier block is
 /// the caller's default block" has no analogue for lava: it is always the
 /// literal block, whatever `default_fluid` says.
+[[nodiscard]] const settings::BlockState& caveAir() {
+    static const settings::BlockState kCaveAir{
+        .name = data::ResourceLocation{"minecraft", "cave_air"}, .properties = {}};
+    return kCaveAir;
+}
+
 [[nodiscard]] const settings::BlockState& lava() {
     static const settings::BlockState kLava{.name = data::ResourceLocation{"minecraft", "lava"},
                                             .properties = {{"level", "0"}}};
@@ -1064,9 +1070,154 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
     // `PostProcessing` lists hold the marks in that order.
     into.orderFluidUpdatesByCells(cellWidth);
 
+    SurfaceSnapshot surfaceSnapshot;
     if (surfaceExecutor_.has_value()) {
-        applySurfaceRules(chunkX, chunkZ, into);
+        applySurfaceRules(chunkX, chunkZ, into, carvers_ != nullptr ? &surfaceSnapshot : nullptr);
     }
+
+    if (carvers_ != nullptr) {
+        // The carving stage, after the surface pass (spec/carvers-a-spec.md
+        // Q11.6's order). A carved cell takes the aquifer's answer at
+        // density 0.0 (A-Q12.1) through the same aquifer the fill asked, its
+        // lattice only below `y_skip` as there, the global picker above.
+        density::Interpreter::CornerCache carverCache(interpreter_.cacheSize());
+        carver::CarveTarget target;
+        target.chunkX = chunkX;
+        target.chunkZ = chunkZ;
+        target.worldSeed = carverWorldSeed_;
+        target.geometry = geometry;
+        target.biomeAt = [&](std::int32_t x, std::int32_t z) -> const data::ResourceLocation& {
+            return carverBiomeSource_->at(interpreter_, settings_->router,
+                                          density::Point{.x = x, .y = 0, .z = z}, carverCache);
+        };
+        target.blockAt = [&into](int lx, std::int32_t y, int lz) -> const data::ResourceLocation& {
+            return into.at(lx, y, lz).name;
+        };
+        target.write = [&](int lx, std::int32_t y, int lz, carver::CarveTarget::Write state) {
+            switch (state) {
+                case carver::CarveTarget::Write::Air:
+                    into.set(lx, y, lz, air());
+                    break;
+                case carver::CarveTarget::Write::CaveAir:
+                    into.set(lx, y, lz, caveAir());
+                    break;
+                case carver::CarveTarget::Write::Lava:
+                    into.set(lx, y, lz, lava());
+                    break;
+                case carver::CarveTarget::Write::Water:
+                default:
+                    into.set(lx, y, lz, settings_->defaultFluid);
+                    break;
+            }
+        };
+        target.aquifer = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
+            carver::AquiferAnswer answer;
+            if (aquiferCentres_.has_value() && aquifer::consultsLattice(y, ySkipLevel)) {
+                const aquifer::AquiferQuery query{
+                    .x = x, .y = y, .z = z, .density = 0.0, .seaLevel = settings_->seaLevel};
+                const aquifer::SubstanceAt result = aquifer::computeSubstance(
+                    *aquiferCentres_, query, aquiferStatusCache, barrierAt, floodednessAt, spreadAt,
+                    lavaAt, pslAt, deepDarkAt,
+                    barrierReadsAlways_ ? aquifer::BarrierReads::Always
+                                        : aquifer::BarrierReads::WhereWeighed);
+                answer.flag = result.flag;
+                switch (result.substance) {
+                    case aquifer::Substance::Solid:
+                        answer.kind = carver::AquiferAnswer::Kind::Solid;
+                        break;
+                    case aquifer::Substance::Fluid:
+                        answer.kind = result.fluidType == aquifer::FluidType::Lava
+                                          ? carver::AquiferAnswer::Kind::Lava
+                                          : carver::AquiferAnswer::Kind::Water;
+                        break;
+                    case aquifer::Substance::Air:
+                    default:
+                        answer.kind = carver::AquiferAnswer::Kind::Air;
+                        break;
+                }
+                return answer;
+            }
+            // The global picker: the same answer the fill writes there.
+            const settings::BlockState* picked =
+                heightRules_[static_cast<std::size_t>(y - geometry.minY)].unconsulted;
+            if (picked == &lava()) {
+                answer.kind = carver::AquiferAnswer::Kind::Lava;
+            } else if (picked == &settings_->defaultFluid) {
+                answer.kind = carver::AquiferAnswer::Kind::Water;
+            }
+            return answer;
+        };
+        // A-Q12.3: the surface rules' top material for the dirt cell, with
+        // "fluid above" as given. Evaluated as the first block of a solid
+        // run (stone depth 1 from above, the cell just above having been
+        // carved), its water height one above the fluid written above it or
+        // cleared under air, and the column's own steepness, preliminary
+        // surface and zoomed biome, read as the surface pass reads them.
+        target.topMaterial = [&](int lx, std::int32_t y, int lz, bool fluidAbove) {
+            if (!surfaceExecutor_.has_value()) {
+                return false;
+            }
+            const surface::Executor& executor = *surfaceExecutor_;
+            surface::Context context;
+            context.x = baseX + lx;
+            context.y = y;
+            context.z = baseZ + lz;
+            if (surfaceNeedsSteep_) {
+                surface::fillSteepNeighbours(
+                    context, [&](std::int32_t worldX, std::int32_t worldZ) {
+                        const auto sx = static_cast<std::size_t>(worldX - baseX);
+                        const auto sz = static_cast<std::size_t>(worldZ - baseZ);
+                        return surfaceSnapshot.worldSurface[(sz * kChunkWidth) + sx];
+                    });
+            }
+            if (surfaceNeedsPreliminarySurface_) {
+                context.preliminarySurface =
+                    preliminarySurfaceIn(surfaceSnapshot.pslCorners, lx, lz);
+            }
+            if (fluidAbove) {
+                context.waterHeight = y + 2;
+            }
+            context.stoneDepthAbove = 1;
+            std::int32_t below = 0;
+            for (std::int32_t yy = y; yy >= geometry.minY; --yy) {
+                if (categorize(into.at(lx, yy, lz), *settings_) != Category::Solid) {
+                    break;
+                }
+                ++below;
+            }
+            context.stoneDepthBelow = std::max(below, std::int32_t{1});
+            if ((surfaceNeedsBiome_ || surfaceNeedsTemperature_) && biomeZoom_.has_value()) {
+                const biome::QuartPos quart = biomeZoom_->zoom(context.x, y, context.z);
+                const data::ResourceLocation& id = surfaceBiomeAt(
+                    density::Point{.x = quart.x * 4, .y = quart.y * 4, .z = quart.z * 4},
+                    carverCache);
+                if (surfaceNeedsBiome_) {
+                    context.biomeKey = executor.biomeKey(id);
+                }
+                if (surfaceNeedsTemperature_) {
+                    context.biomeTemperature = biomeTemperatures_->at(id);
+                }
+            }
+            const settings::BlockState* placed = executor.apply(context);
+            if (placed == nullptr) {
+                return false;
+            }
+            into.set(lx, y, lz, *placed);
+            return categorize(*placed, *settings_) == Category::Fluid;
+        };
+        target.mark = [&into](int lx, std::int32_t y, int lz) { into.markFluidUpdate(lx, y, lz); };
+        carver::carveChunk(*carvers_, target);
+    }
+}
+
+ChunkFiller ChunkFiller::withCarvers(std::shared_ptr<const carver::CarverSet> carvers,
+                                     const biome::Source& biomeSource,
+                                     const std::int64_t worldSeed) const {
+    ChunkFiller result = *this;
+    result.carvers_ = std::move(carvers);
+    result.carverBiomeSource_ = biomeSource;
+    result.carverWorldSeed_ = worldSeed;
+    return result;
 }
 
 const data::ResourceLocation&
@@ -1111,7 +1262,7 @@ biome::Source::KnownRows ChunkFiller::surfaceBiomes(const ChunkBuffer& buffer,
 }
 
 void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_t chunkZ,
-                                    ChunkBuffer& into) const {
+                                    ChunkBuffer& into, SurfaceSnapshot* snapshot) const {
     if (!surfaceExecutor_.has_value()) {
         // fill() only calls this once runsSurfaceRules() is true; checked
         // again here rather than trusting that from a distance.
@@ -1438,8 +1589,15 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             column.readWith(
                 columnHeight, minY, static_cast<std::size_t>(airFrom),
                 [&](const std::size_t i) { return categoryOfIndex(columnBlocks[i * kLayer]); });
-            // Constant down the column, so handed over once for all of it.
-            context.waterHeight = column.waterHeight();
+            // The water height is read per block as the scan descends: air
+            // clears it, and the first fluid met below a clear sets it one
+            // above itself. Measured against the server's carving-stage and
+            // terrain-only overworld goldens (SPEC §11, "The water height
+            // clears at air"): a dry floor under an air pocket below a sea is
+            // not underwater, where the column-latched reading made it so.
+            // The scan starts at the topmost non-air block, with only air
+            // above it.
+            std::optional<std::int32_t> waterHeight;
 
             // The biome grid is quarter-resolution and constant within a
             // cell, so this is resolved once per four y levels rather than
@@ -1493,9 +1651,17 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
             const std::int32_t scanFrom = column.top();
             const auto scanColumn = [&]<bool kAsksThreshold>() {
                 for (std::int32_t y = scanFrom; y >= minY; --y) {
-                    if (into.blocks_[into.linearIndex(localX, y, localZ)] != defaultIndex) {
+                    const std::uint16_t here = into.blocks_[into.linearIndex(localX, y, localZ)];
+                    if (here != defaultIndex) {
+                        const Category category = categoryOfIndex(here);
+                        if (category == Category::Air) {
+                            waterHeight.reset();
+                        } else if (category == Category::Fluid && !waterHeight.has_value()) {
+                            waterHeight = y + 1;
+                        }
                         continue;
                     }
+                    context.waterHeight = waterHeight;
                     context.y = y;
                     // Where the column's above_preliminary_surface threshold
                     // alone decides the rules' answer (Executor::
@@ -1612,6 +1778,10 @@ void ChunkFiller::applySurfaceRules(const std::int32_t chunkX, const std::int32_
                 scanColumn.template operator()<false>();
             }
         }
+    }
+    if (snapshot != nullptr) {
+        snapshot->worldSurface = worldSurface;
+        snapshot->pslCorners = pslCorners;
     }
 }
 

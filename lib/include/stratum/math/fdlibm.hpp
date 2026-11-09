@@ -25,4 +25,10 @@ namespace stratum::fdlibm {
 /// NaN, log(+inf) is +inf, and log(NaN) is that NaN.
 [[nodiscard]] double log(double x) noexcept;
 
+/// Sine, bit-identical to java.lang.StrictMath.sin over the arguments it
+/// carries: |x| <= 2^19 * pi/2 (about 823 550), and +-inf and NaN, which
+/// give NaN. Past that, fdlibm's large-argument reduction is not carried
+/// (fdlibm_sin.cpp says why): a precondition, asserted, answered with NaN.
+[[nodiscard]] double sin(double x) noexcept;
+
 } // namespace stratum::fdlibm

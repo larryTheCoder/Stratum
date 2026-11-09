@@ -313,8 +313,9 @@ static ZEND_FUNCTION(stratum_freezePipeline) {
     try {
         const std::filesystem::path target = worlds().resolvePipelinePath(fromZend(blobPath));
         const std::filesystem::path root(fromZend(versionRoot));
-        const std::vector<std::byte> blob = stratum::freeze::write(stratum::freeze::resolve(
-            stratum::data::Pack::open(root / "worldgen"), root / "biome_parameters"));
+        const std::vector<std::byte> blob = stratum::freeze::write(
+            stratum::freeze::resolve(stratum::data::Pack::open(root / "worldgen"),
+                                     root / "biome_parameters", root / "tags" / "block"));
         // Whole or not at all: a reader of $blobPath — a world's generator
         // opening it — finds the file it replaced or this one, never a
         // part-written blob.

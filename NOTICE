@@ -396,8 +396,11 @@ fdlibm (SunPro)
 --------------------------------------------------------------------------
 
 lib/src/fdlibm_log.cpp is adapted from fdlibm 5.3, file e_log.c
-(version 1.3, 95/01/18), obtained from https://www.netlib.org/fdlibm/.
-It carries the upstream notice in its file header, reproduced here:
+(version 1.3, 95/01/18), and lib/src/fdlibm_sin.cpp from fdlibm 5.3,
+files s_sin.c, k_sin.c, k_cos.c (each version 1.3, 95/01/18) and
+e_rem_pio2.c (version 1.4, 95/01/18), all obtained from
+https://www.netlib.org/fdlibm/. Each carries the upstream notice in its
+file header, reproduced here:
 
     ====================================================
     Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
@@ -408,7 +411,7 @@ It carries the upstream notice in its file header, reproduced here:
     is preserved.
     ====================================================
 
-This notice must be preserved in any distribution of that file;
+This notice must be preserved in any distribution of those files;
 tools/lint/check-determinism.sh fails the build if it is removed.
 
 The reason for vendoring rather than calling the platform's libm is

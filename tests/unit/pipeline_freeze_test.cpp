@@ -12,6 +12,7 @@
 
 #include "support/temp_path.hpp"
 
+#include <stratum/carver/carve.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
@@ -39,6 +40,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <map>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -849,4 +851,65 @@ TEST_CASE("a thawed pipeline builds the same noises its pack would", "[freeze]")
                   bits(legacyFromBlob.get(id).sample(at, at * 0.5, -at)));
         }
     }
+}
+
+TEST_CASE("a pipeline's carvers survive the freeze, and a blob's are held to a pack's",
+          "[freeze][carver]") {
+    const TempTree tree;
+    Pipeline before = buildPipeline(tree);
+    // The form without block tags freezes no carvers: terrain, uncarved.
+    CHECK(before.carvers.empty());
+
+    const ResourceLocation cave = ResourceLocation::parse("minecraft:cave");
+    const ResourceLocation stones = ResourceLocation::parse("minecraft:stones");
+    const ResourceLocation stone = ResourceLocation::parse("minecraft:stone");
+    const ResourceLocation granite = ResourceLocation::parse("minecraft:granite");
+    const ResourceLocation plains = ResourceLocation::parse("minecraft:plains");
+    const ResourceLocation snowy = ResourceLocation::parse("minecraft:snowy_plains");
+    nlohmann::json caveJson = nlohmann::json::parse(R"({"type": "minecraft:cave", "config": {
+        "probability": 0.15,
+        "y": {"type": "minecraft:uniform", "min_inclusive": {"above_bottom": 8},
+              "max_inclusive": {"absolute": 180}},
+        "yScale": {"type": "minecraft:uniform", "min_inclusive": 0.1, "max_exclusive": 0.9},
+        "lava_level": {"above_bottom": 8},
+        "replaceable": "#minecraft:stones",
+        "horizontal_radius_multiplier": {"type": "minecraft:uniform", "min_inclusive": 0.7,
+                                         "max_exclusive": 1.4},
+        "vertical_radius_multiplier": {"type": "minecraft:uniform", "min_inclusive": 0.8,
+                                       "max_exclusive": 1.3},
+        "floor_level": {"type": "minecraft:uniform", "min_inclusive": -1.0,
+                        "max_exclusive": -0.4}}})");
+    before.carvers.configured.emplace(cave, caveJson);
+    before.carvers.tags.emplace(stones, std::set<ResourceLocation>{stone, granite});
+    // A bare id, and a list holding an inline definition (spec B-Q11.1).
+    before.carvers.biomeCarvers.emplace(plains, "minecraft:cave");
+    nlohmann::json inlineCave = caveJson;
+    inlineCave["config"]["replaceable"] = nlohmann::json::array({"minecraft:dirt"});
+    before.carvers.biomeCarvers.emplace(snowy, nlohmann::json::array({inlineCave}));
+
+    const std::vector<std::byte> blob = stratum::freeze::write(before);
+    const Pipeline after = stratum::freeze::read(blob);
+    CHECK(after.carvers == before.carvers);
+    CHECK(stratum::freeze::write(after) == blob);
+
+    const stratum::carver::CarverSet set = stratum::carver::buildCarverSet(after.carvers);
+    REQUIRE(set.carversOf(plains).size() == 1U);
+    CHECK(set.carversOf(plains)[0]->replaceable == std::set<ResourceLocation>{stone, granite});
+    REQUIRE(set.carversOf(snowy).size() == 1U);
+    CHECK(set.carversOf(snowy)[0]->replaceable ==
+          std::set<ResourceLocation>{ResourceLocation::parse("minecraft:dirt")});
+
+    // A blob naming a carver it does not carry is refused by name when it
+    // is thawed, as the pack would be when it is resolved.
+    Pipeline dangling = before;
+    dangling.carvers.biomeCarvers[plains] = "minecraft:ravine";
+    CHECK_THROWS_MATCHES(stratum::freeze::read(stratum::freeze::write(dangling)), FreezeError,
+                         Catch::Matchers::MessageMatches(ContainsSubstring("minecraft:ravine")));
+
+    // And a pipeline asked for carvers without block tags is refused, not
+    // frozen uncarved.
+    CHECK_THROWS_MATCHES(stratum::freeze::resolve(tree.pack(), tree.biomeParametersDir(),
+                                                  tree.biomeParametersDir() / "no-tags-here"),
+                         FreezeError,
+                         Catch::Matchers::MessageMatches(ContainsSubstring("no block tags")));
 }

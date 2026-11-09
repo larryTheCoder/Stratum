@@ -154,6 +154,7 @@ TEST_CASE("the states a dimension can place: fill, veins, surface rules and band
     const std::vector<BlockState> withoutVeins = stratum::nukkit::emittableBlockStates(settings);
     const std::vector<BlockState> expected{
         state("minecraft:air"),
+        state("minecraft:cave_air"),
         state("minecraft:lava", {{"level", "0"}}),
         state("minecraft:stone"),
         state("minecraft:water", {{"level", "0"}}),

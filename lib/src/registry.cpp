@@ -44,7 +44,7 @@ constexpr std::array<RegistryInfo, 16> kRegistries = {{
      .supported = false},
     {.registry = Registry::ConfiguredCarver,
      .directory = "worldgen/configured_carver",
-     .supported = false},
+     .supported = true},
     {.registry = Registry::Structure, .directory = "worldgen/structure", .supported = false},
     {.registry = Registry::StructureSet, .directory = "worldgen/structure_set", .supported = false},
     {.registry = Registry::TemplatePool, .directory = "worldgen/template_pool", .supported = false},

@@ -4,6 +4,7 @@
 #include <stratum/biome/parameter_list.hpp>
 #include <stratum/biome/source.hpp>
 #include <stratum/biome/temperature_table.hpp>
+#include <stratum/carver/carve.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
 #include <stratum/javamath.hpp>
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -132,6 +134,21 @@ noisesFor(const freeze::Pipeline& pipeline, const settings::NoiseSettings& setti
     return javamath::floorDiv(geometry.minY, kQuartWidth);
 }
 
+/// @p filler with the pipeline's carvers, when it carries any: a pipeline
+/// resolved with block tags does (freeze::resolve), and one without
+/// generates terrain uncarved, which the terrain-stage goldens compare.
+[[nodiscard]] terrain::ChunkFiller carving(terrain::ChunkFiller filler,
+                                           const carver::CarverSources& carvers,
+                                           const biome::Source& biomeSource,
+                                           const std::int64_t worldSeed) {
+    if (carvers.empty()) {
+        return filler;
+    }
+    return filler.withCarvers(
+        std::make_shared<const carver::CarverSet>(carver::buildCarverSet(carvers)), biomeSource,
+        worldSeed);
+}
+
 } // namespace
 
 BiomeSource BiomeSource::multiNoise(data::ResourceLocation parameterList) {
@@ -196,8 +213,10 @@ struct CompiledDimension::Impl {
               pipeline.noises, noisesFor(pipeline, settings, surfaceRules), worldSeed,
               settings.legacyRandomSource ? density::RandomSource::Legacy
                                           : density::RandomSource::Xoroshiro)),
-          filler(terrain::ChunkFiller::compile(pipeline.graph, noises, settings, &surfaceRules,
-                                               biomeSource, &pipeline.biomeTemperatures)),
+          filler(
+              carving(terrain::ChunkFiller::compile(pipeline.graph, noises, settings, &surfaceRules,
+                                                    biomeSource, &pipeline.biomeTemperatures),
+                      pipeline.carvers, biomeSource, worldSeed)),
           biomeInterpreter(pipeline.graph, noises,
                            density::CellGeometry{.width = settings.geometry.cellWidth(),
                                                  .height = settings.geometry.cellHeight()}) {

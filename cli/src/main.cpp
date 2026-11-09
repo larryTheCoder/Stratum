@@ -73,11 +73,12 @@ constexpr auto kSubcommands = std::to_array<Subcommand>({
 void printGenerateUsage(std::ostream& out) {
     out << "  stratum generate <version-root | pipeline.blob> --dimension <name> --seed N\n"
         << "      (--region RX,RZ[:RX,RZ] | --chunks X,Z[:X,Z]) --out <dir>\n"
-        << "      [--threads N] [--force]\n"
+        << "      [--threads N] [--force] [--no-carvers]\n"
         << "      Writes Anvil region files, r.<x>.<z>.mca, holding the blocks and\n"
         << "      biomes this build generates (terrain, aquifers, ore veins, biomes,\n"
-        << "      surface rules; no carvers, features or structures) in Java block\n"
+        << "      surface rules, carvers; no features or structures) in Java block\n"
         << "      space, from a tools/fetch-vanilla version root or a frozen pipeline.\n"
+        << "      --no-carvers stops at the stage before carving.\n"
         << "      --dimension names vanilla's pairing of noise settings and biome\n"
         << "      source, stored over its dimension type's column:\n"
         << "       ";
@@ -552,6 +553,10 @@ int runGenerate(const std::vector<std::string_view>& args) {
         }
         if (argument == "--force") {
             request.force = true;
+            continue;
+        }
+        if (argument == "--no-carvers") {
+            request.carve = false;
             continue;
         }
         if (!argument.starts_with("-")) {
