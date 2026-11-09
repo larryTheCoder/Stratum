@@ -1,0 +1,306 @@
+{
+  "_meta": {
+    "source_spec": "carvers-a-spec.md",
+    "provenance": "PROVENANCE.md (run 05 sections)",
+    "minecraft_version": "1.21.11",
+    "date": "2026-11-09",
+    "note": "Hypothesis values for cave and nether_cave (Part A of run 05). Every entry names the claim it supports. Float values are given as the decimal literal and, where precision matters, the single-precision value it denotes.",
+    "_changelog": [
+      {
+        "change": "initial publication of carvers-a-spec.md and this file",
+        "reason": "RESEARCH-RUN-05.md, Part A per REVIEW-19 section 1",
+        "task": "RESEARCH-RUN-05 Part A"
+      }
+    ]
+  },
+  "start_seed": {
+    "seed_input": "world seed plus list position k, 64-bit wrapping",
+    "combine": "(Sx*A) xor (Sz*B) xor (W+k), A and B the first two long draws",
+    "claim": "Q1.1"
+  },
+  "legacy_generator": {
+    "multiplier": "0x5DEECE66D",
+    "addend": "0xB",
+    "state_bits": 48,
+    "float_bits": 24,
+    "float_scale": "2^-24",
+    "claim": "Q1.2"
+  },
+  "start_window": {
+    "chunk_radius": 8,
+    "metric": "Chebyshev",
+    "x_outer": true,
+    "claim": "Q7.3, Q11.1"
+  },
+  "biome_list_sampling": {
+    "quart_x": "4*Sx",
+    "quart_y": 0,
+    "quart_z": "4*Sz",
+    "source": "the dimension biome source itself, not the zoomed biome",
+    "claim": "Q11.2"
+  },
+  "systems": {
+    "cave_bound": 15,
+    "nether_cave_bound": 10,
+    "origin_offset_draw_bound": 16,
+    "room_test_bound": 4,
+    "room_extra_tunnels_bound": 4,
+    "claim": "Q1.4"
+  },
+  "room": {
+    "radius_draw": "1 + F*6 (float)",
+    "base_radius": 1.5,
+    "angle_float": 1.5707964,
+    "centre_x_offset": 1,
+    "uses_radius_multipliers": false,
+    "claim": "Q3.4"
+  },
+  "tunnel_start": {
+    "heading_scale_float": 6.2831855,
+    "pitch_offset": 0.5,
+    "pitch_divisor": 4,
+    "cave_thickness": "a = F*2 + F; if I(10)==0 then a*(F*F*3+1)",
+    "nether_thickness": "(F*2 + F)*2",
+    "length_base": 112,
+    "length_reduction_bound": 28,
+    "claim": "Q1.4"
+  },
+  "walk": {
+    "base_radius": 1.5,
+    "pi_float": 3.1415927,
+    "vertical_scale_root_cave": 1.0,
+    "vertical_scale_root_nether": 5.0,
+    "vertical_scale_fork": 1.0,
+    "steep_bound": 6,
+    "pitch_damping_steep": 0.92,
+    "pitch_damping": 0.7,
+    "velocity_coefficient": 0.1,
+    "pitch_velocity_decay": 0.9,
+    "heading_velocity_decay": 0.75,
+    "pitch_kick": 2.0,
+    "heading_kick": 4.0,
+    "carve_skip_bound": 4,
+    "claim": "Q3.1, Q3.2, Q3.3"
+  },
+  "fork": {
+    "index": "I(floor(L/2)) + floor(L/4)",
+    "threshold_thickness": 1.0,
+    "thickness": "F*0.5 + 0.5",
+    "heading_offset_float": 1.5707964,
+    "pitch_divisor": 3,
+    "max_fork_thickness": 1.0,
+    "claim": "Q6.1, Q6.2"
+  },
+  "reach": {
+    "thickness_addend_1": 2.0,
+    "thickness_addend_2": 16.0,
+    "claim": "Q7.1"
+  },
+  "ellipsoid": {
+    "early_out_base": 16.0,
+    "early_out_radius_factor": 2.0,
+    "cell_centre_offset": 0.5,
+    "top_margin": 7,
+    "top_margin_upgrading": 0,
+    "bottom_margin": 1,
+    "y_order": "descending",
+    "claim": "Q4.1-Q4.5, Q13.6"
+  },
+  "trig_table": {
+    "entries": 65536,
+    "index_scale": 10430.378350470453,
+    "cosine_index_offset": 16384.0,
+    "index": "truncate toward zero to 64 bits, then and 65535",
+    "sha256_big_endian_float32": "87a67a39fff59636acb04edcda4ef622831037291f11fb61586c57596771dac2",
+    "claim": "Q9.1, Q9.2"
+  },
+  "fill": {
+    "aquifer_density": 0.0,
+    "nether_lava_above_floor": 31,
+    "nether_air_block": "minecraft:cave_air",
+    "top_rewrite_trigger_blocks": [
+      "minecraft:grass_block",
+      "minecraft:mycelium"
+    ],
+    "top_rewrite_target_block": "minecraft:dirt",
+    "claim": "Q12.1, Q12.3, Q12.6"
+  },
+  "configured_carvers": {
+    "minecraft:cave": {
+      "type": "minecraft:cave",
+      "probability": 0.15,
+      "y": {
+        "type": "uniform",
+        "min": "above_bottom 8",
+        "max": "absolute 180"
+      },
+      "yScale": {
+        "type": "uniform",
+        "min": 0.1,
+        "max_exclusive": 0.9
+      },
+      "lava_level": "above_bottom 8",
+      "replaceable": "#minecraft:overworld_carver_replaceables",
+      "horizontal_radius_multiplier": {
+        "type": "uniform",
+        "min": 0.7,
+        "max_exclusive": 1.4
+      },
+      "vertical_radius_multiplier": {
+        "type": "uniform",
+        "min": 0.8,
+        "max_exclusive": 1.3
+      },
+      "floor_level": {
+        "type": "uniform",
+        "min": -1.0,
+        "max_exclusive": -0.4
+      },
+      "debug_mode": false
+    },
+    "minecraft:cave_extra_underground": {
+      "type": "minecraft:cave",
+      "probability": 0.07,
+      "y": {
+        "type": "uniform",
+        "min": "above_bottom 8",
+        "max": "absolute 47"
+      },
+      "yScale": {
+        "type": "uniform",
+        "min": 0.1,
+        "max_exclusive": 0.9
+      },
+      "lava_level": "above_bottom 8",
+      "replaceable": "#minecraft:overworld_carver_replaceables",
+      "horizontal_radius_multiplier": {
+        "type": "uniform",
+        "min": 0.7,
+        "max_exclusive": 1.4
+      },
+      "vertical_radius_multiplier": {
+        "type": "uniform",
+        "min": 0.8,
+        "max_exclusive": 1.3
+      },
+      "floor_level": {
+        "type": "uniform",
+        "min": -1.0,
+        "max_exclusive": -0.4
+      },
+      "debug_mode": false
+    },
+    "minecraft:nether_cave": {
+      "type": "minecraft:nether_cave",
+      "probability": 0.2,
+      "y": {
+        "type": "uniform",
+        "min": "absolute 0",
+        "max": "below_top 1"
+      },
+      "yScale": 0.5,
+      "lava_level": "above_bottom 10 (not read)",
+      "replaceable": "#minecraft:nether_carver_replaceables",
+      "horizontal_radius_multiplier": 1.0,
+      "vertical_radius_multiplier": 1.0,
+      "floor_level": -0.7,
+      "debug_mode": false
+    },
+    "claim": "Q11.5, Q13"
+  },
+  "resolved_replaceables": {
+    "#minecraft:overworld_carver_replaceables": [
+      "minecraft:andesite",
+      "minecraft:black_terracotta",
+      "minecraft:blue_terracotta",
+      "minecraft:brown_terracotta",
+      "minecraft:calcite",
+      "minecraft:coarse_dirt",
+      "minecraft:copper_ore",
+      "minecraft:cyan_terracotta",
+      "minecraft:deepslate",
+      "minecraft:deepslate_copper_ore",
+      "minecraft:deepslate_iron_ore",
+      "minecraft:diorite",
+      "minecraft:dirt",
+      "minecraft:granite",
+      "minecraft:grass_block",
+      "minecraft:gravel",
+      "minecraft:gray_terracotta",
+      "minecraft:green_terracotta",
+      "minecraft:iron_ore",
+      "minecraft:light_blue_terracotta",
+      "minecraft:light_gray_terracotta",
+      "minecraft:lime_terracotta",
+      "minecraft:magenta_terracotta",
+      "minecraft:moss_block",
+      "minecraft:mud",
+      "minecraft:muddy_mangrove_roots",
+      "minecraft:mycelium",
+      "minecraft:orange_terracotta",
+      "minecraft:packed_ice",
+      "minecraft:pale_moss_block",
+      "minecraft:pink_terracotta",
+      "minecraft:podzol",
+      "minecraft:powder_snow",
+      "minecraft:purple_terracotta",
+      "minecraft:raw_copper_block",
+      "minecraft:raw_iron_block",
+      "minecraft:red_sand",
+      "minecraft:red_sandstone",
+      "minecraft:red_terracotta",
+      "minecraft:rooted_dirt",
+      "minecraft:sand",
+      "minecraft:sandstone",
+      "minecraft:snow",
+      "minecraft:snow_block",
+      "minecraft:stone",
+      "minecraft:suspicious_gravel",
+      "minecraft:suspicious_sand",
+      "minecraft:terracotta",
+      "minecraft:tuff",
+      "minecraft:water",
+      "minecraft:white_terracotta",
+      "minecraft:yellow_terracotta"
+    ],
+    "#minecraft:nether_carver_replaceables": [
+      "minecraft:andesite",
+      "minecraft:basalt",
+      "minecraft:blackstone",
+      "minecraft:coarse_dirt",
+      "minecraft:crimson_nylium",
+      "minecraft:deepslate",
+      "minecraft:diorite",
+      "minecraft:dirt",
+      "minecraft:granite",
+      "minecraft:grass_block",
+      "minecraft:moss_block",
+      "minecraft:mud",
+      "minecraft:muddy_mangrove_roots",
+      "minecraft:mycelium",
+      "minecraft:nether_wart_block",
+      "minecraft:netherrack",
+      "minecraft:pale_moss_block",
+      "minecraft:podzol",
+      "minecraft:rooted_dirt",
+      "minecraft:soul_sand",
+      "minecraft:soul_soil",
+      "minecraft:stone",
+      "minecraft:tuff",
+      "minecraft:warped_nylium",
+      "minecraft:warped_wart_block"
+    ],
+    "claim": "Q12.2"
+  },
+  "debug_defaults": {
+    "debug_mode": false,
+    "omitted_debug_settings": [
+      "minecraft:acacia_button",
+      "minecraft:candle",
+      "minecraft:orange_stained_glass",
+      "minecraft:glass"
+    ],
+    "omitted_individual_state_falls_back_to": "minecraft:acacia_button",
+    "claim": "Q13.4"
+  }
+}

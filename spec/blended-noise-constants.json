@@ -15,6 +15,28 @@
         "change": "corrected Q3.1's topic sentence in blended-noise-spec.md (named the wrong branch as dead)",
         "reason": "REVIEW-06 gate: the topic sentence said 'd != 0 is dead' when the proof body, the DO-NOT-IMPLEMENT clause, and this file's own dead_branches.zero_divisor_fallback entry all correctly identify d = 0 as the dead branch",
         "task": "REVIEW-06 section 1"
+      },
+      {
+        "change": "added integer_widths; width amendments added under Q1.4 and Q2.2 (original claim text unchanged)",
+        "reason": "REVIEW-14 integer-width audit: every integer formula now states width, signedness and wrap / extension / floor-or-truncation semantics (CLAUDE.md rule 14a)",
+        "task": "REVIEW-14 \u00a71"
+      },
+      {
+        "change": "replaced a mapping class name (2 occurrences, in string values) with neutral wording; no key changed",
+        "reason": "filtration: mapping identifiers are not permitted in crossed artifacts; found by the REVIEW-14 whole-file sweep",
+        "task": "REVIEW-15 \u00a72"
+      },
+      {
+        "change": "corrected the value of divisor_to_cap_bound_ratio",
+        "reason": "the earlier value stated a relation that holds only at block y = 1; the divisor is independent of y while the cap bound is proportional to it. No other value changes; run 02's value verification used the correct operand formulas",
+        "claim": "Q2.1 correction",
+        "task": "REVIEW-15 \u00a72 (finding)"
+      },
+      {
+        "change": "added fp_forms (limit-sum skip at selector 1.0, smoothstep and lerp evaluation order)",
+        "reason": "Q1.5 stated the skip was never behavioral; it is behavioral at selector exactly 1.0. The fade order was not stated",
+        "claim": "Q1.5 / notation floating-point amendments",
+        "task": "REVIEW-15 \u00a75"
       }
     ]
   },
@@ -103,7 +125,7 @@
   "fold_cap": {
     "epsilon": 1e-07,
     "epsilon_precision": "float literal in source, widened to double at the addition",
-    "divisor_to_cap_bound_ratio": "exactly smear_scale_multiplier",
+    "divisor_to_cap_bound_ratio": "smear_scale_multiplier / y in exact arithmetic (y = block y); the divisor does not depend on y, the cap bound does (Q2.1 correction)",
     "smear_scale_multiplier_enters_at": "the divisor only, never the cap bound",
     "cap_condition": "cap_bound >= 0.0 AND cap_bound < yfrac",
     "fold_formula": "fold = floor(clamp_source/divisor + 1e-7) * divisor, where clamp_source = cap_bound if the cap condition holds, else yfrac",
@@ -139,7 +161,7 @@
       "max_limit",
       "main"
     ],
-    "sampler_order_note": "all three share ONE RandomSource instance, advanced in sequence across all three constructions",
+    "sampler_order_note": "all three share ONE random stream, advanced in sequence across all three constructions",
     "per_sampler_octave_order": "highest frequency first (octave 0), then descending through coarser octaves in strict order to the sampler's coarsest octave",
     "per_layer_draws": "3 floating-point draws (that layer's own xo,yo,zo offsets), then 256 draws performing an in-place 256-entry permutation shuffle",
     "layers_ever_skipped_for_this_mechanism": 0,
@@ -152,7 +174,7 @@
   },
   "external_inputs": {
     "complete_set": [
-      "derived RandomSource (via seed + terrain salt)",
+      "derived random stream (via seed + terrain salt)",
       "block position (x,y,z)",
       "xz_scale",
       "y_scale",
@@ -174,5 +196,19 @@
     "max_absolute_difference_after_correction": 0.0,
     "tolerance": 1e-09,
     "one_correction_recorded": "Q2.2's interpolation-weight axis; see AUDIT.md"
+  },
+  "integer_widths": {
+    "claim": "width amendments under Q1.4, Q2.2",
+    "coordinates": "32-bit block coordinates converted exactly to double",
+    "lattice_floor_bits": 32,
+    "fold_floor_bits": 32,
+    "fold_floor_saturation": "unreachable: argument < 1.9e5 under codec bounds",
+    "wrap_floor_bits": 64
+  },
+  "fp_forms": {
+    "claim": "floating-point amendments under Q1.5 and the notation",
+    "limit_sum_skip": "selector >= 1.0: min-limit sum not summed (stays 0.0); selector <= 0.0: max-limit sum not summed (stays 0.0); at selector exactly 1.0 the result is exactly (max_sum/512)/128",
+    "smoothstep": "((t*t)*t)*((t*((t*6.0)-15.0))+10.0); not the expanded polynomial",
+    "lerp": "a + t*(b - a)"
   }
 }

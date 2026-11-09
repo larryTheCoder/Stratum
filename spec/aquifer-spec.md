@@ -22,6 +22,13 @@
 · kind `constant` · confidence `read-directly`
 · verify-by: probe deep columns in a superflat-like preset with varied `sea_level`; the level at which the fallback reading flips gives `A_default`.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> `min_y_limit`, `2·min_y_limit` and the levels `−54`, `sea_level` are 32-bit signed integers. `A_void`'s level is the exact product `−4064`; no overflow is possible.
+>
+> · kind `constant` · confidence `verified(bytecode)`
+> · verify-by: already executed — read as 32-bit constants in the disassembly. No boundary exists, so no mutant applies.
+
 **Q1.2** `Global(x, y, z) = A_lava if y < min(−54, sea_level), else A_default`. It is independent of `x` and `z`.
 · kind `formula` · confidence `read-directly`
 · verify-by: ablation — set `sea_level` below `−54` and confirm the crossover tracks `sea_level` rather than staying pinned at `−54`.
@@ -33,6 +40,13 @@
 **Q1.4** `min_y_limit = −2032` and the sentinel `never = 16·min_y_limit = −32512`. Derivation: the position encoding reserves `64 − 2·(1 + ⌈log2 30000000⌉) = 12` bits for `y`, giving a span of `2^12 − 32 = 4064`, an upper bound of `4064/2 − 1 = 2031`, and `min_y_limit = 2031 − 4064 + 1`.
 · kind `constant` · confidence `inferred-from-reading` (arithmetic composed from four separately-read definitions; the products are not literals in-tree)
 · verify-by: assert the two values in the harness against a direct recomputation of the same arithmetic.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> Every quantity in the derivation is a 32-bit signed integer, and the sentinel `never = 16·min_y_limit = −32512` is that exact product. The position-field widths it derives from are `26` bits for each horizontal coordinate and `12` for `y` (see the Q3.3 amendment, which this derivation governs). No overflow is possible.
+>
+> · kind `constant` · confidence `verified(bytecode)`
+> · verify-by: already executed — constants and field widths read in the disassembly.
 
 **Q1.5** `A_void` is reachable only under a build-time debug switch that disables fluid generation entirely; in shipped builds it is unobservable.
 · kind `contract` · confidence `read-directly`
@@ -62,6 +76,15 @@
 · kind `formula` · confidence `read-directly`
 · verify-by: ablation — force `Prelim` to a constant and confirm the observed cutoff height matches the closed form exactly.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - All quantities are 32-bit signed integers. `floordiv` is floor division (rounding toward −∞), per the notation.
+> - `S_max` is the maximum of the 32-bit `Prelim` values of the Q5.2 amendment. The sample columns are `x = x₀ + 4t` for `x ≤ x₁`, with `x₀ = 16·i_lo` and `x₁ = 16·(i_hi) + 9` (Q3.5's bounds), and likewise in `z`. After Q5.2's snapping, this visits every quarter-resolution column in the rectangle.
+> - No overflow is reachable: every term is bounded by the dimension's y range.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed — the real lattice set-up was driven with a constant preliminary surface across 7 dimension shapes (including `min_y = −2032`, height `4064`, and a top at `2032`), 7 chunk positions (both signs, up to the horizontal extremes) and 6 surface values (including negative and fractional). The skip height matched this formula in every case (harness C of the REVIEW-14 driver).
+
 **Q2.6** The constant `+8` appearing here and throughout Q5 is a single "surface adjustment" applied to every `Prelim` reading before use. It is never applied twice to the same reading.
 · kind `constant` · confidence `read-directly`
 · verify-by: covered by Q2.5 and Q5.4 probes.
@@ -78,17 +101,84 @@
 · kind `formula` · confidence `read-directly`
 · verify-by: locate one cell boundary empirically and confirm it sits at `x ≡ 5 (mod 16)` rather than `x ≡ 0`.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `i`, `j` and `k` are 32-bit signed integers. Each division is **floor division**, toward −∞, for both signs: `i = ⌊(x − 5)/16⌋`, `j = ⌊(y + 1)/12⌋`, `k = ⌊(z − 5)/16⌋`.
+> - **Where a wrong rounding goes undetected:** a truncating division (toward zero) agrees exactly when the dividend is non-negative or an exact multiple of the divisor.
+> - No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · verify-by: already executed. The cell-index maps were called directly on 105 values each, including ±0, ±1 and the values either side of ±11, ±12, ±15, ±16, ±40, ±64 and ±3·10⁷: 0 mismatches. The truncating mutant agreed inside its stated region (55/55 and 52/52) and disagreed outside it (50/50 and 53/53).
+
 **Q3.3** Each cell `(i, j, k)` carries exactly one point at `Q(i,j,k) = (16i + u, 12j + v, 16k + w)` with integer offsets `u ∈ [0,10)`, `v ∈ [0,9)`, `w ∈ [0,10)`. The per-axis slack (`16−10 = 6`, `12−9 = 3`, `16−10 = 6`) guarantees a minimum separation between points of adjacent cells along each axis.
 · kind `formula` · confidence `read-directly`
 · verify-by: histogram recovered point offsets over many cells; support must be exactly `[0,10) × [0,9) × [0,10)` and uniform.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `16i + u`, `12j + v` and `16k + w` are 32-bit signed sums. No overflow is reachable.
+> - **The point is retained with its y coordinate reduced to a signed 12-bit field:** `y_ret = ((12j + v + 2048) mod 4096) − 2048`. Its x and z are retained exactly (26-bit fields, wider than the reachable range).
+> - **Every later use of the point reads the retained coordinates.** That includes the distance of Q4.2 and the status position of Q5.
+> - For `12j + v ∈ [−2048, 2047]`, the reduction is the identity.
+>
+> **`open-question`: a live hazard, not dead code.** Two lattice cells straddle the edge of the 12-bit range.
+> - **Top cell.** When a dimension's top reaches `2028` or above, blocks with `y ∈ [2027, 2031]` consult the cell `j = 170`, whose points lie at `2040 + v`. The point with `v = 8` (true `y = 2048`) is retained at `−2048`.
+> - **Bottom cell.** With `min_y = −2032` and a pack `sea_level` low enough that the global picker is not lava at the bottom (`sea_level ≤ y` there), blocks with `y ≤ −2030` consult the cell `j = −171`, whose points lie at `−2052 + v`. Those with `v ≤ 3` are retained at `+2044 … +2047`.
+>
+> A retained point roughly 4 090 blocks away never ranks among the nearest four. An implementation that keeps the true coordinate therefore selects differently near these edges. No shipped preset reaches either edge. `sea_level` is an unbounded pack integer, and dimension height is pack data. Whether to reproduce the reduction is downstream policy.
+>
+> · kind `open-question` · confidence `verified(bytecode+harness)`
+> · verify-by: already executed.
+> - The 12-bit retention was swept for every `y` in `[−2100, 2100]`: 4 201 values, 0 mismatches.
+> - The real aquifer was driven end to end in a dimension topped at `2032`, with the surface near the top: 6 of 63 top-cell points were retained at `−2048`.
+> - With `min_y = −2032` and `sea_level = −2040`: 30 of 63 bottom-cell points wrapped.
+> - Re-ranking the twelve candidates with true versus retained positions (by the Q4.4 rule) changed the nearest-four set for 77 of 62 720 queried top-edge blocks, and 106 of 37 632 bottom-edge blocks.
+> - Not measured: the substance change, which needs the full status chain at those points. Cheapest confirmation: the same end-to-end set-up with real router noises, about 2 hours.
 
 **Q3.4** RNG derivation for those offsets: a positional fork of the world random, salted by the string **`minecraft:aquifer`**, then positioned at the *cell indices* `(i, j, k)` — not at block coordinates. Positioning mixes the indices as `m = (i·3129871) xor (k·116129781) xor j`, then `((m·m·42317861) + 11m) >> 16`, combined with the stream seed. Draws are consumed in the order `u, v, w` with bounds `10, 9, 10`; the order is output-visible.
 · kind `formula` · confidence `read-directly` (salt, ordering and mixing read directly; the fork/positional composition is `inferred-from-reading` in that the two shipped random sources differ in how the salted seed is combined)
 · verify-by: reproduce offsets for a known seed against a deepslate-oracle probe at a handful of cells; a wrong draw order shows up immediately as swapped axes.
 
+> **Amendment to Q3.4: integer widths of the cell-position mix** (2026-11-09, REVIEW-13 §2). The text above stands as first published. It gives the multipliers but no integer widths. This amendment supplies them. Its scope is the mix's arithmetic only: it applies to presets using the non-legacy random source, and open question 7 (the legacy source) stays closed.
+>
+> All quantities are two's-complement integers. `i`, `j` and `k` are the 32-bit cell indices of Q3.2. `sx` denotes sign extension from 32 to 64 bits.
+>
+> - **x term: a 32-bit product, then sign extension.** `sx((i · 3129871) mod 2³², read as signed 32-bit)`. The product wraps at 32 bits **before** widening.
+> - **z term: sign extension, then a 64-bit product.** `(sx(k) · 116129781) mod 2⁶⁴`.
+> - **y term:** `sx(j)`, with no multiplier.
+> - `m` is the 64-bit XOR of the three terms.
+> - `((m · m · 42317861) + (m · 11)) mod 2⁶⁴`, then an **arithmetic** (sign-propagating) right shift by 16.
+> - **Combination with the stream seed:** the result is XORed into the low 64-bit half of the 128-bit positional stream seed. The high half is unchanged.
+>
+> **Where a wrong-width implementation goes undetected.** Each wrong width agrees with the jar only on part of the index space, and the boundaries are sharp:
+>
+> - a 64-bit x product agrees exactly when `|i| ≤ 686`, which is `|x| ≲ 10 980` blocks;
+> - a 32-bit z product agrees exactly when `|k| ≤ 18`, which is `|z| ≲ 300` blocks;
+> - a zero-extended `j` agrees exactly when `j ≥ 0`;
+> - a logical shift agrees only where the pre-shift value is non-negative.
+>
+> By Q3.2, the reachable cell indices extend to about `|i|, |k| ≤ 1.875·10⁶`, so all four regions are reachable in normal play.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · verify-by: already executed.
+> - **Bytecode** (this session): the aquifer passes its three cell indices as 32-bit integers in the order (x, y, z). The x product is a 32-bit multiply, then widened. `k` is widened, then multiplied in 64 bits. `j` is widened. The remaining products and the sum are 64-bit, the shift is arithmetic, and the result is XORed into the low half only.
+> - **Differential harness** against the unmodified jar: the real aquifer stream's 128-bit state was read at the following points and compared with a reference that computes in arbitrary precision and reduces explicitly at the stated widths:
+>   - 21 x-indices, 15 z-indices and 7 y-indices, including `±685…±688`, `±1372`/`±1373`, `±18`/`±19` and the reachable extremes `1 874 999` / `−1 875 001`;
+>   - 9 world seeds, including 0, ±1 and the 64-bit extremes.
+>
+>   That is 19 845 state comparisons, 0 mismatches. The aquifer's three bounded draws (bounds 10, 9, 10), taken from the stream at those cells, matched a generator built from the reference state: 59 535 checks, 0 mismatches.
+> - **Mutant references**, one per wrong width: each agreed on 100% of samples inside the region stated above and disagreed on 100% of samples outside it. For the logical shift: agreement on 9 927 of 19 845 samples.
+
 **Q3.5** The lattice extent allocated for a chunk spans `i ∈ [floordiv(x_min − 5, 16), floordiv(x_max − 5, 16) + 1]`, `k` likewise in `z`, and `j ∈ [floordiv(min_y + 1, 12) − 1, floordiv(min_y + height + 1, 12) + 1]`.
 · kind `formula` · confidence `read-directly`
 · verify-by: consumed only by Q2.5's rectangle; verify jointly with it.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> All bounds are 32-bit signed integers, with floor division as in the Q3.2 amendment. No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. Every bound matched for 294 combinations of dimension shape, chunk position and surface value (harness C), 0 mismatches.
 
 **Q3.6** A declared constant "maximum reasonable distance to aquifer centre" of `11` exists but is **not read anywhere in the aquifer path** in this version. Recorded for completeness; it must not be implemented.
 · kind `open-question` · confidence `read-directly` (absence of use verified by exhaustive search of the tree)
@@ -102,9 +192,23 @@
 · kind `constant` · confidence `read-directly`
 · verify-by: ablation — widen to a symmetric 27-cell set and confirm the output diverges, establishing the asymmetry is load-bearing.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The candidate cells `(i + a, j + b, k + c)` are 32-bit signed sums. No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — 32-bit adds read in the disassembly. No boundary exists.
+
 **Q4.2** The metric is **squared Euclidean distance** in blocks from `P` to each candidate point. No axis weighting, no cheaper surrogate.
 · kind `formula` · confidence `read-directly`
 · verify-by: golden-region predicate over a region containing near-ties.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The squared distance is the 32-bit signed integer `dx² + dy² + dz²`, where each difference is the retained point coordinate (Q3.3 amendment) minus the block coordinate. No overflow is reachable: even with a reduced `y`, `|dy| < 4 200`.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — 32-bit multiplies and adds on the retained coordinates read in the disassembly.
 
 **Q4.3** The **four** smallest squared distances `d₁ ≤ d₂ ≤ d₃ ≤ d₄` and their points are retained. `d₄` influences only the fluid-update flag of Q8, never the substance.
 · kind `contract` · confidence `read-directly`
@@ -158,13 +262,36 @@ For a lattice point `Q = (qx, qy, qz)`, its status `A(Q) = (L, T)` is a pure fun
 · kind `constant` · confidence `read-directly`
 · verify-by: assert the literal table in the harness; any permutation changes output via Q5.3.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The probe column `(qx + 16·o_x, qz + 16·o_z)` is a 32-bit signed sum. No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — read in the disassembly.
+
 **Q5.2** Write `a(o) = Prelim(qx + 16·o_x, qz + 16·o_z) + 8` for the adjusted surface at probe `o`, and `a₀ = a((0,0))`. `Prelim` is itself evaluated on **quarter-resolution** columns: the sample position is snapped by `4·⌊·/4⌋` in both `x` and `z` before evaluation, and it is evaluated at `y = 0`.
 · kind `formula` · confidence `read-directly`
 · verify-by: confirm `Prelim` is piecewise-constant on 4×4 column blocks.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `Prelim(x, z)` is a 32-bit signed integer: the **floor** (toward −∞) of the router's preliminary-surface value. That value is evaluated at `(4·⌊x/4⌋, 0, 4·⌊z/4⌋)`, where `⌊·/4⌋` is floor division for both signs.
+> - `a(o) = Prelim + 8` is a 32-bit sum.
+> - **Where a wrong rounding goes undetected:** truncating the value agrees exactly when it is non-negative or integral. A truncating snap agrees exactly for non-negative coordinates or exact multiples of 4.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. The real preliminary-surface lookup was driven with a recording input at 35 coordinates × 9 values (including `−3.5`, `−0.25` and `−64.5`): 0 mismatches. The truncating mutants agreed inside their regions (210/210 and 216/216) and disagreed outside them (105/105 and 99/99).
+
 **Q5.3** The status short-circuits, in this priority: (a) if `qy − 12 > a₀` then `A(Q) = Global(Q)`; (b) otherwise, let `o*` be the **first** offset in Q5.1's order satisfying both `qy + 12 > a(o)` and `Global(qx+16·o_x, a(o), qz+16·o_z)(a(o)) ≠ air`; if `o*` exists, `A(Q)` is that global status evaluated at `(·, a(o*), ·)`. Case (a) says: a point far enough below its own surface is governed globally. Case (b) says: a point near a column whose adjusted surface is *submerged* inherits that column's fluid.
 · kind `contract` · confidence `read-directly`
 · verify-by: golden-region predicate near coastlines, where (b) fires often.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> `qy − 12`, `qy + 12` and the probe columns are 32-bit signed sums, compared as 32-bit integers. The probe height `a(o)` is the 32-bit value of the Q5.2 amendment. No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — 32-bit adds and subtracts read in the disassembly. No boundary exists.
 
 **Q5.4** If neither short-circuit fires, define `S_min` as the minimum of `Prelim` (unadjusted) over **all thirteen** probes. `S_min` is well-defined precisely because the non-short-circuit path visits every probe.
 · kind `formula` · confidence `read-directly`
@@ -178,21 +305,79 @@ For a lattice point `Q = (qx, qy, qz)`, its status `A(Q) = (L, T)` is a pure fun
 · kind `formula` · confidence `read-directly`
 · verify-by: ablation on `φ` — clamp `submerged` to false and confirm the `64`-block ramp disappears.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> `d = S_min + 8 − qy` is a 32-bit signed integer, converted exactly to double before the ramp. No overflow is reachable. (A floating-point question about the threshold expressions is outside this amendment. See `AUDIT.md` §21.)
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — 32-bit add and subtract, then an exact conversion, read in the disassembly.
+
+> **Floating-point amendment** (2026-11-09, REVIEW-15 §2). The text above, including its threshold expressions, stands as first published. Those expressions are algebraically correct but **not bit-exact**; this block replaces them for implementation.
+>
+> With `d` the 32-bit integer of the width amendment above, every operation below is double precision, evaluated in exactly the written order:
+>
+> - `t = (d − 0.0)/(64.0 − 0.0)`;
+> - `φ = 1.0` if `t < 0.0`; `φ = 0.0` if `t > 1.0`; otherwise `φ = 1.0 + t·(0.0 − 1.0)`, and `φ = 0.0` when not submerged. This ramp equals the published `clamp((64 − d)/64, 0, 1)` bit for bit on every reachable `d`;
+> - `θ_hi = −0.3 + ((φ − 1.0)/(0.0 − 1.0))·(0.8 − (−0.3))`;
+> - `θ_lo = −0.8 + ((φ − 1.0)/(0.0 − 1.0))·(0.4 − (−0.8))`;
+> - the level is `Global(Q).level` iff `n − θ_hi > 0.0`; otherwise the randomized level of Q5.7 iff `n − θ_lo > 0.0`; otherwise `never`. (For finite doubles, `n − θ > 0.0` holds exactly when `n > θ`, so either comparison is exact. The thresholds themselves are what must match.)
+>
+> **Mis-derivation warning.** The published `θ_hi = 0.8 − 1.1φ` and `θ_lo = 0.4 − 1.2φ` differ in the last bits from the engine on 44 and 63 of the 65 reachable `φ` values. For example, at `φ = 1` the engine's `θ_hi` is exactly `−0.3`, while the published form gives `−0.30000000000000004`. Every literal is a double; there is no single-precision literal here.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · widths: `d` is 32-bit signed, converted exactly to double (width amendment above).
+> · fp-form: double precision throughout, in the written order; all literals are double; the subtrahends `0.8 − (−0.3)` and `0.4 − (−0.8)` are evaluated in double as written, not pre-folded to `1.1` or `1.2`.
+> · verify-by: already executed. The real level computation was driven with floodedness set exactly at each threshold and one unit in the last place either side, for every `d ∈ [−3, 67]`, both submerged and not: 852 decisions, 0 mismatches against this form. The published form disagreed with the jar on 332 of the same 852.
+
 **Q5.7** Randomized level. With `xi = floordiv(qx,16)`, `yi = floordiv(qy,40)`, `zi = floordiv(qz,16)`: `L_rand = min(S_min, 40·yi + 20 + 3·⌊10·Spread(xi, yi, zi)/3⌋)`. The `Spread` noise is sampled **at the grid indices themselves as coordinates**, not at block coordinates — a 1/16, 1/40, 1/16 contraction of the sampling lattice. The `3·⌊·/3⌋` is a quantization to multiples of 3 with floor rounding (so negative values round away from zero).
 · kind `formula` · confidence `read-directly`
 · verify-by: histogram `L_rand − 40·yi − 20` over many points; support must be multiples of 3, and the `min` with `S_min` must be the only source of non-multiples.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `xi = ⌊qx/16⌋`, `yi = ⌊qy/40⌋` and `zi = ⌊qz/16⌋` are 32-bit floor divisions, toward −∞ for both signs.
+> - `40·yi + 20` is a 32-bit sum.
+> - The quantized term is `3·F`, where `F` is the 32-bit floor of `(10.0·s)/3.0`. Here `s` is the `Spread` value, `10.0·s` is formed first in double precision, and the division by `3.0` is a double division.
+> - `L_rand` is the 32-bit minimum.
+> - **Where a wrong rounding goes undetected:** a truncating quantization agrees exactly when `(10s)/3 ≥ 0` or is integral. A truncating index division agrees exactly for non-negative or exactly divisible coordinates.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. The real randomized-level computation was driven with a recording `Spread` over a coordinate grid × 14 values (including `±0.3`, `±0.6` and their neighbours): 0 mismatches, including the exact sampling indices. The truncating quantization mutant agreed inside its region (10 080/10 080) and disagreed outside it (5 600/5 600).
 
 **Q5.8** Fluid type. `T = Global(Q).type`, overridden to lava when **all** of: `L ≤ −10`, `L ≠ never`, and `Global(Q).type` is not already lava — and then `|Lava(floordiv(qx,64), floordiv(qy,40), floordiv(qz,64))| > 0.3`. The `Lava` noise is likewise sampled at contracted indices, on a different horizontal divisor (`64`) from `Spread`'s (`16`).
 · kind `formula` · confidence `read-directly`
 · verify-by: golden-region predicate — the lava/water split of local aquifers at `L ≤ −10`; the `0.3` threshold is recoverable by bisection.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The contracted indices `⌊qx/64⌋`, `⌊qy/40⌋` and `⌊qz/64⌋` are 32-bit floor divisions, toward −∞. A truncating mutant agrees exactly when each coordinate is non-negative or exactly divisible.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. The real fluid-type computation was driven with a recording `Lava` input: the sampled indices matched in every case. The mutant agreed inside its region (342/342) and disagreed outside it (778/778).
+
 **Q5.9** Deep-dark override. If `Erosion(Q) < −0.225` **and** `Depth(Q) > 0.9`, both floodedness comparands are forced to `−1`, which (since `θ_lo ≥ −0.8`) always selects the sentinel: such points are **dry**. This is the only place the aquifer reads `Erosion` or `Depth`, and it reads them as router values at `Q` — there is no biome lookup (see Q7.3).
 · kind `formula` · confidence `read-directly`
 · verify-by: ablation — disable the override and confirm deep-dark regions flood.
 
+> **Floating-point amendment** (2026-11-09, REVIEW-15 §5). The text above stands as first published; this block states the engine's floating-point form.
+>
+> **Literal-precision correction.** The two thresholds are **single-precision literals, widened to double** before the comparison. The comparisons are therefore `Erosion(Q) < −0.22499999403953552` and `Depth(Q) > 0.8999999761581421`, both strict, on double values. The published `−0.225` and `0.9`, read as doubles, decide differently for any value lying between the two forms. The prose relation (both comparands forced to `−1`, so the point is dry) is unchanged.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · widths: none (no integer operation).
+> · fp-form: double comparisons against the widened single-precision literals `(double)(−0.225f) = −0.22499999403953552` and `(double)(0.9f) = 0.8999999761581421`.
+> · verify-by: already executed. The real deep-dark test was driven on 64 (erosion, depth) pairs, including values inside each literal gap: 0 mismatches against the widened thresholds. The decimal doubles decided 24 of the 64 differently.
+
 **Q5.10** Noise scaling. All four aquifer noises use horizontal scale `1.0`. Vertical scales are: `Barrier` `0.5`, `Floodedness` `0.67`, `Spread` `0.7142857142857143`, `Lava` `1.0`. A noise evaluated at context `(cx, cy, cz)` samples at `(cx·1.0, cy·y_scale, cz·1.0)`. These compose with Q5.7/Q5.8's index contraction rather than replacing it.
 · kind `constant` · confidence `read-directly`
 · verify-by: assert against the pack-visible values; `0.7142857142857143` is the `double` nearest `5/7` and must be carried as the literal, not recomputed.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The sample context `(cx, cy, cz)` consists of 32-bit integers: block coordinates for `Barrier` and `Floodedness`, and the floor-divided indices of Q5.7/Q5.8 for `Spread` and `Lava`. Each is converted **exactly** to double before scaling.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · verify-by: already executed. The integer sample contexts were captured exactly by the recording inputs of the REVIEW-14 driver (harness C), and the conversion was read in the disassembly.
 
 **Q5.11** Noise parameters are pack data: `aquifer_barrier` first-octave `−3`, `aquifer_fluid_level_floodedness` `−7`, `aquifer_fluid_level_spread` `−5`, `aquifer_lava` `−1`; each with a single amplitude `1.0`.
 · kind `constant` · confidence `read-directly`
@@ -205,6 +390,13 @@ For a lattice point `Q = (qx, qy, qz)`, its status `A(Q) = (L, T)` is a pure fun
 **Q6.1** Similarity. `sim(p, q) = 1 − (q − p)/25`, applied to squared distances. It is `1` at equality and decreases as the pair separates. Define `s₁₂ = sim(d₁,d₂)`, `s₁₃ = sim(d₁,d₃)`, `s₂₃ = sim(d₂,d₃)`, and let `A₁, A₂, A₃` be the statuses of the corresponding points.
 · kind `formula` · confidence `read-directly`
 · verify-by: assert the `25` by bisection against a golden region containing barrier walls.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> `q − p` is a 32-bit signed difference, converted exactly to double. `sim = 1.0 − (q − p)/25.0` uses a **double division**, not integer division. An integer-division variant agrees exactly when `q − p` is a multiple of 25.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. The real similarity was compared on 322 524 pairs: 0 mismatches. The integer-division mutant agreed inside its region (13 020/13 020) and disagreed outside it (309 504/309 504).
 
 **Q6.2** If `s₁₂ ≤ 0` the nearest point wins outright: result is `A₁(y)`, with no barrier evaluation and no noise consumed.
 · kind `contract` · confidence `read-directly`
@@ -222,6 +414,18 @@ Then `b = Barrier(P)` if `|u| ≤ 2`, else `b = 0`; and `Π = 2·(b + u)`. The a
 · kind `formula` · confidence `read-directly`
 · verify-by: ablation on each of the four divisors independently; each should perturb barrier thickness in one half-space only.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `Δ = |L_A − L_B|` is a 32-bit signed difference and absolute value.
+> - `m = 0.5·(L_A + L_B)`, where the 32-bit sum is converted exactly and **halved exactly in double precision**. It is not an integer division.
+> - `h = (y + 0.5) − m`, with `y` converted exactly and `0.5` added first.
+> - `r = Δ/2.0`, an exact double halving.
+> - No overflow is reachable: levels lie within `[−32512, 2032]`.
+> - **Where a wrong rounding goes undetected:** an integer midpoint agrees exactly when `L_A + L_B` is even, and an integer half-difference exactly when `Δ` is even. Applying both errors at once lets them cancel, so that variant disagrees on only part of the odd-sum cases.
+>
+> · kind `formula` · confidence `verified(differential-harness)`
+> · verify-by: already executed. The real pressure was compared over 17 × 17 levels × 17 heights × 3 barrier values (14 739), including the sentinel level: 0 mismatches. Each single integer-halving mutant agreed inside its region (6 528/6 528) and disagreed outside it (7 344/7 344). The combined mutant disagreed on 1 818 of 7 344 odd-sum cases.
+
 **Q6.5** The `Barrier` noise is evaluated **at the block position** `P`, at most once per block, and the same value is reused across all pressure evaluations for that block. Since it is a pure function of `P`, the reuse is unobservable and carries no ordering requirement.
 · kind `contract` · confidence `read-directly`
 · verify-by: none needed (purity rule); implement as a plain function of `P`.
@@ -229,6 +433,15 @@ Then `b = Barrier(P)` if `|u| ≤ 2`, else `b = 0`; and `Π = 2·(b + u)`. The a
 **Q6.6** Barrier predicate. The block is **solid** iff any of: `D + s₁₂·Π(A₁,A₂) > 0`; `s₁₃ > 0` and `D + s₁₂·s₁₃·Π(A₁,A₃) > 0`; `s₂₃ > 0` and `D + s₁₂·s₂₃·Π(A₂,A₃) > 0`. Otherwise the result is `A₁(y)` — the nearest point's reading, which may be air. The three products differ: the first is single-weighted, the others doubly.
 · kind `formula` · confidence `read-directly`
 · verify-by: golden-region predicate over a region with three-way aquifer junctions; also assert that dropping the `s₁₃ > 0` / `s₂₃ > 0` guards changes output (they are not redundant, since `Π` may be negative).
+
+> **Floating-point amendment** (2026-11-09, REVIEW-15 §5). The text above stands as first published; this block states the engine's floating-point form.
+>
+> The three products are evaluated left to right: `s₁₂·Π(A₁,A₂)`, `(s₁₂·s₁₃)·Π(A₁,A₃)` and `(s₁₂·s₂₃)·Π(A₂,A₃)`. Each is added to `D` and compared with `> 0.0`. The association `s₁₂·(s₁₃·Π)` differs in the last bit for a measurable share of blocks, which can flip a decision at the boundary.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · widths: none (the squared distances feeding `s` are covered by the Q4.2 and Q6.1 width amendments).
+> · fp-form: double precision. The weight is formed first (`s₁₂·s₁₃`, or `s₁₂·s₂₃`), then multiplied by `Π`. Then `D + product` is formed, then compared with `> 0.0`.
+> · verify-by: already executed. The real aquifer was driven with coordinate-hashed noise inputs. Of the blocks where the two associations differ in bits (7 047 found), those where they decide differently at the boundary were re-run with `D` set exactly at that boundary: 374 cases, and the jar decided as left-to-right association predicts in all 374.
 
 **Q6.7** The barrier block is **the caller's default block for the preset** (the same block a positive density yields), not a distinct material. The aquifer signals "solid" and the caller substitutes; it never names a block itself.
 · kind `contract` · confidence `read-directly`
@@ -270,6 +483,23 @@ Then `b = Barrier(P)` if `|u| ≤ 2`, else `b = 0`; and `Π = 2·(b + u)`. The a
 · kind `contract` · confidence `read-directly`
 · verify-by: inspect the stored chunk's post-processing list for a golden chunk.
 
+> **Amendment to Q8.1: what the mark does at promotion** (2026-11-09, REVIEW-23 §2). The text above stands as first published. Its last clause understates the consequence. The mark does not merely cause a fluid tick to be scheduled.
+>
+> When a stored chunk is promoted to full status, each marked position holding a non-empty fluid state has that fluid's tick **executed at that moment**. Then the chunk's list is cleared. This happens whether or not the world's ticking is frozen.
+>
+> The executed tick may change neighbouring blocks: a one-step flow into an adjacent open cell, or a new source where the fluid's own conversion rule makes one. Further scheduled fluid ticks follow from those changes. What those later ticks do is fluid behaviour, outside this spec's scope.
+>
+> Consequence for any comparison: a stored full chunk is generation output **plus** this step. A prediction of generation output alone differs from a stored chunk wherever a marked fluid had somewhere to flow.
+>
+> · kind `contract` · confidence `verified(differential-harness)`, for the fluid case. The non-fluid case (a marked position holding no fluid has its block re-evaluated against its neighbours instead) is `read-directly`; it was not separately exercised.
+> · verify-by: already executed. World-level, frozen regime, unmodified jar. The measurement square was 48×48 chunks, at least 65 chunks from the spawn chunk and outside the area loaded at startup (shown from the run's own saved data). The marks were of both origins: the carver's, which carry this claim's flag (Q8.5), and those set at the noise fill itself. The promotion step treats the two alike.
+>   - Every one of the 53 marked sources (water and lava) with an open neighbour changed at least one neighbour.
+>   - Every one of the 944 chunks whose predicted list was non-empty was stored with an empty list.
+>   - An independent prediction of generation output without this step mismatched the stored blocks in 56 cells.
+>     - 47 are one-step flows from a marked source.
+>     - 6 are new sources between two sources.
+>     - 3 are one-step lava flows from sources that carry the noise-fill mark rather than a carver mark. The fill marks were computed at driver level with the real aquifer and noise fill: all 3 sources are marked, and an adjacent unflagged control cell is not (REVIEW-24 §2; `AUDIT.md` §27).
+
 **Q8.2** The flag is `false` whenever the aquifer returns early (Q2.1–Q2.4), and in the `s₁₂ ≤ 0` case of Q6.2 it is `false` unless `s₁₂ ≥ θ_flow`, in which case it is `A₁ ≠ A₂` (status inequality, comparing both level and type).
 · kind `contract` · confidence `read-directly`
 · verify-by: as Q8.1.
@@ -277,6 +507,13 @@ Then `b = Barrier(P)` if `|u| ≤ 2`, else `b = 0`; and `Π = 2·(b + u)`. The a
 **Q8.3** `θ_flow = sim(10², 12²) = 1 − 44/25 = −0.76` exactly.
 · kind `constant` · confidence `read-directly`
 · verify-by: assert the literal; it is derived in-tree from `10` and `12`, so carry `−0.76` and the derivation together.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The threshold is `1.0 − (144 − 100)/25.0`: a 32-bit difference, converted, then a double division. It equals the double literal `−0.76` bit for bit.
+>
+> · kind `constant` · confidence `verified(differential-harness)`
+> · verify-by: already executed — the real threshold value was read and compared bitwise.
 
 **Q8.4** In the full path (Q6.6 falling through to fluid), the flag is `true` if any of `A₁ ≠ A₂`, or (`s₂₃ ≥ θ_flow` and `A₂ ≠ A₃`), or (`s₁₃ ≥ θ_flow` and `A₁ ≠ A₃`). If none hold, it is instead (`s₁₃ ≥ θ_flow` and `sim(d₁,d₄) ≥ θ_flow` and `A₁ ≠ A₄`) — the sole use of the fourth-nearest point.
 · kind `formula` · confidence `read-directly`

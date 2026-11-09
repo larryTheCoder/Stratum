@@ -1,0 +1,106 @@
+{
+  "_meta": {
+    "source_spec": "carvers-b-spec.md",
+    "provenance": "PROVENANCE.md (run 05 sections)",
+    "minecraft_version": "1.21.11",
+    "date": "2026-11-09",
+    "note": "Hypothesis values for the canyon (Part B of run 05). Shared values are in carvers-a-constants.json and are cited, not repeated. Every entry names the claim it supports.",
+    "_changelog": [
+      {
+        "change": "initial publication of carvers-b-spec.md and this file",
+        "reason": "RESEARCH-RUN-05.md, Part B per REVIEW-19 section 1 and REVIEW-26 section 3",
+        "task": "RESEARCH-RUN-05 Part B"
+      }
+    ]
+  },
+  "start": {
+    "list_position_in_shipped_overworld_lists": 2,
+    "tunnels_per_start": 1,
+    "origin_offset_draw_bound": 16,
+    "heading_scale_float": 6.2831855,
+    "length_base": 112,
+    "length": "truncate toward zero of the float product 112*distance_factor",
+    "length_range_shipped": [
+      84,
+      112
+    ],
+    "claim": "Q1.1, Q1.2"
+  },
+  "trapezoid_provider": {
+    "value": "min + F*(span - slope) + F*slope, span = max - min, slope = (span - plateau)/2",
+    "draws": 2,
+    "claim": "Q1.3"
+  },
+  "walk": {
+    "base_radius": 1.5,
+    "pi_float": 3.1415927,
+    "pitch_damping": 0.7,
+    "velocity_coefficient": 0.05,
+    "pitch_velocity_decay": 0.8,
+    "heading_velocity_decay": 0.5,
+    "pitch_kick": 2.0,
+    "heading_kick": 4.0,
+    "carve_skip_bound": 4,
+    "vertical_factor_draw": "F*0.25 + 0.75",
+    "centre_profile": "1 - |0.5 - i/L|*2",
+    "claim": "Q3.2"
+  },
+  "cross_section": {
+    "vertical_divisor": 6.0,
+    "table_index": "y - y_min - 1",
+    "floor_cut": false,
+    "claim": "Q4.1"
+  },
+  "width_table": {
+    "entries": "generation height H",
+    "run_value": "(1 + F*F)^2",
+    "new_run": "I(width_smoothness) == 0, never at layer 0",
+    "claim": "Q10.5"
+  },
+  "configured_carvers": {
+    "minecraft:canyon": {
+      "type": "minecraft:canyon",
+      "probability": 0.01,
+      "y": {
+        "type": "uniform",
+        "min": "absolute 10",
+        "max": "absolute 67"
+      },
+      "yScale": 3.0,
+      "lava_level": "above_bottom 8",
+      "replaceable": "#minecraft:overworld_carver_replaceables",
+      "vertical_rotation": {
+        "type": "uniform",
+        "min": -0.125,
+        "max_exclusive": 0.125
+      },
+      "shape": {
+        "distance_factor": {
+          "type": "uniform",
+          "min": 0.75,
+          "max_exclusive": 1.0
+        },
+        "thickness": {
+          "type": "trapezoid",
+          "min": 0.0,
+          "max": 6.0,
+          "plateau": 2.0
+        },
+        "width_smoothness": 3,
+        "horizontal_radius_factor": {
+          "type": "uniform",
+          "min": 0.75,
+          "max_exclusive": 1.0
+        },
+        "vertical_radius_default_factor": 1.0,
+        "vertical_radius_center_factor": 0.0
+      },
+      "debug_mode": false
+    },
+    "claim": "Q13.1"
+  },
+  "pack_format": {
+    "carvers_field": "a single id string (equivalent to a one-element list) or a list; entries may be ids or inline definitions",
+    "claim": "Q11.1"
+  }
+}

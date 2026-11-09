@@ -20,6 +20,16 @@
         "change": "rephrased corrections_recorded to remove this driver's own read-path check method name",
         "reason": "REVIEW-08 \u00a72: a camelCase source-adjacent identifier missed by a sweep that was never actually run against this file's final version",
         "task": "REVIEW-08 \u00a72"
+      },
+      {
+        "change": "added integer_widths; width amendments added under Q2.2, Q2.3, Q2.4, Q4.4, Q4.5 (original claim text unchanged)",
+        "reason": "REVIEW-14 integer-width audit: every integer formula now states width, signedness and wrap / extension / floor-or-truncation semantics (CLAUDE.md rule 14a)",
+        "task": "REVIEW-14 \u00a71"
+      },
+      {
+        "change": "replaced a runtime-library class name (2 occurrences, in string values) with neutral wording; no key changed",
+        "reason": "filtration: identifiers are not permitted in crossed artifacts; found by the REVIEW-14 whole-file sweep",
+        "task": "REVIEW-15 \u00a72"
       }
     ]
   },
@@ -133,7 +143,7 @@
   },
   "reachability_finding": {
     "_note": "NOT a dead branch -- the opposite of the usual house pattern. A live, reproduced hazard.",
-    "predicate": "index goes negative (and the real method throws ArrayIndexOutOfBoundsException) whenever y + offset + 192 < 0",
+    "predicate": "index goes negative (and the real method fails with an array-index-out-of-range error) whenever y + offset + 192 < 0",
     "observed_offset_range_200000_samples": [
       -6,
       5
@@ -142,7 +152,7 @@
     "reachable_in_world_height_range": true,
     "reachable_down_to_at_least": -2032,
     "demonstrated_by": "direct call to the real unmodified method at (x=0, y=-2032, z=0), all seeds tried, every call threw",
-    "sweep_result": "4073 of 9045 wide-sweep trials threw ArrayIndexOutOfBoundsException, 100% correctly reproduced by the faithful independent reimplementation",
+    "sweep_result": "4073 of 9045 wide-sweep trials failed with an array-index-out-of-range error, 100% correctly reproduced by the faithful independent reimplementation",
     "what_might_prevent_it_in_real_play": "unknown -- would live in the surrounding surface-rule tree, out of this run's scope",
     "policy_decision_needed": "whether an implementation reproduces the crash-prone shape exactly, or special-cases it -- an explicit Implementer/owner decision, not this spec's to make",
     "claim": "Q5.1"
@@ -169,5 +179,11 @@
       "an embedded-quote string literal broke compilation on the first fix attempt -- rephrased, not a logic error"
     ],
     "tolerance": "exact (discrete block-state identity and thrown-exception agreement, not floating point)"
+  },
+  "integer_widths": {
+    "claim": "width amendments under Q2.2, Q2.3, Q2.4, Q4.4, Q4.5",
+    "construction_integer_bits": 32,
+    "offset_rounding": "64-bit round (ties toward +infinity), narrowed to 32 bits (lossless in reachable range)",
+    "index_reduction": "32-bit (y + offset + 192), truncated remainder by 192 (sign of dividend)"
   }
 }

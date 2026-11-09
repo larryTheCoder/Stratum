@@ -1,0 +1,1052 @@
+{
+  "_meta": {
+    "source_spec": "legacy-named-noise-spec.md",
+    "provenance": "PROVENANCE.md (run 04 section)",
+    "minecraft_version": "1.21.11",
+    "date": "2026-11-09",
+    "note": "Hypothesis values; every numeric entry below is exercised by the run-04 differential harness (843 535 bit-exact comparisons, 0 mismatches). Golden values were emitted by the unmodified jar and each was cross-checked against the independent reimplementation as it was written.",
+    "_changelog": [
+      {
+        "change": "initial publication",
+        "reason": "RESEARCH-RUN-04.md",
+        "task": "RESEARCH-RUN-04"
+      },
+      {
+        "change": "added integer_widths; width amendments added under Q1.6, Q2.3, Q2.4, Q4.7 (original claim text unchanged)",
+        "reason": "REVIEW-14 integer-width audit: every integer formula now states width, signedness and wrap / extension / floor-or-truncation semantics (CLAUDE.md rule 14a)",
+        "task": "REVIEW-14 \u00a71"
+      },
+      {
+        "change": "renamed the input-factor entry of integer_widths (claim Q2.4) to octave_input_scale; value unchanged",
+        "reason": "filtration: the key, introduced by the REVIEW-14 audit, coincided with a source constant name; found by the REVIEW-15 whole-set sweep",
+        "task": "REVIEW-15 \u00a72 (extension)"
+      },
+      {
+        "change": "added fade_evaluation beside fade",
+        "reason": "the evaluation order of the fade was not stated, and the expanded form is not bit-exact",
+        "claim": "Q2.6 floating-point amendment",
+        "task": "REVIEW-15 \u00a75"
+      }
+    ]
+  },
+  "generator_r48": {
+    "claim": "Notation, Q1.1",
+    "state_bits": 48,
+    "seed_scramble_xor": 25214903917,
+    "multiplier": 25214903917,
+    "increment": 11,
+    "draw_bits": "top k of the new 48-bit state, read as signed 32-bit",
+    "draw_64": "b(32)*2^32 + sign_extend(b(32)), mod 2^64 (second word added signed, not OR)",
+    "draw_double": "(b(26)*2^27 + b(27)) * 2^-53, double-precision multiply",
+    "draw_double_multiplier": 1.1102230246251565e-16,
+    "draw_int_bounded": "power-of-two n: floor(n*b(31)/2^31); else rejection while v - (v mod n) + n - 1 > 2^31 - 1"
+  },
+  "seed_derivation": {
+    "claim": "Q1.2-Q1.8",
+    "dimension_factory_seed": "F = first 64-bit draw of R48(W)",
+    "noise_seed": "sign_extend(h(key text 'namespace:path')) XOR F",
+    "stack_seeds": "P1, P2 = first and second 64-bit draws of R48(noise_seed); nothing else drawn",
+    "octave_layer_seed": "sign_extend(h('octave_' + decimal(firstOctave + i))) XOR P_j, for amplitudes[i] != 0 only",
+    "octave_salt_prefix": "octave_",
+    "effective_world_seed_bits": 48,
+    "string_hash": "sum c_i * 31^(m-1-i) mod 2^32 over UTF-16 code units, signed",
+    "layer_draws": "3 doubles (xo, yo, zo = 256*D each), then 256 bounded ints I(256 - t) for t = 0..255, swapping pi[t] and pi[t + j]"
+  },
+  "layer": {
+    "claim": "Q1.7, Q2.6",
+    "offset_scale": 256.0,
+    "permutation_size": 256,
+    "gradient_count": 16,
+    "gradients": [
+      [
+        1,
+        1,
+        0
+      ],
+      [
+        -1,
+        1,
+        0
+      ],
+      [
+        1,
+        -1,
+        0
+      ],
+      [
+        -1,
+        -1,
+        0
+      ],
+      [
+        1,
+        0,
+        1
+      ],
+      [
+        -1,
+        0,
+        1
+      ],
+      [
+        1,
+        0,
+        -1
+      ],
+      [
+        -1,
+        0,
+        -1
+      ],
+      [
+        0,
+        1,
+        1
+      ],
+      [
+        0,
+        -1,
+        1
+      ],
+      [
+        0,
+        1,
+        -1
+      ],
+      [
+        0,
+        -1,
+        -1
+      ],
+      [
+        1,
+        1,
+        0
+      ],
+      [
+        0,
+        -1,
+        1
+      ],
+      [
+        -1,
+        1,
+        0
+      ],
+      [
+        0,
+        -1,
+        -1
+      ]
+    ],
+    "fade": "s^3 * (s*(6s - 15) + 10)",
+    "interpolation_axis_order": [
+      "x",
+      "y",
+      "z"
+    ],
+    "floor_width_bits": 32,
+    "fade_evaluation": "((s*s)*s)*((s*((s*6.0)-15.0))+10.0) in double; the expanded polynomial differs in the last bits on most inputs (Q2.6 floating-point amendment)"
+  },
+  "composition": {
+    "claim": "Q2.2-Q2.5",
+    "stack_count": 2,
+    "second_stack_input_factor": 1.0181268882175227,
+    "value_factor_numerator": 0.16666666666666666,
+    "deviation_base": 0.1,
+    "value_factor": "0.16666666666666666 / (0.1 * (1 + 1/(delta + 1)))",
+    "stack_weight": "lambda = 2^(n-1) / (2^n - 1); term i weighted lambda * 2^-i; input factor 2^(firstOctave+i)",
+    "wrap_period": 33554432.0,
+    "wrap": "v - floor64(v/33554432 + 0.5) * 33554432",
+    "empty_or_all_zero_amplitudes_value": 0.0
+  },
+  "per_noise_vanilla": {
+    "minecraft:gravel_layer": {
+      "firstOctave": -8,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.013333333333333334
+      ],
+      "list_length_n": 9,
+      "delta": 8,
+      "value_factor_V": 1.4999999999999998,
+      "stack_weight_lambda": 0.5009784735812133,
+      "octave_salts": [
+        "octave_-8",
+        "octave_-7",
+        "octave_-6",
+        "octave_-5",
+        "octave_0"
+      ],
+      "key_hash": -129796410,
+      "key_hash_negative": true
+    },
+    "minecraft:nether_state_selector": {
+      "firstOctave": -4,
+      "amplitudes": [
+        1.0
+      ],
+      "list_length_n": 1,
+      "delta": 0,
+      "value_factor_V": 0.8333333333333333,
+      "stack_weight_lambda": 1.0,
+      "octave_salts": [
+        "octave_-4"
+      ],
+      "key_hash": -1772810105,
+      "key_hash_negative": true
+    },
+    "minecraft:nether_wart": {
+      "firstOctave": -3,
+      "amplitudes": [
+        1.0,
+        0.0,
+        0.0,
+        0.9
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-3",
+        "octave_0"
+      ],
+      "key_hash": 815165382,
+      "key_hash_negative": false
+    },
+    "minecraft:netherrack": {
+      "firstOctave": -3,
+      "amplitudes": [
+        1.0,
+        0.0,
+        0.0,
+        0.35
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-3",
+        "octave_0"
+      ],
+      "key_hash": 303935260,
+      "key_hash_negative": false
+    },
+    "minecraft:patch": {
+      "firstOctave": -5,
+      "amplitudes": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.013333333333333334
+      ],
+      "list_length_n": 6,
+      "delta": 5,
+      "value_factor_V": 1.4285714285714284,
+      "stack_weight_lambda": 0.5079365079365079,
+      "octave_salts": [
+        "octave_-5",
+        "octave_0"
+      ],
+      "key_hash": -1137280965,
+      "key_hash_negative": true
+    },
+    "minecraft:soul_sand_layer": {
+      "firstOctave": -8,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.013333333333333334
+      ],
+      "list_length_n": 9,
+      "delta": 8,
+      "value_factor_V": 1.4999999999999998,
+      "stack_weight_lambda": 0.5009784735812133,
+      "octave_salts": [
+        "octave_-8",
+        "octave_-7",
+        "octave_-6",
+        "octave_-5",
+        "octave_0"
+      ],
+      "key_hash": 880346069,
+      "key_hash_negative": false
+    },
+    "minecraft:calcite": {
+      "firstOctave": -9,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-9",
+        "octave_-8",
+        "octave_-7",
+        "octave_-6"
+      ],
+      "key_hash": -665343656,
+      "key_hash_negative": true
+    },
+    "minecraft:gravel": {
+      "firstOctave": -8,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-8",
+        "octave_-7",
+        "octave_-6",
+        "octave_-5"
+      ],
+      "key_hash": -1138481804,
+      "key_hash_negative": true
+    },
+    "minecraft:ice": {
+      "firstOctave": -4,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-4",
+        "octave_-3",
+        "octave_-2",
+        "octave_-1"
+      ],
+      "key_hash": 1768640318,
+      "key_hash_negative": false
+    },
+    "minecraft:packed_ice": {
+      "firstOctave": -7,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-7",
+        "octave_-6",
+        "octave_-5",
+        "octave_-4"
+      ],
+      "key_hash": 1636810289,
+      "key_hash_negative": false
+    },
+    "minecraft:powder_snow": {
+      "firstOctave": -6,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 4,
+      "delta": 3,
+      "value_factor_V": 1.3333333333333333,
+      "stack_weight_lambda": 0.5333333333333333,
+      "octave_salts": [
+        "octave_-6",
+        "octave_-5",
+        "octave_-4",
+        "octave_-3"
+      ],
+      "key_hash": 42285308,
+      "key_hash_negative": false
+    },
+    "minecraft:surface": {
+      "firstOctave": -6,
+      "amplitudes": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "list_length_n": 3,
+      "delta": 2,
+      "value_factor_V": 1.25,
+      "stack_weight_lambda": 0.5714285714285714,
+      "octave_salts": [
+        "octave_-6",
+        "octave_-5",
+        "octave_-4"
+      ],
+      "key_hash": 1228018656,
+      "key_hash_negative": false
+    },
+    "minecraft:surface_swamp": {
+      "firstOctave": -2,
+      "amplitudes": [
+        1.0
+      ],
+      "list_length_n": 1,
+      "delta": 0,
+      "value_factor_V": 0.8333333333333333,
+      "stack_weight_lambda": 1.0,
+      "octave_salts": [
+        "octave_-2"
+      ],
+      "key_hash": 607399873,
+      "key_hash_negative": false
+    }
+  },
+  "read_path": {
+    "claim": "Q4.2-Q4.8",
+    "noise_threshold_sample": "(block x, 0.0, block z)",
+    "noise_threshold_scaling": null,
+    "noise_threshold_comparison": "min_threshold <= N <= max_threshold, both inclusive",
+    "surface_depth": "trunc((N_surface(x,0,z)*2.75 + 3.0) + J(x,z)*0.25), trunc toward zero",
+    "surface_depth_noise_scale": 2.75,
+    "surface_depth_base": 3.0,
+    "surface_depth_jitter_scale": 0.25,
+    "surface_depth_noise_key": "minecraft:surface",
+    "jitter": "first double draw of R48(rho(x,0,z) XOR F)",
+    "rho": {
+      "x_multiplier_32bit_wrap": 3129871,
+      "z_multiplier_64bit": 116129781,
+      "square_multiplier": 42317861,
+      "linear_multiplier": 11,
+      "arithmetic_shift_right": 16
+    },
+    "secondary_term": "r == 0 ? 0 : trunc(((N_ss(x,0,z) + 1) / 2) * r), unclamped",
+    "secondary_noise_key": "minecraft:surface_secondary"
+  },
+  "router_special_keys_out_of_scope": {
+    "claim": "Q5.1c, Q5.2",
+    "keys": [
+      "minecraft:temperature",
+      "minecraft:vegetation",
+      "minecraft:offset"
+    ]
+  },
+  "surface_system_fixed_keys": {
+    "claim": "Q5.1b",
+    "keys": [
+      "minecraft:surface",
+      "minecraft:surface_secondary",
+      "minecraft:clay_bands_offset",
+      "minecraft:badlands_pillar",
+      "minecraft:badlands_pillar_roof",
+      "minecraft:badlands_surface",
+      "minecraft:iceberg_pillar",
+      "minecraft:iceberg_pillar_roof",
+      "minecraft:iceberg_surface"
+    ]
+  },
+  "golden": {
+    "claim": "Q1-Q4",
+    "settings": "minecraft:nether (identical in caves and floating_islands, Q3.1)",
+    "positions": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1000.5,
+        64.25,
+        -2000.75
+      ],
+      [
+        -123456,
+        0,
+        654321
+      ],
+      [
+        29999999,
+        0,
+        -29999999
+      ]
+    ],
+    "surface_depth_columns": [
+      [
+        0,
+        0
+      ],
+      [
+        1000,
+        -2000
+      ],
+      [
+        -1415,
+        -602
+      ],
+      [
+        29999999,
+        -29999999
+      ]
+    ],
+    "note": "keys are world seeds W (decimal); seed 281474976710656 = 2^48 reproduces seed 0 (Q1.8a); 25214903917 zeroes the seeding state; column (-1415,-602) at seed 0 is a truncation case (Q4.6)",
+    "values": {
+      "0": {
+        "dimension_factory_seed": -4962768465676381896,
+        "minecraft:gravel_layer": [
+          0.06213318732549463,
+          0.21459766717831194,
+          0.20624561119614881,
+          0.6897306595043627
+        ],
+        "minecraft:nether_state_selector": [
+          -0.21776712323056274,
+          0.2914872360598714,
+          0.036639867334893925,
+          -0.009995314614953444
+        ],
+        "minecraft:nether_wart": [
+          -0.02168596577338877,
+          0.3189593065619457,
+          0.2642305292476405,
+          0.1568884199325489
+        ],
+        "minecraft:netherrack": [
+          -0.12841816639070214,
+          -0.13940545645835856,
+          0.3254396979713235,
+          0.702768966913806
+        ],
+        "minecraft:patch": [
+          0.008091623124751828,
+          0.1359738472513305,
+          -0.14688261235840547,
+          -0.6829303010785995
+        ],
+        "minecraft:soul_sand_layer": [
+          -0.10400153092656196,
+          -0.07279049769018167,
+          0.37247070474611116,
+          -0.376005358966576
+        ],
+        "minecraft:calcite": [
+          -0.0012460937579493736,
+          0.36921601752581645,
+          -0.10196183949211719,
+          0.2042768483395198
+        ],
+        "minecraft:gravel": [
+          -0.1349868477464783,
+          -0.44854810858478067,
+          -0.12034690980482428,
+          0.33783105517722123
+        ],
+        "minecraft:ice": [
+          -0.27138586508395446,
+          -0.15406483382726346,
+          0.2034643684973148,
+          -0.3022433386094626
+        ],
+        "minecraft:packed_ice": [
+          0.5147194001003036,
+          -0.012694837173552742,
+          -0.35474113163095666,
+          -0.4414667283014535
+        ],
+        "minecraft:powder_snow": [
+          0.15722802028413735,
+          -0.10832146631723374,
+          0.369584702756743,
+          0.2537338989031308
+        ],
+        "minecraft:surface": [
+          -0.38805696650352794,
+          0.13154348097820528,
+          -0.19474598853633818,
+          -0.3079232011487258
+        ],
+        "minecraft:surface_swamp": [
+          -0.4712945846196727,
+          0.447840191609142,
+          0.0483245249513621,
+          -0.12660505746515582
+        ],
+        "surface_depth": [
+          1,
+          2,
+          0,
+          2
+        ]
+      },
+      "281474976710656": {
+        "dimension_factory_seed": -4962768465676381896,
+        "minecraft:gravel_layer": [
+          0.06213318732549463,
+          0.21459766717831194,
+          0.20624561119614881,
+          0.6897306595043627
+        ],
+        "minecraft:nether_state_selector": [
+          -0.21776712323056274,
+          0.2914872360598714,
+          0.036639867334893925,
+          -0.009995314614953444
+        ],
+        "minecraft:nether_wart": [
+          -0.02168596577338877,
+          0.3189593065619457,
+          0.2642305292476405,
+          0.1568884199325489
+        ],
+        "minecraft:netherrack": [
+          -0.12841816639070214,
+          -0.13940545645835856,
+          0.3254396979713235,
+          0.702768966913806
+        ],
+        "minecraft:patch": [
+          0.008091623124751828,
+          0.1359738472513305,
+          -0.14688261235840547,
+          -0.6829303010785995
+        ],
+        "minecraft:soul_sand_layer": [
+          -0.10400153092656196,
+          -0.07279049769018167,
+          0.37247070474611116,
+          -0.376005358966576
+        ],
+        "minecraft:calcite": [
+          -0.0012460937579493736,
+          0.36921601752581645,
+          -0.10196183949211719,
+          0.2042768483395198
+        ],
+        "minecraft:gravel": [
+          -0.1349868477464783,
+          -0.44854810858478067,
+          -0.12034690980482428,
+          0.33783105517722123
+        ],
+        "minecraft:ice": [
+          -0.27138586508395446,
+          -0.15406483382726346,
+          0.2034643684973148,
+          -0.3022433386094626
+        ],
+        "minecraft:packed_ice": [
+          0.5147194001003036,
+          -0.012694837173552742,
+          -0.35474113163095666,
+          -0.4414667283014535
+        ],
+        "minecraft:powder_snow": [
+          0.15722802028413735,
+          -0.10832146631723374,
+          0.369584702756743,
+          0.2537338989031308
+        ],
+        "minecraft:surface": [
+          -0.38805696650352794,
+          0.13154348097820528,
+          -0.19474598853633818,
+          -0.3079232011487258
+        ],
+        "minecraft:surface_swamp": [
+          -0.4712945846196727,
+          0.447840191609142,
+          0.0483245249513621,
+          -0.12660505746515582
+        ],
+        "surface_depth": [
+          1,
+          2,
+          0,
+          2
+        ]
+      },
+      "-1": {
+        "dimension_factory_seed": 4961115982468162243,
+        "minecraft:gravel_layer": [
+          -0.3022695573181609,
+          0.054531794164848435,
+          0.26086185585324,
+          0.38779336454782
+        ],
+        "minecraft:nether_state_selector": [
+          -0.2639283688450537,
+          -0.3423374569369592,
+          0.30503684910167794,
+          -0.24368546009814485
+        ],
+        "minecraft:nether_wart": [
+          -0.1363790540960298,
+          -0.2259342233451998,
+          -0.13704511304163097,
+          0.27440717003994186
+        ],
+        "minecraft:netherrack": [
+          0.3745903587442042,
+          0.11442308528726367,
+          0.05788484099265463,
+          -0.03379223500481327
+        ],
+        "minecraft:patch": [
+          -0.0965243978312707,
+          -0.15743960272538066,
+          -0.15152703930606112,
+          0.23693942719476732
+        ],
+        "minecraft:soul_sand_layer": [
+          0.24020226903157962,
+          0.26815928697938113,
+          -0.7748222959191625,
+          -0.507946796757095
+        ],
+        "minecraft:calcite": [
+          -0.01993361310442735,
+          -0.6248929762972009,
+          0.15858804240211016,
+          -0.5675614583274982
+        ],
+        "minecraft:gravel": [
+          -0.017398755818537254,
+          -0.1413390762184407,
+          -0.13570169736254165,
+          -0.1518768305524268
+        ],
+        "minecraft:ice": [
+          -0.2152044559658109,
+          -0.17030326654021413,
+          -0.030864216508403576,
+          0.27801810726941056
+        ],
+        "minecraft:packed_ice": [
+          -0.18374499890368057,
+          -0.04942464408917505,
+          0.08634601700537464,
+          0.27232157975902926
+        ],
+        "minecraft:powder_snow": [
+          -0.11834205249426029,
+          0.3274016349570117,
+          0.22869476016884505,
+          -0.09400573001507515
+        ],
+        "minecraft:surface": [
+          -0.45164241047327386,
+          -0.31011610061481093,
+          0.671959060822491,
+          -0.050763706103932535
+        ],
+        "minecraft:surface_swamp": [
+          -0.16877620576778835,
+          -0.48926335395356446,
+          0.5516850695414747,
+          -0.2848951692829718
+        ],
+        "surface_depth": [
+          1,
+          2,
+          2,
+          3
+        ]
+      },
+      "-9223372036854775808": {
+        "dimension_factory_seed": -4962768465676381896,
+        "minecraft:gravel_layer": [
+          0.06213318732549463,
+          0.21459766717831194,
+          0.20624561119614881,
+          0.6897306595043627
+        ],
+        "minecraft:nether_state_selector": [
+          -0.21776712323056274,
+          0.2914872360598714,
+          0.036639867334893925,
+          -0.009995314614953444
+        ],
+        "minecraft:nether_wart": [
+          -0.02168596577338877,
+          0.3189593065619457,
+          0.2642305292476405,
+          0.1568884199325489
+        ],
+        "minecraft:netherrack": [
+          -0.12841816639070214,
+          -0.13940545645835856,
+          0.3254396979713235,
+          0.702768966913806
+        ],
+        "minecraft:patch": [
+          0.008091623124751828,
+          0.1359738472513305,
+          -0.14688261235840547,
+          -0.6829303010785995
+        ],
+        "minecraft:soul_sand_layer": [
+          -0.10400153092656196,
+          -0.07279049769018167,
+          0.37247070474611116,
+          -0.376005358966576
+        ],
+        "minecraft:calcite": [
+          -0.0012460937579493736,
+          0.36921601752581645,
+          -0.10196183949211719,
+          0.2042768483395198
+        ],
+        "minecraft:gravel": [
+          -0.1349868477464783,
+          -0.44854810858478067,
+          -0.12034690980482428,
+          0.33783105517722123
+        ],
+        "minecraft:ice": [
+          -0.27138586508395446,
+          -0.15406483382726346,
+          0.2034643684973148,
+          -0.3022433386094626
+        ],
+        "minecraft:packed_ice": [
+          0.5147194001003036,
+          -0.012694837173552742,
+          -0.35474113163095666,
+          -0.4414667283014535
+        ],
+        "minecraft:powder_snow": [
+          0.15722802028413735,
+          -0.10832146631723374,
+          0.369584702756743,
+          0.2537338989031308
+        ],
+        "minecraft:surface": [
+          -0.38805696650352794,
+          0.13154348097820528,
+          -0.19474598853633818,
+          -0.3079232011487258
+        ],
+        "minecraft:surface_swamp": [
+          -0.4712945846196727,
+          0.447840191609142,
+          0.0483245249513621,
+          -0.12660505746515582
+        ],
+        "surface_depth": [
+          1,
+          2,
+          0,
+          2
+        ]
+      },
+      "25214903917": {
+        "dimension_factory_seed": 4232237,
+        "minecraft:gravel_layer": [
+          -0.10717687493218864,
+          0.28609744996034625,
+          -0.3795166004975193,
+          -0.5221655431676433
+        ],
+        "minecraft:nether_state_selector": [
+          0.16564751481608633,
+          -0.35884711726582735,
+          -0.031940129270607645,
+          -0.21882812420153272
+        ],
+        "minecraft:nether_wart": [
+          -0.05601026550717332,
+          0.4969024752352718,
+          -0.6317831565156429,
+          0.029324925858634682
+        ],
+        "minecraft:netherrack": [
+          0.09217010786322406,
+          0.10565537803767723,
+          -0.13583858380165342,
+          0.03135883538117484
+        ],
+        "minecraft:patch": [
+          -0.07166178281582684,
+          0.4116770062893845,
+          -0.11326696054790984,
+          0.3851238296932076
+        ],
+        "minecraft:soul_sand_layer": [
+          0.3301491834162063,
+          0.27151460679402245,
+          -0.3700593320251324,
+          0.03755084676926783
+        ],
+        "minecraft:calcite": [
+          -0.08654226392007514,
+          -0.034485235212271606,
+          -0.15373206618237015,
+          0.14017434228277276
+        ],
+        "minecraft:gravel": [
+          -0.22889300902895154,
+          0.1802303635868854,
+          0.09816460043820159,
+          -0.1430358044799479
+        ],
+        "minecraft:ice": [
+          0.14221687541019706,
+          -0.0860813136129204,
+          -0.3270849871451082,
+          -0.45682606452040747
+        ],
+        "minecraft:packed_ice": [
+          -0.29503744060887743,
+          -0.26704852323445794,
+          0.056182952912792274,
+          -0.35510385140532963
+        ],
+        "minecraft:powder_snow": [
+          0.16865612299099936,
+          0.4030787708016703,
+          0.08636813084856007,
+          -0.16701478187813812
+        ],
+        "minecraft:surface": [
+          -0.20437704403779733,
+          0.19248588766175834,
+          -0.3846567941168382,
+          -0.0008662204014371795
+        ],
+        "minecraft:surface_swamp": [
+          -0.5297644962848655,
+          -0.0354154597426307,
+          0.22382578508929013,
+          0.030020930974084672
+        ],
+        "surface_depth": [
+          2,
+          3,
+          2,
+          3
+        ]
+      },
+      "7280013485192436": {
+        "dimension_factory_seed": 4923357217907423627,
+        "minecraft:gravel_layer": [
+          0.03825346633842722,
+          0.2045489397777861,
+          0.1873508137346479,
+          -0.4857440694377182
+        ],
+        "minecraft:nether_state_selector": [
+          0.2205935737067736,
+          0.047436018086530515,
+          0.05838658338703679,
+          -0.6003502091221071
+        ],
+        "minecraft:nether_wart": [
+          -0.18096212430121872,
+          -0.38286304533692206,
+          0.03238217201293767,
+          -0.1030756736443787
+        ],
+        "minecraft:netherrack": [
+          -0.25897641459908605,
+          0.17517959823427492,
+          -0.503904732414213,
+          0.24202010309087424
+        ],
+        "minecraft:patch": [
+          0.17704372254284204,
+          0.02944446475170832,
+          -0.04050867052768814,
+          -0.5352214749305411
+        ],
+        "minecraft:soul_sand_layer": [
+          0.15014019654742922,
+          0.5615621449641494,
+          0.02264883482533221,
+          -0.11372534505302964
+        ],
+        "minecraft:calcite": [
+          0.25050071999302786,
+          0.12158691025214105,
+          0.27107235498046367,
+          -0.15213307942133714
+        ],
+        "minecraft:gravel": [
+          0.6437308690463838,
+          -0.5303118501689759,
+          -0.02844015158965663,
+          0.18205053360563345
+        ],
+        "minecraft:ice": [
+          0.045945833843581196,
+          0.20748184737148292,
+          0.1325969617064167,
+          0.5214308840065504
+        ],
+        "minecraft:packed_ice": [
+          0.20713290840403303,
+          0.26392744128430706,
+          0.178907973477744,
+          -0.5227608275390995
+        ],
+        "minecraft:powder_snow": [
+          -0.39419395864126394,
+          -0.28325808854289575,
+          -0.47265623964461145,
+          0.02514262712228075
+        ],
+        "minecraft:surface": [
+          0.37274546223191485,
+          -0.03999876239220646,
+          -0.015753155011869434,
+          0.13310980987366944
+        ],
+        "minecraft:surface_swamp": [
+          0.010047639828363516,
+          -0.3545071930170669,
+          0.10629895939056445,
+          -0.23344152934483264
+        ],
+        "surface_depth": [
+          4,
+          2,
+          3,
+          3
+        ]
+      }
+    }
+  },
+  "integer_widths": {
+    "claim": "width amendments under Q1.6, Q2.3, Q2.4, Q4.7",
+    "octave_number": "32-bit signed sum firstOctave + i, wraps (salt uses wrapped value)",
+    "delta_bits": 32,
+    "octave_input_scale": "2^firstOctave in double, doubled per index; all factors 0 when firstOctave < -1074",
+    "surface_depth_multiplier_product_bits": 32,
+    "min_surface_level": "floor_32bit(bilinear(prelim, (x mod 16)/16 float, (z mod 16)/16 float)) + d - 8, 32-bit"
+  }
+}

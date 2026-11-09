@@ -22,6 +22,39 @@
         "change": "added coverage_budget; re-tagged Q4.4/Q4.5/Q4.7/Q8.7 to verified(<method>)",
         "reason": "REVIEW-04 \u00a73 hold release after Task A'' passed under the amended comparator contract",
         "task": "REVIEW-01 Task C / Task D"
+      },
+      {
+        "change": "added a widths entry under rng / seed_mix (integer width of every product and sign extension in the cell-position mix); step1/step2 unchanged",
+        "reason": "the published mix gave multipliers without integer widths; a wrong-width implementation agrees with the jar only for |i| <= 686 (x) or |k| <= 18 (z), so the omission could pass existing evidence",
+        "claim": "Q3.4 amendment",
+        "task": "REVIEW-13 \u00a72"
+      },
+      {
+        "change": "added integer_widths; width amendments added under 16 claims (original claim text unchanged)",
+        "reason": "REVIEW-14 integer-width audit: every integer formula now states width, signedness and wrap / extension / floor-or-truncation semantics (CLAUDE.md rule 14a)",
+        "task": "REVIEW-14 \u00a71"
+      },
+      {
+        "change": "renamed the three flow-threshold keys (value, formula, claim) of claim Q8.3 to flow_threshold, flow_threshold_formula and flow_threshold_claim; the formula value now uses the spec's own notation sim(10^2, 12^2); values unchanged (-0.76). Consumers of the earlier keys: locate them by claim Q8.3 and the unchanged value",
+        "reason": "filtration: the old keys and value reproduced a source constant's name and a source method name; values unchanged (Q8.3)",
+        "task": "REVIEW-15 \u00a72"
+      },
+      {
+        "change": "renamed the two position-encoding keys of claim Q1.4 to y_field_bits (value 12) and y_span (value 4064); values unchanged. Consumers of the earlier keys: locate them by claim Q1.4 and the unchanged values",
+        "reason": "filtration: the old keys reproduced source constant names; found by the REVIEW-15 whole-set sweep beyond the enumerated scrub list",
+        "task": "REVIEW-15 \u00a72 (extension)"
+      },
+      {
+        "change": "added fluid_level.phi_formula_engine, theta_hi_formula_engine, theta_lo_formula_engine and theta_formula_note; the earlier theta formula entries are kept and marked not bit-exact",
+        "reason": "the published threshold expressions differ from the engine in the last bits; the engine form decided 852 of 852 boundary cases correctly, the published form 520",
+        "claim": "Q5.6 floating-point amendment",
+        "task": "REVIEW-15 \u00a72"
+      },
+      {
+        "change": "corrected deep_dark_override.erosion_below and depth_above to the widened single-precision values; added threshold_precision and an fp_forms entry",
+        "reason": "the earlier values were the doubles nearest the decimal literals; the engine compares against single-precision literals widened to double, which decide differently inside the gap",
+        "claim": "Q5.9 / Q6.6 floating-point amendments",
+        "task": "REVIEW-15 \u00a75"
       }
     ]
   },
@@ -35,8 +68,8 @@
     "void_status_claim": "Q1.1"
   },
   "engine_bounds": {
-    "bits_for_y": 12,
-    "y_size": 4064,
+    "y_field_bits": 12,
+    "y_span": 4064,
     "max_y_limit": 2031,
     "min_y_limit": -2032,
     "never_sentinel": -32512,
@@ -102,6 +135,26 @@
         "square_multiplier": 42317861,
         "linear_multiplier": 11,
         "right_shift": 16
+      },
+      "widths": {
+        "claim": "Q3.4 amendment (REVIEW-13 \u00a72)",
+        "cell_index_bits": 32,
+        "x_term": "sign_extend_32_to_64((i * 3129871) mod 2^32): 32-bit product, wraps before widening",
+        "z_term": "(sign_extend(k) * 116129781) mod 2^64: widened first, 64-bit product",
+        "y_term": "sign_extend(j), no multiplier",
+        "m_xor_bits": 64,
+        "square_and_linear_bits": 64,
+        "shift": "arithmetic (sign-propagating) right shift by 16",
+        "x_product_bits": 32,
+        "z_product_bits": 64,
+        "stream_combination": "result XOR stream seed low 64-bit half; high half unchanged",
+        "wrong_width_agreement_regions": {
+          "x_product_64bit": "|i| <= 686",
+          "z_product_32bit": "|k| <= 18",
+          "j_zero_extended": "j >= 0",
+          "logical_shift": "pre-shift value >= 0"
+        },
+        "applies_to": "non-legacy random source; legacy source remains open question 7"
       }
     },
     "seed_mix_claim": "Q3.4",
@@ -232,6 +285,10 @@
     "floodedness_ramp_claim": "Q5.6",
     "theta_hi_formula": "0.8 - 1.1 * phi",
     "theta_lo_formula": "0.4 - 1.2 * phi",
+    "phi_formula_engine": "t = (d - 0.0) / (64.0 - 0.0); phi = 1.0 if t < 0.0, 0.0 if t > 1.0, else 1.0 + t * (0.0 - 1.0); 0.0 if not submerged",
+    "theta_hi_formula_engine": "-0.3 + ((phi - 1.0) / (0.0 - 1.0)) * (0.8 - (-0.3))",
+    "theta_lo_formula_engine": "-0.8 + ((phi - 1.0) / (0.0 - 1.0)) * (0.4 - (-0.8))",
+    "theta_formula_note": "theta_hi_formula / theta_lo_formula are algebraically correct but not bit-exact (they differ from the engine on 44 / 63 of 65 reachable phi); implement the *_engine forms, double precision, in the written order (Q5.6 floating-point amendment)",
     "theta_endpoints": {
       "hi_at_phi_1": -0.3,
       "hi_at_phi_0": 0.8,
@@ -264,10 +321,11 @@
     "claim": "Q5.8"
   },
   "deep_dark_override": {
-    "erosion_below": -0.225,
-    "depth_above": 0.9,
+    "erosion_below": -0.22499999403953552,
+    "depth_above": 0.8999999761581421,
     "forced_comparand": -1.0,
-    "claim": "Q5.9"
+    "claim": "Q5.9",
+    "threshold_precision": "single-precision literals -0.225f and 0.9f widened to double; strict comparisons (Q5.9 floating-point amendment)"
   },
   "noise_scaling": {
     "xz_scale_all": 1.0,
@@ -311,9 +369,9 @@
     "similarity_divisor": 25.0,
     "similarity_formula": "1 - (q - p) / 25",
     "similarity_claim": "Q6.1",
-    "flowing_update_similarity": -0.76,
-    "flowing_update_similarity_formula": "similarity(10^2, 12^2) = 1 - 44/25",
-    "flowing_update_similarity_claim": "Q8.3"
+    "flow_threshold": -0.76,
+    "flow_threshold_formula": "sim(10^2, 12^2) = 1 - 44/25",
+    "flow_threshold_claim": "Q8.3"
   },
   "pressure": {
     "opposed_fluid_result": 2.0,
@@ -365,5 +423,24 @@
       "claim": "Q8.4",
       "note": "never instrumented; no defensible bound from existing data. Treat golden regions as providing ZERO coverage of this path until the next instrumented run measures it."
     }
+  },
+  "integer_widths": {
+    "claim": "width amendments under Q1.1, Q1.4, Q2.5, Q3.2, Q3.3, Q3.5, Q4.1, Q4.2, Q5.1, Q5.2, Q5.6, Q5.7, Q5.8, Q6.1, Q6.4, Q8.3",
+    "integer_bits": 32,
+    "signed": true,
+    "division": "floor (toward -infinity) for every cell index, contraction and snap",
+    "prelim_conversion": "32-bit floor of the router value at (4*floordiv(x,4), 0, 4*floordiv(z,4))",
+    "quantization": "3 * floor_32bit((10.0 * spread) / 3.0)",
+    "similarity": "1.0 - double(q - p) / 25.0 (double division)",
+    "pressure_midpoint": "0.5 * double(L_A + L_B) (exact half, not integer division)",
+    "pressure_half_difference": "double(|L_A - L_B|) / 2.0",
+    "lattice_point_y_retained": "((y + 2048) mod 4096) - 2048 (signed 12-bit field); x, z exact",
+    "lattice_point_y_hazard": "open-question: top cell j=170 point at 2048 and bottom cell j=-171 points below -2048 are reduced; reachable only with pack dimension height / sea_level edges",
+    "flow_threshold_bits_equal_literal": -0.76
+  },
+  "fp_forms": {
+    "claim": "floating-point amendments under Q5.9, Q6.6 (and Q5.6, REVIEW-15 \u00a72)",
+    "barrier_products": "s12*P12; (s12*s13)*P13; (s12*s23)*P23 -- weight first, then the pressure, left to right; then D + product > 0.0",
+    "override_thresholds": "erosion < -0.22499999403953552 and depth > 0.8999999761581421"
   }
 }

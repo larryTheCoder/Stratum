@@ -42,13 +42,34 @@
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section A. This +2 subtlety was caught and confirmed in the same pass as the rest of Q2, by full-array equality against the real method across 10 seeds; an independent reimplementation using only the naive `+1` advance was tried first and diverges from the real array immediately (not included in the published harness, since the faithful `+2` version was written first this run — the aquifer and blended-noise precedent for catching exactly this class of loop-arithmetic error is why this subtlety was checked for specifically rather than assumed).
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> Indices, draws and the advance `d + 2` are 32-bit signed integers bounded below `192 + 6`. No overflow is possible.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — 32-bit adds read in the disassembly. No boundary exists.
+
 **Q2.3** Passes of type (b) — the "band" passes — share one procedure, parameterized by a base width and a color, called three times with parameters `(1, yellow)`, `(2, brown)`, `(1, red)`, in that order. Each call: draw a run count uniformly in `[6, 15]` (inclusive both ends); for each of that many runs, independently draw a width uniform in `[base, base+2]` and a start index uniform in `[0, 191]`, then overwrite cells `start, start+1, …` with the color, up to `width` cells, **truncating silently at the array's end rather than wrapping** — a run whose start is near the end simply colors fewer cells than its drawn width. Runs are **not** prevented from overlapping each other or overwriting earlier passes' cells; a later run's color always wins where it overlaps an earlier one.
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section A (same full-array check covers all three calls of this procedure).
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> Run counts, widths, start indices and cell indices are 32-bit signed integers bounded below `192 + 3`. No overflow is possible.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: as Q2.2.
+
 **Q2.4** Pass (c), the final scatter: draw a target count uniform in `[9, 15]` (inclusive both ends). Starting from index `0`, repeatedly: place the scatter color at the current index; independently, if the index minus one is still a valid positive index, flip a fair coin and on success color that one cell a second, distinct color; independently, if the index plus one is still in bounds, flip a second fair coin and on success color that cell the same second color; count this placement toward the target; advance the index by a fresh uniform draw in `[4, 19]` (16 possible values, offset by 4). Stop once the target count of placements is reached, or the index runs past the array's end — whichever comes first. Every step here draws exactly once and writes exactly once — there is no draw that goes unwritten the way pass (a)'s final over-the-end step can.
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section A (same full-array check).
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The index, its `±1` neighbours and the advance in `[4, 19]` are 32-bit signed integers bounded below `192 + 19`. No overflow is possible.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: as Q2.2.
 
 **Q2.5** Consumption order across the whole construction, as a single flat sequence (this is the *complete* consumption contract; every draw in Q2.2–Q2.4 happens in exactly this order, on one shared source): pass (a)'s draws, in the order its steps occur; then pass (b)'s three calls, each fully consuming its own run-count draw followed by all its runs' width/start draws, in call order `(1,yellow)`, `(2,brown)`, `(1,red)`; then pass (c)'s target-count draw, followed by its own placement loop's draws in placement order (index color is free — no draw — then the two independent coin flips only where their position guard holds, then the advance draw).
 · kind `contract` · confidence `verified(differential-harness)`
@@ -78,6 +99,13 @@
 · kind `contract` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section F, 14 000 trials confirming the sampled value at a given `(x,z)` is independent of which `y` is being queried, cross-checked against the call-site reading that hardcodes the noise's own `y`-argument to `0`.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The column coordinates `x` and `z` are 32-bit integers, converted **exactly** to double for the noise call.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — read in the disassembly.
+
 **Q4.3** The noise's registered pack parameters: first octave `-8`, a single amplitude of `1.0`. (Runtime pack data, permitted.)
 · kind `constant` · confidence `read-directly`
 · verify-by: read from the data pack directly, mirrored in the constants file.
@@ -86,15 +114,31 @@
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section C, eleven hand-constructed exact-tie doubles spanning both signs and several magnitudes, all confirming the floor-based (round-toward-positive-infinity) rule.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - The block coordinates are converted exactly to double.
+> - The rounded value is formed as a **64-bit** integer by the stated rule, then **narrowed to 32 bits** (low 32 bits kept).
+> - The narrowing loses nothing in the reachable range: the noise is bounded (Q5.1 observed offsets in `[−6, 5]`), so a 32-bit or 64-bit implementation agrees on every reachable input.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — the 64-bit rounding and the 32-bit narrowing were read in the disassembly. Values were already verified by run 03's harness (section C/D).
+
 **Q4.5** The final index into the 192-entry array is computed as **`(y + offset + 192) mod 192`, using a single Java `%` after a single `+192`** — not a form that is provably nonnegative for the full range of reachable inputs (see Q5.1). This is the mechanism's own literal expression, not a paraphrase of "always-positive modulo"; the two are equal only where the pre-reduction sum is already nonnegative.
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section D, a wide sweep (9045 trials across 3 seeds, hand-picked corners at both coordinate signs and both world-height extremes plus 3000 random points per seed) comparing an independent reimplementation using this *exact* reduction shape against the real method; 0 mismatches, including exact agreement on every trial where the real method itself throws (below).
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> `y + offset + 192` is a 32-bit signed sum, and the reduction is the **truncated** remainder: its result takes the sign of the dividend, in `(−192, 192)`. No overflow is reachable.
+>
+> · kind `formula` · confidence `verified(bytecode+harness)`
+> · verify-by: already executed — 32-bit adds and a truncated remainder read in the disassembly. Behavior was verified by run 03's harness (section D, including all 4 073 out-of-range cases).
 
 ---
 
 ## Q5 — Conditional behavior
 
-**Q5.1** The read path contains no explicit conditional that changes its *formula* — Q4's five steps run unconditionally for every input. But the index expression of Q4.5 is **not safe for the full range of positions the mechanism can be asked about**: for sufficiently negative `y` combined with a sufficiently negative noise-derived offset, `y + offset + 192` is itself negative, and Java's `%` on a negative dividend returns a negative result, which is then used directly as an array index. **This is not a hypothetical edge case — it was reproduced directly against the real, unmodified method.** Over a 200 000-sample sweep of the offset noise, observed offsets ranged `[-6, 5]`; at the worst observed offset, the index goes negative for any `y < -186`, comfortably inside the reachable world-height range (down to at least `-2032`). A direct call to the real method at `(x=0, y=-2032, z=0)` throws `ArrayIndexOutOfBoundsException` for every seed tried. **This is a genuine reachability finding, not a DO-NOT-IMPLEMENT dead branch** — the opposite of run 01/02's usual pattern. A faithful implementation must reproduce the crash-prone behavior exactly (Q4.5), *or* the Implementer must decide, as an explicit policy choice outside this spec's authority, whether to special-case it. What actually prevents this from crashing real gameplay — if anything does — lives in the surface-rule tree surrounding this mechanism (depth-bounded conditions deciding *when* bandlands is even consulted), which is explicitly out of this run's scope and was not investigated.
+**Q5.1** The read path contains no explicit conditional that changes its *formula* — Q4's five steps run unconditionally for every input. But the index expression of Q4.5 is **not safe for the full range of positions the mechanism can be asked about**: for sufficiently negative `y` combined with a sufficiently negative noise-derived offset, `y + offset + 192` is itself negative, and Java's `%` on a negative dividend returns a negative result, which is then used directly as an array index. **This is not a hypothetical edge case — it was reproduced directly against the real, unmodified method.** Over a 200 000-sample sweep of the offset noise, observed offsets ranged `[-6, 5]`; at the worst observed offset, the index goes negative for any `y < -186`, comfortably inside the reachable world-height range (down to at least `-2032`). A direct call to the real method at `(x=0, y=-2032, z=0)` fails with an array-index-out-of-range error for every seed tried. **This is a genuine reachability finding, not a DO-NOT-IMPLEMENT dead branch** — the opposite of run 01/02's usual pattern. A faithful implementation must reproduce the crash-prone behavior exactly (Q4.5), *or* the Implementer must decide, as an explicit policy choice outside this spec's authority, whether to special-case it. What actually prevents this from crashing real gameplay — if anything does — lives in the surface-rule tree surrounding this mechanism (depth-bounded conditions deciding *when* bandlands is even consulted), which is explicitly out of this run's scope and was not investigated.
 · kind `open-question` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section E (systematic threshold derivation and demonstration) and section D (4073 of 9045 wide-sweep trials threw, all correctly reproduced by the faithful independent reimplementation).
 

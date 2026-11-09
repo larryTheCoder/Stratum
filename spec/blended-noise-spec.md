@@ -14,6 +14,8 @@
 - `wrap(v)` — the coordinate pre-wrap defined in Q1.6.
 - `smoothstep(t) = t³(t(6t − 15) + 10)`, the standard quintic ease curve.
 - `lerp(t,a,b) = a + t(b−a)`.
+
+> **Floating-point amendment to the notation** (2026-11-09, REVIEW-15 §5). `smoothstep(t)` is evaluated as `((t·t)·t)·((t·((t·6.0) − 15.0)) + 10.0)` and `lerp(t, a, b)` as `a + t·(b − a)`, both in double precision. The expanded polynomial `6t⁵ − 15t⁴ + 10t³` differs in the last bits on most inputs; implement the factored form exactly. Evidence: legacy-named-noise Q2.6 floating-point amendment (the same engine function).
 - octave index `n` counts up from `0` (finest/highest-frequency layer) as a sampler's internal array position; `scale(n) = 2⁻ⁿ`.
 
 ---
@@ -42,15 +44,37 @@ Limit sums, over all 16 octaves of each limit sampler: `min_sum = Σₙ noise_mi
 
 Result: `clamp_lerp(selector, min_sum/512, max_sum/512) / 128`, where `clamp_lerp(t,a,b) = a` if `t<0`, `b` if `t>1`, else `lerp(t,a,b)`.
 
-`noise_X(n; …)` is the per-octave fold-noise primitive of Q2, evaluated on octave `n`'s `ImprovedNoise` layer of sampler `X`.
+`noise_X(n; …)` is the per-octave fold-noise primitive of Q2, evaluated on octave `n`'s lattice-noise layer of sampler `X`.
 
 **One structural asymmetry worth stating plainly:** the min/max-limit samplers are evaluated at the **factor-undivided** coordinates (`px,py,pz`, only frequency-multiplied); the main/selector sampler is evaluated at the **factor-divided** coordinates (`fx,fy,fz`). `xz_factor`/`y_factor` therefore only ever coarsen the *selector*, never the limit noise itself.
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness section G (8 hand-picked corners spanning the full Y range) and section H (8000-trial random sweep across 6 pack-parameter corners including all four codec boundary values and the full reachable Y range [−2032, 2031]); 0 mismatches, max absolute difference 0.0, tolerance 1e-9.
 
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> The block coordinates `x`, `y` and `z` are 32-bit signed integers, each converted **exactly** to double before the first multiply. `scale(n) = 2⁻ⁿ` is exact in double precision for every octave used (`n ≤ 15`). No integer operation follows.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed — exact integer-to-double conversions read in the disassembly. No boundary exists, so no mutant applies.
+
+> **Field amendment** (2026-11-09, REVIEW-15 §2 / CLAUDE.md rule 14a). This claim's wording was touched by the identifier scrub, so it now carries the mandatory fields. They make the published form explicit, and change no value.
+>
+> · widths: block coordinates are 32-bit signed, converted exactly to double (width amendment above); the octave index is a small non-negative integer.
+> · fp-form: double precision throughout. `px = double(x)·xz_multiplier`, and likewise `py` and `pz`. `fx = px/xz_factor`, and likewise. `smear = y_multiplier·smear_scale_multiplier`, then `smear_f = smear/y_factor`. `scale(n)` starts at `1.0` and is halved once per octave (exact). Each octave's arguments are formed as `wrap(fx·scale(n))` and so on, with divisor `smear_f·scale(n)` and cap `fy·scale(n)` (main sampler), or `smear·scale(n)` and `py·scale(n)` (limit samplers). Each term is `noise(…)/scale(n)`, a division, accumulated in ascending `n` from `0.0`. Then `selector = (main_sum/10.0 + 1.0)/2.0`, and the result is `clamp_lerp(selector, min_sum/512.0, max_sum/512.0)/128.0`, with `lerp(t, a, b) = a + t·(b − a)`. All literals are double. This is the published formula's own order, confirmed against this session's reading.
+
 **Q1.5** The optimization by which the real implementation skips summing the min-limit (respectively max-limit) sampler entirely once the selector has saturated to `≥1` (respectively `≤0`) is **not a behavioral branch** — `clamp_lerp`'s own saturation makes the skipped sum's value irrelevant to the output. It is omitted from Q1.4's formula because including it would describe an implementation detail with zero observable effect, per the purity rule.
 · kind `contract` · confidence `read-directly`
 · verify-by: none needed — a direct algebraic consequence of `clamp_lerp`'s definition, not a separate behavior.
+
+> **Floating-point amendment** (2026-11-09, REVIEW-15 §5). The text above stands as first published; this block states the engine's floating-point form.
+>
+> **Correction (rule 20).** The skip **is** behavioral, at one value. When the selector is exactly `1.0`, the engine uses `0.0` in place of the min-limit sum, so the result is exactly `(max_sum/512.0)/128.0`. Evaluating `clamp_lerp(1.0, min_sum/512, max_sum/512)` without the skip gives `a + 1.0·(b − a)`, which is not `b` in general. At a selector of exactly `0.0`, the max-limit skip leaves the result `a` either way. For any selector `> 1` or `< 0`, the skip is indeed unobservable.
+>
+> Reaching exactly `1.0` needs the main sum within a few units in the last place of `10`. That has not been observed, but it is not excluded. Implement the skip as stated: it is exact and costs nothing.
+>
+> · kind `contract` · confidence `verified(bytecode+harness)`
+> · fp-form: the skip flags are `selector ≥ 1.0` (min-limit sum not summed, and stays `0.0`) and `selector ≤ 0.0` (max-limit sum not summed, and stays `0.0`). `clamp_lerp(t, a, b)` is `a` if `t < 0.0`, `b` if `t > 1.0`, and otherwise `a + t·(b − a)`.
+> · verify-by: already executed. The skip flags and the zero-initialized sums were read in the disassembly. The engine's own clamped lerp at `t = 1` returned a value other than `b` for 8 157 of 100 000 random `(a, b)` pairs, and exactly `b` whenever `a = 0`.
 
 **Q1.6** `wrap(v) = v − ⌊v/33554432 + 0.5⌋ · 33554432`, applied to the `x, y, z` position arguments of every octave's noise call (never to the two extra fold-mechanism arguments — see Q2). The floor here uses a wider (64-bit) integer floor than the position-grid floor of Q2.
 · kind `formula` · confidence `read-directly`
@@ -62,7 +86,16 @@ Result: `clamp_lerp(selector, min_sum/512, max_sum/512) / 128`, where `clamp_ler
 
 **Q2.1** Each octave's noise call takes, beyond the wrapped `(x,y,z)`, **two further scalar arguments**: a **divisor** and a **cap bound**. From Q1.4's formula: for the main sampler, divisor `= smear_f·scale(n)`, cap bound `= fy·scale(n)`; for each limit sampler, divisor `= smear·scale(n)`, cap bound `= py·scale(n)`. In both cases, **divisor equals cap bound multiplied by `smear_scale_multiplier`, exactly** — `smear_scale_multiplier` enters at (and only at) the divisor, never the cap bound.
 · kind `formula` · confidence `verified(differential-harness)`
-· verify-by: already executed — harness section E, 6048 hand-picked corner probes (4 x-values × 7 y-values × 3 z-values × 9 divisor magnitudes × 8 cap-bound-to-divisor ratios spanning negative, zero, and both sides of the fractional-part range), driven directly against the unmodified `ImprovedNoise` primitive; 0 mismatches.
+· verify-by: already executed — harness section E, 6048 hand-picked corner probes (4 x-values × 7 y-values × 3 z-values × 9 divisor magnitudes × 8 cap-bound-to-divisor ratios spanning negative, zero, and both sides of the fractional-part range), driven directly against the unmodified per-octave lattice-noise primitive; 0 mismatches.
+
+> **Correction and field amendment** (2026-11-09, REVIEW-15 §2 / CLAUDE.md rules 14a and 20). The text above stands as first published. Its verify-by wording was touched by the identifier scrub, so this block adds the mandatory fields. It also **corrects one sentence**.
+>
+> **Correction.** The sentence "divisor equals cap bound multiplied by `smear_scale_multiplier`, exactly" is **false** except at block `y = 1`. The divisor does not depend on the block's `y`: it is `smear_f·scale(n)` for the main sampler, where `smear_f = y_multiplier·smear_scale_multiplier/y_factor`, and `smear·scale(n)` for the limit samplers, where `smear = y_multiplier·smear_scale_multiplier`. The cap bound does depend on `y`: it is `fy·scale(n)`, where `fy = y·y_multiplier/y_factor`, or `py·scale(n)`, where `py = y·y_multiplier`. So `divisor / cap = smear_scale_multiplier / y`, in exact arithmetic. The other half of the sentence stands: `smear_scale_multiplier` enters the divisor only. The divisor and cap formulas stated earlier in this claim, and in Q1.4, are correct. Run 02's value verification used those formulas, so no verified value changes.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · widths: block `y` is 32-bit signed, converted exactly to double; no other integer operation.
+> · fp-form: double precision. `smear = y_multiplier·smear_scale_multiplier`, then `smear_f = smear/y_factor`. The per-octave divisor is `smear_f·scale(n)` (main) or `smear·scale(n)` (limit), formed as that product. The cap is `fy·scale(n)` (main) or `py·scale(n)` (limit), formed as that product. All literals are double.
+> · verify-by: already executed — the divisor's operands were read in the disassembly: the y multiplier times the smear multiplier, with no block-`y` factor. A driver is not needed, because the error is in a stated relation, not in a value: the published operand formulas already match the bytecode.
 
 **Q2.2** Full fold/cap formula. Let `y0 = ⌊y+yo⌋` (the noise layer's own y-offset `yo` added first), `yfrac = (y+yo) − y0`. Given divisor `d` and cap bound `c`:
 - if `d ≠ 0`: let `clamp_source = c` if (`c ≥ 0` and `c < yfrac`), else `yfrac`; then `fold = ⌊clamp_source/d + 10⁻⁷⌋ · d`.
@@ -71,6 +104,26 @@ Result: `clamp_lerp(selector, min_sum/512, max_sum/512) / 128`, where `clamp_ler
 The value actually dotted against the lattice gradient at each corner uses `yfrac − fold` as its y-offset. **The interpolation *weight* blending the y0 and y0+1 corners together, however, uses `smoothstep(yfrac)` — the *unfolded* fraction, not `yfrac − fold`.** Folding changes which noise value gets sampled at each lattice corner; it does not change how smoothly the sampled corners are blended into each other.
 · kind `formula` · confidence `verified(differential-harness)`
 · verify-by: already executed — harness sections D (20 000-trial baseline primitive check, 0 mismatches) and E (above). The interpolation-weight subtlety was caught by this very harness on a first attempt that used the folded fraction for the weight; that attempt failed 5976 of 6048 corners, was corrected, and re-verified to 0 mismatches. Recorded in `AUDIT.md` as a genuine harness-authoring error, not a source-side one.
+
+> **Width amendment** (2026-11-09, REVIEW-14 §1). The text above stands as first published; this block adds integer widths and rounding semantics only.
+>
+> - `y0 = ⌊y + yo⌋` is a **32-bit** floor, toward −∞, and the lattice x and z corners are the same.
+> - `fold = ⌊clamp_source/d + 10⁻⁷⌋ · d`: the floor is **32-bit**, and its integer result is converted exactly to double before the multiply by `d`.
+> - **No saturation is reachable:**
+>   - the floor's argument is below `1/d + 1`;
+>   - by the codec bounds of Q3.1, `d ≥ 684.412·0.001·1/1000·2⁻⁷ ≈ 5.35·10⁻⁶` for the main sampler, and `d ≥ 684.412·0.001·2⁻¹⁵ ≈ 2.09·10⁻⁵` for the limit samplers;
+>   - so the argument stays below `1.9·10⁵`;
+>   - the lattice floors' arguments are bounded by the Q1.6 wrap plus `256`.
+>
+>   A 64-bit floor would therefore agree on every reachable input.
+>
+> · kind `formula` · confidence `verified(bytecode)`
+> · verify-by: already executed. 32-bit floors and the exact conversion were read in the disassembly, and the saturation bound was derived from the published codec ranges. Values were already verified bit-exact by run 02's harness (sections D–H). No reachable boundary exists, so no mutant applies.
+
+> **Field amendment** (2026-11-09, REVIEW-15 §2 / CLAUDE.md rule 14a). This claim's own wording was not touched by the scrub. The fields are added because Q2.1, which was, supplies this formula's arguments. They make the published form explicit, and change no value.
+>
+> · widths: lattice and fold floors are 32-bit (width amendment above).
+> · fp-form: double precision. `X = x + xo`, and likewise. The fraction is `X − double(⌊X⌋)`. The fold is `double(⌊clamp_source/d + ε⌋)·d`, where `ε` is the single-precision literal `10⁻⁷` widened to double (Q2.3), and it is added after the division. The corner y offset is `yfrac − fold`. The y interpolation weight is `smoothstep(yfrac)`, the unfolded fraction. This is the published order, confirmed against this session's reading.
 
 **Q2.3** The `10⁻⁷` epsilon added before the divisor-floor is a single-precision (float) literal in source, widened to double for the arithmetic. It nudges an exact multiple of the divisor to round up rather than down under floating-point error; it was not separately isolated in the harness (it is exercised implicitly by every corner in Q2.2's 6048-probe sweep, including several placed exactly at `clamp_source = k·d` for small integers `k`).
 · kind `constant` · confidence `read-directly`
@@ -100,11 +153,11 @@ The value actually dotted against the lattice gradient at each corner uses `yfra
 · kind `contract` · confidence `read-directly`
 · verify-by: none needed beyond Q4.2–Q4.4, which behaviorally confirm the sequential path's specific consumption pattern.
 
-**Q4.2** All three samplers **share one `RandomSource` instance**, advanced in sequence: the min-limit sampler is constructed first, then the max-limit sampler continues from wherever the min-limit sampler left the shared source, then the main sampler continues from wherever the max-limit sampler left it. Construction order is therefore output-visible, and this is that order: **min-limit, then max-limit, then main.**
+**Q4.2** All three samplers **share one random stream**, advanced in sequence: the min-limit sampler is constructed first, then the max-limit sampler continues from wherever the min-limit sampler left the shared source, then the main sampler continues from wherever the max-limit sampler left it. Construction order is therefore output-visible, and this is that order: **min-limit, then max-limit, then main.**
 · kind `contract` · confidence `verified(differential-harness)`
-· verify-by: already executed — harness section B. A from-scratch, independently-ordered replay (fresh `RandomSource` at the same seed; construct 16 layers, then 16, then 8, each layer via one ordinary sequential draw) was compared against the real instance's internal per-layer state, extracted read-only. Exact match across all 40 layers; any wrong ordering would have produced a diverging state from the first layer onward, since each layer's construction consumes a variable, seed-dependent number of draws from the shared source.
+· verify-by: already executed — harness section B. A from-scratch, independently-ordered replay (a fresh random stream at the same seed; construct 16 layers, then 16, then 8, each layer via one ordinary sequential draw) was compared against the real instance's internal per-layer state, extracted read-only. Exact match across all 40 layers; any wrong ordering would have produced a diverging state from the first layer onward, since each layer's construction consumes a variable, seed-dependent number of draws from the shared source.
 
-**Q4.3** Within each sampler, layers are constructed **highest-frequency octave first** (octave `0`), then descending through the coarser octaves in strict numeric order (octave `−1, −2, …` down to that sampler's coarsest octave — `−15` for each limit sampler, `−7` for the main sampler), all from the one shared, continuously-advancing `RandomSource`.
+**Q4.3** Within each sampler, layers are constructed **highest-frequency octave first** (octave `0`), then descending through the coarser octaves in strict numeric order (octave `−1, −2, …` down to that sampler's coarsest octave — `−15` for each limit sampler, `−7` for the main sampler), all from the one shared, continuously-advancing random stream.
 · kind `contract` · confidence `verified(differential-harness)`
 · verify-by: covered by Q4.2's same harness section — the per-layer ordering was part of what was matched, not just the sampler-level ordering.
 
@@ -120,7 +173,7 @@ The value actually dotted against the lattice gradient at each corner uses `yfra
 
 ## Q5 — Completeness
 
-**Q5.1** The complete external input set to the mechanism's own compute path is: the derived `RandomSource` (itself a pure function of the world seed, via a positional fork salted by the string **`minecraft:terrain`** — runtime data, permitted), the block position `(x,y,z)`, and the five named pack parameters. Nothing else.
+**Q5.1** The complete external input set to the mechanism's own compute path is: the derived random stream (itself a pure function of the world seed, via a positional fork salted by the string **`minecraft:terrain`** — runtime data, permitted), the block position `(x,y,z)`, and the five named pack parameters. Nothing else.
 · kind `contract` · confidence `read-directly` (exhaustive read of the compute path and its transitive reads; the seed-derivation salt was read directly at the wiring site, one level up from the mechanism itself)
 · verify-by: harness-level — every harness section constructs instances directly from exactly this input set and nothing more, and all pass.
 
