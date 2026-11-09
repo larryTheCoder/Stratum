@@ -228,11 +228,12 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     //
     // And the bare subjects — a ROUTER that names an unseedable noise — are
     // gone too: the climate noises are the only ones a legacy router names,
-    // and they are derived. What a legacy dimension still cannot seed lives
-    // in its surface rule alone.
-    CHECK(unseeded == std::vector<std::string>{"minecraft:caves surface_rule",
-                                               "minecraft:floating_islands surface_rule",
-                                               "minecraft:nether surface_rule"});
+    // and they are derived. So are the surface rules' noises now
+    // (spec/legacy-named-noise-spec.md; SPEC §11, "Legacy named noises,
+    // adopted"), which until 2026-11-09 left caves, floating_islands and the
+    // Nether here by their ` surface_rule`: nothing in vanilla's data is
+    // unseeded any more.
+    CHECK(unseeded.empty());
 
     // AND THE CONSTRUCTS: none. This read six — one warning per
     // `vertical_gradient` random_name in caves, floating_islands and the

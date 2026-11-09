@@ -71,6 +71,8 @@ using stratum::density::RandomSource;
 using stratum::test::Category;
 
 constexpr const char* kScript = "tools/analysis/aquifer-farcell-probe.sh";
+/// The seed of the model-only check at the origin cells; each placement
+/// carries its own.
 constexpr std::int64_t kSeed = 42;
 constexpr std::int32_t kChunks = 8;
 constexpr std::int32_t kWindow = kChunks * 16;
@@ -88,6 +90,7 @@ constexpr int kMinColumns = 120;
 
 struct Placement {
     const char* corpus;
+    std::int64_t seed;
     std::int32_t originChunkX;
     std::int32_t originChunkZ;
     std::int32_t regionX;
@@ -96,9 +99,13 @@ struct Placement {
 
 /// Cells are 16 blocks and start on a chunk boundary, so a chunk's index is
 /// its cell's.
-constexpr std::array<Placement, 2> kPlacements{{
-    {"farcell_pos_s42", 704, 704, 22, 22},
-    {"farcell_neg_s42", -712, -712, -23, -23},
+constexpr std::array<Placement, 4> kPlacements{{
+    {"farcell_pos_s42", 42, 704, 704, 22, 22},
+    {"farcell_neg_s42", 42, -712, -712, -23, -23},
+    // A second seed (IMPLEMENTER-RULING-01, aquifer Q3.4): one seed agreeing
+    // with an RNG-driven model is not proof on its own.
+    {"farcell_pos_s31337", 31337, 704, 704, 22, 22},
+    {"farcell_neg_s31337", 31337, -712, -712, -23, -23},
 }};
 
 struct ArmOf {
@@ -131,9 +138,10 @@ constexpr std::array<ArmOf, 2> kArms{
         return false;
     }
     for (const Placement& placement : kPlacements) {
-        INFO(probeDir(placement) << " is missing while the other far-cell corpus is present; "
-                                 << "regenerate both with " << kScript << " --accept-eula "
-                                 << kSeed);
+        INFO(probeDir(placement)
+             << " is missing while the other far-cell corpus is present; "
+             << "regenerate both with " << kScript << " --accept-eula "
+             << "<seed>, or tools/probe-worlds generate --only 'farcell_s*' --accept-eula");
         REQUIRE(std::filesystem::is_regular_file(probeDir(placement) / "spec.json"));
     }
     return true;
@@ -146,7 +154,7 @@ constexpr std::array<ArmOf, 2> kArms{
     }
     nlohmann::json spec = stratum::test::readSpec(probeDir(placement));
     stratum::test::requireFrozen(probeDir(placement), kScript);
-    stratum::test::requireSeed(probeDir(placement), kSeed);
+    stratum::test::requireSeed(probeDir(placement), placement.seed);
 
     // Where the server forceloaded is what every reading below assumes.
     std::ifstream manifestIn(probeDir(placement) / "manifest.json");
@@ -547,9 +555,14 @@ TEST_CASE("the aquifer's own position mix multiplies x in 32 bits where only far
     // chance of three equal draws from different stream seeds. The logical
     // shift parts the cells whose mix is negative under Xoroshiro, and NONE
     // under the legacy source: java.util.Random keeps 48 bits of its seed,
-    // and `>>` and `>>>` differ in the top 16 alone.
+    // and `>>` and `>>>` differ in the top 16 alone. The logical-shift counts
+    // repeat across seeds because the mix is a function of the cell index
+    // alone; the seed enters only after it.
     static constexpr std::array<std::array<std::array<int, 3>, kArms.size()>, kPlacements.size()>
-        kParted{{{{{64, 64, 31}, {62, 64, 0}}}, {{{64, 64, 24}, {64, 64, 0}}}}};
+        kParted{{{{{64, 64, 31}, {62, 64, 0}}},
+                 {{{64, 64, 24}, {64, 64, 0}}},
+                 {{{64, 64, 31}, {64, 64, 0}}},
+                 {{{64, 64, 24}, {64, 64, 0}}}}};
 
     std::array<std::array<Score, kMixes.size()>, kArms.size()> totals{};
     std::array<std::array<int, kMixes.size()>, kArms.size()> partedTotals{};
@@ -557,7 +570,8 @@ TEST_CASE("the aquifer's own position mix multiplies x in 32 bits where only far
     if (!corporaPresent()) {
         SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
                                                  << "; generate them with " << kScript
-                                                 << " --accept-eula " << kSeed);
+                                                 << " --accept-eula <seed>, or tools/probe-worlds "
+                                                    "generate --only 'farcell_s*' --accept-eula");
     }
     int placements = 0;
     for (std::size_t p = 0; p < kPlacements.size(); ++p) {
@@ -569,7 +583,7 @@ TEST_CASE("the aquifer's own position mix multiplies x in 32 bits where only far
         for (std::size_t a = 0; a < kArms.size(); ++a) {
             const ArmOf& arm = kArms.at(a);
             INFO("arm " << arm.name);
-            const CentreSource centres{kSeed, arm.source};
+            const CentreSource centres{placement.seed, arm.source};
             // The mix spelled above is the library's to the bit, or the
             // rivals perturb a lookalike.
             for (std::int32_t dz = -1; dz <= kChunks; ++dz) {
@@ -643,7 +657,8 @@ TEST_CASE("the shipped aquifer lattice replays the far cells block for block",
     if (!corporaPresent()) {
         SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
                                                  << "; generate them with " << kScript
-                                                 << " --accept-eula " << kSeed);
+                                                 << " --accept-eula <seed>, or tools/probe-worlds "
+                                                    "generate --only 'farcell_s*' --accept-eula");
     }
     int placements = 0;
     for (const Placement& placement : kPlacements) {
@@ -655,10 +670,10 @@ TEST_CASE("the shipped aquifer lattice replays the far cells block for block",
             INFO("arm " << arm.name);
             const Arm constants =
                 armOf(stratum::test::specEntry(*spec, probeDir(placement), arm.name));
-            const CentreSource own{kSeed, arm.source};
-            const CentreSource other{kSeed, arm.source == RandomSource::Legacy
-                                                ? RandomSource::Xoroshiro
-                                                : RandomSource::Legacy};
+            const CentreSource own{placement.seed, arm.source};
+            const CentreSource other{placement.seed, arm.source == RandomSource::Legacy
+                                                         ? RandomSource::Xoroshiro
+                                                         : RandomSource::Legacy};
             const Tally exact = replay(placement, arm.name, constants, own);
             const Tally wrong = replay(placement, arm.name, constants, other);
             INFO("own centres: blocks " << exact.blocks << ", agree " << exact.agree << ", flow "
@@ -690,7 +705,8 @@ TEST_CASE("the shipped filler generates the far aquifer cells block for block",
     if (!corporaPresent()) {
         SKIP("no far-cell aquifer probes under " << probeDir(kPlacements.at(0)).parent_path()
                                                  << "; generate them with " << kScript
-                                                 << " --accept-eula " << kSeed);
+                                                 << " --accept-eula <seed>, or tools/probe-worlds "
+                                                    "generate --only 'farcell_s*' --accept-eula");
     }
     int placements = 0;
     for (const Placement& placement : kPlacements) {
@@ -720,7 +736,7 @@ TEST_CASE("the shipped filler generates the far aquifer cells block for block",
                 dimension.legacyRandomSource ? RandomSource::Legacy : RandomSource::Xoroshiro;
             REQUIRE(source == arm.source);
             const auto noises = stratum::density::NoiseRegistry::create(
-                pack, loaded.graph.referencedNoises(), kSeed, source);
+                pack, loaded.graph.referencedNoises(), placement.seed, source);
             const stratum::surface::RuleGraph rules =
                 stratum::surface::RuleGraph::resolve(dimension.surfaceRule, id);
             const stratum::terrain::ChunkFiller filler =

@@ -133,6 +133,13 @@ inline constexpr std::int32_t kNeverLevel = 16 * kMinYLimit;
 /// which moves the thresholds no lower than -0.575 and -0.09375. A value
 /// outside [-1, 1] therefore lands on the same side of every comparison as
 /// its clamp. "the Q5.6 floodedness clamp is inert" sweeps that.
+///
+/// NO LONGER WHAT THE LIBRARY DECIDES WITH (2026-11-09): cellLevel evaluates
+/// Q5.6 in the engine's floating-point form (aquifer_lattice.cpp), whose
+/// thresholds off the ocean branch are 0.8 and 0.40000000000000013 and on it
+/// differ from `threshold - reach * bonus` in the last bits. These two, and
+/// the bonus slopes below, stay as the measured constants the probes and the
+/// analysis rivals are written against.
 inline constexpr double kFloodedLocalThreshold = 0.4;
 inline constexpr double kFloodedSeaThreshold = 0.8;
 
@@ -507,9 +514,12 @@ inline constexpr std::int32_t kNearSurfaceFloorOffset = 20;
 
 /// Q5.9, the deep-dark override's thresholds, read as router values at a
 /// source's centre (spec/aquifer-constants.json `deep_dark_override`). Both
-/// comparisons strict.
-inline constexpr double kDeepDarkErosionBelow = -0.225;
-inline constexpr double kDeepDarkDepthAbove = 0.9;
+/// comparisons strict. SINGLE-PRECISION literals widened to double (Q5.9's
+/// floating-point amendment; IMPLEMENTER-RULING-01 aquifer P1):
+/// -0.22499999403953552 and 0.8999999761581421, not -0.225 and 0.9, which
+/// decide differently for any value between the two forms.
+inline constexpr double kDeepDarkErosionBelow = static_cast<double>(-0.225F);
+inline constexpr double kDeepDarkDepthAbove = static_cast<double>(0.9F);
 
 [[nodiscard]] constexpr bool isDeepDark(const double erosion, const double depth) noexcept {
     return erosion < kDeepDarkErosionBelow && depth > kDeepDarkDepthAbove;

@@ -1053,12 +1053,24 @@ TEST_CASE("the lattice is consulted at y_skip itself and not above it", "[aquife
 
 TEST_CASE("the deep-dark override needs both thresholds, both strict", "[aquifer]") {
     using stratum::aquifer::isDeepDark;
+    // The thresholds are single-precision literals widened to double (Q5.9's
+    // floating-point amendment): -0.22499999403953552 and 0.8999999761581421.
+    constexpr double kErosion = -0.22499999403953552;
+    constexpr double kDepth = 0.8999999761581421;
+    CHECK(std::bit_cast<std::uint64_t>(stratum::aquifer::kDeepDarkErosionBelow) ==
+          std::bit_cast<std::uint64_t>(kErosion));
+    CHECK(std::bit_cast<std::uint64_t>(stratum::aquifer::kDeepDarkDepthAbove) ==
+          std::bit_cast<std::uint64_t>(kDepth));
     CHECK(isDeepDark(-0.3, 1.0));
-    CHECK_FALSE(isDeepDark(-0.225, 1.0)); // erosion AT the threshold is not below it
-    CHECK_FALSE(isDeepDark(-0.3, 0.9));   // depth AT the threshold is not above it
+    CHECK_FALSE(isDeepDark(kErosion, 1.0)); // erosion AT the threshold is not below it
+    CHECK_FALSE(isDeepDark(-0.3, kDepth));  // depth AT the threshold is not above it
     CHECK_FALSE(isDeepDark(0.0, 1.0));
     CHECK_FALSE(isDeepDark(-0.3, 0.0));
-    CHECK(isDeepDark(std::nextafter(-0.225, -1.0), std::nextafter(0.9, 2.0)));
+    CHECK(isDeepDark(std::nextafter(kErosion, -1.0), std::nextafter(kDepth, 2.0)));
+    // Where the decimal reading parts from the engine: -0.225 and 0.9 as
+    // doubles lie past the widened floats, so they now count.
+    CHECK(isDeepDark(-0.225, 1.0));
+    CHECK(isDeepDark(-0.3, 0.9));
 }
 
 TEST_CASE("a deep-dark cell is dry, except on the near-surface return", "[aquifer]") {
@@ -1514,4 +1526,30 @@ TEST_CASE("below a sea under -54 an aborted scan reads -54 and lava, deep-dark o
     const auto guarded = cellLevel(cellWith(quiet, -70, -74, 0.9));
     CHECK(guarded.level == stratum::aquifer::kLavaLevel);
     CHECK(guarded.origin == LevelOrigin::GlobalLava);
+}
+
+TEST_CASE("the level rule's thresholds are the engine's floating-point form", "[aquifer]") {
+    // Q5.6's floating-point amendment (IMPLEMENTER-RULING-01, aquifer P1):
+    // where phi is 0 — off the ocean branch, or past the ramp's end, as here
+    // (d = 150 + 8 - 90 = 68 > 64) — the engine's thresholds are
+    // -0.3 + 1 * (0.8 - (-0.3)) = 0.8 and -0.8 + 1 * (0.4 - (-0.8)) =
+    // 0.40000000000000013, not 0.4. A floodedness strictly between 0.4 and
+    // that takes the ladder under the decimal reading and is dry in the engine.
+    constexpr double kEngineLow = 0.40000000000000013;
+    CHECK(std::bit_cast<std::uint64_t>(-0.8 + (1.0 * (0.4 - (-0.8)))) ==
+          std::bit_cast<std::uint64_t>(kEngineLow));
+    const double between = std::nextafter(0.4, 1.0);
+    REQUIRE(between < kEngineLow);
+
+    // The ladder case of "a deep-dark cell is dry": surface 150, sea 240.
+    const auto level = [](const double floodedness) {
+        return cellFluidLevel(cellWith(constantSurface(150), 240, 90, floodedness, 3.0));
+    };
+    REQUIRE(level(0.5) == 130);
+    CHECK(level(between) == kNeverLevel);
+    CHECK(level(kEngineLow) == kNeverLevel);
+    CHECK(level(std::nextafter(kEngineLow, 1.0)) == 130);
+    // And the upper one is 0.8 exactly here.
+    CHECK(level(0.8) == 130);
+    CHECK(level(std::nextafter(0.8, 1.0)) == 240);
 }

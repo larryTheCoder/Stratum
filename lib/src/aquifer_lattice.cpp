@@ -195,34 +195,45 @@ CellLevel cellLevel(const CellFluid& cell) noexcept {
     // Since the minimum never exceeds the anchor this is the harder test, so
     // the two separate only where `sea_level - 8` falls between them — a
     // configuration no campaign had until one went looking for it.
+    // Q5.6, in the engine's floating-point form (spec/aquifer-spec.md, Q5.6's
+    // floating-point amendment; IMPLEMENTER-RULING-01 aquifer P1): the ramp
+    // phi from `d`, the two thresholds from phi, and the comparisons as
+    // `n - theta > 0.0`, each double operation in exactly the written order.
+    // The algebraically equal form this replaced — floodedness plus a depth
+    // bonus of 11/640 or 3/160 a block against 0.8 or 0.4 — differs in the
+    // last bits on most reachable `d`, and off the ocean branch the engine's
+    // lower threshold is 0.40000000000000013, not 0.4.
+    //
+    // phi is the ramp only on the ocean branch, the spec's "submerged"; off
+    // it phi is 0. The DEPTH path gates on the ANCHOR while `d` reads the
+    // minimum (`cap`); since the minimum never exceeds the anchor this is the
+    // harder test, so the two separate only where `sea_level - 8` falls
+    // between them.
+    double phi = 0.0;
     if (surface.anchor < oceanGate) {
-        // `depth` is a plain signed subtraction and may be negative; it never
-        // divides, so no floorDiv arises. The only division in the whole
-        // decision is the floorDiv inside `ladderLevel`.
-        const std::int32_t depth = javamath::wrappingSub(surface.cap, cell.centreY);
-        // Clamped at zero and only at zero. Without the clamp a cell with
-        // floodedness just above 0.4 would turn to lava past depth 61, where
-        // the server was observed keeping the ladder out to depth 160.
-        const auto reach =
-            static_cast<double>(std::max(0, javamath::wrappingSub(kZeroBonusDepth, depth)));
-
-        // Product over divisor, never a pre-divided constant — see the slope
-        // constants in the header.
-        if (cell.floodedness + ((reach * kSeaBonusNumerator) / kSeaBonusDenominator) >
-            kFloodedSeaThreshold) {
-            level = cell.seaLevel;
-            tookSea = true;
-        } else if (cell.floodedness + ((reach * kLocalBonusNumerator) / kLocalBonusDenominator) >
-                   kFloodedLocalThreshold) {
-            level = ladder;
+        // d = S_min + 8 - qy, a 32-bit signed integer (Q5.6's width
+        // amendment), converted exactly.
+        const std::int32_t d =
+            javamath::wrappingAdd(javamath::wrappingSub(surface.cap, cell.centreY), 8);
+        const double t = (static_cast<double>(d) - 0.0) / (64.0 - 0.0);
+        if (t < 0.0) {
+            phi = 1.0;
+        } else if (t > 1.0) {
+            phi = 0.0;
         } else {
-            level = kNeverLevel;
+            phi = 1.0 + (t * (0.0 - 1.0));
         }
-    } else if (cell.floodedness > kFloodedSeaThreshold) {
-        // No depth term off the ocean branch.
+    }
+    const double ramp = (phi - 1.0) / (0.0 - 1.0);
+    const double thetaHigh = -0.3 + (ramp * (0.8 - (-0.3)));
+    const double thetaLow = -0.8 + (ramp * (0.4 - (-0.8)));
+    // Clamped as the spec writes it; inert here, every threshold lying
+    // strictly inside (-1, 1).
+    const double n = std::clamp(cell.floodedness, -1.0, 1.0);
+    if (n - thetaHigh > 0.0) {
         level = cell.seaLevel;
         tookSea = true;
-    } else if (cell.floodedness > kFloodedLocalThreshold) {
+    } else if (n - thetaLow > 0.0) {
         level = ladder;
     }
 

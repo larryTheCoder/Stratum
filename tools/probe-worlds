@@ -298,6 +298,14 @@ UNITS = [
          density(('fluidceiling_s42', 42), ('fluidceilingp_s42', 42), ('fluidceilingl_s42', 42))),
     unit('farcell_s42', 'end', ['aquifer-farcell-probe.sh', '42'],
          density(('farcell_pos_s42', 42), ('farcell_neg_s42', 42))),
+    # A second seed for the far cells (IMPLEMENTER-RULING-01, aquifer Q3.4):
+    # one seed agreeing with an RNG-driven model is not proof on its own.
+    unit('farcell_s31337', 'end', ['aquifer-farcell-probe.sh', '31337'],
+         density(('farcell_pos_s31337', 31337), ('farcell_neg_s31337', 31337))),
+    # Q5.6's and Q5.9's thresholds in their last bits (IMPLEMENTER-RULING-01,
+    # aquifer P1): seven constant dimensions, one server start.
+    unit('aqthreshold_s42', 'end', ['aquifer-threshold-probe.sh', '42'],
+         density(('aqthreshold_s42', 42))),
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))

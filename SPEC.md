@@ -433,6 +433,7 @@ to bump the version and be called out; this is that call-out.
 | 14 | **Ore veins: a first draw of exactly 0.7F is a member, and veins do not need aquifers** (§11, "Ore veins under the legacy source"). The membership roll compares its nextFloat draw widened to double against 0.7 (equivalently `f <= 0.7F`; no draw separates the two readings); v13 compared `f < 0.7F` in float, so the one 24-bit draw equal to 0.7F (next(24) = 11744051, 2^-24 of candidates) was left as the default block. Measured at five positions under both random sources, four of them found from the RNG before their worlds were generated. And `ore_veins_enabled` places veins whatever `aquifers_enabled` says; v13 placed none with aquifers off, on one comparison that changed the seed along with the flag (its stone world, at seed 42, has no position in its window that the vein gate admits, so the library predicts it stone with aquifers on too). No vanilla preset sets veins without aquifers, no golden block changes and the pinned overworld hash holds; a datapack with veins on and aquifers off now gets veins. The legacy vein source, lifted from its refusal in the same change, needs no bump of its own: every block it changes was refused before. |
 | 15 | **The End's biome source, `minecraft:the_end`** (§11, "The End's biome source"). A dimension now names its biome source when it is compiled (`world::BiomeSource`), and the End's reads the router's `erosion` at each chunk's centre, `the_end` wherever chunkX² + chunkZ² <= 4096. Before, the only way to compile the End was to hand it another dimension's multi-noise list, so every End world took that list's biomes where the server stores the_end and the four outer End biomes. Exact on every stored quart of 45 End regions (47 185 920 quarts, eight golden and 37 probe regions). Changes the biomes of every End world, and the blocks of an End whose surface rules read the biome; no block of vanilla's End changes (its one surface rule reads none), and nothing in the overworld or the Nether moves — the pinned overworld hash holds. In the same version ext's encoder gives PocketMine-MP all 24 sub-chunks: an End chunk's sixteen outside its noise height, which PocketMine-MP filled with ocean, are air with the End's biomes (§4.3); an overworld chunk, which already filled all 24, is unchanged. And a `cache_2d` over `old_blended_noise` or `weird_scaled_sampler`, read through as if transparent before, is refused (§11's M2 `cache_2d` entry); vanilla wraps neither. |
 | 16 | **The surface rules read the zoomed biome** (§11, "The surface rules read the zoomed biome"). A block's biome is the quart `biome::VoronoiZoom` picks for it — its own or a neighbour's, by a jittered lattice keyed by a SHA-256 of all 64 bits of the world seed — not its own quart. Changes surface blocks near biome borders in every dimension whose rules read the biome: on the golden overworld grid 183 of the 415 surface-material misses become exact and none get worse; the pinned overworld hash holds (its window has no border). **Every octave wraps its scaled coordinates into ±2^24** (spec/legacy-named-noise-spec.md Q2.5), as blended noise already did: no change inside ±2^23 of the origin after scaling, so no golden block moves. **Legacy dimensions' named surface noises are built** (§11, "Legacy named noises, adopted"): the Nether, `caves` and `floating_islands` compile and generate their surface rules, where every one was refused before, so no block a v15 blob could produce changes for that. |
+| 17 | **The aquifer's level rule and deep-dark override in the engine's floating-point form** (§11, "Aquifer Q3.4, Q5.6 and Q5.9, adopted"). Q5.6's thresholds are evaluated as the engine evaluates them — the ramp phi from `d`, then `-0.3 + ((phi - 1)/(0 - 1)) * (0.8 - (-0.3))` and its lower twin, compared as `n - theta > 0` — where v16 added a depth bonus to floodedness and compared it with 0.8 or 0.4; the two forms part in the last bits at 51 and 54 of the 82 reachable `d`, and off the ramp the lower threshold is 0.40000000000000013. Q5.9's thresholds are the single-precision literals widened, -0.22499999403953552 and 0.8999999761581421. Changes blocks only where a floodedness, erosion or depth lands within those last bits of a threshold, which `aquifer-threshold-probe.sh` puts there and the server confirms; no golden block changes, and the pinned overworld hash holds. v16 had reached only this development branch; bumped rather than amended because a v16 blob could exist. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -12537,6 +12538,51 @@ Open:
     same machine: 3.20 ms/chunk median before, 3.47 after (+0.28 ms, 8.5%),
     most of it the biome searches for neighbour-chunk quarts the zoom
     reaches. Above the owner's settled 3.4 ms (2026-11-01).
+
+- **Aquifer Q3.4, Q5.6 and Q5.9, adopted (MA, 2026-11-10; pipeline engine
+  v17).** IMPLEMENTER-RULING-01's three aquifer P1 items, against
+  spec/aquifer-spec.md as amended (f055965).
+  - *Q3.4, the cell-position mix's integer widths.* Already this build's:
+    `rng::positionSeed` forms the x product in 32 bits before sign
+    extension, the z product in 64 after it, sign-extends y, wraps the
+    square and sum at 64 bits and shifts arithmetically, and
+    `PositionalSource::at` XORs the result into the low half of the stream
+    seed. The ruling asked for fixtures past the widths' blind regions
+    (|x| about 11 000, |z| about 300); `aquifer-farcell-probe.sh` already
+    put cells at 704..711 and -712..-705 on both axes, at seed 42, and now
+    at seed 31337 too (tools/probe-worlds unit `farcell_s31337`), so the
+    claim no longer rests on one seed. On all four placements and both
+    random sources the shipped mix agrees with the server on every scored
+    cell, and each wrong-width rival — x in 64 bits, z in 32 bits, a
+    logical shift — is refused (47 to 59 of 64 cells at seed 31337;
+    `vanilla_aquifer_farcell_test.cpp`, whose three cases replay the cells
+    block for block too).
+  - *Q5.6, the level rule in the engine's form.* Implemented as the
+    floating-point amendment writes it (aquifer_lattice.cpp): `d = S_min +
+    8 - qy` in 32 bits; `t = (d - 0)/(64 - 0)`; phi 1 below 0, 0 above 1,
+    `1 + t*(0 - 1)` between, and 0 off the ocean branch; the thresholds
+    `-0.3 + ((phi - 1)/(0 - 1)) * (0.8 - (-0.3))` and `-0.8 + ((phi -
+    1)/(0 - 1)) * (0.4 - (-0.8))`; and `n - theta > 0` with `n` the clamped
+    floodedness. It replaces this build's measured spelling (this section,
+    "The bonus is a product over a divisor"), which is the same rule
+    algebraically and parts from the engine in the last bits.
+  - *Q5.9, the deep-dark thresholds.* The single-precision literals
+    widened: `erosion < -0.22499999403953552` and `depth >
+    0.8999999761581421`. The decimal -0.225 and 0.9 this section's MA
+    entries and the v3 row quote decide differently for any value between
+    the two forms.
+  - *Evidence.* `tools/analysis/aquifer-threshold-probe.sh` (unit
+    `aqthreshold_s42`) puts router constants exactly where the readings
+    part, seven dimensions of one constant world, and
+    `vanilla_aquifer_threshold_test.cpp` replays each through the filler
+    name for name: all seven agree with the server (no wrong block; flow
+    remnant only), and the server is DRY at floodedness 0.4000000000000001
+    (the decimal reading floods it), at 0.40000000000000013 itself, at
+    erosion -0.225 and at depth 0.9 (the decimal reading floods both),
+    while 0.4000000000000002, erosion -0.22499999403953552 and the 0.5
+    control flood. Every other conformance case passes unchanged, the
+    pinned overworld hash included; no golden holds a value within those
+    last bits. Pinned in unit cases too (`aquifer_lattice_test.cpp`).
 
 ## 12. Content, provenance & distribution policy
 
