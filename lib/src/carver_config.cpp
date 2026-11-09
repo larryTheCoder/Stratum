@@ -123,21 +123,29 @@ void requireOnly(const nlohmann::json& object, std::initializer_list<std::string
         fail(id, where + " must be a vertical anchor: one of {\"absolute\": y}, "
                          "{\"above_bottom\": n}, {\"below_top\": n}");
     }
+    // Key and value bound once, as surface_rule_graph.cpp's readAnchor does:
+    // GCC 13 at -O3 cannot prove a second `entry.value()` non-null and raises
+    // -Wnull-dereference inside nlohmann/json (an error in CI's release legs).
     const auto entry = value.begin();
-    const std::optional<std::int32_t> y = data::exactInteger<std::int32_t>(entry.value());
-    if (!entry.value().is_number_integer() || !y.has_value()) {
-        fail(id, where + "'s " + entry.key() + " must be a 32-bit whole number");
+    const std::string& key = entry.key();
+    const nlohmann::json& inner = entry.value();
+    if (!inner.is_number_integer()) {
+        fail(id, where + "'s " + key + " must be a 32-bit whole number");
+    }
+    const std::optional<std::int32_t> y = data::exactInteger<std::int32_t>(inner);
+    if (!y.has_value()) {
+        fail(id, where + "'s " + key + " must be a 32-bit whole number");
     }
     surface::VerticalAnchor result;
     result.value = *y;
-    if (entry.key() == "absolute") {
+    if (key == "absolute") {
         result.kind = surface::VerticalAnchor::Kind::Absolute;
-    } else if (entry.key() == "above_bottom") {
+    } else if (key == "above_bottom") {
         result.kind = surface::VerticalAnchor::Kind::AboveBottom;
-    } else if (entry.key() == "below_top") {
+    } else if (key == "below_top") {
         result.kind = surface::VerticalAnchor::Kind::BelowTop;
     } else {
-        fail(id, where + " names '" + entry.key() + "', which is not a vertical anchor");
+        fail(id, where + " names '" + key + "', which is not a vertical anchor");
     }
     return result;
 }
