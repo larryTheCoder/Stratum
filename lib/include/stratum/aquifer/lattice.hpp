@@ -296,7 +296,10 @@ public:
     /// legacy source each draw is java.util.Random's own nextInt(bound).
     [[nodiscard]] Jitter jitterOf(std::int32_t cx, std::int32_t cy, std::int32_t cz) const noexcept;
 
-    /// The centre in absolute block coordinates.
+    /// The centre in absolute block coordinates, its y kept in 12 bits as
+    /// the server packs it (spec Q3.3): floorMod(y + 2048, 4096) - 2048, so a
+    /// lattice point past ±2048 wraps to the other edge. Only a dimension
+    /// reaching within one cell of ±2048 can see it (SPEC §11, "Aquifer Q3.3").
     [[nodiscard]] CellIndex centreOf(std::int32_t cx, std::int32_t cy,
                                      std::int32_t cz) const noexcept;
 

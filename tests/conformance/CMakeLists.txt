@@ -83,6 +83,8 @@ add_executable(stratum_conformance_tests
     vanilla_legacy_nether_surface_test.cpp
     vanilla_aquifer_threshold_test.cpp
     vanilla_aquifer_spreadwidth_test.cpp
+    vanilla_aquifer_ywrap_test.cpp
+    vanilla_blended_fpform_test.cpp
     vanilla_carver_config_test.cpp
     vanilla_carver_golden_test.cpp
     vanilla_legacy_nether_climate_gap_test.cpp

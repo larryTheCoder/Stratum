@@ -303,8 +303,9 @@ Jitter CentreSource::jitterOf(const std::int32_t cx, const std::int32_t cy,
 CellIndex CentreSource::centreOf(const std::int32_t cx, const std::int32_t cy,
                                  const std::int32_t cz) const noexcept {
     const Jitter jitter = jitterOf(cx, cy, cz);
+    const std::int32_t trueY = (cy * kCellPitchY) + jitter.y;
     return CellIndex{.x = (cx * kCellPitchX) + jitter.x,
-                     .y = (cy * kCellPitchY) + jitter.y,
+                     .y = javamath::floorMod(trueY + 2048, 4096) - 2048,
                      .z = (cz * kCellPitchZ) + jitter.z};
 }
 

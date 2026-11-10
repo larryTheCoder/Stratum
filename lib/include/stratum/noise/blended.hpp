@@ -48,6 +48,13 @@
 // is no longer refused by the interpreter — it is evaluated via the Modern
 // reading — but per the smearScaleMultiplier finding above, "evaluated" is
 // not yet "verified everywhere."
+//
+// Since then: the fold's missing epsilon was found (SPEC §11, the M3
+// residual), and since pipeline engine v20 the Modern reading forms its
+// doubles in the engine's order rather than cubiomes' — the position
+// `(x * M) / F` and the selector `(main / 10 + 1) / 2` — confirmed to the
+// bit against the server (SPEC §11, "old_blended_noise's floating-point
+// form"). deepslate's 240 vectors match exactly.
 
 #pragma once
 

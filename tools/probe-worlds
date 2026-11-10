@@ -270,6 +270,10 @@ UNITS = [
          density(('levelwater_s42', 42))),
     unit('levelice_s31337', 'surface', ['aquifer-level-probe.sh', '31337'],
          density(('levelice_s31337', 31337))),
+    # old_blended_noise's floating-point form: 24 points of base_3d_noise
+    # bisected to the bit, one server start of 88 dimensions (about five
+    # minutes locally).
+    unit('blendedfp_s42', 'surface', ['blended-fpform-probe.sh'], density(('blendedfp_s42', 42))),
     unit('levelice_s8675309', 'water', ['aquifer-level-probe.sh', '8675309'],
          density(('levelice_s8675309', 8675309))),
     # end: the End's outer islands, 3200 chunks per seed (2 minutes on a
@@ -315,6 +319,10 @@ UNITS = [
     # P2): a datapack spread past the int range, three constant dimensions.
     unit('aqspread_s42', 'end', ['aquifer-spreadwidth-probe.sh', '42'],
          density(('aqspread_s42', 42))),
+    unit('aqywrap_s42', 'end', ['aquifer-ywrap-probe.sh', '42'],
+         density(('aqywrap_s42', 42))),
+    unit('aqywrap_s31337', 'end', ['aquifer-ywrap-probe.sh', '31337'],
+         density(('aqywrap_s31337', 31337))),
     # The carvers at the carving stage (IMPLEMENTER-RULING-01, carvers P1):
     # vanilla's own world, features stripped, its carvers ring read by status.
     unit('carvers_s42', 'end', ['carver-golden-probe.sh', '42'],

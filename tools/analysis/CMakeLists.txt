@@ -69,7 +69,8 @@ foreach(tool IN ITEMS
         aquifer-level-analyze
         aquifer-nearsurface-analyze
         aquifer-presets-scout
-        aquifer-waterlava-analyze)
+        aquifer-waterlava-analyze
+        blended-fpform-check)
     string(REPLACE "-" "_" target "stratum_${tool}")
     add_executable(${target} ${tool}.cpp)
     target_link_libraries(${target} PRIVATE stratum::core ZLIB::ZLIB)

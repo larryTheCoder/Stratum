@@ -450,6 +450,7 @@ to bump the version and be called out; this is that call-out.
 | 17 | **The aquifer's level rule and deep-dark override in the engine's floating-point form** (§11, "Aquifer Q3.4, Q5.6 and Q5.9, adopted"). Q5.6's thresholds are evaluated as the engine evaluates them — the ramp phi from `d`, then `-0.3 + ((phi - 1)/(0 - 1)) * (0.8 - (-0.3))` and its lower twin, compared as `n - theta > 0` — where v16 added a depth bonus to floodedness and compared it with 0.8 or 0.4; the two forms part in the last bits at 51 and 54 of the 82 reachable `d`, and off the ramp the lower threshold is 0.40000000000000013. Q5.9's thresholds are the single-precision literals widened, -0.22499999403953552 and 0.8999999761581421. Changes blocks only where a floodedness, erosion or depth lands within those last bits of a threshold, which `aquifer-threshold-probe.sh` puts there and the server confirms; no golden block changes, and the pinned overworld hash holds. v16 had reached only this development branch; bumped rather than amended because a v16 blob could exist. |
 | 18 | **The carvers run** (§11, "Carvers, adopted"). `minecraft:cave`, `minecraft:nether_cave` and `minecraft:canyon` carve every chunk of a pipeline that carries them (format 4), exactly as spec/carvers-a-spec.md and spec/carvers-b-spec.md write them, block for block and mark for mark against the server's carving-stage chunks. Changes every carved block of every world. **The surface pass's water height is cleared by air** (§11, "The water height is the fluid under the last air"): scanning a column down, the first fluid under air sets the water height to its y + 1 and the next air clears it, where v17 latched the first fluid for the whole column. Changes surface blocks under a cave or overhang that sits below water higher up the column: 232 golden overworld blocks, all now exact; the pinned overworld hash holds. **The aquifer's fluid-update flag is computed for an air outcome too** (A-Q12.4); no uncarved output reads it. |
 | 19 | **The aquifer's spread quantization at 32-bit width** (§11, "The aquifer's widths, as amended"). Q5.7's quantized term is `3·F`, F the 32-bit floor of the double `(10·s)/3`, the product wrapping, as the width amendment writes it, where v18 floored `10·s` to an int first. The same integer for every spread `10·s` fits in an int, so no vanilla world changes; a datapack spread past about 2.1e8 now takes the server's level where v18 saturated (and refused a barrier the saturation made). |
+| 20 | **`old_blended_noise` in the engine's floating-point form** (§11, "old_blended_noise's floating-point form"). The Modern reading forms its doubles as spec/blended-noise-spec.md's amendments write them: the main sampler's position `(x·M)/F` before the octave scale, where v19 took `x·(M/F)` (cubiomes' order), and the selector `(main/10 + 1)/2`, where v19 took `0.5 + 0.05·main`; the limits' skip flags and the clamped lerp exactly as Q1.5's amendment states, over 512 and then 128. Moves `base_3d_noise` in the last bit at about one block position in eleven; the server agrees with the new value at all 24 points of a bisection where it and v19's differ, and deepslate's 240 vectors now match to the bit (230 under v19). No golden block moves: every conformance case passes unchanged, the pinned overworld hash included. The PreModern (cubiomes) reading is unchanged. **The aquifer keeps a lattice point's y in 12 bits** (§11, "Aquifer Q3.3 and Q6.6"): a jittered centre's y is `floorMod(y + 2048, 4096) - 2048`, as the server packs it. Only a dimension within one cell of y ±2048 can see it, no vanilla dimension is, and no probe world found a block it moves. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -12615,6 +12616,96 @@ Open:
     control flood. Every other conformance case passes unchanged, the
     pinned overworld hash included; no golden holds a value within those
     last bits. Pinned in unit cases too (`aquifer_lattice_test.cpp`).
+
+- **old_blended_noise's floating-point form (M3, 2026-11-10; pipeline
+  engine v20).** IMPLEMENTER-RULING-01's blended-noise P2 items, against
+  spec/blended-noise-spec.md's REVIEW-15 amendments, amendments implemented
+  rather than the text they amend.
+  - *The forms* (Q1.4's fp-form, Q2.1). This build formed the Modern
+    reading's doubles in cubiomes' order. Three places differ from the
+    engine's: the main sampler's position, `(x·M)/F` then times the octave
+    scale against `x·(M/F)` (A); its cap and divisor, `((y·My)/Fy)·s` and
+    `((My·k)/Fy)·s` against `y·((My/Fy)·s)` and `((My/Fy)·s)·k` (C); and
+    the selector, `(main/10 + 1)/2` against `0.5 + 0.05·main` (S). The
+    limits' arguments, the doubling contributions (a term times 2^n is the
+    term over its scale, exactly) and the two divisions by 512 and 128
+    (against one by 65 536) are the same doubles either way.
+    `tools/analysis/blended-fpform-check.cpp` evaluates all eight A/C/S
+    combinations from the octave samplers `BlendedNoise::modern` builds: at
+    seed 42 over x, z in 0..191 and y in -64..319 (14 155 776 positions), A
+    moves the value at 1 249 665, S at 179 557 and C at none.
+  - *Evidence.* `tools/analysis/blended-fpform-probe.sh` (unit
+    `blendedfp_s42`) bisects the server's own `base_3d_noise` at 24 points
+    where the combinations differ — eight where only A moves it, eight
+    only S, eight both — in 88 dimensions, each a `range_choice` at one
+    threshold: every distinct candidate and one ulp above the largest.
+    `vanilla_blended_fpform_test.cpp` reads the block at each point: the
+    server's value equals the amendment's (all three choices) at all 24,
+    and cubiomes' order lands on the wrong side of 34 of the 88
+    thresholds. The points and thresholds live in
+    `tests/conformance/blended_fpform_targets.inc`, which the script
+    parses. A check of the read path, in the first point's three
+    dimensions: the server's block is open exactly where this build's
+    value is below the threshold at all 3 538 944 blocks of x, z 16..111,
+    cell corners or not (so no interpolation stands between the function
+    and the block). deepslate's 240 vectors
+    (`deepslate_oracle_test.cpp`) now match to the bit; the ten that did
+    not, put down to accumulated rounding, were this.
+  - *Q1.5, the selector skip.* Implemented as the amendment states: the
+    minimum is not summed at a selector of 1.0 or more and the maximum at
+    0.0 or less, each left at 0.0, and the clamped lerp is the engine's —
+    `a` below 0, `b` above 1, otherwise `a + t·(b − a)`, which at exactly
+    1.0 gives `b` only because the unsummed minimum is 0.0. This build's
+    old lerp returned `b` at 1.0 too, so the only change of value is a NaN
+    selector, which now gives NaN rather than the minimum; no reachable
+    input makes one (the codec bounds every parameter, Q1.6 wraps every
+    coordinate).
+  - *The fade.* `detail::fade` was already the factored form
+    `((t·t)·t)·((t·((t·6) − 15)) + 10)`; unchanged.
+  - *Q2.1, the corrected relation.* Nothing here relied on "divisor equals
+    cap times the multiplier": divisor and cap are formed separately, the
+    divisor without the block's y.
+  - *Unchanged:* the PreModern reading (`BlendedNoise::legacy`, cubiomes'
+    construction), which the interpreter never builds; and the
+    seedings. `noise_differential_test.cpp`'s reference copy follows the
+    amendment for the Modern reading, spelled from the spec's formulas.
+
+- **Aquifer Q3.3 and Q6.6 (MA, 2026-11-10; pipeline engine v20).**
+  IMPLEMENTER-RULING-01's last two aquifer P2 items.
+  - *Q3.3, the 12-bit y wrap.* `CentreSource::centreOf` returns the
+    jittered centre's y as `floorMod(y + 2048, 4096) - 2048`, the server's
+    12-bit field, so a lattice point past ±2048 lands at the other edge.
+    The rule's reach is small. A wrapped point is at least 17 blocks off in
+    y, so it is at distance 289 or more. It changes a block only by
+    entering the nearest three (the nearest four for the fluid-update flag)
+    and changing an outcome there: the substance needs `s12 > 0` and a
+    positive `s13` or `s23`, the flag needs `d3 - d1` and `d4 - d1` within
+    44 (Q8.4). Both need the nearest true point at about 245 or more.
+  - *Evidence, and its limit.* `aquifer-ywrap-probe.sh` (units
+    `aqywrap_s42`, `aqywrap_s31337`) generates one dimension from y -2032
+    to 2031, all air under the real barrier and spread noises, so the
+    aquifer alone decides. `vanilla_aquifer_ywrap_test.cpp` scores both
+    edge bands, y 1990..2031 and -2032..-1991, over 36 chunks per seed: no
+    block against the server, only post-generation flow. **It passes with
+    the wrap and without it.** Nothing discriminating was found:
+    - this engine with and without the wrap differed at no block and no
+      fluid mark across twelve probe designs and 32 768 chunks, short
+      dimensions at the edges included;
+    - a lattice-only screen for blocks where the wrap reorders the top
+      three or four AND changes the outcome found none: 1024² blocks per
+      edge level on seeds 42, 31337 and -1, then 8192² on 42 and 31337.
+      The nearest true point there is at most 288 away, but never with
+      the near-tie the outcome needs.
+
+    So the wrap enters lib/ on the spec's word and one consistent golden,
+    not a discriminating one. Ruling §2 asks that disagreements be
+    reported, and there is none; this is the gap, reported for the owner
+    to rule on.
+  - *Q6.6, the barrier products.* Already in the amendment's order:
+    `placesBarrierWith` forms the weight `s12 * s13` (and `s12 * s23`)
+    first and `termFires` multiplies it by Π, which is `(s12·s13)·P13`.
+    lib/ is unchanged. The barrier goldens pass, but no golden is known
+    to tell the two associations apart.
 
 - **The aquifer's widths, as amended (MA, 2026-11-10; pipeline engine
   v19).** IMPLEMENTER-RULING-01's aquifer P2 item "the width amendments

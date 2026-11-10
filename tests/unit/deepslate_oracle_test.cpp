@@ -81,10 +81,11 @@ TEST_CASE("the modern construction reproduces vanilla's own values", "[noise][bl
     // Seeding: one generator from the world seed's positional factory under
     // the name `minecraft:terrain`, then sixteen minimum, sixteen maximum and
     // eight blend octaves drawn from it in order. Reading: the octave stack
-    // over 65536, and the smear cap built from the pre-multiplier slab and
-    // not binding below y = 0. Every one of those was established separately
-    // (SPEC §11); this is all of them at once against numbers neither of them
-    // was fitted to.
+    // over 512 and then 128, the smear cap built from the pre-multiplier slab
+    // and not binding below y = 0, and the arithmetic in the order
+    // spec/blended-noise-spec.md's floating-point amendments state. Every one
+    // of those was established separately (SPEC §11); this is all of them at
+    // once against numbers neither of them was fitted to.
     std::size_t exact = 0;
     double worst = 0.0;
     for (const auto& vector : kDeepslateBlendedVectors) {
@@ -102,18 +103,16 @@ TEST_CASE("the modern construction reproduces vanilla's own values", "[noise][bl
         worst = std::max(worst, std::abs(got - fromBits(vector.value)));
     }
 
-    // The claim. Every one of the 240, to within a part in a billion.
-    CHECK(worst < 1.0e-9);
-
-    // And 230 of them bit-for-bit. The ten that are not differ by at most
-    // 6.3e-14 and sit at the largest coordinates in the set — five of them at
-    // (1000, -60, -1000) — which is accumulated rounding across sixteen
-    // octaves whose amplitudes reach 32768, not a difference of construction.
-    // Whether the last bits are ours or deepslate's is not something deepslate
-    // can settle: it is an emulator, and the golden regions are the authority
-    // (SPEC §7). Pinned as a number so that a platform disagreeing here has to
-    // be looked at rather than absorbed.
-    CHECK(exact == 230U);
+    // Every one of the 240, bit for bit. Until the floating-point form was
+    // settled (SPEC §11, "old_blended_noise's floating-point form") ten were
+    // not: off by at most 6.3e-14, five of them at (1000, -60, -1000), which
+    // this case put down to accumulated rounding. It was the order the
+    // position and the selector are formed in — cubiomes' x * (M / F) and
+    // 0.5 + 0.05 * main against the engine's (x * M) / F and (main / 10 + 1) / 2
+    // — which the server, not deepslate, settled
+    // (tests/conformance/vanilla_blended_fpform_test.cpp).
+    CHECK_FALSE(worst > 0.0);
+    CHECK(exact == 240U);
 
     // The salt is load-bearing, not decoration: it is MD5'd into the seed, so
     // a near-miss name gives an unrelated world rather than a nearby one.

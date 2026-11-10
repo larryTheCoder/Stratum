@@ -17,6 +17,12 @@
 // states the same wrap and rounding. deepslate (`modern`) and the server
 // (`legacyFromWorldSeed`) later confirmed the order across the stacks; they
 // are not its source. Recorded in NOTICE.
+//
+// The Modern reading's arithmetic is NOT cubiomes' order any more: since
+// pipeline engine v20 its doubles are formed as spec/blended-noise-spec.md's
+// floating-point amendments write them (Forms, below), which the server
+// confirms to the bit (SPEC §11, "old_blended_noise's floating-point form").
+// The PreModern reading keeps cubiomes' order.
 
 #include "perlin_kernel.hpp"
 
@@ -64,23 +70,76 @@ namespace {
 
 /// The cap handed to the Perlin sampler for one octave.
 ///
-/// @p slab is the octave's slab width, multiplier included; @p bareSlab is
-/// the same width before the multiplier. Which of the two the cap uses, and
-/// what happens below y = 0, is the whole difference between the two
-/// readings — see BlendedNoise::Smear.
-[[nodiscard]] double smearCap(BlendedNoise::Reading reading, double y, double slab,
-                              double bareSlab) noexcept {
+/// In the Modern reading this is spec/blended-noise-spec.md's Q2.1 cap, the
+/// position's own y base times the octave's scale: `fy * s` for the main
+/// sampler, `py * s` for the limits, @p yBase being fy or py. A negative cap
+/// never binds (Q2.2: the fraction itself is folded), which the sampler
+/// spells as an infinite one. The PreModern reading is cubiomes', where the
+/// cap is the block y times the octave's slab with the multiplier in it.
+[[nodiscard]] double octaveCap(BlendedNoise::Reading reading, double y, double yBase, double scale,
+                               double slab) noexcept {
     if (reading == BlendedNoise::Reading::PreModern) {
         return y * slab;
     }
-    if (y < 0.0) {
+    const double cap = yBase * scale;
+    if (!(cap >= 0.0)) {
         // Never binds: the sampler takes min(cap, localY) and localY is below
         // one, so the fold runs at full effect. Infinity rather than a large
         // number, because "does not bind" is the claim and a magic constant
         // would only be an approximation of it.
         return std::numeric_limits<double>::infinity();
     }
-    return y * bareSlab;
+    return cap;
+}
+
+/// The arithmetic each reading forms its doubles in, fixed by the
+/// parameters. Each octave's position argument is `wrap(base * s)` in both
+/// readings, s the octave's scale (1, 1/2, 1/4, ...); what differs is how the
+/// main sampler's bases are formed and how the slab (Q2.1's divisor) is.
+///
+/// Modern, as spec/blended-noise-spec.md's Q1.4 and Q2.1 floating-point
+/// amendments state and tests/conformance/vanilla_blended_fpform_test.cpp
+/// confirms against the server: `fx = (x * Mxz) / xz_factor` — the product
+/// first, then the division — and `fy` likewise; the divisor
+/// `((My * k) / y_factor) * s` for the main sampler and `(My * k) * s` for
+/// the limits, k the smear multiplier.
+///
+/// PreModern, as cubiomes': `x * (Mxz / xz_factor)`, and the slab
+/// `((My / y_factor) * s) * k`. The two part in the last bit for about one
+/// position in eleven.
+struct Forms {
+    double xzScale;    // Mxz = 684.412 * xz_scale
+    double yScale;     // My = 684.412 * y_scale
+    double xzStep;     // Mxz / xz_factor (PreModern)
+    double yStep;      // My / y_factor (PreModern)
+    double mainSmear;  // (My * k) / y_factor (Modern)
+    double limitSmear; // My * k (Modern)
+};
+
+[[nodiscard]] Forms formsOf(const BlendedNoise::Parameters& parameters) noexcept {
+    const double xzScale = kBaseFrequency * parameters.xzScale;
+    const double yScale = kBaseFrequency * parameters.yScale;
+    const double limitSmear = yScale * parameters.smearScaleMultiplier;
+    return Forms{.xzScale = xzScale,
+                 .yScale = yScale,
+                 .xzStep = xzScale / parameters.xzFactor,
+                 .yStep = yScale / parameters.yFactor,
+                 .mainSmear = limitSmear / parameters.yFactor,
+                 .limitSmear = limitSmear};
+}
+
+/// The engine's clamped lerp (Q1.5's floating-point amendment): `a` below 0,
+/// `b` above 1, and otherwise `a + t * (b - a)` — at exactly 1 too, which is
+/// `b` only because the skipped minimum sum leaves `a` at 0.0. A NaN
+/// selector takes the lerp, and so NaN.
+[[nodiscard]] double engineClampedLerp(double t, double a, double b) noexcept {
+    if (t < 0.0) {
+        return a;
+    }
+    if (t > 1.0) {
+        return b;
+    }
+    return a + (t * (b - a));
 }
 
 } // namespace
@@ -153,58 +212,70 @@ BlendedNoise BlendedNoise::build(rng::JavaRandom& random, Parameters parameters,
 }
 
 double BlendedNoise::sample(double x, double y, double z) const noexcept {
-    const double xzScale = kBaseFrequency * parameters_.xzScale;
-    const double yScale = kBaseFrequency * parameters_.yScale;
-    const double xzStep = xzScale / parameters_.xzFactor;
-    const double yStep = yScale / parameters_.yFactor;
+    const Forms f = formsOf(parameters_);
+    const bool modern = reading_ == Reading::Modern;
+    // The main sampler's bases: fx, fy, fz (Forms).
+    const double mainX = modern ? (x * f.xzScale) / parameters_.xzFactor : x * f.xzStep;
+    const double mainY = modern ? (y * f.yScale) / parameters_.yFactor : y * f.yStep;
+    const double mainZ = modern ? (z * f.xzScale) / parameters_.xzFactor : z * f.xzStep;
+    // The limits' bases: px, py, pz, the same in both readings.
+    const double limitBaseX = x * f.xzScale;
+    const double limitBaseY = y * f.yScale;
+    const double limitBaseZ = z * f.xzScale;
 
     // The first octave is sampled at the full scale and contributes once;
     // each one after that halves the frequency and doubles the weight, which
     // is the reverse of the usual arrangement and is what gives this noise
     // its long wavelengths. Both factors are powers of two, so each octave's
-    // are the same doubles whichever stack's loop computes them.
+    // are the same doubles whichever stack's loop computes them, and a term
+    // times its contribution is exactly the spec's term divided by its scale.
     //
-    // The blend first: it decides which of the two limits the clamped lerp
-    // below reads. Past either end of [0, 1] it reads one limit alone, and
-    // the other is not sampled — every octave of every stack is a pure
-    // function of the point, so skipping one changes nothing but the work.
-    // Each stack still sums its own octaves in their own order, so each sum
-    // is the double it always was.
+    // The blend first: it decides which of the two limits are summed at all.
+    // Past either end of [0, 1] the clamped lerp reads one limit alone, and
+    // the other is not sampled. That is not only work saved: at a selector
+    // of exactly 1.0 the unsummed minimum stays 0.0, and the lerp then gives
+    // the maximum exactly (Q1.5's amendment).
     double blend = 0.0;
-    double persistence = 1.0;
+    double scale = 1.0;
     double contribution = 1.0;
     for (std::size_t i = 0; i < kBlendOctaves; ++i) {
-        const double blendX = detail::wrapCoordinate(x * xzStep * persistence);
-        const double blendY = detail::wrapCoordinate(y * yStep * persistence);
-        const double blendZ = detail::wrapCoordinate(z * xzStep * persistence);
-        const double blendBare = yStep * persistence;
-        const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
-        const double blendCap = smearCap(reading_, y, blendSmear, blendBare);
+        const double blendX = detail::wrapCoordinate(mainX * scale);
+        const double blendY = detail::wrapCoordinate(mainY * scale);
+        const double blendZ = detail::wrapCoordinate(mainZ * scale);
+        const double blendSmear =
+            modern ? f.mainSmear * scale : (f.yStep * scale) * parameters_.smearScaleMultiplier;
+        const double blendCap = octaveCap(reading_, y, mainY, scale, blendSmear);
         blend +=
             detail::samplePerlinFoldable(blend_[i], blendX, blendY, blendZ, blendSmear, blendCap) *
             contribution;
-        persistence *= 0.5;
+        scale *= 0.5;
         contribution *= 2.0;
     }
-    const double part = 0.5 + (0.05 * blend);
-    // clampedLerp reads `from` (the minimum) unless part >= 1, and `to` (the
-    // maximum) unless !(part > 0) — NaN included, which reads `from`.
+    // The selector: (main / 10 + 1) / 2 in the Modern reading, as the
+    // amendment states and the server confirms; cubiomes' 0.5 + 0.05 * main
+    // in the PreModern. They part in the last bit for about one point in
+    // eighty.
+    const double part = modern ? ((blend / 10.0) + 1.0) / 2.0 : 0.5 + (0.05 * blend);
+    // Which limits are summed. Modern: the engine's flags, selector >= 1
+    // skips the minimum and selector <= 0 the maximum (a NaN sums both).
+    // PreModern: clampedLerp's reads, `from` unless part >= 1 and `to`
+    // unless !(part > 0).
     const bool readsMinimum = !(part >= 1.0);
-    const bool readsMaximum = part > 0.0;
+    const bool readsMaximum = modern ? !(part <= 0.0) : part > 0.0;
 
     double minimum = 0.0;
     double maximum = 0.0;
-    persistence = 1.0;
+    scale = 1.0;
     contribution = 1.0;
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
-        const double limitX = detail::wrapCoordinate(x * xzScale * persistence);
-        const double limitY = detail::wrapCoordinate(y * yScale * persistence);
-        const double limitZ = detail::wrapCoordinate(z * xzScale * persistence);
-        // The slab the y coordinate is folded onto, and the cap on how much
-        // of the local offset folds. Which is which is Smear's business.
-        const double limitBare = yScale * persistence;
-        const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
-        const double limitCap = smearCap(reading_, y, limitSmear, limitBare);
+        const double limitX = detail::wrapCoordinate(limitBaseX * scale);
+        const double limitY = detail::wrapCoordinate(limitBaseY * scale);
+        const double limitZ = detail::wrapCoordinate(limitBaseZ * scale);
+        // The slab the y coordinate is folded onto (Q2.1's divisor), and the
+        // cap on how much of the local offset folds.
+        const double limitSmear =
+            modern ? f.limitSmear * scale : (f.yScale * scale) * parameters_.smearScaleMultiplier;
+        const double limitCap = octaveCap(reading_, y, limitBaseY, scale, limitSmear);
 
         if (readsMinimum) {
             minimum += detail::samplePerlinFoldable(minimum_[i], limitX, limitY, limitZ, limitSmear,
@@ -217,16 +288,18 @@ double BlendedNoise::sample(double x, double y, double z) const noexcept {
                        contribution;
         }
 
-        persistence *= 0.5;
+        scale *= 0.5;
         contribution *= 2.0;
     }
 
-    // 512 leaves the pre-1.18 density space, of order a hundred; 65536 is
-    // the sum of the sixteen doubling amplitudes and lands in the order-one
-    // space `sloped_cheese` adds its other term in. The two differ by exactly
-    // 128, which is how the modern one was measured (SPEC §11).
-    const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
-    return clampedLerp(part, minimum / divisor, maximum / divisor);
+    // Both limits over 512, which leaves the pre-1.18 density space, of
+    // order a hundred. The Modern reading then divides the lerp by 128 more,
+    // landing in the order-one space `sloped_cheese` adds its other term in
+    // (SPEC §11).
+    if (modern) {
+        return engineClampedLerp(part, minimum / 512.0, maximum / 512.0) / 128.0;
+    }
+    return clampedLerp(part, minimum / 512.0, maximum / 512.0);
 }
 
 void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys, const double z,
@@ -237,46 +310,53 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
         return;
     }
     // sample()'s doubles lane by lane. Every factor below that is not a
-    // lane's own — the scales and steps, each octave's persistence,
-    // contribution, x and z, wrapped, and its slab — is the double sample()
-    // makes, made once; a lane's y, its wrap and its cap are its own. Only
-    // the first `count` entries of each array are written or read (of the
-    // gathers, the first minimumCount and maximumCount).
-    const double xzScale = kBaseFrequency * parameters_.xzScale;
-    const double yScale = kBaseFrequency * parameters_.yScale;
-    const double xzStep = xzScale / parameters_.xzFactor;
-    const double yStep = yScale / parameters_.yFactor;
+    // lane's own — the forms, each octave's scale, contribution, x and z,
+    // wrapped, and its slab — is the double sample() makes, made once; a
+    // lane's y base, its wrap and its cap are its own. Only the first `count`
+    // entries of each array are written or read (of the gathers, the first
+    // minimumCount and maximumCount).
+    const Forms f = formsOf(parameters_);
+    const bool modern = reading_ == Reading::Modern;
+    const double mainX = modern ? (x * f.xzScale) / parameters_.xzFactor : x * f.xzStep;
+    const double mainZ = modern ? (z * f.xzScale) / parameters_.xzFactor : z * f.xzStep;
+    const double limitBaseX = x * f.xzScale;
+    const double limitBaseZ = z * f.xzScale;
 
-    // Each lane's three sums, each from 0.0 as sample()'s.
+    // Each lane's three sums, each from 0.0 as sample()'s, and its two y
+    // bases (sample()'s mainY and limitBaseY).
     std::array<double, kColumn> blend;
     std::array<double, kColumn> minimum;
     std::array<double, kColumn> maximum;
+    std::array<double, kColumn> mainY;
+    std::array<double, kColumn> limitY;
     for (std::size_t k = 0; k < count; ++k) {
         blend[k] = 0.0;
         minimum[k] = 0.0;
         maximum[k] = 0.0;
+        mainY[k] = modern ? (ys[k] * f.yScale) / parameters_.yFactor : ys[k] * f.yStep;
+        limitY[k] = ys[k] * f.yScale;
     }
-    double persistence = 1.0;
+    double scale = 1.0;
     double contribution = 1.0;
     for (std::size_t i = 0; i < kBlendOctaves; ++i) {
-        const double blendX = detail::wrapCoordinate(x * xzStep * persistence);
-        const double blendZ = detail::wrapCoordinate(z * xzStep * persistence);
-        const double blendBare = yStep * persistence;
-        const double blendSmear = blendBare * parameters_.smearScaleMultiplier;
+        const double blendX = detail::wrapCoordinate(mainX * scale);
+        const double blendZ = detail::wrapCoordinate(mainZ * scale);
+        const double blendSmear =
+            modern ? f.mainSmear * scale : (f.yStep * scale) * parameters_.smearScaleMultiplier;
         detail::samplePerlinFoldableColumn(
             blend_[i], blendX,
-            [&ys, yStep, persistence](std::size_t k) noexcept {
-                return detail::wrapCoordinate(ys[k] * yStep * persistence);
+            [&mainY, scale](std::size_t k) noexcept {
+                return detail::wrapCoordinate(mainY[k] * scale);
             },
             blendZ, blendSmear,
-            [this, &ys, blendSmear, blendBare](std::size_t k) noexcept {
-                return smearCap(reading_, ys[k], blendSmear, blendBare);
+            [this, &ys, &mainY, scale, blendSmear](std::size_t k) noexcept {
+                return octaveCap(reading_, ys[k], mainY[k], scale, blendSmear);
             },
             count,
             [&blend, contribution](std::size_t k, double term) noexcept {
                 blend[k] += term * contribution;
             });
-        persistence *= 0.5;
+        scale *= 0.5;
         contribution *= 2.0;
     }
 
@@ -289,56 +369,56 @@ void BlendedNoise::sampleColumn(const double x, const std::span<const double> ys
     std::size_t minimumCount = 0;
     std::size_t maximumCount = 0;
     for (std::size_t k = 0; k < count; ++k) {
-        part[k] = 0.5 + (0.05 * blend[k]);
+        part[k] = modern ? ((blend[k] / 10.0) + 1.0) / 2.0 : 0.5 + (0.05 * blend[k]);
         if (!(part[k] >= 1.0)) {
             minimumLanes[minimumCount++] = k;
         }
-        if (part[k] > 0.0) {
+        if (modern ? !(part[k] <= 0.0) : part[k] > 0.0) {
             maximumLanes[maximumCount++] = k;
         }
     }
 
-    persistence = 1.0;
+    scale = 1.0;
     contribution = 1.0;
     // One limit's octave over the lanes that read it: each lane's y and cap,
     // sampled together, each term added to its own lane's sum.
     const auto limitOctave = [&](const PerlinNoise& octave,
                                  const std::array<std::size_t, kColumn>& lanes,
                                  const std::size_t lanesCount, std::array<double, kColumn>& sums,
-                                 const double limitX, const double limitZ, const double limitSmear,
-                                 const double limitBare) {
+                                 const double octaveX, const double octaveZ,
+                                 const double limitSmear) {
         detail::samplePerlinFoldableColumn(
-            octave, limitX,
+            octave, octaveX,
             [&](std::size_t j) noexcept {
-                return detail::wrapCoordinate(ys[lanes[j]] * yScale * persistence);
+                return detail::wrapCoordinate(limitY[lanes[j]] * scale);
             },
-            limitZ, limitSmear,
+            octaveZ, limitSmear,
             [&](std::size_t j) noexcept {
-                return smearCap(reading_, ys[lanes[j]], limitSmear, limitBare);
+                return octaveCap(reading_, ys[lanes[j]], limitY[lanes[j]], scale, limitSmear);
             },
             lanesCount,
             [&](std::size_t j, double term) noexcept { sums[lanes[j]] += term * contribution; });
     };
     for (std::size_t i = 0; i < kLimitOctaves; ++i) {
-        const double limitX = detail::wrapCoordinate(x * xzScale * persistence);
-        const double limitZ = detail::wrapCoordinate(z * xzScale * persistence);
-        const double limitBare = yScale * persistence;
-        const double limitSmear = limitBare * parameters_.smearScaleMultiplier;
+        const double octaveX = detail::wrapCoordinate(limitBaseX * scale);
+        const double octaveZ = detail::wrapCoordinate(limitBaseZ * scale);
+        const double limitSmear =
+            modern ? f.limitSmear * scale : (f.yScale * scale) * parameters_.smearScaleMultiplier;
         if (minimumCount > 0) {
-            limitOctave(minimum_[i], minimumLanes, minimumCount, minimum, limitX, limitZ,
-                        limitSmear, limitBare);
+            limitOctave(minimum_[i], minimumLanes, minimumCount, minimum, octaveX, octaveZ,
+                        limitSmear);
         }
         if (maximumCount > 0) {
-            limitOctave(maximum_[i], maximumLanes, maximumCount, maximum, limitX, limitZ,
-                        limitSmear, limitBare);
+            limitOctave(maximum_[i], maximumLanes, maximumCount, maximum, octaveX, octaveZ,
+                        limitSmear);
         }
-        persistence *= 0.5;
+        scale *= 0.5;
         contribution *= 2.0;
     }
 
-    const double divisor = reading_ == Reading::PreModern ? 512.0 : 65536.0;
     for (std::size_t k = 0; k < count; ++k) {
-        out[k] = clampedLerp(part[k], minimum[k] / divisor, maximum[k] / divisor);
+        out[k] = modern ? engineClampedLerp(part[k], minimum[k] / 512.0, maximum[k] / 512.0) / 128.0
+                        : clampedLerp(part[k], minimum[k] / 512.0, maximum[k] / 512.0);
     }
 }
 

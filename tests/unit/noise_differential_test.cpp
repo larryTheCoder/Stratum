@@ -11,6 +11,11 @@
 // bytes. A copy rather than a capture, so that the inputs can be random and
 // many, and so that the reference cannot drift with the code it checks.
 //
+// One part is no longer a copy: base::sampleBlendedModern, the Modern
+// reading of old_blended_noise, which follows spec/blended-noise-spec.md's
+// floating-point amendments since the server confirmed them (its own
+// comment). Every other line is still the code at 3967355.
+//
 // The copy is the old code with its member accesses spelled through the
 // public accessors (`originX_` as `noise.originX()`, `at(i)` as a lambda over
 // `noise.permutation()`), and its private octave lists rebuilt by copies of
@@ -376,7 +381,72 @@ template<typename Random>
     return noise;
 }
 
+/// The Modern reading as spec/blended-noise-spec.md's floating-point
+/// amendments state it (Q1.4's fp-form, Q1.5, Q2.1), spelled from those
+/// formulas rather than from the library: `fx = (x * Mxz) / xz_factor` and
+/// likewise, each octave's term the noise over its scale, the selector
+/// `(main / 10 + 1) / 2`, the skip flags `selector >= 1` and `<= 0`, and the
+/// engine's clamped lerp over 512 and then 128. NOT the code that stood at
+/// 3967355: that was cubiomes' order, which the server measurably does not
+/// use (tests/conformance/vanilla_blended_fpform_test.cpp), and this
+/// replaced it in the same change as the library (SPEC §11). The PreModern
+/// reading below is still the verbatim copy.
+[[nodiscard]] double sampleBlendedModern(const Blended& self, double x, double y,
+                                         double z) noexcept {
+    const BlendedNoise::Parameters& parameters = self.parameters_;
+    const double px = x * (kBaseFrequency * parameters.xzScale);
+    const double py = y * (kBaseFrequency * parameters.yScale);
+    const double pz = z * (kBaseFrequency * parameters.xzScale);
+    const double fx = px / parameters.xzFactor;
+    const double fy = py / parameters.yFactor;
+    const double fz = pz / parameters.xzFactor;
+    const double smear = (kBaseFrequency * parameters.yScale) * parameters.smearScaleMultiplier;
+    const double smearF = smear / parameters.yFactor;
+    const auto cap = [](double c) {
+        return c >= 0.0 ? c : std::numeric_limits<double>::infinity();
+    };
+
+    double main = 0.0;
+    double scale = 1.0;
+    for (std::size_t n = 0; n < BlendedNoise::kBlendOctaves; ++n) {
+        main += sample(self.blend_[n], maintainPrecision(fx * scale), maintainPrecision(fy * scale),
+                       maintainPrecision(fz * scale), smearF * scale, cap(fy * scale)) /
+                scale;
+        scale /= 2.0;
+    }
+    const double selector = ((main / 10.0) + 1.0) / 2.0;
+    const bool skipMinimum = selector >= 1.0;
+    const bool skipMaximum = selector <= 0.0;
+    double minimum = 0.0;
+    double maximum = 0.0;
+    scale = 1.0;
+    for (std::size_t n = 0; n < BlendedNoise::kLimitOctaves; ++n) {
+        const double ax = maintainPrecision(px * scale);
+        const double ay = maintainPrecision(py * scale);
+        const double az = maintainPrecision(pz * scale);
+        if (!skipMinimum) {
+            minimum += sample(self.minimum_[n], ax, ay, az, smear * scale, cap(py * scale)) / scale;
+        }
+        if (!skipMaximum) {
+            maximum += sample(self.maximum_[n], ax, ay, az, smear * scale, cap(py * scale)) / scale;
+        }
+        scale /= 2.0;
+    }
+    const double a = minimum / 512.0;
+    const double b = maximum / 512.0;
+    if (selector < 0.0) {
+        return a / 128.0;
+    }
+    if (selector > 1.0) {
+        return b / 128.0;
+    }
+    return (a + (selector * (b - a))) / 128.0;
+}
+
 [[nodiscard]] double sampleBlended(const Blended& self, double x, double y, double z) noexcept {
+    if (self.reading_ == BlendedNoise::Reading::Modern) {
+        return sampleBlendedModern(self, x, y, z);
+    }
     const BlendedNoise::Parameters& parameters = self.parameters_;
     const BlendedNoise::Reading reading = self.reading_;
     const double xzScale = kBaseFrequency * parameters.xzScale;
