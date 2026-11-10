@@ -452,6 +452,7 @@ to bump the version and be called out; this is that call-out.
 | 19 | **The aquifer's spread quantization at 32-bit width** (§11, "The aquifer's widths, as amended"). Q5.7's quantized term is `3·F`, F the 32-bit floor of the double `(10·s)/3`, the product wrapping, as the width amendment writes it, where v18 floored `10·s` to an int first. The same integer for every spread `10·s` fits in an int, so no vanilla world changes; a datapack spread past about 2.1e8 now takes the server's level where v18 saturated (and refused a barrier the saturation made). |
 | 20 | **`old_blended_noise` in the engine's floating-point form** (§11, "old_blended_noise's floating-point form"). The Modern reading forms its doubles as spec/blended-noise-spec.md's amendments write them: the main sampler's position `(x·M)/F` before the octave scale, where v19 took `x·(M/F)` (cubiomes' order), and the selector `(main/10 + 1)/2`, where v19 took `0.5 + 0.05·main`; the limits' skip flags and the clamped lerp exactly as Q1.5's amendment states, over 512 and then 128. Moves `base_3d_noise` in the last bit at about one block position in eleven; the server agrees with the new value at all 24 points of a bisection where it and v19's differ, and deepslate's 240 vectors now match to the bit (230 under v19). No golden block moves: every conformance case passes unchanged, the pinned overworld hash included. The PreModern (cubiomes) reading is unchanged. **The aquifer keeps a lattice point's y in 12 bits** (§11, "Aquifer Q3.3 and Q6.6"): a jittered centre's y is `floorMod(y + 2048, 4096) - 2048`, as the server packs it. Only a dimension within one cell of y ±2048 can see it, no vanilla dimension is, and no probe world found a block it moves. |
 | 21 | **A carver's `debug_mode` is carved, not refused** (§11, "Carver debug mode, and the carvers' unobservable details"): a pack that sets `debug_settings.debug_mode` gets the server's debug output, state for state and mark for mark, where v20 refused the pack at load. **An empty `amplitudes` list is a noise that samples 0.0** (§11, "Legacy named noise Q3.3 and Q5.5"), under either random source, where v20 refused it by name. **A `legacy_random_source` dimension's pack is rejected when it lacks a noise key the dimension's surface rules, or the surface system's fixed nine, request**, at freeze and at thaw, naming the key; v20 found a rule's own missing key only when the dimension compiled, and never asked for the nine. No output changes for a pack v20 generated from: every conformance case passes unchanged. |
+| 22 | **`bandlands` reads its table by the always non-negative index** (§11, "The ruling's P3 items"): `floorMod(y + offset + 192, 192)`, where v21 took Java's truncating remainder and refused, by name, a column whose sum was negative (the depth at which the server itself throws). No block the server places moves: the two reductions agree wherever the sum is non-negative, which is every y above about -186, so every vanilla dimension. Only a custom dimension deeper than that, using `bandlands`, is affected: v21 refused its chunk and v22 generates it. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -5062,15 +5063,16 @@ Open:
     truncation: measured colour transitions land exactly on the raw noise
     value's own ±0.125, ±0.375, ... boundaries — a quarter-step centred at
     zero — which only round-half-up produces. The `%` is Java's own,
-    truncating, sign-follows-dividend operator — `javamath::floorMod` would
-    be the reflex here and would be WRONG: for a sufficiently negative `y` or
-    noise-derived offset, `y + offset + 192` is itself negative, and Java's
-    `%` on a negative dividend returns a negative array index. This is not
-    hypothetical: reproduced directly, `Executor::bandlandsAt` throws at
-    `y = -2032` for every seed tried, matching vanilla's own reachable
-    `ArrayIndexOutOfBoundsException` there (unreachable inside the
-    overworld's own -64..319 height, reachable in a taller or deeper custom
-    dimension). Checked against three world seeds and 532224 real blocks
+    truncating, sign-follows-dividend operator: for a sufficiently negative
+    `y` or noise-derived offset, `y + offset + 192` is itself negative,
+    Java's `%` returns a negative array index, and the server throws
+    (`ArrayIndexOutOfBoundsException` at `y = -2032` for every seed tried;
+    unreachable inside the overworld's own -64..319 height, reachable in a
+    taller or deeper custom dimension). Until engine v22 this build
+    reproduced that as a refusal by name. Since v22 it uses the always
+    non-negative reduction instead, by the owner's ruling (§11, "The
+    ruling's P3 items"): the server's index wherever the server has one,
+    and the table's own 192-block period where it would throw. Checked against three world seeds and 532224 real blocks
     read directly off probe regions (`bandlands-e2e-check.cpp`), zero
     exceptions, zero remaining free parameters.
 
@@ -12932,6 +12934,59 @@ Open:
     target (the window order and sampling position call by call, the mask
     as "no cell is read twice"); the reach test and the early-out are
     behavioural and stay on the goldens, where a wrong one moves blocks.
+
+- **The ruling's P3 items (2026-11-10; pipeline engine v22).**
+  IMPLEMENTER-RULING-01's three P3 items, which close the ruling.
+  - *Bandlands' width amendments (Q2.2-Q2.4, Q4.4-Q4.5), checked against
+    `surface_executor.cpp`.* The table's indices, draws, run counts and
+    widths are 32-bit signed integers, as amended, and none can overflow.
+    The column's x and z convert exactly to double. The offset is
+    `floor(4v + 0.5)`, the amendment's rule. Two points differ from the
+    amendments as written, both outside what any vanilla world reaches:
+    - Q4.4 forms the rounded value at 64 bits and keeps its low 32. This
+      build refuses, by name, an offset no int32 holds (§8), rather than
+      wrap it; and likewise the 32-bit sum `y + offset + 192`. The server's
+      offsets were observed in [-6, 5], so the two agree on every reachable
+      input, and what a wrapped offset then indexes was not measured.
+      Left as it is.
+    - Q4.5's truncated remainder goes negative below about y -186, where
+      the server throws (Q5.1). The ruling states the policy: "Stratum uses
+      the safe, always non-negative index reduction where vanilla would
+      throw." The code did not: since bandlands closed it reproduced the
+      throw as a refusal. It now reduces with `floorMod`, so a deep custom
+      dimension reads the table's 192-block period where v21 refused the
+      chunk. Nothing the server generates moves. A policy, with a unit test
+      (`surface_executor_test.cpp`) and no golden: the server has no output
+      there to compare.
+  - *One disagreement between the spec's text and the goldens, reported
+    rather than reconciled.* Q2.2 as written puts the first orange cell at
+    `d₀ + 2` (`index₀ = 0`, write at `index + d + 2`). The server's tables
+    put it at `d₀ + 1`: each step writes at `index + d + 1` and then
+    advances one more, so the gaps are `d + 2` as the claim says and every
+    cell sits one lower than its formula gives. This build has followed the
+    server since the table was first built ("bandlands — RESOLVED", above:
+    two of three seeds expose it, over 532 224 blocks each). The spec file
+    is unedited, as the ruling requires.
+  - *Renamed constants keys.* `octave_input_scale`
+    (legacy-named-noise-constants.json, Q2.4), and `flow_threshold`,
+    `flow_threshold_formula`, `flow_threshold_claim`, `y_field_bits` and
+    `y_span` (aquifer-constants.json, Q8.3 and Q1.4). No harness, test or
+    tool in this repository reads any of them, under either name: the
+    constants files are read by `legacy_named_noise_test.cpp` (its `golden`,
+    `surface_depth`, `per_noise_vanilla` and `composition` tables) and
+    `vanilla_carver_config_test.cpp` (`carvers`, `resolved_replaceables`)
+    only. Nothing to update. The values they carry match the code: a 12-bit
+    y field (the Q3.3 wrap), and the fluid-update threshold of -0.76.
+  - *Aquifer Q8.1, as amended.* A mark's tick is EXECUTED when the server
+    promotes the chunk to full, for noise-fill marks and carver marks alike,
+    and a stored full chunk is generation output plus that step. This build
+    generates the marks and does not model promotion, which the ruling does
+    not authorise (§4 of it): the bindings hand each mark to the host
+    server's own fluid scheduler (§4.3), and every golden that scores marks
+    or fluids compares at the carving stage or classes moved fluid apart
+    ("fluid that moved", `golden_overworld_test.cpp`,
+    `golden_generate_test.cpp`). No full-stage golden near fluids gates
+    anything unreported.
 
 ## 12. Content, provenance & distribution policy
 

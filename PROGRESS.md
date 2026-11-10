@@ -1471,6 +1471,15 @@ Open:
       unchanged. Fixture-free cases for the reconstruction are in
       `tests/unit/legacy_goldens_decoder_test.cpp` and
       `surface_column_test.cpp`.
+- [x] **IMPLEMENTER-RULING-01's P3 items closed 2026-11-10 (engine v22;
+      SPEC §11, "The ruling's P3 items"), which closes the ruling.**
+      Bandlands' width amendments checked: as amended, but that an
+      out-of-int32 offset or sum is refused rather than wrapped (kept), and
+      that the negative index was refused where the ruling says to reduce
+      it safely (changed: `floorMod`, a deep custom dimension now
+      generates). Renamed constants keys: nothing here reads them. Q8.1's
+      promotion tick: recorded, not modelled. Reported to the owner: Q2.2's
+      text puts each orange cell one higher than the server's tables do.
 - [x] **Legacy named noise P2s closed 2026-11-10 (engine v21; SPEC §11,
       "Legacy named noise Q3.3 and Q5.5").** An empty `amplitudes` list
       is accepted and samples 0.0 (it was refused at parse); the server

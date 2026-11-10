@@ -686,14 +686,13 @@ TEST_CASE("bandlands reads through apply(), not just the raw table", "[surface][
     CHECK(placed->name == executor.bandlandsAt(0, -64, 0).name);
 }
 
-TEST_CASE("bandlands' index reproduces vanilla's own reachable crash, not a clamp",
+TEST_CASE("bandlands' index is the always non-negative reduction where vanilla would throw",
           "[surface][bandlands]") {
-    // spec/bandlands-spec.md Q5.1: vanilla's own index arithmetic is not
-    // safe for extreme y, and the real server was confirmed to throw
-    // ArrayIndexOutOfBoundsException reaching it — not a hypothetical this
-    // build invented. A dimension whose geometry reaches far enough down
-    // hits it here too, deliberately, rather than silently clamping into a
-    // colour vanilla never placed.
+    // spec/bandlands-spec.md Q5.1: the server's `(y + offset + 192) % 192`
+    // goes negative far enough down, and the server throws there (reproduced
+    // at y = -2032). The owner's ruling (IMPLEMENTER-RULING-01, bandlands) is
+    // the safe reduction: the server's index wherever it has one, and the
+    // table's own period below that.
     const ClayBandsTree tree;
     const auto noises = clayBandsOffsetNoise(tree, 42);
     const RuleGraph graph = bandlandsGraph();
@@ -701,10 +700,16 @@ TEST_CASE("bandlands' index reproduces vanilla's own reachable crash, not a clam
         .minY = -2048, .height = 2048 + 320, .sizeHorizontal = 1, .sizeVertical = 2};
     const Executor executor = Executor::compile(graph, 42, deepGeometry, &noises, 63);
 
-    // Ordinary y still reads fine.
-    CHECK_NOTHROW(executor.bandlandsAt(0, -64, 0));
-    // Far enough down, vanilla's own single '+192'-then-'%' goes negative.
-    CHECK_THROWS_WITH(executor.bandlandsAt(0, -2032, 0), ContainsSubstring("outside"));
+    // The table repeats every 192 blocks in y, through the depth where the
+    // server's own remainder turns negative (y + offset + 192 < 0) and on
+    // down: a column's offset is one value, so y and y + 192 read one band.
+    for (std::int32_t y = -2048; y < 320 - 192; ++y) {
+        INFO("y " << y);
+        REQUIRE(executor.bandlandsAt(0, y, 0) == executor.bandlandsAt(0, y + 192, 0));
+    }
+    // And where the server would have thrown, the band is a table entry.
+    CHECK_NOTHROW(executor.bandlandsAt(0, -2032, 0));
+    CHECK(executor.bandlandsAt(0, -2032, 0).name.path().ends_with("terracotta"));
 }
 
 TEST_CASE("clayBandAt refuses a tree that never named bandlands", "[surface][bandlands]") {

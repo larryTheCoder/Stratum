@@ -1519,26 +1519,22 @@ const settings::BlockState& Executor::bandlandsAt(const std::int32_t x, const st
 
 const settings::BlockState& Executor::bandAt(const std::int32_t y,
                                              const std::int32_t offset) const {
-    // Vanilla's OWN index arithmetic: one Java '%' after a single '+192', not
-    // a safe floorMod (spec/bandlands-spec.md Q4.5). C++'s '%' on int32_t
-    // already matches Java's here — both truncate toward zero — so this is
-    // deliberately the raw operator, not javamath::floorMod: for a
-    // sufficiently negative y this can itself go negative, reproducing
-    // vanilla's own reproduced ArrayIndexOutOfBoundsException (Q5.1) rather
-    // than silently wrapping it into something vanilla never places.
-    const std::int32_t index =
+    // The server's index is `(y + offset + 192) % 192`, a 32-bit sum and
+    // Java's truncating remainder (spec/bandlands-spec.md Q4.5 and its width
+    // amendment). Where the sum is negative that remainder is negative, and
+    // the server throws on the array read (Q5.1: reproduced there at
+    // y = -2032; unreachable in the overworld's own -64..319). Here the
+    // reduction is the always non-negative one, by the owner's ruling
+    // (IMPLEMENTER-RULING-01, bandlands: "the safe, always non-negative index
+    // reduction where vanilla would throw"): the same index wherever the
+    // server yields one, and the band the table's period gives where it
+    // would throw. The sum itself is still held to 32 bits, refused by name
+    // where it would leave them (SPEC §8).
+    const std::int32_t index = javamath::floorMod(
         narrowed(std::int64_t{narrowed(std::int64_t{y} + offset, "bandlands' y plus its offset")} +
                      192,
-                 "bandlands' y plus its offset plus 192") %
-        192;
-    if (index < 0 || index >= static_cast<std::int32_t>(kClayBandsSize)) {
-        throw ExecutionError(
-            "bandlands' index (" + std::to_string(index) + ") is outside its " +
-            std::to_string(kClayBandsSize) + "-entry table at y = " + std::to_string(y) +
-            " — this is vanilla's own unguarded arithmetic doing this, reproduced rather than "
-            "clamped (spec/bandlands-spec.md Q5.1); not reachable inside vanilla's own overworld "
-            "height range, but a tall or deep custom dimension can reach it");
-    }
+                 "bandlands' y plus its offset plus 192"),
+        std::int32_t{192});
     return clayBands_[static_cast<std::size_t>(index)];
 }
 
