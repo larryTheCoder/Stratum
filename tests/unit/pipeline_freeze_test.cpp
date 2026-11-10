@@ -82,6 +82,10 @@ public:
         out << json;
     }
 
+    void remove(const char* registry, std::string_view name) const {
+        std::filesystem::remove(root_ / "worldgen" / registry / (std::string(name) + ".json"));
+    }
+
     void writeBiomeParameters(std::string_view name, std::string_view json) const {
         std::ofstream out(root_ / "biome_parameters" / "minecraft" / (std::string(name) + ".json"));
         out << json;
@@ -146,6 +150,14 @@ private:
     // A noise nothing in the graph names, as surface rules' noises are: the
     // freeze has to carry it anyway.
     tree.write("noise", "surface_only", R"({"firstOctave":-2,"amplitudes":[1.0]})");
+    // And the nine the surface system requests for every dimension, which a
+    // legacy_random_source dimension's pack is rejected without
+    // (spec/legacy-named-noise-spec.md Q5.5).
+    for (const char* name : {"surface", "surface_secondary", "clay_bands_offset", "badlands_pillar",
+                             "badlands_pillar_roof", "badlands_surface", "iceberg_pillar",
+                             "iceberg_pillar_roof", "iceberg_surface"}) {
+        tree.write("noise", name, R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
+    }
 
     // Temperatures chosen to have bit patterns a float32 round trip through
     // text would disturb.
@@ -912,4 +924,35 @@ TEST_CASE("a pipeline's carvers survive the freeze, and a blob's are held to a p
                                                   tree.biomeParametersDir() / "no-tags-here"),
                          FreezeError,
                          Catch::Matchers::MessageMatches(ContainsSubstring("no block tags")));
+}
+
+TEST_CASE("a legacy dimension's pack is rejected for a surface noise key it does not define",
+          "[freeze][legacy]") {
+    // spec/legacy-named-noise-spec.md Q5.5, as ruled (IMPLEMENTER-RULING-01,
+    // legacy named noise P2): rejected at load, naming the key. The fixture's
+    // one dimension declares legacy_random_source, and its rule tree names no
+    // noise, so the keys in question are the surface system's fixed nine.
+    const TempTree tree;
+    const Pipeline whole = buildPipeline(tree);
+
+    for (const char* name : {"surface", "badlands_pillar_roof", "iceberg_surface"}) {
+        INFO(name);
+        const std::string key = std::string("minecraft:") + name;
+
+        // From a pack.
+        const TempTree lacking;
+        static_cast<void>(buildPipeline(lacking));
+        lacking.remove("noise", name);
+        CHECK_THROWS_MATCHES(
+            stratum::freeze::resolve(lacking.pack(), lacking.biomeParametersDir()), FreezeError,
+            Catch::Matchers::MessageMatches(ContainsSubstring("'" + key + "'") &&
+                                            ContainsSubstring("minecraft:overworld") &&
+                                            ContainsSubstring("Q5.5")));
+
+        // And from a blob that was made without it.
+        Pipeline pipeline = whole;
+        REQUIRE(pipeline.noises.erase(stratum::data::ResourceLocation::parse(key)) == 1);
+        CHECK_THROWS_MATCHES(stratum::freeze::read(stratum::freeze::write(pipeline)), FreezeError,
+                             Catch::Matchers::MessageMatches(ContainsSubstring("'" + key + "'")));
+    }
 }

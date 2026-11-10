@@ -29,6 +29,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -255,4 +256,45 @@ TEST_CASE("a legacy surface rule and the router get different noises under a cli
     const NoiseRegistry bare = NoiseRegistry::create(none, wanted, 0, RandomSource::Legacy);
     CHECK(bare.findNamed(vegetation) == nullptr);
     CHECK_THROWS_WITH(bare.getNamed(vegetation), ContainsSubstring("minecraft:vegetation"));
+}
+
+TEST_CASE("edge-shaped noise definitions build, and the octaveless ones sample 0.0",
+          "[noise][legacy][spec]") {
+    // spec/legacy-named-noise-spec.md Q3.3 (and Q3.4: no positive-octave
+    // restriction on a named noise). The server's own readings are the
+    // conformance case over probes/noiseedges_s42; this pins the values.
+    const ResourceLocation empty = ResourceLocation::parse("stratum:empty");
+    const ResourceLocation zeros = ResourceLocation::parse("stratum:zeros");
+    const ResourceLocation high = ResourceLocation::parse("stratum:high");
+    const std::map<ResourceLocation, NoiseParameters> parameters{
+        {empty, NoiseParameters::fromJson(
+                    nlohmann::json::parse(R"({"firstOctave":-5,"amplitudes":[]})"), empty)},
+        {zeros,
+         NoiseParameters::fromJson(
+             nlohmann::json::parse(R"({"firstOctave":-8,"amplitudes":[0.0,0.0,0.0]})"), zeros)},
+        {high,
+         NoiseParameters::fromJson(
+             nlohmann::json::parse(R"({"firstOctave":2,"amplitudes":[1.0,0.0,0.0,0.35]})"), high)}};
+    const std::vector<ResourceLocation> wanted{empty, zeros, high};
+    const double expected =
+        constants().at("composition").at("empty_or_all_zero_amplitudes_value").get<double>();
+    CHECK(bits(expected) == bits(0.0));
+
+    for (const RandomSource source : {RandomSource::Legacy, RandomSource::Xoroshiro}) {
+        INFO("source " << (source == RandomSource::Legacy ? "legacy" : "xoroshiro"));
+        const NoiseRegistry registry = NoiseRegistry::create(parameters, wanted, 42, source);
+        bool highVaries = false;
+        for (int i = 0; i < 64; ++i) {
+            const double x = (i * 37.0) - 900.0;
+            const double z = (i * -53.0) + 411.0;
+            // Positive zero, bit for bit: no NaN from a zero octave count.
+            CHECK(bits(registry.get(empty).sample(x, 0.0, z)) == bits(0.0));
+            CHECK(bits(registry.get(zeros).sample(x, 0.0, z)) == bits(0.0));
+            const double value = registry.get(high).sample(x, 0.0, z);
+            CHECK(std::isfinite(value));
+            highVaries =
+                highVaries || bits(value) != bits(registry.get(high).sample(0.0, 0.0, 0.0));
+        }
+        CHECK(highVaries);
+    }
 }

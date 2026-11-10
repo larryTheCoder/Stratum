@@ -25,6 +25,7 @@ using Catch::Matchers::ContainsSubstring;
 using stratum::carver::CarverError;
 using stratum::carver::CarverType;
 using stratum::carver::ConfiguredCarver;
+using stratum::carver::DebugSettings;
 using stratum::carver::FloatProvider;
 using stratum::carver::HeightProvider;
 using stratum::data::BlockTagEntry;
@@ -158,15 +159,71 @@ TEST_CASE("a configured canyon parses its shape, the trapezoid included", "[carv
     CHECK(canyon.replaceable.blocks == std::vector<ResourceLocation>{id("minecraft:stone")});
 }
 
+TEST_CASE("debug_settings is read in full, each omitted state falling back to the button",
+          "[carver][config]") {
+    // spec/carvers-a-spec.md Q13.4. The button's own state is the server's:
+    // the debug golden stores it where a carver's air state was left out.
+    const stratum::settings::BlockState button{
+        .name = id("minecraft:acacia_button"),
+        .properties = {{"face", "wall"}, {"facing", "north"}, {"powered", "false"}}};
+
+    SECTION("omitted entirely: debug off, the four defaults") {
+        nlohmann::json json = caveJson();
+        json["config"].erase("debug_settings");
+        const ConfiguredCarver cave = ConfiguredCarver::fromJson(json, "stratum:cave");
+        CHECK(cave.debug == DebugSettings::omitted());
+        CHECK_FALSE(cave.debug.debugMode);
+        CHECK(cave.debug.airState == button);
+        CHECK(cave.debug.waterState.name == id("minecraft:candle"));
+        CHECK(cave.debug.waterState.properties.at("waterlogged") == "false");
+        CHECK(cave.debug.lavaState.name == id("minecraft:orange_stained_glass"));
+        CHECK(cave.debug.barrierState.name == id("minecraft:glass"));
+    }
+    SECTION("present: a state left out is the button, whichever it is") {
+        // caveJson() gives an air state alone.
+        const ConfiguredCarver cave = ConfiguredCarver::fromJson(caveJson(), "stratum:cave");
+        CHECK_FALSE(cave.debug.debugMode);
+        CHECK(cave.debug.airState.name == id("minecraft:oak_button"));
+        CHECK(cave.debug.airState.properties.empty());
+        CHECK(cave.debug.waterState == button);
+        CHECK(cave.debug.lavaState == button);
+        CHECK(cave.debug.barrierState == button);
+    }
+    SECTION("debug_mode on, with properties") {
+        nlohmann::json json = caveJson();
+        json["config"]["debug_settings"] = {
+            {"debug_mode", true},
+            {"water_state",
+             {{"Name", "minecraft:oak_slab"},
+              {"Properties", {{"type", "bottom"}, {"waterlogged", "false"}}}}}};
+        const ConfiguredCarver cave = ConfiguredCarver::fromJson(json, "stratum:cave");
+        CHECK(cave.debug.debugMode);
+        CHECK(cave.debug.airState == button);
+        CHECK(cave.debug.waterState.name == id("minecraft:oak_slab"));
+        // As written: the carver sets `waterlogged` when it writes the state.
+        CHECK(cave.debug.waterState.properties.at("waterlogged") == "false");
+        CHECK(cave.debug.waterState.properties.at("type") == "bottom");
+    }
+}
+
 TEST_CASE("what this build cannot carve is refused by name", "[carver][config]") {
-    nlohmann::json debug = caveJson();
-    debug["config"]["debug_settings"]["debug_mode"] = true;
-    CHECK_THROWS_MATCHES(ConfiguredCarver::fromJson(debug, "stratum:debug"), CarverError,
+    nlohmann::json debugMode = caveJson();
+    debugMode["config"]["debug_settings"]["debug_mode"] = "yes";
+    CHECK_THROWS_MATCHES(ConfiguredCarver::fromJson(debugMode, "stratum:debug"), CarverError,
                          Catch::Matchers::MessageMatches(ContainsSubstring("stratum:debug") &&
                                                          ContainsSubstring("debug_mode")));
-    nlohmann::json debugOff = caveJson();
-    debugOff["config"]["debug_settings"]["debug_mode"] = false;
-    CHECK_NOTHROW(ConfiguredCarver::fromJson(debugOff, "stratum:quiet"));
+    nlohmann::json debugState = caveJson();
+    debugState["config"]["debug_settings"]["lava_state"] = "minecraft:glass";
+    CHECK_THROWS_WITH(ConfiguredCarver::fromJson(debugState, "stratum:x"),
+                      ContainsSubstring("debug_settings.lava_state"));
+    debugState["config"]["debug_settings"]["lava_state"] = {{"Name", "minecraft:glass"},
+                                                            {"Properties", {{"lit", true}}}};
+    CHECK_THROWS_WITH(ConfiguredCarver::fromJson(debugState, "stratum:x"),
+                      ContainsSubstring("\"lit\""));
+    debugState["config"]["debug_settings"]["lava_state"] = {{"Name", "minecraft:glass"},
+                                                            {"Extra", 1}};
+    CHECK_THROWS_WITH(ConfiguredCarver::fromJson(debugState, "stratum:x"),
+                      ContainsSubstring("Extra"));
 
     nlohmann::json type = caveJson();
     type["type"] = "stratum:tunnel";

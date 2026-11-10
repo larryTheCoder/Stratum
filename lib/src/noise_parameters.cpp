@@ -67,9 +67,9 @@ constexpr std::size_t kMaxAmplitudes = 64;
     if (!amplitudes.is_array()) {
         fail(R"("amplitudes" must be an array, not )" + std::string(amplitudes.type_name()));
     }
-    if (amplitudes.empty()) {
-        fail(R"("amplitudes" is empty; a noise with no octaves samples to nothing)");
-    }
+    // An empty list is accepted, as an all-zero one is: the noise has no
+    // octave and samples 0.0 everywhere (spec/legacy-named-noise-spec.md
+    // Q3.3; the server builds both, under either random source — SPEC §11).
     if (amplitudes.size() > kMaxAmplitudes) {
         fail(R"("amplitudes" has )" + std::to_string(amplitudes.size()) + " entries, more than " +
              std::to_string(kMaxAmplitudes));
@@ -101,9 +101,6 @@ void NoiseParameters::check(const std::string_view subject) const {
         fail(R"("firstOctave" is )" + std::to_string(firstOctave) +
              ", outside the supported range [" + std::to_string(kMinFirstOctave) + ", " +
              std::to_string(kMaxFirstOctave) + "]");
-    }
-    if (amplitudes.empty()) {
-        fail(R"("amplitudes" is empty; a noise with no octaves samples to nothing)");
     }
     if (amplitudes.size() > kMaxAmplitudes) {
         fail(R"("amplitudes" has )" + std::to_string(amplitudes.size()) + " entries, more than " +

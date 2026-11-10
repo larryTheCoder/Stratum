@@ -251,6 +251,20 @@ Report validatePack(const data::Pack& pack, const ValidateOptions& options) {
         // would make the headline number mean something else again.
         try {
             const surface::RuleGraph rules = surface::RuleGraph::resolve(dimension.surfaceRule, id);
+            if (source == density::RandomSource::Legacy) {
+                // spec/legacy-named-noise-spec.md Q5.5, as ruled: a key the
+                // surface rules or the surface system's fixed nine request
+                // and the pack does not define rejects the pack at load
+                // (freeze::resolve). An error here for the same reason.
+                for (const data::ResourceLocation& key : surface::legacyRequestedNoises(rules)) {
+                    if (pack.find(data::Registry::Noise, key) == nullptr) {
+                        add(report, Severity::Error, id.toString() + " surface_rule",
+                            "the pack defines no noise '" + key.toString() +
+                                "', which this legacy_random_source dimension requests for "
+                                "its surface rules (spec/legacy-named-noise-spec.md Q5.5)");
+                    }
+                }
+            }
             const std::vector<data::ResourceLocation> surfaceWanted =
                 surface::requiredNoises(rules);
             if (!surfaceWanted.empty()) {

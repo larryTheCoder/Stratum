@@ -331,6 +331,20 @@ UNITS = [
     unit('carvers_s31337', 'end', ['carver-golden-probe.sh', '31337'],
          own('carvers_s31337', CARVER_REGIONS,
              {'file': 'manifest.json', 'seed': 31337, 'frozen': True})),
+    # The same stage with redefinitions: the carvers' debug output
+    # (spec/carvers-a-spec.md Q13.4) and edge-shaped surface noises
+    # (spec/legacy-named-noise-spec.md Q3.3).
+    unit('carverdebug_s42', 'end', ['carver-golden-probe.sh', '--variant', 'debug', '42'],
+         own('carverdebug_s42',
+             CARVER_REGIONS + tuple(f'overrides/configured_carver/{name}.json' for name in
+                                    ('cave', 'cave_extra_underground', 'canyon', 'nether_cave')),
+             {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
+    unit('noiseedges_s42', 'end', ['carver-golden-probe.sh', '--variant', 'noise-edges', '42'],
+         own('noiseedges_s42',
+             CARVER_REGIONS + tuple(f'overrides/noise/{name}.json' for name in
+                                    ('surface', 'patch', 'soul_sand_layer', 'nether_wart',
+                                     'netherrack', 'nether_state_selector')),
+             {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))

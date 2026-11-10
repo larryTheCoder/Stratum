@@ -181,18 +181,21 @@ private:
     /// A-Q4.4 then A-Q12.
     void decide(const CompiledCarver& carver, std::int32_t lx, std::int32_t y, std::int32_t lz,
                 bool& grassFlag) {
+        // A-Q13.4: debug lifts the mask for every type, and replaceability
+        // for the cave type (which the canyon's fill is, B-Q13.2).
+        const bool debug = carver.config.debug.debugMode;
+        const bool nether = carver.config.type == CarverType::NetherCave;
         const std::size_t index = maskIndex(lx, y, lz);
-        if (mask_[index]) {
+        if (mask_[index] && !debug) {
             return;
         }
         mask_[index] = true;
 
         const data::ResourceLocation& prior = target_.blockAt(lx, y, lz);
-        const bool nether = carver.config.type == CarverType::NetherCave;
         if (!nether && (prior == grassBlock() || prior == mycelium())) {
             grassFlag = true;
         }
-        if (!carver.replaceable.contains(prior)) {
+        if (!carver.replaceable.contains(prior) && (nether || !debug)) {
             return;
         }
 
@@ -204,32 +207,46 @@ private:
         }
 
         CarveTarget::Write replacement = CarveTarget::Write::Air;
+        // Under debug, the state written in the replacement's place.
+        const CompiledCarver::DebugWrite* debugWrite = nullptr;
         const std::int32_t lavaLevel = carver.config.lavaLevel.resolve(target_.geometry);
         if (y <= lavaLevel) {
             // A-Q12.1: lava, the aquifer not consulted; the mark takes the
-            // last decision's flag (A-Q12.4).
+            // last decision's flag (A-Q12.4). Plain lava under debug too.
             replacement = CarveTarget::Write::Lava;
         } else {
             const AquiferAnswer answer = target_.aquifer(x0_ + lx, y, z0_ + lz);
             lastFlag_ = answer.flag;
             switch (answer.kind) {
                 case AquiferAnswer::Kind::Solid:
-                    return; // the barrier verdict: unchanged (A-Q12.1)
+                    if (!debug) {
+                        return; // the barrier verdict: unchanged (A-Q12.1)
+                    }
+                    debugWrite = &carver.debugBarrier;
+                    break;
                 case AquiferAnswer::Kind::Water:
                     replacement = CarveTarget::Write::Water;
+                    debugWrite = debug ? &carver.debugWater : nullptr;
                     break;
                 case AquiferAnswer::Kind::Lava:
                     replacement = CarveTarget::Write::Lava;
+                    debugWrite = debug ? &carver.debugLava : nullptr;
                     break;
                 case AquiferAnswer::Kind::Air:
                 default:
                     replacement = CarveTarget::Write::Air;
+                    debugWrite = debug ? &carver.debugAir : nullptr;
                     break;
             }
         }
-        target_.write(lx, y, lz, replacement);
-        const bool fluid =
+        bool fluid =
             replacement == CarveTarget::Write::Water || replacement == CarveTarget::Write::Lava;
+        if (debugWrite != nullptr) {
+            target_.writeState(lx, y, lz, debugWrite->state);
+            fluid = debugWrite->holdsFluid;
+        } else {
+            target_.write(lx, y, lz, replacement);
+        }
         if (fluid && lastFlag_) {
             target_.mark(lx, y, lz);
         }
@@ -540,6 +557,22 @@ void carveChunk(const CarverSet& carvers, const CarveTarget& target) {
 
 namespace {
 
+/// A debug state prepared for writing (A-Q13.4): @p waterlog sets the
+/// `waterlogged` property true where the state has one, as the water state
+/// is written. It holds fluid, and so can be marked (A-Q12.4), when it is a
+/// fluid's own block or is waterlogged.
+[[nodiscard]] CompiledCarver::DebugWrite debugWrite(settings::BlockState state,
+                                                    const bool waterlog) {
+    const auto waterlogged = state.properties.find("waterlogged");
+    if (waterlog && waterlogged != state.properties.end()) {
+        waterlogged->second = "true";
+    }
+    const bool wet = waterlogged != state.properties.end() && waterlogged->second == "true";
+    const bool fluidBlock = state.name.namespaceName() == "minecraft" &&
+                            (state.name.path() == "water" || state.name.path() == "lava");
+    return CompiledCarver::DebugWrite{.state = std::move(state), .holdsFluid = wet || fluidBlock};
+}
+
 [[nodiscard]] std::shared_ptr<const CompiledCarver> compile(ConfiguredCarver config,
                                                             const CarverSources& sources) {
     auto compiled = std::make_shared<CompiledCarver>();
@@ -554,6 +587,10 @@ namespace {
         compiled->replaceable.insert(config.replaceable.blocks.begin(),
                                      config.replaceable.blocks.end());
     }
+    compiled->debugAir = debugWrite(config.debug.airState, false);
+    compiled->debugWater = debugWrite(config.debug.waterState, true);
+    compiled->debugLava = debugWrite(config.debug.lavaState, false);
+    compiled->debugBarrier = debugWrite(config.debug.barrierState, false);
     compiled->config = std::move(config);
     return compiled;
 }
@@ -612,6 +649,28 @@ CarverSet buildCarverSet(const CarverSources& sources) {
         set.setBiome(biome, std::move(list));
     }
     return set;
+}
+
+std::vector<settings::BlockState> debugStates(const CarverSet& carvers) {
+    std::vector<settings::BlockState> states;
+    const auto add = [&states](const settings::BlockState& state) {
+        if (std::find(states.begin(), states.end(), state) == states.end()) {
+            states.push_back(state);
+        }
+    };
+    for (const auto& [biome, list] : carvers.biomes()) {
+        for (const std::shared_ptr<const CompiledCarver>& carver : list) {
+            // A nether cave's debug mode writes no debug state (A-Q13.4).
+            if (!carver->config.debug.debugMode || carver->config.type == CarverType::NetherCave) {
+                continue;
+            }
+            add(carver->debugAir.state);
+            add(carver->debugWater.state);
+            add(carver->debugLava.state);
+            add(carver->debugBarrier.state);
+        }
+    }
+    return states;
 }
 
 } // namespace stratum::carver

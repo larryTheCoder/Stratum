@@ -215,9 +215,55 @@ void requireOnly(const nlohmann::json& object, std::initializer_list<std::string
     return result;
 }
 
-void debugSettings(const nlohmann::json& config, const std::string& id) {
+/// The default air state, which is also what a state left out of a present
+/// `debug_settings` falls back to, whichever of the four it is (A-Q13.4).
+[[nodiscard]] settings::BlockState defaultAirState() {
+    return settings::BlockState{
+        .name = data::ResourceLocation{"minecraft", "acacia_button"},
+        .properties = {{"face", "wall"}, {"facing", "north"}, {"powered", "false"}}};
+}
+
+[[nodiscard]] settings::BlockState debugState(const nlohmann::json& debug, const char* name,
+                                              const std::string& id) {
+    if (!debug.contains(name)) {
+        return defaultAirState();
+    }
+    const std::string where = std::string("\"debug_settings.") + name + "\"";
+    const nlohmann::json& value = debug.at(name);
+    if (!value.is_object() || !value.contains("Name") || !value.at("Name").is_string()) {
+        fail(id, where + " must be a block state: an object with a \"Name\"");
+    }
+    requireOnly(value, {"Name", "Properties"}, id, where);
+    const std::optional<data::ResourceLocation> block =
+        data::ResourceLocation::tryParse(value.at("Name").get<std::string>());
+    if (!block.has_value()) {
+        fail(id, where + " names '" + value.at("Name").get<std::string>() +
+                     "', which is not a resource location");
+    }
+    settings::BlockState state;
+    state.name = *block;
+    if (value.contains("Properties")) {
+        const nlohmann::json& properties = value.at("Properties");
+        if (!properties.is_object()) {
+            fail(id, where + "'s \"Properties\" must be an object");
+        }
+        for (const auto& [key, property] : properties.items()) {
+            if (!property.is_string()) {
+                std::string message = where;
+                message += "'s property \"";
+                message += key;
+                message += "\" must be a string, as vanilla writes them";
+                fail(id, message);
+            }
+            state.properties.emplace(key, property.get<std::string>());
+        }
+    }
+    return state;
+}
+
+[[nodiscard]] DebugSettings debugSettings(const nlohmann::json& config, const std::string& id) {
     if (!config.contains("debug_settings")) {
-        return;
+        return DebugSettings::omitted();
     }
     const nlohmann::json& debug = config.at("debug_settings");
     if (!debug.is_object()) {
@@ -225,19 +271,32 @@ void debugSettings(const nlohmann::json& config, const std::string& id) {
     }
     requireOnly(debug, {"debug_mode", "air_state", "water_state", "lava_state", "barrier_state"},
                 id, "debug_settings");
+    DebugSettings result;
     if (debug.contains("debug_mode")) {
         if (!debug.at("debug_mode").is_boolean()) {
             fail(id, "\"debug_settings.debug_mode\" must be true or false");
         }
-        if (debug.at("debug_mode").get<bool>()) {
-            fail(id, "\"debug_settings.debug_mode\" is true, and carver debug output is not "
-                     "implemented by this build: it is refused rather than carved without "
-                     "it (IMPLEMENTER-RULING-01; spec/carvers-a-spec.md Q13.4)");
-        }
+        result.debugMode = debug.at("debug_mode").get<bool>();
     }
+    result.airState = debugState(debug, "air_state", id);
+    result.waterState = debugState(debug, "water_state", id);
+    result.lavaState = debugState(debug, "lava_state", id);
+    result.barrierState = debugState(debug, "barrier_state", id);
+    return result;
 }
 
 } // namespace
+
+DebugSettings DebugSettings::omitted() {
+    DebugSettings result;
+    result.airState = defaultAirState();
+    result.waterState = settings::BlockState{
+        .name = data::ResourceLocation{"minecraft", "candle"},
+        .properties = {{"candles", "1"}, {"lit", "false"}, {"waterlogged", "false"}}};
+    result.lavaState.name = data::ResourceLocation{"minecraft", "orange_stained_glass"};
+    result.barrierState.name = data::ResourceLocation{"minecraft", "glass"};
+    return result;
+}
 
 ConfiguredCarver ConfiguredCarver::fromJson(const nlohmann::json& json, const std::string& id) {
     // Named, so that no reference field() returns is bound beside a temporary.
@@ -286,7 +345,7 @@ ConfiguredCarver ConfiguredCarver::fromJson(const nlohmann::json& json, const st
     carver.yScale = floatProvider(field(config, "yScale", id, inConfig), id, "\"yScale\"");
     carver.lavaLevel = anchor(field(config, "lava_level", id, inConfig), id, "\"lava_level\"");
     carver.replaceable = parseReplaceable(field(config, "replaceable", id, inConfig), id);
-    debugSettings(config, id);
+    carver.debug = debugSettings(config, id);
 
     if (carver.type == CarverType::Canyon) {
         carver.verticalRotation = floatProvider(field(config, "vertical_rotation", id, inConfig),

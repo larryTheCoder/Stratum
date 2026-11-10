@@ -147,10 +147,14 @@ public:
         // No tags: plains carves nothing, so no carver names one.
         std::filesystem::create_directories(root_ / "tags" / "block");
 
-        // The surface system's own noises, in case the tree is taken to read
-        // a depth.
-        write("noise", "surface", R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
-        write("noise", "surface_secondary", R"({"firstOctave":-6,"amplitudes":[1.0]})");
+        // The surface system's own nine noises: a legacy_random_source
+        // dimension's pack is rejected without them
+        // (spec/legacy-named-noise-spec.md Q5.5).
+        for (const char* name : {"surface", "surface_secondary", "clay_bands_offset",
+                                 "badlands_pillar", "badlands_pillar_roof", "badlands_surface",
+                                 "iceberg_pillar", "iceberg_pillar_roof", "iceberg_surface"}) {
+            write("noise", name, R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
+        }
         write("biome", "plains", R"({"temperature":0.8,"carvers":[]})");
 
         const nlohmann::json grassOnTop = {

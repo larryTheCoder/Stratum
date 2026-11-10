@@ -1,5 +1,6 @@
 // Stratum — the Nukkit binding's own generation pipeline.
 // Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
+#include <stratum/carver/carve.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/javamath.hpp>
@@ -243,6 +244,16 @@ std::unique_ptr<Pipeline> Pipeline::compile(freeze::Pipeline pipeline,
                 std::to_string(kOverworldMinY + kOverworldHeight - 1));
         }
         impl.emittableStates = emittableBlockStates(settingsEntry->second);
+        // And what a pack's carvers write under `debug_mode`
+        // (spec/carvers-a-spec.md Q13.4): states the pack names, which
+        // nothing in the settings lists. None for a pack that sets no
+        // `debug_mode`, vanilla's included.
+        if (!pipeline.carvers.empty()) {
+            for (settings::BlockState& state :
+                 carver::debugStates(carver::buildCarverSet(pipeline.carvers))) {
+                appendUnique(impl.emittableStates, std::move(state));
+            }
+        }
     }
     const auto& list = biomes.parameterList();
     if (list.has_value()) {

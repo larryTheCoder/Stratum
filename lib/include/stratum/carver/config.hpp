@@ -10,9 +10,10 @@
 // provider other than uniform or constant, a field these types do not have —
 // is refused by name, never read as something near it (SPEC §8).
 //
-// `debug_mode: true` is refused too (IMPLEMENTER-RULING-01, carvers P2:
-// "Until then, packs with `debug_mode: true` hard-error at load"), so
-// `debug_settings` is read only for its shape.
+// `debug_settings` is read in full (spec/carvers-a-spec.md Q13.4 as amended:
+// parity applies, so a pack that sets `debug_mode` gets the debug output the
+// server writes; confirmed on tools/analysis/carver-golden-probe.sh
+// --variant debug, SPEC §11).
 
 #pragma once
 
@@ -81,6 +82,21 @@ struct CanyonShape {
     float verticalRadiusCenterFactor = 0.0F;
 };
 
+/// `debug_settings` (spec A-Q13.4). The states are the pack's, as written.
+struct DebugSettings {
+    bool debugMode = false;
+    settings::BlockState airState;
+    settings::BlockState waterState;
+    settings::BlockState lavaState;
+    settings::BlockState barrierState;
+
+    /// What an omitted `debug_settings` holds: debug off, and the four
+    /// default states (which nothing then reads).
+    [[nodiscard]] static DebugSettings omitted();
+
+    [[nodiscard]] bool operator==(const DebugSettings&) const = default;
+};
+
 struct ConfiguredCarver {
     CarverType type = CarverType::Cave;
     float probability = 0.0F;
@@ -88,6 +104,7 @@ struct ConfiguredCarver {
     FloatProvider yScale;
     surface::VerticalAnchor lavaLevel;
     Replaceable replaceable;
+    DebugSettings debug = DebugSettings::omitted();
 
     // cave and nether_cave (spec A-Q13.2).
     FloatProvider horizontalRadiusMultiplier;

@@ -3,7 +3,24 @@
 # them, before features and before promotion.
 # Copyright 2026 the Stratum contributors. SPDX-License-Identifier: Apache-2.0
 #
-#   tools/analysis/carver-golden-probe.sh --accept-eula [seed]
+#   tools/analysis/carver-golden-probe.sh --accept-eula [--variant <name>] [seed]
+#
+# Variants (each its own corpus; the default is the shipped data, `carvers_s<seed>`):
+#
+#   debug        `carverdebug_s<seed>`: every shipped configured carver with
+#                `debug_settings.debug_mode` true (spec/carvers-a-spec.md
+#                Q13.4), and between them every shape of the debug states —
+#                the shipped four, states left out of a present
+#                `debug_settings` (the fallback), a water state with a
+#                `waterlogged` property and one without.
+#   noise-edges  `noiseedges_s<seed>`: surface noises redefined in the edge
+#                shapes of spec/legacy-named-noise-spec.md Q3.3 — an empty
+#                `amplitudes` list, an all-zero one, positive first octaves —
+#                read through the surface rules of the Nether (the legacy
+#                source) and, for `minecraft:surface`, the overworld's too.
+#
+# A variant's redefinitions are kept beside its regions, under `overrides/`
+# in the layout of the worldgen tree, so the test builds the same pack.
 #
 # WHY THIS EXISTS. IMPLEMENTER-RULING-01 (carvers P1): carver goldens compare
 # at the CARVING STAGE, not against full chunks, whose blocks are the carver's
@@ -43,13 +60,24 @@ readonly MINECRAFT_VERSION="1.21.11"
 readonly CHUNKS=8
 
 accept_eula=0
+variant="plain"
 args=()
-for arg in "$@"; do
-    case "${arg}" in
+while (( $# > 0 )); do
+    case "$1" in
         --accept-eula) accept_eula=1 ;;
-        *) args+=("${arg}") ;;
+        --variant)
+            [[ $# -ge 2 ]] || { echo "--variant needs a name" >&2; exit 2; }
+            variant="$2"; shift ;;
+        *) args+=("$1") ;;
     esac
+    shift
 done
+case "${variant}" in
+    plain) corpus_prefix="carvers" ;;
+    debug) corpus_prefix="carverdebug" ;;
+    noise-edges) corpus_prefix="noiseedges" ;;
+    *) echo "unknown variant: ${variant} (plain, debug, noise-edges)" >&2; exit 2 ;;
+esac
 seed="${args[0]:-42}"
 [[ "${seed}" =~ ^-?[0-9]+$ ]] || { echo "seed must be a whole number: ${seed}" >&2; exit 2; }
 
@@ -66,7 +94,7 @@ jar="$(find "${fixtures}/${MINECRAFT_VERSION}" -maxdepth 2 -name 'server*.jar' 2
 [[ -n "${jar}" ]] || die "no server jar under ${fixtures}/${MINECRAFT_VERSION}; run tools/fetch-vanilla first"
 jar="$(cd "$(dirname "${jar}")" && pwd)/$(basename "${jar}")"
 
-corpus="carvers_s${seed}"
+corpus="${corpus_prefix}_s${seed}"
 out_root="${fixtures}/${MINECRAFT_VERSION}/probes/${corpus}"
 
 work="$(mktemp -d)"
@@ -119,6 +147,52 @@ for biome in "${worldgen}"/biome/*.json; do
 done
 log "datapack: $(ls "${pack}/data/minecraft/worldgen/biome" | wc -l) biome(s), features removed"
 
+# The variant's redefinitions, in the worldgen tree's own layout.
+overrides="${work}/overrides"
+mkdir -p "${overrides}"
+case "${variant}" in
+    debug)
+        carvers="${worldgen}/configured_carver"
+        mkdir -p "${overrides}/configured_carver"
+        # cave and nether_cave: the shipped debug states, switched on.
+        for name in cave nether_cave; do
+            jq '.config.debug_settings.debug_mode = true' "${carvers}/${name}.json" \
+                > "${overrides}/configured_carver/${name}.json"
+        done
+        # cave_extra_underground: air and lava states left out of a present
+        # `debug_settings`; a water state with no `waterlogged` property.
+        jq '.config.debug_settings = {
+                debug_mode: true,
+                water_state: {Name: "minecraft:blue_wool"},
+                barrier_state: {Name: "minecraft:red_wool"}}' \
+            "${carvers}/cave_extra_underground.json" \
+            > "${overrides}/configured_carver/cave_extra_underground.json"
+        # canyon: the barrier state left out; a water state that has the
+        # property and is not a fluid's own block.
+        jq '.config.debug_settings = {
+                debug_mode: true,
+                air_state: {Name: "minecraft:red_stained_glass"},
+                water_state: {Name: "minecraft:oak_slab",
+                              Properties: {type: "bottom", waterlogged: "false"}},
+                lava_state: {Name: "minecraft:magenta_wool"}}' \
+            "${carvers}/canyon.json" > "${overrides}/configured_carver/canyon.json"
+        ;;
+    noise-edges)
+        mkdir -p "${overrides}/noise"
+        edge() { printf '%s\n' "$2" > "${overrides}/noise/$1.json"; }
+        edge surface '{"firstOctave": -6, "amplitudes": []}'
+        edge patch '{"firstOctave": -5, "amplitudes": []}'
+        edge soul_sand_layer '{"firstOctave": -8, "amplitudes": [0.0, 0.0, 0.0]}'
+        edge nether_wart '{"firstOctave": 1, "amplitudes": [1.0, 0.0, 0.0, 0.9]}'
+        edge netherrack '{"firstOctave": 2, "amplitudes": [1.0, 0.0, 0.0, 0.35]}'
+        edge nether_state_selector '{"firstOctave": 1, "amplitudes": [1.0]}'
+        ;;
+esac
+if [[ -n "$(ls -A "${overrides}")" ]]; then
+    cp -r "${overrides}/." "${pack}/data/minecraft/worldgen/"
+    log "variant ${variant}: $(find "${overrides}" -name '*.json' | wc -l) redefinition(s)"
+fi
+
 pipe="${work}/console"
 mkfifo "${pipe}"
 log "starting the server (seed ${seed})"
@@ -134,6 +208,18 @@ while (( waited < 300 )); do
     sleep 5; waited=$((waited + 5))
 done
 grep -q 'Done (' "${work}/server.log" || { tail -30 "${work}/server.log" >&2; die "server did not start"; }
+
+# A pack the server could not load is dropped, and the world generates from
+# the shipped data alone: that would be a golden of the wrong thing.
+if grep -E -i -q 'failed to load datapacks|safe mode' "${work}/server.log"; then
+    grep -E -i 'datapack|safe mode|error' "${work}/server.log" | head -40 >&2
+    printf 'stop\n' >&3
+    die "the server did not load this probe's datapack (variant ${variant})"
+fi
+printf 'datapack list enabled\n' >&3
+sleep 2
+grep -q 'file/stratum-no-features' "${work}/server.log" \
+    || { printf 'stop\n' >&3; die "the probe's datapack is not among the enabled ones"; }
 
 log "freezing the world before generating"
 printf 'tick freeze\n' >&3
@@ -196,8 +282,12 @@ for placement in "${placements[@]}"; do
     cp "$(region_path overworld "${rx}" "${rz}")" "${out_root}/overworld/"
     cp "$(region_path the_nether "${rx}" "${rz}")" "${out_root}/nether/"
 done
+if [[ -n "$(ls -A "${overrides}")" ]]; then
+    cp -r "${overrides}" "${out_root}/overrides"
+fi
 cat > "${out_root}/manifest.json" <<MANIFEST
 {"seed": ${seed}, "version": "${MINECRAFT_VERSION}", "chunks": ${CHUNKS},
+ "variant": "${variant}",
  "placements": [{"name": "pos", "origin_chunk": [8, 8], "region": [0, 0]},
                 {"name": "neg", "origin_chunk": [-24, -24], "region": [-1, -1]}],
  "dimensions": ["overworld", "nether"], "ticks_frozen": true,

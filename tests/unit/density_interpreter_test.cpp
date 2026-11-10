@@ -614,7 +614,9 @@ TEST_CASE("malformed noise parameters are refused by name", "[density][noise]") 
     CHECK_THROWS_WITH(parse(R"({"firstOctave":-3})"), ContainsSubstring("amplitudes"));
     CHECK_THROWS_WITH(parse(R"({"firstOctave":-3.5,"amplitudes":[1.0]})"),
                       ContainsSubstring("must be an integer"));
-    CHECK_THROWS_WITH(parse(R"({"firstOctave":-3,"amplitudes":[]})"), ContainsSubstring("empty"));
+    // An empty list is not malformed: the server builds it, and it samples
+    // 0.0 everywhere (spec/legacy-named-noise-spec.md Q3.3).
+    CHECK(parse(R"({"firstOctave":-3,"amplitudes":[]})").amplitudes.empty());
     CHECK_THROWS_WITH(parse(R"({"firstOctave":-3,"amplitudes":["x"]})"),
                       ContainsSubstring("not a number"));
     CHECK_THROWS_AS(parse(R"({"firstOctave":-9999,"amplitudes":[1.0]})"), NoiseError);

@@ -15,6 +15,8 @@
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/hash/md5.hpp>
 #include <stratum/settings/noise_settings.hpp>
+#include <stratum/surface/executor.hpp>
+#include <stratum/surface/rule_graph.hpp>
 #include <stratum/version.hpp>
 
 #include <nlohmann/json.hpp>
@@ -709,6 +711,41 @@ void readCarvers(Reader& in, Pipeline& pipeline) {
 
 constexpr std::size_t kHeaderFixedSize = kMagic.size() + 4 + 4;
 
+/// spec/legacy-named-noise-spec.md Q5.5, as ruled (IMPLEMENTER-RULING-01,
+/// legacy named noise P2): a `legacy_random_source` dimension whose surface
+/// rules, or the surface system's fixed list of nine, name a noise key the
+/// pack does not define is rejected here, at load, naming the key — on the
+/// server that request is a hard failure, never a zero noise. @p refuse
+/// throws with the message it is given.
+///
+/// A surface rule tree that does not resolve at all is not this check's to
+/// report: compiling its dimension names what is wrong with it.
+template<typename Refuse>
+void requireLegacySurfaceNoises(const Pipeline& pipeline, const Refuse& refuse) {
+    for (const auto& [id, dimension] : pipeline.settings) {
+        if (!dimension.legacyRandomSource) {
+            continue;
+        }
+        std::vector<data::ResourceLocation> requested;
+        try {
+            requested = surface::legacyRequestedNoises(
+                surface::RuleGraph::resolve(dimension.surfaceRule, id));
+        } catch (const surface::RuleError&) {
+            continue;
+        }
+        for (const data::ResourceLocation& key : requested) {
+            if (!pipeline.noises.contains(key)) {
+                refuse("the pack defines no noise '" + key.toString() +
+                       "', which the legacy_random_source dimension '" + id.toString() +
+                       "' requests for its surface rules (a noise_threshold's key, or one of "
+                       "the nine the surface system requests for every dimension); the server "
+                       "fails on that request, so the pack is rejected "
+                       "(spec/legacy-named-noise-spec.md Q5.5)");
+            }
+        }
+    }
+}
+
 } // namespace
 
 std::vector<std::byte> write(const Pipeline& pipeline) {
@@ -828,6 +865,9 @@ Pipeline read(std::span<const std::byte> blob) {
         throw FreezeError("this world's pipeline has trailing bytes after the carvers, so "
                           "it is not the shape this build writes");
     }
+    requireLegacySurfaceNoises(pipeline, [](const std::string& what) {
+        throw FreezeError("this world's pipeline is not one this build writes: " + what);
+    });
     return pipeline;
 }
 
@@ -850,6 +890,8 @@ Pipeline resolve(const data::Pack& pack, const std::filesystem::path& biomeParam
                               "', which a density function references");
         }
     }
+
+    requireLegacySurfaceNoises(pipeline, [](const std::string& what) { throw FreezeError(what); });
 
     if (!std::filesystem::is_directory(biomeParametersDir)) {
         throw FreezeError("no biome parameter lists under " + biomeParametersDir.string() +

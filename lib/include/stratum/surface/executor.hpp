@@ -184,6 +184,16 @@ struct Context {
 /// it generates at all rather than only what gets built.
 [[nodiscard]] std::vector<data::ResourceLocation> requiredNoises(const RuleGraph& graph);
 
+/// Every `worldgen/noise` key a `legacy_random_source` dimension with this
+/// tree requests on the server, whether or not anything then samples it
+/// (spec/legacy-named-noise-spec.md Q5.1a-b): the keys its `noise_threshold`
+/// conditions name, and the surface system's nine fixed keys, which it
+/// requests for every dimension whatever its rules contain. A key among
+/// them with no registry entry is a hard failure there (Q5.5), so a pack
+/// that lacks one is rejected at load (freeze::resolve), naming the key.
+/// Sorted and deduplicated.
+[[nodiscard]] std::vector<data::ResourceLocation> legacyRequestedNoises(const RuleGraph& graph);
+
 /// The four clamped neighbour heights `steep` compares, given a way to read a
 /// column's surface height. Chunk-local and clamped, so no neighbouring chunk
 /// is ever touched.

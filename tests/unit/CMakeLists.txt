@@ -33,6 +33,7 @@ add_executable(stratum_unit_tests
     legacy_climate_test.cpp
     legacy_named_noise_test.cpp
     voronoi_test.cpp
+    carver_carve_test.cpp
     carver_config_test.cpp
     carver_trig_test.cpp
     mapping_biome_test.cpp

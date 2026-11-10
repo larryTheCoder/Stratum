@@ -42,6 +42,21 @@ namespace stratum::carver {
 struct CompiledCarver {
     ConfiguredCarver config;
     std::set<data::ResourceLocation> replaceable;
+
+    /// A debug state as the carver writes it, and whether it holds fluid
+    /// (which is what a mark asks, A-Q12.4).
+    struct DebugWrite {
+        settings::BlockState state;
+        bool holdsFluid = false;
+    };
+
+    /// `debug_settings`' four states, prepared (A-Q13.4): the water state
+    /// with its `waterlogged` property, where it has one, set true. Read
+    /// only when `config.debug.debugMode` is set.
+    DebugWrite debugAir;
+    DebugWrite debugWater;
+    DebugWrite debugLava;
+    DebugWrite debugBarrier;
 };
 
 /// Every biome's carver list, compiled (A-Q11.2): immutable once built.
@@ -56,6 +71,13 @@ public:
     carversOf(const data::ResourceLocation& biome) const noexcept;
 
     [[nodiscard]] bool empty() const noexcept { return biomes_.empty(); }
+
+    /// Every biome's list, by biome.
+    [[nodiscard]] const std::map<data::ResourceLocation,
+                                 std::vector<std::shared_ptr<const CompiledCarver>>>&
+    biomes() const noexcept {
+        return biomes_;
+    }
 
 private:
     std::map<data::ResourceLocation, std::vector<std::shared_ptr<const CompiledCarver>>> biomes_;
@@ -85,6 +107,9 @@ struct CarveTarget {
     /// The kinds of state a carver writes.
     enum class Write : std::uint8_t { Air, CaveAir, Water, Lava };
     std::function<void(int localX, std::int32_t y, int localZ, Write state)> write;
+    /// A write of a state a pack names: a carver's debug state (A-Q13.4).
+    std::function<void(int localX, std::int32_t y, int localZ, const settings::BlockState& state)>
+        writeState;
     /// The aquifer's answer at world (x, y, z), density 0.0 (A-Q12.1).
     std::function<AquiferAnswer(std::int32_t x, std::int32_t y, std::int32_t z)> aquifer;
     /// A-Q12.3's rewrite: set the dirt cell at (localX, y, localZ) to the
@@ -127,5 +152,13 @@ struct CarverSources {
 /// `replaceable` tag looked up in its resolved tags. Throws CarverError
 /// naming the biome, the carver or the tag it cannot resolve.
 [[nodiscard]] CarverSet buildCarverSet(const CarverSources& sources);
+
+/// Every state a carver of @p carvers writes under `debug_mode`
+/// (spec A-Q13.4), as it writes it, deduplicated in a stable order: the four
+/// debug states of each cave or canyon whose `debug_mode` is set (the water
+/// state waterlogged where it has the property). Empty for a set with no
+/// such carver — every shipped one. For a binding that has to know a
+/// dimension's block states before it fills a chunk.
+[[nodiscard]] std::vector<settings::BlockState> debugStates(const CarverSet& carvers);
 
 } // namespace stratum::carver

@@ -1110,6 +1110,10 @@ void ChunkFiller::fill(std::int32_t chunkX, std::int32_t chunkZ, ChunkBuffer& in
                     break;
             }
         };
+        target.writeState = [&into](int lx, std::int32_t y, int lz,
+                                    const settings::BlockState& state) {
+            into.set(lx, y, lz, state);
+        };
         target.aquifer = [&](std::int32_t x, std::int32_t y, std::int32_t z) {
             carver::AquiferAnswer answer;
             if (aquiferCentres_.has_value() && aquifer::consultsLattice(y, ySkipLevel)) {

@@ -451,6 +451,7 @@ to bump the version and be called out; this is that call-out.
 | 18 | **The carvers run** (§11, "Carvers, adopted"). `minecraft:cave`, `minecraft:nether_cave` and `minecraft:canyon` carve every chunk of a pipeline that carries them (format 4), exactly as spec/carvers-a-spec.md and spec/carvers-b-spec.md write them, block for block and mark for mark against the server's carving-stage chunks. Changes every carved block of every world. **The surface pass's water height is cleared by air** (§11, "The water height is the fluid under the last air"): scanning a column down, the first fluid under air sets the water height to its y + 1 and the next air clears it, where v17 latched the first fluid for the whole column. Changes surface blocks under a cave or overhang that sits below water higher up the column: 232 golden overworld blocks, all now exact; the pinned overworld hash holds. **The aquifer's fluid-update flag is computed for an air outcome too** (A-Q12.4); no uncarved output reads it. |
 | 19 | **The aquifer's spread quantization at 32-bit width** (§11, "The aquifer's widths, as amended"). Q5.7's quantized term is `3·F`, F the 32-bit floor of the double `(10·s)/3`, the product wrapping, as the width amendment writes it, where v18 floored `10·s` to an int first. The same integer for every spread `10·s` fits in an int, so no vanilla world changes; a datapack spread past about 2.1e8 now takes the server's level where v18 saturated (and refused a barrier the saturation made). |
 | 20 | **`old_blended_noise` in the engine's floating-point form** (§11, "old_blended_noise's floating-point form"). The Modern reading forms its doubles as spec/blended-noise-spec.md's amendments write them: the main sampler's position `(x·M)/F` before the octave scale, where v19 took `x·(M/F)` (cubiomes' order), and the selector `(main/10 + 1)/2`, where v19 took `0.5 + 0.05·main`; the limits' skip flags and the clamped lerp exactly as Q1.5's amendment states, over 512 and then 128. Moves `base_3d_noise` in the last bit at about one block position in eleven; the server agrees with the new value at all 24 points of a bisection where it and v19's differ, and deepslate's 240 vectors now match to the bit (230 under v19). No golden block moves: every conformance case passes unchanged, the pinned overworld hash included. The PreModern (cubiomes) reading is unchanged. **The aquifer keeps a lattice point's y in 12 bits** (§11, "Aquifer Q3.3 and Q6.6"): a jittered centre's y is `floorMod(y + 2048, 4096) - 2048`, as the server packs it. Only a dimension within one cell of y ±2048 can see it, no vanilla dimension is, and no probe world found a block it moves. |
+| 21 | **A carver's `debug_mode` is carved, not refused** (§11, "Carver debug mode, and the carvers' unobservable details"): a pack that sets `debug_settings.debug_mode` gets the server's debug output, state for state and mark for mark, where v20 refused the pack at load. **An empty `amplitudes` list is a noise that samples 0.0** (§11, "Legacy named noise Q3.3 and Q5.5"), under either random source, where v20 refused it by name. **A `legacy_random_source` dimension's pack is rejected when it lacks a noise key the dimension's surface rules, or the surface system's fixed nine, request**, at freeze and at thaw, naming the key; v20 found a rule's own missing key only when the dimension compiled, and never asked for the nine. No output changes for a pack v20 generated from: every conformance case passes unchanged. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -757,8 +758,10 @@ zoomed biome").
 float providers `constant`, `uniform` and `trapezoid` and the height
 providers `uniform` and `constant`; a biome's `carvers` written as one id,
 a list, or definitions inline (B-Q11.1). Anything else a carver names is
-refused by name at freeze time, and so is `debug_mode: true`
-(IMPLEMENTER-RULING-01, carvers P2). A carver's `replaceable` tag is read
+refused by name at freeze time. `debug_settings` is read in full, and a
+carver whose `debug_mode` is true writes the debug states the server
+writes (§11, "Carver debug mode, and the carvers' unobservable details").
+A carver's `replaceable` tag is read
 from the version root's `tags/block` (tools/fetch-vanilla extracts it), not
 from a pack: a pack's own `tags/` is still refused at load.
 
@@ -12807,8 +12810,10 @@ Open:
     they freeze from needs `tags/block`: one fetched before this change is
     refused by name until tools/fetch-vanilla runs again. Nukkit's emittable
     states gain `minecraft:cave_air`.
-  - *Not done:* `debug_mode` (refused at load until implemented, carvers
-    P2) and upgraded chunks (A-Q13.6, out of scope by ruling).
+  - *Not done:* upgraded chunks (A-Q13.6, out of scope by ruling).
+    `debug_mode`, refused at load when this entry was written, is
+    implemented since engine v21 ("Carver debug mode, and the carvers'
+    unobservable details", below).
 
 - **The water height is the fluid under the last air (M4, 2026-11-10;
   pipeline engine v18).** Found while confirming the carvers: the 232
@@ -12820,6 +12825,113 @@ Open:
   air. A cave or overhang under a lake therefore reads no water height, and
   the `water` condition there is TRUE. With the change all 232 are exact and
   no golden block gets worse; the pin is now 0.
+
+- **Legacy named noise Q3.3 and Q5.5 (M4, 2026-11-10; pipeline engine
+  v21).** IMPLEMENTER-RULING-01's two legacy-named-noise P2 items.
+  - *Q3.3, edge octave shapes.* Positive first octaves already built (Q3.4:
+    a named noise has no positive-octave restriction; the accepted range
+    stays [-64, 64]), and an all-zero `amplitudes` list already sampled 0.0.
+    An EMPTY list was refused at parse ("a noise with no octaves samples to
+    nothing"), for both random sources. It is now accepted and samples
+    `+0.0` everywhere: both octave stacks are empty and the value factor is
+    `(1/6) / (0.1 · (1 + 1/0))`, which is 0.0, not a NaN
+    (`legacy_named_noise_test.cpp` pins the bits under both sources, and
+    the constants file's `empty_or_all_zero_amplitudes_value`).
+  - *Evidence.* `carver-golden-probe.sh --variant noise-edges` (unit
+    `noiseedges_s42`) is the carving-stage probe with six surface noises
+    redefined: `surface` and `patch` empty, `soul_sand_layer` all zero,
+    `nether_wart`, `netherrack` and `nether_state_selector` at first octaves
+    1, 2 and 1. The server loads the pack and generates.
+    `vanilla_carver_variants_test.cpp` lays the same redefinitions over the
+    shipped tree and compares every chunk stored at `minecraft:carvers`:
+    120 Nether chunks (the legacy source) and 128 overworld chunks (the
+    Xoroshiro source, which reads the empty `surface` in every column's
+    depth), every block exact. Each redefinition is observable there but
+    one: with it put back to the shipped definition, this build mismatches
+    the golden at 38 242 cells (`surface`), 952 (`patch`), 467
+    (`soul_sand_layer`), 201 (`netherrack`) and 12 454
+    (`nether_state_selector`). `nether_wart` moves no cell of this corpus,
+    so the positive octave rests on the other two.
+  - *Beyond the claim.* Q3.3 is a claim about the legacy source. The empty
+    list is accepted under the Xoroshiro source too, on the overworld half
+    of the same golden, not on the spec's word.
+  - *Q5.5, a missing registry key.* On the server a legacy dimension's
+    request for a noise key with no registry entry is a hard failure; the
+    ruling is to reject the pack at load, naming the key. `freeze::resolve`
+    now does, for every `legacy_random_source` dimension in the pack: the
+    keys its `noise_threshold` conditions name, plus the surface system's
+    nine (Q5.1b: `surface`, `surface_secondary`, `clay_bands_offset`,
+    `badlands_pillar`, `badlands_pillar_roof`, `badlands_surface`,
+    `iceberg_pillar`, `iceberg_pillar_roof`, `iceberg_surface`), whether or
+    not any rule reads them. `freeze::read` holds a blob to the same, and
+    `stratum validate` reports each missing key as an error. Before, a
+    rule's own missing key was refused only when its dimension compiled, a
+    missing climate key (Q5.2) only when the surface executor was built,
+    and the nine were never asked for unless a rule read a depth or placed
+    `bandlands`. A policy, so it has unit tests and no golden: the spec
+    marks the failure `read-directly` and did not execute it.
+  - *Its scope.* Q5.1b says the surface system requests the nine for every
+    dimension. Only legacy dimensions are held to them here, since that is
+    the spec's subject and the ruling's heading; a Xoroshiro dimension is
+    still refused for the keys it actually reads, when it compiles.
+
+- **Carver debug mode, and the carvers' unobservable details (M6,
+  2026-11-10; pipeline engine v21).** IMPLEMENTER-RULING-01's carver P2
+  items.
+  - *A-Q13.4, `debug_mode`.* `debug_settings` is parsed in full: the four
+    states as block states, each one left out of a present `debug_settings`
+    falling back to the default air state (`minecraft:acacia_button`, face
+    wall, facing north, unpowered), and the four defaults when the field is
+    absent. With `debug_mode` true, a cave or canyon decides a cell whatever
+    the mask holds and whatever block is there; at or below the lava height
+    it still writes plain lava; above it the aquifer's air, water and lava
+    answers write `air_state`, `water_state` (its `waterlogged` property set
+    true, where it has one) and `lava_state`, and the barrier verdict writes
+    `barrier_state` rather than leaving the cell. A written state is marked
+    on the usual rule (A-Q12.4) when it holds fluid, which here means a
+    waterlogged state or a fluid's own block. The grass flag and the
+    top-material rewrite run as without debug, a barrier state counting as a
+    replacement with no fluid above. A nether cave's debug mode lifts the
+    mask only.
+  - *Evidence.* `carver-golden-probe.sh --variant debug` (unit
+    `carverdebug_s42`) switches `debug_mode` on in all four shipped
+    carvers: `cave` and `nether_cave` with their shipped states,
+    `cave_extra_underground` with its air and lava states left out and a
+    water state with no `waterlogged` property (blue wool),
+    `canyon` with its barrier state left out and a waterloggable water
+    state that is not a fluid (an oak slab). `vanilla_carver_variants_test.cpp`
+    compares the 128 overworld chunks stored at `minecraft:carvers` state
+    for state, properties included on the debug states, and mark list for
+    mark list: every block exact, all 10 183 marks in the server's order.
+    The server stores every debug state the pack names (68 702 crimson
+    buttons, 40 985 acacia buttons, 15 150 candles, 12 283 blue wool, 7 332
+    red glass, 6 939 slabs, 2 318 red wool, 1 257 glass, 101 orange glass)
+    but the canyon's lava state: the aquifer answers lava above the lava
+    height in 101 cells, all the cave's. The 120 Nether chunks are exact
+    too, as A-Q13.4's amendment measured. The first build of this reading
+    matched; nothing was fitted.
+  - *One reading the golden does not reach:* which states "hold fluid"
+    beyond a waterlogged property and `minecraft:water` / `minecraft:lava`
+    (kelp, seagrass and bubble columns always do on the server). A pack
+    that names one of those as a debug state would get the right block and
+    a missing mark.
+  - *The trigonometry table (A-Q9).* Already as ruled since engine v18:
+    built from the strict sine (`fdlibm::sin`), and `carver_trig_test.cpp`
+    checks its 65 536 floats against the spec's SHA-256
+    (`87a67a39…71dac2`, A-Q9.2).
+  - *The five details no block comparison singles out,* audited against
+    `carver_carve.cpp` and found as specified, with nothing to change:
+    the start chunks `Sx − Tx` outer and `Sz − Tz` inner, each biome's
+    carvers in list order under seed `W + k` (A-Q11.1, A-Q1.1); the biome
+    at quart `(4Sx, 0, 4Sz)` (A-Q11.2: the pipeline samples block
+    `(16Sx, 0, 16Sz)`); the mask set before replaceability and the aquifer
+    are consulted (A-Q4.4); the reach test
+    `dx² + dz² − r² ≤ (f32(f32(τ + 2) + 16))²`, a failure ending the tunnel
+    (A-Q7); and the cross-section's early-out at `16 + 2ρ` on either axis
+    (A-Q4). `carver_carve_test.cpp` now pins the first three on a recording
+    target (the window order and sampling position call by call, the mask
+    as "no cell is read twice"); the reach test and the early-out are
+    behavioural and stay on the goldens, where a wrong one moves blocks.
 
 ## 12. Content, provenance & distribution policy
 

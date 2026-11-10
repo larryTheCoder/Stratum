@@ -1471,6 +1471,16 @@ Open:
       unchanged. Fixture-free cases for the reconstruction are in
       `tests/unit/legacy_goldens_decoder_test.cpp` and
       `surface_column_test.cpp`.
+- [x] **Legacy named noise P2s closed 2026-11-10 (engine v21; SPEC §11,
+      "Legacy named noise Q3.3 and Q5.5").** An empty `amplitudes` list
+      is accepted and samples 0.0 (it was refused at parse); the server
+      agrees on `noiseedges_s42`, 120 Nether and 128 overworld
+      carving-stage chunks exact with empty, all-zero and positive-octave
+      surface noises. A legacy dimension's pack lacking a noise key its
+      surface rules or the surface system's nine request is rejected at
+      freeze, at thaw and by `stratum validate`, naming the key. Carried:
+      `nether_wart`'s positive octave moves no cell of that corpus; the
+      nine are not required of Xoroshiro dimensions.
 - [x] **The half of it that is settled: legacy `old_blended_noise`.** A
       dimension declaring the flag seeds it with
       `new java.util.Random(worldSeed)` — no fork, no name salt — read the
@@ -2624,7 +2634,13 @@ escape hatch.
 Carvers (2026-11-10, engine v18): done, see the table above and SPEC §11,
 "Carvers, adopted". Carried:
 - The 233 Nether marks at seed 31337 no spec explains.
-- `debug_mode: true` refused until carvers P2 implements it.
+- Carver P2s closed 2026-11-10 (engine v21; SPEC §11, "Carver debug mode,
+  and the carvers' unobservable details"): `debug_mode` is carved, exact
+  against the server on `carverdebug_s42` (128 overworld + 120 Nether
+  chunks, states and marks); the trig digest and the five unobservable
+  details were already as specified, now with `carver_carve_test.cpp`.
+  Carried: the canyon's lava debug state is not in that corpus, and which
+  states "hold fluid" beyond waterlogged / water / lava is unconfirmed.
 - Version roots fetched before `tags/block` was extracted are refused by
   ext, ext-nukkit and `stratum generate` until tools/fetch-vanilla reruns
   (the owner's PMMP and Nukkit servers on potato-disk among them).

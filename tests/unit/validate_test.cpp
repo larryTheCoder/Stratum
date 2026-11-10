@@ -107,6 +107,21 @@ void defineWorkingPack(const TempTree& tree) {
         "xz_scale":1.0,"y_scale":0.0})");
 }
 
+/// The nine noises the surface system requests for every dimension
+/// (spec/legacy-named-noise-spec.md Q5.1b).
+constexpr std::array<const char*, 9> kSurfaceSystemNoises{
+    "surface",         "surface_secondary",    "clay_bands_offset",
+    "badlands_pillar", "badlands_pillar_roof", "badlands_surface",
+    "iceberg_pillar",  "iceberg_pillar_roof",  "iceberg_surface"};
+
+void defineSurfaceSystemNoises(const TempTree& tree, std::string_view except = {}) {
+    for (const char* name : kSurfaceSystemNoises) {
+        if (except != name) {
+            tree.defineNoise(name, R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
+        }
+    }
+}
+
 /// A valid settings file whose `final_density` points at @p finalDensity.
 void defineSettings(const TempTree& tree, std::string_view name, std::string_view finalDensity,
                     bool legacyRandomSource = false,
@@ -521,6 +536,7 @@ TEST_CASE("a legacy router naming a noise beyond the climate is a warning, and i
     // confirmed against the server, so that router is not seeded.
     const TempTree tree;
     defineWorkingPack(tree);
+    defineSurfaceSystemNoises(tree);
     defineSettings(tree, "overworld", "field", /*legacyRandomSource=*/false);
     defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true);
 
@@ -595,4 +611,52 @@ TEST_CASE("aquifers over a default fluid other than water are a warning, named",
     CHECK(finding->severity == Severity::Warning);
     CHECK_THAT(finding->message, ContainsSubstring("default_fluid minecraft:lava"));
     CHECK(findingAbout(report, "minecraft:overworld") == nullptr);
+}
+
+TEST_CASE("a legacy dimension missing a noise its surface system requests is an error, by key",
+          "[validate]") {
+    // spec/legacy-named-noise-spec.md Q5.5 as ruled: reject the pack, naming
+    // the key. The surface system requests nine keys whatever the rules
+    // hold (Q5.1b), and a noise_threshold requests its own.
+    const nlohmann::json threshold = {
+        {"type", "minecraft:condition"},
+        {"if_true",
+         {{"type", "minecraft:noise_threshold"},
+          {"noise", "minecraft:unwritten"},
+          {"min_threshold", 0.0},
+          {"max_threshold", 1.0}}},
+        {"then_run",
+         {{"type", "minecraft:block"}, {"result_state", {{"Name", "minecraft:gravel"}}}}}};
+
+    SECTION("one of the fixed nine") {
+        const TempTree tree;
+        defineWorkingPack(tree);
+        defineSurfaceSystemNoises(tree, "iceberg_pillar_roof");
+        defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true);
+        const Report report = stratum::validate::validatePack(tree.pack());
+        REQUIRE(report.count(Severity::Error) == 1U);
+        const Finding* finding = findingAbout(report, "minecraft:nether surface_rule");
+        REQUIRE(finding != nullptr);
+        CHECK_THAT(finding->message,
+                   ContainsSubstring("minecraft:iceberg_pillar_roof") && ContainsSubstring("Q5.5"));
+    }
+    SECTION("a noise_threshold's key") {
+        const TempTree tree;
+        defineWorkingPack(tree);
+        defineSurfaceSystemNoises(tree);
+        defineSettings(tree, "nether", "field", /*legacyRandomSource=*/true, "minecraft:water",
+                       threshold);
+        const Report report = stratum::validate::validatePack(tree.pack());
+        REQUIRE(report.count(Severity::Error) == 1U);
+        const Finding* finding = findingAbout(report, "minecraft:nether surface_rule");
+        REQUIRE(finding != nullptr);
+        CHECK_THAT(finding->message, ContainsSubstring("minecraft:unwritten"));
+    }
+    SECTION("the Xoroshiro source is not held to the nine") {
+        const TempTree tree;
+        defineWorkingPack(tree);
+        defineSettings(tree, "overworld", "field", /*legacyRandomSource=*/false);
+        const Report report = stratum::validate::validatePack(tree.pack());
+        CHECK(report.count(Severity::Error) == 0U);
+    }
 }

@@ -304,6 +304,20 @@ std::vector<data::ResourceLocation> requiredNoises(const RuleGraph& graph) {
     return {unique.begin(), unique.end()};
 }
 
+std::vector<data::ResourceLocation> legacyRequestedNoises(const RuleGraph& graph) {
+    std::set<data::ResourceLocation> unique;
+    for (const data::ResourceLocation& id : graph.referencedNoises()) {
+        unique.insert(id);
+    }
+    // spec/legacy-named-noise-spec.md Q5.1b, in its order.
+    for (const char* path : {"surface", "surface_secondary", "clay_bands_offset", "badlands_pillar",
+                             "badlands_pillar_roof", "badlands_surface", "iceberg_pillar",
+                             "iceberg_pillar_roof", "iceberg_surface"}) {
+        unique.insert(data::ResourceLocation{"minecraft", path});
+    }
+    return {unique.begin(), unique.end()};
+}
+
 Executor Executor::compile(const RuleGraph& graph, const std::int64_t worldSeed,
                            const settings::NoiseGeometry& geometry,
                            const density::NoiseRegistry* noises, const std::int32_t seaLevel) {

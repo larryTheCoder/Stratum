@@ -10,10 +10,9 @@ blocks and biomes as a Java server, bit for bit.
   through the `stratum` command ([usage](#use-the-command-line))
 - **Speed:** about 3.4 ms per overworld chunk, a quarter of what vanilla takes
   for the same stages
-- **Generates:** terrain, biomes, aquifers, noise caves, large ore veins and
-  surface blocks
-- **Not yet:** worlds have no trees, plants, ordinary ores, carved caves or
-  structures. Those are planned for v2, and need not land where Java puts them.
+- **Generates:** terrain, biomes, aquifers, noise caves, large ore veins,
+  surface blocks, and carved caves and ravines
+- **Not yet:** worlds have no trees, plants, ordinary ores or structures. Those are planned for v2, and need not land where Java puts them.
   The Nether generates through the library and `stratum generate`; neither
   server plugin offers it as a world yet.
 
@@ -23,30 +22,32 @@ says how changes are made.
 
 ## What generates today
 
-Status on 2026-11-09. Every figure is measured against the vanilla 1.21.11
+Status on 2026-11-10. Every figure is measured against the vanilla 1.21.11
 server.
 
 | World | State |
 |---|---|
-| Overworld | Generates, with no trees or other features. 99.9980% of sampled blocks match. |
+| Overworld | Generates, with no trees or other features. 99.9998% of sampled blocks match. |
 | Amplified, large biomes | Generate. On test worlds forced to one biome, terrain, aquifers, ore veins and surface rules match the server, apart from fluid it moved. Not yet measured: where either preset places its biomes, and its surface blocks on its real biomes. |
 | The End | Generates, with no towers, chorus plants or End cities. Blocks on y 0 to 127, the only heights its terrain uses, match exactly on every sampled chunk. Every biome stored on y 0 to 255 also matches, in 45 regions. |
-| The Nether | Generates, with no features or carved caves. Every block of eight golden regions (8×8 chunks each) matches. |
+| The Nether | Generates, with no features. Every block of eight golden regions (8×8 chunks each) matches, and so does every block of its carved caves at the server's carving stage. |
 | `caves`, `floating_islands` noise settings | Compile through the same legacy named-noise construction as the Nether. Not measured against the server. `generate` does not offer them. |
 
 **The overworld sample** is 128 chunks from eight seeds. Of its 12 582 912
-blocks, 12 582 474 match. Of the other 438, 415 are surface blocks near biome
-borders and 23 are fluids the server moved after generating them.
+blocks, 12 582 889 match. The other 23 are fluids the server moved after
+generating them.
 
-A whole region scores a little lower. `stratum diff` on seed 42's region
-`r.0.0` finds 6 686 of 100 663 296 blocks differ (99.9934% match), and 189 of
-1 572 864 biome cells. In the one other region scored in full, every biome
+A whole region scores the same. `stratum diff` on seed 42's region `r.0.0`,
+generated with `--no-carvers`, finds 184 of 100 663 296 blocks differ
+(99.9998% match), and 189 of 1 572 864 biome cells. In the one other region scored in full, every biome
 difference (614 cells) was a tie the server broke the other way.
 
 Every server world behind these figures was generated with features and
 carvers turned off, so it holds no trees to compare. The carvers are scored
 on their own, against the chunks the server stores at its carving stage:
-every block matches at two seeds in the overworld and the Nether.
+every block matches at two seeds in the overworld and the Nether, 33 030 144
+blocks in all. A pack that switches on a carver's `debug_mode` gets the
+server's debug blocks too, checked the same way.
 
 **The Nether's** surface rules read noises seeded by vanilla's older random
 source. A clean-room specification settled that seeding on 2026-11-09, and
@@ -54,8 +55,10 @@ with the surface rules reading the block-level ("zoomed") biome, every block
 of the eight golden Nether regions matches.
 
 **Milestones.** M4 (biomes and surface) carries ties in the biome search
-and the presets not yet measured; the 232 overworld surface blocks once
-unexplained were the water height, and are exact. The server integration (M5) closed on 2026-10-29.
+and the presets not yet measured. The overworld surface blocks that once
+missed near biome borders are exact since the surface rules read the zoomed
+biome and the corrected water height. The server integration (M5) closed on
+2026-10-29.
 
 The large noise caves, ore veins and carvers (carved caves, ravines) do
 generate. Features (trees, plants, ordinary ores) and structures do not. A
@@ -75,6 +78,10 @@ JVM gets help from JIT and GC threads on other cores.
 | Amplified | 3.27 | 16.59 | 0.20x |
 | Large biomes | 3.45 | 15.24 | 0.23x |
 | The End | 0.33 | 2.79 | 0.12x |
+
+These figures predate the carvers and do not include them. Carving added
+about 0.6 ms per overworld chunk and 0.4 ms per Nether chunk when it landed
+(2026-11-10), and the table has not been re-measured since.
 
 The overworld took 155.7 ms before the first performance pass. Each pass kept
 the output byte-identical.
@@ -176,7 +183,7 @@ ctest --preset conformance                  # skips loudly while fixtures are ab
 
 CI builds and tests on Linux, macOS and Windows, on x86-64 and ARM64. It also
 generates these worlds on Linux x86-64, and runs conformance over them on Linux
-x86-64 and ARM64. On 2026-11-01, 176 of the 185 cases ran on each, and the other
+x86-64 and ARM64. On 2026-11-10, 185 of the 194 cases ran on each, and the other
 9 have no committed generator.
 
 ### Presets
@@ -235,7 +242,7 @@ keeps open what the default should be for a user's pack.
 | Registry / feature | v1 | Notes |
 |---|---|---|
 | `worldgen/density_function` | Supported | All cache node types included |
-| `worldgen/noise` | Supported | Its own entry or written inline. An inline one loads but cannot yet be seeded. |
+| `worldgen/noise` | Supported | Its own entry or written inline. An inline one loads but cannot yet be seeded. An empty or all-zero `amplitudes` list is a noise that samples 0.0, as on the server. |
 | `worldgen/noise_settings` | Supported | Noise router and surface rules. Spawn targets load and are kept, not interpreted. |
 | Aquifers (`aquifers_enabled` and the router's aquifer entries) | Supported | Under either random source. Refused by name when `default_fluid` is not water, or under the legacy source when the noise router reads a named noise other than the three legacy climate noises. |
 | Multi-noise biome source | Supported | Named by its parameter list |
@@ -244,7 +251,7 @@ keeps open what the default should be for a user's pack.
 | `worldgen/biome` | Supported | For biome identity, surface rules and carvers. A biome's features do not run. |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Load but are not interpreted. The caller names the noise settings and biome source. |
 | Namespaced references | Supported | Within the registries above |
-| `worldgen/configured_carver` | Supported | `cave`, `nether_cave` and `canyon`, block for block against the server's carving stage. `debug_mode: true` is refused. |
+| `worldgen/configured_carver` | Supported | `cave`, `nether_cave` and `canyon`, block for block against the server's carving stage. `debug_mode: true` writes the server's debug states. |
 | Tags | **Refused** | A pack with a JSON file under `tags/` is refused by name at load. Carvers read vanilla's block tags from the version root's `tags/block`. |
 | `configured_feature`, `placed_feature` | **Rejected** | v2 (M6) |
 | `structure`, `structure_set` | **Rejected** | v2 |
@@ -262,6 +269,12 @@ These are also refused by name rather than guessed at:
   range, integers their field cannot hold, and nesting too deep for the stack.
   The depth limits are 128 for JSON, 256 for a density function graph and 128
   for surface rules.
+- **A legacy dimension missing a surface noise.** For noise settings with
+  `legacy_random_source`, the pack must define every noise its surface rules
+  name and the nine the server's surface system always requests (`surface`,
+  `surface_secondary`, `clay_bands_offset`, and the `badlands_*` and
+  `iceberg_*` six). A pack lacking one is refused at load, naming the key,
+  because the server fails on it.
 - **Far chunks on the overworld presets:** past about 2.8 million blocks from
   the centre on either axis (chunk coordinates 175 770 and up, and -175 771 and
   down). The coordinates of vanilla's `jagged` noise stop fitting in 32 bits
