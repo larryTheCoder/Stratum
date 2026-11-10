@@ -57,9 +57,15 @@
 #include "support/fluid_flow.hpp"
 #include "support/temp_path.hpp"
 
+#include <stratum/biome/parameter_list.hpp>
 #include <stratum/chunk/chunk.hpp>
+#include <stratum/data/pack.hpp>
+#include <stratum/data/resource_location.hpp>
+#include <stratum/density/interpreter.hpp>
+#include <stratum/density/noise_registry.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/settings/noise_settings.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -68,11 +74,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -105,8 +115,20 @@ constexpr const char* kThreads = "2";
     return std::filesystem::path(STRATUM_FIXTURES_DIR) / "1.21.11";
 }
 
-[[nodiscard]] std::filesystem::path goldenRegion(const char* dimension) {
-    return versionDir() / "regions" / ("seed-" + std::to_string(kSeed)) / dimension / "r.0.0.mca";
+/// A region file's coordinates; r.0.0 unless said.
+struct RegionAt {
+    std::int32_t x = 0;
+    std::int32_t z = 0;
+
+    [[nodiscard]] std::string fileName() const {
+        return "r." + std::to_string(x) + "." + std::to_string(z) + ".mca";
+    }
+};
+
+[[nodiscard]] std::filesystem::path goldenRegion(const char* dimension, std::int64_t seed = kSeed,
+                                                 RegionAt region = {}) {
+    return versionDir() / "regions" / ("seed-" + std::to_string(seed)) / dimension /
+           region.fileName();
 }
 
 struct Window {
@@ -138,6 +160,22 @@ struct Score {
     std::size_t marksOurs = 0;
     std::size_t marksGolden = 0;
     std::size_t marksShared = 0;
+
+    /// The biome cells that disagree, by their lowest block, and the solid
+    /// blocks of another material: what the preset cases attribute.
+    struct CellApart {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t z = 0;
+        std::string ours;
+        std::string golden;
+    };
+
+    std::vector<CellApart> cellsApart;
+    std::vector<std::array<std::int32_t, 3>> materialAt;
+    /// The golden's highest WORLD_SURFACE entry, as stored (the first air
+    /// above the top block, counted from the column's floor).
+    std::int64_t highestSurface = 0;
 };
 
 constexpr std::array<Heightmap, 4> kHeightmaps = {Heightmap::WorldSurface, Heightmap::OceanFloor,
@@ -152,18 +190,19 @@ constexpr std::array<Heightmap, 4> kHeightmaps = {Heightmap::WorldSurface, Heigh
 /// Runs `stratum generate` for @p dimension over @p range into a fresh
 /// directory, and returns the region file it wrote.
 [[nodiscard]] std::filesystem::path generate(const char* dimension, const std::string& range,
-                                             const std::filesystem::path& out) {
+                                             const std::filesystem::path& out,
+                                             std::int64_t seed = kSeed, RegionAt region = {}) {
     std::filesystem::remove_all(out);
     const stratum::test::CliResult result = stratum::test::runCli(
         std::string(kCli), "generate \"" + versionDir().string() + "\" --dimension " + dimension +
-                               " --seed " + std::to_string(kSeed) + " " + range + " --out \"" +
+                               " --seed " + std::to_string(seed) + " " + range + " --out \"" +
                                out.string() + "\" --threads " + kThreads + " --no-carvers");
     INFO(result.output);
     REQUIRE(result.exitCode == 0);
     // The timing line, for whoever reads the log: not a measurement of
     // record (Debug, a shared machine), but the same numbers the CLI prints.
     WARN(result.output);
-    const std::filesystem::path written = out / "r.0.0.mca";
+    const std::filesystem::path written = out / region.fileName();
     REQUIRE(std::filesystem::is_regular_file(written));
     return written;
 }
@@ -247,6 +286,7 @@ void scoreChunk(const Chunk& ours, const Chunk& golden, GoldenRegion& flowReader
                 }
             } else if (ourCategory == Category::Solid) {
                 ++score.material;
+                score.materialAt.push_back({worldX, y, worldZ});
             } else {
                 ++score.unexplained;
                 UNSCOPED_INFO("unexplained: ours " << ourState.toString() << ", golden "
@@ -262,6 +302,13 @@ void scoreChunk(const Chunk& ours, const Chunk& golden, GoldenRegion& flowReader
                 mine.biomePalette[mine.biomes[cell]] == theirs.biomePalette[theirs.biomes[cell]]) {
                 ++score.biomesExact;
             } else {
+                score.cellsApart.push_back(
+                    {.x = (golden.x() * 16) + static_cast<int>((cell % 4U) * 4U),
+                     .y = (mine.y * 16) + static_cast<int>((cell / 16U) * 4U),
+                     .z = (golden.z() * 16) + static_cast<int>(((cell / 4U) % 4U) * 4U),
+                     .ours = mine.biomes.empty() ? "<none>" : mine.biomePalette[mine.biomes[cell]],
+                     .golden = theirs.biomes.empty() ? "<none>"
+                                                     : theirs.biomePalette[theirs.biomes[cell]]});
                 // Named by the cell's lowest block, as `stratum diff` does.
                 UNSCOPED_INFO(
                     "biome cell at "
@@ -285,6 +332,10 @@ void scoreChunk(const Chunk& ours, const Chunk& golden, GoldenRegion& flowReader
             continue;
         }
         for (std::size_t column = 0; column < 256U; ++column) {
+            if (kind == 0) {
+                score.highestSurface = std::max(
+                    score.highestSurface, static_cast<std::int64_t>((*theirs)[column].value_or(0)));
+            }
             if ((*mine)[column] == (*theirs)[column]) {
                 ++score.heightsExact[kind];
             } else if (!columnDiffers[column]) {
@@ -311,10 +362,11 @@ void scoreChunk(const Chunk& ours, const Chunk& golden, GoldenRegion& flowReader
 }
 
 [[nodiscard]] Score scoreRegion(const std::filesystem::path& ours,
-                                const std::filesystem::path& golden, const Window& window) {
+                                const std::filesystem::path& golden, const Window& window,
+                                RegionAt region = {}) {
     const auto ourFile = stratum::region::RegionFile::open(ours);
     const auto goldenFile = stratum::region::RegionFile::open(golden);
-    GoldenRegion flowReader(golden);
+    GoldenRegion flowReader(golden, region.x, region.z);
     // Exactly the window, and nothing beside it: a chunk outside the range
     // asked for is one the CLI was not asked to write.
     const auto expected = static_cast<std::size_t>(window.maxX - window.minX + 1) *
@@ -365,7 +417,8 @@ private:
 };
 
 /// The fixtures a case reads, or the reason it cannot run.
-[[nodiscard]] std::string missingInputs(const char* dimension) {
+[[nodiscard]] std::string missingInputs(const char* dimension, std::int64_t seed = kSeed,
+                                        RegionAt region = {}) {
     if (kCli.empty()) {
         return "this build has no stratum binary (STRATUM_BUILD_CLI=OFF)";
     }
@@ -374,8 +427,8 @@ private:
         return "no worldgen or biome_parameters fixtures under " + versionDir().string() +
                "; run tools/fetch-vanilla";
     }
-    if (!std::filesystem::is_regular_file(goldenRegion(dimension))) {
-        return "no golden region at " + goldenRegion(dimension).string() +
+    if (!std::filesystem::is_regular_file(goldenRegion(dimension, seed, region))) {
+        return "no golden region at " + goldenRegion(dimension, seed, region).string() +
                "; generate it with tools/fetch-vanilla --generate-regions";
     }
     return {};
@@ -460,4 +513,238 @@ TEST_CASE("stratum generate writes the overworld the server wrote, but for fluid
     // and every mark a golden keeps among them.
     CHECK(score.marksOurs == 25936U);
     CHECK(score.marksShared == score.marksGolden);
+}
+
+// The two other overworld presets (PROGRESS, M4: "Full-biome goldens for
+// amplified and large_biomes"). Their probes fix the biome, so until these
+// regions neither preset's biome assignment — large_biomes' own
+// `temperature_large` and `vegetation_large`, each preset's own `depth`,
+// through the search — nor its surface over its real biomes had been read
+// off the server. tools/fetch-vanilla --world-preset generates them: the
+// same frozen, terrain-only world as the other goldens, under
+// server.properties' level-type.
+namespace {
+
+struct PresetCase {
+    const char* preset;
+    std::int64_t seed;
+    /// The region, and the 16x16 chunks of it scored, by their lowest chunk.
+    RegionAt region{};
+    std::int32_t chunkX = 0;
+    std::int32_t chunkZ = 0;
+    /// The model's own residual, pinned: biome cells apart (every one a tie
+    /// the server resolved to the earlier row), the surface material that
+    /// follows those cells' columns, and the fluid updates written.
+    std::size_t cellsApart = 0;
+    std::size_t material = 0;
+    std::size_t marks = 0;
+    /// What the golden's highest stored WORLD_SURFACE must reach.
+    std::int64_t surfaceAtLeast = 0;
+};
+
+struct Attribution {
+    std::size_t tied = 0;
+    std::size_t earlier = 0;
+    std::size_t columns = 0;
+    std::size_t materialByCell = 0;
+    std::string pairs;
+};
+
+/// Why each biome cell is apart: the preset's own climate router at the
+/// cell, quantised, against every row of the overworld's table — a TIE when
+/// the server's biome is on a row at the minimum fitness beside ours.
+[[nodiscard]] Attribution attribute(const PresetCase& which, const Score& score) {
+    using stratum::data::ResourceLocation;
+    using stratum::settings::RouterEntry;
+    Attribution result;
+    const stratum::data::Pack pack = stratum::data::Pack::open(versionDir() / "worldgen");
+    const std::ifstream file(versionDir() / "biome_parameters" / "minecraft" / "overworld.json");
+    std::stringstream contents;
+    contents << file.rdbuf();
+    const auto list = stratum::biome::ParameterList::fromJson(
+        nlohmann::json::parse(contents.str()), ResourceLocation::parse("minecraft:overworld"));
+    const stratum::settings::LoadedSettings loaded = stratum::settings::loadAll(pack);
+    const auto& settings =
+        loaded.settings.at(ResourceLocation::parse(std::string("minecraft:") + which.preset));
+    const auto noises =
+        stratum::density::NoiseRegistry::create(pack, loaded.graph.referencedNoises(), which.seed,
+                                                stratum::density::RandomSource::Xoroshiro);
+    const stratum::density::Interpreter interpreter(
+        loaded.graph, noises,
+        stratum::density::CellGeometry{.width = settings.geometry.cellWidth(),
+                                       .height = settings.geometry.cellHeight()});
+    std::set<std::pair<std::int32_t, std::int32_t>> columns;
+    std::set<std::string> pairs;
+    for (const Score::CellApart& cell : score.cellsApart) {
+        columns.emplace(cell.x, cell.z);
+        const stratum::density::Point at{.x = cell.x, .y = cell.y, .z = cell.z};
+        const auto axis = [&](RouterEntry entry) {
+            return interpreter.evaluate(settings.router.at(entry), at);
+        };
+        const auto sample = stratum::biome::QuantizedSample::of(
+            stratum::biome::ClimateSample{.temperature = axis(RouterEntry::Temperature),
+                                          .humidity = axis(RouterEntry::Vegetation),
+                                          .continentalness = axis(RouterEntry::Continents),
+                                          .erosion = axis(RouterEntry::Erosion),
+                                          .depth = axis(RouterEntry::Depth),
+                                          .weirdness = axis(RouterEntry::Ridges)});
+        std::int64_t best = 0;
+        std::vector<std::size_t> tie;
+        std::size_t row = 0;
+        for (const auto& entry : list.entries()) {
+            const std::int64_t fitness =
+                stratum::biome::QuantizedPoint::of(entry.parameters).fitness(sample);
+            if (tie.empty() || fitness < best) {
+                best = fitness;
+                tie.assign(1, row);
+            } else if (fitness == best) {
+                tie.push_back(row);
+            }
+            ++row;
+        }
+        std::size_t oursRow = list.size();
+        std::size_t theirsRow = list.size();
+        for (const std::size_t tied : tie) {
+            const std::string biome = list.entries()[tied].biome.toString();
+            if (biome == cell.ours) {
+                oursRow = tied;
+            }
+            if (biome == cell.golden && theirsRow == list.size()) {
+                theirsRow = tied;
+            }
+        }
+        if (oursRow != list.size() && theirsRow != list.size()) {
+            ++result.tied;
+            if (theirsRow < oursRow) {
+                ++result.earlier;
+            }
+            pairs.insert(" " + cell.golden + " (row " + std::to_string(theirsRow) + ") over " +
+                         cell.ours + " (row " + std::to_string(oursRow) + ")");
+        } else {
+            UNSCOPED_INFO("not a tie: biome cell at " << cell.x << " " << cell.y << " " << cell.z
+                                                      << ": ours " << cell.ours << ", golden "
+                                                      << cell.golden);
+        }
+    }
+    result.columns = columns.size();
+    for (const std::string& pair : pairs) {
+        result.pairs += pair + ";";
+    }
+    for (const auto& block : score.materialAt) {
+        const bool near = std::ranges::any_of(columns, [&](const auto& column) {
+            return block[0] >= column.first - 8 && block[0] < column.first + 12 &&
+                   block[2] >= column.second - 8 && block[2] < column.second + 12;
+        });
+        if (near) {
+            ++result.materialByCell;
+        } else {
+            UNSCOPED_INFO("material block away from any cell apart: " << block[0] << " " << block[1]
+                                                                      << " " << block[2]);
+        }
+    }
+    return result;
+}
+
+void scorePreset(const PresetCase& which) {
+    const std::string missing = missingInputs(which.preset, which.seed, which.region);
+    if (!missing.empty()) {
+        SKIP(missing << " --world-preset " << which.preset);
+    }
+    const ScratchDir out(std::string("stratum-generate-") + which.preset);
+    const Score score = scoreRegion(generate(which.preset,
+                                             "--chunks " + std::to_string(which.chunkX) + "," +
+                                                 std::to_string(which.chunkZ) + ":" +
+                                                 std::to_string(which.chunkX + 15) + "," +
+                                                 std::to_string(which.chunkZ + 15),
+                                             out.path(), which.seed, which.region),
+                                    goldenRegion(which.preset, which.seed, which.region),
+                                    Window{.minX = which.chunkX,
+                                           .minZ = which.chunkZ,
+                                           .maxX = which.chunkX + 15,
+                                           .maxZ = which.chunkZ + 15},
+                                    which.region);
+    report(which.preset, score);
+    const Attribution found = attribute(which, score);
+    WARN(which.preset << " at seed " << which.seed << ": " << score.cellsApart.size()
+                      << " biome cells apart in " << found.columns << " column(s), " << found.tied
+                      << " of them ties holding the server's biome (" << found.earlier
+                      << " where the server took the earlier row), pairs:" << found.pairs << "; "
+                      << found.materialByCell << " of " << score.material
+                      << " material blocks within 8 blocks of such a cell's column; highest "
+                         "stored WORLD_SURFACE "
+                      << score.highestSurface);
+    CHECK(score.highestSurface >= which.surfaceAtLeast);
+    CHECK(score.chunks == 256U);
+    CHECK(score.chunkFindings == 0U);
+    CHECK(score.blocks == std::size_t{256} * 24U * 4096U);
+    CHECK(score.biomeCells == std::size_t{256} * 24U * 64U);
+
+    // Every block is exact, flow, or surface material; nothing else. Flow is
+    // the server's and run-dependent, so bounded: under 1 in 50 000, twice
+    // the overworld's bound, for amplified's tall terrain sheds more of it
+    // (131, 45, 1 and 94 blocks on the first set).
+    CHECK(score.unexplained == 0U);
+    CHECK(score.exact + score.level + score.flowed + score.material == score.blocks);
+    CHECK((score.flowed + score.level) * 50000U < score.blocks);
+    CHECK(score.heightsUnexplained == 0U);
+
+    // The biomes: every cell but ties in the multi-noise search, each
+    // holding the server's biome on a row at the minimum fitness and each
+    // resolved by the server to the EARLIER row — the open tie-break of SPEC
+    // §11, on the preset's own router, and nothing of the preset's. Whole
+    // columns of them where the tie is on an axis that does not vary down
+    // the column. Surface material follows a column's biome, so any
+    // material block must lie by such a column (none does on this set).
+    CHECK(score.cellsApart.size() == which.cellsApart);
+    CHECK(found.tied == score.cellsApart.size());
+    CHECK(found.earlier == found.tied);
+    CHECK(score.material == which.material);
+    CHECK(found.materialByCell == score.material);
+
+    // The aquifer's fluid updates, the model's count; a full-status golden
+    // keeps none (the overworld case above says why).
+    CHECK(score.marksOurs == which.marks);
+    CHECK(score.marksShared == score.marksGolden);
+}
+
+} // namespace
+
+TEST_CASE("stratum generate writes the amplified overworld the server wrote",
+          "[conformance][cli][world][presets]") {
+    // Not r.0.0, which is ocean at both seeds, and amplified leaves ocean
+    // as it is: the regions, and the quarter of each, where this engine's
+    // amplified differs most from its default preset among the sixteen
+    // regions round the origin — 2.3 million blocks of each quarter another
+    // block, terrain past y 300, and every coordinate negative.
+    scorePreset({.preset = "amplified",
+                 .seed = 42,
+                 .region = {.x = -1, .z = -1},
+                 .chunkX = -16,
+                 .chunkZ = -32,
+                 .cellsApart = 173U,
+                 .material = 0U,
+                 .marks = 6689U,
+                 .surfaceAtLeast = 300});
+    scorePreset({.preset = "amplified",
+                 .seed = kSeed,
+                 .region = {.x = -2, .z = -2},
+                 .chunkX = -48,
+                 .chunkZ = -48,
+                 .cellsApart = 96U,
+                 .material = 0U,
+                 .marks = 7359U,
+                 .surfaceAtLeast = 300});
+}
+
+TEST_CASE("stratum generate writes the large_biomes overworld the server wrote",
+          "[conformance][cli][world][presets]") {
+    // The low quarter of each. Over the whole region 99 in 100 biome cells
+    // are another biome than the default preset's at the same seed.
+    scorePreset(
+        {.preset = "large_biomes", .seed = 42, .cellsApart = 13U, .material = 0U, .marks = 590U});
+    scorePreset({.preset = "large_biomes",
+                 .seed = kSeed,
+                 .cellsApart = 22U,
+                 .material = 0U,
+                 .marks = 14359U});
 }

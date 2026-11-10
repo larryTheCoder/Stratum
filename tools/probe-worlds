@@ -116,7 +116,7 @@ GOLDEN_SEEDS = ('0', '1', '-1', '42', '-4172144997902289642', '2891948927356891'
 # regions something other than what the cases score (--no-freeze-ticks,
 # --with-features, --margin, --output, --jar ...).
 GOLDEN_OPTIONS = {'--generate-regions': False, '--dimensions': True, '--seeds': True,
-                  '--regions': True, '--heap': True}
+                  '--regions': True, '--heap': True, '--world-preset': True}
 
 
 def option(argv, flag, default):
@@ -126,10 +126,16 @@ def option(argv, flag, default):
 def golden(name, shard, *options):
     """A tools/fetch-vanilla --generate-regions run, and the region files it
     collects: regions/seed-<seed>/<dimension>/r.<x>.<z>.mca, read off its own
-    arguments with fetch-vanilla's defaults."""
+    arguments with fetch-vanilla's defaults. Under a non-default
+    --world-preset the overworld is the only dimension, and is collected
+    under the preset's name."""
     argv = [FETCH, '--generate-regions', *options]
     seeds = option(argv, '--seeds', ','.join(GOLDEN_SEEDS)).split(',')
-    dimensions = option(argv, '--dimensions', 'overworld,nether,end').split(',')
+    preset = option(argv, '--world-preset', 'normal')
+    dimensions = option(argv, '--dimensions', 'overworld,nether,end' if preset == 'normal'
+                        else 'overworld').split(',')
+    if preset != 'normal':
+        dimensions = [preset if dimension == 'overworld' else dimension for dimension in dimensions]
     regions = option(argv, '--regions', '0,0').split()
     files = [f'seed-{seed}/{dimension}/r.{region.replace(",", ".")}.mca'
              for seed in seeds for dimension in dimensions for region in regions]
@@ -406,6 +412,21 @@ UNITS = [
            '--heap', '4G'),
     golden('goldens-r.4.3', 'goldens-overworld', '--seeds', '-4172144997902289642',
            '--dimensions', 'overworld', '--regions', '4,3', '--heap', '4G'),
+    # The other two overworld presets, whole (tools/fetch-vanilla
+    # --world-preset): their real biomes and the surface over them, which
+    # the aquifer-presets probe's fixed biome cannot show. Two seeds each,
+    # one server start a seed, about two and a half minutes each locally.
+    # amplified's r.0.0 is ocean at both seeds, which the preset leaves as
+    # it is (0.3 and 0.2 blocks in 100 another block than the default
+    # preset's), so it is read where this engine's own two presets differ
+    # most among the sixteen regions round the origin: 8.4 and 7.3 in 100.
+    golden('goldens-amplified-s42', 'goldens-overworld', '--world-preset', 'amplified',
+           '--seeds', '42', '--regions', '-1,-1', '--heap', '4G'),
+    golden('goldens-amplified-s-4172144997902289642', 'goldens-overworld',
+           '--world-preset', 'amplified', '--seeds', '-4172144997902289642',
+           '--regions', '-2,-2', '--heap', '4G'),
+    golden('goldens-large-biomes', 'goldens-overworld', '--world-preset', 'large_biomes',
+           '--seeds', '42,-4172144997902289642', '--heap', '4G'),
 ]
 
 # Every other tools/analysis/*-probe.sh, and why CI does not run it. `lint`

@@ -228,6 +228,39 @@ check "--with-structures does not turn structures on in the world" \
 check "the terrain-only datapack is still written beside it" \
     test -f "${work_dir}/gen-nbt/servers/seed-0/world/datapacks/stratum-terrain-only/pack.mcmeta"
 
+# --world-preset is server.properties' level-type, the default preset unless
+# asked; a preset changes the overworld alone, so another dimension beside
+# it, or a preset the server does not have, is refused before any server.
+level_type() {
+    sed -n 's/^level-type=//p' "$1/servers/seed-0/server.properties" 2>/dev/null
+}
+check "a golden world is the default preset unless asked" \
+    test "$(level_type "${work_dir}/gen-plain")" = minecraft:normal
+generate "${work_dir}/gen-amplified" --world-preset amplified > /dev/null || true
+check "--world-preset sets the world's level-type" \
+    test "$(level_type "${work_dir}/gen-amplified")" = minecraft:amplified
+preset_status=0
+preset_output="$("${fetch}" --jar "${gen_jar}" --skip-verify --output "${work_dir}/gen-preset-nether" \
+    --generate-regions --accept-eula --seeds 0 --world-preset large_biomes \
+    --dimensions overworld,nether 2>&1)" || preset_status=$?
+if [[ ${preset_status} -ne 0 ]] && grep -q "changes the overworld alone" <<<"${preset_output}" \
+    && [[ ! -e "${work_dir}/gen-preset-nether/servers" ]]; then
+    echo "  ok: a preset with another dimension is refused, before any server"
+else
+    echo "  FAILED: --world-preset with the Nether was not refused" >&2
+    echo "${preset_output}" >&2
+    failures=$((failures + 1))
+fi
+unknown_preset_status=0
+unknown_preset_output="$("${fetch}" --dry-run --world-preset atlantis 2>&1)" || unknown_preset_status=$?
+if [[ ${unknown_preset_status} -ne 0 ]] && grep -q "atlantis" <<<"${unknown_preset_output}"; then
+    echo "  ok: an unknown world preset is rejected by name"
+else
+    echo "  FAILED: an unknown world preset was not rejected" >&2
+    echo "${unknown_preset_output}" >&2
+    failures=$((failures + 1))
+fi
+
 structures_status=0
 structures_output="$(generate "${work_dir}/gen-refused" --generate-structures)" || structures_status=$?
 # By its own message: an unknown option fails too, and its usage text names

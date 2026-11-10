@@ -566,13 +566,15 @@ Open:
       (now bounded, with their flow shape required), MSVC's C4702 after an
       unconditional FAIL (lint rule 9), and a golden-region walk that took
       a probe corpus for a golden. SPEC §7, §12.
-- [ ] **Owner: require approval for every fork pull request's CI run.**
+- [x] **Owner: require approval for every fork pull request's CI run.**
       Fork pull-request runs restore the Actions cache, probe worlds
       included, and run the pull request's own `ci.yml`; GitHub's default
-      approves only first-time contributors' runs. Set Settings → Actions →
+      approves only first-time contributors' runs. Settings → Actions →
       General → "Approval for running fork pull request workflows from
-      contributors" to "Require approval for all external contributors",
-      and tick this once it is confirmed. SPEC §12.
+      contributors" is "Require approval for all external contributors":
+      confirmed 2026-11-10 by the owner, and read back from the repository
+      (`gh api repos/larryTheCoder/Stratum/actions/permissions/fork-pr-contributor-approval`
+      answers `all_external_contributors`). SPEC §12.
 - [x] **Region goldens in CI — green on both legs.** Dispatch run
       37890579708 (e482f71, 2026-10-09) generated them cold (goldens-nether
       9 minutes, goldens-overworld 14) and every golden case passed on
@@ -2070,14 +2072,17 @@ Open:
       six whole columns — five of `warm_ocean` where the server has
       `deep_lukewarm_ocean`, and (460, 200) — a seventh in part, five pairs
       of cells and three cave cells.)*
-- [ ] **Full-biome goldens for amplified and large_biomes.** Their probe
-      fixes the biome, so either preset's biome assignment (large_biomes'
-      `temperature_large` and `vegetation_large`, and each preset's own
-      `depth`, through the search) and either preset's surface over
-      its real biomes are checked against the pack path only
-      (`vanilla_compiled_dimension_test.cpp`). Needs a `tools/fetch-vanilla
-      --world-preset` that sets server.properties' `level-type`; the aquifer
-      does not (SPEC §11).
+- [x] **Full-biome goldens for amplified and large_biomes** (2026-11-10;
+      no engine change). `tools/fetch-vanilla --world-preset` sets
+      server.properties' `level-type` and collects the overworld under the
+      preset's name; four regions (two seeds a preset) are units of
+      `goldens-overworld`. `golden_generate_test.cpp` scores 256 chunks of
+      each: of 100 663 296 blocks all but 271 that flowed, no surface
+      material apart, and of 1 572 864 biome cells all but 304, every one
+      attributed in the case as a tie holding the server's biome (the open
+      tie-break, above). amplified is read at r.-1.-1 and r.-2.-2, where it
+      differs from the default preset (its r.0.0 is ocean at both seeds).
+      SPEC §8, §11 "The two other presets, whole".
 
 ## M5 — Integration
 

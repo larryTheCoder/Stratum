@@ -55,7 +55,8 @@ with the surface rules reading the block-level ("zoomed") biome, every block
 of the eight golden Nether regions matches.
 
 **Milestones.** M4 (biomes and surface) carries ties in the biome search
-and the presets not yet measured. The overworld surface blocks that once
+on every overworld preset: amplified and large biomes now match whole golden
+regions but for those ties. The overworld surface blocks that once
 missed near biome borders are exact since the surface rules read the zoomed
 biome and the corrected water height. The server integration (M5) closed on
 2026-10-29.

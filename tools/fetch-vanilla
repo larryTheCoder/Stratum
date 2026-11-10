@@ -42,7 +42,8 @@ generate_regions=0
 with_structures=0
 world_structures=0
 seeds=""
-dimensions="overworld,nether,end"
+dimensions=""
+world_preset="normal"
 regions="0,0"
 margin=4
 terrain_only=1
@@ -68,7 +69,14 @@ options:
   --generate-regions also produce golden region files by running the server
   --accept-eula      you accept Mojang's EULA; required by --generate-regions
   --seeds <list>     comma-separated seeds (default: the fixed eight)
-  --dimensions <l>   comma-separated: overworld,nether,end (default: all)
+  --dimensions <l>   comma-separated: overworld,nether,end (default: all; the
+                     overworld alone under a non-default --world-preset)
+  --world-preset <p> the server's world preset, server.properties' level-type:
+                     normal (default), amplified or large_biomes. A preset
+                     changes the overworld alone, so only the overworld is
+                     generated, and its regions are collected under the
+                     preset's name (regions/seed-<seed>/amplified/...) beside
+                     the default preset's overworld/
   --regions <list>   comma-separated region coordinates as X,Z pairs, e.g.
                      "0,0 -1,-1" (default: 0,0)
   --margin <n>       chunks generated around each region so its own chunks
@@ -137,6 +145,7 @@ while [[ $# -gt 0 ]]; do
         --with-structures)  with_structures=1; shift ;;
         --seeds)            seeds="${2:?--seeds needs an argument}"; shift 2 ;;
         --dimensions)       dimensions="${2:?--dimensions needs an argument}"; shift 2 ;;
+        --world-preset)     world_preset="${2:?--world-preset needs an argument}"; shift 2 ;;
         --regions)          regions="${2:?--regions needs an argument}"; shift 2 ;;
         --margin)           margin="${2:?--margin needs an argument}"; shift 2 ;;
         --with-features)    terrain_only=0; shift ;;
@@ -152,6 +161,16 @@ while [[ $# -gt 0 ]]; do
         *)                  usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+case "${world_preset}" in
+    normal|amplified|large_biomes) ;;
+    *) die "unknown --world-preset '${world_preset}' (expected normal, amplified or large_biomes)" ;;
+esac
+# Every dimension by default; under a non-default preset the overworld, the
+# only one the preset changes.
+if [[ -z "${dimensions}" ]]; then
+    [[ "${world_preset}" == "normal" ]] && dimensions="overworld,nether,end" || dimensions="overworld"
+fi
 
 : "${output_dir:="${repo_root}/.fixtures/${version}"}"
 # Absolute from here on: the data generator runs from a staging directory,
@@ -537,6 +556,17 @@ emit_forceload_commands() {
     done
 }
 
+# Where a dimension's regions are collected: under its own name, but a
+# non-default preset's overworld under the preset's, so that it never stands
+# where the cases look for the default overworld.
+collected_name() {
+    if [[ "$1" == "overworld" && "${world_preset}" != "normal" ]]; then
+        echo "${world_preset}"
+    else
+        echo "$1"
+    fi
+}
+
 # A server left running holds its world files open and would collide with the
 # next run. Whatever happens — an error, or the user interrupting — the child
 # is stopped before this script goes away.
@@ -583,6 +613,7 @@ generate_for_seed() {
     # 60.00 seconds ... Considering it to be crashed".
     cat > "${server_dir}/server.properties" <<PROPERTIES
 level-seed=${seed}
+level-type=minecraft:${world_preset}
 level-name=world
 online-mode=false
 server-port=0
@@ -747,11 +778,11 @@ PROPERTIES
             local region_x="${region%%,*}"
             local region_z="${region##*,}"
             local source_file="${world_dir}/$(dimension_directory "${dimension}")/r.${region_x}.${region_z}.mca"
-            local target_dir="${regions_dir}/seed-${seed}/${dimension}"
+            local target_dir="${regions_dir}/seed-${seed}/$(collected_name "${dimension}")"
             [[ -f "${source_file}" ]] || die "seed ${seed}: ${source_file} was never written"
             mkdir -p "${target_dir}"
             cp "${source_file}" "${target_dir}/r.${region_x}.${region_z}.mca"
-            log "seed ${seed}: collected ${dimension}/r.${region_x}.${region_z}.mca ($(wc -c < "${source_file}") bytes)"
+            log "seed ${seed}: collected $(collected_name "${dimension}")/r.${region_x}.${region_z}.mca ($(wc -c < "${source_file}") bytes)"
         done
     done
 
@@ -775,6 +806,11 @@ if [[ ${generate_regions} -eq 1 ]]; then
     for dimension in ${dimensions//,/ }; do
         dimension_id "${dimension}" > /dev/null
     done
+    if [[ "${world_preset}" != "normal" && "${dimensions}" != "overworld" ]]; then
+        die "--world-preset ${world_preset} changes the overworld alone: the Nether and the End
+       are the default preset's, which a run without --world-preset generates.
+       Pass --dimensions overworld, or leave --dimensions out."
+    fi
     for region in ${regions}; do
         [[ "${region}" =~ ^-?[0-9]+,-?[0-9]+$ ]] \
             || die "malformed region coordinate '${region}': expected X,Z (for example 0,0 or -1,-1)"

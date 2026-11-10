@@ -86,7 +86,9 @@ struct HeightRange {
 };
 
 [[nodiscard]] HeightRange expectedHeight(const std::string& dimension) {
-    if (dimension == "overworld") {
+    // The overworld, under whichever world preset: a preset's regions are
+    // collected under its own name (tools/fetch-vanilla --world-preset).
+    if (dimension == "overworld" || dimension == "amplified" || dimension == "large_biomes") {
         return {-64, 319};
     }
     return {0, 255}; // nether and end

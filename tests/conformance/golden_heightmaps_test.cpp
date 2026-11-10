@@ -156,8 +156,13 @@ TEST_CASE("the ocean floor sits at or below the world surface", "[conformance][h
     // r.4.3.mca at seed -4172144997902289642, generated to reach the four
     // negative-surface-depth columns — and an exact inventory equality turns
     // every such addition into a spurious failure in an unrelated case.
+    // The two other world presets' overworlds sit beside them under the
+    // preset's name (tools/fetch-vanilla --world-preset) and are not of the
+    // twenty-four either.
     const auto golden = std::ranges::count_if(regions, [](const std::filesystem::path& region) {
-        return region.filename() == "r.0.0.mca";
+        const std::string dimension = region.parent_path().filename().string();
+        return region.filename() == "r.0.0.mca" &&
+               (dimension == "overworld" || dimension == "nether" || dimension == "end");
     });
     INFO(regions.size() << " region(s) found, " << golden << " of them the golden r.0.0");
     CHECK(golden == 24);
