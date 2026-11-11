@@ -184,7 +184,7 @@ ctest --preset conformance                  # skips loudly while fixtures are ab
 
 CI builds and tests on Linux, macOS and Windows, on x86-64 and ARM64. It also
 generates these worlds on Linux x86-64, and runs conformance over them on Linux
-x86-64 and ARM64. On 2026-11-10, 185 of the 194 cases ran on each, and the other
+x86-64 and ARM64. On 2026-11-10, 189 of the 198 cases ran on each, and the other
 9 have no committed generator.
 
 ### Presets
@@ -196,8 +196,8 @@ x86-64 and ARM64. On 2026-11-10, 185 of the 194 cases ran on each, and the other
 | `ci-debug`, `ci-release` | As above, with warnings as errors. |
 | `ci-shipped` | Release, warnings as errors: the code generation the bindings ship. |
 | `ci-shipped-conformance` | Test preset: the conformance suite on `ci-shipped`'s build. |
-| `conformance` | Test preset: the conformance suite on `dev`'s build. |
-| `ci-conformance` | Build and test presets: the same suite four cases at a time, as CI runs it. |
+| `conformance` | Test preset: the conformance suite on `dev`'s build, four cases at a time. |
+| `ci-conformance` | Build and test presets: the same suite, built four jobs at a time, as CI runs it. |
 | `sanitize` | Clang UBSan. The first report is fatal. |
 | `sanitize-conformance` | Test preset: conformance on `sanitize`'s build. |
 | `ext`, `ext-release` | The PocketMine-MP extension. Needs `STRATUM_PHP_CONFIG`; see `ext/README.md`. |

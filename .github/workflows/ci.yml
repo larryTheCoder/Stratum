@@ -160,36 +160,14 @@ jobs:
         # `dpkg -x` if you would rather not install it system-wide.
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
 
-      - name: Configure for clang-tidy (compile_commands.json)
-        # Tests ON: tests/ and ext/tests are analysed too, tests/ under
-        # tests/.clang-tidy.
-        run: cmake --preset dev -B build/tidy -DSTRATUM_BUILD_TESTS=ON
-
       - name: clang-tidy
-        run: |
-          # The same list tools/lint/tidy.sh analyses; keep the two in step.
-          mapfile -t sources < <(find lib cli ext/src ext/tests tests -name '*.cpp' -not -path '*/_deps/*' | sort; \
-            printf '%s\n' tools/analysis/legacy-seed-analyze.cpp \
-                           tools/analysis/legacy-goldens-biome-analyze.cpp \
-                           tools/analysis/legacy-goldens-surface-analyze.cpp \
-                           tools/analysis/aquifer-barrier-analyze.cpp \
-                           tools/analysis/aquifer-cells.cpp \
-                           tools/analysis/aquifer-cost-bench.cpp \
-                           tools/analysis/aquifer-deepfloor-analyze.cpp \
-                           tools/analysis/aquifer-fluidtype-analyze.cpp \
-                           tools/analysis/aquifer-level-analyze.cpp \
-                           tools/analysis/aquifer-nearsurface-analyze.cpp \
-                           tools/analysis/aquifer-presets-scout.cpp \
-                           tools/analysis/aquifer-ties-analyze.cpp \
-                           tools/analysis/aquifer-waterlava-analyze.cpp \
-                           tools/analysis/legacy-aquifer-analyze.cpp \
-                           tools/analysis/legacy-orevein-analyze.cpp \
-                           tools/analysis/aquifer-tiebreak-analyze.cpp \
-                           tools/analysis/chunk-cost-bench.cpp)
-          if [ ${#sources[@]} -eq 0 ]; then
-            echo "no first-party sources to analyse"; exit 0
-          fi
-          clang-tidy-18 -p build/tidy --warnings-as-errors='*' "${sources[@]}"
+        # tools/lint/tidy.sh itself: the one list of sources, configured with
+        # tests ON (tests/ and ext/tests are analysed too, tests/ under
+        # tests/.clang-tidy), a process a file on every core of the runner.
+        # As one process over the list this step took an hour.
+        env:
+          CLANG_TIDY: clang-tidy-18
+        run: tools/lint/tidy.sh
 
   build:
     name: ${{ matrix.name }}

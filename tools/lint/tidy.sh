@@ -10,7 +10,8 @@
 # It covers the tests too: tests/ under tests/.clang-tidy (the root policy plus
 # the support headers, less the one check Catch2's REQUIRE defeats; the file
 # says why) and ext/tests under the root's. They are most of its time: adding
-# their 118 files took a full run here from 6 minutes to 26.
+# their 118 files took a full run here from 6 minutes to 26, as one process;
+# it runs a process a file now, several at a time (TIDY_JOBS, below).
 #
 # Given file arguments, it analyses only those, configured and invoked exactly
 # as the full run is: the way to re-check the files a change touched without
@@ -92,5 +93,43 @@ if [[ ${#sources[@]} -eq 0 ]]; then
     exit 0
 fi
 
-"${CLANG_TIDY}" -p build/tidy --warnings-as-errors='*' "${sources[@]}"
-echo "clang-tidy clean: ${#sources[@]} file(s)"
+# One clang-tidy process a file, TIDY_JOBS at a time (default: the cores, at
+# most 8 — a test unit's analysis holds over a gigabyte). One process over
+# the whole list took 26 minutes here and an hour on CI's runner, and its
+# single header cache was what a checkout in the middle of a run could
+# poison. Each file's output is kept apart and printed whole, in list order,
+# and only for a file with something to say.
+jobs="${TIDY_JOBS:-}"
+if [[ -z "${jobs}" ]]; then
+    jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+    (( jobs > 8 )) && jobs=8
+fi
+[[ "${jobs}" =~ ^[1-9][0-9]*$ ]] || { echo "TIDY_JOBS must be a positive whole number" >&2; exit 2; }
+
+logs="$(mktemp -d)"
+trap 'rm -rf "${logs}"' EXIT
+export CLANG_TIDY logs
+status=0
+printf '%s\n' "${sources[@]}" | nl -w1 -s' ' | xargs -P "${jobs}" -L 1 bash -c '
+    if ! "${CLANG_TIDY}" -p build/tidy --warnings-as-errors="*" --quiet "$2" \
+            >"${logs}/$1.out" 2>&1; then
+        touch "${logs}/$1.failed"
+    fi' tidy || status=$?
+
+failed=0
+for index in $(seq 1 "${#sources[@]}"); do
+    if [[ -e "${logs}/${index}.failed" ]]; then
+        failed=$((failed + 1))
+        echo "== ${sources[$((index - 1))]}"
+        cat "${logs}/${index}.out"
+    elif [[ ! -e "${logs}/${index}.out" ]]; then
+        # xargs stopped before reaching it, or its shell died.
+        failed=$((failed + 1))
+        echo "== ${sources[$((index - 1))]}: not analysed"
+    fi
+done
+if [[ ${failed} -ne 0 || ${status} -ne 0 ]]; then
+    echo "clang-tidy: ${failed} of ${#sources[@]} file(s) with findings" >&2
+    exit 1
+fi
+echo "clang-tidy clean: ${#sources[@]} file(s), ${jobs} at a time"

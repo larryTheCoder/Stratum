@@ -903,7 +903,9 @@ At evaluation:
   175 770 and up, and -175 771 and down, on either axis, are refused there
   (their cell corners reach |x| = 2 812 336); -175 770 to 175 769 generate.
   That stands until the server's reading past that point is measured (§11,
-  "Undefined behaviour, audited");
+  "Undefined behaviour, audited"). The owner ruled on 2026-10-15 that this
+  refusal needs no policy of the bindings' own: a server that asks for
+  such a chunk gets the refusal, by name, and M5 added nothing round it;
 - a climate sample outside ±1e5, or NaN, in the multi-noise search: the
   conversion and QuantizedPoint::fitness's int64 sum are defined to there
   (a router temperature of the constant 1e6 overflowed the sum);
@@ -7593,7 +7595,8 @@ Open:
 
   A third, smaller gap worth writing down: cubiomes' `maintainPrecision` is
   a no-op — the real line is commented out in its header as "useless in
-  practice". This build implements the wrap (fold into ±2^25, rounding half
+  practice". This build implements the wrap (fold into ±2^24, half its
+  period of 2^25, rounding half
   up as Java does), and the vectors deliberately stay inside the band where
   the two agree. Where the wrap actually bites, nothing checks it. (The
   wrap is that commented-out line, restored, and is recorded as adapted
@@ -11466,8 +11469,9 @@ Open:
 
   *Fluid updates.* `Level.scheduleUpdate(block, delay)`, server thread
   only; the plugin schedules each liquid among a chunk's fluid updates
-  after its tick rate when Nukkit fires `ChunkPopulateEvent`, as `ext/`
-  does, and counts them. Written, never run.
+  after its tick rate when Nukkit fires `ChunkPopulateEvent`, and counts
+  them (`ext/` did the same when this was written; it waits for the chunk
+  to settle now, §4.3). Written, never run.
 
   *The server, and what reaches the network.* Read at `b3caad67d`:
   `server.properties`' defaults are `Server.ServerProperties` (`server-ip`

@@ -72,7 +72,8 @@ namespace stratum::noise {
 /// folds a coordinate back into ±2^24, half its period of 2^25, so that the
 /// lattice arithmetic keeps its precision far from the origin. Identity on
 /// [-2^24, 2^24) but at 2^24 - 2^-29, which the half-up rounding folds to
-/// just below -2^24 (blended.cpp). That is why cubiomes can leave it a
+/// exactly -2^24 (blended.cpp: the quotient plus a half rounds to 1.0, and
+/// the difference, -2^24 - 2^-29, to -2^24). That is why cubiomes can leave it a
 /// no-op, and why the two agree wherever no coordinate reaches the wrap.
 [[nodiscard]] double maintainPrecision(double value) noexcept;
 

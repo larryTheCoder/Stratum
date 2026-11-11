@@ -131,12 +131,14 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 - [ ] Veins with aquifers off over vanilla's own router (real terrain):
       `aquifer-free-probe.sh` turns veins off; an aquifers-off, veins-on
       twin of the real overworld would close it.
-- [ ] `tools/lint/tidy.sh` is one clang-tidy process over every file it
+- [x] `tools/lint/tidy.sh` was one clang-tidy process over every file it
       lists — 176 when measured, 2026-10-13, 186 at 20e2f92 — about
-      26 minutes locally (CI's lint job has no timeout and nothing waits on
-      it). Running files in parallel (`run-clang-tidy-18 -j`, or `xargs
-      -P`) would cut it about 3x and end the one-process header cache that
-      a mid-run checkout can poison.
+      26 minutes locally, and an hour of CI's 61-minute lint job (run
+      42806517418). *Closed 2026-11-10:* a process a file, `TIDY_JOBS` at a
+      time (default the cores, at most 8), each file's output kept whole
+      and printed only when it has findings; 240 files in 6.4 minutes here
+      at 8. CI's lint job runs the script itself, so the list of sources is
+      in one place.
 - [ ] Never analysed by clang-tidy: `tools/analysis/*.hpp` (the root
       header filter excludes `tools/`; `legacy-goldens-surface-decoder.hpp`
       alone carries 10 findings seen from test units) and `ext-nukkit/`,
@@ -157,7 +159,10 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       four jobs. Each conformance leg now logs its
       runner's CPU model and core count, so the next swing can be put on
       the hardware. If it nears 150: shard the leg or build it optimised
-      (the owner's call).
+      (the owner's call). *Watched, 2026-11-10:* 92 of 150 minutes on run
+      42806517418 (196 cases) and 91 on run 42833918838 (198 cases, the
+      two preset goldens added), the ARM64 leg 52 and 53. Steady, and
+      well short of the limit; left open as a watch, not as work.
 - [ ] `ChunkFiller::fill` executes up to 10 M instructions a chunk more on
       one pass than the next of the same configuration, deterministically
       and alike under v13 and v14 — probably allocator state; unexplained.
@@ -209,13 +214,18 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 **New, from the 2026-10-15 verifiers, each checked in the tree at
 20e2f92.**
 
-- [ ] `blended.hpp` says `maintainPrecision` folds 2^24 - 2^-29 to "just
-      below -2^24" (lib/include/stratum/noise/blended.hpp:66-67); it is
-      exactly -2^24.
-- [ ] SPEC §8 (SPEC.md:806-807) and
-      `interpreter.hpp` (lib/include/stratum/density/interpreter.hpp:317-319)
-      say only y reaches the `interpolated` refusal inside the chunk
-      domain; a verifier found x does too.
+- [x] `blended.hpp` said `maintainPrecision` folds 2^24 - 2^-29 to "just
+      below -2^24"; it is exactly -2^24. *Closed 2026-11-10,* the
+      arithmetic checked: the quotient plus a half rounds to 1.0 and the
+      difference to -2^24.
+- [x] SPEC §8 and `interpreter.hpp` say only y reaches the
+      `interpolated` refusal inside the chunk domain; a verifier found x
+      does too, and left no case. *Closed 2026-11-10, checked and not
+      reproduced:* the furthest chunk, `kMaxChunkCoordinate` = 2^27 - 8,
+      ends at block 2^31 - 113, a fill reads at most 20 blocks past it, and
+      a cell is at most 16 wide (`size_horizontal` 4), so the highest
+      corner on x or z is 2^31 - 77. The text stands. `evaluate` itself
+      takes any int32 point, and says so; that is outside a chunk.
 - [ ] `freeze::read` refuses on the container format, the engine version
       and the Minecraft version, but never checks the pack-format fields
       `inspect` reads (lib/src/pipeline_freeze.cpp:673-674, 681-707).
@@ -256,21 +266,24 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
 
 **New, from this sweep: SPEC docs items.**
 
-- [ ] SPEC carries no record of the owner's 2026-10-15 ruling that the
+- [x] SPEC carried no record of the owner's 2026-10-15 ruling that the
       far-chunk refusal (chunks 175 770 and -175 771 outward, above) needs
-      no M5 policy work.
+      no M5 policy work. *Closed 2026-11-10:* §8 records it beside the
+      refusal.
 - [x] §11's End biome entry said `WorldFactory::create` writes only the
       overworld's options and that neither has run inside a server; 683dc64
       and `pmmp.smoke.end` answer both. *Closed 2026-11-01.*
-- [ ] §11 says `maintainPrecision` folds into ±2^25 (SPEC.md:7457), where
-      its licence entry (SPEC.md:1820) and NOTICE say ±2^24 since fba3bd6.
+- [x] §11 said `maintainPrecision` folds into ±2^25, where its licence
+      entry and NOTICE say ±2^24 since fba3bd6. *Closed 2026-11-10:* ±2^24,
+      half its period of 2^25.
 - [x] §10's M3 entry still gives the compiled program "a measured
       237 ms/chunk" as its target (SPEC.md:1035-1036), which §11's perf
       entry calls not comparable to its instrument. *Closed 2026-10-26:*
       it points at §11's baseline of record instead.
-- [ ] §11's M5-Nukkit entry says the Nukkit plugin schedules fluid
+- [x] §11's M5-Nukkit entry said the Nukkit plugin schedules fluid
       updates at `ChunkPopulateEvent` "as `ext/` does"; `ext/` waits for
-      the chunk to settle now (§4.3).
+      the chunk to settle now (§4.3). *Closed 2026-11-10:* the entry says
+      so.
 
 **Owner flags (decisions or settings only the owner can make).**
 
