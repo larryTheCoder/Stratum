@@ -31,4 +31,8 @@ namespace stratum::fdlibm {
 /// (fdlibm_sin.cpp says why): a precondition, asserted, answered with NaN.
 [[nodiscard]] double sin(double x) noexcept;
 
+/// Cosine, bit-identical to java.lang.StrictMath.cos over the same
+/// arguments, with the same precondition.
+[[nodiscard]] double cos(double x) noexcept;
+
 } // namespace stratum::fdlibm

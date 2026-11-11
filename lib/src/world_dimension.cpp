@@ -192,6 +192,26 @@ std::string BiomeSource::toString() const {
     return parameterList_->toString();
 }
 
+/// The dimension's possible biomes in its biome source's own order, each
+/// once: what the feature order is built from (feature::FeatureSet::build).
+/// A multi-noise source's is its parameter list's, by first appearance —
+/// MEASURED for `minecraft:overworld` (SPEC §11, "The decoration framework,
+/// measured"). The End's is not measured, and is refused by name.
+[[nodiscard]] std::vector<data::ResourceLocation> possibleBiomes(const biome::Source& source) {
+    const biome::ParameterList* parameters = source.parameters();
+    if (parameters == nullptr) {
+        throw feature::Unsupported("the order minecraft:the_end's biome source lists its biomes "
+                                   "in, which the feature order follows, is not measured");
+    }
+    std::vector<data::ResourceLocation> biomes;
+    for (const biome::Entry& entry : parameters->entries()) {
+        if (std::ranges::find(biomes, entry.biome) == biomes.end()) {
+            biomes.push_back(entry.biome);
+        }
+    }
+    return biomes;
+}
+
 /// Declaration order IS construction order, and it is load-bearing: see
 /// dimension.hpp's header. `filler` and `biomeInterpreter` are last because
 /// they hold references and pointers into everything above them.
@@ -203,28 +223,48 @@ struct CompiledDimension::Impl {
     density::NoiseRegistry noises;
     terrain::ChunkFiller filler;
     density::Interpreter biomeInterpreter;
+    std::optional<feature::FeatureSet> features;
+    std::string featuresBlockedBy;
+    std::int64_t worldSeed;
 
     Impl(freeze::Pipeline frozen, const data::ResourceLocation& noiseSettings,
-         const BiomeSource& source, const std::int64_t worldSeed)
+         const BiomeSource& source, const std::int64_t seed)
         : pipeline(std::move(frozen)), settings(settingsNamed(pipeline, noiseSettings)),
           biomeSource(bind(pipeline, source)),
           surfaceRules(resolveSurfaceRules(settings, noiseSettings)),
           noises(density::NoiseRegistry::create(
-              pipeline.noises, noisesFor(pipeline, settings, surfaceRules), worldSeed,
+              pipeline.noises, noisesFor(pipeline, settings, surfaceRules), seed,
               settings.legacyRandomSource ? density::RandomSource::Legacy
                                           : density::RandomSource::Xoroshiro)),
           filler(
               carving(terrain::ChunkFiller::compile(pipeline.graph, noises, settings, &surfaceRules,
                                                     biomeSource, &pipeline.biomeTemperatures),
-                      pipeline.carvers, biomeSource, worldSeed)),
+                      pipeline.carvers, biomeSource, seed)),
           biomeInterpreter(pipeline.graph, noises,
                            density::CellGeometry{.width = settings.geometry.cellWidth(),
-                                                 .height = settings.geometry.cellHeight()}) {
+                                                 .height = settings.geometry.cellHeight()}),
+          worldSeed(seed) {
         // What the biome source reads, refused now rather than at the first
         // chunk: the End's source reads erosion alone, a multi-noise one all
         // six climate entries.
         for (const settings::RouterEntry entry : biomeSource.routerEntries()) {
             biomeInterpreter.requireEvaluable(settings.router.at(entry));
+        }
+        if (pipeline.features.empty()) {
+            featuresBlockedBy = "this pipeline carries no features (it was resolved without "
+                                "block tags)";
+        } else {
+            try {
+                const std::vector<data::ResourceLocation> biomes = possibleBiomes(biomeSource);
+                features.emplace(feature::FeatureSet::build(pipeline.features, biomes));
+            } catch (const feature::Unsupported& reason) {
+                featuresBlockedBy = reason.what();
+            } catch (const feature::FeatureError& error) {
+                // Feature data this dimension cannot be decorated from: the
+                // terrain still generates, and decorate() refuses in these
+                // words.
+                featuresBlockedBy = error.what();
+            }
         }
     }
 };
@@ -247,6 +287,40 @@ CompiledDimension::compile(freeze::Pipeline pipeline, const data::ResourceLocati
 
 const settings::NoiseGeometry& CompiledDimension::geometry() const noexcept {
     return impl_->settings.geometry;
+}
+
+const feature::FeatureSet* CompiledDimension::features() const noexcept {
+    const std::optional<feature::FeatureSet>& features = impl_->features;
+    return features.has_value() ? &*features : nullptr;
+}
+
+const std::string& CompiledDimension::featuresBlockedBy() const noexcept {
+    return impl_->featuresBlockedBy;
+}
+
+void CompiledDimension::decorate(const std::int32_t chunkX, const std::int32_t chunkZ,
+                                 const std::array<feature::RegionChunk, 9>& chunks) const {
+    const feature::FeatureSet* features = this->features();
+    if (features == nullptr) {
+        throw DimensionError("this dimension has no features to run: " + impl_->featuresBlockedBy);
+    }
+    density::Interpreter::CornerCache cache(impl_->biomeInterpreter.cacheSize());
+    feature::Region region{
+        .centreX = chunkX,
+        .centreZ = chunkZ,
+        .chunks = chunks,
+        .geometry = impl_->settings.geometry,
+        .worldSeed = impl_->worldSeed,
+        .biomeOutside = [this,
+                         &cache](const biome::QuartPos quart) -> const data::ResourceLocation& {
+            return impl_->biomeSource.at(impl_->biomeInterpreter, impl_->settings.router,
+                                         density::Point{.x = quart.x * kQuartWidth,
+                                                        .y = quart.y * kQuartWidth,
+                                                        .z = quart.z * kQuartWidth},
+                                         cache);
+        },
+    };
+    feature::decorate(*features, region);
 }
 
 void CompiledDimension::fillBlocks(const std::int32_t chunkX, const std::int32_t chunkZ,

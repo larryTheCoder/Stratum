@@ -108,14 +108,13 @@ TEST_CASE("the capability matrix matches SPEC section 8", "[data][registry]") {
     for (const Registry supported :
          {Registry::DensityFunction, Registry::Noise, Registry::NoiseSettings, Registry::Biome,
           Registry::MultiNoiseBiomeSourceParameterList, Registry::WorldPreset, Registry::Dimension,
-          Registry::ConfiguredCarver}) {
+          Registry::ConfiguredCarver, Registry::ConfiguredFeature, Registry::PlacedFeature}) {
         CAPTURE(stratum::data::registryDirectory(supported));
         CHECK(stratum::data::isSupported(supported));
     }
     for (const Registry rejected :
-         {Registry::ConfiguredFeature, Registry::PlacedFeature, Registry::Structure,
-          Registry::StructureSet, Registry::TemplatePool, Registry::ProcessorList,
-          Registry::FlatLevelGeneratorPreset}) {
+         {Registry::Structure, Registry::StructureSet, Registry::TemplatePool,
+          Registry::ProcessorList, Registry::FlatLevelGeneratorPreset}) {
         CAPTURE(stratum::data::registryDirectory(rejected));
         CHECK_FALSE(stratum::data::isSupported(rejected));
     }
@@ -149,7 +148,7 @@ TEST_CASE("a worldgen tree loads with nested identifiers", "[data][pack]") {
 TEST_CASE("entries in registries v1 does not execute are reported, never dropped", "[data][pack]") {
     const TempDirectory tree;
     tree.write("density_function/a.json", kConstantDensityFunction);
-    tree.write("placed_feature/ore_coal.json", R"({"feature":"minecraft:ore_coal"})");
+    tree.write("template_pool/village/plains/houses.json", R"({"elements":[]})");
     tree.write("structure/village_plains.json", R"({"type":"minecraft:jigsaw"})");
 
     const Pack pack = Pack::openWorldgenTree(tree.path());
@@ -161,7 +160,7 @@ TEST_CASE("entries in registries v1 does not execute are reported, never dropped
     PackLoadOptions strict;
     strict.rejectUnsupported = true;
     REQUIRE_THROWS_WITH(Pack::openWorldgenTree(tree.path(), "minecraft", strict),
-                        Catch::Matchers::ContainsSubstring("placed_feature") &&
+                        Catch::Matchers::ContainsSubstring("structure") &&
                             Catch::Matchers::ContainsSubstring("does not execute"));
 }
 

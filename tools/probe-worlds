@@ -46,8 +46,8 @@ whatever subset of seeds or entries they find, so a half-generated set
 would pass them.
 
 A shard's cache key hashes its rows of this table and the text of every
-script those rows run (each generator and the tools/analysis/*.sh it
-calls, i.e. density-probe.sh; tools/fetch-vanilla for the goldens):
+script those rows run (each generator and the tools/analysis/*.sh or *.py
+it calls, e.g. density-probe.sh; tools/fetch-vanilla for the goldens):
 editing one generator regenerates only its shard. The engine is never an
 input; the server's output does not depend on it. FORMAT, or PROBE_CACHE_EPOCH in ci.yml, forces a regeneration for a
 change this cannot see (the JDK patch level, the heap, the runner).
@@ -99,6 +99,10 @@ def own(directory, files, record=None):
 # The carving-stage goldens' four region files (carver-golden-probe.sh).
 CARVER_REGIONS = ('overworld/r.0.0.mca', 'overworld/r.-1.-1.mca',
                   'nether/r.0.0.mca', 'nether/r.-1.-1.mca')
+
+
+# The feature probes' two region files (feature-probe.sh).
+FEATURE_REGIONS = ('overworld/r.0.0.mca', 'overworld/r.-1.-1.mca')
 
 
 def unit(name, shard, argv, outputs):
@@ -351,6 +355,21 @@ UNITS = [
                                     ('surface', 'patch', 'soul_sand_layer', 'nether_wart',
                                      'netherrack', 'nether_state_selector')),
              {'file': 'manifest.json', 'seed': 42, 'frozen': True})),
+] + [
+    # The decoration framework (SPEC §10 M6): vanilla's own overworld with
+    # every biome's features replaced by a variant's markers, read where the
+    # chunks are full. One start each, about a minute locally: thirteen
+    # here, a quarter of an hour of the shard's ninety minutes.
+    unit(f'feat{variant}_s42', 'end', ['feature-probe.sh', '--variant', variant, '42'],
+         own(f'feat{variant}_s42', FEATURE_REGIONS,
+             {'file': 'manifest.json', 'seed': 42, 'frozen': True}))
+    for variant in ('seed', 'draws', 'terrain', 'order', 'biomefilter', 'misc',
+                    # The ore feature: its blob at every shipped size, where an
+                    # attempt in the open is given up, what an ore beside air
+                    # discards, and the shipped ores alone in the shipped world.
+                    'oresizes', 'oresurface', 'oreexposed', 'orediscard', 'ores',
+                    # The shipped springs, and the shipped disks, each alone.
+                    'springs', 'disks')
 ] + [
     unit(f'{corpus}_s{seed}', 'end', ['aquifer-yskip-probe.sh', '--group', group, str(seed)],
          density((f'{corpus}_s{seed}', seed)))
@@ -728,7 +747,8 @@ def generate(units):
 # --- cache keys ---------------------------------------------------------------
 
 def scripts_of(units):
-    """Each unit's generator plus every tools/analysis/*.sh it runs, transitively.
+    """Each unit's generator plus every tools/analysis/*.sh and *.py it runs,
+    transitively.
 
     A script counts as run when a line that is not a comment names it; a
     script that is only mentioned in prose is not an input."""
@@ -744,7 +764,7 @@ def scripts_of(units):
             die(f'cannot read {path}: {error}')
         for line in lines:
             if not line.lstrip().startswith('#'):
-                queue.extend(re.findall(r'tools/analysis/[A-Za-z0-9_.-]+\.sh', line))
+                queue.extend(re.findall(r'tools/analysis/[A-Za-z0-9_.-]+\.(?:sh|py)', line))
     return sorted(found)
 
 

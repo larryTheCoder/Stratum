@@ -453,6 +453,7 @@ to bump the version and be called out; this is that call-out.
 | 20 | **`old_blended_noise` in the engine's floating-point form** (§11, "old_blended_noise's floating-point form"). The Modern reading forms its doubles as spec/blended-noise-spec.md's amendments write them: the main sampler's position `(x·M)/F` before the octave scale, where v19 took `x·(M/F)` (cubiomes' order), and the selector `(main/10 + 1)/2`, where v19 took `0.5 + 0.05·main`; the limits' skip flags and the clamped lerp exactly as Q1.5's amendment states, over 512 and then 128. Moves `base_3d_noise` in the last bit at about one block position in eleven; the server agrees with the new value at all 24 points of a bisection where it and v19's differ, and deepslate's 240 vectors now match to the bit (230 under v19). No golden block moves: every conformance case passes unchanged, the pinned overworld hash included. The PreModern (cubiomes) reading is unchanged. **The aquifer keeps a lattice point's y in 12 bits** (§11, "Aquifer Q3.3 and Q6.6"): a jittered centre's y is `floorMod(y + 2048, 4096) - 2048`, as the server packs it. Only a dimension within one cell of y ±2048 can see it, no vanilla dimension is, and no probe world found a block it moves. |
 | 21 | **A carver's `debug_mode` is carved, not refused** (§11, "Carver debug mode, and the carvers' unobservable details"): a pack that sets `debug_settings.debug_mode` gets the server's debug output, state for state and mark for mark, where v20 refused the pack at load. **An empty `amplitudes` list is a noise that samples 0.0** (§11, "Legacy named noise Q3.3 and Q5.5"), under either random source, where v20 refused it by name. **A `legacy_random_source` dimension's pack is rejected when it lacks a noise key the dimension's surface rules, or the surface system's fixed nine, request**, at freeze and at thaw, naming the key; v20 found a rule's own missing key only when the dimension compiled, and never asked for the nine. No output changes for a pack v20 generated from: every conformance case passes unchanged. |
 | 22 | **`bandlands` reads its table by the always non-negative index** (§11, "The ruling's P3 items"): `floorMod(y + offset + 192, 192)`, where v21 took Java's truncating remainder and refused, by name, a column whose sum was negative (the depth at which the server itself throws). No block the server places moves: the two reductions agree wherever the sum is non-negative, which is every y above about -186, so every vanilla dimension. Only a custom dimension deeper than that, using `bandlands`, is affected: v21 refused its chunk and v22 generates it. |
+| 23 | **A frozen pipeline carries its features** (blob format 5), and decoration exists (§11, "The decoration framework, measured"; "The ore feature, measured"). No block of a chunk filled as before moves: `fillBlocks` and `fillBiomes` are v22's. A world's chunks change only where a caller now decorates them, which no binding does yet. The version moves because the blob does: a v22 blob has no feature section, and is refused rather than opened undecorated. |
 
 **No version for the undefined-behaviour refusals (§8, §5.7).** They refuse;
 they change no output that is still produced. What they stop is of five
@@ -517,7 +518,7 @@ cannot keep stamping the old number.
 | Tier | Scope | Bar |
 |------|-------|-----|
 | A | Density functions, noise, terrain shape, aquifer fill decision (air/default/fluid), multi-noise biome assignment, surface rules | Bit-exact vs vanilla Java, block-for-block, in Java block space |
-| B | (v2) carvers, features, structures | Statistical parity: distributions match, exact placement may differ |
+| B | (v2) carvers, features, structures | Statistical parity: distributions match, exact placement may differ. *As it stands:* the carvers are exact, by clean-room spec (§11, "Carvers, adopted"). For features the bar is the owner's of 2026-11-11 (§11, "M6 scoped"): the decoration FRAMEWORK exact — seeds, order, which features a chunk runs, placement modifiers — and each feature type exact where a clean-room spec or a measurement to the block establishes it, statistical where neither does. Structures are M7 |
 | U | Everything outside the capability matrix | Never executed. A JSON file in a directory this build cannot name is a hard error at pack load; an entry in an unsupported registry is recorded by name, and a hard error only under `rejectUnsupported` or `stratum validate --strict` (§8) |
 
 ### Conformance harness (built in Milestone M1, not later)
@@ -773,8 +774,48 @@ A carver's `replaceable` tag is read
 from the version root's `tags/block` (tools/fetch-vanilla extracts it), not
 from a pack: a pack's own `tags/` is still refused at load.
 
-Unsupported in v1, and never executed:
-`configured_feature`, `placed_feature`, `structure`,
+`placed_feature` and `configured_feature` are read since M6 (§11, "The
+decoration framework, measured" and "The ore feature, measured"), and a
+frozen pipeline carries them (blob format 5). Decoration is a stage of its
+own, run when a caller asks (`world::CompiledDimension::decorate`, `stratum
+generate --features`), over the nine chunks round the chunk decorated.
+What runs:
+
+- *Placement modifiers:* `in_square`, `count`, `height_range`, `heightmap`,
+  `biome`, `block_predicate_filter`, `rarity_filter`,
+  `surface_water_depth_filter`, `random_offset`, `environment_scan`,
+  `surface_relative_threshold_filter`, `fixed_placement`,
+  `noise_threshold_count`, `noise_based_count`. Not `count_on_every_layer`.
+- *Int providers:* `constant`, `uniform`, `biased_to_bottom`, `clamped`,
+  `clamped_normal`, `weighted_list`. *Height providers:* a bare anchor,
+  `constant`, `uniform`, `biased_to_bottom`, `very_biased_to_bottom`,
+  `trapezoid`, `weighted_list`.
+- *Block predicates:* `true`, `matching_blocks`, `matching_block_tag`,
+  `matching_fluids` (water and lava), `inside_world_bounds`, `all_of`,
+  `any_of`, `not`. Not `solid`, `replaceable`, `has_sturdy_face`,
+  `would_survive`, `unobstructed`: each asks what a block is, which no pack
+  file says.
+- *Feature types:* `ore` (rule tests `always_true`, `block_match`,
+  `tag_match`), `spring_feature` (of water or lava), `disk` (its
+  rule-based state provider included), and `simple_block` of a block known
+  to stay wherever it is put (the probes' markers).
+
+**A placed feature this build cannot run is left out and named, not
+refused** (the owner, 2026-11-11): its type, a modifier, a provider or a
+predicate it uses. It keeps its place in the order, so every other
+feature's seed is the server's; `FeatureSet::unsupported()` lists it with
+the reason, and `stratum generate --features` prints the list. Of the 164
+placed features the shipped overworld's biomes list, 37 run (every
+`minecraft:ore`, the three springs and four of the five disks) and 127 are
+left out. Feature data that does not hold — a
+biome listing a feature the pack lacks, lists that order two features both
+ways, malformed JSON — is named too (`featuresBlockedBy()`), and stops the
+decoration, never the terrain. A dimension on the End's biome source has
+no features to run: the order that source lists its biomes in is not
+measured. Features of a biome's list written inline or as a tag are
+refused by name.
+
+Unsupported in v1, and never executed: `structure`,
 `structure_set`, `template_pool`, `processor_list`,
 `flat_level_generator_preset`. Each entry is recorded by name. By default it
 does not stop a load, because vanilla's own data holds hundreds of them;
@@ -979,7 +1020,8 @@ readings or turn them into refusals.
 and this section used to say of every unsupported registry, has two
 readings, and the difference matters: taken literally it makes vanilla's own
 data unloadable, since 1.21.11 ships 258 `placed_feature` and 224
-`configured_feature` entries that v1 never executes — and the Tier-A goldens
+`configured_feature` entries that v1 never executed (they are read since
+M6, above; the question stands for the structure registries) — and the Tier-A goldens
 are deliberately generated with features stripped because they are out of
 scope. The loader therefore *classifies and reports* rather than baking in a
 reading: every JSON file is loaded, recorded by name or refused, none is dropped,
@@ -1389,10 +1431,19 @@ mapping has two halves, split at a platform-neutral midpoint:
   landed (§7, `cli generate`). *Closed 2026-10-29* by the owner, on
   headless real-server evidence and the owner's own Bedrock client check
   (§11, "M5 closed"); further speed is work after it.
-- **M6 (v2)** — Staged features/structures with declared read/write radii;
-  scripting escape hatch evaluation. Carvers' research is closed, with the
-  chunk stream and fill rule exact and the walk a fitted Tier B model (§11,
-  "Carvers, measured and modelled"); nothing of it is implemented.
+- **M6 (v2)** — Staged features, read and written over the nine chunks
+  round the chunk decorated. Scoped by the owner on 2026-11-11 (§11, "M6
+  scoped"): structures are their own milestone, M7; the scripting escape
+  hatch is dropped; block entities and loot are in scope where a feature
+  needs them. Six slices: (1) the decoration framework, exact; (2) ores and
+  the other underground features; (3) ground cover; (4) trees; (5) the
+  Nether's and the End's features; (6) the server bindings. The carvers
+  are implemented and exact (§11, "Carvers, adopted"). Slice 1 has landed
+  but for `count_on_every_layer` and the block predicates that ask what a
+  block is; of slice 2, `ore`, `spring_feature` and `disk` (PROGRESS.md,
+  M6).
+- **M7 (v2)** — Structures: placement, jigsaw assembly, processors, and the
+  piece generators. Not started.
 - **MA** — Aquifers. Lettered rather than numbered because it does **not** gate
   M4, M5 or M6: it is a parallel track, and the numeric milestones proceed past
   it. It gates only the capability matrix's aquifer row (§8) and any golden
@@ -13042,6 +13093,216 @@ Open:
     hold none; the case requires any such block to lie by a tied column.
   Nothing here gates on fluid unreported: flow is classed apart and
   bounded, as in the overworld's case.
+
+- **M6 scoped (2026-11-11; the owner's rulings).** Vanilla 1.21.11 ships
+  224 configured features of 55 types, 258 placed features behind 15
+  placement modifier types, and 34 structures of 16 types; no document says
+  how any of them generates to the bit. Five rulings, each as proposed:
+  1. *The parity bar.* The decoration framework is exact. A feature type is
+     exact where a clean-room spec specifies it, and statistical where none
+     does. (A type measured to the block with no spec — `minecraft:ore`,
+     below — is recorded as measured, and flagged for a spec to confirm.)
+  2. *Structures are their own milestone,* M7.
+  3. *A feature this build cannot run is left out and named,* not refused:
+     the world generates without it, and the build says which and why. The
+     rule against silent skips is kept by the naming. *The implementer's
+     reading, flagged:* the proposal offered refusing the world or naming
+     the gap, and the ruling accepted the proposal without choosing; naming
+     is taken because refusing would refuse every shipped world until the
+     last of 55 types lands.
+  4. *Block entities and loot are in scope* where a feature needs them (a
+     monster room's spawner and chests). Nothing implemented needs them yet.
+  5. *The scripting escape hatch is dropped* from M6.
+
+- **The decoration framework, measured (2026-11-11; pipeline engine v23).**
+  SPEC §10 M6, slice 1. Nothing permitted documents the framework to the
+  bit, so it is measured: `tools/analysis/feature-probe.sh` generates
+  vanilla's own overworld with every biome's features replaced by a
+  variant's MARKERS — placed features writing, through `simple_block`, one
+  block no terrain holds, behind the modifiers under test — and where a
+  marker lands is what the framework drew. Each claim was first fitted
+  off the server's regions, then implemented, then confirmed by
+  `vanilla_feature_probe_test.cpp` decorating the same 288 full chunks from
+  the same pack: 68 400 markers over six variants, every one where the
+  server stored it and no other, but 13 where the two sides read different
+  biomes (the open ties of the multi-noise search).
+  - *The random source* (`rng/worldgen_random.hpp`). java.util.Random's
+    derivations over a Xoroshiro128++ stream, each `next(bits)` the top
+    bits of one long. The Xoroshiro source's own bounded draw placed none
+    of 3456 markers; this places all. The population seed is cubiomes'
+    `getPopulationSeed` (MIT, finders.c, with rng.h's Java-shaped draws),
+    and a feature's seed is `population + index + 10000 * step`.
+  - *The order* (`FeatureSet::build`). Per generation step, a graph with an
+    edge from each feature of a biome's list to the next; its nodes in
+    first-seen order, the biomes taken in the order the dimension's biome
+    source lists them (a multi-noise source: its parameter list, by first
+    appearance); a depth-first walk in that order; the walk's post-order,
+    reversed. Read off the server by putting every shipped placed feature
+    in the world as a marker under its own name: 77 features' indices
+    recovered from where they landed, every one reproduced; then all 164
+    of the overworld's, 15 520 markers, exact. A biome per feature and no
+    shared lists (the `biomefilter` variant) comes out in the biomes'
+    reversed order, as the walk gives. *Not discriminated:* whether an edge
+    also joins the last feature of one step to the first of the next, and
+    whether nodes are keyed by step first; the four readings give one order
+    on the shipped overworld and Nether. A list that orders two features
+    both ways is refused by name.
+  - *Which features a chunk runs.* Those of every biome any of the nine
+    chunks round it holds: of 288 chunks, none ran a feature the nine do
+    not list, and 616 ran one the centre alone does not.
+  - *The origin* is the chunk's lowest block corner at the dimension's
+    lowest layer (a marker behind `in_square` alone lands at y -64).
+  - *The modifiers*, each as `feature/feature.hpp` states it: `in_square`
+    draws x then z; `count` and the rest run depth first, so a position's
+    feature draws before the next position is drawn; `rarity_filter` keeps
+    where `nextFloat() < 1/chance`; `random_offset` draws x, y, z, one
+    provider for x and z; `heightmap` reads the height above the column's
+    top block of the kind; `surface_water_depth_filter` reads the live
+    world surface less the live ocean floor;
+    `surface_relative_threshold_filter` and the block predicates read as
+    documented; `environment_scan` requires the start be allowed, takes the
+    start if it is the target, then moves up to `max_steps` times;
+    `fixed_placement` keeps the positions in the chunk.
+  - *The two `_WG` heightmaps are the terrain's, fixed before any feature
+    runs; the other four are live.* A marker on a column raised the live
+    maps for the markers after it and neither `_WG` map. Three markers the
+    first fit had wrong were columns water flowed into after generation;
+    decorating this build's own terrain, which does not flow, has all
+    three.
+  - *The providers.* Int: `uniform` min + nextInt(span + 1);
+    `biased_to_bottom` min + nextInt(nextInt(span + 1) + 1); `clamped`;
+    `clamped_normal` mean + gaussian x deviation, truncated toward zero,
+    the gaussians the polar method's cached pair; `weighted_list`. Height,
+    with range = max - min: `biased_to_bottom` min + nextInt(nextInt(range
+    - inner + 1) + inner); `very_biased_to_bottom` one nesting deeper;
+    `trapezoid` min + nextInt(n + 1) + nextInt(m + 1) with m = (range -
+    plateau) / 2 and n = range - m, or the uniform when the plateau spans
+    the range.
+  - *The count noise* behind `noise_threshold_count` and
+    `noise_based_count`: a 2D simplex over the permutation a
+    java.util.Random seeded with the constant 2345 builds, sampled at
+    (x / 200, z / 200) for the threshold and (x / factor, z / factor) for
+    the other, whose count is ceil((noise + offset) x ratio). Found by
+    search: of 200 000 constant seeds one fits 288 chunks' counts, and of
+    2000 scales one. The same field in every world, as the surface rules'
+    temperature noise is (seeded 1234). 20 242 markers, exact.
+  - *The `biome` modifier* reads the block-level zoomed biome (the surface
+    rules' zoom): 11 553 of 11 558 markers, and the 13 positions apart are
+    all within reach of a quart whose biome the two sides disagree on.
+  - *Not measured, and said so in the code:* `count_on_every_layer` (left
+    out by name; only the Nether's features use it); an empty column under
+    `heightmap` (nothing is placed, the documented reading); a scan that
+    leaves the dimension (it ends); an empty or inverted height range (the
+    minimum, drawing nothing); the width of `clamped_normal`'s product;
+    the order the End's biome source lists its biomes in (a dimension on
+    it has no features to run).
+  - *What a chunk's decoration reads and writes* is the nine chunks round
+    it, as on the server; where two chunks' features meet, the later sees
+    the earlier's blocks. The server does not fix that order (below), so
+    a caller's own is as good: `stratum generate --features` decorates
+    z-major on one thread.
+  A frozen pipeline carries the pack's placed and configured features,
+  every biome's lists and every block tag (blob format 5).
+
+- **The ore feature, measured (2026-11-11; pipeline engine v23).** SPEC §10
+  M6, slice 2. No clean-room spec covers `minecraft:ore`; minecraft.wiki
+  gives its fields and a table of block counts, not how a blob is shaped.
+  It is measured to the block, on the framework above, whose exact stream
+  makes every draw of an ore known:
+  - *How far an ore moves the stream.* Two ores a chunk: the second lands
+    where the stream stands 3 + 2 x size longs after the first (sizes 9 and
+    12: 21 and 27, in 166 and 165 of 200 chunks, the rest empty blobs). An
+    attempt far above the terrain moves it 3 (the `oresky` variant, 1874
+    blocks exact under that reading and under no other of seven).
+  - *The blob.* One float for a direction, two ints for the ends' heights,
+    then a double a node: a segment through the position, `size` nodes
+    along it, each a sphere whose radius is ((S(pi t) + 1) x nextDouble() x
+    size/16 + 1) / 2, and a block is in the blob when its centre is inside
+    one. `feature/feature.hpp` states it in full. Twelve sizes (every size
+    the shipped ores use), each replacing whatever was there: 354 574
+    blocks, every one and no other — with the direction's sine and cosine
+    the true ones in single precision, and the radius's the carvers' table
+    sine (spec/carvers-a-spec.md Q9). The true sine there leaves 3 blocks
+    wrong, the table sine for the direction 19; all in double precision, 2.
+    `fdlibm::cos` is vendored beside `sin` for it, with 1630 StrictMath
+    vectors.
+  - *Where an attempt is given up.* Unless some column within H + R of the
+    position has the terrain's ocean floor at or above y - 2 - R (H =
+    ceil(size/8), R = ceil((size/8 + 1) / 2)), three draws in: 398 first
+    attempts between y 50 and 140, at sizes 9 and 33, separated without
+    error by that window and no other of 624 tried (57 927 blocks, exact).
+  - *Targets and discarding.* A block passes to the first target whose
+    test it meets. A discard chance of 0 draws nothing; of 1 discards
+    every block beside air, drawing nothing; between them each block that
+    passes a test draws, and is discarded when the draw is below the
+    chance and air is beside it. The blocks draw node by node, x outermost
+    then y then z, each once — after nodes lying wholly inside another are
+    dropped, which moves no block of the blob and decides that order: 272
+    of 168 694 blocks wrong without the dropping, none with (`oreexposed`:
+    thirty-two features of one ore each, so none is put out of step by
+    another).
+  - *The shipped ores, alone in the shipped world* (`ores`: every biome's
+    `minecraft:ore` features and nothing else, thirty features, all run):
+    1 749 597 blocks stored, 1 742 810 the same. Of the rest, 5929 are
+    contested between two ores that replace each other's blocks, 762 lie
+    within reach of a quart whose biome the two sides read differently,
+    and 1029 are a drawing ore's (coal's lower band, gold, diamond).
+  - **The server does not reproduce itself there, and that is the bound.**
+    The same probe generated twice differs from itself in 3347 blocks, of
+    the same kinds: 1027 stone for coal ore or the reverse, the rest one
+    stone variant for another. Where two chunks' ores meet, the chunk
+    decorated first decides what the second may replace; an ore that
+    draws as it places then takes another number of draws, and every
+    later ore of that feature in that chunk moves. The server's chunk
+    order is not fixed. So the cases with drawing ores hold a share (5 in
+    1000 for the shipped ores, 2 and 1 for the two probes), not a count,
+    and require what is left over to be a drawing ore's; the cases whose
+    ores draw nothing as they place (`oresizes`, `oresurface`) are held to
+    the block.
+  - *Not measured:* whether a discarded block goes on to the next target
+    (minecraft.wiki's history says it did at this version; the shipped
+    ores' targets do not overlap, so nothing shipped depends on it);
+    `blockstate_match` and the two random rule tests (left out by name);
+    which heightmap gives an attempt up where features have changed the
+    terrain (the terrain's own is read).
+  - *Flagged for the owner:* this is exactness by measurement, past the
+    ruling's "statistical where no spec exists". Every formula was a
+    hypothesis scored against the server and kept at zero residual; a
+    clean-room spec for `minecraft:ore` would confirm or correct it.
+  `scattered_ore`, `geode`, the dripstone features, `monster_room`, `lake`
+  and `underwater_magma` — the rest of slice 2, but for the two below — are
+  not implemented, and are left out by name.
+
+- **Springs and disks, measured (2026-11-11; pipeline engine v23).** SPEC
+  §10 M6, slice 2. Two feature types whose rule the pack's own fields all
+  but state, each confirmed on the shipped features alone in the shipped
+  world (`feature-probe.sh --variant springs`, `disks`).
+  - *`spring_feature`.* minecraft.wiki's "Spring" gives the rule: the block
+    above must be one of `valid_blocks`; so must the block below, where
+    `requires_block_below`; and of the five blocks beside and below,
+    exactly `rock_count` valid and exactly `hole_count` air. Read off the
+    regions first — 12 960 attempts of the shipped water and lava springs,
+    49 placed by the rule and by the server alike, and one more by the
+    server beside a chunk the comparison did not hold — then implemented:
+    this build writes 50 springs over 288 chunks, and the server holds all
+    50. It draws nothing. The block is the fluid's source (`level` 0 in the
+    stored chunk, whatever `falling` the config names). The server stores a
+    scheduled fluid tick at it; this build marks it for a fluid update with
+    the aquifer's, which comes to the same flow once the chunk ticks. *Not
+    measured:* what the spring's own block may be — air or a valid block
+    here, as every spring of the probe replaced.
+  - *`disk`.* One draw, the radius; every column with dx² + dz² <= radius²;
+    in each, every block from `half_height` above the position to
+    `half_height` below that the target holds at, rewritten with the first
+    rule's state whose predicate holds there, else the fallback's (sand
+    over air becomes sandstone). The first reading tried: 12 325 blocks
+    written by the shipped sand, clay and gravel disks, 12 170 the
+    server's, and the other 155 one disk's block for another's (gravel for
+    sand 127, sand for gravel 20, clay for sand 8) where two chunks' disks
+    met — each rewrites dirt and grass and not the other's block, so the
+    first to reach a block keeps it, and the server's chunk order is not
+    this build's. `disk_grass` is left out: its predicate is `solid`.
+
 
 ## 12. Content, provenance & distribution policy
 

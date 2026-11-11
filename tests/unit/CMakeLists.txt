@@ -28,6 +28,7 @@ add_executable(stratum_unit_tests
     density_render_test.cpp
     end_islands_test.cpp
     fdlibm_test.cpp
+    feature_test.cpp
     java_random_test.cpp
     javamath_test.cpp
     legacy_climate_test.cpp

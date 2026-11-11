@@ -75,6 +75,9 @@ TEST_CASE("vanilla's worldgen data loads whole", "[conformance][data][pack]") {
     CHECK(pack.entriesOf(Registry::MultiNoiseBiomeSourceParameterList).size() == 2U);
     CHECK(pack.entriesOf(Registry::WorldPreset).size() == 6U);
     CHECK(pack.entriesOf(Registry::ConfiguredCarver).size() == 4U);
+    // Read since M6: the decoration stage runs the ones it can.
+    CHECK(pack.entriesOf(Registry::PlacedFeature).size() == 258U);
+    CHECK(pack.entriesOf(Registry::ConfiguredFeature).size() == 224U);
 
     // And the ones it does not, which must have been reported rather than
     // silently ignored.
@@ -83,9 +86,8 @@ TEST_CASE("vanilla's worldgen data loads whole", "[conformance][data][pack]") {
         ++rejectedByRegistry[rejected.registry];
         CHECK_FALSE(stratum::data::isSupported(rejected.registry));
     }
-    CHECK(rejectedByRegistry[Registry::PlacedFeature] == 258U);
-    CHECK(rejectedByRegistry[Registry::ConfiguredFeature] == 224U);
     CHECK(rejectedByRegistry[Registry::TemplatePool] == 188U);
+    CHECK(rejectedByRegistry[Registry::Structure] == 34U);
 
     for (const auto& entry : pack.entries()) {
         CAPTURE(entry.id.toString());
@@ -270,11 +272,18 @@ TEST_CASE("vanilla's own data validates, with an exact account of what is left",
     };
     CHECK(unevaluable == expected);
 
-    // Features and their neighbours are reported by registry, never dropped.
-    const auto features =
-        std::ranges::find_if(report.findings, [](const stratum::validate::Finding& finding) {
-            return finding.subject == "worldgen/placed_feature";
-        });
+    // The registries this build does not execute are reported by registry,
+    // never dropped; the features, read since M6, with a note that says this
+    // report does not tell which of them run.
+    const auto about = [&](const std::string& subject) {
+        return std::ranges::find_if(
+            report.findings,
+            [&](const stratum::validate::Finding& finding) { return finding.subject == subject; });
+    };
+    const auto pools = about("worldgen/template_pool");
+    REQUIRE(pools != report.findings.end());
+    CHECK(pools->severity == stratum::validate::Severity::Warning);
+    const auto features = about("worldgen/placed_feature");
     REQUIRE(features != report.findings.end());
-    CHECK(features->severity == stratum::validate::Severity::Warning);
+    CHECK(features->severity == stratum::validate::Severity::Note);
 }

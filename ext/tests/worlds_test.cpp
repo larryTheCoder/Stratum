@@ -104,9 +104,9 @@ public:
         everything["default_fluid"] = {{"Name", "minecraft:water"},
                                        {"Properties", {{"level", "16"}}}};
         write("noise_settings", "all_wrong", everything.dump());
-        write("biome", "plains", R"({"temperature":0.8,"carvers":[]})");
+        write("biome", "plains", R"({"temperature":0.8,"carvers":[],"features":[]})");
         // Not a vanilla biome, so not in the Bedrock table: a datapack's.
-        write("biome", "moon", R"({"temperature":0.1,"carvers":[]})");
+        write("biome", "moon", R"({"temperature":0.1,"carvers":[],"features":[]})");
         writeList("overworld", R"({"biomes":[
             {"biome":"minecraft:plains","parameters":{"temperature":[-1.0,1.0],
              "humidity":[-1.0,1.0],"continentalness":[-1.0,1.0],"erosion":[-1.0,1.0],

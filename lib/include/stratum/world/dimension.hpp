@@ -23,10 +23,12 @@
 #pragma once
 
 #include <stratum/data/resource_location.hpp>
+#include <stratum/feature/feature.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/settings/noise_settings.hpp>
 #include <stratum/terrain/filler.hpp>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -194,6 +196,31 @@ public:
     void fillBiomes(std::int32_t chunkX, std::int32_t chunkZ, std::int32_t minQuartY,
                     std::span<const data::ResourceLocation*> into,
                     const terrain::ChunkBuffer& filled) const;
+
+    /// This dimension's features, in the order they run — null when it has
+    /// none to run: a pipeline that carries no features (one resolved
+    /// without block tags, freeze::resolve), a biome source whose feature
+    /// order this build has not measured, or feature data that does not hold
+    /// (a biome listing a feature the pack lacks, lists with no order,
+    /// malformed JSON) — each of which featuresBlockedBy() names, and none of
+    /// which stops the terrain generating.
+    /// What the set itself leaves unrun it lists (FeatureSet::unsupported).
+    [[nodiscard]] const feature::FeatureSet* features() const noexcept;
+
+    /// Why features() is null, in words; empty when it is not.
+    [[nodiscard]] const std::string& featuresBlockedBy() const noexcept;
+
+    /// Decorates chunk (@p chunkX, @p chunkZ): runs its features over the
+    /// nine chunks around it, `chunks[(dz + 1) * 3 + (dx + 1)]` the chunk at
+    /// (chunkX + dx, chunkZ + dz), each filled by fillBlocks, its heightmaps
+    /// taken (feature::terrainHeightmaps) before any chunk was decorated,
+    /// and its biomes fillBiomes' over any run of quart layers. A caller
+    /// decorates each chunk once, after the nine are filled; what a
+    /// neighbour's decoration already wrote into them is read as it stands
+    /// (feature::decorate). Throws DimensionError when features() is null,
+    /// and feature::FeatureError for a chunk missing from the nine.
+    void decorate(std::int32_t chunkX, std::int32_t chunkZ,
+                  const std::array<feature::RegionChunk, 9>& chunks) const;
 
 private:
     /// Both range forms: @p known empty for the one without a buffer.

@@ -177,8 +177,8 @@ TEST_CASE("a pack with nothing wrong with it reports nothing", "[validate]") {
 TEST_CASE("a registry this engine does not execute is a warning, not an error", "[validate]") {
     const TempTree tree;
     defineWorkingPack(tree);
-    tree.defineIn("placed_feature", "a", "{}");
-    tree.defineIn("placed_feature", "b", "{}");
+    tree.defineIn("template_pool", "a", "{}");
+    tree.defineIn("template_pool", "b", "{}");
     tree.defineIn("structure", "c", "{}");
 
     const Report report = stratum::validate::validatePack(tree.pack());
@@ -190,12 +190,12 @@ TEST_CASE("a registry this engine does not execute is a warning, not an error", 
     CHECK(report.resolved);
     CHECK(report.evaluable == 1U);
 
-    const Finding* features = findingAbout(report, "worldgen/placed_feature");
-    REQUIRE(features != nullptr);
-    CHECK(features->severity == Severity::Warning);
+    const Finding* pools = findingAbout(report, "worldgen/template_pool");
+    REQUIRE(pools != nullptr);
+    CHECK(pools->severity == Severity::Warning);
     // The count, not just the fact: two entries and two hundred are
     // different situations.
-    CHECK_THAT(features->message, ContainsSubstring("2 entries"));
+    CHECK_THAT(pools->message, ContainsSubstring("2 entries"));
 
     const Finding* structures = findingAbout(report, "worldgen/structure");
     REQUIRE(structures != nullptr);

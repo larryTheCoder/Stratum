@@ -24,7 +24,9 @@
 #include <functional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace stratum::cli {
 
@@ -99,7 +101,21 @@ struct GenerateRequest {
     /// Run the carvers the pipeline carries. Off, the chunks are terrain at
     /// the stage before carving, which is what the terrain goldens hold.
     bool carve = true;
+    /// Decorate: run the features the pipeline carries and this build runs
+    /// (feature/feature.hpp) over the carved terrain. Needs `carve`.
+    ///
+    /// Every chunk of the range, and the ring of chunks round it, is
+    /// decorated — in z-major order, on one thread — over terrain filled two
+    /// rings out, all of it held at once. So a chunk at the range's edge
+    /// holds what its neighbours outside the range wrote into it, as a
+    /// server's does; and the same chunk asked for in another range can
+    /// differ where two chunks' features meet, as a server's own two runs do.
+    bool features = false;
 };
+
+/// The most chunks a `features` request may fill: the range and two rings.
+/// About 200 KiB a chunk are held until the range is written.
+inline constexpr std::size_t kMaxDecoratedChunks = 16384;
 
 /// Time spent in each stage, summed over every thread — so per chunk it is
 /// what one generation thread spends on a chunk, whatever --threads said.
@@ -108,6 +124,8 @@ struct StageTimes {
     std::chrono::nanoseconds fill{};
     /// `CompiledDimension::fillBiomes` over the stored column.
     std::chrono::nanoseconds biomes{};
+    /// `CompiledDimension::decorate`, on its one thread.
+    std::chrono::nanoseconds decorate{};
     /// Sections, heightmaps and NBT: `chunk::encode` and `nbt::write`.
     std::chrono::nanoseconds encode{};
     /// `region::writeRegion`: compression and the file, on one thread.
@@ -121,6 +139,10 @@ struct GenerateReport {
     /// From the first chunk to the last region on disk, pipeline loading and
     /// compiling excluded.
     std::chrono::nanoseconds wall{};
+    /// With `features`: how many of the dimension's features were run, and
+    /// each one left out with the reason, "id: reason".
+    std::size_t featuresRun = 0;
+    std::vector<std::string> featuresLeftOut;
 };
 
 /// Called once a region file is on disk, with its path and chunk count.

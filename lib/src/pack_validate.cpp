@@ -31,7 +31,9 @@ namespace {
 [[nodiscard]] bool isInterpretedYet(data::Registry registry) noexcept {
     return registry == data::Registry::DensityFunction || registry == data::Registry::Noise ||
            registry == data::Registry::NoiseSettings || registry == data::Registry::Biome ||
-           registry == data::Registry::ConfiguredCarver;
+           registry == data::Registry::ConfiguredCarver ||
+           registry == data::Registry::ConfiguredFeature ||
+           registry == data::Registry::PlacedFeature;
 }
 
 void add(Report& report, Severity severity, std::string subject, std::string message) {
@@ -92,13 +94,25 @@ void reportRegistries(const data::Pack& pack, Report& report) {
                     " entries load and are addressable, but nothing in this build interprets "
                     "them yet (SPEC §10)");
         }
+        if (entry.registry == data::Registry::PlacedFeature ||
+            entry.registry == data::Registry::ConfiguredFeature) {
+            // Which of them a dimension runs depends on its biomes and on
+            // the block tags, neither of which a bare pack settles; a
+            // compiled dimension lists what it leaves unrun
+            // (feature::FeatureSet::unsupported).
+            add(report, Severity::Note, std::string(data::registryDirectory(entry.registry)),
+                std::to_string(entry.entries) +
+                    " entries load; this build runs some feature types and placement "
+                    "modifiers and not others, and this report does not say which of these "
+                    "it runs (stratum generate --features lists the ones it leaves out)");
+        }
         if (entry.registry == data::Registry::Biome) {
             // Generation refuses a biome with no numeric temperature; this
             // report does not look, so a clean one says nothing about them.
             add(report, Severity::Note, std::string(data::registryDirectory(entry.registry)),
                 std::to_string(entry.entries) +
-                    " entries load; generation reads only each one's temperature, and this "
-                    "report does not check them");
+                    " entries load; generation reads each one's temperature, carvers and "
+                    "features, and this report does not check them");
         }
     }
 }

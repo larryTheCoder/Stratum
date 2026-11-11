@@ -5,6 +5,7 @@
 #include <stratum/chunk/chunk.hpp>
 #include <stratum/data/pack.hpp>
 #include <stratum/data/resource_location.hpp>
+#include <stratum/feature/feature.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/javamath.hpp>
 #include <stratum/nbt/writer.hpp>
@@ -22,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -136,21 +138,30 @@ struct Scratch {
     StageTimes times;
 };
 
-/// Chunk (@p chunkX, @p chunkZ) as the NBT a server stores it as.
-[[nodiscard]] std::vector<std::byte> generateChunk(const world::CompiledDimension& dimension,
-                                                   const DimensionPreset& column,
-                                                   std::int32_t chunkX, std::int32_t chunkZ,
-                                                   Scratch& scratch) {
+/// Fills @p blocks and @p biomes with chunk (@p chunkX, @p chunkZ): its
+/// terrain, carved where the dimension carves, and its biomes over the
+/// stored column.
+void fillChunk(const world::CompiledDimension& dimension, const DimensionPreset& column,
+               std::int32_t chunkX, std::int32_t chunkZ, terrain::ChunkBuffer& blocks,
+               std::span<const data::ResourceLocation*> biomes, StageTimes& times) {
     const Clock::time_point start = Clock::now();
-    dimension.fillBlocks(chunkX, chunkZ, scratch.blocks);
+    dimension.fillBlocks(chunkX, chunkZ, blocks);
     const Clock::time_point filled = Clock::now();
     // Handed the blocks just filled: the quarts their surface pass looked
     // up are taken from them, the same biomes (CompiledDimension::fillBiomes).
-    dimension.fillBiomes(chunkX, chunkZ, javamath::floorDiv(column.minY, kQuartWidth),
-                         scratch.biomes, scratch.blocks);
-    const Clock::time_point biomed = Clock::now();
+    dimension.fillBiomes(chunkX, chunkZ, javamath::floorDiv(column.minY, kQuartWidth), biomes,
+                         blocks);
+    times.fill += filled - start;
+    times.biomes += Clock::now() - filled;
+}
 
-    const terrain::ChunkBuffer& blocks = scratch.blocks;
+/// Chunk (@p chunkX, @p chunkZ), holding @p blocks and @p biomes, as the NBT
+/// a server stores it as.
+[[nodiscard]] std::vector<std::byte>
+encodeChunk(const world::CompiledDimension& dimension, const DimensionPreset& column,
+            std::int32_t chunkX, std::int32_t chunkZ, const terrain::ChunkBuffer& blocks,
+            std::span<const data::ResourceLocation* const> biomes, StageTimes& times) {
+    const Clock::time_point start = Clock::now();
     const settings::NoiseGeometry& geometry = dimension.geometry();
     const std::vector<settings::BlockState>& palette = blocks.palette();
     if (palette.empty() || heightClassOf(palette.front()) != HeightClass::Air) {
@@ -211,7 +222,7 @@ struct Scratch {
         std::vector<const data::ResourceLocation*> seen;
         section.biomes.resize(chunk::kBiomesPerSection);
         for (std::size_t cell = 0; cell < chunk::kBiomesPerSection; ++cell) {
-            const data::ResourceLocation* biome = scratch.biomes[firstCell + cell];
+            const data::ResourceLocation* biome = biomes[firstCell + cell];
             const auto found = std::ranges::find(seen, biome);
             const auto at = static_cast<std::size_t>(found - seen.begin());
             if (found == seen.end()) {
@@ -268,11 +279,18 @@ struct Scratch {
     }
 
     std::vector<std::byte> bytes = nbt::write("", chunk::encode(data));
-    const Clock::time_point encoded = Clock::now();
-    scratch.times.fill += filled - start;
-    scratch.times.biomes += biomed - filled;
-    scratch.times.encode += encoded - biomed;
+    times.encode += Clock::now() - start;
     return bytes;
+}
+
+/// Chunk (@p chunkX, @p chunkZ) as the NBT a server stores it as.
+[[nodiscard]] std::vector<std::byte> generateChunk(const world::CompiledDimension& dimension,
+                                                   const DimensionPreset& column,
+                                                   std::int32_t chunkX, std::int32_t chunkZ,
+                                                   Scratch& scratch) {
+    fillChunk(dimension, column, chunkX, chunkZ, scratch.blocks, scratch.biomes, scratch.times);
+    return encodeChunk(dimension, column, chunkX, chunkZ, scratch.blocks, scratch.biomes,
+                       scratch.times);
 }
 
 [[nodiscard]] freeze::Pipeline loadPipeline(const std::filesystem::path& source, const bool carve) {
@@ -382,16 +400,182 @@ struct RegionPlan {
 void add(StageTimes& total, const StageTimes& part) {
     total.fill += part.fill;
     total.biomes += part.biomes;
+    total.decorate += part.decorate;
     total.encode += part.encode;
     total.write += part.write;
 }
+
+/// Runs @p body(i, times) for every i below @p count on @p threads threads,
+/// each with its own StageTimes, summed into @p times. The first failure
+/// stops the rest and is rethrown, named by @p describe(i).
+template<typename Body, typename Describe>
+void forEachIndex(const std::size_t count, const unsigned threads, StageTimes& times,
+                  const Body& body, const Describe& describe) {
+    std::atomic<std::size_t> next{0};
+    std::atomic<bool> failed{false};
+    std::mutex lock;
+    std::exception_ptr firstError;
+    const auto work = [&] {
+        StageTimes mine;
+        while (!failed.load()) {
+            const std::size_t i = next.fetch_add(1);
+            if (i >= count) {
+                break;
+            }
+            try {
+                body(i, mine);
+            } catch (const std::exception& error) {
+                const std::scoped_lock guard(lock);
+                if (!firstError) {
+                    firstError =
+                        std::make_exception_ptr(GenerateError(describe(i) + ": " + error.what()));
+                }
+                failed.store(true);
+            } catch (...) {
+                const std::scoped_lock guard(lock);
+                if (!firstError) {
+                    firstError = std::current_exception();
+                }
+                failed.store(true);
+            }
+        }
+        const std::scoped_lock guard(lock);
+        add(times, mine);
+    };
+    const auto helpers = static_cast<std::size_t>(std::min<std::size_t>(threads, count) - 1U);
+    std::vector<std::thread> pool;
+    pool.reserve(helpers);
+    for (std::size_t i = 0; i < helpers; ++i) {
+        pool.emplace_back(work);
+    }
+    work();
+    for (std::thread& thread : pool) {
+        thread.join();
+    }
+    if (firstError) {
+        std::rethrow_exception(firstError);
+    }
+}
+
+/// A range's chunks decorated: the range and two rings round it filled, the
+/// range and one ring decorated (GenerateRequest::features).
+class DecoratedRange {
+public:
+    DecoratedRange(const world::CompiledDimension& dimension, const DimensionPreset& column,
+                   const ChunkRange& range, const unsigned threads, StageTimes& times)
+        : minX_(range.minX - 2), minZ_(range.minZ - 2),
+          width_(static_cast<std::size_t>(std::int64_t{range.maxX} - range.minX + 5)),
+          depth_(static_cast<std::size_t>(std::int64_t{range.maxZ} - range.minZ + 5)) {
+        const std::size_t count = width_ * depth_;
+        const auto biomeCells =
+            static_cast<std::size_t>(column.height / kQuartWidth) * kQuartsPerLayer;
+        chunks_.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            chunks_.push_back(
+                Filled{.blocks = terrain::ChunkBuffer(dimension.geometry()),
+                       .biomes = std::vector<const data::ResourceLocation*>(biomeCells),
+                       .heightmaps = {}});
+        }
+        forEachIndex(
+            count, threads, times,
+            [&](const std::size_t i, StageTimes& mine) {
+                Filled& chunk = chunks_[i];
+                fillChunk(dimension, column, xOf(i), zOf(i), chunk.blocks, chunk.biomes, mine);
+                chunk.heightmaps = feature::terrainHeightmaps(chunk.blocks);
+            },
+            [&](const std::size_t i) {
+                return "chunk (" + std::to_string(xOf(i)) + ", " + std::to_string(zOf(i)) + ")";
+            });
+
+        // One thread, z-major: what a chunk's features find where a
+        // neighbour's reached first is then the same on every run.
+        const Clock::time_point start = Clock::now();
+        const std::int32_t minQuartY = javamath::floorDiv(column.minY, kQuartWidth);
+        for (std::size_t z = 1; z + 1 < depth_; ++z) {
+            for (std::size_t x = 1; x + 1 < width_; ++x) {
+                std::array<feature::RegionChunk, 9> around{};
+                for (std::size_t dz = 0; dz < 3; ++dz) {
+                    for (std::size_t dx = 0; dx < 3; ++dx) {
+                        Filled& chunk = chunks_[((z + dz - 1) * width_) + x + dx - 1];
+                        around.at((dz * 3) + dx) = {.blocks = &chunk.blocks,
+                                                    .heightmaps = &chunk.heightmaps,
+                                                    .biomes = chunk.biomes,
+                                                    .minQuartY = minQuartY};
+                    }
+                }
+                const std::size_t i = (z * width_) + x;
+                try {
+                    dimension.decorate(xOf(i), zOf(i), around);
+                } catch (const std::exception& error) {
+                    throw GenerateError("decorating chunk (" + std::to_string(xOf(i)) + ", " +
+                                        std::to_string(zOf(i)) + "): " + error.what());
+                }
+            }
+        }
+        times.decorate += Clock::now() - start;
+    }
+
+    [[nodiscard]] const terrain::ChunkBuffer& blocks(const std::int32_t chunkX,
+                                                     const std::int32_t chunkZ) const {
+        return chunks_[indexOf(chunkX, chunkZ)].blocks;
+    }
+
+    [[nodiscard]] std::span<const data::ResourceLocation* const>
+    biomes(const std::int32_t chunkX, const std::int32_t chunkZ) const {
+        return chunks_[indexOf(chunkX, chunkZ)].biomes;
+    }
+
+private:
+    struct Filled {
+        terrain::ChunkBuffer blocks;
+        std::vector<const data::ResourceLocation*> biomes;
+        feature::TerrainHeightmaps heightmaps;
+    };
+
+    [[nodiscard]] std::int32_t xOf(const std::size_t index) const noexcept {
+        return minX_ + static_cast<std::int32_t>(index % width_);
+    }
+
+    [[nodiscard]] std::int32_t zOf(const std::size_t index) const noexcept {
+        return minZ_ + static_cast<std::int32_t>(index / width_);
+    }
+
+    [[nodiscard]] std::size_t indexOf(const std::int32_t chunkX,
+                                      const std::int32_t chunkZ) const noexcept {
+        return (static_cast<std::size_t>(chunkZ - minZ_) * width_) +
+               static_cast<std::size_t>(chunkX - minX_);
+    }
+
+    std::int32_t minX_;
+    std::int32_t minZ_;
+    std::size_t width_;
+    std::size_t depth_;
+    std::vector<Filled> chunks_;
+};
 
 /// Every chunk of @p plan, generated on @p threads threads; entry i is the
 /// NBT of `plan.chunks[i]`, whichever thread made it.
 [[nodiscard]] std::vector<std::vector<std::byte>>
 generateRegion(const world::CompiledDimension& dimension, const DimensionPreset& column,
-               const RegionPlan& plan, unsigned threads, StageTimes& times) {
+               const RegionPlan& plan, unsigned threads, StageTimes& times,
+               const DecoratedRange* decorated) {
     std::vector<std::vector<std::byte>> payloads(plan.chunks.size());
+    if (decorated != nullptr) {
+        // Already filled and decorated: only the encoding is left.
+        forEachIndex(
+            plan.chunks.size(), threads, times,
+            [&](const std::size_t i, StageTimes& mine) {
+                const auto [chunkX, chunkZ] = plan.chunks[i];
+                payloads[i] = encodeChunk(dimension, column, chunkX, chunkZ,
+                                          decorated->blocks(chunkX, chunkZ),
+                                          decorated->biomes(chunkX, chunkZ), mine);
+            },
+            [&](const std::size_t i) {
+                return "chunk (" + std::to_string(plan.chunks[i].first) + ", " +
+                       std::to_string(plan.chunks[i].second) + ")";
+            });
+        return payloads;
+    }
     std::atomic<std::size_t> next{0};
     std::atomic<bool> failed{false};
     std::mutex lock;
@@ -504,15 +688,48 @@ GenerateReport generate(const GenerateRequest& request, const RegionWritten& onR
         }
     }
 
+    if (request.features) {
+        if (!request.carve) {
+            throw GenerateError("features run over carved terrain: --features cannot be "
+                                "combined with --no-carvers");
+        }
+        const std::size_t filled =
+            static_cast<std::size_t>(std::int64_t{range.maxX} - range.minX + 5) *
+            static_cast<std::size_t>(std::int64_t{range.maxZ} - range.minZ + 5);
+        if (filled > kMaxDecoratedChunks) {
+            throw GenerateError("--features holds the whole range and two rings of chunks "
+                                "round it at once, " +
+                                std::to_string(filled) + " chunks here; the most is " +
+                                std::to_string(kMaxDecoratedChunks) +
+                                ". Generate the range in parts");
+        }
+    }
+
     const std::unique_ptr<world::CompiledDimension> dimension =
         compile(loadPipeline(request.source, request.carve), preset, request.seed);
+    GenerateReport report;
+    if (request.features) {
+        const feature::FeatureSet* features = dimension->features();
+        if (features == nullptr) {
+            throw GenerateError("dimension " + describe(preset) +
+                                " has no features to run: " + dimension->featuresBlockedBy());
+        }
+        report.featuresRun = features->supportedCount();
+        for (const feature::FeatureSet::UnsupportedFeature& left : features->unsupported()) {
+            report.featuresLeftOut.push_back(left.id.toString() + ": " + left.reason);
+        }
+    }
     std::filesystem::create_directories(request.out);
 
-    GenerateReport report;
     const Clock::time_point start = Clock::now();
+    std::optional<DecoratedRange> decorated;
+    if (request.features) {
+        decorated.emplace(*dimension, preset, range, threads, report.stages);
+    }
     for (const RegionPlan& plan : plans) {
         std::vector<std::vector<std::byte>> payloads =
-            generateRegion(*dimension, preset, plan, threads, report.stages);
+            generateRegion(*dimension, preset, plan, threads, report.stages,
+                           decorated.has_value() ? &*decorated : nullptr);
         std::map<std::pair<std::int32_t, std::int32_t>, region::ChunkPayload> chunks;
         for (std::size_t i = 0; i < plan.chunks.size(); ++i) {
             // Timestamp zero, not the clock: the same request writes the

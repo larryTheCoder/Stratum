@@ -12,7 +12,10 @@ blocks and biomes as a Java server, bit for bit.
   for the same stages
 - **Generates:** terrain, biomes, aquifers, noise caves, large ore veins,
   surface blocks, and carved caves and ravines
-- **Not yet:** worlds have no trees, plants, ordinary ores or structures. Those are planned for v2, and need not land where Java puts them.
+- **Not yet:** worlds have no trees, plants or structures. Ordinary ores,
+  springs and underwater disks generate where Java puts them, but only
+  through `stratum generate --features`: the server plugins do not decorate
+  yet. The rest is planned for v2, feature type by feature type.
   The Nether generates through the library and `stratum generate`; neither
   server plugin offers it as a world yet.
 
@@ -62,8 +65,17 @@ biome and the corrected water height. The server integration (M5) closed on
 2026-10-29.
 
 The large noise caves, ore veins and carvers (carved caves, ravines) do
-generate. Features (trees, plants, ordinary ores) and structures do not. A
-pack's copies of those are recorded and not run until v2 (M6).
+generate. Of the features, the ordinary ores, water and lava springs, and
+the sand, clay and gravel disks under water do, through `stratum generate
+--features`, which lists every feature it leaves out and why (127 of the
+overworld's 164 today: trees, plants, lakes, geodes and the rest).
+Structures do not.
+
+Ores are measured against the server block for block: every blob of every
+shipped ore size matches. In a world holding the shipped ores alone, 99.6%
+of 1.75 million ore and stone-variant blocks match one server run. Two runs
+of the server itself differ by about half as much, because the server does
+not fix the order chunks are decorated in.
 
 ## Speed
 
@@ -249,12 +261,12 @@ keeps open what the default should be for a user's pack.
 | Multi-noise biome source | Supported | Named by its parameter list |
 | `the_end` biome source | Supported | Reads the router's `erosion`, as the server does |
 | `fixed`, `checkerboard` biome sources | **Refused** | Refused by name when a caller names them. One a pack declares in `dimension` or `world_preset` is not read or reported yet. |
-| `worldgen/biome` | Supported | For biome identity, surface rules and carvers. A biome's features do not run. |
+| `worldgen/biome` | Supported | For biome identity, surface rules, carvers and features |
 | `dimension`, `dimension_type`, `world_preset` | Partial | Load but are not interpreted. The caller names the noise settings and biome source. |
 | Namespaced references | Supported | Within the registries above |
 | `worldgen/configured_carver` | Supported | `cave`, `nether_cave` and `canyon`, block for block against the server's carving stage. `debug_mode: true` writes the server's debug states. |
 | Tags | **Refused** | A pack with a JSON file under `tags/` is refused by name at load. Carvers read vanilla's block tags from the version root's `tags/block`. |
-| `configured_feature`, `placed_feature` | **Rejected** | v2 (M6) |
+| `configured_feature`, `placed_feature` | Partial | Run only by `stratum generate --features`. 14 of the 15 placement modifiers (not `count_on_every_layer`); the `ore`, `spring_feature` and `disk` feature types. A feature this build cannot run is left out and listed by name with the reason. No features on the End's biome source yet. |
 | `structure`, `structure_set` | **Rejected** | v2 |
 | `template_pool`, `processor_list` | **Rejected** | v2 |
 | `flat_level_generator_preset` | **Rejected** | Not planned for v1 |
@@ -344,7 +356,7 @@ they cost nothing today, not a promise about other versions.
 | Tier | Scope | Bar |
 |---|---|---|
 | A | Density functions, noise, terrain shape, aquifer fill decision, multi-noise biome assignment, surface rules, carvers | Bit-exact vs vanilla Java, block-for-block, in Java block space |
-| B (v2) | Features, structures | Statistical parity; exact placement may differ |
+| B (v2) | Features, structures | The decoration framework is exact. A feature type is exact where a clean-room spec or a block-for-block measurement establishes it, and statistical otherwise. Structures are not started. |
 | U | Everything outside the matrix | Never executed. A JSON file in a directory this build cannot name is a hard error at pack load. An entry in a **Rejected** registry is recorded by name, and a hard error only under `--strict`. |
 
 ## Determinism

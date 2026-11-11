@@ -1,10 +1,11 @@
-// Stratum — sine, adapted from fdlibm.
+// Stratum — sine and cosine, adapted from fdlibm.
 // SPDX-License-Identifier: Apache-2.0 AND SunPro
 //
 // ATTRIBUTION (CLAUDE.md, SPEC §2):
-//   Upstream: fdlibm 5.3, files `s_sin.c` (1.3, 95/01/18), `k_sin.c`
-//             (1.3, 95/01/18), `k_cos.c` (1.3, 95/01/18) and `e_rem_pio2.c`
-//             (1.4, 95/01/18), https://netlib.org/fdlibm/
+//   Upstream: fdlibm 5.3, files `s_sin.c` (1.3, 95/01/18), `s_cos.c`
+//             (1.3, 95/01/18), `k_sin.c` (1.3, 95/01/18), `k_cos.c`
+//             (1.3, 95/01/18) and `e_rem_pio2.c` (1.4, 95/01/18),
+//             https://netlib.org/fdlibm/
 //   License:  SunPro / freely distributable with notice preserved — the
 //             upstream notice is reproduced verbatim immediately below and
 //             must not be removed. Also recorded in NOTICE.
@@ -23,7 +24,8 @@
 //
 // WHY. The carvers' sine table (spec/carvers-a-spec.md Q9.1-Q9.2) is the
 // single-precision rounding of the STRICT sine at 65 536 points, and a host
-// libm is not bit-identical across platforms (SPEC §5).
+// libm is not bit-identical across platforms (SPEC §5). The ore feature's
+// direction (feature/feature.hpp) reads the sine and the cosine both.
 //
 // Changes from upstream, all mechanical:
 //   * C++ namespacing, `static_cast` in place of C casts, fixed-width types.
@@ -241,6 +243,39 @@ double sin(const double x) noexcept {
             return -kernelSin(y[0], y[1], 1);
         default:
             return -kernelCos(y[0], y[1]);
+    }
+}
+
+double cos(const double x) noexcept {
+    const double z = 0.0;
+    // High word of x.
+    const std::int32_t ix = highWord(x) & 0x7fffffff;
+
+    // |x| ~< pi/4
+    if (ix <= 0x3fe921fb) {
+        return kernelCos(x, z);
+    }
+    // cos(Inf or NaN) is NaN
+    if (ix >= 0x7ff00000) {
+        return x - x;
+    }
+    // Past the medium path: not carried (the header says why).
+    if (ix > 0x413921fb) {
+        assert(false && "fdlibm::cos: |x| past 2^19 * pi/2 is not carried");
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // argument reduction needed
+    std::array<double, 2> y{};
+    const int n = remPio2(x, y);
+    switch (n & 3) {
+        case 0:
+            return kernelCos(y[0], y[1]);
+        case 1:
+            return -kernelSin(y[0], y[1], 1);
+        case 2:
+            return -kernelCos(y[0], y[1]);
+        default:
+            return kernelSin(y[0], y[1], 1);
     }
 }
 

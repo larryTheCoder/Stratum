@@ -18,6 +18,7 @@
 #include <stratum/density/graph.hpp>
 #include <stratum/density/interpreter.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/feature/feature.hpp>
 #include <stratum/freeze/pipeline.hpp>
 #include <stratum/hash/md5.hpp>
 #include <stratum/settings/noise_settings.hpp>
@@ -924,6 +925,47 @@ TEST_CASE("a pipeline's carvers survive the freeze, and a blob's are held to a p
                                                   tree.biomeParametersDir() / "no-tags-here"),
                          FreezeError,
                          Catch::Matchers::MessageMatches(ContainsSubstring("no block tags")));
+}
+
+TEST_CASE("a pipeline's features survive the freeze, as they were written", "[freeze][feature]") {
+    const TempTree tree;
+    Pipeline before = buildPipeline(tree);
+    // The form without block tags freezes no features: a world undecorated.
+    CHECK(before.features.empty());
+
+    const ResourceLocation plains = ResourceLocation::parse("minecraft:plains");
+    before.features.placed.emplace(
+        ResourceLocation::parse("minecraft:ore_coal"),
+        nlohmann::json::parse(R"({"feature": "minecraft:ore_coal", "placement": [
+            {"type": "minecraft:count", "count": 30}, {"type": "minecraft:in_square"},
+            {"type": "minecraft:height_range", "height": {"type": "minecraft:uniform",
+                "min_inclusive": {"absolute": 136}, "max_inclusive": {"below_top": 0}}},
+            {"type": "minecraft:biome"}]})"));
+    before.features.configured.emplace(
+        ResourceLocation::parse("minecraft:ore_coal"),
+        nlohmann::json::parse(R"({"type": "minecraft:ore", "config": {
+            "size": 17, "discard_chance_on_air_exposure": 0.0, "targets": [
+                {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:stones"},
+                 "state": {"Name": "minecraft:coal_ore"}}]}})"));
+    before.features.biomeFeatures.emplace(
+        plains, nlohmann::json::array({nlohmann::json::array({"minecraft:ore_coal"})}));
+    before.features.tags.emplace(
+        ResourceLocation::parse("minecraft:stones"),
+        std::set<ResourceLocation>{ResourceLocation::parse("minecraft:stone")});
+
+    const std::vector<std::byte> blob = stratum::freeze::write(before);
+    const Pipeline after = stratum::freeze::read(blob);
+    CHECK(after.features == before.features);
+    CHECK(stratum::freeze::write(after) == blob);
+
+    // And what was thawed compiles: the one feature, run, writing coal.
+    const std::vector<ResourceLocation> biomes = {plains};
+    const stratum::feature::FeatureSet set =
+        stratum::feature::FeatureSet::build(after.features, biomes);
+    CHECK(set.supportedCount() == 1U);
+    CHECK(set.unsupported().empty());
+    REQUIRE(set.writtenStates().size() == 1U);
+    CHECK(set.writtenStates()[0].name == ResourceLocation::parse("minecraft:coal_ore"));
 }
 
 TEST_CASE("a legacy dimension's pack is rejected for a surface noise key it does not define",

@@ -36,6 +36,7 @@
 #include <stratum/data/resource_location.hpp>
 #include <stratum/density/graph.hpp>
 #include <stratum/density/noise_registry.hpp>
+#include <stratum/feature/feature.hpp>
 #include <stratum/hash/md5.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
@@ -77,6 +78,9 @@ struct Pipeline {
     /// The carvers (carver::CarverSources): empty for a pipeline resolved
     /// without block tags, which generates terrain uncarved.
     carver::CarverSources carvers;
+    /// The features (feature::FeatureSources): empty, like the carvers, for a
+    /// pipeline resolved without block tags, whose world is then undecorated.
+    feature::FeatureSources features;
 };
 
 /// Everything a world generates from, resolved out of @p pack (a `worldgen/`
@@ -91,7 +95,9 @@ struct Pipeline {
 /// is resolved through the block tags under @p blockTagsDir (the data pack's
 /// `tags/block`, which tools/fetch-vanilla extracts to `<version>/tags/block`).
 /// A world generated from what this resolves is carved; one from the form
-/// above is not, which is what the terrain-stage goldens compare. Throws
+/// above is not, which is what the terrain-stage goldens compare. The pack's
+/// features are gathered too (feature::gatherFeatureSources), with every
+/// block tag, so the world can be decorated. Throws
 /// carver::CarverError or data::BlockTagError naming what it cannot read, and
 /// FreezeError when @p blockTagsDir is not a directory.
 [[nodiscard]] Pipeline resolve(const data::Pack& pack,
@@ -128,7 +134,10 @@ struct Provenance {
 /// 4 since the blob carries the carvers (carver::CarverSources), appended
 /// after the biome tables; a format-3 blob has none, and opening it would
 /// generate a world uncarved where this build carves.
-inline constexpr std::uint32_t kBlobFormat = 4;
+///
+/// 5 since the blob carries the features (feature::FeatureSources), appended
+/// after the carvers.
+inline constexpr std::uint32_t kBlobFormat = 5;
 
 /// Serialises @p pipeline. Deterministic: the same pipeline gives the same
 /// bytes, here and on any other platform.

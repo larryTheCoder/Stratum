@@ -89,7 +89,8 @@ public final class StrictMathVectors {
         return inputs;
     }
 
-    /// Sine inputs over what stratum::fdlibm::sin carries: |x| <= 2^19 * pi/2.
+    /// Sine (and cosine) inputs over what stratum::fdlibm::sin and cos carry:
+    /// |x| <= 2^19 * pi/2.
     /// The carvers' table (spec/carvers-a-spec.md Q9) reads [0, 2 pi).
     private static List<Double> sinInputs() {
         List<Double> inputs = new ArrayList<>();
@@ -177,6 +178,18 @@ public final class StrictMathVectors {
         for (double input : sinInputs()) {
             System.out.printf("    {UINT64_C(0x%016X), UINT64_C(0x%016X)},%n",
                 resultBits(input), resultBits(StrictMath.sin(input)));
+        }
+        System.out.println("});");
+        System.out.println();
+        System.out.println("struct CosVector {");
+        System.out.println("    std::uint64_t inputBits;");
+        System.out.println("    std::uint64_t resultBits;");
+        System.out.println("};");
+        System.out.println();
+        System.out.println("constexpr auto kCosVectors = std::to_array<CosVector>({");
+        for (double input : sinInputs()) {
+            System.out.printf("    {UINT64_C(0x%016X), UINT64_C(0x%016X)},%n",
+                resultBits(input), resultBits(StrictMath.cos(input)));
         }
         System.out.println("});");
         System.out.println();

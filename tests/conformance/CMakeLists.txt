@@ -88,6 +88,7 @@ add_executable(stratum_conformance_tests
     vanilla_carver_config_test.cpp
     vanilla_carver_golden_test.cpp
     vanilla_carver_variants_test.cpp
+    vanilla_feature_probe_test.cpp
     vanilla_legacy_nether_climate_gap_test.cpp
     vanilla_legacy_goldens_biome_test.cpp
     vanilla_legacy_gradient_gap_test.cpp

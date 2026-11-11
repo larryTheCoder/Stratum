@@ -19,7 +19,7 @@ Last swept: 2026-10-25 (no engine change, still v15: the 101 commits of 2026-10-
 | M4 — biomes + surface | Open — the legacy RNG now blocks only the named noises in 3 legacy dimensions' surface rules (their `vertical_gradient`s run the measured legacy coin): the legacy Nether's climate is derived (cubiomes' rule, 32765/32768 golden cells, every miss a tie), its terrain measures 99.99591%, and the End generates exactly through the public compile path — its blocks, and its biomes through its own `minecraft:the_end` source (pipeline engine v15), exact on every stored quart of 45 End regions (47 185 920 quarts, eight distinct End worlds). The legacy named-noise seeding is CLOSED (2026-11-09, pipeline engine v16): spec/legacy-named-noise-spec.md adopted, and with the surface rules reading the zoomed biome all eight golden Nether regions are exact block for block (SPEC §11, "Legacy named noises, adopted"; a legacy router naming a noise beyond the climate stays refused until a golden confirms it). The overworld's 232 surface misses left after the zoom (415 before) were the water height, which air clears (2026-11-10, pipeline engine v18; SPEC §11, "The water height is the fluid under the last air"): every overworld golden block is now exact but flow. M4 still carries ties in the biome search and the full-biome goldens for amplified and large_biomes (below) |
 | MA — Aquifers (parallel track, does not gate M4-M6) | IMPLEMENTER-RULING-01's aquifer P1s closed 2026-11-10 (pipeline engine v17; SPEC §11, "Aquifer Q3.4, Q5.6 and Q5.9, adopted"): Q5.6's level rule and Q5.9's thresholds in the engine's floating-point form, confirmed at the discriminating values by the new `aquifer-threshold-probe.sh`; Q3.4's widths were already right, and the far cells now stand on seeds 42 and 31337. Aquifer P2 "the width amendments throughout Q1-Q8" closed the same day (pipeline engine v19; SPEC §11, "The aquifer's widths, as amended"): every amended floor and halving was already as amended but Q5.7's quantization, now `3·floor((10s)/3)` at 32-bit width and confirmed past the int range by `aquifer-spreadwidth-probe.sh` (`aqspread_s42`); Aquifer P2 Q6.6 and Q3.3 closed the same day (pipeline engine v20; SPEC §11, "Aquifer Q3.3 and Q6.6"). Q6.6's products were already formed weight first. Q3.3's 12-bit y wrap is implemented, and `aqywrap_s42`/`aqywrap_s31337` confirm it consistent, but no world found discriminates it: carried on the spec's word, flagged to the owner. Fill decision matches every golden block that did not flow after generation (engine v13: the surface scan read sample by sample, the clean-room Q5.3 as written — Q5.3(a) on the anchor, then the first sample in scan order to fire — exact on every scored block and mark of 24 probe dimension-seeds built to part it from v12; engine v12: Q5.3(a) off the ocean branch, a land cell more than twenty above its surface takes the sea, exact on 556 964 848 constant-surface probe blocks; v11: an aborted scan's status is A_lava, -54 and lava, on all three paths — exact below a sea of -54, and its type unseen at or above it; v10: cache markers in a datapack's aquifer entries read as the server reads them, `interpolated` blending only at the generating block and `flat_cache` reading at the read's own y off its window, whose extent is measured; v9: Q5.8's lava override does not reach a short-circuit sea; v8: y_skip's rectangle reads -16..+25, not +16; v7: lava is fluid to the surface pass and the bottom-up run resets on every fluid; v6: Q5.9's override does not reach an aborted scan; v5: an aborted scan floors its level at lambda, dry or wet; v4: a near-surface sea is not typed lava by its centre; v3: Q5.9 through the chunk's flat_cache window, y_skip); Q8's fluid-update flag exact against the server's own post-processing lists; Q4.4's later-wins tie-break decided by the goldens on 1585 blocks, none against. Open: Q5.8's `L != never` conjunct, carried on the spec's word (provably inert; its other conjunct, a source already reading lava, is a tautology — overriding lava with lava returns lava), and the fluid updates' PocketMine-MP scheduling, whose flow nobody has compared with Java's (M5) |
 | M5 — integration (Bedrock mapping, PMMP binding, perf) | **Closed 2026-10-29** (owner: the evidence is clear; Nukkit's biome defects are limitations of Nukkit itself). Mapping tables, shared generation core, `ext/` encoder + zend module + plugin (including block state translation), `stratum generate` and the perf instruments landed; Stratum ran inside a real headless PocketMine-MP 5.44.3 on its own PHP (`ctest --preset pmmp`) and inside Nukkit b3caad67 (`ctest --preset nukkit`), and the owner's Bedrock client saw the same terrain on both servers at sixteen places (2026-10-27). Speed (quiet box, 2026-10-27): the whole generation task through PHP runs below vanilla's own time — overworld 10.5 ms/chunk end to end against vanilla's 13.6 (it was 155.7), amplified 10.5 against 15.6, large_biomes 10.7 against 13.9, the End 1.44 against 2.81 — byte-identical. Carried past it as recorded limits, not gates: the headless runs' open ends (SPEC §11), Nukkit's biome serializer offset and missing registry entries, and §4.1's flat program built for the per-block arithmetic only (further speed is post-M5 work) |
-| M6 (v2) — staged features/structures, scripting escape hatch | Features and structures out of scope for v1. **Carvers implemented and exact, 2026-11-10** (pipeline engine v18, blob format 4; SPEC §11, "Carvers, adopted"): IMPLEMENTER-RULING-01's carver P1 items against spec/carvers-a-spec.md and carvers-b-spec.md, which write the walk exactly and so supersede the 2026-11-06 Tier B fit. Every block of the server's carving-stage chunks matches at seeds 42 and 31337, overworld and Nether, both coordinate signs, through the frozen-pipeline path every world takes; every mark this build makes is the server's. Open: 233 server-only post-processing marks on untouched Nether lava-sea cells at seed 31337 (reported, pinned, not reconciled); carvers P2's `debug_mode` (refused at load until implemented); upgraded chunks (A-Q13.6) out of scope by ruling |
+| M6 (v2) — staged features | **Scoped 2026-11-11, and open.** Slice 1, the decoration framework, landed the same day (pipeline engine v23): seeds, feature order, which features a chunk runs, 14 of 15 placement modifiers, exact on 68 400 marker blocks of the server's. Of slice 2, `minecraft:ore`, measured to the block (all 30 shipped ores run), springs and disks. 127 of the overworld's 164 placed features are left out by name; no server plugin decorates yet (below). Structures are M7. **Carvers implemented and exact, 2026-11-10** (pipeline engine v18, blob format 4; SPEC §11, "Carvers, adopted"): IMPLEMENTER-RULING-01's carver P1 items against spec/carvers-a-spec.md and carvers-b-spec.md, which write the walk exactly and so supersede the 2026-11-06 Tier B fit. Every block of the server's carving-stage chunks matches at seeds 42 and 31337, overworld and Nether, both coordinate signs, through the frozen-pipeline path every world takes; every mark this build makes is the server's. Open: 233 server-only post-processing marks on untouched Nether lava-sea cells at seed 31337 (reported, pinned, not reconciled); carvers P2's `debug_mode` (refused at load until implemented); upgraded chunks (A-Q13.6) out of scope by ruling |
 
 ¹ StrictMath: `log` and `sin` are vendored (fdlibm; `sin` for the carvers' table, small and medium arguments only); `exp`/`pow`/`cos`/`atan2` deferred until a node needs them.
 ² `weird_scaled_sampler`'s End-dimension remainder has not been re-surveyed since M3 closed for the overworld.
@@ -163,6 +163,12 @@ jar pinned); `ctest --preset conformance -j 12` 179/179.
       42806517418 (196 cases) and 91 on run 42833918838 (198 cases, the
       two preset goldens added), the ARM64 leg 52 and 53. Steady, and
       well short of the limit; left open as a watch, not as work.
+      *Expect it to rise (2026-11-11):* the fifteen feature-probe cases
+      each fill the same 512 chunks in a Debug build before decorating
+      them, about 110 s of fill a case here, so about half an hour of
+      test time more, a quarter of that on the wall at four jobs. If the
+      leg nears its limit, they are the first to merge into one process
+      (they share their terrain within one) or to read it from a cache.
 - [ ] `ChunkFiller::fill` executes up to 10 M instructions a chunk more on
       one pass than the next of the same configuration, deterministically
       and alike under v13 and v14 — probably allocator state; unexplained.
@@ -2655,8 +2661,89 @@ everything Stratum owns.
 
 ## M6 (v2) — Staged features
 
-Out of scope for now: features/structures, read/write radii, the scripting
-escape hatch.
+Scoped 2026-11-11 (SPEC §11, "M6 scoped"): the framework exact; a feature
+type exact where a spec or a measurement to the block establishes it,
+statistical otherwise; structures their own milestone (M7); a feature this
+build cannot run left out and named; block entities and loot in scope where
+a feature needs them; the scripting escape hatch dropped. Six slices.
+
+### Slice 1 — the decoration framework (engine v23)
+
+SPEC §11, "The decoration framework, measured". Every claim measured on
+`tools/analysis/feature-probe.sh`'s marker worlds and confirmed by
+`vanilla_feature_probe_test.cpp`: 68 400 markers over six variants, every
+one where the server stored it, but 13 where the two sides read different
+biomes (the open ties).
+
+- [x] The random source, the population seed and the feature seed
+      (`rng/worldgen_random.hpp`).
+- [x] The order features run in, and which features a chunk runs
+      (`FeatureSet::build`): all 164 of the shipped overworld's placed
+      features at the server's index, in the server's chunks.
+- [x] Fourteen placement modifiers; the int and height providers; the
+      count noise; the `_WG` heightmaps fixed and the other four live.
+- [x] `world::CompiledDimension::decorate` over nine chunks;
+      `stratum generate --features`, which lists what it leaves out; a
+      frozen pipeline carries its features (blob format 5).
+- [x] The probes are units of `tools/probe-worlds` (shard `end`), so CI
+      generates them.
+- [ ] `count_on_every_layer`: not measured. Only the Nether's features use
+      it; left out by name. Belongs with slice 5's first Nether probe.
+- [ ] The block predicates that ask what a block is — `solid`,
+      `replaceable`, `has_sturdy_face`, `would_survive`, `unobstructed` —
+      are left out by name. 14 of the overworld's features wait on them
+      alone, and most of slices 3 and 4 behind them. They need a table of
+      block behaviour, which no pack carries: **for the owner — may such a
+      table be measured off the server and committed?** The block
+      identifier table needed its own approval.
+- [ ] The order `minecraft:the_end`'s biome source lists its biomes in: not
+      measured, so a dimension on it has no features to run (by name).
+      The Nether's order is its parameter list's, by the overworld's rule,
+      with no probe of its own yet.
+- [ ] Not discriminated by anything shipped: whether the order's edges
+      cross generation steps. A probe pack built to part the four readings
+      would settle it.
+- [ ] A biome's features written inline or as a tag: refused by name.
+- [ ] Speed. Decorating with the 30 ores takes about 1 ms a chunk in an
+      optimised build (0.95 ms over 324 chunks, 2026-11-11, a loaded box;
+      the fill beside it 5.3 ms). Nothing in it is tuned: each block read
+      compares identifiers, and each live heightmap read scans the column.
+      Re-measure on a quiet box when the bindings decorate (slice 6).
+
+### Slice 2 — ores and the underground
+
+- [x] `minecraft:ore`, measured to the block (SPEC §11, "The ore feature,
+      measured"): every blob of every shipped size, where an attempt is
+      given up, what an ore beside air discards. All 30 shipped ore
+      features run. In the shipped world with ores alone, 99.6 in 100 of
+      1 749 597 blocks are one server run's; the server's own two runs
+      differ in 3347, of the same kinds.
+- [ ] **For the owner:** `minecraft:ore` is exact by measurement, with no
+      clean-room spec. A spec would confirm or correct it.
+- [x] `spring_feature` and `disk` (SPEC §11, "Springs and disks,
+      measured"): all 50 springs this build writes over 288 chunks are the
+      server's; of 12 325 disk blocks, all but 155 where two chunks' disks
+      met in another order. A spring is marked for a fluid update where the
+      server schedules a fluid tick.
+- [ ] `disk_grass` waits on the `solid` predicate (slice 1's open item).
+- [ ] `scattered_ore` (two Nether features), `geode`, `dripstone_cluster`,
+      `large_dripstone`, `pointed_dripstone`, `monster_room`, `lake`,
+      `underwater_magma`: not started; each is left out by name.
+      `monster_room` needs block entities and loot (in scope by ruling 4,
+      nothing built); `geode`, `lake` and the dripstone three draw as they
+      build, so each needs the stream-first measurement the ore had.
+
+### Slices 3 to 6
+
+- [ ] 3: ground cover (`random_patch` alone is 42 of the overworld's
+      features). 4: trees. 5: the Nether's and the End's features. 6: the
+      server bindings — no plugin decorates yet, so a server's worlds are
+      as they were at v22.
+- [ ] The order chunks are decorated in is the caller's. `stratum generate
+      --features` decorates the range and one ring z-major, holding it all
+      at once (at most 16 384 chunks), so the same chunk asked for in
+      another range can differ where two chunks' features meet. What a
+      server binding should promise there is slice 6's question.
 
 Carvers (2026-11-10, engine v18): done, see the table above and SPEC §11,
 "Carvers, adopted". Carried:

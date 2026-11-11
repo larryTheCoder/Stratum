@@ -35,6 +35,22 @@ TEST_CASE("fdlibm::sin is bit-identical to StrictMath.sin", "[fdlibm][vectors]")
     CHECK(checked > 1000U);
 }
 
+TEST_CASE("fdlibm::cos is bit-identical to StrictMath.cos", "[fdlibm][vectors]") {
+    std::size_t checked = 0;
+    for (const CosVector& vector : kCosVectors) {
+        const auto input = std::bit_cast<double>(vector.inputBits);
+        const double result = stratum::fdlibm::cos(input);
+        INFO("cos(" << input << ")");
+        if (std::isnan(result)) {
+            CHECK(vector.resultBits == UINT64_C(0x7FF8000000000000));
+        } else {
+            CHECK(std::bit_cast<std::uint64_t>(result) == vector.resultBits);
+        }
+        ++checked;
+    }
+    CHECK(checked > 1000U);
+}
+
 TEST_CASE("the carvers' sine table is the spec's, to its SHA-256", "[carver][trig]") {
     // spec/carvers-a-spec.md Q9.2: over the entries as big-endian IEEE-754
     // float32 in index order.

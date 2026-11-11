@@ -274,6 +274,16 @@ server answers differently — it reads the dimension's own router where
 cubiomes evaluates a fixed copy of the island field — follows the server
 (SPEC.md section 11, "The End's biome source").
 
+lib/include/stratum/rng/worldgen_random.hpp adapts cubiomes' finders.c
+`getPopulationSeed` (its 1.18+ branch) and rng.h `xNextLongJ` and
+`xNextIntJ`, with the `population + salt` seeding its feature finders use:
+the decoration stage's population seed, and java.util.Random's derivations
+drawn over a Xoroshiro128++ stream. Rewritten in wrapping 64-bit arithmetic
+through javamath. Confirmed against the server rather than taken on
+cubiomes' word: 3456 marker features land where the seeds put them
+(tests/conformance/vanilla_feature_probe_test.cpp), and the feature seed's
+`index + 10000 * step` is this project's measurement.
+
 lib/src/biome_voronoi.cpp and lib/include/stratum/biome/voronoi.hpp adapt
 cubiomes' layers.c `getVoronoiSHA`, `getVoronoiCell` and `voronoiAccess3D`,
 with rng.h `mcStepSeed`: the zoom's key, a single-block SHA-256 of the
@@ -396,8 +406,9 @@ fdlibm (SunPro)
 --------------------------------------------------------------------------
 
 lib/src/fdlibm_log.cpp is adapted from fdlibm 5.3, file e_log.c
-(version 1.3, 95/01/18), and lib/src/fdlibm_sin.cpp from fdlibm 5.3,
-files s_sin.c, k_sin.c, k_cos.c (each version 1.3, 95/01/18) and
+(version 1.3, 95/01/18), and lib/src/fdlibm_sin.cpp (the sine and, since
+the ore feature needed it, the cosine) from fdlibm 5.3, files s_sin.c,
+s_cos.c, k_sin.c, k_cos.c (each version 1.3, 95/01/18) and
 e_rem_pio2.c (version 1.4, 95/01/18), all obtained from
 https://www.netlib.org/fdlibm/. Each carries the upstream notice in its
 file header, reproduced here:

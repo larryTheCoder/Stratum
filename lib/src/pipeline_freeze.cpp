@@ -697,6 +697,67 @@ void readCarvers(Reader& in, Pipeline& pipeline) {
     }
 }
 
+void writeJsonMap(Writer& out, const std::map<data::ResourceLocation, nlohmann::json>& entries) {
+    out.u32(static_cast<std::uint32_t>(entries.size()));
+    for (const auto& [id, json] : entries) {
+        out.id(id);
+        out.str(json.dump());
+    }
+}
+
+void writeFeatures(Writer& out, const feature::FeatureSources& features) {
+    // As JSON text, as the carvers are.
+    writeJsonMap(out, features.placed);
+    writeJsonMap(out, features.configured);
+    writeJsonMap(out, features.biomeFeatures);
+    out.u32(static_cast<std::uint32_t>(features.tags.size()));
+    for (const auto& [tag, blocks] : features.tags) {
+        out.id(tag);
+        out.u32(static_cast<std::uint32_t>(blocks.size()));
+        for (const data::ResourceLocation& block : blocks) {
+            out.id(block);
+        }
+    }
+}
+
+void readFeatures(Reader& in, Pipeline& pipeline) {
+    feature::FeatureSources& features = pipeline.features;
+    const auto readJsonMap = [&in](std::map<data::ResourceLocation, nlohmann::json>& into,
+                                   const char* counted, const std::string& kind) {
+        const std::uint32_t entries = in.count(counted);
+        for (std::uint32_t i = 0; i < entries; ++i) {
+            const data::ResourceLocation id = in.id();
+            const std::string what = kind + " '" + id.toString() + "'";
+            const std::string text = in.str();
+            nlohmann::json json;
+            try {
+                json = nlohmann::json::parse(text);
+            } catch (const nlohmann::json::exception& error) {
+                in.fail("a stored " + what + " is not JSON: " + error.what());
+            }
+            if (const std::size_t depth = data::jsonDepth(json); depth > data::kMaxJsonDepth) {
+                in.refuse("a stored " + what + " nests arrays and objects " +
+                          std::to_string(depth) + " deep, past the " +
+                          std::to_string(data::kMaxJsonDepth) + " this build reads");
+            }
+            into.emplace(id, std::move(json));
+        }
+    };
+    readJsonMap(features.placed, "the placed features", "placed feature");
+    readJsonMap(features.configured, "the configured features", "configured feature");
+    readJsonMap(features.biomeFeatures, "the biomes' feature lists", "feature list of biome");
+    const std::uint32_t tags = in.count("the features' block tags");
+    for (std::uint32_t i = 0; i < tags; ++i) {
+        const data::ResourceLocation tag = in.id();
+        const std::uint32_t size = in.count("a block tag's blocks");
+        std::set<data::ResourceLocation> blocks;
+        for (std::uint32_t k = 0; k < size; ++k) {
+            blocks.insert(in.id());
+        }
+        features.tags.emplace(tag, std::move(blocks));
+    }
+}
+
 /// The payload, without the header. Split out because the hash is over
 /// exactly this and nothing else.
 [[nodiscard]] std::vector<std::byte> writePayload(const Pipeline& pipeline) {
@@ -706,6 +767,7 @@ void readCarvers(Reader& in, Pipeline& pipeline) {
     writeSettings(out, pipeline.settings);
     writeBiomes(out, pipeline);
     writeCarvers(out, pipeline.carvers);
+    writeFeatures(out, pipeline.features);
     return out.take();
 }
 
@@ -861,8 +923,9 @@ Pipeline read(std::span<const std::byte> blob) {
     pipeline.settings = readSettings(payloadReader);
     readBiomes(payloadReader, pipeline);
     readCarvers(payloadReader, pipeline);
+    readFeatures(payloadReader, pipeline);
     if (!payloadReader.exhausted()) {
-        throw FreezeError("this world's pipeline has trailing bytes after the carvers, so "
+        throw FreezeError("this world's pipeline has trailing bytes after the features, so "
                           "it is not the shape this build writes");
     }
     requireLegacySurfaceNoises(pipeline, [](const std::string& what) {
@@ -932,7 +995,9 @@ Pipeline resolve(const data::Pack& pack, const std::filesystem::path& biomeParam
                           "extracts them to <version>/tags/block");
     }
     Pipeline pipeline = resolve(pack, biomeParametersDir);
-    pipeline.carvers = carver::gatherCarverSources(pack, data::BlockTags::load(blockTagsDir));
+    const data::BlockTags tags = data::BlockTags::load(blockTagsDir);
+    pipeline.carvers = carver::gatherCarverSources(pack, tags);
+    pipeline.features = feature::gatherFeatureSources(pack, tags);
     return pipeline;
 }
 

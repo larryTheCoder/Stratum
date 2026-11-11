@@ -19,6 +19,8 @@ add_library(stratum_core STATIC
     src/carver_config.cpp
     src/carver_carve.cpp
     src/carver_trig.cpp
+    src/feature_config.cpp
+    src/feature_decorate.cpp
     src/biome_temperature_table.cpp
     src/world_dimension.cpp
     src/aquifer_barrier.cpp
@@ -99,6 +101,8 @@ target_sources(stratum_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/density_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/render/region_render.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/java_random.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/worldgen_random.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/feature/feature.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/rng/xoroshiro128.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/settings/noise_settings.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/stratum/validate/pack_report.hpp"

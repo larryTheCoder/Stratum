@@ -16,6 +16,7 @@
 #include <stratum/javamath.hpp>
 #include <stratum/nbt/reader.hpp>
 #include <stratum/region/region_file.hpp>
+#include <stratum/rng/worldgen_random.hpp>
 #include <stratum/settings/noise_settings.hpp>
 
 #include <nlohmann/json.hpp>
@@ -125,7 +126,8 @@ private:
 ///   overworld  stone below y 0, where its density falls to zero; no
 ///              aquifers, so water up to sea level 8 and air above; one
 ///              surface rule turning stone at y >= -2 into grass_block (a
-///              state with a property); one biome, plains, everywhere.
+///              state with a property); one biome, plains, everywhere, with
+///              two features for `--features`.
 ///   end        legacy random source, end_stone below y 32 over a noise
 ///              height of 0..127 in a column of 0..255; the End's own biome
 ///              source, with erosion a constant 0.5 (end_highlands, off the
@@ -140,7 +142,8 @@ class GeneratePack {
 public:
     GeneratePack() : root_(stratum::test::tempPath("stratum-cli-generate-pack")) {
         std::filesystem::remove_all(root_);
-        for (const char* registry : {"density_function", "noise", "noise_settings", "biome"}) {
+        for (const char* registry :
+             {"density_function", "noise", "noise_settings", "biome", "placed_feature"}) {
             std::filesystem::create_directories(root_ / "worldgen" / registry);
         }
         std::filesystem::create_directories(root_ / "biome_parameters" / "minecraft");
@@ -155,7 +158,19 @@ public:
                                  "iceberg_pillar", "iceberg_pillar_roof", "iceberg_surface"}) {
             write("noise", name, R"({"firstOctave":-6,"amplitudes":[1.0,1.0]})");
         }
-        write("biome", "plains", R"({"temperature":0.8,"carvers":[]})");
+        // Two features, which only `generate --features` runs: a marker on
+        // the terrain's surface, and one of a type this build leaves out.
+        write("biome", "plains",
+              R"({"temperature":0.8,"carvers":[],
+                  "features":[["minecraft:mark","minecraft:grove"]]})");
+        write("placed_feature", "mark",
+              R"({"feature":{"type":"minecraft:simple_block","config":{"to_place":{
+                  "type":"minecraft:simple_state_provider",
+                  "state":{"Name":"minecraft:white_wool"}}}},
+                  "placement":[{"type":"minecraft:in_square"},
+                               {"type":"minecraft:heightmap","heightmap":"WORLD_SURFACE_WG"}]})");
+        write("placed_feature", "grove",
+              R"({"feature":{"type":"minecraft:tree","config":{}},"placement":[]})");
 
         const nlohmann::json grassOnTop = {
             {"type", "minecraft:condition"},
@@ -787,6 +802,105 @@ TEST_CASE("generate refuses what it cannot do, by name, before writing anything"
 
     // Nothing above wrote a region file.
     CHECK_FALSE(std::filesystem::exists(regionPath(out.path(), 0, 0)));
+}
+
+TEST_CASE("generate --features decorates, and lists what it leaves out", "[cli][generate]") {
+    const GeneratePack pack;
+    const TempDir out("stratum-cli-generate-features");
+    const std::string request =
+        "generate " + quote(pack.root()) + " --dimension overworld --seed 5";
+
+    const CliResult result =
+        runCli(request + " --chunks -1,-1:0,0 --features --out " + quote(out.path() / "one"));
+    INFO(result.output);
+    REQUIRE(result.exitCode == 0);
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("features: 1 run"));
+    CHECK_THAT(result.output, Catch::Matchers::ContainsSubstring("1 left out:"));
+    CHECK_THAT(result.output,
+               Catch::Matchers::ContainsSubstring("minecraft:grove: feature type minecraft:tree"));
+
+    // One marker a chunk, where the feature's own seed puts it: index 0 of
+    // step 0, on the water's surface.
+    for (const auto& [chunkX, chunkZ] : {std::pair{-1, -1}, {0, -1}, {-1, 0}, {0, 0}}) {
+        CAPTURE(chunkX, chunkZ);
+        const stratum::chunk::Chunk chunk = readGenerated(out.path() / "one", chunkX, chunkZ);
+        stratum::rng::WorldgenRandom random(stratum::rng::featureSeed(
+            stratum::rng::populationSeed(5, chunkX * 16, chunkZ * 16), 0, 0));
+        const int x = random.nextInt(16);
+        const int z = random.nextInt(16);
+        int markers = 0;
+        for (int localX = 0; localX < 16; ++localX) {
+            for (int localZ = 0; localZ < 16; ++localZ) {
+                for (int y = chunk.minY(); y <= chunk.maxY(); ++y) {
+                    markers += blockAt(chunk, localX, y, localZ) == "minecraft:white_wool" ? 1 : 0;
+                }
+            }
+        }
+        CHECK(markers == 1);
+        const std::optional<int> top = chunk.highestNonAir(x, z);
+        REQUIRE(top.has_value());
+        CHECK(blockAt(chunk, x, *top, z) == "minecraft:white_wool");
+        CHECK(blockAt(chunk, x, *top - 1, z) == "minecraft:water");
+        // The stored heightmaps are of the decorated chunk.
+        const auto surface = chunk.heightmap(stratum::chunk::Heightmap::WorldSurface);
+        REQUIRE(surface.has_value());
+        CHECK((*surface)[(static_cast<std::size_t>(z) * 16U) + static_cast<std::size_t>(x)] == top);
+    }
+
+    // The same bytes on three threads.
+    REQUIRE(runCli(request + " --chunks -1,-1:0,0 --features --threads 3 --out " +
+                   quote(out.path() / "three"))
+                .exitCode == 0);
+    for (const auto& [regionX, regionZ] : {std::pair{-1, -1}, {0, -1}, {-1, 0}, {0, 0}}) {
+        CHECK(bytesOf(regionPath(out.path() / "one", regionX, regionZ)) ==
+              bytesOf(regionPath(out.path() / "three", regionX, regionZ)));
+    }
+
+    // Without the flag nothing is decorated.
+    REQUIRE(runCli(request + " --chunks 0,0 --out " + quote(out.path() / "plain")).exitCode == 0);
+    const stratum::chunk::Chunk plain = readGenerated(out.path() / "plain", 0, 0);
+    const std::optional<int> plainTop = plain.highestNonAir(3, 3);
+    REQUIRE(plainTop.has_value());
+    CHECK(blockAt(plain, 3, *plainTop, 3) == "minecraft:water");
+
+    const std::string to = " --out " + quote(out.path() / "refused");
+    SECTION("uncarved terrain") {
+        const CliResult refused = runCli(request + " --chunks 0,0 --features --no-carvers" + to);
+        CHECK(refused.exitCode == 4);
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("--no-carvers"));
+    }
+    SECTION("a range too large to hold at once") {
+        const CliResult refused = runCli(request + " --region 0,0:3,3 --features" + to);
+        CHECK(refused.exitCode == 4);
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("17424 chunks"));
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("in parts"));
+    }
+    SECTION("a dimension whose feature order is not measured") {
+        const CliResult refused = runCli("generate " + quote(pack.root()) +
+                                         " --dimension end --seed 1 --chunks 0,0 --features" + to);
+        CHECK(refused.exitCode == 4);
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("no features to run"));
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("minecraft:the_end"));
+    }
+    SECTION("a pipeline frozen without its features") {
+        const CliResult refused =
+            runCli("generate " + quote(pack.freeze()) +
+                   " --dimension overworld --seed 5 --chunks 0,0 --features" + to);
+        CHECK(refused.exitCode == 4);
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("carries no features"));
+    }
+    SECTION("a biome listing a feature the pack does not define") {
+        std::filesystem::remove(pack.root() / "worldgen" / "placed_feature" / "mark.json");
+        const CliResult refused = runCli(request + " --chunks 0,0 --features" + to);
+        CHECK(refused.exitCode == 4);
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("minecraft:mark"));
+        CHECK_THAT(refused.output, Catch::Matchers::ContainsSubstring("does not define"));
+        // The terrain is not held up by it.
+        CHECK(
+            runCli(request + " --chunks 0,0 --out " + quote(out.path() / "undecorated")).exitCode ==
+            0);
+    }
+    CHECK_FALSE(std::filesystem::exists(out.path() / "refused"));
 }
 
 TEST_CASE("generate refuses to replace a region file unless --force says to", "[cli][generate]") {

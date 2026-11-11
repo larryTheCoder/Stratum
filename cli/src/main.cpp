@@ -73,12 +73,18 @@ constexpr auto kSubcommands = std::to_array<Subcommand>({
 void printGenerateUsage(std::ostream& out) {
     out << "  stratum generate <version-root | pipeline.blob> --dimension <name> --seed N\n"
         << "      (--region RX,RZ[:RX,RZ] | --chunks X,Z[:X,Z]) --out <dir>\n"
-        << "      [--threads N] [--force] [--no-carvers]\n"
+        << "      [--threads N] [--force] [--no-carvers] [--features]\n"
         << "      Writes Anvil region files, r.<x>.<z>.mca, holding the blocks and\n"
         << "      biomes this build generates (terrain, aquifers, ore veins, biomes,\n"
-        << "      surface rules, carvers; no features or structures) in Java block\n"
-        << "      space, from a tools/fetch-vanilla version root or a frozen pipeline.\n"
+        << "      surface rules, carvers; no structures) in Java block space, from\n"
+        << "      a tools/fetch-vanilla version root or a frozen pipeline.\n"
         << "      --no-carvers stops at the stage before carving.\n"
+        << "      --features decorates: it runs the features this build runs and\n"
+        << "      lists the ones it leaves out, each with the reason. The range and\n"
+        << "      two rings of chunks round it are held at once (at most "
+        << stratum::cli::kMaxDecoratedChunks << "\n"
+        << "      chunks), and where two chunks' features meet, the chunk decorated\n"
+        << "      first wins, in z-major order.\n"
         << "      --dimension names vanilla's pairing of noise settings and biome\n"
         << "      source, stored over its dimension type's column:\n"
         << "       ";
@@ -559,6 +565,10 @@ int runGenerate(const std::vector<std::string_view>& args) {
             request.carve = false;
             continue;
         }
+        if (argument == "--features") {
+            request.features = true;
+            continue;
+        }
         if (!argument.starts_with("-")) {
             paths.push_back(argument);
             continue;
@@ -697,6 +707,17 @@ int runGenerate(const std::vector<std::string_view>& args) {
               << ", biomes " << perChunk(report.stages.biomes, report.chunks) << ", encode "
               << perChunk(report.stages.encode, report.chunks) << "; region writes "
               << perChunk(report.stages.write, report.chunks) << '\n';
+    if (request.features) {
+        // Fill and biomes above are over every chunk filled, the two rings
+        // included, divided by the chunks written; decorate likewise.
+        std::cout << "features: " << report.featuresRun << " run, decorating "
+                  << perChunk(report.stages.decorate, report.chunks) << " a chunk written; "
+                  << report.featuresLeftOut.size() << " left out";
+        std::cout << (report.featuresLeftOut.empty() ? "\n" : ":\n");
+        for (const std::string& left : report.featuresLeftOut) {
+            std::cout << "  " << left << '\n';
+        }
+    }
     return kExitOk;
 }
 
